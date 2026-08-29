@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 // 1. Integer type aliases (zsh.h:30-92).
 // =============================================================================
 
-/// Port of `#define minimum(a,b)` from `Src/zsh.h:31`.
+/// Port of `minimum` from `Src/zsh.h:31` — C macro `#define minimum(a,b)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn minimum<T: PartialOrd>(a: T, b: T) -> T {
@@ -209,7 +209,7 @@ pub const SPECCHARS: &str = "#$^*()=|{}[]`<>?~;&\n\t \\\'\""; // c:228
 /// `PATCHARS` constant.
 pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
 
-/// Port of `#define IS_DASH(x)` from `Src/zsh.h:242`.
+/// Port of `IS_DASH` from `Src/zsh.h:242` — C macro `#define IS_DASH(x)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_DASH(x: char) -> bool {
@@ -240,7 +240,7 @@ pub const QT_BACKSLASH_SHOWNULL: i32 = 8; // c:286
 /// `QT_QUOTEDZPUTS` constant.
 pub const QT_QUOTEDZPUTS: i32 = 9; // c:291
 
-/// Port of `#define QT_IS_SINGLE(x)` from `Src/zsh.h:294`.
+/// Port of `QT_IS_SINGLE` from `Src/zsh.h:294` — C macro `#define QT_IS_SINGLE(x)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn QT_IS_SINGLE(x: i32) -> bool {
@@ -427,37 +427,37 @@ pub const REDIR_TYPE_MASK: i32 = 0x1f; // c:397
 pub const REDIR_VARID_MASK: i32 = 0x20; // c:399
 /// `REDIR_FROM_HEREDOC_MASK` constant.
 pub const REDIR_FROM_HEREDOC_MASK: i32 = 0x40; // c:401
-/// `IS_WRITE_FILE` — see implementation.
+/// Port of `IS_WRITE_FILE` from `Src/zsh.h:403` — C macro `#define IS_WRITE_FILE(X) ((X)>=REDIR_WRITE && (X)<=REDIR_READWRITE)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_WRITE_FILE(x: i32) -> bool {
     x >= REDIR_WRITE && x <= REDIR_READWRITE
 }
-/// `IS_APPEND_REDIR` — see implementation.
+/// Port of `IS_APPEND_REDIR` from `Src/zsh.h:404` — C macro `#define IS_APPEND_REDIR(X) (IS_WRITE_FILE(X) && ((X) & 2))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_APPEND_REDIR(x: i32) -> bool {
     IS_WRITE_FILE(x) && (x & 2) != 0
 }
-/// `IS_CLOBBER_REDIR` — see implementation.
+/// Port of `IS_CLOBBER_REDIR` from `Src/zsh.h:405` — C macro `#define IS_CLOBBER_REDIR(X) (IS_WRITE_FILE(X) && ((X) & 1))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_CLOBBER_REDIR(x: i32) -> bool {
     IS_WRITE_FILE(x) && (x & 1) != 0
 }
-/// `IS_ERROR_REDIR` — see implementation.
+/// Port of `IS_ERROR_REDIR` from `Src/zsh.h:406` — C macro `#define IS_ERROR_REDIR(X) ((X)>=REDIR_ERRWRITE && (X)<=REDIR_ERRAPPNOW)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_ERROR_REDIR(x: i32) -> bool {
     x >= REDIR_ERRWRITE && x <= REDIR_ERRAPPNOW
 }
-/// `IS_READFD` — see implementation.
+/// Port of `IS_READFD` from `Src/zsh.h:407` — C macro `#define IS_READFD(X) (((X)>=REDIR_READWRITE && (X)<=REDIR_MERGEIN) || (X)==REDIR_INPIPE)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_READFD(x: i32) -> bool {
     (x >= REDIR_READWRITE && x <= REDIR_MERGEIN) || x == REDIR_INPIPE
 }
-/// `IS_REDIROP` — see implementation.
+/// Port of `IS_REDIROP` from `Src/zsh.h:408` — C macro `#define IS_REDIROP(X) ((X)>=OUTANG && (X)<=TRINANG)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_REDIROP(x: lextok) -> bool {
@@ -1771,25 +1771,25 @@ pub const EC_DUP: i32 = 1; // c:872
 pub const EC_DUPTOK: i32 = 2; // c:878
 /// `WC_CODEBITS` constant.
 pub const WC_CODEBITS: u32 = 5; // c:882
-/// `wc_code` — see implementation.
+/// Port of `wc_code` from `Src/zsh.h:883` — C macro `#define wc_code(C) ((C) & ((wordcode) ((1 << WC_CODEBITS) - 1)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn wc_code(c: wordcode) -> wordcode {
     c & ((1 << WC_CODEBITS) - 1)
 }
-/// `wc_data` — see implementation.
+/// Port of `wc_data` from `Src/zsh.h:884` — C macro `#define wc_data(C) ((C) >> WC_CODEBITS)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn wc_data(c: wordcode) -> wordcode {
     c >> WC_CODEBITS
 }
-/// `wc_bdata` — see implementation.
+/// Port of `wc_bdata` from `Src/zsh.h:885` — C macro `#define wc_bdata(D) ((D) << WC_CODEBITS)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn wc_bdata(d: wordcode) -> wordcode {
     d << WC_CODEBITS
 }
-/// `wc_bld` — see implementation.
+/// Port of `wc_bld` from `Src/zsh.h:886` — C macro `#define wc_bld(C,D) (((wordcode) (C)) | (((wordcode) (D)) << WC_CODEBITS))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn wc_bld(c: wordcode, d: wordcode) -> wordcode {
@@ -1915,338 +1915,338 @@ pub const WC_IF_ELSE: wordcode = 3;
 // Each WC_X_TYPE / WC_X_SKIP / WCB_X is one of the per-opcode
 // `wc_data` slicers / `wc_bld` constructors.
 // =============================================================================
-/// `WCB_END` — see implementation.
+/// Port of `WCB_END` from `Src/zsh.h:918` — C macro `#define WCB_END() wc_bld(WC_END, 0)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_END() -> wordcode {
     wc_bld(WC_END, 0)
 } // c:918
-/// `WC_LIST_TYPE` — see implementation.
+/// Port of `WC_LIST_TYPE` from `Src/zsh.h:920` — C macro `#define WC_LIST_TYPE(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_LIST_TYPE(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:920
-/// `WC_LIST_SKIP` — see implementation.
+/// Port of `WC_LIST_SKIP` from `Src/zsh.h:924` — C macro `#define WC_LIST_SKIP(C) (wc_data(C) >> WC_LIST_FREE)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_LIST_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_LIST_FREE
 } // c:924
-/// `WCB_LIST` — see implementation.
+/// Port of `WCB_LIST` from `Src/zsh.h:925` — C macro `#define WCB_LIST(T,O) wc_bld(WC_LIST, ((T) | ((O) << WC_LIST_FREE)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_LIST(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_LIST, t | (o << WC_LIST_FREE))
 }
-/// `WC_SUBLIST_TYPE` — see implementation.
+/// Port of `WC_SUBLIST_TYPE` from `Src/zsh.h:927` — C macro `#define WC_SUBLIST_TYPE(C) (wc_data(C) & ((wordcode) 3))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SUBLIST_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:927
-/// `WC_SUBLIST_FLAGS` — see implementation.
+/// Port of `WC_SUBLIST_FLAGS` from `Src/zsh.h:931` — C macro `#define WC_SUBLIST_FLAGS(C) (wc_data(C) & ((wordcode) 0x1c))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SUBLIST_FLAGS(c: wordcode) -> wordcode {
     wc_data(c) & 0x1c
 } // c:931
-/// `WC_SUBLIST_SKIP` — see implementation.
+/// Port of `WC_SUBLIST_SKIP` from `Src/zsh.h:936` — C macro `#define WC_SUBLIST_SKIP(C) (wc_data(C) >> WC_SUBLIST_FREE)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SUBLIST_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_SUBLIST_FREE
 }
-/// `WCB_SUBLIST` — see implementation.
+/// Port of `WCB_SUBLIST` from `Src/zsh.h:937` — C macro `#define WCB_SUBLIST(T,F,O) wc_bld(WC_SUBLIST, ((T) | (F) | ((O) << WC_SUBLIST_FREE)))` (c:937-938).
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_SUBLIST(t: wordcode, f: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_SUBLIST, t | f | (o << WC_SUBLIST_FREE))
 }
-/// `WC_PIPE_TYPE` — see implementation.
+/// Port of `WC_PIPE_TYPE` from `Src/zsh.h:940` — C macro `#define WC_PIPE_TYPE(C) (wc_data(C) & ((wordcode) 1))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_PIPE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:940
-/// `WC_PIPE_LINENO` — see implementation.
+/// Port of `WC_PIPE_LINENO` from `Src/zsh.h:943` — C macro `#define WC_PIPE_LINENO(C) (wc_data(C) >> 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_PIPE_LINENO(c: wordcode) -> wordcode {
     wc_data(c) >> 1
 }
-/// `WCB_PIPE` — see implementation.
+/// Port of `WCB_PIPE` from `Src/zsh.h:944` — C macro `#define WCB_PIPE(T,L) wc_bld(WC_PIPE, ((T) | ((L) << 1)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_PIPE(t: wordcode, l: wordcode) -> wordcode {
     wc_bld(WC_PIPE, t | (l << 1))
 }
-/// `WC_REDIR_TYPE` — see implementation.
+/// Port of `WC_REDIR_TYPE` from `Src/zsh.h:946` — C macro `#define WC_REDIR_TYPE(C) ((int)(wc_data(C) & REDIR_TYPE_MASK))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_REDIR_TYPE(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_TYPE_MASK as u32) as i32
 }
-/// `WC_REDIR_VARID` — see implementation.
+/// Port of `WC_REDIR_VARID` from `Src/zsh.h:947` — C macro `#define WC_REDIR_VARID(C) ((int)(wc_data(C) & REDIR_VARID_MASK))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_REDIR_VARID(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_VARID_MASK as u32) as i32
 }
-/// `WC_REDIR_FROM_HEREDOC` — see implementation.
+/// Port of `WC_REDIR_FROM_HEREDOC` from `Src/zsh.h:948` — C macro `#define WC_REDIR_FROM_HEREDOC(C) ((int)(wc_data(C) & REDIR_FROM_HEREDOC_MASK))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_REDIR_FROM_HEREDOC(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_FROM_HEREDOC_MASK as u32) as i32
 }
-/// `WCB_REDIR` — see implementation.
+/// Port of `WCB_REDIR` from `Src/zsh.h:949` — C macro `#define WCB_REDIR(T) wc_bld(WC_REDIR, (T))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_REDIR(t: wordcode) -> wordcode {
     wc_bld(WC_REDIR, t)
 }
-/// `WC_REDIR_WORDS` — see implementation.
+/// Port of `WC_REDIR_WORDS` from `Src/zsh.h:951` — C macro `#define WC_REDIR_WORDS(C) ((WC_REDIR_VARID(C) ? 4 : 3) + (WC_REDIR_FROM_HEREDOC(C) ? 2 : 0))` (c:951-953).
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_REDIR_WORDS(c: wordcode) -> i32 {
     (if WC_REDIR_VARID(c) != 0 { 4 } else { 3 })
         + (if WC_REDIR_FROM_HEREDOC(c) != 0 { 2 } else { 0 })
 }
-/// `WC_ASSIGN_TYPE` — see implementation.
+/// Port of `WC_ASSIGN_TYPE` from `Src/zsh.h:955` — C macro `#define WC_ASSIGN_TYPE(C) (wc_data(C) & ((wordcode) 1))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_ASSIGN_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:955
-/// `WC_ASSIGN_TYPE2` — see implementation.
+/// Port of `WC_ASSIGN_TYPE2` from `Src/zsh.h:956` — C macro `#define WC_ASSIGN_TYPE2(C) ((wc_data(C) & ((wordcode) 2)) >> 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_ASSIGN_TYPE2(c: wordcode) -> wordcode {
     (wc_data(c) & 2) >> 1
 }
-/// `WC_ASSIGN_NUM` — see implementation.
+/// Port of `WC_ASSIGN_NUM` from `Src/zsh.h:967` — C macro `#define WC_ASSIGN_NUM(C) (wc_data(C) >> 2)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_ASSIGN_NUM(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
-/// `WCB_ASSIGN` — see implementation.
+/// Port of `WCB_ASSIGN` from `Src/zsh.h:968` — C macro `#define WCB_ASSIGN(T,A,N) wc_bld(WC_ASSIGN, ((T) | ((A) << 1) | ((N) << 2)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_ASSIGN(t: wordcode, a: wordcode, n: wordcode) -> wordcode {
     wc_bld(WC_ASSIGN, t | (a << 1) | (n << 2))
 }
-/// `WC_SIMPLE_ARGC` — see implementation.
+/// Port of `WC_SIMPLE_ARGC` from `Src/zsh.h:970` — C macro `#define WC_SIMPLE_ARGC(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SIMPLE_ARGC(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:970
-/// `WCB_SIMPLE` — see implementation.
+/// Port of `WCB_SIMPLE` from `Src/zsh.h:971` — C macro `#define WCB_SIMPLE(N) wc_bld(WC_SIMPLE, (N))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_SIMPLE(n: wordcode) -> wordcode {
     wc_bld(WC_SIMPLE, n)
 }
-/// `WC_TYPESET_ARGC` — see implementation.
+/// Port of `WC_TYPESET_ARGC` from `Src/zsh.h:973` — C macro `#define WC_TYPESET_ARGC(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_TYPESET_ARGC(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:973
-/// `WCB_TYPESET` — see implementation.
+/// Port of `WCB_TYPESET` from `Src/zsh.h:974` — C macro `#define WCB_TYPESET(N) wc_bld(WC_TYPESET, (N))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_TYPESET(n: wordcode) -> wordcode {
     wc_bld(WC_TYPESET, n)
 }
-/// `WC_SUBSH_SKIP` — see implementation.
+/// Port of `WC_SUBSH_SKIP` from `Src/zsh.h:976` — C macro `#define WC_SUBSH_SKIP(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SUBSH_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:976
-/// `WCB_SUBSH` — see implementation.
+/// Port of `WCB_SUBSH` from `Src/zsh.h:977` — C macro `#define WCB_SUBSH(O) wc_bld(WC_SUBSH, (O))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_SUBSH(o: wordcode) -> wordcode {
     wc_bld(WC_SUBSH, o)
 }
-/// `WC_CURSH_SKIP` — see implementation.
+/// Port of `WC_CURSH_SKIP` from `Src/zsh.h:979` — C macro `#define WC_CURSH_SKIP(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_CURSH_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:979
-/// `WCB_CURSH` — see implementation.
+/// Port of `WCB_CURSH` from `Src/zsh.h:980` — C macro `#define WCB_CURSH(O) wc_bld(WC_CURSH, (O))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_CURSH(o: wordcode) -> wordcode {
     wc_bld(WC_CURSH, o)
 }
-/// `WC_TIMED_TYPE` — see implementation.
+/// Port of `WC_TIMED_TYPE` from `Src/zsh.h:982` — C macro `#define WC_TIMED_TYPE(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_TIMED_TYPE(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:982
-/// `WCB_TIMED` — see implementation.
+/// Port of `WCB_TIMED` from `Src/zsh.h:985` — C macro `#define WCB_TIMED(T) wc_bld(WC_TIMED, (T))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_TIMED(t: wordcode) -> wordcode {
     wc_bld(WC_TIMED, t)
 }
-/// `WC_FUNCDEF_SKIP` — see implementation.
+/// Port of `WC_FUNCDEF_SKIP` from `Src/zsh.h:987` — C macro `#define WC_FUNCDEF_SKIP(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_FUNCDEF_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:987
-/// `WCB_FUNCDEF` — see implementation.
+/// Port of `WCB_FUNCDEF` from `Src/zsh.h:988` — C macro `#define WCB_FUNCDEF(O) wc_bld(WC_FUNCDEF, (O))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_FUNCDEF(o: wordcode) -> wordcode {
     wc_bld(WC_FUNCDEF, o)
 }
-/// `WC_FOR_TYPE` — see implementation.
+/// Port of `WC_FOR_TYPE` from `Src/zsh.h:990` — C macro `#define WC_FOR_TYPE(C) (wc_data(C) & 3)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_FOR_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:990
-/// `WC_FOR_SKIP` — see implementation.
+/// Port of `WC_FOR_SKIP` from `Src/zsh.h:994` — C macro `#define WC_FOR_SKIP(C) (wc_data(C) >> 2)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_FOR_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
-/// `WCB_FOR` — see implementation.
+/// Port of `WCB_FOR` from `Src/zsh.h:995` — C macro `#define WCB_FOR(T,O) wc_bld(WC_FOR, ((T) | ((O) << 2)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_FOR(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_FOR, t | (o << 2))
 }
-/// `WC_SELECT_TYPE` — see implementation.
+/// Port of `WC_SELECT_TYPE` from `Src/zsh.h:997` — C macro `#define WC_SELECT_TYPE(C) (wc_data(C) & 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SELECT_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:997
-/// `WC_SELECT_SKIP` — see implementation.
+/// Port of `WC_SELECT_SKIP` from `Src/zsh.h:1000` — C macro `#define WC_SELECT_SKIP(C) (wc_data(C) >> 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_SELECT_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 1
 }
-/// `WCB_SELECT` — see implementation.
+/// Port of `WCB_SELECT` from `Src/zsh.h:1001` — C macro `#define WCB_SELECT(T,O) wc_bld(WC_SELECT, ((T) | ((O) << 1)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_SELECT(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_SELECT, t | (o << 1))
 }
-/// `WC_WHILE_TYPE` — see implementation.
+/// Port of `WC_WHILE_TYPE` from `Src/zsh.h:1003` — C macro `#define WC_WHILE_TYPE(C) (wc_data(C) & 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_WHILE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:1003
-/// `WC_WHILE_SKIP` — see implementation.
+/// Port of `WC_WHILE_SKIP` from `Src/zsh.h:1006` — C macro `#define WC_WHILE_SKIP(C) (wc_data(C) >> 1)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_WHILE_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 1
 }
-/// `WCB_WHILE` — see implementation.
+/// Port of `WCB_WHILE` from `Src/zsh.h:1007` — C macro `#define WCB_WHILE(T,O) wc_bld(WC_WHILE, ((T) | ((O) << 1)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_WHILE(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_WHILE, t | (o << 1))
 }
-/// `WC_REPEAT_SKIP` — see implementation.
+/// Port of `WC_REPEAT_SKIP` from `Src/zsh.h:1009` — C macro `#define WC_REPEAT_SKIP(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_REPEAT_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:1009
-/// `WCB_REPEAT` — see implementation.
+/// Port of `WCB_REPEAT` from `Src/zsh.h:1010` — C macro `#define WCB_REPEAT(O) wc_bld(WC_REPEAT, (O))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_REPEAT(o: wordcode) -> wordcode {
     wc_bld(WC_REPEAT, o)
 }
-/// `WC_TRY_SKIP` — see implementation.
+/// Port of `WC_TRY_SKIP` from `Src/zsh.h:1012` — C macro `#define WC_TRY_SKIP(C) wc_data(C)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_TRY_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:1012
-/// `WCB_TRY` — see implementation.
+/// Port of `WCB_TRY` from `Src/zsh.h:1013` — C macro `#define WCB_TRY(O) wc_bld(WC_TRY, (O))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_TRY(o: wordcode) -> wordcode {
     wc_bld(WC_TRY, o)
 }
-/// `WC_CASE_TYPE` — see implementation.
+/// Port of `WC_CASE_TYPE` from `Src/zsh.h:1015` — C macro `#define WC_CASE_TYPE(C) (wc_data(C) & 7)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_CASE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 7
 } // c:1015
-/// `WC_CASE_SKIP` — see implementation.
+/// Port of `WC_CASE_SKIP` from `Src/zsh.h:1021` — C macro `#define WC_CASE_SKIP(C) (wc_data(C) >> WC_CASE_FREE)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_CASE_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_CASE_FREE
 }
-/// `WCB_CASE` — see implementation.
+/// Port of `WCB_CASE` from `Src/zsh.h:1022` — C macro `#define WCB_CASE(T,O) wc_bld(WC_CASE, ((T) | ((O) << WC_CASE_FREE)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_CASE(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_CASE, t | (o << WC_CASE_FREE))
 }
-/// `WC_IF_TYPE` — see implementation.
+/// Port of `WC_IF_TYPE` from `Src/zsh.h:1024` — C macro `#define WC_IF_TYPE(C) (wc_data(C) & 3)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_IF_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:1024
-/// `WC_IF_SKIP` — see implementation.
+/// Port of `WC_IF_SKIP` from `Src/zsh.h:1029` — C macro `#define WC_IF_SKIP(C) (wc_data(C) >> 2)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_IF_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
-/// `WCB_IF` — see implementation.
+/// Port of `WCB_IF` from `Src/zsh.h:1030` — C macro `#define WCB_IF(T,O) wc_bld(WC_IF, ((T) | ((O) << 2)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_IF(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_IF, t | (o << 2))
 }
-/// `WC_COND_TYPE` — see implementation.
+/// Port of `WC_COND_TYPE` from `Src/zsh.h:1032` — C macro `#define WC_COND_TYPE(C) (wc_data(C) & 127)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_COND_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 127
 } // c:1032
-/// `WC_COND_SKIP` — see implementation.
+/// Port of `WC_COND_SKIP` from `Src/zsh.h:1033` — C macro `#define WC_COND_SKIP(C) (wc_data(C) >> 7)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WC_COND_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 7
 }
-/// `WCB_COND` — see implementation.
+/// Port of `WCB_COND` from `Src/zsh.h:1034` — C macro `#define WCB_COND(T,O) wc_bld(WC_COND, ((T) | ((O) << 7)))`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_COND(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_COND, t | (o << 7))
 }
-/// `WCB_ARITH` — see implementation.
+/// Port of `WCB_ARITH` from `Src/zsh.h:1036` — C macro `#define WCB_ARITH() wc_bld(WC_ARITH, 0)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_ARITH() -> wordcode {
     wc_bld(WC_ARITH, 0)
 } // c:1036
-/// `WCB_AUTOFN` — see implementation.
+/// Port of `WCB_AUTOFN` from `Src/zsh.h:1038` — C macro `#define WCB_AUTOFN() wc_bld(WC_AUTOFN, 0)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCB_AUTOFN() -> wordcode {
@@ -2257,10 +2257,10 @@ pub fn WCB_AUTOFN() -> wordcode {
 // 16c. Other macros: BUILTIN/BIN_PREFIX/CONDDEF/HOOKDEF/PARAMDEF/etc.
 // =============================================================================
 
-/// Port of `#define NULLBINCMD` from `Src/zsh.h:1438`.
+/// Port of `NULLBINCMD` from `Src/zsh.h:1438` — C macro `#define NULLBINCMD`.
 pub const NULLBINCMD: Option<HandlerFunc> = None; // c:1438
 
-/// Port of `#define EMULATION(X)` from `Src/zsh.h:2347`.
+/// Port of `EMULATION` from `Src/zsh.h:2347` — C macro `#define EMULATION(X)`.
 /// C macro: `(emulation & (X))`. Reads the canonical `emulation`
 /// static from `crate::ported::options::emulation` directly.
 #[inline]
@@ -2271,7 +2271,7 @@ pub fn EMULATION(x: i32) -> bool {
     (emul & x) != 0
 }
 
-/// Port of `#define SHELL_EMULATION()` from `Src/zsh.h:2350`.
+/// Port of `SHELL_EMULATION` from `Src/zsh.h:2350` — C macro `#define SHELL_EMULATION()`.
 /// C macro: `(emulation & ((1<<5)-1))`. Reads the canonical
 /// `emulation` static directly.
 #[inline]
@@ -2282,7 +2282,7 @@ pub fn SHELL_EMULATION() -> i32 {
     emul & ((1 << 5) - 1)
 }
 
-/// Port of `#define IN_EVAL_TRAP()` from `Src/zsh.h:2962`.
+/// Port of `IN_EVAL_TRAP` from `Src/zsh.h:2962` — C macro `#define IN_EVAL_TRAP()`.
 /// C macro reads the four globals `intrap` / `trapisfunc` /
 /// `traplocallevel` / `locallevel` directly with no args; Rust
 /// matches by reading the canonical statics
@@ -2298,22 +2298,22 @@ pub fn IN_EVAL_TRAP() -> bool {
             == crate::ported::params::locallevel.load(Ordering::Relaxed)
 }
 
-/// Port of `#define ASG_ARRAYP(asg)` from `Src/zsh.h:1288`.
+/// Port of `ASG_ARRAYP` from `Src/zsh.h:1288` — C macro `#define ASG_ARRAYP(asg)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn ASG_ARRAYP(asg: &asgment) -> bool {
     (asg.flags & ASG_ARRAY) != 0
 }
 
-/// Port of `#define ASG_VALUEP(asg)` from `Src/zsh.h:1296`.
+/// Port of `ASG_VALUEP` from `Src/zsh.h:1296` — C macro `#define ASG_VALUEP(asg)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn ASG_VALUEP(asg: &asgment) -> bool {
     ASG_ARRAYP(asg) || asg.scalar.is_some()
 }
 
-/// Port of `#define MB_METASTRLEN2END(str, widthp, eptr)` from
-/// `Src/zsh.h:3282/3363`. C: `mb_metastrlenend(str, widthp, eptr)`
+/// Port of `MB_METASTRLEN2END` from `Src/zsh.h:3282/3363` — C macro
+/// `#define MB_METASTRLEN2END(str, widthp, eptr)`. C: `mb_metastrlenend(str, widthp, eptr)`
 /// (multibyte) or `ztrlenend(str, eptr)` (non-multibyte). Rust port
 /// counts metafied chars from `str` up to `eptr` (exclusive).
 #[inline]
@@ -2335,7 +2335,7 @@ pub const AFTERTRAPHOOK_OFFSET: usize = 2; // c:3261
 /// `GETCOLORATTR_OFFSET` constant.
 pub const GETCOLORATTR_OFFSET: usize = 3; // c:3262
 
-/// Port of `#define STOPHIST` from `Src/zsh.h:2267`. Increments the
+/// Port of `STOPHIST` from `Src/zsh.h:2267` — C macro `#define STOPHIST`. Increments the
 /// `stophist` global by 4. Rust port exposes the delta; the global
 /// itself lives in `hist.rs`.
 pub const STOPHIST_DELTA: i32 = 4; // c:2267
@@ -2359,7 +2359,7 @@ pub const AFTERTRAPHOOK: usize = AFTERTRAPHOOK_OFFSET;
 /// `GETCOLORATTR` constant.
 pub const GETCOLORATTR: usize = GETCOLORATTR_OFFSET;
 
-/// Port of `#define ZLONG_CONST(x)` from `Src/zsh.h:68/72/78/83`.
+/// Port of `ZLONG_CONST` from `Src/zsh.h:68/72/78/83` — C macro `#define ZLONG_CONST(x)`.
 /// C casts an integer literal to `zlong` via the `l`/`ll` suffix.
 /// In Rust integer literals are typed at the use site; this macro
 /// is an explicit cast to `zlong` (= `i64`).
@@ -2369,7 +2369,7 @@ pub const fn ZLONG_CONST(x: i64) -> zlong {
     x
 } // c:68
 
-/// Port of `#define STRINGIFY_LITERAL(x)` from `Src/zsh.h:2915`. C
+/// Port of `STRINGIFY_LITERAL` from `Src/zsh.h:2915` — C macro `#define STRINGIFY_LITERAL(x)`. C
 /// uses the `#` operator to stringify an identifier. Rust's
 /// `stringify!` macro does the same.
 #[macro_export]
@@ -2379,7 +2379,7 @@ macro_rules! STRINGIFY_LITERAL {
     };
 }
 
-/// Port of `#define STRINGIFY(x)` from `Src/zsh.h:2916`. Two-pass
+/// Port of `STRINGIFY` from `Src/zsh.h:2916` — C macro `#define STRINGIFY(x)`. Two-pass
 /// stringification (expand x first, then stringify).
 #[macro_export]
 macro_rules! STRINGIFY {
@@ -2388,7 +2388,7 @@ macro_rules! STRINGIFY {
     };
 }
 
-/// Port of `#define ERRMSG(x)` from `Src/zsh.h:2917`. Build a debug
+/// Port of `ERRMSG` from `Src/zsh.h:2917` — C macro `#define ERRMSG(x)`. Build a debug
 /// error-message prefix `__FILE__ ":" __LINE__ ": " x`.
 #[macro_export]
 macro_rules! ERRMSG {
@@ -2397,11 +2397,11 @@ macro_rules! ERRMSG {
     };
 }
 
-/// Port of `#define HEAPID_FMT` from `Src/zsh.h:2831`. printf format
+/// Port of `HEAPID_FMT` from `Src/zsh.h:2831` — C macro `#define HEAPID_FMT`. printf format
 /// specifier for `Heapid` values. C uses `"%x"`; Rust uses `"{:x}"`.
 pub const HEAPID_FMT: &str = "{:x}"; // c:2831
 
-/// Port of `#define HEAP_ERROR(heap_id)` from `Src/zsh.h:2864`. Debug-
+/// Port of `HEAP_ERROR` from `Src/zsh.h:2864` — C macro `#define HEAP_ERROR(heap_id)`. Debug-
 /// only macro that fprintf's an "invalid heap" error to stderr.
 /// Rust port: eprintln! with the same format. Only active under
 /// the `zsh-heap-debug` feature.
@@ -2536,7 +2536,7 @@ macro_rules! DPUTS3 {
     }; // c:2921
 } // c:2921
 
-/// Port of `#define SGTTYFLAG` from `Src/zsh.h:2614/2616`. Termios
+/// Port of `SGTTYFLAG` from `Src/zsh.h:2614/2616` — C macro `#define SGTTYFLAG`. Termios
 /// flag accessor — `shttyinfo.tio.c_oflag` (HAVE_TERMIOS) or
 /// `shttyinfo.sgttyb.sg_flags` (sgtty fallback). Rust port exposes
 /// the field name; consumers access via `&ttyinfo.tio.c_oflag`.
@@ -2546,7 +2546,7 @@ pub const SGTTYFLAG_NAME: &str = "tio.c_oflag";
 /// in error messages / debug output).
 pub const SGTTYFLAG: &str = SGTTYFLAG_NAME;
 
-/// Port of `#define SGTABTYPE` from `Src/zsh.h:2619/2622/2625`.
+/// Port of `SGTABTYPE` from `Src/zsh.h:2619/2622/2625` — C macro `#define SGTABTYPE`.
 /// Tab-expansion mode constant — `TAB3` / `OXTABS` / `XTABS` per
 /// platform. macOS/BSD use `OXTABS`; Linux uses `XTABS`.
 #[cfg(target_os = "linux")]
@@ -2555,7 +2555,7 @@ pub const SGTABTYPE: u32 = libc::XTABS;
 #[cfg(not(target_os = "linux"))]
 pub const SGTABTYPE: u32 = 0;
 
-/// Port of `#define ZWS(s)` from `Src/zsh.h:3329/3373`. Wide-string
+/// Port of `ZWS` from `Src/zsh.h:3329/3373` — C macro `#define ZWS(s)`. Wide-string
 /// cast. In Rust `&str` is already UTF-8; pass through.
 #[inline]
 #[allow(non_snake_case)]
@@ -2572,8 +2572,8 @@ pub fn ZWS(s: &str) -> &str {
 // matching struct.
 // =============================================================================
 
-/// Port of `BUILTIN(name, flags, handler, min, max, funcid, optstr, defopts)`
-/// from `Src/zsh.h:1450`.
+/// Port of `BUILTIN` from `Src/zsh.h:1450` — C macro
+/// `#define BUILTIN(name, flags, handler, min, max, funcid, optstr, defopts)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn BUILTIN(
@@ -2601,7 +2601,7 @@ pub fn BUILTIN(
     }
 }
 
-/// Port of `BIN_PREFIX(name, flags)` from `Src/zsh.h:1452`. Builds a
+/// Port of `BIN_PREFIX` from `Src/zsh.h:1452` — C macro `BIN_PREFIX(name, flags)`. Builds a
 /// prefix-builtin entry (no handler, marked with BINF_PREFIX).
 #[inline]
 #[allow(non_snake_case)]
@@ -2618,8 +2618,8 @@ pub fn BIN_PREFIX(name: &str, flags: i32) -> builtin {
     )
 }
 
-/// Port of `CONDDEF(name, flags, handler, min, max, condid)` from
-/// `Src/zsh.h:701`.
+/// Port of `CONDDEF` from `Src/zsh.h:701` — C macro
+/// `#define CONDDEF(name, flags, handler, min, max, condid)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn CONDDEF(
@@ -2642,7 +2642,7 @@ pub fn CONDDEF(
     }
 }
 
-/// Port of `HOOKDEF(name, func, flags)` from `Src/zsh.h:1594`:
+/// Port of `HOOKDEF` from `Src/zsh.h:1594` — C macro `HOOKDEF(name, func, flags)`:
 /// `{ NULL, name, (Hookfn) func, flags, NULL }`. `func` accepts `None`
 /// to match C's `HOOKDEF("exit", NULL, HOOKF_ALL)` form.
 #[inline]
@@ -2657,7 +2657,7 @@ pub fn HOOKDEF(name: &str, func: Option<Hookfn>, flags: i32) -> hookdef {
     }
 }
 
-/// Port of `NUMMATHFUNC(name, func, min, max, id)` from `Src/zsh.h:133`.
+/// Port of `NUMMATHFUNC` from `Src/zsh.h:133` — C macro `NUMMATHFUNC(name, func, min, max, id)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn NUMMATHFUNC(name: &str, func: NumMathFunc, min: i32, max: i32, id: i32) -> mathfunc {
@@ -2674,7 +2674,7 @@ pub fn NUMMATHFUNC(name: &str, func: NumMathFunc, min: i32, max: i32, id: i32) -
     }
 }
 
-/// Port of `STRMATHFUNC(name, func, id)` from `Src/zsh.h:135`.
+/// Port of `STRMATHFUNC` from `Src/zsh.h:135` — C macro `STRMATHFUNC(name, func, id)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn STRMATHFUNC(name: &str, func: StrMathFunc, id: i32) -> mathfunc {
@@ -2691,7 +2691,7 @@ pub fn STRMATHFUNC(name: &str, func: StrMathFunc, id: i32) -> mathfunc {
     }
 }
 
-/// Port of `PARAMDEF(name, flags, var, gsu)` from `Src/zsh.h:2096`.
+/// Port of `PARAMDEF` from `Src/zsh.h:2096` — C macro `PARAMDEF(name, flags, var, gsu)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn PARAMDEF(name: &str, flags: i32, var: usize, gsu: usize) -> paramdef {
@@ -2706,29 +2706,29 @@ pub fn PARAMDEF(name: &str, flags: i32, var: usize, gsu: usize) -> paramdef {
     }
 }
 
-/// Port of `INTPARAMDEF(name, var)` from `Src/zsh.h:2105`.
+/// Port of `INTPARAMDEF` from `Src/zsh.h:2105` — C macro `INTPARAMDEF(name, var)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn INTPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_INTEGER as i32, var, 0)
 }
 
-/// Port of `STRPARAMDEF(name, var)` from `Src/zsh.h:2107`.
+/// Port of `STRPARAMDEF` from `Src/zsh.h:2107` — C macro `STRPARAMDEF(name, var)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn STRPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_SCALAR as i32, var, 0)
 }
 
-/// Port of `ARRPARAMDEF(name, var)` from `Src/zsh.h:2109`.
+/// Port of `ARRPARAMDEF` from `Src/zsh.h:2109` — C macro `ARRPARAMDEF(name, var)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn ARRPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_ARRAY as i32, var, 0)
 }
 
-/// Port of `SPECIALPMDEF(name, flags, gsufn, getfn, scanfn)` from
-/// `Src/zsh.h:2123`.
+/// Port of `SPECIALPMDEF` from `Src/zsh.h:2123` — C macro
+/// `#define SPECIALPMDEF(name, flags, gsufn, getfn, scanfn)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn SPECIALPMDEF(
@@ -2748,7 +2748,7 @@ pub fn SPECIALPMDEF(
         pm: None,
     }
 }
-/// Port of `WRAPDEF(func)` from `Src/zsh.h:1371`.
+/// Port of `WRAPDEF` from `Src/zsh.h:1371` — C macro `WRAPDEF(func)`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
@@ -2988,7 +2988,7 @@ pub const PARSEARGS_LOGIN: i32 = 0x2; // c:1426
 // indexes `ind[c]`. Char indexing is direct (not c-1) per zsh.h:1408
 // `((ops)->ind[c] != 0)`.
 
-/// Port of `OPT_MINUS(ops,c)` from `Src/zsh.h:1400` —
+/// Port of `OPT_MINUS` from `Src/zsh.h:1400` — C macro `OPT_MINUS(ops,c)` —
 /// `((ops)->ind[c] & 1)`. True if option was set as `-X`.
 #[inline]
 #[allow(non_snake_case)]
@@ -2996,7 +2996,7 @@ pub fn OPT_MINUS(ops: &options, c: u8) -> bool {
     (ops.ind[c as usize] & 1) != 0
 }
 
-/// Port of `OPT_PLUS(ops,c)` from `Src/zsh.h:1402` —
+/// Port of `OPT_PLUS` from `Src/zsh.h:1402` — C macro `OPT_PLUS(ops,c)` —
 /// `((ops)->ind[c] & 2)`. True if option was set as `+X`.
 #[inline]
 #[allow(non_snake_case)]
@@ -3004,7 +3004,7 @@ pub fn OPT_PLUS(ops: &options, c: u8) -> bool {
     (ops.ind[c as usize] & 2) != 0
 }
 
-/// Port of `OPT_ISSET(ops,c)` from `Src/zsh.h:1408` —
+/// Port of `OPT_ISSET` from `Src/zsh.h:1408` — C macro `OPT_ISSET(ops,c)` —
 /// `((ops)->ind[c] != 0)`. True if option was set any way.
 #[inline]
 #[allow(non_snake_case)]
@@ -3012,7 +3012,7 @@ pub fn OPT_ISSET(ops: &options, c: u8) -> bool {
     ops.ind[c as usize] != 0
 }
 
-/// Port of `OPT_HASARG(ops,c)` from `Src/zsh.h:1410` —
+/// Port of `OPT_HASARG` from `Src/zsh.h:1410` — C macro `OPT_HASARG(ops,c)` —
 /// `((ops)->ind[c] > 3)`. True if option carries an argument.
 #[inline]
 #[allow(non_snake_case)]
@@ -3325,7 +3325,7 @@ pub const PM_HASHELEM: u32 = 1 << 28;
 pub const PM_NAMEDDIR: u32 = 1 << 29;
 /// `PM_NAMEREF` constant.
 pub const PM_NAMEREF: u32 = 1 << 30;
-/// `PM_TYPE` — see implementation.
+/// Port of `PM_TYPE` from `Src/zsh.h:1885` — C macro `#define PM_TYPE(X) (X & (PM_SCALAR|PM_INTEGER|PM_EFLOAT|PM_FFLOAT|PM_ARRAY|PM_HASHED|PM_NAMEREF))` (c:1885-1886).
 #[inline]
 #[allow(non_snake_case)]
 pub const fn PM_TYPE(x: u32) -> u32 {
@@ -3979,7 +3979,7 @@ pub const OPT_SIZE: i32 = 186;
 pub type OptIndex = u8; // c:2556
 
 // #define isset(X) (opts[X])                                               // c:2559
-/// Port of `isset(X)` macro from `Src/zsh.h:2559`.
+/// Port of `isset` from `Src/zsh.h:2559` — C macro `isset(X)`.
 /// Returns true if option is set.
 #[inline]
 pub fn isset(opt: i32) -> bool {
@@ -3990,7 +3990,7 @@ pub fn isset(opt: i32) -> bool {
 }
 
 // #define unset(X) (!opts[X])                                              // c:2560
-/// Port of `unset(X)` macro from `Src/zsh.h:2560`.
+/// Port of `unset` from `Src/zsh.h:2560` — C macro `unset(X)`.
 /// Returns true if option is NOT set.
 #[inline]
 pub fn unset(opt: i32) -> bool {
@@ -3998,26 +3998,40 @@ pub fn unset(opt: i32) -> bool {
 }
 
 // #define interact (isset(INTERACTIVE))                                    // c:2562
-/// Port of `interact` macro from `Src/zsh.h:2562`.
+/// Port of `interact` from `Src/zsh.h:2562` — C macro.
 #[inline]
 pub fn interact() -> bool {
     isset(INTERACTIVE)
 }
 
 // #define jobbing  (isset(MONITOR))                                        // c:2563
-/// Port of `jobbing` macro from `Src/zsh.h:2563`.
+/// Port of `jobbing` from `Src/zsh.h:2563` — C macro.
 #[inline]
 pub fn jobbing() -> bool {
     isset(MONITOR)
 }
 
 // #define islogin  (isset(LOGINSHELL))                                     // c:2564
-/// Port of `islogin` macro from `Src/zsh.h:2564`.
+/// Port of `islogin` from `Src/zsh.h:2564` — C macro.
 #[inline]
 pub fn islogin() -> bool {
     isset(LOGINSHELL)
 }
 
+// !!! WARNING: RUST-ONLY HELPER !!!
+//
+// `opt_name()` has NO C counterpart — do not add a `Port of … from Src/…`
+// citation to it. C zsh has no option-number → option-name function at all:
+// the mapping lives in the static `optns[]` table (`Src/options.c:79`) whose
+// rows carry both the name and the number, and every caller either walks that
+// table or looks a row up through `optiontab` (`Src/options.c:490-491`,
+// `optiontab->addnode(optiontab, on->node.nam, on)`). Printing a name goes
+// through `on->node.nam` directly (`Src/options.c:459-465`).
+//
+// The Rust port keeps option numbers as `i32` constants rather than as rows of
+// a table, so the reverse lookup C gets for free from `optns[]` has to be a
+// function here. It stands in for the `optns[]` row's `node.nam` field, not
+// for any C function.
 /// Helper: convert option constant to its name for lookup.
 ///
 /// Cached O(1) number→name lookup. The canonical match below has ~185
@@ -4658,14 +4672,14 @@ pub const MB_INVALID: usize = usize::MAX; // c:3314
 /// `MB_CUR_MAX` constant.
 pub const MB_CUR_MAX: usize = 6; // c:3324
 
-/// Port of `MB_METACHARINIT()` from `Src/zsh.h:3275/3356`. C calls
+/// Port of `MB_METACHARINIT` from `Src/zsh.h:3275/3356` — C macro `MB_METACHARINIT()`. C calls
 /// `mb_charinit()` to reset multibyte state. Rust char iteration is
 /// stateless; no-op.
 #[inline]
 #[allow(non_snake_case)]
 pub fn MB_METACHARINIT() {} // c:3275
 
-/// Port of `MB_METACHARLEN(str)` from `Src/zsh.h:3278/3359`. Returns
+/// Port of `MB_METACHARLEN` from `Src/zsh.h:3278/3359` — C macro `MB_METACHARLEN(str)`. Returns
 /// the byte length of the next metafied character. C: `*str == Meta
 /// ? 2 : 1` (non-multibyte); `mb_metacharlenconv(str, NULL)`
 /// (multibyte). Rust returns the same byte length.
@@ -4682,7 +4696,7 @@ pub fn MB_METACHARLEN(s: &[u8]) -> usize {
     }
 }
 
-/// Port of `MB_METACHARLENCONV(str, cp)` from `Src/zsh.h:3277/3358`.
+/// Port of `MB_METACHARLENCONV` from `Src/zsh.h:3277/3358` — C macro `MB_METACHARLENCONV(str, cp)`.
 /// Returns byte length + (optionally) the converted char. Rust port
 /// returns `(byte_len, Option<char>)`.
 #[inline]
@@ -4700,7 +4714,7 @@ pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
     }
 }
 
-/// Port of `MB_METASTRLEN(str)` from `Src/zsh.h:3279`. Counts
+/// Port of `MB_METASTRLEN` from `Src/zsh.h:3279` — C macro `MB_METASTRLEN(str)`. Counts
 /// multibyte characters in a metafied string.
 ///
 /// C is a one-line delegation — `mb_metastrlenend(str, 0, NULL)` — and
@@ -4717,7 +4731,7 @@ pub fn MB_METASTRLEN(s: &str) -> usize {
     crate::ported::utils::mb_metastrlenend(s, false, s.len())
 }
 
-/// Port of `MB_METASTRWIDTH(str)` from `Src/zsh.h:3280`. Total display
+/// Port of `MB_METASTRWIDTH` from `Src/zsh.h:3280` — C macro `MB_METASTRWIDTH(str)`. Total display
 /// WIDTH (columns) of a metafied string — a wide CJK character counts
 /// 2, a combining character 0.
 ///
@@ -4734,7 +4748,7 @@ pub fn MB_METASTRWIDTH(s: &str) -> usize {
     crate::ported::utils::mb_metastrlenend(s, true, s.len())
 }
 
-/// Port of `MB_METASTRLEN2(str, widthp)` from `Src/zsh.h:3281/3362`.
+/// Port of `MB_METASTRLEN2` from `Src/zsh.h:3281/3362` — C macro `MB_METASTRLEN2(str, widthp)`.
 /// Variant that returns either char count or width depending on
 /// `widthp`.
 #[inline]
@@ -4748,13 +4762,13 @@ pub fn MB_METASTRLEN2(s: &str, widthp: bool) -> usize {
     }
 }
 
-/// Port of `MB_CHARINIT()` from `Src/zsh.h:3286/3365`. No-op
+/// Port of `MB_CHARINIT` from `Src/zsh.h:3286/3365` — C macro `MB_CHARINIT()`. No-op
 /// counterpart of `MB_METACHARINIT` for unmetafied input.
 #[inline]
 #[allow(non_snake_case)]
 pub fn MB_CHARINIT() {} // c:3286
 
-/// Port of `MB_CHARLEN(str, len)` from `Src/zsh.h:3288/3367`. Byte
+/// Port of `MB_CHARLEN` from `Src/zsh.h:3288/3367` — C macro `MB_CHARLEN(str, len)`. Byte
 /// length of the next char in an unmetafied byte string.
 #[inline]
 #[allow(non_snake_case)]
@@ -4767,7 +4781,7 @@ pub fn MB_CHARLEN(s: &[u8], len: usize) -> usize {
     }
 }
 
-/// Port of `MB_CHARLENCONV(str, len, cp)` from `Src/zsh.h:3287/3366`.
+/// Port of `MB_CHARLENCONV` from `Src/zsh.h:3287/3366` — C macro `MB_CHARLENCONV(str, len, cp)`.
 /// Byte length + converted char of the next char in an unmetafied
 /// byte string.
 #[inline]
@@ -4781,7 +4795,7 @@ pub fn MB_CHARLENCONV(s: &[u8], len: usize) -> (usize, Option<char>) {
     }
 }
 
-/// Port of `WCWIDTH(wc)` from `Src/zsh.h:3300`. Display width of a
+/// Port of `WCWIDTH` from `Src/zsh.h:3300` — C macro `WCWIDTH(wc)`. Display width of a
 /// wide character: 0 for combining marks / control chars, 2 for
 /// CJK-wide / emoji, 1 otherwise.
 ///
@@ -4809,7 +4823,7 @@ pub fn WCWIDTH(wc: char) -> i32 {
         .unwrap_or_else(|| if wc.is_control() { -1 } else { 1 })
 }
 
-/// Port of `WCWIDTH_WINT(wc)` from `Src/zsh.h:3311/3369`. Always
+/// Port of `WCWIDTH_WINT` from `Src/zsh.h:3311/3369` — C macro `WCWIDTH_WINT(wc)`. Always
 /// 1 in non-multibyte mode; uses WCWIDTH in multibyte mode.
 #[inline]
 #[allow(non_snake_case)]
@@ -4818,7 +4832,7 @@ pub fn WCWIDTH_WINT(wc: char) -> i32 {
     WCWIDTH(wc)
 }
 
-/// Port of `IS_COMBINING(wc)` from `Src/zsh.h:3343`. True iff `wc`
+/// Port of `IS_COMBINING` from `Src/zsh.h:3343` — C macro `IS_COMBINING(wc)`. True iff `wc`
 /// is a non-zero combining character (zero display width).
 #[inline]
 #[allow(non_snake_case)]
@@ -4827,7 +4841,7 @@ pub fn IS_COMBINING(wc: char) -> bool {
     wc as u32 != 0 && WCWIDTH(wc) == 0
 }
 
-/// Port of `IS_BASECHAR(wc)` from `Src/zsh.h:3352`. True iff `wc`
+/// Port of `IS_BASECHAR` from `Src/zsh.h:3352` — C macro `IS_BASECHAR(wc)`. True iff `wc`
 /// is a graphic character with non-zero width (suitable as base for
 /// a combining character).
 #[inline]
@@ -4837,7 +4851,7 @@ pub fn IS_BASECHAR(wc: char) -> bool {
     !wc.is_whitespace() && !wc.is_control() && WCWIDTH(wc) > 0
 }
 
-/// Port of `ZWC(c)` from `Src/zsh.h:3328/3372`. C casts a char
+/// Port of `ZWC` from `Src/zsh.h:3328/3372` — C macro `ZWC(c)`. C casts a char
 /// literal to `wchar_t` via the `L` prefix (`L'a'`). Rust's `char`
 /// is already 32-bit Unicode; the cast is a no-op.
 #[inline]
@@ -4850,7 +4864,7 @@ pub const fn ZWC(c: char) -> char {
 // 46. Options accessor compat (already-allowed alias for OPT_*).
 // =============================================================================
 
-/// Port of `OPT_ARG(ops, c)` from `Src/zsh.h:1412` —
+/// Port of `OPT_ARG` from `Src/zsh.h:1412` — C macro `OPT_ARG(ops, c)` —
 /// `((ops)->args[((ops)->ind[c] >> 2) - 1])`. Returns the argument
 /// associated with option `c`. Caller must have already checked
 /// `OPT_HASARG(ops,c)`; out-of-range indices yield `None` (C would
@@ -4866,7 +4880,7 @@ pub fn OPT_ARG<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
     ops.args.get(idx - 1).map(|s| s.as_str())
 }
 
-/// Port of `OPT_ARG_SAFE(ops, c)` from `Src/zsh.h:1414` —
+/// Port of `OPT_ARG_SAFE` from `Src/zsh.h:1414` — C macro `OPT_ARG_SAFE(ops, c)` —
 /// `(OPT_HASARG(ops,c) ? OPT_ARG(ops,c) : NULL)`.
 #[inline]
 #[allow(non_snake_case)]
