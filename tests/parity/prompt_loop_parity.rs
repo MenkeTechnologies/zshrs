@@ -162,7 +162,6 @@ if [[ $all == *OUTBGJ* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 /// Absolute times are never compared: the two shells start seconds
 /// apart, so every assertion here is on the COUNT and the command text.
 mod sched_bookkeeping {
-    use super::*;
     use std::path::Path;
     use std::process::Command;
 
