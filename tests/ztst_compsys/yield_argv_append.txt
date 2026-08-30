@@ -1,0 +1,142 @@
+# per-cause yield
+
+run       : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshrs_0.12.48_fxoff.json
+reference : (unrecorded)  corpus ? assertions
+after     : tests/ztst_compsys/zshrs_0.12.49_29ee728e_fxoff.json
+reference : (unrecorded)
+!! reference NOT fully checkable: tree.version, tree.git_rev, harness.sha256, corpus.drivers, corpus.per_file_digest
+
+failing assertions in the run: 93
+layers (independent causes per assertion): 1x29 2x47 3x17
+  single-cause: 29    stacked (2+): 64
+measured flips fail -> pass between the two runs: 5
+
+| cause | mentions | sole (UPPER BOUND) | flipped (MEASURED) | of which sole |
+|---|---|---|---|---|
+| colour-tags | 73 | 13 | 0 | 0 |
+| h-prefix-description | 50 | 2 | 1 | 1 |
+| line-buffer | 23 | 2 | 0 | 0 |
+| insert-positions | 14 | 4 | 4 | 4 |
+| compadd | 11 | 8 | 0 | 0 |
+| description | 3 | 0 | 0 | 0 |
+
+mentions           = assertions whose divergence includes this cause.  This is
+                     the number symptom counting reports.  It is NOT a yield:
+                     an assertion that also diverges for another reason keeps
+                     failing after this cause is fixed.
+sole (UPPER BOUND) = assertions whose ENTIRE divergence is this cause, so no
+                     other known cause has to be fixed first.  Still a bound,
+                     not a prediction: it assumes the fix makes the shell emit
+                     exactly the expected lines and perturbs nothing else.
+flipped (MEASURED) = actually passes in the later run.  This is a real
+                     counterfactual, not an estimate -- but it attributes
+                     to a cause only in the sense that the assertion carried
+                     that cause before and passes after; if several fixes
+                     landed between the two runs it cannot separate them.
+
+## what each cause is
+  colour-tags: no colour-tagged match line at all (lc=/rc= ignored, so comptest's <LC>xx<RC>...<EC> never matches)
+  compadd: a <COMPADD> trace differs
+  description: a description differs (not the h: prefix shape)
+  h-prefix-description: descriptions carry an 'h:' prefix (zformat spec list built by _description:83 with argv+=)
+  insert-positions: $compstate[insert_positions] differs
+  line-buffer: the edit buffer comptest reports differs
+
+## per assertion
+| assertion | layers | causes | after |
+|---|---|---|---|
+| Y01completion#1 | 3 | colour-tags(4) h-prefix-description(8) line-buffer(12) | fail |
+| Y01completion#2 | 3 | colour-tags(6) h-prefix-description(7) line-buffer(8) | fail |
+| Y01completion#3 | 3 | colour-tags(6) h-prefix-description(7) line-buffer(8) | fail |
+| Y01completion#6 | 3 | colour-tags(6) h-prefix-description(2) line-buffer(10) | fail |
+| Y01completion#7 | 1 | colour-tags(4) | fail |
+| Y01completion#8 | 2 | colour-tags(2) line-buffer(6) | fail |
+| Y01completion#9 | 3 | colour-tags(2) h-prefix-description(4) line-buffer(4) | fail |
+| Y01completion#10 | 3 | colour-tags(2) h-prefix-description(13) line-buffer(8) | fail |
+| Y01completion#11 | 2 | colour-tags(4) h-prefix-description(2) | fail |
+| Y01completion#12 | 2 | colour-tags(4) description(2) | fail |
+| Y01completion#15 | 2 | colour-tags(4) h-prefix-description(2) | fail |
+| Y01completion#16 | 1 | line-buffer(4) | fail |
+| Y01completion#23 | 2 | colour-tags(7) h-prefix-description(2) | fail |
+| Y01completion#24 | 1 | colour-tags(5) | fail |
+| Y01completion#25 | 2 | colour-tags(4) h-prefix-description(2) | fail |
+| Y01completion#26 | 1 | colour-tags(3) | fail |
+| Y01completion#27 | 2 | colour-tags(4) h-prefix-description(2) | fail |
+| Y01completion#28 | 2 | colour-tags(2) description(1) | fail |
+| Y01completion#29 | 2 | colour-tags(4) h-prefix-description(2) | fail |
+| Y01completion#30 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y01completion#31 | 2 | colour-tags(2) description(1) | fail |
+| Y01completion#32 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y01completion#33 | 1 | colour-tags(27) | fail |
+| Y02compmatch#2 | 1 | compadd(2) | fail |
+| Y02compmatch#3 | 1 | compadd(2) | fail |
+| Y02compmatch#4 | 1 | compadd(2) | fail |
+| Y02compmatch#5 | 1 | compadd(2) | fail |
+| Y02compmatch#6 | 1 | compadd(2) | fail |
+| Y02compmatch#7 | 1 | compadd(2) | fail |
+| Y02compmatch#8 | 1 | compadd(2) | fail |
+| Y02compmatch#10 | 3 | compadd(2) insert-positions(2) line-buffer(2) | fail |
+| Y02compmatch#11 | 3 | compadd(2) insert-positions(2) line-buffer(2) | fail |
+| Y02compmatch#12 | 3 | compadd(2) insert-positions(2) line-buffer(2) | fail |
+| Y02compmatch#13 | 1 | compadd(2) | fail |
+| Y02compmatch#17 | 1 | colour-tags(5) | fail |
+| Y02compmatch#18 | 1 | colour-tags(10) | fail |
+| Y02compmatch#19 | 1 | colour-tags(12) | fail |
+| Y02compmatch#20 | 1 | colour-tags(12) | fail |
+| Y02compmatch#21 | 1 | colour-tags(17) | fail |
+| Y02compmatch#24 | 1 | colour-tags(2) | fail |
+| Y02compmatch#25 | 2 | colour-tags(2) line-buffer(2) | fail |
+| Y02compmatch#26 | 2 | colour-tags(2) line-buffer(2) | fail |
+| Y02compmatch#27 | 3 | colour-tags(3) insert-positions(4) line-buffer(4) | fail |
+| Y02compmatch#30 | 1 | colour-tags(18) | fail |
+| Y02compmatch#39 | 2 | colour-tags(2) insert-positions(2) | fail |
+| Y02compmatch#40 | 3 | colour-tags(2) insert-positions(4) line-buffer(2) | fail |
+| Y02compmatch#45 | 1 | colour-tags(3) | fail |
+| Y02compmatch#47 | 1 | colour-tags(3) | fail |
+| Y02compmatch#49 | 1 | insert-positions(2) | pass |
+| Y02compmatch#50 | 2 | colour-tags(4) insert-positions(2) | fail |
+| Y02compmatch#52 | 2 | insert-positions(2) line-buffer(2) | fail |
+| Y02compmatch#53 | 1 | insert-positions(2) | pass |
+| Y02compmatch#54 | 1 | insert-positions(2) | pass |
+| Y02compmatch#55 | 2 | colour-tags(3) insert-positions(2) | fail |
+| Y02compmatch#56 | 1 | insert-positions(2) | pass |
+| Y02compmatch#57 | 3 | colour-tags(2) insert-positions(6) line-buffer(2) | fail |
+| Y03arguments#2 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y03arguments#3 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y04regexargs#2 | 2 | colour-tags(2) h-prefix-description(6) | fail |
+| Y04regexargs#3 | 1 | h-prefix-description(3) | fail |
+| Y04regexargs#4 | 3 | colour-tags(3) h-prefix-description(4) line-buffer(2) | fail |
+| Y04regexargs#5 | 3 | colour-tags(2) h-prefix-description(2) line-buffer(2) | fail |
+| Y04regexargs#6 | 2 | colour-tags(10) h-prefix-description(12) | fail |
+| Y05describe#1 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y05describe#2 | 1 | line-buffer(2) | fail |
+| Y05describe#3 | 3 | colour-tags(3) h-prefix-description(3) line-buffer(2) | fail |
+| Y05describe#4 | 2 | colour-tags(6) h-prefix-description(2) | fail |
+| Y05describe#5 | 3 | colour-tags(3) h-prefix-description(3) line-buffer(2) | fail |
+| Y05describe#6 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y05describe#7 | 3 | colour-tags(6) h-prefix-description(6) line-buffer(2) | fail |
+| Y06values#1 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#2 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#3 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#4 | 2 | colour-tags(5) h-prefix-description(2) | fail |
+| Y06values#5 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#6 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#7 | 2 | colour-tags(4) h-prefix-description(4) | fail |
+| Y06values#8 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#9 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#10 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#11 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#12 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#13 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#14 | 1 | h-prefix-description(4) | pass |
+| Y06values#15 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#16 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#17 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#18 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#19 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#20 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#23 | 2 | colour-tags(3) h-prefix-description(2) | fail |
+| Y06values#24 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+| Y06values#25 | 2 | colour-tags(2) h-prefix-description(2) | fail |
+
+## still failing after: 88, of which 64 were already stacked (2+ causes) before
