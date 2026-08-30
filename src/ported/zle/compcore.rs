@@ -7797,6 +7797,55 @@ mod tests {
         assert_eq!(vals, vec!["v1".to_string(), "v2".to_string()]);
     }
 
+    /// The `compadd -k <magic-hash>` path, pinned end-to-end from
+    /// `get_data_arr` down.
+    ///
+    /// c:2022-2037 — `fetchvalue(…, SCANPM_WANTKEYS|SCANPM_MATCHMANY)`
+    /// then `getarrvalue`, which for a PM_HASHED param is
+    /// `paramvalarr(v->pm->gsu.h->getfn(v->pm), v->scanflags)`
+    /// (Src/params.c:717). For a SPECIALPMDEF magic hash that `getfn`
+    /// returns the fake HashTable whose `scantab` IS the module's
+    /// `scanpm*` fn, so the SCAN is the backing.
+    ///
+    /// zshrs stores ordinary assoc contents in the name-keyed
+    /// `paramtab_hashed_storage` map; an EMPTY row seeded there for a
+    /// magic name used to answer first and shadow the scan. That is the
+    /// exact route `_path_commands`' `compadd -k commands` (sh:103)
+    /// takes, so command-name completion returned ZERO external
+    /// commands in a fresh shell and only started working after some
+    /// other `$commands` read had run the scan (which is what calls
+    /// `fillcmdnamtable` under HASH_LIST_ALL,
+    /// Src/Modules/parameter.c:253).
+    ///
+    /// Probed with `builtins` rather than `commands` so the assertion
+    /// does not depend on `$PATH` or on `pathchecked` state another
+    /// test may have consumed.
+    #[test]
+    fn get_data_arr_scans_a_magic_hash_past_an_empty_storage_row() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::vm_helper::seed_partab_param("builtins");
+        // Exactly the row that used to answer instead of the scan.
+        crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .insert("builtins".to_string(), Default::default());
+
+        let keys = get_data_arr("builtins", true)
+            .expect("c:2034 — a PM_HASHED magic name must not fetch as None");
+        assert!(
+            keys.iter().any(|k| k == "print"),
+            "c:2037 — `compadd -k builtins` must see the scanfn's keys, not the \
+             empty hashed-storage row (got {} key(s))",
+            keys.len()
+        );
+
+        crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .remove("builtins");
+    }
+
     #[test]
     fn get_data_arr_none_for_non_hashed() {
         let _g = crate::test_util::global_state_lock();
