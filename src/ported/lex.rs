@@ -6044,7 +6044,24 @@ pub fn untokenize(s: &str) -> String {
 /// changes propagate automatically (typtab is a runtime table).
 pub fn has_token(s: &str) -> bool {
     // c:2282 (Src/utils.c)
-    s.bytes().any(itok)
+    //
+    // C scans BYTES, which is safe there only because zsh metafies: a
+    // raw byte >= 0x80 is stored escaped (Meta, then byte ^ 32), so a
+    // bare 0x84..=0xA1 in a metafied string is always a real token.
+    // zshrs does not metafy -- it keeps UTF-8 `str` and stores tokens
+    // as CHARS in U+0084..=U+00A1 (see `untokenize`, which tests
+    // `c as u32`). Scanning bytes here therefore mistakes a UTF-8
+    // continuation byte for a token: `\u{2192}` encodes as E2 86 92 and both
+    // 0x86 and 0x92 answer `itok`. The false positive is unrecoverable
+    // downstream, because the char-based `untokenize` and `haswilds`
+    // correctly see U+2192 and leave the word untouched -- so
+    // `execcmd_exec`'s `while has_token(&args[0]) { zglob(..) }` sweep
+    // (c:3315-3318) never clears its condition and spins at 100% CPU.
+    // Scan chars, matching how tokens are actually represented.
+    s.chars().any(|c| {
+        let u = c as u32;
+        u <= 0xff && itok(u as u8)
+    })
 }
 
 #[cfg(test)]
