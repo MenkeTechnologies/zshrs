@@ -4161,6 +4161,20 @@ impl ZshCompiler {
                         0,
                     );
                     self.builder.emit(Op::Pop, 0);
+                    // c:Src/exec.c:3396 — an assignment-only simple command
+                    // takes its status from `cmdoutval`, the exit of a `$()`
+                    // that ran on the RHS. The subscripted paths returned
+                    // without recording that, so `h[k]="$(false)"` reported 0
+                    // where zsh reports 1. VCS_INFO_detect_git relies on it:
+                    // `vcs_comm[gitdir]="$(git rev-parse --git-dir)"` is the
+                    // condition of an `&&` chain, so outside a repo the git
+                    // backend ran anyway with an empty gitdir and read `/HEAD`.
+                    self.last_assign_had_cmd_subst = match &assign.value {
+                        ZshAssignValue::Scalar(rhs) => scalar_rhs_has_cmd_subst(rhs),
+                        ZshAssignValue::Array(els) => {
+                        els.iter().any(|e| scalar_rhs_has_cmd_subst(e))
+                        }
+                };
                     return;
                 }
                 let name_const = self.builder.add_constant(Value::str(base));
@@ -4292,6 +4306,20 @@ impl ZshCompiler {
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 4), 0);
                 }
                 self.builder.emit(Op::Pop, 0);
+                // c:Src/exec.c:3396 — an assignment-only simple command
+                // takes its status from `cmdoutval`, the exit of a `$()`
+                // that ran on the RHS. The subscripted paths returned
+                // without recording that, so `h[k]="$(false)"` reported 0
+                // where zsh reports 1. VCS_INFO_detect_git relies on it:
+                // `vcs_comm[gitdir]="$(git rev-parse --git-dir)"` is the
+                // condition of an `&&` chain, so outside a repo the git
+                // backend ran anyway with an empty gitdir and read `/HEAD`.
+                self.last_assign_had_cmd_subst = match &assign.value {
+                    ZshAssignValue::Scalar(rhs) => scalar_rhs_has_cmd_subst(rhs),
+                    ZshAssignValue::Array(els) => {
+                        els.iter().any(|e| scalar_rhs_has_cmd_subst(e))
+                    }
+                };
                 return;
             }
         }
