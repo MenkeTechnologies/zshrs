@@ -550,3 +550,58 @@ fn math_subscript_with_nested_bracket_terminates() {
         }
     }
 }
+
+/// zshrs bundles zsh's function tree and materialises it into
+/// `~/.zshrs/functions` on first run, then puts that directory first on
+/// `fpath`. zsh gets the equivalent from a configure-baked
+/// `<prefix>/share/zsh/<version>/functions`; zshrs is not installed under
+/// a zsh prefix, so without this a shell started with no `FPATH` could
+/// not autoload anything -- `exec zshrs` printed
+/// "is-at-least: function definition file not found" and two more.
+///
+/// Runs against a throwaway HOME so it never touches the user's tree.
+#[test]
+fn bundled_functions_materialise_and_resolve() {
+    let tmp = std::env::temp_dir().join(format!("zshrs-bundle-pin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("mkdir temp HOME");
+
+    let run = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env("HOME", &tmp)
+            .env_remove("FPATH")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    // First run materialises; the three functions below are exactly the
+    // ones whose absence broke `exec zshrs`.
+    let got = run("autoload -Uz is-at-least colors add-zsh-hook && print RESOLVED");
+    assert!(
+        got.contains("RESOLVED"),
+        "bundled functions must autoload with FPATH unset, got {:?}",
+        got
+    );
+
+    let dir = tmp.join(".zshrs").join("functions");
+    let n = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+    assert!(
+        n > 1000,
+        "expected the full tree in {}, found {} entries",
+        dir.display(),
+        n
+    );
+    // FLAT, matching zsh's own install layout.
+    let subdirs = std::fs::read_dir(&dir)
+        .map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count())
+        .unwrap_or(0);
+    assert_eq!(subdirs, 0, "layout must be flat like zsh's functions dir");
+    // compsys leaves have to be there too, not just Misc helpers.
+    for f in ["_git", "_describe", "_arguments", "compinit"] {
+        assert!(dir.join(f).is_file(), "{f} missing from the bundled tree");
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}

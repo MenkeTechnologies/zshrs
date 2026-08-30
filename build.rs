@@ -29,6 +29,9 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/zsh_c_fn_names.txt");
     println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/zsh/Completion");
+    println!("cargo:rerun-if-changed=src/zsh/Functions");
+    bundle_zsh_functions();
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
 
     // Parse `src/zsh/Config/version.mk` for VERSION + VERSION_DATE
@@ -617,4 +620,76 @@ fn load_c_fn_index(path: &Path) -> Result<HashMap<String, HashSet<String>>, std:
         }
     }
     Ok(index)
+}
+
+
+/// Pack the vendored zsh function tree into a single zstd blob for
+/// `crate::bundled_functions` to materialise into `~/.zshrs/functions`.
+///
+/// zsh's own `make install` FLATTENS `Completion/**` and `Functions/**`
+/// into one directory -- /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions
+/// holds 1235 files and zero subdirectories -- so the bundle is keyed by
+/// basename and the installed layout matches it.
+///
+/// Format: repeated `u32 name_len | name | u32 body_len | body`, all
+/// little-endian, then zstd. Deliberately not tar: this avoids a second
+/// build-dependency for a payload we both write and read.
+fn bundle_zsh_functions() {
+    use std::io::Write;
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for root in ["src/zsh/Completion", "src/zsh/Functions"] {
+        let mut stack = vec![PathBuf::from(root)];
+        while let Some(dir) = stack.pop() {
+            let rd = match fs::read_dir(&dir) {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let name = match p.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                // Mirror what zsh's install skips: docs and build inputs.
+                if name.starts_with('.')
+                    || name.starts_with("README")
+                    || name == "Makefile"
+                    || name.ends_with(".in")
+                    || name.ends_with(".mdd")
+                    || name.ends_with(".pro")
+                {
+                    continue;
+                }
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                if let Ok(body) = fs::read(&p) {
+                    files.push((name, body));
+                }
+            }
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut raw: Vec<u8> = Vec::new();
+    for (name, body) in &files {
+        raw.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        raw.extend_from_slice(name.as_bytes());
+        raw.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        raw.extend_from_slice(body);
+    }
+    let packed = zstd::encode_all(&raw[..], 19).expect("zstd encode zsh function bundle");
+    let dest = out_dir.join("zsh_functions.zst");
+    let mut f = fs::File::create(&dest).expect("create zsh_functions.zst");
+    f.write_all(&packed).expect("write zsh_functions.zst");
+    println!(
+        "cargo:warning=bundled {} zsh functions ({} KiB packed)",
+        files.len(),
+        packed.len() / 1024
+    );
 }
