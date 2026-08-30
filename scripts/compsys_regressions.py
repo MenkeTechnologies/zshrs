@@ -83,7 +83,12 @@ names the harness that owns it:
 `--harness-dir DIR` points the first three at another copy of the scripts (e.g.
 `git show HEAD:scripts/comptab_parity.py > $DIR/comptab_parity.py`) for when the
 working tree is mid-edit. The directory used is recorded in the JSON document,
-because a verdict is only as identified as the harness that produced it.
+because a verdict is only as identified as the harness that produced it. Every
+harness that boots zshrs is passed `--zshrs` explicitly, so a copy living
+outside the repo still runs the intended binary — each harness otherwise
+resolves `target/debug/zshrs` relative to its OWN file and a copy under /tmp
+finds nothing at all — and so the binary the report stamps is the binary the
+cells ran.
 
 Each cell boots two real shells on ptys, so budget 8-25s per cell. `--jobs`
 runs cells concurrently — they are independent pty pairs — but the DEFAULT IS 1
@@ -388,8 +393,23 @@ def zstyle_argv(run, directory, harness):
     return []
 
 
-def build_command(cell, directory, json_path, harness_script):
-    """The exact argv that replays one cell."""
+def build_command(cell, directory, json_path, harness_script, zshrs):
+    """The exact argv that replays one cell.
+
+    `zshrs` is handed to every harness that boots it. Without that the flag was
+    a STAMP ONLY: each harness resolved its own `target/debug/zshrs` relative to
+    its own file, so `--zshrs /opt/homebrew/bin/zshrs` produced a report that
+    identified the Homebrew binary while every cell had actually run the debug
+    one — the report attributing results to a binary that did not produce them
+    is the one failure this file's binary-identity code exists to prevent. It
+    also repairs the `--harness-dir` workflow the README documents: a copy of
+    the harnesses taken outside the repo (`git show HEAD:scripts/... > /tmp/h`)
+    computes REPO from its own path and cannot find the binary at all, which is
+    a hard ERROR on every cell.
+
+    `zsh_reference_probe` is the exception: it boots only zsh and has no such
+    flag (tests/compsys_fixtures/zsh_reference_probe.py:165-177).
+    """
     run, harness = cell.run, cell.harness
     argv = [sys.executable, harness_script[harness]]
     if harness == "compsys_spec_fuzz":
@@ -414,6 +434,8 @@ def build_command(cell, directory, json_path, harness_script):
             argv += ["--rows", str(run["rows"])]
         if run.get("cols"):
             argv += ["--cols", str(run["cols"])]
+    if harness != PROBE_HARNESS:
+        argv += ["--zshrs", zshrs]
     argv += run.get("flags", [])
     argv += ["--json", json_path]
     return argv
@@ -508,7 +530,8 @@ def score_parity(cell, r, current_binary):
 def score(cell, args, harness_script, current_binary):
     directory = tempfile.mkdtemp(prefix="compsys_regressions_")
     json_path = os.path.join(directory, "result.json")
-    argv = build_command(cell, directory, json_path, harness_script)
+    argv = build_command(cell, directory, json_path, harness_script,
+                         args.zshrs)
     human = " ".join(shlex.quote(a) for a in argv)
     try:
         proc = subprocess.run(argv, cwd=REPO, capture_output=True, text=True,
@@ -674,7 +697,11 @@ def main():
                          "is mid-edit: git show HEAD:scripts/comptab_parity.py "
                          "> $DIR/comptab_parity.py")
     ap.add_argument("--zshrs", default=os.path.join(REPO, "target", "debug", "zshrs"),
-                    help="the binary whose identity is stamped into the report")
+                    help="the zshrs every cell runs, and whose identity is "
+                         "stamped into the report. Point it at an OLDER build "
+                         "to check that a fixture retired as a guard (expect "
+                         "`agrees`) really would catch the bug coming back: "
+                         "the guard should report CONTROL-MOVED there")
     ap.add_argument("--no-binary-hash", dest="binary_hash",
                     action="store_false", default=True,
                     help="identify the binary by size+mtime+version only")
