@@ -97,6 +97,19 @@ all="${all//$'\e'\][0-9]#;[^$'\a'$'\e']#($'\a'|$'\e'\\)/}"
 all="${all//$'\e'[()][A-Za-z0-9]/}"
 "#;
 
+/// Wrap `s` in single quotes for embedding in a driver script,
+/// escaping any single quote the standard way (`'` → `'\''`).
+///
+/// Drivers hand setup lines to the inner shell as
+/// `zpty -w w '<setup>'`, so a setup containing its own single quotes —
+/// `PS1=$'A\nB> '` is the common one — silently TERMINATES the wrapper
+/// and the rest of the line is parsed as something else entirely. Two
+/// multiline-prompt cases failed at the reference shell for exactly
+/// that reason before this existed.
+pub fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Run `driver` under `shell` and hand back its stdout. `zshrs` also
 /// gets `ZSHRS_NATIVE_ZLE_FX=0`: the native autosuggest/highlight ports
 /// paint history into the INNER shell's buffer, which is not what any
