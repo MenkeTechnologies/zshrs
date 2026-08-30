@@ -60,6 +60,43 @@ default) draws a sequence per case — menu start, cycling, reverse cycling,
 a filter letter typed into an open menu, and the two abort routes — because
 a listing that is right on the first TAB can still be wrong on the second.
 
+And each case is judged through a WIDGET, drawn by `--widget auto` from 36
+entry points. Every other completion harness in this tree reaches completion
+one way: TAB, on whatever compinit left there. That is one of a family, and
+the widget decides which dispatch inside the completion core runs —
+
+    the eight builtin completion widgets compinit rebinds to `_main_complete`
+    (Completion/compinit:539-543), plus `menu-select` (:544), plus
+    `accept-and-menu-complete` and `expand-word`, which are bindable but are
+    NOT legal `zle -C` bases (no ZLE_ISCOMP — Src/Zle/zle_thingy.c:612)
+
+    the compsys widget files compinit installs from their own `#compdef -k` /
+    `-K` headers: `_complete_help`, `_correct_word`, `_expand_word`,
+    `_history-complete-older`, `_bash_complete-word`, `_bash_list-choices`
+
+    `zle -C` user completion widgets over all nine legal bases, with the
+    widget's function either the generated completer itself (the completion
+    core calls it with nothing between it and the builtins) or `_generic`
+    (back through `_main_complete`)
+
+    `compdef -k` / `compdef -K`, and the `#compdef -k` / `#compdef -K` FILE
+    HEADER forms, which make compinit itself parse the declaration
+
+A declaration real zsh REJECTS is a generator bug, not a finding, so every
+one of the 36 is run on the reference shell before a case is generated and
+proved to have installed the binding it claims (`zle -C` prints nothing on
+success, so each entry carries a `verify` command whose output must name the
+widget). The same check runs on zshrs: an id zsh accepts and zshrs does not
+is reported as a divergence, never used to prune. `--check-widgets` runs the
+check alone; `--list-widgets` prints the table.
+
+`--compstate-probe` echoes the widget-visible `$compstate` fields — insert,
+list, list_max, last_prompt, to_end, old_list, exact, pattern_insert — into
+the listing the way the `compset` kind echoes `$PREFIX`, so a divergence in
+the STATE a widget set is visible even when the rendered list matches. It
+found `old_list=shown` vs `old_list=yes` on a re-invoked `zle -C` widget, a
+case that is otherwise pixel-identical.
+
 Verdicts — none of which is ever softened to make a run look greener:
 
     PASS        both shells rendered the identical screen
@@ -84,6 +121,9 @@ Typical use:
     scripts/compsys_spec_fuzz.py --seed 1 --cases 200 --jobs 4 --json out.json
     scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --kind compadd,compset
     scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --keys tab,tab,down
+    scripts/compsys_spec_fuzz.py --check-widgets
+    scripts/compsys_spec_fuzz.py --seed 7 --cases 12 --widget zle-C:list-choices
+    scripts/compsys_spec_fuzz.py --seed 7 --cases 12 --compstate-probe always
     scripts/compsys_spec_fuzz.py --replay target/spec-fuzz-1/case0003.min.zsh
     scripts/compsys_spec_fuzz.py --spec '1:c:((a\\:"add files" b\\:"bench"))'
 """
@@ -160,6 +200,20 @@ KEYS = {
     "esc": b"\x1b",
     "space": b" ",
     "enter": b"\r",
+    # Multi-byte sequences the WIDGET axis fires. Named after the sequence, not
+    # after a widget: which widget sits on one is decided per case, and the
+    # generated init always binds it explicitly so both shells are driven
+    # through the identical binding.
+    "cx-w": b"\x18w",            # ^Xw — unbound after a stock compinit
+    "cx-v": b"\x18v",            # ^Xv — likewise
+    "cx-z": b"\x18z",            # ^Xz — likewise
+    "cx-h": b"\x18h",            # ^Xh — _complete_help
+    "cx-c": b"\x18c",            # ^Xc — _correct_word
+    "cx-e": b"\x18e",            # ^Xe — _expand_word
+    "cx-star": b"\x18*",         # ^X* — expand-word
+    "cx-tilde": b"\x18~",        # ^X~ — _bash_list-choices
+    "esc-slash": b"\x1b/",       # \e/ — _history-complete-older
+    "esc-tilde": b"\x1b~",       # \e~ — _bash_complete-word
 }
 
 # Keys that only mean anything once a completion LIST is on screen. A case
@@ -200,6 +254,209 @@ MENU_SETUP = [
     "zmodload -i zsh/complist",
     "zstyle ':completion:*' menu 'select=1'",
 ]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# the widget axis
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Every case in every completion harness in this tree reaches completion by
+# sending TAB to whatever compinit left bound there — `expand-or-complete`,
+# rebound to `_main_complete`. That is ONE entry point out of a family, and the
+# entry point decides which dispatch inside the completion core runs:
+#
+#   Completion/compinit:539-544  rebinds EIGHT builtin completion widgets to
+#                                `_main_complete`. They are eight different
+#                                Widget flag sets (Src/Zle/iwidgets.list:34,40,
+#                                61,62,83,86,87,103) reaching one shell
+#                                function, and `list-choices` alone also
+#                                carries ZLE_LASTCOL.
+#   Completion/compinit:544      `menu-select` joins them, but only once
+#                                zsh/complist has registered it
+#                                (Src/Zle/complist.c:3589).
+#   Src/Zle/zle_thingy.c:599-628 `zle -C` refuses any base widget without
+#                                ZLE_ISCOMP ("invalid widget `%s'"), so the
+#                                legal base set is exactly those nine and
+#                                nothing else — `accept-and-menu-complete`
+#                                (iwidgets.list:13) and `expand-word`
+#                                (iwidgets.list:63) are NOT legal bases, which
+#                                is why they appear here only as bindings.
+#   Completion/compinit:516-520  a `#compdef -k` / `#compdef -K` FILE HEADER is
+#                                turned into `compdef -kna` / `-Kna`, which
+#                                calls `zle -C` and `bindkey` itself
+#                                (compinit:311-355). This project's own records
+#                                note `#compdef -k` support as missing; a
+#                                generated case is how that gets settled rather
+#                                than assumed.
+#
+# Every entry is bound EXPLICITLY in the generated init — never left to
+# whatever compinit happened to do — and every init line is recorded in the
+# fixture as an `@setup` header, so `--replay` reproduces the binding exactly.
+
+# The function name a generated `zle -C` / `compdef -k` widget calls.
+SFZ_FN = "_sfz_widget"
+
+# Bases legal for `zle -C` (ZLE_ISCOMP, see above). `menu-select` is listed
+# apart because it only exists after `zmodload zsh/complist`.
+ZLE_C_BASES = [
+    "complete-word", "delete-char-or-list", "expand-or-complete",
+    "expand-or-complete-prefix", "list-choices", "menu-complete",
+    "menu-expand-or-complete", "reverse-menu-complete",
+]
+ZLE_C_BASE_COMPLIST = "menu-select"
+
+# Widgets compinit installs from the `#compdef -k`/`-K` headers of the files in
+# Completion/Base/Widget. Verified present after `compinit -u -D` in a hermetic
+# `zsh -f`; each is bound here to TAB as well, so a case's key path reaches it.
+COMPSYS_WIDGETS = [
+    "_complete_help",            # Widget/_complete_help  `#compdef -k complete-word \C-xh`
+    "_correct_word",             # Widget/_correct_word   `#compdef -k complete-word \C-xc`
+    "_expand_word",              # Widget/_expand_word    `#compdef -K ... complete-word \C-xe`
+    "_history-complete-older",   # Widget/_history_complete_word `#compdef -K ... \e/`
+    "_bash_complete-word",       # Widget/_bash_completions `#compdef -K ... \e~`
+    "_bash_list-choices",        # Widget/_bash_completions `... list-choices ^X~`
+]
+
+
+def widget_ids():
+    """Every widget entry point the axis can drive, in a stable order."""
+    ids = ["default"]
+    ids += ["std:" + w for w in ZLE_C_BASES]
+    ids += ["std:menu-select", "std:expand-word", "std:accept-and-menu-complete"]
+    ids += ["fn:" + w for w in COMPSYS_WIDGETS]
+    ids += ["zle-C:" + b for b in ZLE_C_BASES + [ZLE_C_BASE_COMPLIST]]
+    ids += ["compdef-k:" + b for b in ("complete-word", "list-choices",
+                                       "menu-complete", ZLE_C_BASE_COMPLIST)]
+    ids += ["compdef-K:complete-word", "compdef-K:list-choices"]
+    ids += ["fpdef-k:complete-word", "fpdef-k:list-choices", "fpdef-K"]
+    return ids
+
+
+WIDGET_IDS = widget_ids()
+
+# Placeholder in a `verify` expectation: the name of the widget compinit
+# derives from a `#compdef -k` file, which is the file's own basename and so
+# differs between a generated case (`_fzc0007`) and the self-check probe.
+FILEFN = "%FILEFN%"
+
+
+def widget_plan(wid, fn=SFZ_FN):
+    """How one widget id is declared, fired, and proved to be bound.
+
+    Returns a dict:
+      label     the id itself, used in the per-widget report
+      pre       init lines that must run before the declaration (modules)
+      decl      the declaration + binding lines, run after `compinit`
+      header    a replacement first line for the completer FILE, or None. Only
+                the `fpdef-*` forms use one: their whole point is that compinit
+                itself has to parse the header.
+      fire      the harness key name that invokes the widget
+      prime     keys sent before the case's key path (open a menu, etc.)
+      complist  whether zsh/complist has to be loaded first
+      verify    (shell command, token) — the token must appear as a word in the
+                command's output for the binding to count as installed. This is
+                what the self-check asserts, on both shells.
+    """
+    p = {"label": wid, "pre": [], "decl": [], "header": None, "fire": "tab",
+         "prime": [], "complist": False, "verify": None}
+    if wid == "default":
+        # The control: no binding at all, i.e. exactly what every other harness
+        # in this tree does. Kept in the pool so a widget-axis run always
+        # contains cases judged the old way to compare against.
+        return p
+
+    what, _, arg = wid.partition(":")
+
+    if what == "std":
+        if arg == "accept-and-menu-complete":
+            # iwidgets.list:13 — ZLE_MENUCMP|ZLE_KEEPSUFFIX, no ZLE_ISCOMP. It
+            # accepts the current menu match and starts the next completion, so
+            # it means nothing until a menu is open: TAB opens one via
+            # menu-complete, then ^Xw accepts-and-continues.
+            p["complist"] = True
+            p["decl"] = ["bindkey '^I' menu-complete",
+                         "bindkey '^Xw' accept-and-menu-complete"]
+            p["fire"] = "cx-w"
+            p["prime"] = ["tab"]
+            p["verify"] = ("bindkey '^Xw'", "accept-and-menu-complete")
+            return p
+        if arg == "expand-word":
+            # iwidgets.list:63 — flags 0. Not a completion widget at all; it
+            # does history/alias/parameter expansion. Bound on TAB on purpose:
+            # it is the widget sitting next to completion in every real keymap,
+            # and nothing here has ever compared it.
+            pass
+        if arg == ZLE_C_BASE_COMPLIST:
+            # compinit:544 — `zle -la menu-select && zle -C menu-select
+            # .menu-select _main_complete`. It cannot have run at compinit time
+            # here (complist is loaded afterwards), so the compsys wiring is
+            # redone verbatim; without it `menu-select` is complist's raw
+            # widget and never reaches a generated completer at all.
+            p["complist"] = True
+            p["pre"] = ["zle -C menu-select .menu-select _main_complete"]
+        p["decl"] = ["bindkey '^I' %s" % arg]
+        p["verify"] = ("bindkey '^I'", arg)
+        return p
+
+    if what == "fn":
+        # Installed by compinit from a Widget/ file header; bound to TAB here so
+        # the ordinary key paths reach it. If a shell never installed the
+        # widget, the bindkey itself fails and the case reports it.
+        p["decl"] = ["bindkey '^I' %s" % arg]
+        p["verify"] = ("bindkey '^I'", arg)
+        return p
+
+    if what == "zle-C":
+        p["complist"] = (arg == ZLE_C_BASE_COMPLIST)
+        p["decl"] = ["zle -C _sfz_w %s %s" % (arg, fn),
+                     "bindkey '^I' _sfz_w"]
+        p["verify"] = ("bindkey '^I'", "_sfz_w")
+        return p
+
+    if what == "compdef-k":
+        # compinit:333-355 — `compdef -k func comp-widget key...` does the
+        # `zle -C "$func" ".$comp-widget" "$func"` and the bindkey itself, so
+        # the widget is NAMED after the function.
+        p["complist"] = (arg == ZLE_C_BASE_COMPLIST)
+        p["decl"] = ["compdef -k %s %s '^Xw'" % (fn, arg),
+                     "bindkey '^I' complete-word"]
+        p["fire"] = "cx-w"
+        p["verify"] = ("bindkey '^Xw'", fn)
+        return p
+
+    if what == "compdef-K":
+        # compinit:318-331 — `compdef -K func widget comp-widget key ...`, in
+        # triples. Two widgets over one function, on two keys; the id says
+        # which of the two the case fires.
+        p["decl"] = ["compdef -K %s _sfz_kw1 complete-word '^Xw' "
+                     "_sfz_kw2 list-choices '^Xv'" % fn,
+                     "bindkey '^I' complete-word"]
+        if arg == "list-choices":
+            p["fire"], p["verify"] = "cx-v", ("bindkey '^Xv'", "_sfz_kw2")
+        else:
+            p["fire"], p["verify"] = "cx-w", ("bindkey '^Xw'", "_sfz_kw1")
+        return p
+
+    if what == "fpdef-k":
+        # The header form. compinit:516-517 turns it into `compdef -kna <file
+        # basename> <comp-widget> <key>`; `-n` means it will NOT rebind a key
+        # that is already bound, which is why ^Xw (free after a stock compinit)
+        # is used.
+        p["header"] = "#compdef -k %s ^Xw" % arg
+        p["decl"] = ["bindkey '^I' complete-word"]
+        p["fire"] = "cx-w"
+        p["verify"] = ("bindkey '^Xw'", FILEFN)
+        return p
+
+    if wid == "fpdef-K":
+        p["header"] = ("#compdef -K _sfz_fw1 complete-word ^Xw "
+                       "_sfz_fw2 list-choices ^Xv")
+        p["decl"] = ["bindkey '^I' complete-word"]
+        p["fire"] = "cx-w"
+        p["verify"] = ("bindkey '^Xw'", "_sfz_fw1")
+        return p
+
+    raise AssertionError("no plan for widget id %r" % wid)
 
 
 class UnknownKey(Exception):
@@ -867,18 +1124,17 @@ class Case:
         c.body_override = self.body_override
         return c
 
-    # The completer file dropped into the throwaway fpath.
-    def completer(self):
-        if self.body_override is not None:
-            return self.body_override
-        out = ["#compdef %s" % self.cmd, ""]
-        for h in self.extra.get("helpers", []):
-            out.append("%s() { compadd -- %s }" % (h, " ".join(PLAIN_WORDS[:3])))
-        if self.extra.get("helpers"):
-            out.append("")
-        pre = self.extra.get("pre", [])
-        if pre:
-            out += list(pre) + [""]
+    # `$compstate` fields a completion WIDGET can set. Every one of them is
+    # documented in compwid.yo as read/write from the widget function, and none
+    # of them is visible in a rendered listing — a shell that agrees on the
+    # printed matches can still have decided differently about whether to
+    # insert, whether to list, or whether the old list is still valid. Echoed
+    # through the listing the same way the `compset` kind echoes $PREFIX.
+    COMPSTATE_KEYS = ("insert", "list", "list_max", "last_prompt", "to_end",
+                      "old_list", "exact", "pattern_insert")
+
+    def body_lines(self):
+        """The completer's shell body — no `#compdef` header, no helpers."""
         builders = {
             "arguments": self._arguments_body,
             "values": self._values_body,
@@ -889,12 +1145,74 @@ class Case:
             "tags": self._tags_body,
             "nested": self._nested_body,
         }
-        out += builders[self.kind]()
+        body = builders[self.kind]()
+        if self.extra.get("compstate_probe"):
+            body = self._compstate_wrap(body)
+        return body
+
+    def _compstate_wrap(self, body):
+        """Run the generated body, then add `$compstate` as visible matches.
+
+        The body cannot simply be followed by the probe: most kinds end in
+        `return ret`, so anything appended would never run. Wrapping it in a
+        function keeps the body byte-identical (the shrinker still reduces the
+        same atoms) and still lets the probe observe the state the body left
+        behind, plus the status it returned.
+        """
+        out = ["_sfz_main() {"]
+        out += ["  " + ln for ln in body]
+        out.append("}")
+        out.append("_sfz_main; _sfz_ret=$?")
+        entries = ['"%s=$compstate[%s]"' % (k, k) for k in self.COMPSTATE_KEYS]
+        entries.append('"ret=$_sfz_ret"')
+        out += self._probe_group(entries, "compstate", group="_sfzcs")
+        out.append("return $_sfz_ret")
+        return out
+
+    def helper_lines(self):
+        out = []
+        for h in self.extra.get("helpers", []):
+            out.append("%s() { compadd -- %s }" % (h, " ".join(PLAIN_WORDS[:3])))
+        if self.extra.get("helpers"):
+            out.append("")
+        pre = self.extra.get("pre", [])
+        if pre:
+            out += list(pre) + [""]
+        return out
+
+    # The completer file dropped into the throwaway fpath. Its first line is
+    # normally `#compdef <cmd>`; the `fpdef-*` widget forms replace it with a
+    # `#compdef -k` / `-K` header, which is the whole point of those forms —
+    # compinit itself has to parse it (Completion/compinit:516-520).
+    def completer(self):
+        if self.body_override is not None:
+            return self.body_override
+        out = [self.extra.get("compdef_header") or ("#compdef %s" % self.cmd), ""]
+        out += self.helper_lines()
+        out += self.body_lines()
         return "\n".join(out) + "\n"
+
+    # Every line the generated init file runs after `compinit`, in order:
+    # modules, the widget function (when the widget calls one), then the
+    # declaration and its binding. A replayed fixture carries these verbatim in
+    # its `@setup` headers, so `--replay` reconstructs the exact shell state.
+    def init_lines(self):
+        if self.extra.get("setup_verbatim"):
+            return list(self.extra["setup_verbatim"])
+        out = list(self.extra.get("setup_pre", []))
+        if self.extra.get("widget_fn") == "body":
+            # The widget's function IS the generated completer, so a shrunk
+            # atom list shrinks the widget too — the body is rebuilt from
+            # self.atoms here, never snapshotted at generation time.
+            out.append("%s() {" % SFZ_FN)
+            out += ["  " + ln for ln in self.helper_lines() + self.body_lines()]
+            out.append("}")
+        out += list(self.extra.get("setup", []))
+        return out
 
     # ── the builtin layer ────────────────────────────────────────────────────
 
-    def _probe_group(self, entries, label="probe"):
+    def _probe_group(self, entries, label="probe", group="_sfzprobe"):
         """A `compadd` whose matches ARE the values under test.
 
         A completion listing only ever shows what got added as a match, so a
@@ -905,8 +1223,8 @@ class Case:
         list. `-U` is required: the values do not match the word on the line
         and would otherwise be filtered out before they were ever displayed.
         """
-        return ["compadd -U -Q -J _sfzprobe -X %s -- %s"
-                % (zq(label), " ".join(entries))]
+        return ["compadd -U -Q -J %s -X %s -- %s"
+                % (group, zq(label), " ".join(entries))]
 
     def _compadd_body(self):
         term = self.extra.get("term", "--")
@@ -1269,10 +1587,46 @@ def generate(seed, idx, args):
         buf = "%s %s" % (cmd, prefix)
 
     keys = list(args.keys) if args.keys else list(g.rng.choice(KEY_PATHS))
+    setup_pre = []
     if set(keys) & NAV_KEYS:
         # Without menu selection the nav keys are just movement commands and
         # the case would prove nothing about the menu engine.
-        extra["setup"] = list(MENU_SETUP)
+        setup_pre += list(MENU_SETUP)
+
+    # ── the widget the case is judged through ────────────────────────────────
+    wid = g.rng.choice(args.widget_pool)
+    plan = widget_plan(wid)
+    extra["widget"] = wid
+    extra["compdef_header"] = plan["header"]
+    if plan["complist"] and "zmodload -i zsh/complist" not in setup_pre:
+        setup_pre.insert(0, "zmodload -i zsh/complist")
+    setup_pre += plan["pre"]
+    extra["setup"] = list(plan["decl"])
+    if plan["decl"] and wid.startswith(("zle-C:", "compdef-k:", "compdef-K:")):
+        # `zle -C` / `compdef -k` name a FUNCTION to generate the matches. Two
+        # forms exist and they are not the same code path: `_generic` routes
+        # the widget back through `_main_complete` and the whole compsys
+        # machinery, while a direct function is called by the completion core
+        # with nothing between it and the builtins.
+        if g.rng.random() < 0.5:
+            extra["widget_fn"] = "body"
+        else:
+            extra["setup"] = [ln.replace(SFZ_FN, "_generic") for ln in plan["decl"]]
+    extra["setup_pre"] = setup_pre
+
+    # The key path is written in terms of `tab`; a widget bound elsewhere has
+    # every `tab` in it rewritten to the key it actually sits on, so the same
+    # fourteen paths (menu start, cycling, filter letter, abort) are judged
+    # through every entry point rather than only through TAB.
+    if plan["fire"] != "tab":
+        keys = [plan["fire"] if k == "tab" else k for k in keys]
+    keys = list(plan["prime"]) + keys
+
+    if args.compstate_probe == "always":
+        extra["compstate_probe"] = True
+    elif args.compstate_probe == "auto":
+        extra["compstate_probe"] = g.rng.random() < 0.35
+
     return Case(idx, seed, cmd, kind, atoms, flags, extra, buf, keys)
 
 
@@ -1337,7 +1691,7 @@ def build_case_dir(root, case, fpath_dirs):
             % (SELF, case.seed, case.name,
                " ".join(shlex.quote(p) for p in [fp] + fpath_dirs),
                SENTINEL, shlex.quote(work),
-               "".join(ln + "\n" for ln in case.extra.get("setup", []))))
+               "".join(ln + "\n" for ln in case.init_lines())))
     return d, init
 
 
@@ -1861,29 +2215,37 @@ def write_fixture(path, args, case, note):
             "# @case %d\n"
             "# @cmd %s\n"
             "# @kind %s\n"
+            "# @widget %s\n"
             "# @buffer %s\n"
             "# @keys %s\n"
             "# @shell %s\n"
             % (case.name, note, SELF, rel, rel, case.buffer, ",".join(case.keys),
-               case.seed, case.idx, case.cmd, case.kind, case.buffer,
+               case.seed, case.idx, case.cmd, case.kind,
+               case.extra.get("widget", "default"), case.buffer,
                ",".join(case.keys), " ".join(args.test_argv)))
         # One header line per init line, so `--replay` reconstructs the exact
-        # shell state the divergence needed (menu selection, styles, modules).
-        for ln in case.extra.get("setup", []):
+        # shell state the divergence needed (the widget declaration and its
+        # binding, the widget's own function, menu selection, styles, modules).
+        for ln in case.init_lines():
             f.write("# @setup %s\n" % ln)
-        f.write("\nemulate -L zsh\ntypeset _d=${TMPDIR:-/tmp}/spec-fuzz-repro.$$\n"
+        # `_d` is EXPORTED: the generated .zshrc keeps `$_d` literal (the
+        # heredoc below is quoted, so a `$` in a widget declaration or in a
+        # generated function body reaches the file unmangled) and the rc is
+        # read by a fresh `zsh -i`, which only sees `_d` if it is in the
+        # environment.
+        f.write("\nemulate -L zsh\ntypeset -x _d=${TMPDIR:-/tmp}/spec-fuzz-repro.$$\n"
                 "mkdir -p $_d/fpath\n")
         f.write("cat >$_d/fpath/_%s <<'%s'\n%s%s\n" % (case.cmd, HEREDOC, body, HEREDOC))
         f.write(
-            "cat >$_d/.zshrc <<RC\n"
-            "fpath=( \\$_d/fpath %s )\n"
+            "cat >$_d/.zshrc <<'RC'\n"
+            "fpath=( $_d/fpath %s )\n"
             "PROMPT='%s '\n"
             "autoload -Uz compinit\n"
             "compinit -u -D\n"
             "%s"
             "RC\n"
             % (" ".join(shlex.quote(p) for p in args.fpath_dirs), SENTINEL,
-               "".join(ln + "\n" for ln in case.extra.get("setup", []))))
+               "".join(ln + "\n" for ln in case.init_lines())))
         f.write("print -r -- \"# fpath dir: $_d/fpath   buffer: %s\"\n"
                 % case.buffer.replace('"', '\\"'))
         f.write("ZDOTDIR=$_d exec ${SPEC_FUZZ_SHELL:-zsh} -i\n")
@@ -1907,12 +2269,204 @@ def read_fixture(path):
                  "(no @cmd header or no completer heredoc)" % path)
     end = lines.index(HEREDOC, start)
     body = "\n".join(lines[start:end]) + "\n"
+    # `setup_verbatim` — a replayed fixture's init is taken exactly as written,
+    # never rebuilt: the widget declaration, its function and the module loads
+    # are all already in the `@setup` headers, and re-deriving them from a
+    # widget id would silently drift from the file the divergence was saved in.
     case = Case(int(meta.get("case", -1)), int(meta.get("seed", 0)), meta["cmd"],
                 meta.get("kind", "replay"), [], [],
-                {"setup": multi.get("setup", [])},
+                {"setup_verbatim": multi.get("setup", []),
+                 "widget": meta.get("widget", "default")},
                 meta["buffer"], meta["keys"].split(","))
     case.body_override = body
     return case
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# widget self-check
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# A binding real zsh REJECTS is a generator bug, not a finding: every case
+# drawn through it would diverge for a reason that says nothing about zshrs.
+# So before a run generates anything, every widget declaration is executed on
+# the reference shell and proved to have installed the binding it claims —
+# `zle -C` writes no message on success, so "no complaint" is not enough
+# evidence and each plan carries a `verify` command whose output must name the
+# widget.
+#
+# The same script runs on zshrs. That side is NOT used to exclude anything: an
+# id real zsh accepts and zshrs rejects is a divergence, and it is reported as
+# one.
+
+OK, REJECTED, NOTBOUND = "ok", "REJECTED", "not-bound"
+
+_CHECK_RE = re.compile(r"^@@(B|RC|V|E) (\S+)(?: (.*))?$")
+
+
+def _probe_body(fn):
+    return ["%s() { compadd sfzprobe }" % fn]
+
+
+def _check_block(wid, plan, fn):
+    """The lines that declare one widget and prove the binding landed."""
+    out = ["print -r -- '@@B %s'" % wid]
+    if plan["complist"]:
+        out.append("zmodload -i zsh/complist")
+    out += plan["pre"] + plan["decl"]
+    out.append("print -r -- \"@@RC %s $?\"" % wid)
+    if plan["verify"]:
+        cmd = plan["verify"][0]
+        out.append("_sfz_v=$( { %s } 2>&1 )" % cmd)
+        out.append("print -r -- \"@@V %s ${_sfz_v//$'\\n'/ }\"" % wid)
+    out.append("print -r -- '@@E %s'" % wid)
+    return out
+
+
+def _parse_check(text, wid_order, plans, filefn=None):
+    """-> {id: (status, message)} from one annotated run."""
+    blocks = {}
+    cur, buf = None, []
+    rc, ver = {}, {}
+    for line in text.splitlines():
+        m = _CHECK_RE.match(line.strip())
+        if not m:
+            if cur:
+                buf.append(line.rstrip())
+            continue
+        tag, wid, rest = m.group(1), m.group(2), (m.group(3) or "")
+        if tag == "B":
+            cur, buf = wid, []
+        elif tag == "RC":
+            rc[wid] = rest.strip()
+            blocks[wid] = [b for b in buf if b.strip()]
+            buf = []
+        elif tag == "V":
+            ver[wid] = rest.strip()
+        elif tag == "E":
+            cur = None
+    out = {}
+    for wid in wid_order:
+        if wid not in rc:
+            out[wid] = (REJECTED, "the shell never reached this declaration")
+            continue
+        noise = blocks.get(wid) or []
+        if noise:
+            out[wid] = (REJECTED, "; ".join(noise)[:160])
+            continue
+        if rc[wid] not in ("0", ""):
+            out[wid] = (REJECTED, "declaration exited %s" % rc[wid])
+            continue
+        v = plans[wid]["verify"]
+        if v:
+            token = v[1].replace(FILEFN, filefn) if filefn else v[1]
+            got = ver.get(wid, "")
+            if token not in got.split():
+                out[wid] = (NOTBOUND, "%s -> %r (expected %s)"
+                            % (v[0], got[:100], token))
+                continue
+        out[wid] = (OK, "")
+    return out
+
+
+def _run_check(argv, env, cwd, script, timeout):
+    try:
+        p = subprocess.run(list(argv) + ["-f", "-c", script],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, timeout=timeout, env=env, cwd=cwd)
+    except subprocess.TimeoutExpired:
+        return "", "timed out after %ds" % timeout
+    except OSError as exc:
+        return "", "could not run: %r" % (exc,)
+    return p.stdout, None
+
+
+def check_widgets(args, ids):
+    """Run every widget declaration on both shells. -> {shell: {id: (st, msg)}}"""
+    root = os.path.join(REPO, "target", "spec-fuzz-%d" % args.seed, "widget-check")
+    os.makedirs(root, exist_ok=True)
+    env = child_env(root, args.non_ascii)
+    fp = " ".join(shlex.quote(p) for p in args.fpath_dirs)
+    plans = {w: widget_plan(w) for w in ids}
+
+    head = ["fpath=( %s )" % fp, "zmodload zsh/zle",
+            "autoload -Uz compinit", "compinit -u -D"] + _probe_body(SFZ_FN)
+
+    # Phase A — everything declared from the init file. One shell, in order:
+    # each block is verified immediately after it is declared, so later blocks
+    # rebinding the same key cannot make an earlier one look installed.
+    inline = [w for w in ids if plans[w]["header"] is None and plans[w]["decl"]]
+    script_a = "\n".join(head + [ln for w in inline
+                                 for ln in _check_block(w, plans[w], SFZ_FN)])
+
+    # Phase B — the `#compdef -k` / `-K` FILE headers. compinit only reads them
+    # while it scans $fpath, so each needs its own fpath and its own shell.
+    filed = [w for w in ids if plans[w]["header"] is not None]
+    scripts_b = {}
+    for w in filed:
+        d = os.path.join(root, re.sub(r"[^\w.-]", "_", w))
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "_sfzprobe"), "w") as f:
+            f.write("%s\n\ncompadd sfzprobe\n" % plans[w]["header"])
+        scripts_b[w] = "\n".join(
+            ["fpath=( %s %s )" % (shlex.quote(d), fp), "zmodload zsh/zle",
+             "print -r -- '@@B %s'" % w,
+             "autoload -Uz compinit", "compinit -u -D"] +
+            ["print -r -- \"@@RC %s $?\"" % w] +
+            _check_block(w, dict(plans[w], pre=[], decl=[]), SFZ_FN)[1:])
+
+    out = {}
+    for label, argv in (("zsh", [args.zsh]), ("zshrs", args.test_base)):
+        res = {}
+        if inline:
+            text, err = _run_check(argv, env, root, script_a, args.widget_check_timeout)
+            if err:
+                res.update({w: (REJECTED, err) for w in inline})
+            else:
+                res.update(_parse_check(text, inline, plans))
+        for w in filed:
+            text, err = _run_check(argv, env, root, scripts_b[w],
+                                   args.widget_check_timeout)
+            if err:
+                res[w] = (REJECTED, err)
+            else:
+                res.update(_parse_check(text, [w], plans, filefn="_sfzprobe"))
+        for w in ids:
+            res.setdefault(w, (OK, "no declaration to check"))
+        out[label] = res
+    return out
+
+
+def print_widget_check(report, ids):
+    """-> (ids real zsh rejected, ids only zshrs rejected)"""
+    zsh, zshrs = report["zsh"], report["zshrs"]
+    bad_ref = [w for w in ids if zsh[w][0] != OK]
+    bad_test = [w for w in ids if zsh[w][0] == OK and zshrs[w][0] != OK]
+    print("# widget self-check — every declaration run on BOTH shells")
+    print("#   %-30s %-10s %s" % ("id", "zsh", "zshrs"))
+    for w in ids:
+        a, b = zsh[w], zshrs[w]
+        if a[0] == OK and b[0] == OK:
+            continue
+        print("#   %-30s %-10s %s" % (w, a[0], b[0]))
+        if a[1]:
+            print("#     zsh  : %s" % a[1])
+        if b[1]:
+            print("#     zshrs: %s" % b[1])
+    print("# %d declaration(s) checked: %d rejected by real zsh, "
+          "%d accepted by zsh but not by zshrs"
+          % (len(ids), len(bad_ref), len(bad_test)))
+    if bad_ref:
+        print("#   generator-rejected (dropped from the pool — a binding real "
+              "zsh refuses is a generator bug, not a finding):")
+        for w in bad_ref:
+            print("#     %-28s %s" % (w, zsh[w][1][:90]))
+    if bad_test:
+        print("#   widget-decl-divergence (KEPT in the pool — real zsh "
+              "installed these and zshrs did not):")
+        for w in bad_test:
+            print("#     %-28s %s" % (w, zshrs[w][1][:90]))
+    sys.stdout.flush()
+    return bad_ref, bad_test
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1920,8 +2474,13 @@ def read_fixture(path):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def print_case_spec(case):
-    print("  cmd      : %s   kind=%s" % (case.cmd, case.kind))
+    print("  cmd      : %s   kind=%s   widget=%s"
+          % (case.cmd, case.kind, case.extra.get("widget", "default")))
     print("  buffer   : %r   keys=%s" % (case.buffer, ",".join(case.keys)))
+    # The init lines are part of the case now: with a `zle -C` / `compdef -k`
+    # widget the function under test lives here, not in the fpath file.
+    for ln in case.init_lines():
+        print("  init %s" % ln)
     for ln in case.completer().rstrip("\n").split("\n"):
         print("  | %s" % ln)
 
@@ -1999,9 +2558,12 @@ def to_json(v):
         "seed": v.case.seed,
         "index": v.case.idx,
         "kind": v.case.kind,
+        "widget": v.case.extra.get("widget", "default"),
+        "compstate_probe": bool(v.case.extra.get("compstate_probe")),
         "cmd": v.case.cmd,
         "buffer": v.case.buffer,
         "keys": v.case.keys,
+        "init": v.case.init_lines(),
         "completer": v.case.completer(),
         "status": v.status,
         "category": v.category,
@@ -2040,6 +2602,31 @@ def main():
     ap.add_argument("--kind", default="all",
                     help="comma-separated: arguments,values,describe,"
                          "alternative,compadd,compset,tags,nested")
+    ap.add_argument("--widget", default="auto",
+                    help="which WIDGET the completion is reached through. "
+                         "`auto` (default) draws one per case from the whole "
+                         "pool, `default` keeps the round-2 behaviour (whatever "
+                         "compinit left on TAB), or a comma-separated list of "
+                         "ids: " + ",".join(WIDGET_IDS))
+    ap.add_argument("--list-widgets", action="store_true",
+                    help="print every widget id with the declaration and the "
+                         "key it is fired by, and exit")
+    ap.add_argument("--check-widgets", action="store_true",
+                    help="run only the widget self-check (every declaration on "
+                         "both shells) and exit")
+    ap.add_argument("--no-widget-check", dest="widget_check",
+                    action="store_false", default=True,
+                    help="skip the pre-run widget self-check. A binding real "
+                         "zsh rejects then reaches the fuzzer as a bogus FAIL, "
+                         "so this is for iterating, not for reporting.")
+    ap.add_argument("--widget-check-timeout", type=float, default=120.0)
+    ap.add_argument("--compstate-probe", choices=("auto", "always", "never"),
+                    default="auto",
+                    help="echo the widget-visible $compstate fields (%s) into "
+                         "the completion listing so a divergence in the STATE "
+                         "is visible even when the rendered list matches. "
+                         "auto: ~35%%%% of cases."
+                         % ",".join(Case.COMPSTATE_KEYS))
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--json", default=None)
     ap.add_argument("--verbose", action="store_true",
@@ -2088,8 +2675,9 @@ def main():
     if not os.path.exists(args.zshrs):
         sys.exit("compsys_spec_fuzz: %s not found (build it, or pass --zshrs)"
                  % args.zshrs)
-    args.test_argv = ([args.zshrs, "-f", "-i"] if args.mode == "native"
-                      else [args.zshrs, "--zsh", "-f", "-i"])
+    args.test_base = ([args.zshrs] if args.mode == "native"
+                      else [args.zshrs, "--zsh"])
+    args.test_argv = args.test_base + ["-f", "-i"]
     # `auto` leaves args.keys empty and lets each case draw its own key PATH
     # from KEY_PATHS, so a generated spec is judged over a sequence (menu
     # start, cycling, a filter letter, an abort) instead of one press.
@@ -2113,7 +2701,44 @@ def main():
             sys.exit("compsys_spec_fuzz: unknown --kind %r (have %s)"
                      % (k, ",".join(all_kinds)))
 
+    if args.widget.strip() in ("auto", "all"):
+        args.widget_pool = list(WIDGET_IDS)
+    elif args.widget.strip() == "default":
+        args.widget_pool = ["default"]
+    else:
+        args.widget_pool = [w.strip() for w in args.widget.split(",") if w.strip()]
+        for w in args.widget_pool:
+            if w not in WIDGET_IDS:
+                sys.exit("compsys_spec_fuzz: unknown --widget %r (have auto, "
+                         "default, or: %s)" % (w, ",".join(WIDGET_IDS)))
+
+    if args.list_widgets:
+        for w in WIDGET_IDS:
+            p = widget_plan(w)
+            print("%-30s fire=%-9s prime=%-6s %s"
+                  % (w, p["fire"], ",".join(p["prime"]) or "-",
+                     "; ".join(p["pre"] + p["decl"]) or
+                     ("header %s" % p["header"] if p["header"] else
+                      "(no binding — whatever compinit left on TAB)")))
+        return 0
+
     args.fpath_dirs = hermetic_fpath(args.zsh)
+
+    # ── widget self-check ────────────────────────────────────────────────────
+    widget_bad_ref, widget_bad_test = [], []
+    if args.check_widgets or (args.widget_check and args.widget_pool != ["default"]
+                              and not args.replay and not args.spec):
+        report = check_widgets(args, args.widget_pool)
+        widget_bad_ref, widget_bad_test = print_widget_check(report, args.widget_pool)
+        print()
+        if args.check_widgets:
+            return 1 if widget_bad_ref else 0
+        # A declaration real zsh refuses cannot produce a meaningful case, so
+        # it leaves the pool — loudly, above, never silently.
+        args.widget_pool = [w for w in args.widget_pool if w not in widget_bad_ref]
+        if not args.widget_pool:
+            sys.exit("compsys_spec_fuzz: real zsh rejected EVERY requested "
+                     "widget declaration — nothing left to generate")
 
     # ── case list ────────────────────────────────────────────────────────────
     if args.replay:
@@ -2149,6 +2774,10 @@ def main():
              args.rows, args.cols, args.jobs))
     print("# kinds  : %s%s" % (",".join(args.kinds),
                                "   non-ascii" if args.non_ascii else ""))
+    print("# widgets: %s   compstate-probe=%s"
+          % ("%d id(s) (%s)" % (len(args.widget_pool), args.widget)
+             if len(args.widget_pool) > 3 else ",".join(args.widget_pool),
+             args.compstate_probe))
     print("# outdir : %s" % os.path.relpath(root, REPO))
     print()
     sys.stdout.flush()
@@ -2185,9 +2814,11 @@ def main():
                 extra = "  [raw escape streams differ]"
             if v.status == FAIL and getattr(v, "shrunk", None):
                 extra = "  [shrunk to %d spec(s)/%d flag(s) in %d probes]" % v.shrunk
-            print("%-9s %-9s %-10s %-22s %-16s %s%s"
-                  % (mark, v.case.name, v.case.kind, repr(v.case.buffer)[:22],
-                     ",".join(v.case.keys)[:16], v.detail[:48], extra))
+            print("%-9s %-9s %-10s %-24s %-18s %-14s %s%s"
+                  % (mark, v.case.name, v.case.kind,
+                     v.case.extra.get("widget", "default")[:24],
+                     repr(v.case.buffer)[:18],
+                     ",".join(v.case.keys)[:14], v.detail[:40], extra))
             sys.stdout.flush()
             if args.verbose and v.status in (PASS, PASS_ERR):
                 print_case_spec(v.case)
@@ -2230,6 +2861,32 @@ def main():
         print("#     %-12s %5d  %5d  %9d  %5d  %5d"
               % (kind, sum(row.values()), row[PASS], row[PASS_ERR],
                  row[FAIL], row[SKIP]))
+    # Per-WIDGET, for the same reason as per-kind: the entry point decides
+    # which dispatch inside the completion core runs, so a run that drew only
+    # `default` has tested exactly one of them however green it looks.
+    perw = {}
+    for v in results:
+        row = perw.setdefault(v.case.extra.get("widget", "default"),
+                              dict.fromkeys((PASS, PASS_ERR, FAIL, SKIP), 0))
+        row[v.status] += 1
+    if len(perw) > 1 or set(perw) != {"default"}:
+        print("#   by widget:    cases   PASS  PASS(err)   FAIL   SKIP")
+        for w in sorted(perw):
+            row = perw[w]
+            print("#     %-30s %3d  %5d  %9d  %5d  %5d"
+                  % (w, sum(row.values()), row[PASS], row[PASS_ERR],
+                     row[FAIL], row[SKIP]))
+    ncs = sum(1 for v in results if v.case.extra.get("compstate_probe"))
+    if ncs:
+        print("#   %d case(s) also compared the widget-visible $compstate "
+              "fields (%s)" % (ncs, ",".join(Case.COMPSTATE_KEYS)))
+    if widget_bad_ref:
+        print("#   generator-rejected widget id(s), dropped before generating: "
+              "%d  (%s)" % (len(widget_bad_ref), " ".join(widget_bad_ref)))
+    if widget_bad_test:
+        print("#   widget-decl-divergence, declarations real zsh installed and "
+              "zshrs did not: %d  (%s)"
+              % (len(widget_bad_test), " ".join(widget_bad_test)))
     kpaths = {}
     for v in results:
         kpaths.setdefault(",".join(v.case.keys), []).append(v.status)
@@ -2275,6 +2932,10 @@ def main():
                 "cases": len(results),
                 "pass": npass, "pass_err": nerr, "fail": nfail, "skip": nskip,
                 "stream_only": nstream,
+                "widgets": sorted(perw),
+                "widget_generator_rejected": widget_bad_ref,
+                "widget_decl_divergence": widget_bad_test,
+                "compstate_probed": ncs,
                 "zsh": args.zsh,
                 "zshrs": args.test_argv,
                 "results": [to_json(v) for v in results],
