@@ -12,6 +12,7 @@
   "zstyle": []
  },
  "expect": "diverges",
+ "group": "listing-render",
  "fingerprint": "b29792c9a7",
  "observed": {
   "verdict": "FAIL",
@@ -75,7 +76,7 @@
   },
   {
    "origin": "named in the round-2 divergence list",
-   "note": "same symptom from parameter-name completion, confirmed first-hand 2026-08-30, but under its OWN fingerprint e8e0447836 rather than b29792c9a7 \u2014 the shape id takes the surrounding context in, so the same wrong count in a different position is a different shape. zsh 'zsh: do you wish to see all 396 possibilities (99 lines)?' vs zshrs '... 400 possibilities (100 lines)?'.",
+   "note": "same symptom from parameter-name completion, confirmed first-hand 2026-08-30, but under its OWN fingerprint e8e0447836 rather than b29792c9a7 — the shape id takes the surrounding context in, so the same wrong count in a different position is a different shape. zsh 'zsh: do you wish to see all 396 possibilities (99 lines)?' vs zshrs '... 400 possibilities (100 lines)?'.",
    "buffer": "echo $",
    "keys": [
     "tab"
@@ -91,14 +92,39 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "132228963a",
+  "commit": "3b4a01f0cd",
   "harness_sha256_16": {
-   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
-   "scripts/comptab_parity.py": "47635660871f1c55",
-   "scripts/compsys_parity.py": "31410b8b90816683"
+   "scripts/comptab_parity.py": "517045bc5c73ceee"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101601256,
+   "mtime": "2026-08-30 05:50:47",
+   "version": "zshrs 0.12.49",
+   "sha256_16": "6420c23cecc13c35",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
-  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
- }
+  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '1 row(s) differ'; failure fingerprint b29792c9a7, unchanged"
+ },
+ "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "132228963a",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+    "scripts/comptab_parity.py": "47635660871f1c55",
+    "scripts/compsys_parity.py": "31410b8b90816683"
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+   "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+  }
+ ]
 }

@@ -14,6 +14,7 @@
   "zstyle_file": "scripts/parity_zstyle.zsh"
  },
  "expect": "diverges",
+ "group": "multiline-buffer",
  "fingerprint": null,
  "observed": {
   "verdict": "FAIL",
@@ -40,7 +41,7 @@
    }
   ],
   "rows_total": 3,
-  "notes": "Both shells answer the Enter with PS2 \u2014 the buffer is deliberately incomplete at the newline, so nothing executes and the completion fires inside the continuation. The single-line control below completes the same word with the newline removed and PASSES, which is what makes the CONTINUATION the variable rather than the word. Same two `_describe:compdescribe` diagnostics as the backslash continuation, from a completely different continuation context (an array literal that opened on the previous line), which is why the two are pinned separately rather than as variants of one another: the shared symptom is evidence about how far the defect reaches. Under `--no-zstyle` this cell PASSES on both shells, so the zstyle fixture is load-bearing and is recorded in `run.zstyle_file`."
+  "notes": "Both shells answer the Enter with PS2 — the buffer is deliberately incomplete at the newline, so nothing executes and the completion fires inside the continuation. The single-line control below completes the same word with the newline removed and PASSES, which is what makes the CONTINUATION the variable rather than the word. Same two `_describe:compdescribe` diagnostics as the backslash continuation, from a completely different continuation context (an array literal that opened on the previous line), which is why the two are pinned separately rather than as variants of one another: the shared symptom is evidence about how far the defect reaches. Under `--no-zstyle` this cell PASSES on both shells, so the zstyle fixture is load-bearing and is recorded in `run.zstyle_file`."
  },
  "controls": [
   {
@@ -60,19 +61,17 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "d1d16a132d",
+  "commit": "3b4a01f0cd",
   "harness_sha256_16": {
-   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
-   "scripts/comptab_parity.py": "cb15559d30603b6b",
-   "scripts/compsys_parity.py": "07aa459d97b3516d"
+   "scripts/compsys_parity.py": "4e07364abc7bf011"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
-   "size": 101596360,
-   "mtime": "2026-08-30 03:13:45",
-   "version": "zshrs 0.12.46",
-   "sha256_16": "d4a77617b8cd3c67"
+   "size": 101601256,
+   "mtime": "2026-08-30 05:50:47",
+   "version": "zshrs 0.12.49",
+   "sha256_16": "6420c23cecc13c35",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -80,7 +79,34 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
-  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
- }
+  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '3 row(s) differ from step #1 (tab), first row 1 col 7'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+ },
+ "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "d1d16a132d",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+    "scripts/comptab_parity.py": "cb15559d30603b6b",
+    "scripts/compsys_parity.py": "07aa459d97b3516d"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+    "size": 101596360,
+    "mtime": "2026-08-30 03:13:45",
+    "version": "zshrs 0.12.46",
+    "sha256_16": "d4a77617b8cd3c67"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+   "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+  }
+ ]
 }

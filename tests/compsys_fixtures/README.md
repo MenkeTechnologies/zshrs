@@ -99,7 +99,7 @@ stamp.
 | ----- | ------- |
 | `id` | stable name; also the filename |
 | `title` | one line, what the two shells do differently |
-| `harness` | `compsys_spec_fuzz`, `comptab_parity`, `compsys_parity` or `zsh_reference_probe` — which one owns the replay |
+| `harness` | `compsys_spec_fuzz`, `comptab_parity`, `compsys_parity`, `zsh_reference_probe`, `shell_probe` or `winch_probe` — which one owns the replay |
 | `run.buffer` / `run.keys` | typed, then each key sent in order. Only `compsys_parity` buffers may contain a newline (the continuation cells) |
 | `run.flags` | extra harness flags the finding needs (`--strict-stream`, `--compare-attrs`, `--strict-cursor`) |
 | `run.zstyle` | statements written to a temp file and sourced by both shells |
@@ -107,6 +107,8 @@ stamp.
 | `run.rows` / `run.cols` | geometry, only when the finding depends on it |
 | `run.spec` | `compsys_spec_fuzz` only: `cmd`, `kind`, `widget`, `setup` and the completer source, re-materialised into a `--replay` file. `widget` and `setup` are load-bearing — three fixtures ARE about the widget, and a reproducer without them replays the default TAB binding, which is those fixtures' own control |
 | `run.word` / `run.control_word` / `run.trials` | `zsh_reference_probe` only |
+| `run.script` / `run.files` / `run.dirs` / `run.argv` / `run.env` / `run.compare_stderr` | `shell_probe` only: the script both shells run under `-f`, plus any files or directories (with modes) it needs materialised beside it. `compare_stderr` is off by default — see below |
+| `run.new_rows` / `run.new_cols` | `winch_probe` only: the geometry the window is changed TO, mid-cell, after the completion has been drawn |
 | `expect` | `diverges`, or `reference-crash` for an upstream defect |
 | `fingerprint` | `comptab_parity`'s stable id for the failure shape, or `null` when the owning harness does not compute one |
 | `observed` | the recorded verdict, the differing rows verbatim, one-sided diagnostics, raw-stream fragments, and prose notes |
@@ -141,6 +143,43 @@ stamp and says which of two very different things happened:
   evidence base.
 
 Both exit 1. The diagnosis is what differs, and it is free to compute.
+
+## The two fixtures that are not pty cells
+
+Most findings here are a screen: a buffer, some keys, and the rows the two
+shells drew. Two are not, and forcing them into a pty cell would have made them
+worse evidence.
+
+`shell_probe.py` — one script, two shells, **no pty**. `argv+=( ... )` losing
+the positional parameters is a parameter bug in the shell core; it earns its
+place in a *completion* evidence base only because
+`Completion/Base/Core/_description:83` builds its `zformat` spec list with
+exactly that append, so it reprices every description compsys renders. Pinned
+through a pty harness the cell would assert a screen — and a screen carries the
+prompt, the geometry, the listing layout and the rest of the completion system
+with it, a dozen ways to change shape for reasons that have nothing to do with
+the bug. Two lines of `print -l` isolate the same defect in **0.2s** against
+8-25s, and cannot be moved by a layout change. STDERR is compared only when the
+fixture asks (`compare_stderr`): the two shells prefix diagnostics differently
+(`probe.zsh:2:` against `zsh:2:`), a real divergence but not the one any of
+these cells is about, and one that would otherwise fail every stderr-carrying
+cell for the same uninteresting reason.
+
+`winch_probe.py` — completes, then **changes the window size** mid-session
+(`TIOCSWINSZ`, then an explicit `SIGWINCH`, so a shell that only reacts to the
+signal and one that re-reads the size on its next redraw get the same chance).
+The three sibling harnesses each set the geometry once, before the shell boots,
+and never touch it again, so none of them can reach a defect that needs a
+resize. What it compares is how many non-blank rows survive the resize on each
+shell, not the exact rendering — two shells legitimately re-lay a listing out
+once the width changes, and that argument belongs in a different cell.
+
+Both emit the same `{"results": [ ... ]}` document the pty harnesses emit, with
+a `status` of `PASS`/`FAIL`, so `compsys_regressions.py` scores them through
+the identical code path: there is no second verdict implementation to get
+wrong. Both live HERE rather than in `scripts/`, because they are part of the
+evidence base and are versioned with it — `--harness-dir` does not point at
+them.
 
 ## The reference-defect fixture
 
@@ -184,6 +223,25 @@ read as a slow one.
 * `CC -` — one of the seven round-2 `TIMEOUT` cells, but NOT a crash: the shell
   stays alive and produces no output at all for 180s. That is a genuine hang
   and needs a different kind of fixture than either of the two kinds here.
+* Two round-5 `compinit` claims that did **not** reproduce in round 6, against
+  `zshrs 0.12.48`: that `compinit -i` fails to drop an insecure (0777)
+  directory, and that `compinit -d FILE` writes no dump. Probed with zsh's own
+  shipped `compinit`/`compaudit`/`compdump` (copied to a 0755 directory, since
+  Homebrew's own `functions` directory is mode 0777 here and `-i` prunes it out
+  from under the run — which is its own trap), an fpath of
+  `(fns good bad)` and `bad` at 0777: **both shells** report
+  `nfpath=2 bad_in_fpath=0 zz01=<unset> secure=yes dump_exists=yes` under `-i`,
+  and both report `nfpath=3 ... zz01=_zz01 secure=<unset> dump_exists=yes`
+  under `-u` and under `-C`. Five configurations agreed: that one, the same
+  with the world-writable Homebrew functions directory in `fpath` (both shells
+  fail identically, `compinit:483: compdump: function definition file not
+  found`), a group-writable (0775) bad directory, an insecure 0777 *file* in a
+  secure directory (neither shell flags it), and no `compinit` in `fpath` at
+  all (neither shell has a native one: `command not found` on both). No commit
+  in the log names a `compinit -i` fix, so whether a peer fixed this since
+  round 5 or the original probe was mis-built is **not established** — what is
+  established is that it does not reproduce now.
+
 * `combo_7_1` and `combo_11_0_1` from `$TMPDIR/compsys_parity_failing_combos_*`
   — their zstyle subsets survived but their buffers did not, and the RNG stream
   that generated those buffers has since drifted, so the original cells cannot

@@ -85,16 +85,16 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "79c953de7a",
+  "commit": "3b4a01f0cd",
   "harness_sha256_16": {
    "tests/compsys_fixtures/shell_probe.py": "29869257ce4cba02"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101592632,
-   "mtime": "2026-08-30 04:06:47",
-   "version": "zshrs 0.12.48",
-   "sha256_16": "33260fa3dcc29246",
+   "size": 101601256,
+   "mtime": "2026-08-30 05:50:47",
+   "version": "zshrs 0.12.49",
+   "sha256_16": "6420c23cecc13c35",
    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
   },
   "zsh_binary": {
@@ -103,7 +103,32 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
-  "note": "round 6. Reproduced FIRST-HAND through tests/compsys_fixtures/shell_probe.py before pinning; the `observed` rows below are that replayer's output verbatim."
- }
+  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '3 line(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+ },
+ "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "79c953de7a",
+   "harness_sha256_16": {
+    "tests/compsys_fixtures/shell_probe.py": "29869257ce4cba02"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101592632,
+    "mtime": "2026-08-30 04:06:47",
+    "version": "zshrs 0.12.48",
+    "sha256_16": "33260fa3dcc29246",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
+   "note": "round 6. Reproduced FIRST-HAND through tests/compsys_fixtures/shell_probe.py before pinning; the `observed` rows below are that replayer's output verbatim."
+  }
+ ]
 }

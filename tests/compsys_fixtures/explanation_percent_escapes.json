@@ -22,6 +22,7 @@
   }
  },
  "expect": "diverges",
+ "group": "description-escapes",
  "fingerprint": null,
  "observed": {
   "verdict": "FAIL",
@@ -88,7 +89,7 @@
   },
   {
    "origin": "target/spec-fuzz-22/case0002.min.zsh",
-   "note": "fuzz-found witness for %{...%}, confirmed 2026-08-30 (FAIL, 1 row): zsh '\\e[32mzero-width\\e[0m expl' vs zshrs '\\e[32m%zero-width\\e[0m% expl' \u2014 the %{ %} delimiters survive.",
+   "note": "fuzz-found witness for %{...%}, confirmed 2026-08-30 (FAIL, 1 row): zsh '\\e[32mzero-width\\e[0m expl' vs zshrs '\\e[32m%zero-width\\e[0m% expl' — the %{ %} delimiters survive.",
    "buffer": "fzc0002 -",
    "keys": [
     "tab",
@@ -133,14 +134,39 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "132228963a",
+  "commit": "3b4a01f0cd",
   "harness_sha256_16": {
-   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
-   "scripts/comptab_parity.py": "47635660871f1c55",
-   "scripts/compsys_parity.py": "31410b8b90816683"
+   "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101601256,
+   "mtime": "2026-08-30 05:50:47",
+   "version": "zshrs 0.12.49",
+   "sha256_16": "6420c23cecc13c35",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
-  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
- }
+  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+ },
+ "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "132228963a",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+    "scripts/comptab_parity.py": "47635660871f1c55",
+    "scripts/compsys_parity.py": "31410b8b90816683"
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+   "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+  }
+ ]
 }
