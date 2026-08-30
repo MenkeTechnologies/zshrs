@@ -19,6 +19,94 @@ CI green pending the underlying fix.
 
 ---
 
+## #1125 — `${~var}` in a PATTERN operand globbed the ENCLOSING expansion — fixed
+
+**Status:** `fixed` 2026-08-30.
+
+```console
+$ zsh   -fc "cm=X; v='a|b'; print -r -- \${v%%\${~cm}*}"
+a|b
+$ zshrs --zsh -f -c "cm=X; v='a|b'; print -r -- \${v%%\${~cm}*}"
+zsh:1: no matches found: a|b
+```
+
+The `~` belongs to the INNER expansion: it makes `$cm`'s value a live pattern
+for the `%%` operator. It must not make the OUTER `${v%%…}` result a candidate
+for filename generation.
+
+**C reference.** The GLOB_SUBST switch is a `paramsubst` LOCAL:
+
+```c
+/* Src/subst.c:1671 */
+int globsubst = isset(GLOBSUBST);
+...
+/* Src/subst.c:2596-2602 */
+} else if (c == '~' || c == Tilde) {
+    /* GLOB_SUBST (forced) on or off (doubled) */
+    if ((c = *++s) == '~' || c == Tilde) {
+        globsubst = 0;
+        s++;
+    } else
+        globsubst = 2;
+}
+```
+
+The pattern operand of `#` / `##` / `%` / `%%` / `/` / `//` / `:/` / `:#` is
+expanded by `singsub(&s)` at `Src/subst.c:3412` (the `case '%': case '#': case
+Pound: case '/':` arm opening at `Src/subst.c:3371`), which re-enters
+`paramsubst`. Because `globsubst` is that nested call's own local, a `~` in the
+pattern tokenizes only the value THAT call splices into the pattern; the
+enclosing call's `globsubst` — the one `strcatsub(…, globsubst, …)` consults at
+`Src/subst.c:4352` / `:4397` / `:4436` / `:4475` to decide whether its RESULT is
+offered to filename generation — is untouched.
+
+zshrs carries the switch through the GLOBAL option table instead, a deliberate
+deviation documented at the `TILDE_GLOBSUBST_CARRIER` declaration in
+`src/ported/subst.rs` (the compile-emitted glob ops later in the same word
+pipeline have no other way to see it), and unwinds the carrier only at the
+command-dispatch boundary. A nested `${~…}` therefore left GLOB_SUBST on for the
+rest of the word.
+
+**Fix.** `src/ported/subst.rs` grows a `pat_operand` closure that saves and
+restores GLOB_SUBST (and the carrier) around the whole
+pre-tokenize / `singsub` / literalize triple, re-creating C's local scoping; all
+nine pattern-operand call sites route through it. The restore must come AFTER
+`literalize_spliced_metas`, not merely after `singsub`: that pass is the
+`Src/subst.c:1669` GLOBSUBST gate that decides whether the spliced value's
+metacharacters stay literal or stay active, i.e. it is where the nested `~`
+actually takes effect. Unlike the replacement-word helper `singsub_replstr`, the
+result is NOT untokenized — `Src/subst.c:3412` has no `untokenize`, because the
+pattern's tokens are exactly what `patcompile` needs.
+
+Same-shaped sibling, already fixed earlier and left in place: the `${x/pat/REPL}`
+REPLACEMENT word, which C untokenizes at `Src/glob.c:2687-2688`.
+
+**Named victim.** zsh's own `Test/X04zlehighlight.ztst`. Its `zpty_line` helper
+ends every captured line with
+
+```zsh
+print -r -- ${${REPLY%%${~cm}*}##[[:space:]]##}
+```
+
+and the file's own `zle_highlight=( fg_start_code:"CDE|3" … )` puts a `|` in
+every captured line, so all 20 assertions aborted inside the helper with
+`zpty_line:13: bad pattern: …` and produced no output at all. The helper now
+runs; the file's remaining failures are a separate ZLE-refresh divergence (zshrs
+emits `\e[J` / `\e[K` and unresolved `fg_start_code` sequences where zsh does
+not).
+
+Not version-sensitive: `git log -L2590,2610:Src/subst.c` in the upstream tree
+shows the last touch to this switch is `a9ba166216` (ksh namespace prefixes),
+which left it unchanged, and every row of
+`tests/parity/tilde_globsubst_scope_parity.rs` agrees with the 5.9.2 reference
+binary.
+
+Pinned by `tests/parity/tilde_globsubst_scope_parity.rs` (20 rows in three
+groups: the leak itself, the nested `~` still activating its own splice, and a
+genuinely-on GLOB_SUBST still globbing).
+
+---
+
 ## #1124 — the binary linked `libtinfo`, making it an Ubuntu install dependency — fixed
 
 **Status:** `fixed` 2026-08-29.
