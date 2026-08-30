@@ -10078,9 +10078,14 @@ pub fn execcmd_exec(
                     }
                     crate::ported::glob::zglob(&mut head_vec, 0usize, 0);
                     if let Some(ref mut v) = args {
-                        for (i, s) in head_vec.into_iter().enumerate() {
-                            v.insert(i, s);
-                        }
+                        // Re-merge the globbed head ahead of the tail. Inserting
+                        // one element at a time (`v.insert(i, s)`) memmoves the
+                        // whole remaining tail on every element, so a head word
+                        // that globs to K matches costs O(K*n) and a completion
+                        // sweep over a large directory spins. Splicing the batch
+                        // in at position 0 shifts the tail exactly once and is
+                        // order-identical: element i lands at index i.
+                        v.splice(0..0, head_vec);
                     }
                 }
             } else if unglobbed == 0 {
