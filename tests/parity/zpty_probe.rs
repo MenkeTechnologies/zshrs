@@ -261,17 +261,23 @@ pub fn assert_same_dump(driver: &str, what: &str) {
     // An EMPTY dump means the widget never ran — a keystroke dropped
     // while the inner shell was still redrawing, which this box does
     // under build load. That is the probe failing to take a
-    // measurement, not a shell disagreeing, so it is retried ONCE.
+    // MEASUREMENT, not a shell disagreeing, so it is retried: up to
+    // three attempts, stopping the moment both sides report something.
+    // A longer sequence of keystrokes is likelier to lose one, and a
+    // single retry was not enough for the six-keystroke history cases.
     //
     // A mismatch between two NON-EMPTY dumps is never retried. Retrying
     // a real disagreement is how a pin quietly turns into a
     // rubber stamp, and the whole point of these is to fail when the
     // shells differ.
-    let mut reference = dump(Path::new(zsh_path()), false, driver, "zsh");
-    let mut under_test = dump(&zshrs_bin(), true, driver, "zshrs");
-    if reference.is_empty() || under_test.is_empty() {
-        reference = dump(Path::new(zsh_path()), false, driver, "zsh-retry");
-        under_test = dump(&zshrs_bin(), true, driver, "zshrs-retry");
+    let mut reference = String::new();
+    let mut under_test = String::new();
+    for _ in 0..3 {
+        reference = dump(Path::new(zsh_path()), false, driver, "zsh");
+        under_test = dump(&zshrs_bin(), true, driver, "zshrs");
+        if !reference.is_empty() && !under_test.is_empty() {
+            break;
+        }
     }
     assert!(
         !reference.is_empty(),
