@@ -1,0 +1,7 @@
+# Seeds are a mechanical product of parity_corpus.CASES x --seed-sequences plus
+# comptab_divergent_cases.txt — 500+ files git already holds the sources of.
+# Regenerate: scripts/comptab_parity.py --corpus-seed
+seed_*.json
+
+# Promoted reproducers (fp_*.json and their *_styles.zsh) are NOT ignored: they
+# are the findings, and nothing else can reproduce them.
