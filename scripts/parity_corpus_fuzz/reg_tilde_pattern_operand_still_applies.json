@@ -1,0 +1,10 @@
+{
+  "buffer": "cm='[0-9]'; v=ab7cd; print -r -- ${v#*${~cm}}",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d30f91f8ed (control) \u2014 the restore must come after literalize_spliced_metas, so the nested ~ still makes the pattern a pattern. A blunter fix would break this row.",
+  "origin": "regression/2026-08-30/d30f91f8ed",
+  "statements": []
+}

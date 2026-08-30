@@ -1,0 +1,10 @@
+{
+  "buffer": "f() { argv+=( X ); print -r -- \"n=$# argv=<${(j:,:)argv}>\" }; f 1 2 3; f 1 2 3",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d555917f07 \u2014 argv+= must append to pparams, not to a process-global array slot, and must not leak across calls. Completion/Base/Core/_description:83 builds its zformat spec list with argv+=( h:$1 ), so a regression here breaks every description in the completion system.",
+  "origin": "regression/2026-08-30/d555917f07",
+  "statements": []
+}

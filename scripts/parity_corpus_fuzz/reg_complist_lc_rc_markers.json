@@ -1,0 +1,14 @@
+{
+  "buffer": "ls /usr/share/zsh/",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "guards 6fa67cb221 \u2014 zlrputs hardcoded `\\e[` + cap + `m` instead of reading mcolors.files[COL_LC]/[COL_RC] (complist.c:569-571). The c:206 defaults are exactly those two strings, so the hardcoded form looked right until a config SET lc=/rc= \u2014 which zsh's own suite does (Test/comptest:44). That one gap accounted for 73 of the 88 failing Y-series assertions (53 of them alone). `zmodload zsh/complist` is load-bearing: without it both shells fall back to plain ilistmatches and emit no SGR at all, so the cell would pass without ever exercising the code.",
+  "origin": "regression/2026-08-30/6fa67cb221",
+  "statements": [
+    "zmodload zsh/complist",
+    "zstyle ':completion:*' list-colors 'lc=<LC>' 'rc=<RC>' 'ec=<EC>' 'no=<NO>'"
+  ]
+}

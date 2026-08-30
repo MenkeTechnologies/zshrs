@@ -1,0 +1,10 @@
+{
+  "buffer": "setopt magic_equal_subst; V=; print -r -- --height=\"\\${V:=75%}\"; print -r -- --h=${V:=x}",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards b26c3ccd61 \u2014 the colon of ${VAR:=default} is not a path-list separator: filesub only considers colons at ${ } depth 0.",
+  "origin": "regression/2026-08-30/b26c3ccd61",
+  "statements": []
+}

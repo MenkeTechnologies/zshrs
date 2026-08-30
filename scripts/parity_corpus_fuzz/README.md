@@ -45,6 +45,186 @@ fuzzer on the neighbourhood of bugs it already has, which is the intent for a
 long run and may be the wrong trade for a short one. Treat the weights as
 unvalidated at small budgets.
 
+## Regression guards (`reg_*.json`, `reg_*_init.zsh`)
+
+The `fp_*` and `fn_*` entries are things that were BROKEN. The `reg_*` entries
+are things that were FIXED, kept as the cell that would notice them coming
+back. Same idea as flipping a `tests/compsys_fixtures` entry to `agrees`,
+applied to the axis this harness actually drives.
+
+Each one names the commit it guards and quotes the mechanism from that commit's
+own message, so a reader can tell what the cell is FOR without a git archaeology
+session. `origin` is `regression/2026-08-30/<commit>`, which means
+`corpus_weight` gives it 1 — the same as a hand-written case, and deliberately
+not the 12x a mined reproducer gets. A guard is known-good territory; it is not
+where the next bug is.
+
+FIVE of them are marked `DIVERGES TODAY` in their own `note` or comment header.
+Those are not guards, they are open divergences this round found while building
+the guards, and the file says so rather than letting a reader assume every
+`reg_*` passes.
+
+Verified not vacuous, which matters more for a guard than for a finding: a
+guard that would pass even with the bug back is worse than no guard.
+`reg_complist_lc_rc_markers` renders `<LC>1ls /usr/share/zsh/5.9/` / `>/<EC>`
+on both shells, so the `lc=`/`rc=` config is demonstrably live in the cell;
+`reg_printfmt_percent_escapes_init.zsh` renders all eight explanation strings.
+Both PASS.
+
+| entry | guards | shape |
+| --- | --- | --- |
+| `reg_argv_append_pparams` | `d555917f07` | `argv+=` must append to pparams and not leak across calls — `_description:83` builds its `zformat` spec list with it |
+| `reg_hashed_local_shadow_commands` | `40982fc067` + `d555917f07` | `local -A commands` is served from its own table (`_command_names:70`) |
+| `reg_hashed_nonhash_shadow_hides` | `40982fc067` control | `local -a options` still HIDES the magic row |
+| `reg_tilde_pattern_operand_no_glob` | `d30f91f8ed` | `${v%%${~cm}*}` must not glob the enclosing expansion |
+| `reg_tilde_pattern_operand_still_applies` | `d30f91f8ed` control | the nested `~` must still make the pattern a pattern |
+| `reg_chained_subscript_search_bound` | `d7058390e7` 1+2 | `${a[1,(r)d][(I)C]}` returns the element, `${a[1,4][(I)C]}` the index |
+| `reg_chained_subscript_comma_token` | `d7058390e7` 3 | the `Comma` token inside a nested expansion |
+| `reg_ssub_split_and_quote` | `d7058390e7` 4 | `PREFORK_SINGLE` reaching paramsubst for a `${(flags)NAME[SUB]}` RHS |
+| `reg_zparseopts_long_spec_unguarded` | `93de3309af` | `-move=opt_move` unguarded — verbatim `zinit-install.zsh:1528` |
+| `reg_magic_equal_quoted_not_expanded` | `c7cd9ee0f1` | a QUOTED `=`/`~` is not a lexer token, so `--a='b:=c'` survives |
+| `reg_magic_equal_unquoted_still_expands` | `c7cd9ee0f1` control | `P=/bin:=ls` must still expand |
+| `reg_paramsubst_colon_not_pathlist` | `b26c3ccd61` | the colon of `${VAR:=default}` is not a path-list separator |
+| `reg_transpose_words_eol` | `44a3b4841c` 4 | `M-t` at end of line — the panic AND the wrong transposition |
+| `reg_complist_lc_rc_markers` | `6fa67cb221` | `lc=`/`rc=` honoured when listing matches — the single gap behind 73 of 88 failing Y assertions |
+| `reg_nested_anon_fn_compile_depth40` | `b4ad35079c` 2 | 40 nested `() { }` compile in 0.06 s, not `(4/3)^N` |
+| `reg_zparseopts_stacked_flags` | — | **DIVERGES TODAY** — see below |
+| `reg_zparseopts_n_before_array` | — | **DIVERGES TODAY** — see below |
+| `reg_typeset_to_unset_pattern_hide` | — | **DIVERGES TODAY** — see below |
+| `reg_multibyte_closure_c_locale` | — | **DIVERGES TODAY** — see below |
+| `reg_zle_pre_redraw_hook_init.zsh` | — | **DIVERGES TODAY** — `zle-line-pre-redraw` does not fire; see below |
+
+### The completer-shaped guards need `--init-extra`
+
+Three of today's fixes are in code no host completer reaches, so their guard is
+a completer written for the occasion. Those cannot be corpus entries — a corpus
+entry is a buffer, keys and zstyle statements, and none of those can define a
+completion function. They ship as `reg_*_init.zsh` sidecars instead, in the
+same spirit as the `fp_*_styles.zsh` sidecars, each carrying its own replay
+command in a comment at the top:
+
+```sh
+scripts/comptab_parity.py --init-extra scripts/parity_corpus_fuzz/reg_printfmt_percent_escapes_init.zsh \
+                          --case 'true ' --keys ctrl-d --compare-attrs --strict-stream
+scripts/comptab_parity.py --init-extra scripts/parity_corpus_fuzz/reg_zle_pre_redraw_hook_init.zsh \
+                          --case 'ls /usr' --keys tab
+scripts/comptab_parity.py --init-extra scripts/parity_corpus_fuzz/reg_zle_line_init_control_init.zsh \
+                          --case 'ls /usr' --keys tab -v
+```
+
+They cover `44a3b4841c` items 2 and 3 (printfmt's `%` escape switch, and the
+erase-to-EOL every listing row is terminated with) and `b122d9cbe1`'s
+`zle-line-pre-redraw` hook plus its control.
+
+The printfmt one is a real guard, verified not vacuous — `-v` shows all eight
+explanation strings rendered and byte-identical on both shells, including the
+one that named the bug:
+
+```
+   0| @CT@ true          7| fg              12| h1  h2
+   1| bold               8| f1  f2          13| Xzero
+   2| b1  b2             9| bg              14| z1  z2
+   3| under             10| k1  k2          15| 100% pct
+   4| u1  u2            11| hi
+```
+
+`hi`, not `Hhih`; `100% pct`, not `100%% pct`. PASS in 4.7 s.
+
+A fourth sidecar for `b122d9cbe1` item 1 (`zle -T tc`) was written and then
+DELETED rather than shipped. A `tc` hook suppresses terminal capabilities by
+design, so with zsh's own `tcfunc(){ REPLY="" }` the reference shell could not
+draw its own prompt and the cell FAILED on `codelabs-arm% source <path>`
+instead of the `@CT@` sentinel (3 rows, fingerprint `5af453e279`). Narrowing it
+to a single capability (`[[ $1 == le ]]`) produced the same garbled reference
+screen. That is a probe defect, and a file that always FAILs for the wrong
+reason is worse than no file: someone would read it as a divergence. `zle -T
+tc` is structurally out of reach for a grid-diff harness — it deliberately
+breaks the terminal it would be measured on.
+
+**The pre-redraw one is not a guard — it found the bug still there.** First run
+of `--init-extra`, FAIL in 46.8 s, fingerprint `0602148f26`:
+
+```
+zsh   : @CT@ ls /usr [PRD]
+zshrs : @CT@ ls /usr
+```
+
+with the widget being `_f() { POSTDISPLAY=' [PRD]' }; zle -N zle-line-pre-redraw _f`.
+The control rules out the obvious alternative explanation: the same body bound
+to `zle-line-init` renders ` [LI]` on BOTH shells (PASS, 23.3 s, `-v` shows
+`@CT@ ls /usr [LI]` on each). So `POSTDISPLAY` works and the HOOK is what does
+not fire. `redrawhook` (`zle_main.c:1066`) is where every zsh syntax
+highlighter repaints `$region_highlight`.
+
+### Which of the day's fixes are OUT OF REACH here, and why
+
+Not a failure list — a blind-spot list. This harness compares two terminal
+grids after a typed buffer and a key sequence, so anything whose only evidence
+is not on a grid cannot be guarded from here.
+
+| fix | why it is out of reach |
+| --- | --- |
+| `44a3b4841c` 1 — SIGWINCH redraw | needs the window to be RESIZED mid-cell. The pty is created once at `--rows`x`--cols` and never resized; `tests/compsys_fixtures/listing_lost_on_window_shrink` has its own `winch_probe` for exactly this reason |
+| `44a3b4841c` 5 — `insert_positions`' second `cline_str` walk | its only observable is upstream's `INSERT_POSITIONS:{…}` line, which `Test/comptest` synthesises and no ordinary terminal ever shows |
+| `188f88cd98` — a corrupt `plugins.db` heals once | needs a corrupt database file staged before boot. `--init-extra` runs after `compinit`, which is far too late |
+| `8d3e39201e` — the six stock-utility fixes | reachable, but NOT from a corpus entry: they need the utility called directly. They are guarded by `--fn-sweep`, and the thirteen `fn/fn_*.json` findings ARE the guards — every one of them should now pass |
+| `b122d9cbe1` 2 and 3 — one attribute-off cap, `applytextattributes` | the divergence is in WHICH escape bytes are emitted, and two different escape sequences can paint an identical grid. `--compare-attrs` narrows it, `--strict-stream` sees only diagnostics; the raw stream is diffed on FAIL but not asserted on |
+| `2573335336` — `gethparam` held a read lock across the magic-hash scan | a deadlock, so the only expression available here is a TIMEOUT, which this harness (correctly) refuses to score as a divergence |
+| `b122d9cbe1` 1 — `zle -T tc` | a `tc` hook suppresses terminal capabilities by design, so the reference shell cannot draw a comparable screen at all. Measured both ways — suppress-everything and suppress-one — and both garble the reference. Out of reach here by construction |
+| `93de3309af`/`693889cb68` stacking | reachable, and it is one of the four `DIVERGES TODAY` rows — see below |
+
+### The four open divergences these entries pin
+
+**`zparseopts` stacking, against the 5.9.2 reference** (`reg_zparseopts_stacked_flags`,
+`reg_zparseopts_n_before_array`). Measured non-pty, `LC_ALL=C`, zshrs 0.12.49
+@10:38:
+
+```
+f(){ local -a o; zparseopts -DF - o:=o && print -r -- "o=<$o[*]>" }; f -o ab
+  /opt/homebrew/bin/zsh 5.9.2  rc=1  f:zparseopts: no default array defined: -DF
+  target/debug/zshrs           rc=0  o=<-o ab>
+
+f(){ local -a o; zparseopts -n nm - o:=o && print -r -- "o=<$o[*]>" }; f -o ab
+  /opt/homebrew/bin/zsh 5.9.2  rc=1  f:zparseopts: no default array defined: -n
+  target/debug/zshrs           rc=0  o=<-o ab>
+```
+
+This is a REFERENCE-CHOICE divergence, and it is the clearest single example of
+why two instruments disagree. `693889cb68` deliberately adopted upstream
+`88d51a2400`'s standard option parsing (stacking, `-n NAME`), and `93de3309af`
+then reverted only the LONG-SPEC half back to 5.9.2 because zshrs reports
+`$ZSH_VERSION=5.9.2`. So zshrs is 5.9.999 on stacking and 5.9.2 on long specs.
+`tests/ztst_compsys` compares against a built 5.9.999.3-test tree and sees
+agreement; this harness compares against `zsh` on `PATH`, which is Homebrew
+5.9.2, and sees a divergence. Neither instrument is wrong; they are answering
+different questions, and only running both asks both.
+
+**`TYPESET_TO_UNSET` + `typeset -h +g -m '*'` destroys `PATH`**
+(`reg_typeset_to_unset_pattern_hide`). Named in `tests/ztst_compsys/NOTES.md`
+as the highest-severity shape in the core corpus — it runs in `E03posix#1` and
+every later assertion in that file then fails with `command not found`. Still
+reproduces on 0.12.49 @10:38. Nothing in this corpus had ever typed it, which
+is precisely why this harness never saw it.
+
+**A literal multibyte character in a closure pattern, in the C locale**
+(`reg_multibyte_closure_c_locale`) — NEW, found 2026-08-30 while writing the
+guard for `b4ad35079c`. That commit fixed the HANG (`[[ éé = é# ]]` spun at
+100% CPU in `patcomppiece`'s literal-run backtrack). The ANSWER is still wrong:
+
+```
+LC_ALL=C <shell> -f -c 'setopt extendedglob; g=é; [[ éé = ${g}# ]]; print $?'
+  zsh 5.9.2   1
+  zshrs       0
+```
+
+It is source-representation specific rather than a pattern-matcher bug: the
+same bytes written `$'\xc3\xa9'` give 1 on BOTH shells, `${#s}` is 4 on both,
+and pure-ASCII multi-character runs agree (`[[ abab = ab# ]]` is 1 on both).
+Under `en_US.UTF-8` both answer 0. It matters to this harness specifically
+because `child_env` pins `LC_ALL=C`, so every cell here runs in the one locale
+where it is live.
+
+
 ## What is tracked in git, and what is not
 
 * **Tracked: `fp_*.json` (+ its `*_styles.zsh` sidecar).** These are the
@@ -78,6 +258,22 @@ sampling a fixture, which is the only way the VALUE grammar of a style
 (match specifications, completer chain order, tag-order, menu, format,
 list-colors, ...) gets exercised at all — subset sampling can only ever replay
 values that were already in `scripts/parity_zstyle.zsh`.
+
+Three run-wide flags apply to every mode and are new this round:
+
+```sh
+--dump FILE            # ALWAYS pass one on a shared machine; see --check-dump
+--init-extra FILE      # zsh appended to the init both shells source
+--silence-recheck 3    # separate a silent reference from a slow one
+```
+
+`--check-dump` is on by default and refuses a run whose dump registers no
+completions. Build a private one first and every number becomes reproducible:
+
+```sh
+zsh -fc 'autoload -Uz compinit; compinit -u -d $TMPDIR/dump'
+scripts/comptab_parity.py --dump $TMPDIR/dump ...
+```
 
 ```sh
 # 20 mutated inputs, anywhere in the corpus
@@ -383,6 +579,272 @@ callee is byte-identical on both shells.
 The TIMEOUT (`_wanted -2 -V g options expl opt compadd -o`) is one-sided
 silence from the REFERENCE zsh — no output for 10s, twice, including the serial
 re-run. Not scored as a pass, and named rather than folded into FAIL.
+
+
+### The rest of the router table (`--fn-derive`)
+
+The 24 probes above are hand-written because their interface is an argument
+GRAMMAR that has to be read out of the function's own `zparseopts` line. That
+left the rest of the table unswept — measured on this host, **24 of 246 router
+arms had a probe, so 223 were never called by this harness at all**.
+
+Most of the 223 do not HAVE a grammar. They are value generators — `_users`,
+`_file_modes`, `_locales`, `_terminals` — whose body ends in
+`_wanted`/`_description`/`compadd` and forwards `"$@"` as compadd options. For
+those a BARE call is the documented use: it is exactly what
+`_alternative 'users:user:_users'` writes. So the call is not invented, it is
+DERIVED, and the derivation is a scan of the function's own stock source:
+
+* resolve the name against `$fpath` the same way `fn_backend_map` does, so the
+  citation names the file that will really run;
+* strip comment lines and look for `$1`..`$9`, `${1`..`${9`, `$argv[` or
+  `shift`. Any of those means the function needs arguments this file cannot
+  invent, and NO probe is derived — the name is reported with the construct
+  that disqualified it, never quietly dropped;
+* `$@` / `$*` do not disqualify: forwarding an empty `"$@"` to compadd is the
+  passthrough shape and is well defined with no arguments;
+* a body that drives ZLE (`zle`, `vared`, `read -k`) is excluded and named — it
+  is a widget, and inside a completion widget it waits for input that never
+  arrives, so every such cell would be a TIMEOUT measuring the harness.
+
+Measured on this host, 2026-08-30:
+
+| | before | after |
+| --- | ---: | ---: |
+| functions with a probe | 24 | **170** |
+| generated calls | 99 | **391** |
+| router arms with no probe | 222 | **76**, each named with its reason |
+
+Of the 76: 70 use a positional, 4 have no file on this `$fpath`, and 2
+(`_complete_help_generic`, `_read_comp`) drive ZLE.
+
+```sh
+scripts/comptab_parity.py --fn-list --fn-derive          # the table and the 76 exclusions
+scripts/comptab_parity.py --fn-sweep --fn-derive 20      # the 24 + 20 derived
+scripts/comptab_parity.py --fn-sweep --fn-derive-only _users,_file_modes \
+                          --fn-only _users,_file_modes   # ONLY those two
+```
+
+`--fn-derive-only` ADDS to the table; it does not restrict the run. Pair it
+with `--fn-only` when the point is to drive just the derived ones, or the 24
+hand-written probes come along and the run is 103 cells instead of 4.
+
+`--fn-derive` is OPT-IN and a plain `--fn-sweep` still drives exactly the 24
+hand-written probes. That is deliberate: a full derived sweep is 391 calls,
+each booting two shells.
+
+**First derived cells, and they found something.** Two functions, four calls,
+35.4 s, 2026-08-30 over the private dump:
+
+```
+FAIL   _users/bare       _users                  [3de4771a42]  1 row differs
+FAIL   _users/group-J    _users '-J' 'zpfgrp'    [3de4771a42]  1 row differs
+PASS   _file_modes/bare      _file_modes
+PASS   _file_modes/group-J   _file_modes '-J' 'zpfgrp'
+```
+
+`3de4771a42` is an EXISTING fingerprint — the caller's `expl` comes back
+holding the callee's value, which the first sweep found on `_alternative` and
+`_path_files`. So no new fingerprint was written (correctly: the bug shape is
+already on file), but a new FUNCTION carries it, and it was found by the first
+two derived probes ever run. That is the whole argument for deriving the rest:
+the 24 hand-written probes were the framework, and the bug family they exposed
+lives in the 149 that were never called.
+
+### The return-status axis (`--fn-repeat`, `--fn-propagate`)
+
+`-- rc:` has always been in the report, and it is what caught `_setup`
+returning 0 where zsh returns 1 (`fn/fn_5e5ca020b9.json`) — so "the sweep does
+not compare return status" is not true of the default axis, and saying so would
+be the opposite mistake. What the report could NOT say is anything about status
+beyond the FIRST call, or about what the status DOES:
+
+* `--fn-repeat N` calls the utility N times in one probe and records
+  `-- rc[i]:` for each. `_next_label`, `_all_labels` and `_requested` are
+  written for `while _next_label …; do … done` and are documented to change
+  status across iterations; a port that gets the first answer right and never
+  changes it is invisible to a single-call probe. `N=1` (the default) emits the
+  report byte-identically to before, so no existing fingerprint moves.
+* `--fn-propagate` makes `_zpf_probe` RETURN the utility's status instead of a
+  hard 0. The hard 0 is load-bearing by default — it stops the completer chain
+  so a second completer cannot re-run the probe — but it also means the status
+  is only ever observed, never acted on. Propagated, `_main_complete` does what
+  it really does with a non-zero completer and moves down the `completer`
+  style, so a status divergence becomes a divergence in the SCREEN, including
+  on `--fn-keys ctrl-d` where there is no report at all.
+
+```sh
+scripts/comptab_parity.py --fn-only _next_label,_all_labels,_requested \
+                          --fn-sweep --fn-repeat 3
+scripts/comptab_parity.py --fn-only _setup --fn-sweep --fn-propagate --fn-keys ctrl-d
+```
+
+**Measured, and it found nothing — stated as such rather than left implied.**
+Both commands above were run 2026-08-30 over the private dump against zshrs
+0.12.49 @10:38:
+
+| run | cells | result |
+| --- | ---: | --- |
+| `--fn-repeat 3` over `_next_label`, `_requested`, `_all_labels` | 11 | 11 PASS, 68.6 s, 0 fingerprints |
+| `--fn-propagate --fn-keys ctrl-d` over `_setup` | 4 | 4 PASS, 18.1 s, 0 fingerprints |
+
+Three of those cells are pinned fn findings that this confirms are FIXED:
+`_all_labels/no-action` (`4a4f853fa6`) and `_all_labels/dash-prev`
+(`8379d2af48`) now pass, as do `_description/plain` (`b3c97da2eb`) and
+`_values/plain` (`df47ae1cbe`) on the baseline run. So the axis works and the
+functions it was pointed at are clean; it has not yet earned its cost on any
+function, and 146 derived probes have not been through it.
+
+
+## What each instrument can and cannot see
+
+Five harnesses now compare completion behaviour, and a fixing round on
+2026-08-30 established that they do not overlap the way their descriptions
+suggest: the 36 caller-state corruptions `--fn-sweep` found moved zsh's own
+Y-series oracle by **exactly zero** assertions, and the Y oracle's own top
+finding (`argv+=` discarding the positionals) has no upstream `.ztst` coverage
+of its own — `grep 'argv+=' Test/*.ztst` finds nothing. So the question worth
+measuring is not "how many bugs does each find" but "what is each one
+structurally unable to see".
+
+What follows is measured against this harness. Every MISS names the mechanism.
+
+### The dump has to be checked FIRST, or none of this measures anything
+
+The first attempt at this matrix produced six "one-sided silence" misses and
+one fixture that appeared to have been FIXED. All seven were artefacts, and the
+cause is worth more than the matrix was:
+
+```
+$ ls -l ~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies
+-rw-r--r--  1 wizard staff  1 Aug 30 10:44
+
+$ zsh -f -c 'fpath=(...); autoload -Uz compinit
+             compinit -C -d ~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies
+             print "comps=$#_comps"'
+comps=0
+```
+
+A peer instance truncated the shared dump to ONE BYTE at 10:44. `resolve_dump`
+globs that file out of `$HOME` by default, so from 10:44 onward every cell was
+comparing two shells with no completion system at all — and the harness scored
+the agreement:
+
+```
+--case 'ls /usr/sha' --keys tab      PASS      (buffer still `ls /usr/sha`)
+```
+
+That is the `--skip-missing` fake-pass class one layer down: not "the command
+is missing" but "the completion system is missing". It also manufactures the
+one-sided silences, because a shell that completes nothing emits nothing.
+
+`--check-dump` (ON by default) now asks real zsh for `$#_comps` before any pty
+boots and refuses the run if the answer is zero, naming the file and its size.
+`--allow-empty-dump` overrides. Refusing can only ever remove fake evidence.
+Every number below was taken against a private dump built into `$TMPDIR`
+(`comps=51704`), passed with `--dump`, so nothing in this section depends on a
+file other processes rewrite.
+
+### The 29 pinned fixtures, replayed through this harness
+
+Fifteen cells replayed 2026-08-30 against `target/debug/zshrs` 0.12.49 @10:38
+and Homebrew zsh 5.9.2, `--confirm 1 --silence-recheck 3`, over the private
+dump. The rest are reasoned about from the harness's interface and marked so.
+
+| fixture | this harness | evidence / reason |
+| --- | --- | --- |
+| `cc_match_set` | **DETECTED** | FAIL, 4 rows differ, 9.4 s — the same detail the fixture pins |
+| `equals_word_line_rewrite` | **DETECTED** | FAIL, 5 rows, 9.0 s |
+| `equals_word_arg_position` | **DETECTED** | FAIL, 5 rows, 8.8 s |
+| `completer_style_missing_function` | **DETECTED** | FAIL, 4 rows, 9.4 s |
+| `match_count_ask_prompt` | **DETECTED** | FAIL, 1 row, 9.1 s |
+| `path_assign_menu_next_trailing_slash` | **DETECTED** | FAIL, 1 row, 10.5 s |
+| `last_prompt_false_no_redraw` | **DETECTED** | FAIL, 1 row, 9.8 s |
+| `multiline_array_literal` | **DETECTED** | FAIL, 4 rows, 9.7 s — a `compsys_parity` fixture this harness turns out to see, because a `\n` in `--case` is sent raw and both shells continue on PS2 |
+| `multiline_heredoc_terminator` | **DETECTED** | FAIL, 8 rows, 8.7 s |
+| `multiline_backslash_continuation_cd` | **DETECTED** | FAIL, 4 rows, 9.7 s (needs its `list-grouped false` zstyle; without it, PASS) |
+| `reference_crash_uppercase_autoload` | **DETECTED** | `REF-CRASHED`, zsh died on signal 10 (SIGBUS), 14.4 s. The upstream defect reproduces here under the private dump — over the shared 1-byte one it passed 3/3, which is the same artefact |
+| `transpose_words_panic` (guard) | DETECTED, holds | PASS, 24.6 s. Now `reg_transpose_words_eol.json` |
+| `argv_append_discards_positionals` (guard) | DETECTED, holds | PASS, 4.1 s, as a typed script plus `cr`. Now `reg_argv_append_pparams.json` |
+| `dotted_parameter_name_accepted` | DETECTED | FAIL, 1 row differs, 8.1 s, as a typed script plus `cr` |
+| `multiline_squote_corrections` | MISSED — one-sided silence | TIMEOUT, 62.1 s. The reference produced NOTHING after `tab` at 10 s and again at 30 s while zshrs drew a screen — `--silence-recheck 3` confirms silence, not budget. A real divergence the harness cannot score |
+| `multiline_dquote_parameter_list` | MISSED — one-sided silence | TIMEOUT, 63.0 s, same shape, same confirmation |
+| `fpath_underscore_name_runs_undeclared` | MISSED, structural | needs a file STAGED in a scratch `$fpath` before boot. `--init-extra` runs after `compinit`, far too late; `--layout-fuzz` can stage one and its first run found this exact bug independently |
+| the 8 `compsys_spec_fuzz` fixtures | MISSED, now REACHABLE | each needs a completer generated for the occasion — an `_alternative` spec, a `compset -P`, a `zle -C` widget, a `compdef -K` binding. No mode here could define one; that is what `--init-extra` was added for |
+| `listing_lost_on_window_shrink` | MISSED, structural | the pty is sized once at `--rows`x`--cols` and never resized |
+| `listing_row_erase_to_eol` | MISSED, structural | the assertion is on `\e[K` in the raw STREAM. `--strict-stream` compares diagnostics, not escapes, and two different escape sequences can paint an identical grid |
+
+Read plainly: with a healthy dump this harness detects **11 of the 13 pinned
+divergences it can express**, including four `compsys_parity` multiline
+fixtures and one `zsh_reference_probe` crash that were attributed to other
+harnesses. The two it misses are one-sided silences, and the eight
+`compsys_spec_fuzz` ones were unreachable until `--init-extra`.
+
+### The named ztst causes, against this harness
+
+| cause | this harness | reason |
+| --- | --- | --- |
+| `ZLS_COLORS` `lc=`/`rc=` ignored (73 of 88 Y assertions) | MISSED — now CLOSED | `GEN_LIST_COLORS`, the `--style-fuzz` value table, held `ma di ln ex no fi so or sp ec` and pattern forms but **no `lc=` or `rc=`**. The hardcoded `\e[`+cap+`m` in `zlrputs` was byte-correct for every value the generator could produce, so no amount of style fuzzing could ever have reached it. `lc=`/`rc=`/marker forms added to the table, and `reg_complist_lc_rc_markers.json` pins it |
+| `zparseopts` mis-parses its own option words (20) | MISSED — now CLOSED, and it DIVERGES against 5.9.2 | nothing in the corpus typed a `zparseopts` call. Three `reg_zparseopts_*` entries; two of them are open divergences against the 5.9.2 reference (above) |
+| `${~var}` in a nested pattern operand (20) | MISSED — now CLOSED | same reason: no corpus entry typed the construct. `reg_tilde_pattern_operand_*` |
+| `TYPESET_TO_UNSET` + `typeset -h +g -m '*'` (10) | MISSED — now CLOSED, still DIVERGES | same reason. `reg_typeset_to_unset_pattern_hide` |
+| `argv+=` (Y series, no upstream coverage) | MISSED — now CLOSED | same reason. `reg_argv_append_pparams` |
+| the four hangs (D04, D07, W02, X06) | PARTIAL | a hang can only ever be a TIMEOUT here, and a TIMEOUT is deliberately not scored as a divergence. Two of the four are typed-buffer reachable and are now pinned as timing guards |
+| GDBM `ztie` (27), `zsh/random` (8) | NOT APPLICABLE | module availability on the build, not shell behaviour |
+| `zformat -q`/`-Q` (6) | NOT APPLICABLE to completion | `Completion/` uses only `-f`/`-F`/`-a`, and `NOTES.md` refutes V13zformat as a compsys cause. `zformat -F` with `_description:89`'s exact call is byte-identical on both shells |
+
+### The reverse: what this harness finds that the ztst oracle cannot
+
+| finding | why upstream's suite cannot see it |
+| --- | --- |
+| the 13 `fn/fn_*.json` caller-state divergences | upstream drives completion through `comptest` KEYSTROKES. It never calls a utility directly, so `expl` leaked out of a callee, `expl` deleted from the caller, `_lastdescr` short by one element, or `_setup`'s status are invisible unless they change a rendered match line. Demonstrated, not argued: fixing all 36 of those state checks moved the Y-series oracle by zero assertions |
+| the `fp_*.json` style-fuzz reproducers | upstream's Y files set one fixed style set in `comptestinit`. They never vary the VALUE grammar of `matcher-list`, `tag-order`, `group-order`, `format` or `list-colors`, so a config-shaped divergence has nothing to come from |
+| the `--layout-fuzz` findings — an undeclared `_name` in `$fpath` being executable, `compinit -i` not dropping an insecure directory, doubled-colon error frames | `Test/comptest` builds ONE layout: one fpath, one dump, one `compinit` invocation. Where a completer is stored and how it is found is not an axis upstream varies at all |
+| the `zparseopts` stacking divergence | upstream's oracle is a BUILT 5.9.999.3-test tree, which has `88d51a2400`; this harness's oracle is `zsh` on `PATH`, which is 5.9.2, which does not. The two references disagree, so only running both asks both questions |
+| the C-locale multibyte closure answer | upstream's suite runs in the host locale; `child_env` here pins `LC_ALL=C`, which is the one setting where this bug is live |
+
+### The two gaps this round measured
+
+**1. An input the harness never checked.** The dump section above is the
+bigger of the two: a shared file, rewritten by other processes, silently
+turning every cell into a comparison of two shells with no completion system.
+It produced seven wrong rows in the first draft of the matrix above — six false
+"one-sided silence" misses and one fixture that appeared to have been fixed —
+and it would have shipped as a finding. `--check-dump` refuses that run now.
+
+**2. A reference shell that legitimately produces nothing is
+indistinguishable from one that is hanging**, so the cell becomes a TIMEOUT and
+is never compared. Two of the fifteen cells replayed above survive a healthy
+dump and still die on this: `multiline_squote_corrections` and
+`multiline_dquote_parameter_list`, where the reference draws nothing after
+`tab` while zshrs draws a screen.
+
+The TIMEOUT rule is not wrong — `timeout_reasons` only fires for a ONE-SIDED
+silence, precisely so that a key which legitimately draws nothing on BOTH
+shells is still compared, and the "it might just be slow" hypothesis has to be
+disproved before the label can be dropped. So it was disproved, by measurement:
+`--silence-recheck 3` re-measured both cells at 30 s and both were still
+silent.
+
+Two additions came out of that, both of which only ever make the harness
+measure MORE:
+
+* `--key-budget SECONDS` — how long to wait for the first byte after a key
+  (default 10.0, unchanged). It can only make the harness wait longer.
+* `--silence-recheck X` — on a one-sided-silence TIMEOUT, re-measure once at X
+  times the budget. If the side is still silent the detail line says
+  `ONE-SIDED SILENCE, not budget` and the JSON carries
+  `one_sided_silence: true`. The STATUS deliberately stays `TIMEOUT`: six run
+  modes each keep their own counters and exit expression over a fixed label
+  set, and a new label missed in one of them would drop the cell out of the
+  exit status. Non-pass and non-zero exit are inherited unchanged. OFF by
+  default, and it hangs off the existing serial TIMEOUT re-check, so
+  `--no-timeout-recheck` disables it too.
+
+Order matters between the two: run the silence recheck over an empty dump and
+it will confidently report silence that is really a missing completion system.
+`--check-dump` is a precondition for the rest of the instrument, not a
+convenience.
 
 
 ## Storage and lookup (`--layout-fuzz`)

@@ -1,0 +1,10 @@
+{
+  "buffer": "f(){ local -a m q; zparseopts -D -E -move=m -q=q; print -r -- \"rc=$? m=<$m[*]> q=<$q[*]>\" }; f -q",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards 93de3309af \u2014 zshrs reports $ZSH_VERSION=5.9.2, and 5.9.2 has no 'long-option specs must be guarded' rule. Verbatim ~/.zinit/bin/zinit-install.zsh:1528 (ziextract), i.e. the whole plugin stack.",
+  "origin": "regression/2026-08-30/93de3309af",
+  "statements": []
+}
