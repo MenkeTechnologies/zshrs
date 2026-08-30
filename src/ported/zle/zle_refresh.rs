@@ -1704,9 +1704,32 @@ pub fn zrefresh() {
                 in_invisible = true; // Inpar — %{ begins zero-width span
             } else if c == '\u{2}' {
                 in_invisible = false; // Outpar — %} ends it
-            } else if in_invisible {
-                // Zero-width by contract; SGR inside the span was already
-                // parsed by the in_esc arm above.
+            } else if in_invisible && c != '\n' && c != '\r' {
+                // PRINTABLE text inside `%{…%}`. C prints it — `zputs`
+                // (Src/utils.c:5265-5282) skips only the Inpar/Outpar
+                // markers, so everything between them reaches the terminal —
+                // while `countprompt` (prompt.c:1179-1184) does not count it,
+                // which is why LPROMPTW stays the VISIBLE width.
+                //
+                // This port paints the prompt into the video buffer instead
+                // of relying on a print-once, so the cells have to match what
+                // the terminal was actually sent: dropping them left the
+                // video model believing rows the terminal had text on were
+                // empty, and the diff erased them. powerlevel10k puts every
+                // line above its last one inside one `%{…%}` region, so all
+                // that survived was the final `╰─ … ❯` line.
+                //
+                // Width accounting is unchanged: LPROMPTW still comes from
+                // `countprompt`, so a `%{…%}` span used the normal way (to
+                // hide escape sequences) contributes no cells here either —
+                // its bytes are consumed by the `in_esc` arm above.
+                let _ = emit(&mut rpms, c, prompt_attr);
+                just_wrapped = rpms.pos == 0;
+            } else if in_invisible && c == '\r' {
+                // A bare CR inside the hidden span: C sends it, the terminal
+                // homes the column. Nothing is erased, so only the model's
+                // column moves.
+                rpms.pos = 0;
             } else if c == '\n' {
                 // countprompt `w = 0; h++` (prompt.c:1204-1206), with the
                 // exactly-full-row absorption above.

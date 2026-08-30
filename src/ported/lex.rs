@@ -3931,11 +3931,66 @@ pub fn exalias() -> bool {
     }
 
     let tokstr = tokstr().unwrap();
-    // lex.c:1973-1980 — untokenize: convert the lexer's internal
-    // tokenized form (Pound..ztokens shifts) into the literal
-    // shell text. Call the global helper.
+    // c:1973-1980 —
+    // ```c
+    //     VARARR(char, copy, (strlen(tokstr) + 1));
+    //     if (has_token(tokstr)) {
+    //         char *p, *t;
+    //         zshlextext = p = copy;
+    //         for (t = tokstr; (*p++ = itok(*t) ? ztokens[*t++ - Pound] : *t++););
+    //     } else
+    //         zshlextext = tokstr;
+    // ```
+    // EVERY token char maps back through `ztokens` (c:38), quote markers
+    // included: `Snull` → `'`, `Dnull` → `"`, `Bnull` → `\`. So a word the
+    // user quoted keeps its quote characters here, and that is precisely
+    // what stops `'jl'` / `"if"` / `\;` from matching an alias or a
+    // reserved word further down — the lookup key is `'jl'`, not `jl`.
+    //
+    // The general-purpose `untokenize` helper (lex.rs:5870) STRIPS
+    // Snull/Dnull instead, because its other callers walk the
+    // substitution stream where the markers must not reappear as literal
+    // quotes. Routing exalias through it made the lookup key `jl`, so a
+    // QUOTED word matched an alias: with `alias -g jl='| less -rMN'` set,
+    // re-parsing a function body containing `JULIA_ICON 'jl'` expanded the
+    // quoted element into `| less -rMN` mid-array and the parse died with
+    // "expected `)' after array assignment". The reserved-word half of the
+    // same divergence was already patched twice downstream via
+    // `tokstr_has_quote_marker` (docs/BUGS.md #14, #19, #283); building the
+    // text C's way fixes the class at the source.
     let lextext = if has_token(&tokstr) {
-        untokenize(&tokstr)
+        let zt = ztokens.as_bytes();
+        let chars: Vec<char> = tokstr.chars().collect();
+        let mut copy = String::with_capacity(tokstr.len());
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            // Rust-only: zshrs metafies at the CHARACTER level, so a raw
+            // high byte is stored as the pair (Meta, byte ^ 0x20) and that
+            // continuation char can land inside the ITOK range. C's copy
+            // loop is byte-based and has no such pair to protect; copy it
+            // verbatim, exactly as `untokenize` (lex.rs:5895) does.
+            if c as u32 == 0x83 && i + 1 < chars.len() {
+                copy.push(c);
+                copy.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            let cu = c as u32;
+            if (0x84..=0xa1).contains(&cu) {
+                // c:1979 — `ztokens[*t - Pound]`. `Nularg` (0xa1) indexes
+                // the table's terminating NUL, which ends C's copy string;
+                // stop here for the same effect.
+                match zt.get((cu - 0x84) as usize) {
+                    Some(&b) => copy.push(b as char),
+                    None => break,
+                }
+            } else {
+                copy.push(c);
+            }
+            i += 1;
+        }
+        copy
     } else {
         tokstr.clone()
     };
@@ -3987,12 +4042,12 @@ pub fn exalias() -> bool {
         // therefore FAILS for any quoted `}` and the reswd lookup
         // never fires.
         //
-        // zshrs's untokenize at lex.rs:4275 STRIPS Snull/Dnull/Bnull
-        // entirely (intentional — many call sites rely on the
-        // markers being gone), so lextext for `"}"` is just `}` (1
-        // byte). To still reject quoted `}` from the reswd path, we
-        // gate `is_close_brace_special` on the original tokstr NOT
-        // containing any quote-marker bytes. Bug #14 in BUGS.md:
+        // `lextext` above is now built C's way (quote markers mapped
+        // back through `ztokens`), so a quoted `"}"` already reads as
+        // the 3-char string `"}"` and cannot reach this branch. The
+        // `tokstr_has_quote_marker` gate is kept as the explicit
+        // statement of that rule for any caller that hands exalias a
+        // pre-stripped token. Bug #14 in BUGS.md:
         // `[[ x == "}" ]]` and `echo "}"` both used to silently
         // discard the `}` because exalias promoted the quoted `}`
         // to OUTBRACE_TOK.
@@ -4022,10 +4077,12 @@ pub fn exalias() -> bool {
         // quote markers AS THEIR LITERAL QUOTE CHARS in `lextext` (via
         // the ztokens table). So C's lextext for `"if"` is the 4-byte
         // string `"if"` (quotes intact) and reswd_lookup against `"if"`
-        // never matches the bare reswd `if`. zshrs's untokenize at
-        // lex.rs:4275 STRIPS those markers entirely (so lextext is
-        // `if`), which would spuriously promote a quoted token to a
-        // reserved word. Bug #19 in docs/BUGS.md: quoted patterns like
+        // never matches the bare reswd `if`. `lextext` above is built
+        // the same way now; the `tokstr_has_quote_marker` gate below
+        // states the rule explicitly rather than relying on it. Before
+        // that, exalias untokenized through the marker-STRIPPING helper
+        // and a quoted token was promoted to a reserved word.
+        // Bug #19 in docs/BUGS.md: quoted patterns like
         // `"!"`, `"if"`, `"{"`, `"}"` in non-first case branches
         // parsed as the corresponding reswd (BANG_TOK / IF / INBRACE
         // / OUTBRACE) and triggered "expected ')' in case pattern".

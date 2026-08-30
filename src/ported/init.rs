@@ -409,15 +409,35 @@ pub fn parseopts(
             *idx += 1;
             continue;
         }
+        // c:Src/init.c:432-460 — GNU-style long options. C rewrites `-`
+        // to `_` in the name and falls into the shared `longoptions:`
+        // label, so `--no-rcs` is exactly `-o no_rcs`.
+        //
         // zshrs-specific long flags (`--zsh`, `--bash`, `--dap`, …) are
-        // NOT zsh options and the faithful c:511 `optlookup` would reject
-        // them with "no such option". They are consumed by the bin's
-        // front-end before zsh_main, so any remaining `--long` here is
-        // skipped rather than ported through optlookup. (This is the one
-        // deliberate divergence — it's why the prior port stubbed the
-        // whole loop; the single-letter / `-o` forms below are safe to
-        // apply faithfully.)
-        if arg.starts_with("--") {
+        // NOT zsh options; the bin's front-end consumes them before
+        // zsh_main and c:492's `optlookup` would reject them with "no
+        // such option", so an unrecognised `--NAME` is still skipped
+        // here. That is the deliberate divergence. Skipping ALL of them
+        // was too broad: a long flag that IS a real option never reached
+        // the option table, so `zshrs --no-rcs` left RCS set and an
+        // interactive shell still sourced .zshenv/.zshrc, while the
+        // equivalent `-f` and `-o norcs` both suppressed them (the rc
+        // gate is `isset(RCS)` at init.rs:1546/1568).
+        if let Some(long) = arg.strip_prefix("--") {
+            let name = long.replace('-', "_"); // c:456-459
+            let optno = crate::ported::options::optlookup(&name); // c:492
+            if optno != crate::ported::zsh_h::OPT_INVALID {
+                if emulate_required {
+                    parseopts_setemulate(_nam, flags); // c:488-490
+                    emulate_required = false;
+                }
+                // c:498 — `dosetopt(optno, action, toplevel, new_opts)`.
+                // `action` is true for a `-`-introduced word (c:420);
+                // optlookup answers a NEGATIVE optno for a `no…`
+                // spelling and dosetopt inverts on that, which is what
+                // the `-o` arm above already relies on.
+                crate::ported::options::dosetopt(optno, 1, toplevel as i32);
+            }
             *idx += 1;
             continue;
         }
@@ -2610,6 +2630,50 @@ mod tests {
             "-c must capture the next arg as the command"
         );
         assert_eq!(idx, 2, "idx must advance past both -c AND its arg");
+    }
+
+    /// c:Src/init.c:456-460 — a GNU-style `--LONG` option is rewritten
+    /// (`-` becomes `_`) and applied through optlookup + dosetopt, so
+    /// `--no-rcs` is exactly `-o no_rcs`.
+    ///
+    /// This arm used to skip EVERY `--NAME`, so a long-spelled option
+    /// never reached the option table: `zshrs --no-rcs -i` left RCS set
+    /// and still sourced .zshenv/.zshrc (the gate is `isset(RCS)` in
+    /// `run_init_scripts`), while `-f` and `-o norcs` both suppressed
+    /// them. Non-interactive `-c` masked it because nothing reads .zshrc
+    /// there.
+    #[test]
+    fn parseopts_long_option_reaches_the_option_table() {
+        let _g = crate::test_util::global_state_lock();
+        for spelling in ["--no-rcs", "--norcs", "--no_rcs"] {
+            crate::ported::options::opt_state_set("rcs", true);
+            assert!(isset(RCS), "precondition for {}: RCS starts on", spelling);
+            let mut argv = vec![spelling.to_string()];
+            let mut idx = 0usize;
+            let mut cmd: Option<String> = None;
+            let r = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 1);
+            assert_eq!(r, 0, "{} must parse cleanly", spelling);
+            assert!(!isset(RCS), "{} must clear RCS, like -f does", spelling);
+            assert_eq!(idx, 1, "{} consumes exactly one slot", spelling);
+        }
+        crate::ported::options::opt_state_set("rcs", true);
+    }
+
+    /// The deliberate divergence from c:492 must hold: zshrs-only long
+    /// flags (`--zsh`, `--dap`, …) are NOT zsh options, are consumed by
+    /// the bin front-end, and must be skipped here rather than rejected
+    /// with "no such option". Guards the fix above from over-reaching.
+    #[test]
+    fn parseopts_skips_zshrs_specific_long_flags() {
+        let _g = crate::test_util::global_state_lock();
+        for flag in ["--zsh", "--bash", "--zsh-compat", "--dap"] {
+            let mut argv = vec![flag.to_string()];
+            let mut idx = 0usize;
+            let mut cmd: Option<String> = None;
+            let r = parseopts("zsh", &mut argv, &mut idx, &mut cmd, 1);
+            assert_eq!(r, 0, "{} must not be rejected", flag);
+            assert_eq!(idx, 1, "{} must still be consumed", flag);
+        }
     }
 
     /// c:418 — `parseopts` stops at the first non-option positional.
