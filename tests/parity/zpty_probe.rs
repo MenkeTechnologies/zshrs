@@ -183,6 +183,27 @@ pub const DUMP_WIDGET: &str = concat!(
     r#"zpty -w w 'bindkey -M vicmd "^X^G" dumpbuf'"#,
 );
 
+/// Same widget, but dumping an ARBITRARY expression — `$KEYMAP`,
+/// `$LBUFFER`/`$RBUFFER`, `$PREBUFFER`, `$LASTWIDGET`, `$NUMERIC` — so
+/// a probe can measure whichever piece of editor state it is about
+/// rather than only the buffer and cursor.
+///
+/// `expr` is inserted into `print -r -- <expr>` inside the widget, so
+/// it must be a shell word: `"KM=[$KEYMAP]"`, quotes included.
+pub fn dump_widget(expr: &str) -> String {
+    format!(
+        concat!(
+            r#"zpty -w w 'dumpbuf(){{ print -r -- {expr} >! $OUTFILE }}; "#,
+            r#"zle -N dumpbuf; bindkey "^X^G" dumpbuf'"#,
+            "\n",
+            r#"zpty -w w 'bindkey -M vicmd "^X^G" dumpbuf'"#,
+            "\n",
+            r#"zpty -w w 'bindkey -M viins "^X^G" dumpbuf'"#,
+        ),
+        expr = expr
+    )
+}
+
 /// Keystrokes that fire `dumpbuf`.
 pub const DUMP_KEY: &str = "zpty -w -n w $'\\C-x\\C-g'\nsleep 2";
 
