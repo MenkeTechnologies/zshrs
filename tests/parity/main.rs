@@ -67,6 +67,7 @@ mod fuzz_discovered_parity;
 mod getopts_deep_parity;
 mod glob_numeric_parity;
 mod history_expansion_parity;
+mod history_options_parity;
 mod glob_parity;
 mod glob_qualifiers_real_parity;
 mod hashed_magic_shadow_parity;
