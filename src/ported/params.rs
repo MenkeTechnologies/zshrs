@@ -6391,7 +6391,29 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
                 // an empty Vec so the C "param exists, no entries" shape
                 // is preserved (vs returning None which means "param
                 // doesn't exist").
-                {
+                // c:Src/params.c:717 — `paramvalarr(v->pm->gsu.h->getfn(v->pm),
+                // v->scanflags)`. For a SPECIALPMDEF magic hash (`commands`,
+                // `functions`, `builtins`, `parameters`, `jobtexts`, …) that
+                // `getfn` hands back a FAKE HashTable whose `scantab` is the
+                // module's `scanpm*` fn (Src/module.c createspecialhash), so
+                // the scan below — not any stored map — is the backing. zshrs
+                // keeps ordinary assoc contents in the name-keyed
+                // `paramtab_hashed_storage` map, and the seeded row for a
+                // magic name left an EMPTY map there which answered first and
+                // shadowed the scanfn. `compadd -k commands`
+                // (Completion/Unix/Type/_path_commands sh:103) then returned
+                // ZERO matches in a fresh shell — command-name completion
+                // offered builtins only, and only started working once some
+                // other `$commands` read had gone through the scanfn (which
+                // runs `fillcmdnamtable` under HASH_LIST_ALL,
+                // Src/Modules/parameter.c:253). Skip the map for a live
+                // (non-shadowed) PARTAB name; a `local -A commands` shadow
+                // makes `magic_special_shadowed` true and the map wins again.
+                let magic_ = crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .any(|e_| e_.name == name)
+                    && !crate::vm_helper::magic_special_shadowed(name);
+                if !magic_ {
                     let store = paramtab_hashed_storage().lock().ok()?;
                     if let Some(m) = store.get(name) {
                         return Some(m.values().cloned().collect()); // c:3124
@@ -6475,7 +6497,14 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                 // return keys instead of values. Empty-storage
                 // fallback identical: Some(empty Vec) for "exists,
                 // no entries" shape.
-                {
+                // c:Src/params.c:717 — same magic-hash rule as `gethparam`
+                // above: the scanfn IS the backing for a PARTAB name, so an
+                // empty `paramtab_hashed_storage` row must not answer for it.
+                let magic_ = crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .any(|e_| e_.name == name)
+                    && !crate::vm_helper::magic_special_shadowed(name);
+                if !magic_ {
                     let store = paramtab_hashed_storage().lock().ok()?;
                     if let Some(m) = store.get(name) {
                         return Some(m.keys().cloned().collect()); // c:3138
