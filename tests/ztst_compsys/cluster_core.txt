@@ -5,40 +5,52 @@ assertions: 350
 clusters  : 103
             27 with 2+ members, 76 singletons
 
-| n | files | key |
-|---|---|---|
-| 74 | A01grammar,A03quoting,A06assign,B01cd,B02typeset,B03print,B07emulate,B10getopts,C02cond,C04funcdef,D02glob,D04parameter,D06subscript,D07multibyte,E01options,E02xtrace,K01nameref,V01zmodload,V04features,V06parameter,V10private,V13zformat,W03jobparameters,X03zlebindkey | output: same number of lines, different values |
-| 27 | A01grammar,A05execution,B12limit,C03traps,D01prompt,E01options,V01zmodload,V04features,V11db_gdbm | (no witness: not reproducible standalone) |
-| 27 | V11db_gdbm | sut diagnostic: error opening database file |
-| 20 | V12zparseopts,Z04zgetopt | sut diagnostic: no default array defined: |
-| 19 | A04redirect,A06assign,B02typeset,C03traps,C04funcdef,D04parameter,D10nofork,E01options,K01nameref,V10private,X05zleincarg | output: 1 line(s) missing from the shell under test |
-| 15 | A01grammar,A02alias,A06assign,B02typeset,B04read,D04parameter,D10nofork,E01options,K01nameref,V01zmodload,V13zformat | exit status 1 -> 0, output identical |
-| 12 | A03quoting,A04redirect,B10getopts,D04parameter,E01options,K01nameref,V12zparseopts | (no witness: identical outputs) |
-| 11 | D02glob,D04parameter,E01options,K01nameref,V01zmodload,X03zlebindkey | output: 1 extra line(s) from the shell under test |
-| 10 | E03posix | sut diagnostic: command not found: rm |
-| 8 | B02typeset,K01nameref | sut diagnostic: no such module zsh/random |
-| 6 | V13zformat | sut diagnostic: invalid argument: -Fq |
-| 5 | A01grammar,B02typeset,K01nameref | exit status 0 -> 1, output identical |
-| 4 | A04redirect,D07multibyte,V10private | output: 2 line(s) missing from the shell under test |
-| 4 | D04parameter,K01nameref,K02parameter | output: 6 line(s) missing from the shell under test |
-| 4 | V10private | sut diagnostic: read-only variable: hash_test |
-| 3 | V07pcre | exit status 2 -> 0, output identical |
-| 3 | V12zparseopts | sut diagnostic: bad option: -x |
-| 3 | B01cd,D02glob,E01options | sut diagnostic: no such file or |
-| 3 | E01options | sut diagnostic: parse error: expected `}' |
-| 2 | D04parameter,K01nameref | output: 2 extra line(s) from the shell under test |
-| 2 | D04parameter,D10nofork | output: 3 line(s) missing from the shell under test |
-| 2 | D02glob | sut diagnostic: Permission denied |
-| 2 | D04parameter,K02parameter | sut diagnostic: bad substitution |
-| 2 | B11kill | sut diagnostic: illegal pid: |
-| 2 | B11kill | sut diagnostic: illegal pid: a |
-| 2 | V01zmodload | sut diagnostic: module `zsh/parameter' has no |
-| 2 | K01nameref | sut diagnostic: not valid in this |
+layers = how many independent causes an assertion's divergence splits into.
+A cluster whose members are all layers=1 is a cluster one fix can clear; a
+cluster of layers>=2 members will still be failing after its named cause is
+fixed, on whatever else is underneath.  n is a symptom count, never a yield.
+
+attributed = members with at least one NAMED cause (a comptest emission
+channel).  Where it is 0 -- the whole core suite, whose output is arbitrary
+shell text rather than comptest's fixed channels -- `layers` is a count of
+distinct line kinds in the diff: an upper bound on the number of independent
+causes, not a count of them.  Those rows are marked `~`.
+
+| n | layers | single-cause | attributed | files | key |
+|---|---|---|---|---|---|
+| 74 | ~1x4 2x52 3x4 4x7 6x2 7x1 8x2 10x1 24x1 | 4 | 0 | A01grammar,A03quoting,A06assign,B01cd,B02typeset,B03print,B07emulate,B10getopts,C02cond,C04funcdef,D02glob,D04parameter,D06subscript,D07multibyte,E01options,E02xtrace,K01nameref,V01zmodload,V04features,V06parameter,V10private,V13zformat,W03jobparameters,X03zlebindkey | output: same number of lines, different values |
+| 27 | ~0x27 | 0 | 0 | A01grammar,A05execution,B12limit,C03traps,D01prompt,E01options,V01zmodload,V04features,V11db_gdbm | (no witness: not reproducible standalone) |
+| 27 | ~1x2 2x25 | 2 | 0 | V11db_gdbm | sut diagnostic: error opening database file |
+| 20 | ~1x1 3x6 4x12 5x1 | 1 | 0 | V12zparseopts,Z04zgetopt | sut diagnostic: no default array defined: |
+| 19 | ~1x5 2x3 3x5 4x4 5x2 | 5 | 0 | A04redirect,A06assign,B02typeset,C03traps,C04funcdef,D04parameter,D10nofork,E01options,K01nameref,V10private,X05zleincarg | output: 1 line(s) missing from the shell under test |
+| 15 | ~1x1 2x9 3x3 4x1 6x1 | 1 | 0 | A01grammar,A02alias,A06assign,B02typeset,B04read,D04parameter,D10nofork,E01options,K01nameref,V01zmodload,V13zformat | exit status 1 -> 0, output identical |
+| 12 | ~1x7 2x4 3x1 | 7 | 0 | A03quoting,A04redirect,B10getopts,D04parameter,E01options,K01nameref,V12zparseopts | (no witness: identical outputs) |
+| 11 | ~1x4 2x2 3x2 4x1 5x1 7x1 | 4 | 0 | D02glob,D04parameter,E01options,K01nameref,V01zmodload,X03zlebindkey | output: 1 extra line(s) from the shell under test |
+| 10 | ~1x8 3x1 6x1 | 8 | 0 | E03posix | sut diagnostic: command not found: rm |
+| 8 | ~2x7 4x1 | 0 | 0 | B02typeset,K01nameref | sut diagnostic: no such module zsh/random |
+| 6 | ~3x5 5x1 | 0 | 0 | V13zformat | sut diagnostic: invalid argument: -Fq |
+| 5 | ~1x2 2x1 3x1 18x1 | 2 | 0 | A01grammar,B02typeset,K01nameref | exit status 0 -> 1, output identical |
+| 4 | ~3x1 4x1 5x2 | 0 | 0 | A04redirect,D07multibyte,V10private | output: 2 line(s) missing from the shell under test |
+| 4 | ~3x1 5x1 10x2 | 0 | 0 | D04parameter,K01nameref,K02parameter | output: 6 line(s) missing from the shell under test |
+| 4 | ~3x1 6x3 | 0 | 0 | V10private | sut diagnostic: read-only variable: hash_test |
+| 3 | ~2x2 3x1 | 0 | 0 | V07pcre | exit status 2 -> 0, output identical |
+| 3 | ~1x3 | 3 | 0 | V12zparseopts | sut diagnostic: bad option: -x |
+| 3 | ~1x2 3x1 | 2 | 0 | B01cd,D02glob,E01options | sut diagnostic: no such file or |
+| 3 | ~4x1 74x1 75x1 | 0 | 0 | E01options | sut diagnostic: parse error: expected `}' |
+| 2 | ~4x1 5x1 | 0 | 0 | D04parameter,K01nameref | output: 2 extra line(s) from the shell under test |
+| 2 | ~1x1 9x1 | 1 | 0 | D04parameter,D10nofork | output: 3 line(s) missing from the shell under test |
+| 2 | ~3x1 5x1 | 0 | 0 | D02glob | sut diagnostic: Permission denied |
+| 2 | ~3x2 | 0 | 0 | D04parameter,K02parameter | sut diagnostic: bad substitution |
+| 2 | ~1x2 | 2 | 0 | B11kill | sut diagnostic: illegal pid: |
+| 2 | ~1x2 | 2 | 0 | B11kill | sut diagnostic: illegal pid: a |
+| 2 | ~1x2 | 2 | 0 | V01zmodload | sut diagnostic: module `zsh/parameter' has no |
+| 2 | ~7x2 | 0 | 0 | K01nameref | sut diagnostic: not valid in this |
 
 ## clusters in detail
 
 ### [74] output: same number of lines, different values
-members: A01grammar#23 A01grammar#92 A03quoting#5 A06assign#77 A06assign#101 B01cd#7 B02typeset#17 B02typeset#21 B02typeset#41 B02typeset#42 B02typeset#52 B02typeset#55 B02typeset#62 B02typeset#66 B02typeset#69 B02typeset#70 B02typeset#78 B02typeset#79 B03print#22 B07emulate#20 B10getopts#21 C02cond#61 C04funcdef#51 D02glob#24 D04parameter#9 D04parameter#10 D04parameter#33 D04parameter#41 D04parameter#60 D04parameter#101 D04parameter#102 D04parameter#133 D04parameter#134 D06subscript#2 D06subscript#4 D06subscript#11 D06subscript#13 D06subscript#17 D06subscript#18 D06subscript#19 D06subscript#38 D07multibyte#5 D07multibyte#6 D07multibyte#32 D07multibyte#39 E01options#1 E01options#37 E01options#42 E01options#54 E01options#59 E01options#71 E01options#73 E02xtrace#1 K01nameref#24 K01nameref#53 K01nameref#92 K01nameref#120 K01nameref#126 K01nameref#127 V01zmodload#34 V01zmodload#36 V04features#19 V06parameter#5 V10private#4 V10private#5 V13zformat#13 V13zformat#15 V13zformat#16 V13zformat#17 V13zformat#21 V13zformat#27 W03jobparameters#2 W03jobparameters#3 X03zlebindkey#4
+members: A01grammar#23(L2) A01grammar#92(L6) A03quoting#5(L2) A06assign#77(L2) A06assign#101(L2) B01cd#7(L1) B02typeset#17(L2) B02typeset#21(L2) B02typeset#41(L2) B02typeset#42(L2) B02typeset#52(L4) B02typeset#55(L3) B02typeset#62(L7) B02typeset#66(L2) B02typeset#69(L2) B02typeset#70(L2) B02typeset#78(L4) B02typeset#79(L2) B03print#22(L2) B07emulate#20(L2) B10getopts#21(L1) C02cond#61(L1) C04funcdef#51(L2) D02glob#24(L8) D04parameter#9(L2) D04parameter#10(L2) D04parameter#33(L3) D04parameter#41(L2) D04parameter#60(L6) D04parameter#101(L2) D04parameter#102(L2) D04parameter#133(L2) D04parameter#134(L2) D06subscript#2(L2) D06subscript#4(L2) D06subscript#11(L2) D06subscript#13(L2) D06subscript#17(L2) D06subscript#18(L2) D06subscript#19(L2) D06subscript#38(L2) D07multibyte#5(L2) D07multibyte#6(L2) D07multibyte#32(L24) D07multibyte#39(L2) E01options#1(L2) E01options#37(L2) E01options#42(L2) E01options#54(L4) E01options#59(L2) E01options#71(L3) E01options#73(L2) E02xtrace#1(L2) K01nameref#24(L2) K01nameref#53(L4) K01nameref#92(L10) K01nameref#120(L2) K01nameref#126(L4) K01nameref#127(L2) V01zmodload#34(L4) V01zmodload#36(L2) V04features#19(L2) V06parameter#5(L4) V10private#4(L2) V10private#5(L2) V13zformat#13(L2) V13zformat#15(L8) V13zformat#16(L2) V13zformat#17(L2) V13zformat#21(L2) V13zformat#27(L2) W03jobparameters#2(L3) W03jobparameters#3(L1) X03zlebindkey#4(L2)
+  stacked: 70 of 74 members carry a second cause and will not flip on this one alone
 representative: A01grammar#23  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_023.zsh)
   repro:
     touch foo bar
@@ -51,7 +63,7 @@ representative: A01grammar#23  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:<<STATUS:0>>
 
 ### [27] (no witness: not reproducible standalone)
-members: A01grammar#29 A05execution#31 A05execution#33 A05execution#34 A05execution#39 B12limit#7 C03traps#12 C03traps#18 C03traps#19 C03traps#25 C03traps#26 C03traps#32 C03traps#66 C03traps#81 D01prompt#17 E01options#18 V01zmodload#3 V01zmodload#4 V01zmodload#24 V01zmodload#25 V01zmodload#26 V01zmodload#27 V01zmodload#29 V01zmodload#31 V01zmodload#32 V04features#21 V11db_gdbm#23
+members: A01grammar#29(L0) A05execution#31(L0) A05execution#33(L0) A05execution#34(L0) A05execution#39(L0) B12limit#7(L0) C03traps#12(L0) C03traps#18(L0) C03traps#19(L0) C03traps#25(L0) C03traps#26(L0) C03traps#32(L0) C03traps#66(L0) C03traps#81(L0) D01prompt#17(L0) E01options#18(L0) V01zmodload#3(L0) V01zmodload#4(L0) V01zmodload#24(L0) V01zmodload#25(L0) V01zmodload#26(L0) V01zmodload#27(L0) V01zmodload#29(L0) V01zmodload#31(L0) V01zmodload#32(L0) V04features#21(L0) V11db_gdbm#23(L0)
 representative: A01grammar#29  ()
   repro:
     mkdir basic.tmp && cd basic.tmp
@@ -140,7 +152,8 @@ representative: A01grammar#29  ()
     E:<<STATUS:0>>
 
 ### [27] sut diagnostic: error opening database file
-members: V11db_gdbm#2 V11db_gdbm#3 V11db_gdbm#4 V11db_gdbm#5 V11db_gdbm#6 V11db_gdbm#7 V11db_gdbm#8 V11db_gdbm#9 V11db_gdbm#10 V11db_gdbm#11 V11db_gdbm#12 V11db_gdbm#13 V11db_gdbm#14 V11db_gdbm#16 V11db_gdbm#17 V11db_gdbm#18 V11db_gdbm#19 V11db_gdbm#20 V11db_gdbm#21 V11db_gdbm#22 V11db_gdbm#24 V11db_gdbm#25 V11db_gdbm#26 V11db_gdbm#27 V11db_gdbm#28 V11db_gdbm#29 V11db_gdbm#30
+members: V11db_gdbm#2(L2) V11db_gdbm#3(L2) V11db_gdbm#4(L2) V11db_gdbm#5(L2) V11db_gdbm#6(L2) V11db_gdbm#7(L2) V11db_gdbm#8(L2) V11db_gdbm#9(L2) V11db_gdbm#10(L2) V11db_gdbm#11(L2) V11db_gdbm#12(L2) V11db_gdbm#13(L2) V11db_gdbm#14(L2) V11db_gdbm#16(L2) V11db_gdbm#17(L2) V11db_gdbm#18(L2) V11db_gdbm#19(L2) V11db_gdbm#20(L1) V11db_gdbm#21(L1) V11db_gdbm#22(L2) V11db_gdbm#24(L2) V11db_gdbm#25(L2) V11db_gdbm#26(L2) V11db_gdbm#27(L2) V11db_gdbm#28(L2) V11db_gdbm#29(L2) V11db_gdbm#30(L2)
+  stacked: 25 of 27 members carry a second cause and will not flip on this one alone
 representative: V11db_gdbm#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v11db_gdbm_002.zsh)
   repro:
     modname="zsh/db/gdbm"
@@ -158,7 +171,8 @@ representative: V11db_gdbm#2  (/private/tmp/claude-501/-Users-wizard-RustroverPr
     E:<<STATUS:1>>
 
 ### [20] sut diagnostic: no default array defined:
-members: V12zparseopts#30 V12zparseopts#31 Z04zgetopt#1 Z04zgetopt#2 Z04zgetopt#3 Z04zgetopt#4 Z04zgetopt#5 Z04zgetopt#6 Z04zgetopt#7 Z04zgetopt#8 Z04zgetopt#9 Z04zgetopt#10 Z04zgetopt#11 Z04zgetopt#12 Z04zgetopt#13 Z04zgetopt#14 Z04zgetopt#15 Z04zgetopt#16 Z04zgetopt#17 Z04zgetopt#18
+members: V12zparseopts#30(L1) V12zparseopts#31(L3) Z04zgetopt#1(L3) Z04zgetopt#2(L4) Z04zgetopt#3(L4) Z04zgetopt#4(L4) Z04zgetopt#5(L4) Z04zgetopt#6(L4) Z04zgetopt#7(L4) Z04zgetopt#8(L4) Z04zgetopt#9(L4) Z04zgetopt#10(L4) Z04zgetopt#11(L4) Z04zgetopt#12(L5) Z04zgetopt#13(L4) Z04zgetopt#14(L3) Z04zgetopt#15(L3) Z04zgetopt#16(L4) Z04zgetopt#17(L3) Z04zgetopt#18(L3)
+  stacked: 19 of 20 members carry a second cause and will not flip on this one alone
 representative: V12zparseopts#30  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v12zparseopts_030.zsh)
   repro:
     () { zparseopts -DF - '' } -x
@@ -170,7 +184,8 @@ representative: V12zparseopts#30  (/private/tmp/claude-501/-Users-wizard-Rustrov
     E:<<STATUS:1>>
 
 ### [19] output: 1 line(s) missing from the shell under test
-members: A04redirect#37 A06assign#80 A06assign#81 B02typeset#60 C03traps#7 C03traps#11 C04funcdef#47 D04parameter#34 D10nofork#30 E01options#43 E01options#49 K01nameref#59 V10private#11 V10private#17 V10private#41 X05zleincarg#22 X05zleincarg#23 X05zleincarg#91 X05zleincarg#92
+members: A04redirect#37(L1) A06assign#80(L3) A06assign#81(L3) B02typeset#60(L5) C03traps#7(L1) C03traps#11(L1) C04funcdef#47(L1) D04parameter#34(L3) D10nofork#30(L1) E01options#43(L3) E01options#49(L2) K01nameref#59(L3) V10private#11(L2) V10private#17(L5) V10private#41(L2) X05zleincarg#22(L4) X05zleincarg#23(L4) X05zleincarg#91(L4) X05zleincarg#92(L4)
+  stacked: 14 of 19 members carry a second cause and will not flip on this one alone
 representative: A04redirect#37  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a04redirect_037.zsh)
   repro:
     print This is out1 >out1
@@ -185,7 +200,8 @@ representative: A04redirect#37  (/private/tmp/claude-501/-Users-wizard-Rustrover
     E:<<STATUS:0>>
 
 ### [15] exit status 1 -> 0, output identical
-members: A01grammar#104 A02alias#15 A02alias#16 A06assign#64 A06assign#70 B02typeset#71 B04read#16 D04parameter#63 D10nofork#11 D10nofork#18 E01options#28 K01nameref#105 V01zmodload#18 V13zformat#22 V13zformat#23
+members: A01grammar#104(L3) A02alias#15(L2) A02alias#16(L2) A06assign#64(L2) A06assign#70(L2) B02typeset#71(L2) B04read#16(L1) D04parameter#63(L3) D10nofork#11(L3) D10nofork#18(L2) E01options#28(L2) K01nameref#105(L2) V01zmodload#18(L4) V13zformat#22(L2) V13zformat#23(L6)
+  stacked: 14 of 15 members carry a second cause and will not flip on this one alone
 representative: A01grammar#104  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_104.zsh)
   repro:
     a='${'
@@ -198,7 +214,8 @@ representative: A01grammar#104  (/private/tmp/claude-501/-Users-wizard-Rustrover
     E:<<STATUS:0>>
 
 ### [12] (no witness: identical outputs)
-members: A03quoting#9 A04redirect#73 B10getopts#22 D04parameter#25 D04parameter#55 D04parameter#130 D04parameter#132 E01options#19 K01nameref#118 K01nameref#121 K01nameref#122 V12zparseopts#11
+members: A03quoting#9(L2) A04redirect#73(L1) B10getopts#22(L3) D04parameter#25(L2) D04parameter#55(L1) D04parameter#130(L2) D04parameter#132(L2) E01options#19(L1) K01nameref#118(L1) K01nameref#121(L1) K01nameref#122(L1) V12zparseopts#11(L1)
+  stacked: 5 of 12 members carry a second cause and will not flip on this one alone
 representative: A03quoting#9  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a03quoting_009.zsh)
   repro:
     null2="$(setopt posixstrings; print -r a$'b\0c'd)"
@@ -225,7 +242,8 @@ representative: A03quoting#9  (/private/tmp/claude-501/-Users-wizard-RustroverPr
     E:<<STATUS:0>>
 
 ### [11] output: 1 extra line(s) from the shell under test
-members: D02glob#2 D02glob#50 D02glob#53 D04parameter#12 D04parameter#59 E01options#44 K01nameref#79 K01nameref#119 K01nameref#125 V01zmodload#23 X03zlebindkey#10
+members: D02glob#2(L5) D02glob#50(L1) D02glob#53(L1) D04parameter#12(L2) D04parameter#59(L3) E01options#44(L3) K01nameref#79(L4) K01nameref#119(L1) K01nameref#125(L7) V01zmodload#23(L1) X03zlebindkey#10(L2)
+  stacked: 7 of 11 members carry a second cause and will not flip on this one alone
 representative: D02glob#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d02glob_002.zsh)
   repro:
     globtest () {
@@ -260,7 +278,8 @@ representative: D02glob#2  (/private/tmp/claude-501/-Users-wizard-RustroverProje
     O:1:  [[ foooxfooxofoxfooox = *(f*(o)x) ]]
 
 ### [10] sut diagnostic: command not found: rm
-members: E03posix#1 E03posix#2 E03posix#3 E03posix#4 E03posix#5 E03posix#6 E03posix#7 E03posix#8 E03posix#9 E03posix#16
+members: E03posix#1(L6) E03posix#2(L1) E03posix#3(L1) E03posix#4(L1) E03posix#5(L1) E03posix#6(L1) E03posix#7(L1) E03posix#8(L1) E03posix#9(L1) E03posix#16(L3)
+  stacked: 2 of 10 members carry a second cause and will not flip on this one alone
 representative: E03posix#1  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/e03posix_001.zsh)
   repro:
     setopt POSIX_BUILTINS TYPESET_TO_UNSET
@@ -300,7 +319,8 @@ representative: E03posix#1  (/private/tmp/claude-501/-Users-wizard-RustroverProj
     O:integer local i
 
 ### [8] sut diagnostic: no such module zsh/random
-members: B02typeset#82 B02typeset#83 B02typeset#84 B02typeset#85 B02typeset#86 B02typeset#87 K01nameref#101 K01nameref#102
+members: B02typeset#82(L2) B02typeset#83(L2) B02typeset#84(L2) B02typeset#85(L2) B02typeset#86(L2) B02typeset#87(L2) K01nameref#101(L2) K01nameref#102(L4)
+  stacked: 8 of 8 members carry a second cause and will not flip on this one alone
 representative: B02typeset#82  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b02typeset_082.zsh)
   repro:
     zmodload -u zsh/random
@@ -311,7 +331,8 @@ representative: B02typeset#82  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:<<STATUS:1>>
 
 ### [6] sut diagnostic: invalid argument: -Fq
-members: V13zformat#30 V13zformat#31 V13zformat#32 V13zformat#33 V13zformat#34 V13zformat#35
+members: V13zformat#30(L3) V13zformat#31(L5) V13zformat#32(L3) V13zformat#33(L3) V13zformat#34(L3) V13zformat#35(L3)
+  stacked: 6 of 6 members carry a second cause and will not flip on this one alone
 representative: V13zformat#30  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v13zformat_030.zsh)
   repro:
     zformat -Fq     REPLY F && print -r - $REPLY
@@ -323,7 +344,8 @@ representative: V13zformat#30  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:<<STATUS:1>>
 
 ### [5] exit status 0 -> 1, output identical
-members: A01grammar#17 A01grammar#55 B02typeset#18 B02typeset#58 K01nameref#96
+members: A01grammar#17(L1) A01grammar#55(L2) B02typeset#18(L1) B02typeset#58(L3) K01nameref#96(L18)
+  stacked: 3 of 5 members carry a second cause and will not flip on this one alone
 representative: A01grammar#17  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_017.zsh)
   repro:
     - $ZTST_testdir/../Src/zsh -fc "[[ \$0 = \"-$ZTST_testdir/../Src/zsh\" ]]"
@@ -333,7 +355,8 @@ representative: A01grammar#17  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:<<STATUS:1>>
 
 ### [4] output: 2 line(s) missing from the shell under test
-members: A04redirect#74 D07multibyte#35 V10private#27 V10private#40
+members: A04redirect#74(L4) D07multibyte#35(L3) V10private#27(L5) V10private#40(L5)
+  stacked: 4 of 4 members carry a second cause and will not flip on this one alone
 representative: A04redirect#74  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a04redirect_074.zsh)
   repro:
     fn-here-pipe() {
@@ -356,7 +379,8 @@ representative: A04redirect#74  (/private/tmp/claude-501/-Users-wizard-Rustrover
     E:<<STATUS:0>>
 
 ### [4] output: 6 line(s) missing from the shell under test
-members: D04parameter#53 D04parameter#98 K01nameref#107 K02parameter#9
+members: D04parameter#53(L10) D04parameter#98(L5) K01nameref#107(L3) K02parameter#9(L10)
+  stacked: 4 of 4 members carry a second cause and will not flip on this one alone
 representative: D04parameter#53  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_053.zsh)
   repro:
     foo='<five> {six} (seven) >eight< }nine{ |forty-two| $many$ )ten( more'
@@ -390,7 +414,8 @@ representative: D04parameter#53  (/private/tmp/claude-501/-Users-wizard-Rustrove
     E:<<STATUS:0>>
 
 ### [4] sut diagnostic: read-only variable: hash_test
-members: V10private#18 V10private#19 V10private#20 V10private#21
+members: V10private#18(L3) V10private#19(L6) V10private#20(L6) V10private#21(L6)
+  stacked: 4 of 4 members carry a second cause and will not flip on this one alone
 representative: V10private#18  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v10private_018.zsh)
   repro:
     if ! zmodload zsh/param/private 2>/dev/null; then
@@ -421,7 +446,8 @@ representative: V10private#18  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:<<STATUS:1>>
 
 ### [3] exit status 2 -> 0, output identical
-members: V07pcre#2 V07pcre#12 V07pcre#14
+members: V07pcre#2(L2) V07pcre#12(L3) V07pcre#14(L2)
+  stacked: 3 of 3 members carry a second cause and will not flip on this one alone
 representative: V07pcre#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v07pcre_002.zsh)
   repro:
     setopt rematch_pcre
@@ -435,7 +461,7 @@ representative: V07pcre#2  (/private/tmp/claude-501/-Users-wizard-RustroverProje
     E:<<STATUS:0>>
 
 ### [3] sut diagnostic: bad option: -x
-members: V12zparseopts#2 V12zparseopts#8 V12zparseopts#29
+members: V12zparseopts#2(L1) V12zparseopts#8(L1) V12zparseopts#29(L1)
 representative: V12zparseopts#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v12zparseopts_002.zsh)
   repro:
     () { zparseopts -F -- } -x
@@ -447,7 +473,8 @@ representative: V12zparseopts#2  (/private/tmp/claude-501/-Users-wizard-Rustrove
     E:<<STATUS:1>>
 
 ### [3] sut diagnostic: no such file or
-members: B01cd#5 D02glob#28 E01options#48
+members: B01cd#5(L3) D02glob#28(L1) E01options#48(L1)
+  stacked: 1 of 3 members carry a second cause and will not flip on this one alone
 representative: B01cd#5  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b01cd_005.zsh)
   repro:
     (unset HOME; ARGV0=sh $ZTST_testdir/../Src/zsh -c cd)
@@ -460,7 +487,8 @@ representative: B01cd#5  (/private/tmp/claude-501/-Users-wizard-RustroverProject
     E:<<STATUS:1>>
 
 ### [3] sut diagnostic: parse error: expected `}'
-members: E01options#87 E01options#98 E01options#103
+members: E01options#87(L4) E01options#98(L74) E01options#103(L75)
+  stacked: 3 of 3 members carry a second cause and will not flip on this one alone
 representative: E01options#87  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/e01options_087.zsh)
   repro:
     mkdir options.tmp && cd options.tmp
@@ -779,7 +807,8 @@ representative: E01options#87  (/private/tmp/claude-501/-Users-wizard-RustroverP
     E:/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p004444/probe-04444.zsh:402: parse error: expected `}'
 
 ### [2] output: 2 extra line(s) from the shell under test
-members: D04parameter#35 K01nameref#124
+members: D04parameter#35(L4) K01nameref#124(L5)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
 representative: D04parameter#35  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_035.zsh)
   repro:
     (setopt shwordsplit # ensure this doesn't get set in main shell...
@@ -808,7 +837,8 @@ representative: D04parameter#35  (/private/tmp/claude-501/-Users-wizard-Rustrove
     E:<<STATUS:0>>
 
 ### [2] output: 3 line(s) missing from the shell under test
-members: D04parameter#90 D10nofork#13
+members: D04parameter#90(L9) D10nofork#13(L1)
+  stacked: 1 of 2 members carry a second cause and will not flip on this one alone
 representative: D04parameter#90  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_090.zsh)
   repro:
     setopt shwordsplit
@@ -831,7 +861,8 @@ representative: D04parameter#90  (/private/tmp/claude-501/-Users-wizard-Rustrove
     E:<<STATUS:0>>
 
 ### [2] sut diagnostic: Permission denied
-members: D02glob#74 D02glob#75
+members: D02glob#74(L5) D02glob#75(L3)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
 representative: D02glob#74  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d02glob_074.zsh)
   repro:
     mkdir glob.tmp
@@ -1182,7 +1213,8 @@ representative: D02glob#74  (/private/tmp/claude-501/-Users-wizard-RustroverProj
     O:* (eval):1: unknown file attribute:   (eval):1: command not found: reply=(
 
 ### [2] sut diagnostic: bad substitution
-members: D04parameter#84 K02parameter#11
+members: D04parameter#84(L3) K02parameter#11(L3)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
 representative: D04parameter#84  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_084.zsh)
   repro:
     print ${array[4,5][1][2,3]}
@@ -1194,7 +1226,7 @@ representative: D04parameter#84  (/private/tmp/claude-501/-Users-wizard-Rustrove
     E:<<STATUS:1>>
 
 ### [2] sut diagnostic: illegal pid:
-members: B11kill#7 B11kill#8
+members: B11kill#7(L1) B11kill#8(L1)
 representative: B11kill#7  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b11kill_007.zsh)
   repro:
     (
@@ -1209,7 +1241,7 @@ representative: B11kill#7  (/private/tmp/claude-501/-Users-wizard-RustroverProje
     E:<<STATUS:1>>
 
 ### [2] sut diagnostic: illegal pid: a
-members: B11kill#3 B11kill#4
+members: B11kill#3(L1) B11kill#4(L1)
 representative: B11kill#3  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b11kill_003.zsh)
   repro:
     (
@@ -1227,7 +1259,7 @@ representative: B11kill#3  (/private/tmp/claude-501/-Users-wizard-RustroverProje
     E:<<STATUS:3>>
 
 ### [2] sut diagnostic: module `zsh/parameter' has no
-members: V01zmodload#17 V01zmodload#19
+members: V01zmodload#17(L1) V01zmodload#19(L1)
 representative: V01zmodload#17  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v01zmodload_017.zsh)
   repro:
     (zmodload -u zsh/parameter
@@ -1245,7 +1277,8 @@ representative: V01zmodload#17  (/private/tmp/claude-501/-Users-wizard-Rustrover
     E:<<STATUS:1>>
 
 ### [2] sut diagnostic: not valid in this
-members: K01nameref#88 K01nameref#91
+members: K01nameref#88(L7) K01nameref#91(L7)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
 representative: K01nameref#88  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/k01nameref_088.zsh)
   repro:
     function e() {

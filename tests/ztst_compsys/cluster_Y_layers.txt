@@ -1,0 +1,184 @@
+# failing assertions, clustered by root-cause key
+
+inputs    : tests/ztst_compsys/zshrs_0.12.49_dde99902_fxoff.json
+assertions: 37
+clusters  : 9
+            5 with 2+ members, 4 singletons
+
+layers = how many independent causes an assertion's divergence splits into.
+A cluster whose members are all layers=1 is a cluster one fix can clear; a
+cluster of layers>=2 members will still be failing after its named cause is
+fixed, on whatever else is underneath.  n is a symptom count, never a yield.
+
+attributed = members with at least one NAMED cause (a comptest emission
+channel).  Where it is 0 -- the whole core suite, whose output is arbitrary
+shell text rather than comptest's fixed channels -- `layers` is a count of
+distinct line kinds in the diff: an upper bound on the number of independent
+causes, not a count of them.  Those rows are marked `~`.
+
+| n | layers | single-cause | attributed | files | key |
+|---|---|---|---|---|---|
+| 18 | 1x14 2x1 3x3 | 14 | 17 | Y01completion,Y02compmatch,Y04regexargs,Y05describe | missing=[] extra=[] same-kinds-different-values |
+| 6 | 1x1 2x3 3x2 | 1 | 5 | Y01completion,Y02compmatch | missing=[] extra=[NO] |
+| 4 | 3x4 | 0 | 4 | Y01completion,Y05describe | missing=[] extra=[DESCRIPTION,NO] |
+| 3 | 1x1 3x2 | 1 | 3 | Y01completion,Y02compmatch | missing=[NO] extra=[] |
+| 2 | 3x2 | 0 | 2 | Y01completion | missing=[] extra=[DESCRIPTION,DI] |
+| 1 | 2x1 | 0 | 1 | Y01completion | missing=[DESCRIPTION,NO] extra=[] |
+| 1 | 2x1 | 0 | 1 | Y01completion | missing=[DESCRIPTION] extra=[NO] |
+| 1 | 1x1 | 1 | 1 | Y04regexargs | missing=[DESCRIPTION] extra=[] |
+| 1 | 4x1 | 0 | 1 | Y01completion | missing=[] extra=[DESCRIPTION,DI,FI] |
+
+## clusters in detail
+
+### [18] missing=[] extra=[] same-kinds-different-values
+members: Y01completion#6(L1) Y01completion#16(L1) Y01completion#30(L1) Y02compmatch#2(L1) Y02compmatch#3(L1) Y02compmatch#4(L1) Y02compmatch#5(L1) Y02compmatch#6(L1) Y02compmatch#7(L1) Y02compmatch#8(L1) Y02compmatch#10(L3) Y02compmatch#11(L3) Y02compmatch#12(L3) Y02compmatch#13(L1) Y02compmatch#52(L2) Y04regexargs#4(L1) Y04regexargs#5(L1) Y05describe#2(L1)
+  stacked: 4 of 18 members carry a second cause and will not flip on this one alone
+representative: Y01completion#6
+  zsh:
+    line: {: dir2/}{}
+    line: {: file1 }{}
+    line: {: file2 }{}
+    line: {: dir1 dir2 file1 file2 }{}
+    line: {: *}{}
+  zshrs:
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+
+### [6] missing=[] extra=[NO]
+members: Y01completion#8(L2) Y01completion#10(L3) Y02compmatch#25(L2) Y02compmatch#26(L2) Y02compmatch#27(L3) Y02compmatch#47(L1)
+  stacked: 5 of 6 members carry a second cause and will not flip on this one alone
+representative: Y01completion#8
+  zsh:
+    line: {: ~zuser1}{}
+    line: {: ~zuser2}{}
+    line: {: ~zuser1}{}
+  zshrs:
+    line: {: ~zuser}{}
+    NO:{zuser1}
+    NO:{zuser2}
+    line: {: ~zuser}{}
+    NO:{zuser1}
+    NO:{zuser2}
+    line: {: ~zuser}{}
+    NO:{zuser1}
+    NO:{zuser2}
+
+### [4] missing=[] extra=[DESCRIPTION,NO]
+members: Y01completion#9(L3) Y05describe#3(L3) Y05describe#5(L3) Y05describe#7(L3)
+  stacked: 4 of 4 members carry a second cause and will not flip on this one alone
+representative: Y01completion#9
+  zsh:
+    line: {: ~[name/1]}{}
+    line: {: ~[name2]}{}
+  zshrs:
+    line: {: ~[name}{}
+    DESCRIPTION:{dynamically named directory}
+    NO:{name/1}
+    NO:{name2}
+    line: {: ~[name}{}
+    DESCRIPTION:{dynamically named directory}
+    NO:{name/1}
+    NO:{name2}
+
+### [3] missing=[NO] extra=[]
+members: Y01completion#33(L1) Y02compmatch#40(L3) Y02compmatch#57(L3)
+  stacked: 2 of 3 members carry a second cause and will not flip on this one alone
+representative: Y01completion#33
+  zsh:
+    NO:{<INSERT>menu</INSERT>}
+    NO:{w}
+    NO:{x}
+    NO:{y}
+    NO:{z}
+  zshrs:
+    (none)
+
+### [2] missing=[] extra=[DESCRIPTION,DI]
+members: Y01completion#2(L3) Y01completion#3(L3)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
+representative: Y01completion#2
+  zsh:
+    line: {: dir1/}{}
+    line: {: dir2/}{}
+    line: {: dir1/}{}
+    line: {: dir1 }{}
+  zshrs:
+    line: {: dir}{}
+    line: {: dir}{}
+    DESCRIPTION:{file}
+    DI:{dir1}
+    DI:{dir2}
+    line: {: dir}{}
+    DESCRIPTION:{file}
+    DI:{dir1}
+    DI:{dir2}
+    line: {: dir }{}
+    DESCRIPTION:{file}
+    DI:{dir1}
+
+### [1] missing=[DESCRIPTION,NO] extra=[]
+members: Y01completion#31(L2)
+  stacked: 1 of 1 members carry a second cause and will not flip on this one alone
+representative: Y01completion#31
+  zsh:
+    DESCRIPTION:{parameter}
+    NO:{path}
+    NO:{paths}
+  zshrs:
+    (none)
+
+### [1] missing=[DESCRIPTION] extra=[NO]
+members: Y01completion#28(L2)
+  stacked: 1 of 1 members carry a second cause and will not flip on this one alone
+representative: Y01completion#28
+  zsh:
+    DESCRIPTION:{desc}
+  zshrs:
+    NO:{,}
+    NO:{,\ \\t\\n\\-}
+    NO:{-}
+    NO:{-F}
+    NO:{-J}
+    NO:{-S}
+    NO:{-X}
+    NO:{-o}
+    NO:{-r}
+    NO:{1}
+    NO:{\<DESCRIPTION\>desc\</DESCRIPTION\>$'\n'}
+    NO:{argument-1}
+
+### [1] missing=[DESCRIPTION] extra=[]
+members: Y04regexargs#3(L1)
+representative: Y04regexargs#3
+  zsh:
+    DESCRIPTION:{version}
+  zshrs:
+    (none)
+
+### [1] missing=[] extra=[DESCRIPTION,DI,FI]
+members: Y01completion#1(L4)
+  stacked: 1 of 1 members carry a second cause and will not flip on this one alone
+representative: Y01completion#1
+  zsh:
+    line: {: dir1/}{}
+    line: {: dir2/}{}
+    line: {: file1}{}
+    line: {: file2}{}
+    line: {: dir1/}{}
+    line: {: dir2/}{}
+  zshrs:
+    line: {: }{}
+    DESCRIPTION:{file}
+    DI:{dir1}
+    DI:{dir2}
+    FI:{file1}
+    FI:{file2}
+    line: {: }{}
+    DESCRIPTION:{file}
+    DI:{dir1}
+    DI:{dir2}
+    FI:{file1}
+    FI:{file2}

@@ -1,26 +1,38 @@
 # failing assertions, clustered by root-cause key
 
-inputs    : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/y_new.json
+inputs    : tests/ztst_compsys/zshrs_0.12.49_29ee728e_fxoff.json
 assertions: 88
 clusters  : 9
             6 with 2+ members, 3 singletons
 
-| n | files | key |
-|---|---|---|
-| 58 | Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values | missing=[NO] extra=[] |
-| 14 | Y01completion,Y02compmatch,Y05describe | missing=[] extra=[] same-kinds-different-values |
-| 4 | Y01completion | missing=[DI,FI] extra=[] |
-| 4 | Y01completion,Y05describe | missing=[NO] extra=[DESCRIPTION] |
-| 3 | Y01completion | missing=[DI,FI] extra=[DESCRIPTION] |
-| 2 | Y01completion | missing=[DESCRIPTION,NO] extra=[] |
-| 1 | Y04regexargs | missing=[DESCRIPTION] extra=[] |
-| 1 | Y01completion | missing=[DI,FI,NO] extra=[] |
-| 1 | Y01completion | missing=[FI] extra=[] |
+layers = how many independent causes an assertion's divergence splits into.
+A cluster whose members are all layers=1 is a cluster one fix can clear; a
+cluster of layers>=2 members will still be failing after its named cause is
+fixed, on whatever else is underneath.  n is a symptom count, never a yield.
+
+attributed = members with at least one NAMED cause (a comptest emission
+channel).  Where it is 0 -- the whole core suite, whose output is arbitrary
+shell text rather than comptest's fixed channels -- `layers` is a count of
+distinct line kinds in the diff: an upper bound on the number of independent
+causes, not a count of them.  Those rows are marked `~`.
+
+| n | layers | single-cause | attributed | files | key |
+|---|---|---|---|---|---|
+| 58 | 1x49 2x5 3x4 | 49 | 58 | Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values | missing=[NO] extra=[] |
+| 14 | 1x10 2x1 3x3 | 10 | 14 | Y01completion,Y02compmatch,Y05describe | missing=[] extra=[] same-kinds-different-values |
+| 4 | 1x3 2x1 | 3 | 4 | Y01completion | missing=[DI,FI] extra=[] |
+| 4 | 3x4 | 0 | 4 | Y01completion,Y05describe | missing=[NO] extra=[DESCRIPTION] |
+| 3 | 3x3 | 0 | 3 | Y01completion | missing=[DI,FI] extra=[DESCRIPTION] |
+| 2 | 2x2 | 0 | 2 | Y01completion | missing=[DESCRIPTION,NO] extra=[] |
+| 1 | 1x1 | 1 | 1 | Y04regexargs | missing=[DESCRIPTION] extra=[] |
+| 1 | 2x1 | 0 | 1 | Y01completion | missing=[DI,FI,NO] extra=[] |
+| 1 | 1x1 | 1 | 1 | Y01completion | missing=[FI] extra=[] |
 
 ## clusters in detail
 
 ### [58] missing=[NO] extra=[]
-members: Y01completion#7 Y01completion#8 Y01completion#10 Y01completion#24 Y01completion#25 Y01completion#26 Y01completion#27 Y01completion#30 Y01completion#32 Y01completion#33 Y02compmatch#17 Y02compmatch#18 Y02compmatch#19 Y02compmatch#20 Y02compmatch#21 Y02compmatch#24 Y02compmatch#25 Y02compmatch#26 Y02compmatch#27 Y02compmatch#30 Y02compmatch#39 Y02compmatch#40 Y02compmatch#45 Y02compmatch#47 Y02compmatch#50 Y02compmatch#55 Y02compmatch#57 Y03arguments#2 Y03arguments#3 Y04regexargs#2 Y04regexargs#4 Y04regexargs#5 Y04regexargs#6 Y05describe#1 Y05describe#4 Y05describe#6 Y06values#1 Y06values#2 Y06values#3 Y06values#4 Y06values#5 Y06values#6 Y06values#7 Y06values#8 Y06values#9 Y06values#10 Y06values#11 Y06values#12 Y06values#13 Y06values#15 Y06values#16 Y06values#17 Y06values#18 Y06values#19 Y06values#20 Y06values#23 Y06values#24 Y06values#25
+members: Y01completion#7(L1) Y01completion#8(L2) Y01completion#10(L3) Y01completion#24(L1) Y01completion#25(L1) Y01completion#26(L1) Y01completion#27(L1) Y01completion#30(L1) Y01completion#32(L1) Y01completion#33(L1) Y02compmatch#17(L1) Y02compmatch#18(L1) Y02compmatch#19(L1) Y02compmatch#20(L1) Y02compmatch#21(L1) Y02compmatch#24(L1) Y02compmatch#25(L2) Y02compmatch#26(L2) Y02compmatch#27(L3) Y02compmatch#30(L1) Y02compmatch#39(L1) Y02compmatch#40(L3) Y02compmatch#45(L1) Y02compmatch#47(L1) Y02compmatch#50(L1) Y02compmatch#55(L1) Y02compmatch#57(L3) Y03arguments#2(L1) Y03arguments#3(L1) Y04regexargs#2(L1) Y04regexargs#4(L2) Y04regexargs#5(L2) Y04regexargs#6(L1) Y05describe#1(L1) Y05describe#4(L1) Y05describe#6(L1) Y06values#1(L1) Y06values#2(L1) Y06values#3(L1) Y06values#4(L1) Y06values#5(L1) Y06values#6(L1) Y06values#7(L1) Y06values#8(L1) Y06values#9(L1) Y06values#10(L1) Y06values#11(L1) Y06values#12(L1) Y06values#13(L1) Y06values#15(L1) Y06values#16(L1) Y06values#17(L1) Y06values#18(L1) Y06values#19(L1) Y06values#20(L1) Y06values#23(L1) Y06values#24(L1) Y06values#25(L1)
+  stacked: 9 of 58 members carry a second cause and will not flip on this one alone
 representative: Y01completion#7
   zsh:
     NO:{dir1}
@@ -31,7 +43,8 @@ representative: Y01completion#7
     (none)
 
 ### [14] missing=[] extra=[] same-kinds-different-values
-members: Y01completion#16 Y02compmatch#2 Y02compmatch#3 Y02compmatch#4 Y02compmatch#5 Y02compmatch#6 Y02compmatch#7 Y02compmatch#8 Y02compmatch#10 Y02compmatch#11 Y02compmatch#12 Y02compmatch#13 Y02compmatch#52 Y05describe#2
+members: Y01completion#16(L1) Y02compmatch#2(L1) Y02compmatch#3(L1) Y02compmatch#4(L1) Y02compmatch#5(L1) Y02compmatch#6(L1) Y02compmatch#7(L1) Y02compmatch#8(L1) Y02compmatch#10(L3) Y02compmatch#11(L3) Y02compmatch#12(L3) Y02compmatch#13(L1) Y02compmatch#52(L2) Y05describe#2(L1)
+  stacked: 4 of 14 members carry a second cause and will not flip on this one alone
 representative: Y01completion#16
   zsh:
     line: {cd "A(B)/C/}{}
@@ -41,7 +54,8 @@ representative: Y01completion#16
     line: {cd ../}{}
 
 ### [4] missing=[DI,FI] extra=[]
-members: Y01completion#11 Y01completion#12 Y01completion#15 Y01completion#29
+members: Y01completion#11(L1) Y01completion#12(L2) Y01completion#15(L1) Y01completion#29(L1)
+  stacked: 1 of 4 members carry a second cause and will not flip on this one alone
 representative: Y01completion#11
   zsh:
     DI:{dir1}
@@ -52,7 +66,8 @@ representative: Y01completion#11
     (none)
 
 ### [4] missing=[NO] extra=[DESCRIPTION]
-members: Y01completion#9 Y05describe#3 Y05describe#5 Y05describe#7
+members: Y01completion#9(L3) Y05describe#3(L3) Y05describe#5(L3) Y05describe#7(L3)
+  stacked: 4 of 4 members carry a second cause and will not flip on this one alone
 representative: Y01completion#9
   zsh:
     NO:{name/1}
@@ -66,7 +81,8 @@ representative: Y01completion#9
     DESCRIPTION:{dynamically named directory}
 
 ### [3] missing=[DI,FI] extra=[DESCRIPTION]
-members: Y01completion#1 Y01completion#2 Y01completion#3
+members: Y01completion#1(L3) Y01completion#2(L3) Y01completion#3(L3)
+  stacked: 3 of 3 members carry a second cause and will not flip on this one alone
 representative: Y01completion#1
   zsh:
     DI:{dir1}
@@ -94,7 +110,8 @@ representative: Y01completion#1
     DESCRIPTION:{file}
 
 ### [2] missing=[DESCRIPTION,NO] extra=[]
-members: Y01completion#28 Y01completion#31
+members: Y01completion#28(L2) Y01completion#31(L2)
+  stacked: 2 of 2 members carry a second cause and will not flip on this one alone
 representative: Y01completion#28
   zsh:
     DESCRIPTION:{desc}
@@ -104,7 +121,7 @@ representative: Y01completion#28
     (none)
 
 ### [1] missing=[DESCRIPTION] extra=[]
-members: Y04regexargs#3
+members: Y04regexargs#3(L1)
 representative: Y04regexargs#3
   zsh:
     DESCRIPTION:{version}
@@ -112,7 +129,8 @@ representative: Y04regexargs#3
     (none)
 
 ### [1] missing=[DI,FI,NO] extra=[]
-members: Y01completion#6
+members: Y01completion#6(L2)
+  stacked: 1 of 1 members carry a second cause and will not flip on this one alone
 representative: Y01completion#6
   zsh:
     DI:{dir1}
@@ -134,7 +152,7 @@ representative: Y01completion#6
     line: {: dir1/}{}
 
 ### [1] missing=[FI] extra=[]
-members: Y01completion#23
+members: Y01completion#23(L1)
 representative: Y01completion#23
   zsh:
     FI:{\!foo}

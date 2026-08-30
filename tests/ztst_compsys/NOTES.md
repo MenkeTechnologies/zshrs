@@ -16,7 +16,8 @@ Two suites are covered, and they must not be mixed:
 | **Y series** (`Y01`-`Y06`) | 6 | the completion system, driven through a pty by `Test/comptest` |
 | **core** (everything else) | 70 | shell parity — grammar, builtins, expansion, globbing, options, modules, ZLE |
 
-`ls <zsh-tree>/Test/*.ztst | wc -l` = 76 = 6 + 70.
+`ls <zsh-tree>/Test/*.ztst | wc -l` = 76 = 6 + 70 — **on the dev tree**. The
+default `--zsh-build` is a different, smaller corpus; see "Reference identity".
 
 ## Why upstream's suite
 
@@ -48,6 +49,96 @@ the suite. Homebrew zsh 5.9.2 is therefore not usable as the baseline.
 `zsh/zpty` is loaded by the *harness*, never by the shell under test, so zshrs
 needing no zpty of its own is not a blocker for the Y series.
 
+## Reference identity: which zsh, which corpus
+
+A score is a number *plus what produced it*. Two runs are comparable only if the
+zsh source tree, the zsh binary that drove them and the set of `.ztst`
+assertions are the same. Round 7 produced two numbers that were not comparable
+and did not say so, so the runner now records all of it and refuses to pretend.
+
+`ztst_compsys.py --identity` prints the block without running anything; the
+verbatim output of every command in this section is in
+`reference_identity.txt`.
+
+### The default `--zsh-build` is a partial tree
+
+`src/zsh` (gitignored, always present, used when no `--zsh-build` is passed) is
+a **5.9.0.3-test** checkout at `e73499b372`. The dev tree is **5.9.999.3-test**
+at `599af4604f`. They are not the same corpus:
+
+| | `src/zsh` (default) | dev tree |
+|---|---|---|
+| `Config/version.mk` VERSION | `5.9.0.3-test` | `5.9.999.3-test` |
+| `Test/*.ztst` | 70 | 76 |
+| Y corpus | 3 files, **188 assertions** | 6 files, **229 assertions** |
+| core corpus | 67 files, **2416 assertions** | 70 files, **2523 assertions** |
+
+Absent from the default tree: `Y04regexargs`, `Y05describe`, `Y06values`,
+`A09zwc`, `V15nearcolor`, `Z04zgetopt`. It also does not contain either
+assertion that currently hangs the core suite —
+`grep -n "zsh_eval_context resizing" src/zsh/Test/D04parameter.ztst` and
+`grep -n "Raw bytes don't match multibyte characters part 2"
+src/zsh/Test/D07multibyte.ztst` both return nothing, and both match in the dev
+tree (`D04parameter.ztst:1717`, `D07multibyte.ztst:574`). A hang baseline taken
+on the default tree therefore shows no truncation — not because nothing hangs,
+but because the input that hangs is not there.
+
+That is not hypothetical. The scratch before/after pair that produced round 7's
+"+24" for the `lc=`/`rc=` fix both record `zsh_build = <repo>/src/zsh`,
+`zsh_build_version = 5.9.0.3-test`, and `0` assertions for each of
+`Y04regexargs`, `Y05describe` and `Y06values`. The delta was real;
+it was measured over 188 assertions, and the same fix is worth **51** over the
+full 229 (see "Yield" below).
+
+### What changed about the default
+
+* When more than one candidate tree is built, the one carrying the whole Y
+  corpus wins; the incomplete one is only selected when nothing else is.
+* A run on an incomplete corpus prefixes **every line** of its report with
+  `[PARTIAL 3/6 requested files, 188 assertions]` and opens with a `!! PARTIAL CORPUS`
+  banner naming the absent files.
+* `--pin` and `--gate` on an incomplete corpus **refuse** (exit 3) unless
+  `--allow-partial-corpus` is given: a pin taken there would silently score
+  against a different population later.
+
+### What the gate now checks
+
+The pin records the full reference. A gate run compares tree `VERSION`, tree git
+rev, the harness binary's sha256, a digest over `ztst.zsh` + `comptest`, and the
+per-file digest of every `.ztst` **in the intersection** of the two corpora — so
+a deliberate `--tests` subset stays like-for-like, while a file whose bytes
+differ is a hard reference difference. Verdicts:
+
+| | |
+|---|---|
+| `SAME` | every checked field matched |
+| `CROSS-REFERENCE` | a field differs: the gate **refuses** (exit 3) unless `--allow-cross-reference`, which labels every verdict |
+| `UNVERIFIABLE` | the pin predates this block; what it does record is checked, the rest is reported as unchecked, never as equal |
+
+`reference_gate_refusal.txt` has the demonstration: `Y01completion` pinned
+against the dev tree, gated from the default tree, refused with
+
+    tree.version: '5.9.999.3-test' -> '5.9.0.3-test'
+    tree.git_rev: '599af4604f' -> 'e73499b372-dirty'
+    harness.sha256: 'f14c87e66dadde72' -> 'a9287331c720e42f'
+    corpus.drivers: '8cea485133f220c8' -> 'aac9e65b0fdb9a6e'
+    corpus.Y01completion: 1ec0dce99bc70cbb -> a233262a95d6cbc9
+
+Forced through with `--allow-cross-reference` that comparison reports
+`UNCHANGED=33`, which unlabelled reads as "the gate passed". It is not a result:
+the two trees' `Y01completion.ztst` are different files.
+
+The two committed pins (`gate.json`, `gate_core.json`) were taken before this
+block existed, so they gate as `UNVERIFIABLE` — their tree version is checked
+(and does catch the default-tree hazard), nothing else is. They are left as
+they are rather than silently retaken, because retaking a pin also rewrites the
+ledger of what is failing. Re-pin deliberately:
+
+    $P scripts/ztst_compsys.py --sut target/debug/zshrs --zsh-build $B --timeout 180 --pin
+
+`--compare-to` and `--cluster` apply the same rule: `--cluster` refuses to merge
+two `--json` runs from different references into one table.
+
 ## How to run it
 
     P=/opt/homebrew/bin/python3            # pythonrs cannot parse this script
@@ -77,9 +168,21 @@ needing no zpty of its own is not a blocker for the Y series.
         --out tests/ztst_compsys/core_minimization.txt \
         --json tests/ztst_compsys/core_minimization.json
 
-    # group failing assertions by root cause
+    # group failing assertions by root cause (carries a layers column)
     $P scripts/ztst_compsys.py --zsh-build $B \
         --cluster tests/ztst_compsys/core_minimization.json --cluster-min 2
+
+    # what produced a score: tree, corpus, both binaries -- runs nothing
+    $P scripts/ztst_compsys.py --identity --zsh-build $B
+
+    # per-cause yield: bounded from one run, MEASURED against a later one
+    $P scripts/ztst_compsys.py --yield BEFORE.json --yield-after AFTER.json
+
+    # neutralise a cause for real: same suite twice, one arm with the
+    # substituted completion function, through the same mirror
+    $P scripts/ztst_compsys.py --sut target/debug/zshrs --zsh-build $B \
+        --tests Y01completion,Y05describe,Y06values \
+        --yield-patch /tmp/_description
 
 Gate exit codes: `0` unchanged, `1` something regressed, `2` something moved
 without regressing, `3` the runner itself failed. They are distinct on purpose —
@@ -98,18 +201,23 @@ host-specific baseline failure to subtract.
 
 ### zshrs (`--fx off`)
 
-`tests/ztst_compsys/zshrs_0.12.49_29ee728e_fxoff.txt`:
+`tests/ztst_compsys/zshrs_0.12.49_dde99902_fxoff.txt` (current) and
+`..._29ee728e_fxoff.txt` (the previous pin), both over the full 229:
 
-    files=6 assertions=229 fail=88 notrun=1 pass=37 unknown=96 xfail=7
+    @29ee728e   files=6 assertions=229 fail=88 notrun=1 pass=37 unknown=96 xfail=7
+    @dde99902   files=6 assertions=229 fail=37 notrun=1 pass=88 unknown=96 xfail=7
 
-| file | baseline | zshrs |
-|---|---|---|
-| Y01completion | pass 33 | pass 10, fail 23 |
-| Y02compmatch | pass 51, xfail 7 | pass 22, fail 29, xfail 7 |
-| Y03arguments | pass 100 | pass 1, fail 2, then **timed out** (96 unrun) |
-| Y04regexargs | pass 6 | pass 1, fail 5 |
-| Y05describe | pass 7 | fail 7 |
-| Y06values | pass 25 | pass 3, fail 22 |
+| file | baseline | zshrs @29ee728e | zshrs @dde99902 |
+|---|---|---|---|
+| Y01completion | pass 33 | pass 10, fail 23 | pass 21, fail 12 |
+| Y02compmatch | pass 51, xfail 7 | pass 22, fail 29, xfail 7 | pass 33, fail 18, xfail 7 |
+| Y03arguments | pass 100 | pass 1, fail 2, then **timed out** (96 unrun) | pass 3, then **timed out** (96 unrun) |
+| Y04regexargs | pass 6 | pass 1, fail 5 | pass 3, fail 3 |
+| Y05describe | pass 7 | fail 7 | pass 3, fail 4 |
+| Y06values | pass 25 | pass 3, fail 22 | pass 25 |
+
+The 51 that moved are almost all the `lc=`/`rc=` fix; see "Yield" for the
+measurement that says so rather than assuming it.
 
 Y03arguments does not fail, it hangs: at assertion 4 the shell under test exits
 and the driver blocks forever waiting for its finish widget. `--timeout 180`
@@ -126,7 +234,8 @@ in progress, so every number here names the binary it came from:
 |---|---|---|
 | `0.12.46` | round 5 | the first pin |
 | `0.12.49 @06:25` | 2026-08-30 06:25 | round 6's pin, `gate.json` / `gate_core.json` |
-| `0.12.49 @29ee728e` | 2026-08-30 07:58 | this round's runs |
+| `0.12.49 @29ee728e` | 2026-08-30 07:58 | round 7's runs; `gate.json` |
+| `0.12.49 @dde99902` | 2026-08-30 10:38 | round 8's runs (sha256 `dde99902f0fa812d`, snapshotted before use so a peer relink cannot move it mid-run) |
 
 Between @06:25 and @29ee728e a peer landed a fix for `argv+=( ... )`, which
 round 5 and 6 had recorded as the top Y-series divergence:
@@ -457,6 +566,113 @@ failure, and does the compsys failure disappear when the construct is avoided.
   20 assertions; whether `region_highlight` itself also diverges is not
   measured, because the file never gets far enough to say.
 
+## Yield: measured, not counted
+
+Round 7 used this directory's cluster tables to decide what to fix, and twice
+the prioritisation was wrong in the same way: a cluster counts assertions whose
+output *mentions* a symptom, and an assertion that fails for two independent
+reasons keeps failing when one of them is fixed. "Explains N of M" is a symptom
+count. It is not a yield, and the runner no longer prints it as one.
+
+`--yield BEFORE.json [--yield-after AFTER.json]` splits every element of an
+assertion's expected-vs-actual diff and attributes it to a cause. Each cause is
+anchored to one of `comptest`'s own emission channels (`Test/comptest:159`), not
+to a hand-written "these look similar" rule:
+
+| cause | what it is |
+|---|---|
+| `colour-tags` | upstream expected `<LC>xx<RC>…<EC>` match lines and the shell produced **none at all** |
+| `h-prefix-description` | descriptions carry an `h:` prefix (the `argv+=` shape) |
+| `line-buffer` | the buffer `comptest` reports differs |
+| `description`, `message`, `compadd`, `insert-positions` | that channel differs |
+| `other:<kind>` | anything left over, bucketed by line kind so it is still counted |
+
+Three numbers, and they are not interchangeable:
+
+| column | meaning |
+|---|---|
+| `mentions` | assertions whose divergence includes this cause. **The symptom count.** |
+| `sole` | assertions whose *entire* divergence is this one cause. **UPPER BOUND** — it still assumes the fix emits exactly the expected lines and perturbs nothing else. |
+| `flipped` | with `--yield-after`: what actually passes in the later run. **Measured.** |
+
+### `argv+=` — counting said 50, the bound says 2, reality was 1
+
+`yield_argv_append.txt`, over the run where `argv+=` was live (@06:25,
+93 failures) against the run where it was fixed (@29ee728e):
+
+| cause | mentions | sole (bound) | flipped (measured) |
+|---|---|---|---|
+| `colour-tags` | 73 | 13 | 0 |
+| `h-prefix-description` | **50** | **2** | **1** |
+| `line-buffer` | 23 | 2 | 0 |
+| `insert-positions` | 14 | 4 | 4 |
+| `compadd` | 11 | 8 | 0 |
+
+The old cluster key put 50 assertions in `h-prefix` buckets. The whole run moved
+5 assertions, one of which carried that cause. The new bound would have said
+"at most 2", which is the number a prioritisation decision needed.
+
+Why the gap: 64 of the 93 failures were stacked (`1x29 2x47 3x17`). 48 of the 50
+`h-prefix` assertions were *also* dead on `colour-tags`, so fixing descriptions
+could not surface in them.
+
+### `lc=`/`rc=` — the bound was right, the earlier measurement was not
+
+`yield_list_colors.txt`, @29ee728e (88 failures) against @dde99902:
+
+| cause | mentions | sole (bound) | flipped (measured) |
+|---|---|---|---|
+| `colour-tags` | 73 | 53 | **51** (50 of them `sole`) |
+| `line-buffer` | 23 | 2 | 0 |
+| `description` | 12 | 1 | 1 |
+| `compadd` | 11 | 8 | 0 |
+| `insert-positions` | 7 | 0 | 0 |
+
+53 predicted, 51 measured, and every one of the 51 carried `colour-tags` — the
+report's "flipped but carrying no attributed cause" section is empty. 37 are
+still failing, 23 of which were already stacked before the fix.
+
+53 predicted, 51 measured. The "+24" this round was briefed with is not a
+refutation of that: it was measured on the default `src/zsh` tree, over 188
+assertions with Y04/Y05/Y06 absent — the three files that between them hold 32
+of the colour-affected assertions. Same fix, two populations.
+
+Whole-suite movement over the full corpus, `--fx off`, dev tree:
+
+    @29ee728e   files=6 assertions=229 fail=88 notrun=1 pass=37 unknown=96 xfail=7
+    @dde99902   files=6 assertions=229 fail=37 notrun=1 pass=88 unknown=96 xfail=7
+
+### A cause's yield is not a property of the cause
+
+`--yield-patch FILE` substitutes a completion function and runs the suite twice
+through the same symlink mirror of `Test/`, `Completion/` and `Functions/` —
+once with the substitution, once without. `comptestinit` builds `$fpath` from
+`$ZTST_srcdir/../{Functions,Completion}` (`Test/comptest:4-6`) and `ZTST_srcdir`
+is `${0%/*}` of the invoked `ztst.zsh` (`Test/ztst.zsh:105`), so redirecting it
+is enough: **no upstream file is written**. This is the mechanism that proved
+`argv+=` was the cause of the `h:` descriptions, made repeatable.
+
+Three arms, same binary (@dde99902), same 65 assertions
+(`Y01completion,Y05describe,Y06values`) — `yield_patch_description.txt`:
+
+| arm | substitution in `Completion/Base/Core/_description` | control | patched | broke |
+|---|---|---|---|---|
+| noop | byte-identical copy | fail=16 pass=49 | fail=16 pass=49 | 0 |
+| poison | `"d:$1"` → `"d:ZZ$1"` | fail=16 pass=49 | fail=50 pass=15 | 34 |
+| argvbug | line 83 `argv+=( h:… )` → `argv=( h:… )` | fail=16 pass=49 | fail=49 pass=16 | 33 |
+
+noop moving nothing is what makes the other two arms readable: the mirror does
+not perturb the suite. poison breaking 34 is what makes a *zero* readable: the
+substitution really does reach the shell under test, so zero means "no effect",
+not "not wired up".
+
+argvbug is the point. It re-creates the pre-fix behaviour on today's shell, and
+it costs **33 assertions in three files** — against a measured yield of 1 when
+the bug was actually live. Both numbers are correct. A cause's yield is not a
+property of the cause; it is a property of the cause *and everything stacked on
+top of it*, so it has to be measured against the shell about to be fixed, not
+counted off a stale run.
+
 ## Clustering: which bug, not which file
 
 `--cluster` groups failing assertions by a key computed from the data, never by
@@ -477,13 +693,43 @@ different evidence:
     $P scripts/ztst_compsys.py --zsh-build $B --cluster tests/ztst_compsys/zshrs_0.12.49_29ee728e_fxoff.json
     $P scripts/ztst_compsys.py --zsh-build $B --cluster tests/ztst_compsys/core_minimization.json --cluster-min 2
 
-### Y series: 88 failures, 9 clusters, one cause dominates
+Every cluster table now carries a **layers** column: how many independent causes
+each member's divergence splits into, and how many members are single-cause. A
+cluster of single-cause members is one a fix can clear; a cluster of
+`layers >= 2` members will still be failing afterwards, on whatever is
+underneath. `n` stays a symptom count and is labelled as one in the file.
 
-`cluster_Y.txt`: 9 clusters, 6 of them with two or more members. The top
-three keys cover 76 of the 88, and every one of the nine is a missing- or
-wrong-match-line shape.
+The layers number means two different things in the two suites, and the table
+says which. In the Y series every cause is *named*, because `comptest` emits on
+fixed channels (`NO:`/`DI:`/`FI:`, `DESCRIPTION:`, `MESSAGE:`, `COMPADD:`,
+`INSERT_POSITIONS:`, `line:`) — the `attributed` column is 58/58 on the largest
+cluster. In the core suite the output is arbitrary shell text, so nothing is
+named, `attributed` is 0, and the layers figure is a count of distinct line
+kinds in the diff: an upper bound on independent causes, not a count of them.
+Those rows are printed with a leading `~`.
 
-The dominant one is measurable directly rather than by cluster key. `comptest`
+### Y series: 88 failures, 9 clusters, one cause dominates — but not alone
+
+`cluster_Y.txt`, @29ee728e: 9 clusters, 6 of them with two or more members. With
+layers:
+
+| n | layers | single-cause | key |
+|---|---|---|---|
+| 58 | 1x49 2x5 3x4 | 49 | `missing=[NO] extra=[]` |
+| 14 | 1x10 2x1 3x3 | 10 | `missing=[] extra=[] same-kinds-different-values` |
+| 4 | 1x3 2x1 | 3 | `missing=[DI,FI] extra=[]` |
+| 4 | 3x4 | 0 | `missing=[NO] extra=[DESCRIPTION]` |
+| 3 | 3x3 | 0 | `missing=[DI,FI] extra=[DESCRIPTION]` |
+| 2 | 2x2 | 0 | `missing=[DESCRIPTION,NO] extra=[]` |
+
+The 58-member cluster is 49 single-cause plus 9 stacked, and 51 assertions
+flipped when the colour bug was fixed. The two clusters with no single-cause
+member at all did not move, and could not have.
+
+`cluster_Y_layers.txt` is the same table for @dde99902, after the colour fix:
+the 37 that survive are what is underneath.
+
+The dominant cause is measurable directly rather than by cluster key. `comptest`
 turns a listed match into a `NO:{...}` / `DI:{...}` / `FI:{...}` line by
 matching `<LC><(??)><RC>(*)<EC>` (`Test/comptest:159`), where the markers come
 from the `list-colors` zstyle `comptestinit` sets (`Test/comptest:44`). So:
@@ -493,9 +739,13 @@ from the `list-colors` zstyle `comptestinit` sets (`Test/comptest:44`). So:
 | failing assertions | 88 |
 | ...whose expected output contains at least one colour-tagged match line | **73** |
 | ...of those, how many produced any colour-tagged line under zshrs | **0** |
-| ...whose diff is *only* those lines, i.e. this one fix would make them pass | **53** |
+| ...whose diff is *only* those lines (`sole`, an upper bound) | **53** |
+| ...that actually flipped to pass on @dde99902 (measured) | **51** |
 
-Spread across every file: Y01 22, Y02 17, Y03 2, Y04 4, Y05 6, Y06 22.
+Spread of the 73 across every file: Y01 22, Y02 17, Y03 2, Y04 4, Y05 6, Y06 22.
+Y01completion#1 is the shape to keep in mind: 3 layers (`colour-tags`,
+`description`, `line-buffer`), so it now emits correct colour tags and still
+fails, on the buffer that does not advance.
 
 The mechanism, from a raw pty capture of the same completion in both shells:
 
@@ -528,9 +778,15 @@ the cluster, is the deliverable there. The clusters that do carry blast radius:
 
 ### Ranked by blast radius
 
+**Read these as symptom counts, not yields.** Only the first row has been
+measured against a later run; the rest are `mentions`-style numbers, and the
+gap between the two is the whole subject of the "Yield" section above. A core
+number here has an additional caveat: `--core-minimize` anchors on one witness,
+so it says a cause is present, never that it is the only one.
+
 | assertions | suite | root cause | evidence |
 |---|---|---|---|
-| 73 (53 alone) | Y | `ZLS_COLORS` `lc=`/`rc=` ignored when listing matches | raw pty capture, below |
+| 73 mentions, 53 sole, **51 measured** | Y | `ZLS_COLORS` `lc=`/`rc=` ignored when listing matches | raw pty capture below; `yield_list_colors.txt`. **Fixed on @dde99902.** |
 | 27 | core | no GDBM: `ztie` reports `GDBM support not compiled in` | `repros_core/v11db_gdbm_002.zsh` |
 | 20 | core | `zparseopts` mis-parses its own option words | below |
 | 20 | core | `${~var}` in a nested pattern operand marks the *outer* expansion for filename generation | below |
@@ -666,6 +922,15 @@ Nothing here edits, filters or relaxes an upstream assertion. `.ztst` files,
   same probe script returned 24 lines through a link named `abc` and nothing at
   all through `sut-a`. A `/bin/sh` wrapper fails for a second reason — it drops
   the exported `PS1`, which `comptest` keys every read on.
+* `--yield-patch` runs the suite through a **symlink mirror** of the tree's
+  `Test/`, `Completion/` and `Functions/`, invoking `ztst.zsh` by its path in
+  the mirror so `ZTST_srcdir` (`Test/ztst.zsh:105`) lands there and
+  `comptestinit`'s `$fpath` (`Test/comptest:4-6`) is built from the mirror. That
+  is what lets a completion function be replaced without writing to the zsh
+  tree. No `.ztst`, `Test/comptest` or `Test/ztst.zsh` is modified, and the
+  control arm goes through the same mirror, so the mirror is not part of the
+  measured difference. Verified: a byte-identical substitution moves nothing
+  (`yield_patch_description.txt`, noop arm).
 * The shell binary is copied into the run directory once per run (see above).
 * `ZTST_exe` and `config.modules` are supplied as `make check` supplies them.
 * Modules are symlinked from the build tree rather than `make install.modules`;
@@ -680,15 +945,21 @@ Nothing here edits, filters or relaxes an upstream assertion. `.ztst` files,
 The 88 failing assertions on @29ee728e, in blast-radius order. Full detail and
 expected-vs-actual diffs are in
 `zshrs_0.12.49_29ee728e_fxoff.failures.txt`; the grouping is
-`cluster_Y.txt`.
+`cluster_Y.txt`. The 37 that survive on @dde99902 are in
+`zshrs_0.12.49_dde99902_fxoff.failures.txt` and `cluster_Y_layers.txt` — items 2
+onwards below are what is left, which is the point of the layers column.
 
-1. **`ZLS_COLORS` `lc=`/`rc=` are ignored when listing matches.** 73 of the 88,
-   in every one of the six files; 53 of them would pass on this fix alone.
-   `ec=` is honoured and the `\e[`/`m` around the colour are hardcoded
-   (`src/ported/zle/complist.rs:738-743` documents why). Because upstream keys
-   every listed match on `<LC><xx><RC>...<EC>`, no match line survives into the
+1. **`ZLS_COLORS` `lc=`/`rc=` are ignored when listing matches. FIXED on
+   @dde99902.** 73 of the 88 mentioned it, 53 carried it as their only cause,
+   and **51 actually flipped** (`yield_list_colors.txt`). `ec=` was honoured and
+   the `\e[`/`m` around the colour were hardcoded
+   (`src/ported/zle/complist.rs:738-743` documented why). Because upstream keys
+   every listed match on `<LC><xx><RC>...<EC>`, no match line survived into the
    captured output at all. Measured directly, same completion, both shells:
-   zsh `^[[J<LC><NO><RC>alpha<EC>`, zshrs `^[[J^[[<NO>malpha<EC>`.
+   zsh `^[[J<LC><NO><RC>alpha<EC>`, zshrs `^[[J^[[<NO>malpha<EC>`. 22 mentioned
+   it and did not flip: 19 were stacked on item 2 or item 3, and 3 were
+   single-cause yet still failed — the residual the bound cannot see, and the
+   reason `sole` is stated as an upper bound rather than a prediction.
 2. **The buffer does not advance on repeated TAB.** 23 assertions have a
    `line:` divergence, and the shape is the same: zsh inserts the next match
    (`line: {: dir1/}{}`) where zshrs re-lists the same buffer
@@ -735,7 +1006,14 @@ in front of every description built by `_description`. Fixed between @06:25 and
 | file | what it is |
 |---|---|
 | `baseline_zsh_5.9.999.3-test.{txt,json}` | the zsh Y-series baseline, per assertion |
-| `zshrs_0.12.49_29ee728e_fxoff.{txt,json,failures.txt}` | zshrs Y series on the current binary, and every failure's diff |
+| `zshrs_0.12.49_dde99902_fxoff.{txt,json,failures.txt}` | zshrs Y series on the current binary, and every failure's diff; the first run carrying a recorded reference identity |
+| `zshrs_0.12.49_29ee728e_fxoff.{txt,json,failures.txt}` | round 7's run, kept for provenance and as the yield "before" |
+| `reference_identity.txt` | `--identity` for the default tree and the dev tree, and the partial-corpus refusal |
+| `reference_gate_refusal.txt` | the gate refusing a cross-reference comparison, and the same run forced through with `--allow-cross-reference` |
+| `yield_argv_append.txt` | per-cause yield across the `argv+=` fix: 50 mentions, 2 sole, 1 measured |
+| `yield_list_colors.txt` | per-cause yield across the `lc=`/`rc=` fix: 73 mentions, 53 sole, 51 measured |
+| `yield_patch_description.txt` | the `--yield-patch` counterfactual: noop / poison / argvbug arms |
+| `cluster_Y_layers.txt` | the 37 surviving Y failures clustered, with the layers column |
 | `cluster_Y.txt` | the 88 Y failures grouped by root-cause key |
 | `zshrs_0.12.49_fxoff.{txt,failures.txt}` | the @06:25 run, kept for provenance |
 | `zshrs_0.12.46_fxoff.{txt,json,failures.txt}` | round 5's run, kept for provenance |

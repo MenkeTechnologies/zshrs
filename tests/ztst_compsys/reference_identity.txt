@@ -1,0 +1,62 @@
+# reference identity: what the default tree contains, and what the gate refuses
+
+Every command below is reproducible; the output is verbatim.
+
+## $ ztst_compsys.py --identity                 (the DEFAULT --zsh-build)
+
+## reference identity
+reference id     : 04a5a612becb
+zsh source tree  : /Users/wizard/RustroverProjects/zshrs/src/zsh
+  VERSION        : 5.9.0.3-test
+  git rev        : e73499b372-dirty
+zsh binary driven: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+  version        : zsh 5.9.0.3-test (arm-apple-darwin25.4.0)
+  size/mtime/sha : 737536 2026-05-01T21:59:01 a9287331c720e42f
+corpus           : 3 file(s), 188 assertion(s), digest 69142aa4c4721866
+  tree holds     : 70 .ztst file(s)
+  files run      : Y01completion Y02compmatch Y03arguments
+  ABSENT         : Y04regexargs Y05describe Y06values  <-- not in this tree, so not scored and not counted
+shell under test : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+  version        : zshrs 0.12.49
+  size/mtime/sha : 101779080 2026-08-30T10:41:25 dde99902f0fa812d
+!! PARTIAL CORPUS: Y04regexargs, Y05describe, Y06values absent from this tree
+
+## $ ztst_compsys.py --identity --zsh-build <dev tree>
+
+## reference identity
+reference id     : f68ee1d02e29
+zsh source tree  : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+  VERSION        : 5.9.999.3-test
+  git rev        : 599af4604f
+zsh binary driven: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+  version        : zsh 5.9.999.3-test [zsh-5.9.0.3-test-357-g599af46] (aarch64-apple-darwin25.5.0)
+  size/mtime/sha : 737776 2026-08-30T05:05:21 f14c87e66dadde72
+corpus           : 6 file(s), 229 assertion(s), digest 031a0357a801217f
+  tree holds     : 76 .ztst file(s)
+  files run      : Y01completion Y02compmatch Y03arguments Y04regexargs Y05describe Y06values
+shell under test : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+  version        : zshrs 0.12.49
+  size/mtime/sha : 101779080 2026-08-30T10:41:25 dde99902f0fa812d
+
+## $ ztst_compsys.py --identity --core          (default vs dev tree)
+
+zsh source tree  : /Users/wizard/RustroverProjects/zshrs/src/zsh
+  VERSION        : 5.9.0.3-test
+corpus           : 67 file(s), 2416 assertion(s), digest 21f3c89b6e487340
+  tree holds     : 70 .ztst file(s)
+
+zsh source tree  : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+  VERSION        : 5.9.999.3-test
+corpus           : 70 file(s), 2523 assertion(s), digest 36acaa3512f41691
+  tree holds     : 76 .ztst file(s)
+
+## $ ztst_compsys.py --pin                      (default tree, partial corpus)
+
+exit=3
+PARTIAL CORPUS: Y04regexargs, Y05describe, Y06values absent from /Users/wizard/RustroverProjects/zshrs/src/zsh
+  this run scores 188 assertions over 3 files, not the full Y suite.
+  build a complete tree (Util/preconfig && configure && make on a
+  5.9.999-era checkout) and pass --zsh-build, or pass
+  --allow-partial-corpus to score the subset on purpose.
+  refusing to pin or gate a partial corpus: a pin taken here would
+  silently score against a different assertion population later.

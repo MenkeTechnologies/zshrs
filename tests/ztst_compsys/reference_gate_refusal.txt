@@ -1,0 +1,167 @@
+# the gate refuses a cross-reference comparison
+
+Y01completion was pinned against the dev tree (5.9.999.3-test, 599af4604f).
+The same file, same shell binary, gated from the vendored default tree.
+
+## $ ztst_compsys.py --tests Y01completion --gate --gate-file <that pin>
+##   (default --zsh-build)
+
+exit=3
+[ztst_compsys] candidate /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+  ## reference identity
+  reference id     : 3561d1ec3f6b
+  zsh source tree  : /Users/wizard/RustroverProjects/zshrs/src/zsh
+    VERSION        : 5.9.0.3-test
+    git rev        : e73499b372-dirty
+  zsh binary driven: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+    version        : zsh 5.9.0.3-test (arm-apple-darwin25.4.0)
+    size/mtime/sha : 737536 2026-05-01T21:59:01 a9287331c720e42f
+  corpus           : 1 file(s), 33 assertion(s), digest 95a8a75002f09942
+    tree holds     : 70 .ztst file(s)
+    files run      : Y01completion
+  mode: compsys (Y series)
+  sut_snapshot: yes
+  sut: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+  sut_version: 5.9.2 zsh-5.9.2-0-gddee3e7
+  harness: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+  harness_version: 5.9.0.3-test zsh-5.9.0.2-test-179-ge73499b
+  zsh_build: /Users/wizard/RustroverProjects/zshrs/src/zsh
+  zsh_build_version: 5.9.0.3-test
+  zsh_build_git_rev: e73499b372-dirty
+  reference_id: 3561d1ec3f6b
+  corpus_digest: 95a8a75002f09942
+  corpus_files: 1
+  corpus_assertions: 33
+  corpus_missing: (none)
+  modules_linked: 41
+  fx: off
+  sut_env: ZSHRS_NATIVE_ZLE_FX=0
+  tests: Y01completion
+  timeout: 60
+  date: 2026-08-30T10:57:11-0400
+pinned reference : f4db3da9f63b
+current reference: 3561d1ec3f6b
+reference differs:
+  tree.version: '5.9.999.3-test' -> '5.9.0.3-test'
+  tree.git_rev: '599af4604f' -> 'e73499b372-dirty'
+  harness.sha256: 'f14c87e66dadde72' -> 'a9287331c720e42f'
+  corpus.drivers: '8cea485133f220c8' -> 'aac9e65b0fdb9a6e'
+  corpus.Y01completion: 1ec0dce99bc70cbb -> a233262a95d6cbc9
+refusing to gate against /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/demo_gate.json: it was pinned against a different reference.
+  A pin recorded on one corpus must not be scored against another.
+  Re-pin against this reference, or pass --allow-cross-reference to
+  print the comparison labelled CROSS-REFERENCE.
+# ztst Y-series completion suite -- candidate /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+
+## reference identity
+reference id     : 3561d1ec3f6b
+zsh source tree  : /Users/wizard/RustroverProjects/zshrs/src/zsh
+  VERSION        : 5.9.0.3-test
+  git rev        : e73499b372-dirty
+zsh binary driven: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+  version        : zsh 5.9.0.3-test (arm-apple-darwin25.4.0)
+  size/mtime/sha : 737536 2026-05-01T21:59:01 a9287331c720e42f
+corpus           : 1 file(s), 33 assertion(s), digest 95a8a75002f09942
+  tree holds     : 70 .ztst file(s)
+  files run      : Y01completion
+
+corpus_assertions: 33
+corpus_digest: 95a8a75002f09942
+corpus_files: 1
+corpus_missing: (none)
+date: 2026-08-30T10:57:11-0400
+fx: off
+harness: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+harness_version: 5.9.0.3-test zsh-5.9.0.2-test-179-ge73499b
+mode: compsys (Y series)
+modules_linked: 41
+reference_id: 3561d1ec3f6b
+sut: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now
+sut_env: ZSHRS_NATIVE_ZLE_FX=0
+sut_snapshot: yes
+sut_version: 5.9.2 zsh-5.9.2-0-gddee3e7
+tests: Y01completion
+timeout: 60
+zsh_build: /Users/wizard/RustroverProjects/zshrs/src/zsh
+zsh_build_git_rev: e73499b372-dirty
+zsh_build_version: 5.9.0.3-test
+
+files=1 assertions=33 fail=12 pass=21
+
+## Y01completion  exit=1  fail=12 pass=21
+  FAIL   1 directories and files
+  FAIL   2 unambiguous prefix and autoremovable suffix
+  FAIL   3 unambiguous prefix and autoremovable suffix with _prefix completer
+  ok     4 compstate[insert]=1 compstate[list]=
+  ok     5 compstate[insert]=1 compstate[list]= with _prefix completer
+  FAIL   6 _expand shows file types
+  ok     7 _expand preserves array form
+  FAIL   8 tilde
+  FAIL   9 dynamic directory names after ~[
+  FAIL  10 dynamic directory names inside ~[...]
+  ok    11 directories and files before separator
+  ok    12 custom description with formatting sequences
+  ok    13 command
+  ok    14 command after separator
+  ok    15 redirection after "for ...; do"
+  FAIL  16 directory name is not a glob qualifier
+  ok    17 remove exact number of characters from a prefix
+  ok    18 remove exact number of characters from a suffix
+  ok    19 try to remove excess characters from prefix and suffix
+  ok    20 remove multibyte character from a prefix
+  ok    21 allow for suffixes when moving cursor to end of match (with ignored suffix)
+  ok    22 allow for suffixes when moving cursor to end of match (without ignored suffix)
+  ok    23 ignore backslashes when sorting completion matches
+  ok    24 reverse numeric sorting of matches
+  ok    25 reverse numeric sorting of matches via a style
+  ok    26 sort in match rather than display name order
+  ok    27 sorting disabled via the sort style
+  FAIL  28 -F does not break _sequence
+  ok    29 multiple envarrays
+  FAIL  30 extra-verbose shows parameter values
+  FAIL  31 verbose doesn't show special or hidden parameter values
+  ok    32 parameter values not shown without verbose
+  FAIL  33  menu select=long-list starts menu selection for list widgets
+
+
+## the same run with --allow-cross-reference
+
+# ztst_compsys gate
+## reference identity
+reference id     : 3561d1ec3f6b
+zsh source tree  : /Users/wizard/RustroverProjects/zshrs/src/zsh
+  VERSION        : 5.9.0.3-test
+  git rev        : e73499b372-dirty
+zsh binary driven: /Users/wizard/RustroverProjects/zshrs/src/zsh/Src/zsh
+  version        : zsh 5.9.0.3-test (arm-apple-darwin25.4.0)
+  size/mtime/sha : 737536 2026-05-01T21:59:01 a9287331c720e42f
+corpus           : 1 file(s), 33 assertion(s), digest 95a8a75002f09942
+  tree holds     : 70 .ztst file(s)
+  files run      : Y01completion
+pinned reference : f4db3da9f63b
+current reference: 3561d1ec3f6b
+reference differs:
+  tree.version: '5.9.999.3-test' -> '5.9.0.3-test'
+  tree.git_rev: '599af4604f' -> 'e73499b372-dirty'
+  harness.sha256: 'f14c87e66dadde72' -> 'a9287331c720e42f'
+  corpus.drivers: '8cea485133f220c8' -> 'aac9e65b0fdb9a6e'
+  corpus.Y01completion: 1ec0dce99bc70cbb -> a233262a95d6cbc9
+!! CROSS-REFERENCE: this is not a like-for-like gate; every verdict below describes two runs that did not measure the same thing
+pinned at   : 2026-08-30T10:49:50-0400
+pinned sut  : zshrs 0.12.49 dde99902f0fa812d
+current sut : zshrs 0.12.49 dde99902f0fa812d
+binary moved: no
+zsh build   : 5.9.0.3-test (/Users/wizard/RustroverProjects/zshrs/src/zsh)
+UNCHANGED=33 REGRESSED=0 FIXED=0 CHANGED=0 NEW=0 MISSING=0
+verdict: UNCHANGED  [CROSS-REFERENCE comparison]
+
+Note the verdict: UNCHANGED=33 across two trees whose Y01completion.ztst is not
+the same file.  Unlabelled, that reads as 'the gate passed'.  It is not a result.
+
+## a like-for-like subset gate against the same pin is NOT refused
+
+pinned reference : f4db3da9f63b
+current reference: f4db3da9f63b
+reference: identical to the pin
+UNCHANGED=33 REGRESSED=0 FIXED=0 CHANGED=0 NEW=0 MISSING=0
+verdict: UNCHANGED

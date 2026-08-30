@@ -1,0 +1,816 @@
+=== Y01completion #1 [fail] directories and files
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,9 +4,39 @@
+     DI:{dir2}
+     FI:{file1}
+     FI:{file2}
+    -line: {: dir1/}{}
+    -line: {: dir2/}{}
+    -line: {: file1}{}
+    -line: {: file2}{}
+    -line: {: dir1/}{}
+    -line: {: dir2/}{}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+    +line: {: }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +FI:{file1}
+    +FI:{file2}
+
+=== Y01completion #2 [fail] unambiguous prefix and autoremovable suffix
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,12 +3,21 @@
+     DESCRIPTION:{file}
+     DI:{dir1}
+     DI:{dir2}
+    -line: {: dir1/}{}
+    -line: {: dir2/}{}
+    -line: {: dir1/}{}
+    -line: {: dir1 }{}
+    +line: {: dir}{}
+     DESCRIPTION:{file}
+     DI:{dir1}
+     DI:{dir2}
+    +line: {: dir}{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +line: {: dir}{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +line: {: dir }{}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+     FI:{file1}
+     FI:{file2}
+
+=== Y01completion #3 [fail] unambiguous prefix and autoremovable suffix with _prefix completer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,12 +3,21 @@
+     DESCRIPTION:{file}
+     DI:{dir1}
+     DI:{dir2}
+    -line: {: dir1/}{suf}
+    -line: {: dir2/}{suf}
+    -line: {: dir1/}{suf}
+    -line: {: dir1 }{suf}
+    +line: {: dir}{suf}
+     DESCRIPTION:{file}
+     DI:{dir1}
+     DI:{dir2}
+    +line: {: dir}{suf}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +line: {: dir}{suf}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+    +line: {: dir }{suf}
+    +DESCRIPTION:{file}
+    +DI:{dir1}
+    +DI:{dir2}
+     FI:{file1}
+     FI:{file2}
+
+=== Y01completion #6 [fail] _expand shows file types
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -8,8 +8,8 @@
+     NO:{dir1 dir2 file1 file2}
+     DESCRIPTION:{original}
+     NO:{*}
+    -line: {: dir2/}{}
+    -line: {: file1 }{}
+    -line: {: file2 }{}
+    -line: {: dir1 dir2 file1 file2 }{}
+    -line: {: *}{}
+    +line: {: dir1/}{}
+    +line: {: dir1/}{}
+    +line: {: dir1/}{}
+    +line: {: dir1/}{}
+    +line: {: dir1/}{}
+
+=== Y01completion #8 [fail] tilde
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,6 +2,12 @@
+     line: {: ~zuser}{}
+     NO:{zuser1}
+     NO:{zuser2}
+    -line: {: ~zuser1}{}
+    -line: {: ~zuser2}{}
+    -line: {: ~zuser1}{}
+    +line: {: ~zuser}{}
+    +NO:{zuser1}
+    +NO:{zuser2}
+    +line: {: ~zuser}{}
+    +NO:{zuser1}
+    +NO:{zuser2}
+    +line: {: ~zuser}{}
+    +NO:{zuser1}
+    +NO:{zuser2}
+
+=== Y01completion #9 [fail] dynamic directory names after ~[
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,5 +3,11 @@
+     DESCRIPTION:{dynamically named directory}
+     NO:{name/1}
+     NO:{name2}
+    -line: {: ~[name/1]}{}
+    -line: {: ~[name2]}{}
+    +line: {: ~[name}{}
+    +DESCRIPTION:{dynamically named directory}
+    +NO:{name/1}
+    +NO:{name2}
+    +line: {: ~[name}{}
+    +DESCRIPTION:{dynamically named directory}
+    +NO:{name/1}
+    +NO:{name2}
+
+=== Y01completion #10 [fail] dynamic directory names inside ~[...]
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,48 @@
+    -line: {: ~[name}{]}
+    -line: {: ~[name}{]}
+    -DESCRIPTION:{dynamically named directory}
+    +line: {: ~[}{]}
+    +NO:{--}
+     NO:{name/1}
+     NO:{name2}
+    -line: {: ~[name/1}{]}
+    -line: {: ~[name2}{]}
+    +DESCRIPTION:{expansions}
+    +NO:{ ~ [ ]}
+    +DESCRIPTION:{all expansions}
+    +NO:{name/1}
+    +NO:{name2}
+    +NO:{~[]}
+    +DESCRIPTION:{original}
+    +NO:{~[]}
+    +line: {: ~[}{]}
+    +NO:{--}
+    +NO:{name/1}
+    +NO:{name2}
+    +DESCRIPTION:{expansions}
+    +NO:{ ~ [ ]}
+    +DESCRIPTION:{all expansions}
+    +NO:{name/1}
+    +NO:{name2}
+    +NO:{~[]}
+    +DESCRIPTION:{original}
+    +NO:{~[]}
+    +line: {: ~[}{]}
+    +NO:{--}
+    +NO:{name/1}
+    +NO:{name2}
+    +DESCRIPTION:{expansions}
+    +NO:{ ~ [ ]}
+    +DESCRIPTION:{all expansions}
+    +NO:{name/1}
+    +NO:{name2}
+    +NO:{~[]}
+    +DESCRIPTION:{original}
+    +NO:{~[]}
+    +line: {: ~[}{]}
+    +NO:{--}
+    +NO:{name/1}
+    +NO:{name2}
+    +DESCRIPTION:{expansions}
+    +NO:{ ~ [ ]}
+    +DESCRIPTION:{all expansions}
+    +NO:{name/1}
+    +NO:{name2}
+    +NO:{~[]}
+    +DESCRIPTION:{original}
+    +NO:{~[]}
+
+=== Y01completion #16 [fail] directory name is not a glob qualifier
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {cd "A(B)/}{}
+    -line: {cd "A(B)/C/}{}
+    -line: {cd ../C/}{}
+    +line: {cd "A(B)/}{}
+    +line: {cd ../}{}
+
+=== Y01completion #28 [fail] -F does not break _sequence
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,18 @@
+     line: {tst 1,}{}
+    -DESCRIPTION:{desc}
+    +NO:{,}
+    +NO:{,\ \\t\\n\\-}
+    +NO:{-}
+    +NO:{-F}
+    +NO:{-J}
+    +NO:{-S}
+    +NO:{-X}
+    +NO:{-o}
+    +NO:{-r}
+    +NO:{1}
+     NO:{2}
+     NO:{3}
+    +NO:{\<DESCRIPTION\>desc\</DESCRIPTION\>$'\n'}
+    +NO:{argument-1}
+    +NO:{compadd}
+    +NO:{dedup}
+    +NO:{nosort}
+
+=== Y01completion #30 [fail] extra-verbose shows parameter values
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     line: {: $ba}{}
+     DESCRIPTION:{parameter}
+    -NO:{bar  -- ( '^@' '^A' '^B' '^C' '^D' '^E' '^F' '^G' '^H' '\t' '\n' '^K' '^L' '}
+    -NO:{bat  -- ( [' ']='!' ['"']='#' ['$']=% ['&']=\' ['(']=')' ['*']=+ [,]=- [.]=/}
+    -NO:{bay  -- '^@ ^A ^B ^C ^D ^E ^F ^G ^H \t \n ^K ^L ^M ^N ^O ^P ^Q ^R ^S ^T ^U ^}
+    +NO:{bar}
+    +NO:{bat}
+    +NO:{bay}
+
+=== Y01completion #31 [fail] verbose doesn't show special or hidden parameter values
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1 @@
+     line: {: $path}{}
+    -DESCRIPTION:{parameter}
+    -NO:{path}
+    -NO:{paths}
+
+=== Y01completion #33 [fail]  menu select=long-list starts menu selection for list widgets
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,3 @@
+    -NO:{<INSERT>menu</INSERT>}
+     NO:{a}
+     NO:{b}
+     NO:{c}
+    @@ -21,7 +20,3 @@
+     NO:{t}
+     NO:{u}
+     NO:{v}
+    -NO:{w}
+    -NO:{x}
+    -NO:{y}
+    -NO:{z}
+
+=== Y02compmatch #2 [fail] Match Error for "m:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing word pattern}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #3 [fail] Match Error for "M:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing word pattern}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #4 [fail] Match Error "r:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing right anchor}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #5 [fail] Match Error "R:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing right anchor}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #6 [fail] Match Error for "l:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing line pattern}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #7 [fail] Match Error for "L:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing line pattern}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #8 [fail] Match Error for "m:{0-9"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: unterminated character class}
+    +COMPADD:{_tst:compadd: missing word pattern}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #10 [fail] Match Error for "m:{0-9}={"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -line: {tst }{}
+    -COMPADD:{_tst:compadd: unterminated character class}
+    -INSERT_POSITIONS:{}
+    +line: {tst IndianRed}{}
+    +COMPADD:{}
+    +INSERT_POSITIONS:{13}
+
+=== Y02compmatch #11 [fail] Match Error for "m:{0-9}={0-"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -line: {tst }{}
+    -COMPADD:{_tst:compadd: unterminated character class}
+    -INSERT_POSITIONS:{}
+    +line: {tst IndianRed}{}
+    +COMPADD:{}
+    +INSERT_POSITIONS:{13}
+
+=== Y02compmatch #12 [fail] Match Error for "m:{0-9}={-"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -line: {tst }{}
+    -COMPADD:{_tst:compadd: unterminated character class}
+    -INSERT_POSITIONS:{}
+    +line: {tst IndianRed}{}
+    +COMPADD:{}
+    +INSERT_POSITIONS:{13}
+
+=== Y02compmatch #13 [fail] Match Error "r:"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     line: {tst }{}
+    -COMPADD:{_tst:compadd: missing patterns}
+    +COMPADD:{_tst:compadd: missing right anchor}
+     INSERT_POSITIONS:{}
+
+=== Y02compmatch #25 [fail] Documentation example for lowercase insenitive m, input "A\t\t" 
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,6 +3,8 @@
+     INSERT_POSITIONS:{5}
+     NO:{ABC}
+     NO:{Abc}
+    -line: {tst ABC}{}
+    +line: {tst A}{}
+     COMPADD:{}
+     INSERT_POSITIONS:{5}
+    +NO:{ABC}
+    +NO:{Abc}
+
+=== Y02compmatch #26 [fail] Documentation example for case insenitive M, input "aB\t\t"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,6 +3,8 @@
+     INSERT_POSITIONS:{6}
+     NO:{aBC}
+     NO:{aBc}
+    -line: {tst aBC}{}
+    +line: {tst aB}{}
+     COMPADD:{}
+     INSERT_POSITIONS:{6}
+    +NO:{aBC}
+    +NO:{aBc}
+
+=== Y02compmatch #27 [fail] Documentation example for case insenitive m, input "aB\t\t"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,12 @@
+    -line: {tst a}{BC}
+    +line: {tst aB}{}
+     COMPADD:{}
+    -INSERT_POSITIONS:{5:7}
+    -line: {tst a}{BC}
+    +INSERT_POSITIONS:{5:6}
+    +NO:{ABC}
+    +NO:{Abc}
+    +NO:{abc}
+    +line: {tst aB}{}
+     COMPADD:{}
+    -INSERT_POSITIONS:{5:7}
+    +INSERT_POSITIONS:{5:6}
+     NO:{ABC}
+     NO:{Abc}
+     NO:{abc}
+
+=== Y02compmatch #40 [fail] Documentation example using "r:|[A-Z0-9]=** r:|=*", input 2
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,6 @@
+     line: {tst 5}{23}
+     COMPADD:{}
+     INSERT_POSITIONS:{5:7}
+    -line: {tst 5}{23}
+    +line: {tst 23 }{}
+     COMPADD:{}
+    -INSERT_POSITIONS:{5:7}
+    -NO:{5bar234}
+    -NO:{5foo123}
+    +INSERT_POSITIONS:{9}
+
+=== Y02compmatch #47 [fail] Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -10,3 +10,6 @@
+     line: {tst build.out}{}
+     COMPADD:{}
+     INSERT_POSITIONS:{13}
+    +NO:{build.out}
+    +NO:{build.out1}
+    +NO:{build.out2}
+
+=== Y02compmatch #52 [fail] Second test from workers 12995
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -line: {tst ../Completion/Core }{}
+    +line: {tst ../}{com/cor}
+     COMPADD:{}
+    -INSERT_POSITIONS:{22}
+    +INSERT_POSITIONS:{}
+
+=== Y02compmatch #57 [fail] Test for insert positions
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,8 +4,6 @@
+     line: {tst a.b}{.cB.dA}
+     COMPADD:{}
+     INSERT_POSITIONS:{5:7:13}
+    -line: {tst a}{.bC.cB.dA}
+    +line: {tst .cB.dA }{}
+     COMPADD:{}
+    -INSERT_POSITIONS:{5:14}
+    -NO:{aA.bC.cB.dA}
+    -NO:{aD.bC.cB.dA}
+    +INSERT_POSITIONS:{6}
+
+=== Y03arguments #4 [notrun] three arguments
+
+=== Y03arguments #5 [unknown] first argument
+
+=== Y03arguments #6 [unknown] second argument but no first argument
+
+=== Y03arguments #7 [unknown] second and rest arguments but no first argument
+
+=== Y03arguments #8 [unknown] -+
+
+=== Y03arguments #9 [unknown] option beginning with + and -.
+
+=== Y03arguments #10 [unknown] option beginning with + and -, specified the other way around
+
+=== Y03arguments #11 [unknown] mix of + and - and exclusion of stacked options
+
+=== Y03arguments #12 [unknown] mix of + and - and exclusion of stacked options
+
+=== Y03arguments #13 [unknown] two option arguments
+
+=== Y03arguments #14 [unknown] option argument to ignored option
+
+=== Y03arguments #15 [unknown] ignored option not completed
+
+=== Y03arguments #16 [unknown] ignored option is not taken to be the normal argument
+
+=== Y03arguments #17 [unknown] unrecognised option has no effect on proceedings with no normal arguments
+
+=== Y03arguments #18 [unknown] unrecognised option is taken to be the normal argument
+
+=== Y03arguments #19 [unknown] option argument follows in next argument
+
+=== Y03arguments #20 [unknown] option argument either direct or in following argument
+
+=== Y03arguments #21 [unknown] option argument follows directly
+
+=== Y03arguments #22 [unknown] option argument follows optional equals
+
+=== Y03arguments #23 [unknown] option argument follows optional equals, with -s
+
+=== Y03arguments #24 [unknown] option argument follows mandatory equals
+
+=== Y03arguments #25 [unknown] sticky option argument
+
+=== Y03arguments #26 [unknown] option argument with prefix that passes option prefix-needed test
+
+=== Y03arguments #27 [unknown] end of option sequence
+
+=== Y03arguments #28 [unknown] argument beginning with minus
+
+=== Y03arguments #29 [unknown] argument beginning with minus, guard on rest argument
+
+=== Y03arguments #30 [unknown] optional option argument
+
+=== Y03arguments #31 [unknown] variable length option arguments
+
+=== Y03arguments #32 [unknown] opt_args
+
+=== Y03arguments #33 [unknown] opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour
+
+=== Y03arguments #34 [unknown] opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping
+
+=== Y03arguments #35 [unknown] option completion with rest arguments on the line but not in the specs
+
+=== Y03arguments #36 [unknown] optarg completion following rest operand on line (workers/42141)
+
+=== Y03arguments #37 [unknown] rest arguments
+
+=== Y03arguments #38 [unknown] rest arguments with single colon
+
+=== Y03arguments #39 [unknown] rest arguments with two colons
+
+=== Y03arguments #40 [unknown] rest arguments with three colons
+
+=== Y03arguments #41 [unknown] rest arguments with three colons following optional argument
+
+=== Y03arguments #42 [unknown] rest arguments with three colons following optional argument to an option
+
+=== Y03arguments #43 [unknown] words array in rest arguments
+
+=== Y03arguments #44 [unknown] opt_args
+
+=== Y03arguments #45 [unknown] options and words (zsh-workers:12257)
+
+=== Y03arguments #46 [unknown] matcher applies to options but not rest arguments
+
+=== Y03arguments #47 [unknown] matcher in combination with sets (implies separate cadef structure)
+
+=== Y03arguments #48 [unknown] option after --
+
+=== Y03arguments #49 [unknown] -S: disallowed option after --
+
+=== Y03arguments #50 [unknown] -S: allowed option after -
+
+=== Y03arguments #51 [unknown] -S: allowed option before --
+
+=== Y03arguments #52 [unknown] -S: only first of duplicate -- is ignored
+
+=== Y03arguments #53 [unknown] -S -S: disallowed option after --
+
+=== Y03arguments #54 [unknown] -S -S: disallowed option after -
+
+=== Y03arguments #55 [unknown] option after a word
+
+=== Y03arguments #56 [unknown] long option after word that doesn't match -A pattern
+
+=== Y03arguments #57 [unknown] option after word that doesn't match -A pattern, no space before pattern
+
+=== Y03arguments #58 [unknown] option before a word that doesn't match -A pattern, separate -A from pattern
+
+=== Y03arguments #59 [unknown] continue completion after rest argument that looks like an option
+
+=== Y03arguments #60 [unknown] word matching -A pattern doesn't exclude options
+
+=== Y03arguments #61 [unknown] unrecognised word matching -A pattern not treated as a rest argument
+
+=== Y03arguments #62 [unknown] exclusion from option following word matching -A pattern should not apply
+
+=== Y03arguments #63 [unknown] repeatable options
+
+=== Y03arguments #64 [unknown] rest arguments from another set not completed after option from first set
+
+=== Y03arguments #65 [unknown] continue completion after rest argument that looks like an option (with sets)
+
+=== Y03arguments #66 [unknown] foreign option disables whole set (without -A)
+
+=== Y03arguments #67 [unknown] foreign option disables whole set (with -A)
+
+=== Y03arguments #68 [unknown] exclude option common to two sets and from one common option
+
+=== Y03arguments #69 [unknown] rest argument rule in two sets
+
+=== Y03arguments #70 [unknown] exclude various forms of rest argument in set specific form
+
+=== Y03arguments #71 [unknown] exclusion lists
+
+=== Y03arguments #72 [unknown] exclude option from normal argument to the right of the cursor
+
+=== Y03arguments #73 [unknown] exclude own set from an option
+
+=== Y03arguments #74 [unknown] exclude later set from an option common to both
+
+=== Y03arguments #75 [unknown] exclude earlier set from an option common to both
+
+=== Y03arguments #76 [unknown] single option sets are still mutually exclusive
+
+=== Y03arguments #77 [unknown] excluding a set doesn't exclude common options as part of the set
+
+=== Y03arguments #78 [unknown] exclude all other options
+
+=== Y03arguments #79 [unknown] exclude all options from a normal argument
+
+=== Y03arguments #80 [unknown] exclusion only applies to later words
+
+=== Y03arguments #81 [unknown] exclusion with clumped options, in, after and before
+
+=== Y03arguments #82 [unknown] don't prematurely exclude option that current word is a prefix of
+
+=== Y03arguments #83 [unknown] don't prematurely exclude option that current word is a prefix of (with sets)
+
+=== Y03arguments #84 [unknown] option clumping mixed with real option that looks like clump
+
+=== Y03arguments #85 [unknown] option clumping mixed with direct argument
+
+=== Y03arguments #86 [unknown] exclusion with option argument that looks like an option
+
+=== Y03arguments #87 [unknown] exclude group options
+
+=== Y03arguments #88 [unknown] single option groups are not mutually exclusive
+
+=== Y03arguments #89 [unknown] exclude rest args listed within a group
+
+=== Y03arguments #90 [unknown] two forms of same option in different groups
+
+=== Y03arguments #91 [unknown] normal argument excludes options in internally mutually exclusive group
+
+=== Y03arguments #92 [unknown] mix sets, groups and option stacking
+
+=== Y03arguments #93 [unknown] sets and groups with - in their name
+
+=== Y03arguments #94 [unknown] with message and bashautolist, a third tab will get menu completion
+
+=== Y03arguments #95 [unknown] with message and bashautolist, a third tab is needed to display the list
+
+=== Y03arguments #96 [unknown] with message and noautomenu second tab redisplays the list
+
+=== Y03arguments #97 [unknown] with message two tabs will start menu completion
+
+=== Y03arguments #98 [unknown] with message and _oldlist, two tabs will start menu completion
+
+=== Y03arguments #99 [unknown] partial completion of option with an argument
+
+=== Y03arguments #100 [unknown] with -W options mixed with arguments
+
+=== Y04regexargs #3 [fail] optional fields after a suffix
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,4 @@
+     line: {tst rpc mountd,}{}
+     line: {tst rpc mountd,}{}
+    -DESCRIPTION:{version}
+     line: {tst rpc mountd,1,}{}
+     DESCRIPTION:{procedure}
+
+=== Y04regexargs #4 [fail] simple repetition, note zero repititions allowed
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -6,4 +6,4 @@
+     NO:{end}
+     line: {tst 1,}{}
+     line: {tst 1,2,end }{}
+    -line: {tst 1,2,end next }{}
+    +line: {tst 1,2,end }{}
+
+=== Y04regexargs #5 [fail] non-matching pattern to separate matches from consuming patterns
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,4 +3,4 @@
+     NO:{--fix}
+     NO:{--on}
+     line: {tst --on=true }{}
+    -line: {tst --on=true --}{}
+    +line: {tst --on=true }{}
+
+=== Y05describe #2 [fail] name1 as ((...)) not supported
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -line: {tst  }{}
+    +line: {tst }{}
+
+=== Y05describe #3 [fail] name2 as (...)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,4 +3,8 @@
+     NO:{b    -- descb}
+     NO:{c:c  -- descc}
+     NO:{a}
+    -line: {tst bx}{}
+    +line: {tst }{}
+    +DESCRIPTION:{desc}
+    +NO:{b    -- descb}
+    +NO:{c:c  -- descc}
+    +NO:{a}
+
+=== Y05describe #5 [fail] arrays by name
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,4 +3,8 @@
+     NO:{b    -- descb}
+     NO:{c:c  -- descc}
+     NO:{a}
+    -line: {tst bx}{}
+    +line: {tst }{}
+    +DESCRIPTION:{desc}
+    +NO:{b    -- descb}
+    +NO:{c:c  -- descc}
+    +NO:{a}
+
+=== Y05describe #7 [fail] compadd options, complex
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -7,4 +7,12 @@
+     NO:{y}
+     NO:{z}
+     NO:{x}
+    -line: {tst cx}{}
+    +line: {tst }{}
+    +DESCRIPTION:{desc}
+    +NO:{c}
+    +NO:{b}
+    +NO:{a}
+    +DESCRIPTION:{desc}
+    +NO:{y}
+    +NO:{z}
+    +NO:{x}
+
