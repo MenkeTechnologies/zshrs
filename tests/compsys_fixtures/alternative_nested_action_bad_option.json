@@ -1,0 +1,85 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "alternative_nested_action_bad_option",
+ "title": "a nested _values/_alternative action makes zsh report 'bad option'; zshrs completes silently",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0001 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0001",
+   "kind": "alternative",
+   "seed": 900,
+   "case": 1,
+   "setup": [],
+   "completer": "#compdef fzc0001\n\n_alternative \\\n  'beta:eq=sign:{ _values '\\''back\\slash'\\'' '\\''five[brace{s} here amp&and]'\\'' '\\''delta[dash-dash --opt]'\\'' }' \\\n  'two:amp&and:_alternative '\\''alpha:back\\\\slash plain:(zeta gamma one)'\\'' '\\''eps:$HOME path:_files'\\'''\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "one-sided-error",
+  "detail": "14 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "_alternative:7: bad option: -J",
+    "zshrs": "delta  -- dash-dash --opt"
+   }
+  ],
+  "only_zsh_diagnostics": [
+   "_alternative:7: bad option: --",
+   "_alternative:7: bad option: -J",
+   "_alternative:7: bad option: -a",
+   "_alternative:7: bad option: -d",
+   "_alternative:7: bad option: -e",
+   "_alternative:7: bad option: -f",
+   "_alternative:7: bad option: -l",
+   "_alternative:7: bad option: -t",
+   "_alternative:7: bad option: -u"
+  ],
+  "only_zshrs_diagnostics": [],
+  "notes": "zsh rejects the option letters the nested action passes through and prints nine 'bad option' diagnostics instead of a list; zshrs accepts them and renders the matches."
+ },
+ "variants": [
+  {
+   "origin": "target/spec-fuzz-31/case0000.min.zsh",
+   "note": "superset witness, confirmed 2026-08-30 (FAIL, 24 rows differ): the same nine 'bad option' diagnostics PLUS the escaped-colon 'command not found: b' of fixture alternative_escaped_colon_split.",
+   "buffer": "fzc0000 ",
+   "keys": [
+    "tab",
+    "space",
+    "tab"
+   ],
+   "flags": [],
+   "spec": {
+    "cmd": "fzc0000",
+    "kind": "alternative",
+    "seed": 31,
+    "case": 0,
+    "setup": [],
+    "completer": "#compdef fzc0000\n\n_alternative \\\n  'eta:semi;colon:_alternative '\\''beta:eq=sign trailing:(theta one six eps)'\\'' '\\''delta:it'\\''\\'\\'''\\''s here star*glob:_files'\\''' \\\n  'gamma:star*glob:(two four alpha zeta)' \\\n  'five:at@sign:_files' \\\n  'theta:a\\:b colon add files:(three beta)'\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "target/spec-fuzz-900/case0001.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

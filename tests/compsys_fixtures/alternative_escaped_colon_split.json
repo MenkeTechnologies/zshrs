@@ -1,0 +1,75 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "alternative_escaped_colon_split",
+ "title": "_alternative splits a spec at a backslash-escaped colon on zsh but not on zshrs",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0004 -",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0004",
+   "kind": "alternative",
+   "seed": 1,
+   "case": 4,
+   "setup": [],
+   "completer": "#compdef fzc0004\n\n_fzc0004_helper0() { compadd -- alpha beta gamma }\n\n_alternative \\\n  'one:a\\:b colon:_alternative '\\''eta:paren(s) here two  spaces:(two six eps gamma)'\\'' '\\''three:a\\:b colon:_files'\\'''\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "one-sided-error",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@SFZ@ fzc0004 -_alternative:71: command not found: b",
+    "zshrs": "@SFZ@ fzc0004 -"
+   }
+  ],
+  "only_zsh_diagnostics": [
+   "_alternative:71: command not found: b"
+  ],
+  "only_zshrs_diagnostics": [],
+  "notes": "The spec is 'one:a\\:b colon:_alternative ...'. zsh takes the text after the escaped colon as the ACTION and tries to run `b`, printing 'command not found: b'; zshrs prints nothing. The divergence is the diagnostic, i.e. where each shell splits the spec."
+ },
+ "variants": [
+  {
+   "origin": "target/spec-fuzz-31/case0007.min.zsh",
+   "note": "second witness, confirmed 2026-08-30 (FAIL, 1 row differs, same one-sided '_alternative:71: command not found: b'). Different generated spec set, same shape.",
+   "buffer": "fzc0007 --",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "spec": {
+    "cmd": "fzc0007",
+    "kind": "alternative",
+    "seed": 31,
+    "case": 7,
+    "setup": [],
+    "completer": "#compdef fzc0007\n\n_fzc0007_helper0() { compadd -- alpha beta gamma }\n\n_alternative \\\n  'six:100% done:_files' \\\n  'delta:paren(s) here:_files' \\\n  'two:amp&and: _fzc0007_helper0' \\\n  'beta:a\\:b colon:_alternative '\\''one:amp&and at@sign:(zeta eps five)'\\'' '\\''theta:plain:_files'\\'''\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "target/spec-fuzz-1/case0004.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

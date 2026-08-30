@@ -1,0 +1,84 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "completer_style_missing_function",
+ "title": "a `completer` style naming a function that does not exist: zsh reports it, zshrs ignores it",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "CC ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": [
+   "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger"
+  ]
+ },
+ "expect": "diverges",
+ "fingerprint": "19376c78e1",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "4 row(s) differ",
+  "fingerprint_label": "cell/row0/col0 | ref/$ CC _main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ CC _main_complete:218: command not found: _fasd_zsh_word_complete_trigger",
+    "zshrs": "@CT@ CC"
+   },
+   {
+    "row": 1,
+    "zsh": "files",
+    "zshrs": "bench/        daemon/       editors/      man/          src/          test_corpus/  typeset.tmp/"
+   }
+  ],
+  "only_zsh_diagnostics": [
+   "_main_complete:218: command not found: _fasd_zsh_word_complete_trigger"
+  ],
+  "notes": "Two names in the chain do not exist on this host (_megacomplete and _fasd_zsh_word_complete_trigger). zsh runs the chain far enough to hit the missing function and prints 'command not found'; zshrs silently skips it. The match-set half of the difference is fixture cc_match_set showing through \u2014 the diagnostic is what is new here."
+ },
+ "variants": [
+  {
+   "origin": "scripts/parity_corpus_fuzz/fp_24f697a03c.json",
+   "note": "confirmed 2026-08-30 (FAIL, 3 rows, fingerprint 7b20398e3e): same missing-function diagnostic, plus the tag list in the format line differs \u2014 zsh '`input files', `files', or `last args'' vs zshrs '... `fasd ranked files', `fasd ranked directories', ...'.",
+   "buffer": "CC   i",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [
+    "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger",
+    "zstyle ':completion:*' format $'\\C-[[1;31m-<<\\C-[[0;34m%d\\C-[[1;31m>>-\\C-[[0m'"
+   ],
+   "fingerprint": "7b20398e3e"
+  },
+  {
+   "origin": "scripts/parity_corpus_fuzz/fp_792b0b818e.json",
+   "note": "confirmed 2026-08-30 (FAIL, 3 rows, fingerprint 2c3fbfd907): with a ctrl-g abort after the tab, zsh leaves 'CC   ib' plus the diagnostic, zshrs leaves the inserted match 'CC   bench'.",
+   "buffer": "CC   ib",
+   "keys": [
+    "tab",
+    "ctrl-g"
+   ],
+   "flags": [],
+   "zstyle": [
+    "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger"
+   ],
+   "fingerprint": "2c3fbfd907"
+  }
+ ],
+ "origin": [
+  "scripts/parity_corpus_fuzz/fp_17200719e0.json"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

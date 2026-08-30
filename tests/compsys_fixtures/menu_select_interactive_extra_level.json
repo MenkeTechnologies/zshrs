@@ -1,0 +1,57 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "menu_select_interactive_extra_level",
+ "title": "`menu select=0 interactive` \u2014 zshrs descends one directory level further than zsh",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "ls /usr/share/zsh",
+  "keys": [
+   "tab",
+   "tab",
+   "tab",
+   "ctrl-d"
+  ],
+  "flags": [],
+  "zstyle": [
+   "zstyle ':completion:*:*:*:*:*' menu 'select=0' interactive"
+  ],
+  "rows": 24,
+  "cols": 80
+ },
+ "expect": "diverges",
+ "fingerprint": "cc5fb00f9b",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "2 row(s) differ",
+  "fingerprint_label": "cell/row0/col2 | ref/$ ls <path> | test/$ ls <path>",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ ls /usr/share/zsh/",
+    "zshrs": "@CT@ ls /usr/share/zsh/5.9/"
+   },
+   {
+    "row": 1,
+    "zsh": "5.9/             site-functions/",
+    "zshrs": "functions/  help/       scripts/"
+   }
+  ],
+  "notes": "zsh stops at /usr/share/zsh/ and offers 5.9/ and site-functions/; zshrs has already accepted 5.9/ and is listing inside it. The round-2 shrinker proved this is not edit-related \u2014 it reduced to zero edit tokens, and it reproduces here with no edit program at all. Geometry pinned at 24x80, the geometry it was found at."
+ },
+ "variants": [],
+ "origin": [
+  "$TMPDIR/compsys_parity_failing_combos_5/combo_5_0_e15.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}
