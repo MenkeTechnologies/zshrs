@@ -215,6 +215,12 @@ fn dump(shell: &Path, zshrs: bool, driver: &str, tag: &str) -> String {
         .env("UNDER_TEST", shell)
         .env("OUTFILE", &out_path)
         .env("TERM", "xterm-256color")
+        // Pin a UTF-8 locale so the multibyte cases measure CHARACTER
+        // indices rather than whatever the ambient locale implies. Both
+        // shells get the same value, so a host without this locale
+        // degrades identically on both sides rather than diverging.
+        .env("LC_ALL", "en_US.UTF-8")
+        .env("LANG", "en_US.UTF-8")
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("invoke shell");
@@ -231,13 +237,31 @@ pub fn assert_same_dump(driver: &str, what: &str) {
         eprintln!("skip: zsh not found");
         return;
     }
-    let reference = dump(Path::new(zsh_path()), false, driver, "zsh");
+    // An EMPTY dump means the widget never ran — a keystroke dropped
+    // while the inner shell was still redrawing, which this box does
+    // under build load. That is the probe failing to take a
+    // measurement, not a shell disagreeing, so it is retried ONCE.
+    //
+    // A mismatch between two NON-EMPTY dumps is never retried. Retrying
+    // a real disagreement is how a pin quietly turns into a
+    // rubber stamp, and the whole point of these is to fail when the
+    // shells differ.
+    let mut reference = dump(Path::new(zsh_path()), false, driver, "zsh");
+    let mut under_test = dump(&zshrs_bin(), true, driver, "zshrs");
+    if reference.is_empty() || under_test.is_empty() {
+        reference = dump(Path::new(zsh_path()), false, driver, "zsh-retry");
+        under_test = dump(&zshrs_bin(), true, driver, "zshrs-retry");
+    }
     assert!(
         !reference.is_empty(),
         "reference zsh dumped no editor state for `{what}` — the probe is broken, \
          not the shell under test.\n--- driver ---\n{driver}"
     );
-    let under_test = dump(&zshrs_bin(), true, driver, "zshrs");
+    assert!(
+        !under_test.is_empty(),
+        "zshrs dumped no editor state for `{what}` while zsh reported \
+         `{reference}` — the widget never ran.\n--- driver ---\n{driver}"
+    );
     assert_eq!(
         reference, under_test,
         "{what}\n--- zsh ---\n{reference}\n--- zshrs ---\n{under_test}"
