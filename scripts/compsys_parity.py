@@ -35,6 +35,8 @@ diffs both screens after EVERY keystroke. Three independent axes are fuzzed:
     --geometry-fuzz     terminal (rows, cols) from a seeded pool that includes
                         narrow (40 cols), tiny-rows (6-8) and wide (200 cols)
     --edit-fuzz         the LINE EDITING that produced the buffer — see below
+    --multiline-fuzz    the CONTINUATION context the completion fires in —
+                        see below
 
 and a failure is delta-debugged down to the minimal edit program, keystroke
 path and zstyle subset that still diverge at the SAME first-diff cell:
@@ -72,6 +74,52 @@ Edit fuzz (`--edit-fuzz`)
         --convergent-cases N   convergent pairs per combo (default 2)
         --edit-modes LIST      emacs,vi,emacs-nobp (bracketed paste off)
 
+Multiline fuzz (`--multiline-fuzz`)
+    Every other case here — and in every sibling harness — completes on ONE
+    physical line. Completion re-parses the whole buffer through the lexer, so
+    a word inside a continuation (after a trailing `\\`, inside a quote or a
+    `$( )` that spans lines, in a `for`/`while`/`if`/`case` body, in an `x=( `
+    array literal, in a heredoc body or on its terminator line, after a
+    trailing `|`/`&&`/`||`) reaches `get_comp_string` through a different path
+    than the same word on one line. The continuation also drags in PS2 and the
+    prompt-height accounting this project has had real bugs in, so these run
+    under `--geometry-fuzz` too.
+
+    Every generated buffer is deliberately INCOMPLETE at each newline, so the
+    Enter that ends a line is answered with PS2 on both shells and never
+    executes anything.
+
+Latency (`--latency`)
+    Every assertion in this file is about WHAT the two shells drew, never how
+    long they took — and a completion that takes 25 seconds where zsh takes
+    0.1 is a defect in this project, not a footnote. `--latency` measures, per
+    keystroke and for BOTH shells, the time to first byte and the time to the
+    last byte before the screen settles (the trailing quiet window is excluded;
+    it is a harness constant, not shell work).
+
+    It is a SEPARATE, additively-reported axis. It cannot change a correctness
+    verdict in either direction, and a correctness PASS stays a PASS no matter
+    how slow the cell was.
+
+    Noise defences, because this box runs many concurrent sessions:
+      * best-of-K runs per cell (`--latency-runs`, default 3), min per side —
+        best-of is the standard defence against load noise, a mean is not;
+      * a sample is only ever reported or flagged once the ABSOLUTE delta
+        clears `--latency-min-ms` (default 25), so 2ms vs 1ms is never called
+        a 2x regression;
+      * `--jobs > 1` is REFUSED outright: concurrent cells contend for the same
+        cores and the numbers would be fiction;
+      * while measuring, both ptys are drained in ONE select loop so neither
+        shell's clock includes the other's wait.
+
+    The zshrs binary under test is a DEBUG build and is uniformly slower than
+    an optimised zsh, so the raw ratio has a floor that is a build artefact.
+    The signal is therefore the OUTLIER against the harness's own baseline
+    distribution (median ratio and MAD over every sample of the run), which is
+    printed with the results. `--latency-threshold N` additionally flags any
+    cell more than N times slower than the reference; it defaults to off so
+    existing runs keep their verdicts.
+
 Env / flags of note:
     --zshrs PATH      zshrs binary (default: target/debug/zshrs under repo)
     --zsh PATH        reference zsh (default: `zsh` on PATH)
@@ -94,6 +142,7 @@ import select
 import shlex
 import shutil
 import signal
+import statistics
 import sys
 import tempfile
 import termios
@@ -319,6 +368,21 @@ class Case:
     note: str = ""
 
 
+# ── per-keystroke timing ─────────────────────────────────────────────────────
+#
+# `ttfb`   ms from the write() that delivered the key to the FIRST byte the
+#          shell wrote back. This is the shell's think time before it renders
+#          anything — the number a human perceives as "did it react".
+# `settle` ms from that same write() to the LAST byte before the screen went
+#          quiet. The trailing quiet window (`--settle`) is deliberately NOT
+#          included: it is a harness constant, identical for both shells, and
+#          adding it to both sides would compress every ratio toward 1.
+#
+# Both are None when the key produced no output at all (a key the shell chose
+# to ignore); such a sample is dropped rather than timed as zero.
+KeyTiming = namedtuple("KeyTiming", "ttfb settle")
+
+
 class ShellSession:
     """One shell child on its own PTY, screen mirrored through pyte."""
 
@@ -327,6 +391,15 @@ class ShellSession:
         self.rows = rows
         self.cols = cols
         self.settle = settle_ms / 1000.0
+        # Timing state: `_t0` is stamped by every send(), `_first_at`/`_last_at`
+        # by every byte actually read, and `timing` is published when a drain
+        # finishes. Recorded unconditionally (it costs two monotonic() calls per
+        # read) but only ever REPORTED under --latency, which also forces the
+        # concurrent drain that makes the numbers comparable.
+        self._t0 = None
+        self._first_at = None
+        self._last_at = None
+        self.timing = None
         self.screen = _TolerantScreen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
         with _FORK_LOCK:
@@ -356,8 +429,21 @@ class ShellSession:
             return False
         if not data:
             return False
+        now = time.monotonic()
+        if self._first_at is None:
+            self._first_at = now
+        self._last_at = now
         self.stream.feed(data)
         return True
+
+    def _finish_timing(self):
+        """Publish `self.timing` for the drain that just ended."""
+        if self._t0 is None:
+            self.timing = None
+            return
+        ttfb = (self._first_at - self._t0) * 1000.0 if self._first_at else None
+        settle = (self._last_at - self._t0) * 1000.0 if self._last_at else None
+        self.timing = KeyTiming(ttfb, settle)
 
     def drain_settled(self, max_wait=8.0, first_wait=5.0):
         """Read until output settles. Waits up to `first_wait` for the FIRST
@@ -369,20 +455,23 @@ class ShellSession:
         start = time.monotonic()
         last = start
         seen = False
-        while True:
-            now = time.monotonic()
-            if now - start > max_wait:
-                return
-            got = self._drain_once(0.05)
-            now = time.monotonic()
-            if got:
-                seen = True
-                last = now
-            elif not seen:
-                if now - start > first_wait:
+        try:
+            while True:
+                now = time.monotonic()
+                if now - start > max_wait:
                     return
-            elif now - last >= self.settle:
-                return
+                got = self._drain_once(0.05)
+                now = time.monotonic()
+                if got:
+                    seen = True
+                    last = now
+                elif not seen:
+                    if now - start > first_wait:
+                        return
+                elif now - last >= self.settle:
+                    return
+        finally:
+            self._finish_timing()
 
     def wait_for_prompt(self, timeout=15.0):
         """Wait for the prompt sentinel against a WALL-CLOCK deadline.
@@ -411,10 +500,33 @@ class ShellSession:
         return False
 
     def send(self, data: bytes):
+        # Stamp the clock HERE, immediately before the write: everything the
+        # shell does about this key happens after this instant, and nothing the
+        # harness does before it should be charged to the shell.
+        self._t0 = time.monotonic()
+        self._first_at = None
+        self._last_at = None
         os.write(self.fd, data)
 
     def type_text(self, text: str):
         self.send(text.encode())
+
+    # A buffer line that ENDS a physical line. `\r` is what a terminal sends
+    # for Return, so both shells take the same accept-line path; every
+    # multiline surface is deliberately incomplete at that point, so the shell
+    # answers with PS2 instead of running anything.
+    def buffer_lines(self, text: str):
+        """Split a possibly multi-line buffer into the writes that type it.
+
+        Yields `bytes` chunks in order. A `\\n` in the buffer becomes a real
+        Return keystroke, so the harness never has to model PS2 itself — it
+        just types the line and lets both shells continue it."""
+        parts = text.split("\n")
+        for i, part in enumerate(parts):
+            if part:
+                yield part.encode()
+            if i < len(parts) - 1:
+                yield b"\r"
 
     def send_key(self, name: str):
         # STRICT: parity_corpus.key_bytes rejects an unknown multi-character
@@ -523,6 +635,56 @@ class ShellSession:
                 except OSError:
                     return
                 select.select([], [], [], 0.025)
+
+
+def drain_concurrent(sessions, max_wait=8.0, first_wait=5.0):
+    """Drain several sessions in ONE select loop, each to its own quiet window.
+
+    The sequential `for s in (ref, test): s.drain_settled()` the harness uses
+    everywhere else is correct for COMPARISON — the end state is the same
+    either way — but it is useless for TIMING: the second shell's clock starts
+    at its own write() and its first byte is not read until the first shell has
+    finished settling, so the second shell is charged for the first shell's
+    entire wait. Under --latency the pair is drained here instead, where each
+    session's bytes are read as they arrive and each session's `first_wait` /
+    quiet window is judged against its own arrivals.
+
+    Nothing about what either shell DREW changes: the same bytes are fed to the
+    same pyte screens, in the same per-session order.
+    """
+    start = time.monotonic()
+    state = {id(s): [False, start] for s in sessions}   # [seen, last]
+    pending = list(sessions)
+    while pending:
+        now = time.monotonic()
+        if now - start > max_wait:
+            break
+        try:
+            ready, _, _ = select.select([s.fd for s in pending], [], [], 0.02)
+        except (OSError, ValueError):
+            break
+        now = time.monotonic()
+        for s in list(pending):
+            st = state[id(s)]
+            if s.fd in ready:
+                if s._drain_once(0.0):
+                    st[0] = True
+                    st[1] = time.monotonic()
+                    continue
+                # select said readable and the read produced nothing: the pty
+                # is at EOF (the child died). Drop it NOW — leaving it in
+                # `pending` would spin this loop at full CPU on a permanently
+                # readable fd until first_wait/max_wait expired, which is both
+                # a busy-wait and a timing measurement of the harness.
+                pending.remove(s)
+                continue
+            if st[0]:
+                if time.monotonic() - st[1] >= s.settle:
+                    pending.remove(s)
+            elif now - start > first_wait:
+                pending.remove(s)
+    for s in sessions:
+        s._finish_timing()
 
 
 @functools.lru_cache(maxsize=1)
@@ -744,12 +906,277 @@ def normalize_rows(rows):
     return out
 
 
+# ── latency axis ─────────────────────────────────────────────────────────────
+#
+# STRICTLY ADDITIVE. A latency finding is reported in its own named category,
+# never mixed into the parity verdict set, and can neither create nor suppress
+# a correctness FAIL/FLAKY/PASS. The reason is not politeness: the two measure
+# different things, and a harness that let a slow cell read as a compatibility
+# divergence (or vice versa) would make both numbers useless.
+LAT_DEBUG_NOTE = (
+    "the zshrs under test is a DEBUG build and is uniformly slower than an "
+    "optimised zsh — the ratio has a floor that is a BUILD artefact, so the "
+    "signal below is the OUTLIER against this run's own baseline, not the raw "
+    "ratio"
+)
+
+
+@dataclass
+class LatSample:
+    """One key, timed on both shells, already reduced to best-of-K."""
+    cell: str
+    idx: int
+    label: str
+    ref_ms: float
+    test_ms: float
+    ref_ttfb: float = None
+    test_ttfb: float = None
+    note: str = ""
+
+    @property
+    def delta(self) -> float:
+        return self.test_ms - self.ref_ms
+
+    @property
+    def ratio(self) -> float:
+        return self.test_ms / self.ref_ms if self.ref_ms > 0 else float("inf")
+
+
+def merge_best_timings(runs):
+    """Element-wise BEST-OF over K timed runs of the same key path.
+
+    Best-of, not mean: this box runs many concurrent agent sessions, and load
+    only ever makes a measurement WORSE. The minimum is the closest thing to
+    the shell's own cost that a loaded machine can show; a mean folds the noise
+    straight into the number and a single 300ms scheduling hiccup would invent
+    a regression. Each side is minimised independently — the question is what
+    each shell can do, not what one pass happened to do.
+
+    Runs are truncated to the shortest one, and at the first label mismatch:
+    a run that stopped earlier (a divergence ends the lockstep) simply
+    contributes no sample for the keys it never reached.
+    """
+    runs = [r for r in runs if r]
+    if not runs:
+        return []
+    out = []
+    for i in range(min(len(r) for r in runs)):
+        labels = {r[i][0] for r in runs}
+        if len(labels) != 1:
+            break
+        label = labels.pop()
+
+        def best(which, field):
+            vals = [getattr(r[i][which], field) for r in runs
+                    if r[i][which] is not None
+                    and getattr(r[i][which], field) is not None]
+            return min(vals) if vals else None
+
+        out.append((label,
+                    KeyTiming(best(1, "ttfb"), best(1, "settle")),
+                    KeyTiming(best(2, "ttfb"), best(2, "settle"))))
+    return out
+
+
+class LatencyBook:
+    """Collects every timed key of a run, then answers two questions:
+    what does this harness's ratio distribution look like on THIS machine and
+    THIS build, and which cells are outliers against it."""
+
+    # Below this many samples the median/MAD is not a distribution, it is a
+    # rumour — the book says so and flags nothing rather than inventing a cut.
+    MIN_BASELINE_SAMPLES = 8
+
+    def __init__(self, min_delta_ms, threshold, runs, concurrent_drain):
+        self.min_delta = min_delta_ms
+        self.threshold = threshold
+        self.runs = runs
+        self.concurrent_drain = concurrent_drain
+        self.samples: list = []
+        self.dropped_no_output = 0
+        self.dropped_zero_ref = 0
+        # Cells that produced no timing at all. A convergent PAIR is not timed
+        # as a pair — it is two runs, and "the cell's ratio" would be ambiguous
+        # — though a pair that collapses to a single failing LEG is an ordinary
+        # cell by then and is timed like one. Named in the report rather than
+        # silently absent, so the latency section never implies coverage it
+        # does not have.
+        self.unmeasured: list = []
+
+    def not_measured(self, cell_id):
+        self.unmeasured.append(cell_id)
+
+    def record(self, cell_id, merged, note=""):
+        for i, (label, rt, tt) in enumerate(merged, 1):
+            if rt is None or tt is None or rt.settle is None or tt.settle is None:
+                # A key one of the shells answered with no output at all cannot
+                # be timed. Counted, never treated as zero.
+                self.dropped_no_output += 1
+                continue
+            if rt.settle <= 0:
+                self.dropped_zero_ref += 1
+                continue
+            self.samples.append(LatSample(
+                cell=cell_id, idx=i, label=label,
+                ref_ms=rt.settle, test_ms=tt.settle,
+                ref_ttfb=rt.ttfb, test_ttfb=tt.ttfb, note=note))
+
+    # ── distribution ─────────────────────────────────────────────────────────
+    def baseline(self):
+        """(n, median, mad, p90, cut) over EVERY sample of the run.
+
+        Deliberately computed over every sample, including the ones too small
+        to report: the baseline is a description of this build's constant
+        handicap, and filtering it to the big deltas would bias it upward and
+        hide the very outliers it exists to find. The min-delta filter applies
+        to what is REPORTED, not to what the distribution is measured from.
+        """
+        ratios = sorted(s.ratio for s in self.samples if s.ref_ms > 0)
+        if len(ratios) < self.MIN_BASELINE_SAMPLES:
+            return (len(ratios), None, None, None, None)
+        med = statistics.median(ratios)
+        mad = statistics.median([abs(r - med) for r in ratios])
+        p90 = ratios[min(len(ratios) - 1, int(0.9 * len(ratios)))]
+        # 1.4826*MAD is the MAD-based estimate of sigma for a normal
+        # distribution; median + 3 sigma is the ordinary robust outlier cut.
+        # Floored at 1.5x the median so a degenerate MAD of 0 (every cell
+        # equally slow) cannot make the median itself the cut and flag half the
+        # run.
+        cut = max(med + 3 * 1.4826 * mad, med * 1.5)
+        return (len(ratios), med, mad, p90, cut)
+
+    def reportable(self):
+        """Samples whose ABSOLUTE delta clears the floor.
+
+        A 2ms-vs-1ms key is a 2x ratio and means nothing — it is one scheduler
+        slice. Nothing below `--latency-min-ms` of real, measured difference is
+        allowed to be called a regression, printed as a ratio, or flagged."""
+        return [s for s in self.samples if s.delta >= self.min_delta]
+
+    def worst_by_cell(self):
+        """cell -> its worst REPORTABLE sample."""
+        worst = {}
+        for s in self.reportable():
+            cur = worst.get(s.cell)
+            if cur is None or s.ratio > cur.ratio:
+                worst[s.cell] = s
+        return worst
+
+    def verdicts(self):
+        """cell -> (verdict, sample). Verdicts live in their OWN namespace
+        (`LAT-OUTLIER` / `LAT-OVER-THRESHOLD`) precisely so no reader can
+        mistake one for a parity verdict."""
+        _, _, _, _, cut = self.baseline()
+        out = {}
+        for cell, s in self.worst_by_cell().items():
+            if self.threshold and s.ratio > self.threshold:
+                out[cell] = ("LAT-OVER-THRESHOLD", s)
+            elif cut is not None and s.ratio > cut:
+                out[cell] = ("LAT-OUTLIER", s)
+        return out
+
+    # ── report ───────────────────────────────────────────────────────────────
+    def report(self, limit=10):
+        n, med, mad, p90, cut = self.baseline()
+        print()
+        print("# ── latency (its OWN category — never a parity verdict) ──────")
+        print(f"#   {LAT_DEBUG_NOTE}")
+        print(f"#   best-of-{self.runs} per key, each side minimised "
+              f"independently; both ptys drained "
+              f"{'concurrently' if self.concurrent_drain else 'sequentially'}")
+        print(f"#   a sample is reported only when zshrs-zsh >= "
+              f"{self.min_delta:.0f}ms of real measured difference")
+        if not self.samples:
+            print("#   no timed samples (no key produced output on both shells)")
+            return 0
+        if med is None:
+            print(f"#   baseline: {n} samples — fewer than "
+                  f"{self.MIN_BASELINE_SAMPLES}, too thin to call anything an "
+                  f"outlier; ratios below are raw")
+        else:
+            print(f"#   baseline: {n} samples  median {med:.2f}x  "
+                  f"MAD {mad:.2f}  p90 {p90:.2f}x  ->  outlier cut "
+                  f"{cut:.2f}x"
+                  + (f"   (--latency-threshold {self.threshold:g}x)"
+                     if self.threshold else ""))
+        if self.dropped_no_output or self.dropped_zero_ref:
+            print(f"#   not timed: {self.dropped_no_output} keys drew nothing, "
+                  f"{self.dropped_zero_ref} with a zero reference time")
+        if self.unmeasured:
+            print(f"#   {len(self.unmeasured)} cells carry no timing at all "
+                  f"(convergent pairs are not timed): "
+                  + ", ".join(self.unmeasured[:4])
+                  + (" ..." if len(self.unmeasured) > 4 else ""))
+        verdicts = self.verdicts()
+        rep = sorted(self.reportable(), key=lambda s: -s.ratio)
+        if not rep:
+            print(f"#   no sample cleared the {self.min_delta:.0f}ms floor")
+        else:
+            print(f"#   slowest cells ({len(rep)} samples over the floor):")
+            for s in rep[:limit]:
+                verdict = verdicts.get(s.cell)
+                tag = f"  {verdict[0]}" if verdict and verdict[1] is s else ""
+                ttfb = ""
+                if s.ref_ttfb is not None and s.test_ttfb is not None:
+                    ttfb = (f"  ttfb {s.ref_ttfb:.0f}->{s.test_ttfb:.0f}ms")
+                print(f"#     {s.ratio:6.2f}x  {s.cell:26s} key #{s.idx} "
+                      f"{s.label!r:12s}  zsh {s.ref_ms:8.1f}ms -> zshrs "
+                      f"{s.test_ms:8.1f}ms{ttfb}{tag}")
+            if len(rep) > limit:
+                print(f"#     ... {len(rep) - limit} more")
+        n_out = sum(1 for v, _ in verdicts.values() if v == "LAT-OUTLIER")
+        n_over = sum(1 for v, _ in verdicts.values()
+                     if v == "LAT-OVER-THRESHOLD")
+        print(f"#   latency verdicts: {n_out} LAT-OUTLIER, "
+              f"{n_over} LAT-OVER-THRESHOLD"
+              + ("" if self.threshold else
+                 " (--latency-threshold unset: report only)"))
+        return n_over
+
+    def json_doc(self):
+        n, med, mad, p90, cut = self.baseline()
+        verdicts = self.verdicts()
+        return {
+            "note": LAT_DEBUG_NOTE,
+            "build": "debug",
+            "runs_best_of": self.runs,
+            "min_delta_ms": self.min_delta,
+            "threshold": self.threshold,
+            "concurrent_drain": self.concurrent_drain,
+            "baseline": {"samples": n, "median_ratio": med, "mad": mad,
+                         "p90_ratio": p90, "outlier_cut": cut},
+            "not_timed": {"no_output": self.dropped_no_output,
+                          "zero_reference": self.dropped_zero_ref},
+            "verdicts": {cell: {"verdict": v, "ratio": s.ratio,
+                                "key": s.label, "key_index": s.idx,
+                                "ref_ms": s.ref_ms, "test_ms": s.test_ms}
+                         for cell, (v, s) in sorted(verdicts.items())},
+            "samples": [{"cell": s.cell, "key_index": s.idx, "key": s.label,
+                         "ref_ms": round(s.ref_ms, 2),
+                         "test_ms": round(s.test_ms, 2),
+                         "ref_ttfb_ms": (round(s.ref_ttfb, 2)
+                                         if s.ref_ttfb is not None else None),
+                         "test_ttfb_ms": (round(s.test_ttfb, 2)
+                                          if s.test_ttfb is not None else None),
+                         "ratio": round(s.ratio, 3),
+                         "delta_ms": round(s.delta, 2)}
+                        for s in sorted(self.reportable(),
+                                        key=lambda x: -x.ratio)],
+        }
+
+
 def run_case(sess: ShellSession, case: Case):
     sess.fresh_prompt()
+    # `key_timings` is published for --latency; the correctness path ignores it.
+    sess.key_timings = []
     if case.buffer:
-        sess.type_text(case.buffer)
-        # Buffer chars just echo — instant; short first-byte wait.
-        sess.drain_settled(max_wait=2.0, first_wait=1.0)
+        # One write per PHYSICAL line: a `\n` in the buffer is a real Return on
+        # a deliberately incomplete line, which the shell answers with PS2. A
+        # single-line buffer takes exactly the write it always took.
+        for chunk in sess.buffer_lines(case.buffer):
+            sess.send(chunk)
+            # Buffer chars just echo — instant; short first-byte wait.
+            sess.drain_settled(max_wait=2.0, first_wait=1.0)
     for key in case.keys:
         sess.send_key(key)
         # A cold completion can take seconds to first render; wait for it.
@@ -764,6 +1191,7 @@ def run_case(sess: ShellSession, case: Case):
             sess.drain_settled(max_wait=12.0, first_wait=8.0)
         finally:
             sess.settle = prev
+        sess.key_timings.append((key, sess.timing))
     # Settle the FINAL screen against a longer quiet window than the
     # per-keystroke one. A literal key typed into an interactive menu re-runs
     # the whole completion, and an unoptimized zshrs build regularly takes
@@ -1011,12 +1439,104 @@ BUFFER_SURFACES: list = [
 ]
 
 
-def available_surfaces(skips: Counter) -> list:
+# ── multiline / continuation surfaces ────────────────────────────────────────
+#
+# Every buffer above — and every case in every sibling harness — is ONE physical
+# line. Completion re-parses the entire buffer through the lexer on each TAB
+# (`get_comp_string`), so the same word reached through a CONTINUATION is a
+# different parse: the lexer is resumed inside an open quote / open `$( )` /
+# open compound command, `CURRENT` and the word offsets are computed over a
+# buffer containing newlines, and the redisplay has PS2 rows above the cursor
+# that the completion list has to be drawn around. None of that is exercised by
+# a single-line corpus.
+#
+# Every buffer here is deliberately INCOMPLETE at each newline, so the Return
+# that ends a line is answered with PS2 by both shells and nothing is ever
+# executed. `\n` in the text is that Return — see ShellSession.buffer_lines.
+#
+# These compose with the ordinary buffer surfaces (`--buffer-fuzz
+# --multiline-fuzz` fuzzes both pools) and with `--geometry-fuzz`, which is
+# where they earn the most: a completion list drawn under a multi-row prompt is
+# exactly the shape of the bug this project has already shipped once (a list
+# that climbed the screen with a two-line prompt).
+MULTILINE_SURFACES: list = [
+    Surface("ml_backslash", "word completed after a trailing \\ continuation",
+            lambda rng: (_pick(rng,
+                               "ls /usr/share \\\n/usr/lo",
+                               "cd \\\n/usr/sh",
+                               "echo hi \\\n/etc/pa"), [])),
+    Surface("ml_dquote", "unterminated double quote spanning lines",
+            lambda rng: (_pick(rng,
+                               'echo "first line\n/usr/sh',
+                               'ls "one\ntwo/etc/pa',
+                               'echo "a b\n$HO'), [])),
+    Surface("ml_squote", "unterminated single quote spanning lines",
+            lambda rng: (_pick(rng,
+                               "echo 'first line\n/usr/sh",
+                               "ls 'one\ntwo/etc/pa"), [])),
+    Surface("ml_cmdsubst", "$( ) spanning lines — nested command position",
+            lambda rng: (_pick(rng,
+                               "echo $(\nls /usr/sh",
+                               "echo $(ls /usr\nprint /etc/pa",
+                               "echo $(\ncd /usr/lo"), [])),
+    Surface("ml_backtick", "backquoted command substitution spanning lines",
+            lambda rng: (_pick(rng,
+                               "echo `\nls /usr/sh",
+                               "echo `ls /usr\nprint /etc/pa"), [])),
+    Surface("ml_for_body", "for body, after the newline that follows `do`",
+            lambda rng: (_pick(rng,
+                               "for f in a b\ndo\nls /usr/sh",
+                               "for f in /etc/pa\ndo\ncd /usr/lo",
+                               "for f in a b\ndo\nl"), [])),
+    Surface("ml_while_body", "while body, after `do`",
+            lambda rng: (_pick(rng,
+                               "while true\ndo\nls /et",
+                               "while true\ndo\nls /usr/sh"), [])),
+    Surface("ml_if_body", "if body, after `then`",
+            lambda rng: (_pick(rng,
+                               "if true\nthen\nls /usr/sh",
+                               "if true\nthen\ncd /et",
+                               "if true\nthen\nl"), [])),
+    Surface("ml_case_body", "case body, after the newline that follows `in`",
+            lambda rng: (_pick(rng,
+                               "case /usr in\n/usr/sh",
+                               "case $x in\n  a) ls /et"), [])),
+    Surface("ml_array", "array literal x=( spanning lines",
+            lambda rng: (_pick(rng,
+                               "x=(\n/usr/sh",
+                               "x=( /usr/bin\n/usr/lo",
+                               "typeset -a y=(\n/etc/pa"), [])),
+    Surface("ml_heredoc_body", "inside a heredoc BODY",
+            lambda rng: (_pick(rng,
+                               "cat <<EOF\n/usr/sh",
+                               "cat <<EOF\nline one\n/etc/pa"), [])),
+    Surface("ml_heredoc_term", "on the heredoc TERMINATOR line",
+            lambda rng: (_pick(rng,
+                               "cat <<EOF\nbody\nEO",
+                               "cat <<END\na\nEN"), [])),
+    Surface("ml_pipe", "after a trailing | continuation",
+            lambda rng: (_pick(rng,
+                               "ls /usr |\nls /usr/sh",
+                               "echo hi |\ngrep /et",
+                               "ls /usr |\nl"), [])),
+    Surface("ml_andor", "after a trailing && / || continuation",
+            lambda rng: (_pick(rng,
+                               "true &&\nls /usr/sh",
+                               "false ||\ncd /et",
+                               "true &&\nl"), [])),
+]
+
+
+def available_surfaces(skips: Counter, pool=None) -> list:
     """The surfaces usable on THIS host. Every dropped surface is counted under
     `unavailable-surface:<name>` and printed in the summary — never silently
-    omitted."""
+    omitted.
+
+    `pool` defaults to the single-line BUFFER_SURFACES, so every pre-existing
+    caller is unchanged; `--multiline-fuzz` passes a pool that also carries
+    MULTILINE_SURFACES."""
     out = []
-    for s in BUFFER_SURFACES:
+    for s in (BUFFER_SURFACES if pool is None else pool):
         missing = [b for b in s.needs if shutil.which(b) is None]
         if missing:
             skips[f"unavailable-surface:{s.name}(no {','.join(missing)})"] += 1
@@ -1387,7 +1907,8 @@ def saved_path(outdir, seed, n, suffix=""):
     return os.path.join(outdir, f"combo_{seed}_{n}{suffix}.zsh")
 
 
-def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
+def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
+               timings_out=None):
     """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
     `buffer`, optionally run an EDIT PROGRAM over it, then send each key in
     `keys` one at a time, capturing + byte-diffing BOTH screens AFTER EACH
@@ -1404,6 +1925,16 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
 
     `geom` sizes BOTH ptys and BOTH environments identically.
 
+    `timings_out` (None = not measuring, the pre-existing behaviour) is a list
+    the per-key `(key, ref_timing, test_timing)` triples are appended to. When
+    it is supplied the two ptys are drained CONCURRENTLY (one select loop over
+    both) instead of one after the other, because the sequential drain charges
+    the second shell for the first shell's entire wait — see drain_concurrent.
+    Nothing about what is compared changes; only the read interleaving does.
+
+    A `\\n` in `buffer` is typed as a real Return on a deliberately incomplete
+    line, so both shells continue with PS2 — that is the multiline surface.
+
     Returns (fail_step, records): fail_step is the 1-based index of the first
     STEP whose screens diverge (0 if all match); records is
     [(step, label, ref_grid, test_grid, diffs), ...]. Stops at first divergence
@@ -1414,6 +1945,18 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
     test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, geom.rows, geom.cols, "zshrs", args.settle)
     records = []
     step = [0]
+    measuring = timings_out is not None
+
+    def drain_both(max_wait, first_wait):
+        """Settle both shells. Concurrent only while measuring — the sequential
+        form is what every existing verdict in this repo was scored under and
+        it stays the default."""
+        if measuring:
+            drain_concurrent((ref, test), max_wait=max_wait,
+                             first_wait=first_wait)
+        else:
+            for s in (ref, test):
+                s.drain_settled(max_wait=max_wait, first_wait=first_wait)
 
     def compare(label):
         """One parity assertion. Appends a record and returns its diffs."""
@@ -1433,10 +1976,14 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
         for s in (ref, test):
             s.fresh_prompt()
         if buffer:
-            for s in (ref, test):
-                s.type_text(buffer)
-            for s in (ref, test):
-                s.drain_settled(max_wait=2.0, first_wait=1.0)
+            # One write per PHYSICAL line, both shells in step: a single-line
+            # buffer is exactly the one write it always was, and a multiline
+            # one lets each PS2 continuation land on both shells before the
+            # next line is typed.
+            for chunk in ref.buffer_lines(buffer):
+                for s in (ref, test):
+                    s.send(chunk)
+                drain_both(max_wait=2.0, first_wait=1.0)
         if edits is not None:
             # Baseline assertion: if the two shells already disagree on the
             # plain typed line, no edit below caused it and the report must not
@@ -1449,8 +1996,7 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
                 # An edit is a local line redraw, not a completion: short
                 # first-byte wait, but a real quiet window (a paste burst on a
                 # narrow terminal reflows several rows).
-                for s in (ref, test):
-                    s.drain_settled(max_wait=6.0, first_wait=1.5)
+                drain_both(max_wait=6.0, first_wait=1.5)
                 if compare("edit:" + edit_label(tok)):
                     return (step[0], records)
         for kn, key in enumerate(keys, 1):
@@ -1462,8 +2008,9 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
             # index: with an edit program in front, the cold key is no longer
             # step 1 and it would otherwise get the warm (4s) window.
             fw = 8.0 if kn == 1 else 4.0
-            for s in (ref, test):
-                s.drain_settled(max_wait=12.0, first_wait=fw)
+            drain_both(max_wait=12.0, first_wait=fw)
+            if measuring:
+                timings_out.append((key, ref.timing, test.timing))
             if compare(key):
                 return (step[0], records)
         return (0, records)
@@ -1650,6 +2197,9 @@ class CellResult:
     # shell's command line matched what the edit generator claimed it would be.
     expect_ok: object = None
     expect_saw: str = None
+    # --latency only: [(key, ref_KeyTiming, test_KeyTiming), ...] already
+    # reduced to best-of-K. Never consulted by anything that decides `status`.
+    latency: list = None
 
 
 def replay_command(args, buffer, keys, geom, zstyle_path,
@@ -1688,6 +2238,50 @@ def conv_replay_command(args, cell, keys, zstyle_path):
             + shlex.quote(json.dumps(spec, separators=(",", ":"))) + " -v")
 
 
+def measure_latency(cell, args, env):
+    """Time one cell's key path K times and keep the BEST of each side.
+
+    Deliberately its own runs rather than a reading taken off the verdict run:
+    the verdict run drains sequentially (the shape every existing result in
+    this repo was produced under) and a timing taken from it would charge the
+    second shell for the first shell's wait. These runs drain both ptys in one
+    select loop instead, which is the only configuration whose numbers mean
+    anything — and they are compared exactly as usual, so a run that diverges
+    stops where it always stops and simply contributes no sample for the keys
+    it never reached.
+    """
+    runs = []
+    for _ in range(max(1, args.latency_runs)):
+        t = []
+        run_keyseq(cell.init_file, cell.buffer, cell.keys, args, env,
+                   cell.geom, edits=cell.edit_tokens, timings_out=t)
+        runs.append(t)
+    return merge_best_timings(runs)
+
+
+def lat_cell_id(cell) -> str:
+    return f"{cell.surface}#{cell.idx}.{cell.uid}"
+
+
+def lat_worst(merged, min_delta):
+    """The slowest REPORTABLE key of one cell, or None.
+
+    "Reportable" is the absolute-delta floor: below it the ratio is scheduler
+    noise wearing a percentage sign, and this returns None rather than a
+    number nobody should act on."""
+    best = None
+    for i, (label, rt, tt) in enumerate(merged or [], 1):
+        if (rt is None or tt is None
+                or rt.settle is None or tt.settle is None or rt.settle <= 0):
+            continue
+        if tt.settle - rt.settle < min_delta:
+            continue
+        ratio = tt.settle / rt.settle
+        if best is None or ratio > best[0]:
+            best = (ratio, i, label, rt.settle, tt.settle)
+    return best
+
+
 def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     """One fuzz cell: lockstep run, flake labelling, then delta debugging."""
     if isinstance(cell, ConvCell):
@@ -1708,6 +2302,12 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     # the generator claims? Recorded and counted on its own; it can neither
     # create nor suppress a parity verdict.
     _check_expect(res, cell, records)
+    # Latency, measured HERE — after the verdict-producing run and BEFORE any
+    # shrinking rewrites `cell.keys`/`cell.edit_tokens`, so the times belong to
+    # the cell as generated. These are extra runs whose SCREENS are not scored:
+    # the parity verdict above is already fixed and nothing below can move it.
+    if getattr(args, "latency", False):
+        res.latency = measure_latency(cell, args, env)
     if fail_step == 0:
         res.status = "PASS"
         return res
@@ -2030,14 +2630,19 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
                                                    combo_path, mode)
             return mode_inits[mode]
 
-        count = per_combo if args.buffer_fuzz else len(fixed)
+        # `fuzz_buffers` is `--buffer-fuzz` OR `--multiline-fuzz`: both draw the
+        # buffer from a surface pool, they just contribute different surfaces to
+        # it. With neither, the fixed --combo-commands list is used exactly as
+        # before.
+        fuzzing = getattr(args, "fuzz_buffers", args.buffer_fuzz)
+        count = per_combo if fuzzing else len(fixed)
         for ci in range(count):
             crng = random.Random(f"{args.seed}:{n}:{ci}")
-            if args.buffer_fuzz:
+            if fuzzing:
                 surface, buf, pre = gen_buffer(crng, surfaces)
             else:
                 surface, buf, pre = "fixed", fixed[ci], []
-            buffer = buf if buf.endswith(" ") or args.buffer_fuzz else buf + " "
+            buffer = buf if buf.endswith(" ") or fuzzing else buf + " "
             geom = pick_geom(crng, args)
             # A buffer that cannot even be TYPED inside the window (prompt +
             # text wider than the whole screen) is not a comparison the harness
@@ -2046,6 +2651,16 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
             if len(PROMPT_SENTINEL) + 1 + len(buffer) >= geom.rows * geom.cols:
                 skips[f"buffer-exceeds-screen:{geom_str(geom)}"] += 1
                 continue
+            # A MULTILINE buffer needs one row per physical line (plus its
+            # wraps) before completion has drawn anything. If the buffer alone
+            # fills the window there is no comparison to make, only a scrolled
+            # grid — same treatment, counted under its own reason.
+            if "\n" in buffer:
+                need = sum(1 + (len(PROMPT_SENTINEL) + 1 + len(ln)) // geom.cols
+                           for ln in buffer.split("\n"))
+                if need + 1 > geom.rows:
+                    skips[f"multiline-exceeds-rows:{geom_str(geom)}"] += 1
+                    continue
             keys = pre + gen_keyseq(
                 random.Random(f"{args.seed}:{n}:{ci}:keys"), args.presses)
             cells.append(Cell(idx=n, uid=f"{n}_{ci}", surface=surface,
@@ -2109,9 +2724,18 @@ def run_random_combos(args, dump, fpath_dirs, env):
     way."""
     statements = parse_zstyle_statements(args.zstyle)
     skips: Counter = Counter()
-    surfaces = available_surfaces(skips) if args.buffer_fuzz else []
-    if args.buffer_fuzz and not surfaces:
-        sys.exit("compsys_parity: --buffer-fuzz has no usable surfaces on this host")
+    # Surface POOL: `--buffer-fuzz` contributes the single-line surfaces,
+    # `--multiline-fuzz` the continuation ones, and both together fuzz the
+    # union — a multiline surface is an ordinary Surface, so everything
+    # downstream (shrinking, replay, geometry) already handles it.
+    pool = []
+    if args.buffer_fuzz:
+        pool += BUFFER_SURFACES
+    if args.multiline_fuzz:
+        pool += MULTILINE_SURFACES
+    surfaces = available_surfaces(skips, pool) if pool else []
+    if pool and not surfaces:
+        sys.exit("compsys_parity: no usable buffer surfaces on this host")
     edit_pairs = (available_edit_surfaces(args.edit_modes_list)
                   if args.edit_fuzz else [])
     if args.edit_fuzz and not edit_pairs:
@@ -2129,9 +2753,21 @@ def run_random_combos(args, dump, fpath_dirs, env):
     print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
     print(f"# seed={args.seed}  keep-prob={args.combo_keep}  confirm={args.confirm}  "
           f"jobs={max(1, args.jobs)}  shrink-probes={args.shrink_probes}")
-    print(f"# buffer-fuzz={args.buffer_fuzz} ({len(surfaces)} surfaces)  "
+    print(f"# buffer-fuzz={args.buffer_fuzz} multiline-fuzz={args.multiline_fuzz} "
+          f"({len(surfaces)} surfaces)  "
           f"geometry-fuzz={args.geometry_fuzz}  "
           f"geom={'pool' if args.geometry_fuzz else geom_str(Geom(args.rows, args.cols))}")
+    if args.multiline_fuzz:
+        n_ml = sum(1 for c in cells if "\n" in c.buffer)
+        print(f"# multiline-fuzz=True  {len(MULTILINE_SURFACES)} continuation "
+              f"surfaces  {n_ml} cells complete inside a continuation "
+              f"(every one is INCOMPLETE at each newline, so both shells "
+              f"answer Return with PS2 and nothing is executed)")
+    if args.latency:
+        print(f"# latency=True  best-of-{args.latency_runs} per key  "
+              f"min-delta={args.latency_min_ms:g}ms  "
+              f"threshold={f'{args.latency_threshold:g}x' if args.latency_threshold else 'off (report only)'}"
+              f"  — reported in its OWN category, never a parity verdict")
     if args.edit_fuzz:
         n_edit = sum(1 for c in cells if not isinstance(c, ConvCell)
                      and c.edit_tokens is not None)
@@ -2160,12 +2796,20 @@ def run_random_combos(args, dump, fpath_dirs, env):
     by_category: Counter = Counter()
     expect_bad: Counter = Counter()
     results = []
+    book = (LatencyBook(args.latency_min_ms, args.latency_threshold,
+                        args.latency_runs, concurrent_drain=True)
+            if args.latency else None)
     try:
         for res in stream:
             c = res.cell
             cat = (f"{c.edit_gen}[{c.edit_mode}]" if c.edit_gen
                    else f"{c.surface}[-]")
             by_category[(cat, res.status)] += 1
+            if book is not None:
+                if res.latency:
+                    book.record(lat_cell_id(c), res.latency)
+                else:
+                    book.not_measured(lat_cell_id(c))
             if res.expect_ok is False:
                 expect_bad[f"{c.edit_gen}: claimed {c.expect!r}, "
                            f"zsh showed {res.expect_saw!r}"] += 1
@@ -2173,6 +2817,14 @@ def run_random_combos(args, dump, fpath_dirs, env):
                     f"{geom_str(c.geom):>7s} {c.buffer!r}")
             if c.edit_tokens:
                 head += f" +{edit_program_str(c.edit_tokens)} ({c.edit_mode})"
+            if book is not None and res.latency:
+                # Inline, clearly namespaced `lat`, and RAW: the outlier
+                # judgement needs the whole run's distribution and is made in
+                # the latency section at the end, never here.
+                w = lat_worst(res.latency, args.latency_min_ms)
+                head += (f"  lat {w[0]:.2f}x (key #{w[1]} {w[2]!r} "
+                         f"{w[3]:.0f}->{w[4]:.0f}ms)" if w
+                         else f"  lat <{args.latency_min_ms:g}ms")
             if res.status == "PASS":
                 passed += 1
                 print(f"{head}  keys={'+'.join(c.keys)}")
@@ -2279,6 +2931,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
         print(f"# {skipped} skipped (never compared):")
         for reason, count in sorted(skips.items()):
             print(f"#   {reason}: {count}")
+    lat_over = book.report() if book is not None else 0
     if args.json:
         doc = {
             "schema": "compsys-parity/1",
@@ -2290,6 +2943,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
             "zstyle": args.zstyle,
             "seed": args.seed,
             "buffer_fuzz": args.buffer_fuzz,
+            "multiline_fuzz": args.multiline_fuzz,
             "geometry_fuzz": args.geometry_fuzz,
             "edit_fuzz": args.edit_fuzz,
             "edit_modes": list(args.edit_modes_list),
@@ -2303,12 +2957,22 @@ def run_random_combos(args, dump, fpath_dirs, env):
             "summary": {"passed": passed, "failed": failed, "flaky": flaky,
                         "skipped": skipped, "cells": len(cells)},
             "skips": dict(skips),
+            # Its own top-level key, never folded into `summary`: a latency
+            # finding is not a parity result and no consumer should be able to
+            # read it as one by accident.
+            "latency": (book.json_doc() if book is not None else None),
             "results": results,
         }
         _write_json(args.json, doc)
     # Flaky is NOT a pass: a cell that diverges only sometimes is still a cell
     # whose two shells did not agree, so it fails the run.
-    return 1 if (failed or flaky) else 0
+    #
+    # `lat_over` is counted SEPARATELY and only ever ADDS: it is non-zero only
+    # when the user asked for a --latency-threshold and a cell crossed it. It
+    # can never turn a correctness failure into a pass, and with the flag unset
+    # (the default) it is always 0, so every pre-existing run keeps its exit
+    # code exactly.
+    return 1 if (failed or flaky or lat_over) else 0
 
 
 def _cell_json(res) -> dict:
@@ -2335,6 +2999,20 @@ def _cell_json(res) -> dict:
         "zstyle_file": c.zstyle_path,
         "replay": res.replay,
     }
+    if res.latency:
+        # Under `latency`, never under `status`/`detail`: the cell's parity
+        # verdict is what the fields above say and nothing here modifies it.
+        doc["latency"] = [
+            {"key": label, "key_index": i,
+             "ref_ttfb_ms": (round(rt.ttfb, 2)
+                             if rt and rt.ttfb is not None else None),
+             "ref_settle_ms": (round(rt.settle, 2)
+                               if rt and rt.settle is not None else None),
+             "test_ttfb_ms": (round(tt.ttfb, 2)
+                              if tt and tt.ttfb is not None else None),
+             "test_settle_ms": (round(tt.settle, 2)
+                                if tt and tt.settle is not None else None)}
+            for i, (label, rt, tt) in enumerate(res.latency, 1)]
     if c.edit_tokens is not None:
         doc.update(
             edit_mode=c.edit_mode,
@@ -2378,6 +3056,19 @@ def run_lockstep_case(args, init_file, env):
     fail_step, records = run_keyseq(init_file, args.case, keys, args, env, geom,
                                     edits=edits)
     step, key, rg, tg, diffs = records[-1]
+    # Latency, measured in its OWN runs after the verdict-producing one above,
+    # so the number reported here is never the thing that decided PASS/FAIL.
+    book = None
+    if args.latency:
+        book = LatencyBook(args.latency_min_ms, args.latency_threshold,
+                           args.latency_runs, concurrent_drain=True)
+        runs = []
+        for _ in range(args.latency_runs):
+            t = []
+            run_keyseq(init_file, args.case, keys, args, env, geom,
+                       edits=edits, timings_out=t)
+            runs.append(t)
+        book.record(f"lockstep:{args.case}", merge_best_timings(runs))
     if edits is not None:
         print(f"# edit program : {edit_program_str(edits)}"
               f"   mode={args.editing_mode or 'shell default'}")
@@ -2405,6 +3096,7 @@ def run_lockstep_case(args, init_file, env):
                    "first_diff": {"row": row, "col": col},
                    "diff_rows": [{"row": i, "ref": a, "test": b}
                                  for i, a, b in (diffs or [])[:50]]}
+    lat_over = book.report() if book is not None else 0
     if args.json:
         doc_res.update(id="lockstep", buffer=args.case, keys=keys,
                        edit_program=(edit_encode(edits) if edits else None),
@@ -2413,11 +3105,17 @@ def run_lockstep_case(args, init_file, env):
         _write_json(args.json, {
             "schema": "compsys-parity/1", "mode": "lockstep",
             "argv": sys.argv[1:], "zshrs": args.zshrs, "zsh": args.zsh,
+            # `summary` stays purely the CORRECTNESS verdict — `rc` here is the
+            # parity result and latency is not allowed to touch it.
             "summary": {"passed": 1 - rc, "failed": rc, "flaky": 0,
                         "skipped": 0, "cells": 1},
+            "latency": (book.json_doc() if book is not None else None),
             "results": [doc_res],
         })
-    return rc
+    # Exit code only: a threshold the user explicitly asked for, ADDED to the
+    # correctness result. `rc` itself — and everything reported above and in the
+    # JSON — is untouched by latency.
+    return 1 if (rc or lat_over) else 0
 
 
 def run_conv_replay(args, dump, fpath_dirs, env):
@@ -2548,6 +3246,47 @@ def main():
     ap.add_argument("--conv-replay", default=None, metavar="JSON",
                     help="re-run one convergent PAIR from the JSON blob a "
                          "convergent failure prints")
+    ap.add_argument("--multiline-fuzz", action="store_true",
+                    help="fuzz the CONTINUATION context the completion fires "
+                         "in: trailing-backslash continuation, an unterminated "
+                         "single/double quote spanning lines, $( ) and "
+                         "backquotes spanning lines, a for/while/if/case body "
+                         "after the newline (and after do/then), an x=( array "
+                         "literal, a heredoc body and its terminator line, and "
+                         "a trailing |, && or ||. Every generated buffer is "
+                         "INCOMPLETE at each newline, so Return is answered "
+                         "with PS2 on both shells and nothing is executed. "
+                         "Composes with --buffer-fuzz (both surface pools) and "
+                         "with --geometry-fuzz, where a completion list under a "
+                         "multi-row prompt is the shape of a bug this project "
+                         "has already shipped. Implies --random-combos 1 if "
+                         "that is 0.")
+    ap.add_argument("--latency", action="store_true",
+                    help="also MEASURE how long each keystroke takes on both "
+                         "shells (time to first byte and to settle) and report "
+                         "the zshrs/zsh ratio per key and per cell. Strictly "
+                         "additive: latency lives in its own verdict namespace "
+                         "(LAT-OUTLIER / LAT-OVER-THRESHOLD) and can never "
+                         "change a correctness PASS/FAIL/FLAKY. Refused at "
+                         "--jobs > 1, where the numbers would be fiction.")
+    ap.add_argument("--latency-runs", type=int, default=3, metavar="K",
+                    help="time each cell K times and keep the BEST of each "
+                         "side (default 3). Best-of, not mean: load on this box "
+                         "only ever makes a measurement worse, and a mean folds "
+                         "one scheduling hiccup straight into the ratio.")
+    ap.add_argument("--latency-min-ms", type=float, default=25.0, metavar="MS",
+                    help="minimum ABSOLUTE zshrs-minus-zsh difference before a "
+                         "ratio is reported or flagged at all (default 25). "
+                         "Without it a 2ms-vs-1ms key reads as a 2x regression.")
+    ap.add_argument("--latency-threshold", type=float, default=0.0, metavar="N",
+                    help="flag a cell LAT-OVER-THRESHOLD when zshrs is more "
+                         "than N times slower than the reference on some key "
+                         "(and make the run exit non-zero for it). Default 0 = "
+                         "report only, so existing runs keep their verdicts. "
+                         "Note the binary under test is a DEBUG build, so the "
+                         "ratio has a floor that is a build artefact — the "
+                         "unthresholded OUTLIER flagging against this run's own "
+                         "baseline distribution is usually the better signal.")
     ap.add_argument("--geometry-fuzz", action="store_true",
                     help="draw (rows, cols) per cell from the seeded pool "
                          "(narrow 40-col, tiny 6-8-row, wide 200-col, ...). Both "
@@ -2606,6 +3345,22 @@ def main():
     unknown_modes = [m for m in args.edit_modes_list if m not in EDIT_MODES]
     if unknown_modes:
         sys.exit("unknown editing mode(s): " + ", ".join(unknown_modes))
+    # Both surface pools are drawn from the same generator, so one flag is
+    # enough to know a buffer is fuzzed rather than taken from --combo-commands.
+    args.fuzz_buffers = args.buffer_fuzz or args.multiline_fuzz
+    if args.multiline_fuzz and args.random_combos == 0:
+        args.random_combos = 1
+    # Latency is REFUSED under --jobs > 1 rather than reported with a caveat.
+    # Concurrent cells contend for the same cores, so every number would be a
+    # measurement of the harness's own scheduling, and a wrong number in an
+    # audit instrument is worse than no number.
+    if args.latency and args.jobs > 1:
+        sys.exit("compsys_parity: --latency refuses --jobs > 1 — concurrent "
+                 "cells contend for the same cores and the timings would be "
+                 "measurements of the harness, not of the shells. Re-run with "
+                 "--jobs 1 (correctness sweeps are unaffected).")
+    if args.latency_runs < 1:
+        sys.exit("compsys_parity: --latency-runs must be at least 1")
     if args.edit_fuzz and args.random_combos == 0:
         # `--edit-fuzz` on its own is a complete request. One combo is the
         # smallest thing that carries a zstyle subset for the cells to run
@@ -2701,8 +3456,12 @@ def main():
             sess.drain_settled(max_wait=3.0, first_wait=2.0)
             sess.send(source_cmd)
             if not sess.wait_for_prompt(timeout=25.0):
-                return None
-            return run_case(sess, case)
+                return None, []
+            # `sess.key_timings` is per-key (key, KeyTiming); the correctness
+            # path ignores it entirely. It is honest with no concurrent
+            # draining here because each shell is captured in its OWN run, so
+            # neither one is ever waiting on the other.
+            return run_case(sess, case), list(sess.key_timings)
         finally:
             sess.close()
 
@@ -2715,29 +3474,46 @@ def main():
     # FLAKY, which is still a failure, never into PASS.
     confirm_runs = args.confirm if args.jobs > 1 else 0
 
+    def measure(case):
+        """Best-of-K timing for one case, in its own runs.
+
+        Runs AFTER the verdict is already fixed, and its screens are not
+        scored: a latency number can never be what decided a parity result."""
+        runs = []
+        for _ in range(args.latency_runs):
+            _, rt = capture(ref_argv, "zsh", case)
+            _, tt = capture(test_argv, "zshrs", case)
+            if not rt or not tt:
+                continue
+            runs.append([(k, a, b) for (k, a), (_, b) in zip(rt, tt)])
+        return merge_best_timings(runs)
+
     def evaluate(case):
         """One cell: capture both shells, diff, and (in parallel mode) re-run a
         failure to label nondeterminism. Returns (status, ref, test, diffs,
-        detail)."""
-        ref_grid = capture(ref_argv, "zsh", case)
-        test_grid = capture(test_argv, "zshrs", case)
+        detail, latency)."""
+        ref_grid, _ = capture(ref_argv, "zsh", case)
+        test_grid, _ = capture(test_argv, "zshrs", case)
+        lat = measure(case) if args.latency else None
         if ref_grid is None or test_grid is None:
             who = "zsh" if ref_grid is None else "zshrs"
-            return "FAIL", ref_grid, test_grid, None, f"{who} never reached prompt"
+            return ("FAIL", ref_grid, test_grid, None,
+                    f"{who} never reached prompt", lat)
         diffs = diff_grids(ref_grid, test_grid)
         if not diffs:
-            return "PASS", ref_grid, test_grid, [], ""
+            return "PASS", ref_grid, test_grid, [], "", lat
         for _ in range(max(0, confirm_runs)):
-            r2 = capture(ref_argv, "zsh", case)
-            t2 = capture(test_argv, "zshrs", case)
+            r2, _ = capture(ref_argv, "zsh", case)
+            t2, _ = capture(test_argv, "zshrs", case)
             if r2 is None or t2 is None:
                 continue
             d2 = diff_grids(r2, t2)
             if not d2 or first_diff_cell(d2) != first_diff_cell(diffs):
                 return ("FLAKY", ref_grid, test_grid, diffs,
-                        f"{len(diffs)} rows differ, not reproducible")
+                        f"{len(diffs)} rows differ, not reproducible", lat)
             ref_grid, test_grid, diffs = r2, t2, d2
-        return "FAIL", ref_grid, test_grid, diffs, f"{len(diffs)} rows differ"
+        return ("FAIL", ref_grid, test_grid, diffs,
+                f"{len(diffs)} rows differ", lat)
 
     if args.jobs > 1:
         from concurrent.futures import ThreadPoolExecutor
@@ -2751,8 +3527,13 @@ def main():
 
     passed = failed = flaky = 0
     results = []
-    for case, (status, ref_grid, test_grid, diffs, detail) in verdicts:
+    book = (LatencyBook(args.latency_min_ms, args.latency_threshold,
+                        args.latency_runs, concurrent_drain=False)
+            if args.latency else None)
+    for case, (status, ref_grid, test_grid, diffs, detail, lat) in verdicts:
         keyspec = "+".join(case.keys)
+        if book is not None and lat:
+            book.record(case.name, lat)
         record = {
             # `case.name` is already `<corpus case>.<sequence>` for the built-in
             # set, so it is a stable id across runs and machines.
@@ -2774,7 +3555,13 @@ def main():
             continue
         if status == "PASS":
             passed += 1
-            print(f"PASS {case.name:16s} {case.buffer!r} [{keyspec}]")
+            lat_note = ""
+            if book is not None:
+                w = lat_worst(lat, args.latency_min_ms)
+                lat_note = (f"  lat {w[0]:.2f}x (key #{w[1]} {w[2]!r} "
+                            f"{w[3]:.0f}->{w[4]:.0f}ms)" if w
+                            else f"  lat <{args.latency_min_ms:g}ms")
+            print(f"PASS {case.name:16s} {case.buffer!r} [{keyspec}]{lat_note}")
             if args.verbose:
                 print(render_grid(ref_grid))
         else:
@@ -2813,6 +3600,7 @@ def main():
     print()
     print(f"# {passed} passed, {failed} failed, {flaky} flaky, {len(cases)} total"
           + (f"  ({failed + flaky} cells did not agree)" if failed + flaky else ""))
+    lat_over = book.report() if book is not None else 0
     if args.json:
         doc = {
             "schema": "compsys-parity/1",
@@ -2831,10 +3619,16 @@ def main():
             # additional detail, not a subtraction.
             "summary": {"passed": passed, "failed": failed + flaky,
                         "flaky": flaky, "skipped": 0, "cells": len(cases)},
+            # Separate key, never inside `summary`: parity_matrix and friends
+            # read `summary`, and a latency finding is not a parity result.
+            "latency": (book.json_doc() if book is not None else None),
             "results": results,
         }
         _write_json(args.json, doc)
-    return 1 if (failed or flaky) else 0
+    # Latency contributes to the EXIT CODE only, and only when the user asked
+    # for a --latency-threshold. Every counter and every printed verdict above
+    # is the correctness result, unchanged.
+    return 1 if (failed or flaky or lat_over) else 0
 
 
 if __name__ == "__main__":
