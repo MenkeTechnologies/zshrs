@@ -34,16 +34,43 @@ diffs both screens after EVERY keystroke. Three independent axes are fuzzed:
                         backslash-escaped spaces, partial long options)
     --geometry-fuzz     terminal (rows, cols) from a seeded pool that includes
                         narrow (40 cols), tiny-rows (6-8) and wide (200 cols)
+    --edit-fuzz         the LINE EDITING that produced the buffer — see below
 
-and a failure is delta-debugged down to the minimal keystroke path and the
-minimal zstyle subset that still diverge at the SAME first-diff cell:
+and a failure is delta-debugged down to the minimal edit program, keystroke
+path and zstyle subset that still diverge at the SAME first-diff cell:
 
     --shrink-probes N   probe budget per axis (0 disables shrinking)
     --jobs N            run N cells concurrently (independent pty pairs)
     --json PATH         machine-readable result document ('-' for stdout)
 
 Every failure prints a copy-pasteable `--lockstep` replay carrying the seed,
-buffer, minimal key path, geometry and the saved zstyle fixture.
+buffer, edit program, editing mode, minimal key path, geometry and the saved
+zstyle fixture.
+
+Edit fuzz (`--edit-fuzz`)
+    Every other case in this file (and in every sibling harness) types a buffer
+    left to right and then completes. Real lines arrive at the completion point
+    after backspaces, word kills, pastes, cursor moves, undo and vi-mode
+    motions, and completion re-derives everything from the line and the cursor
+    at TAB time — so the EDIT HISTORY can change what completion sees even when
+    the final text is byte-identical.
+
+    `--edit-fuzz` generates a seeded EDIT PROGRAM that runs between the buffer
+    and the completion keys, and asserts parity after EVERY token of it as well
+    as after every completion key. It covers emacs kills/motions/transpose/
+    yank/undo/backspace-runs/retype-over, vi normal-mode motions and
+    dw/db/dd/cw/x/./u under `bindkey -v`, and paste-shaped bursts delivered in
+    one write (bracketed and raw).
+
+    It also generates CONVERGENT PAIRS: two DIFFERENT edit programs claimed to
+    produce the IDENTICAL final line. If the reference shell ends both on the
+    same screen and zshrs does not, the line is not the variable — the history
+    that built it is. A pair that does not converge in the reference shell is a
+    counted SKIP, never a pass.
+
+        --edit-cases N         edit cells per combo (default 4)
+        --convergent-cases N   convergent pairs per combo (default 2)
+        --edit-modes LIST      emacs,vi,emacs-nobp (bracketed paste off)
 
 Env / flags of note:
     --zshrs PATH      zshrs binary (default: target/debug/zshrs under repo)
@@ -123,6 +150,133 @@ from parity_corpus import (  # noqa: E402
 # window to one thread at a time; it costs nothing at --jobs 1. Same guard as
 # comptab_parity._FORK_LOCK.
 _FORK_LOCK = threading.Lock()
+
+
+# ── edit programs (`--edit-fuzz`) ─────────────────────────────────────────────
+#
+# Every case in every harness here types a buffer left to right and then
+# completes. Real lines do not arrive that way: they reach the completion point
+# after backspaces, word kills, pastes, cursor moves, undo and — under
+# `bindkey -v` — vi normal-mode motions. That matters because completion
+# re-derives everything from the line and the cursor at TAB time
+# (`get_comp_string`), so the EDIT HISTORY that produced a line can change what
+# completion sees even when the final text is byte-identical. This project has
+# shipped bugs of exactly that shape (a filter keystroke dropped mid-menu, a
+# `^@` plus a stale line leaking out of interactive menu reconstruction,
+# type-ahead eaten after accept-line, vi/emacs editing divergences).
+#
+# An EDIT PROGRAM is a list of tokens run after the buffer is typed and before
+# the completion keys, with the two screens diffed after EVERY token exactly as
+# they are after every completion key.
+#
+# Token grammar — one comma-separated list, payloads percent-encoded so a comma
+# or a space inside a paste can never be read as a separator:
+#
+#   k:<keyname>   one named key (parity_corpus.KEYS, or EDIT_KEYS below)
+#   t:<text>      text TYPED — one write() per character, with a read between,
+#                 so the shell sees separate arrivals like a human typing
+#   p:<text>      text PASTED — the whole payload in ONE write(), which is the
+#                 queued-keystroke / type-ahead path
+#   b:<text>      the same single write, wrapped in the bracketed-paste
+#                 ESC[200~ / ESC[201~ brackets a terminal emulator sends
+#
+# The whole program round-trips through `--edit-program` so every failure
+# replays verbatim.
+EDIT_KEYS: dict[str, bytes] = {
+    # Meta-prefixed emacs motions/kills that parity_corpus.KEYS does not carry.
+    # Verified against `zsh -f -c 'bindkey -M emacs'` on this host:
+    #   "^[b" backward-word   "^[f" forward-word
+    #   "^[d" kill-word       "^[t" transpose-words
+    "alt-b": b"\x1bb",
+    "alt-f": b"\x1bf",
+    "alt-d": b"\x1bd",
+    "alt-t": b"\x1bt",
+    # "^T" transpose-chars, "^X^U" undo, "^X^K" kill-buffer (same listing).
+    "ctrl-t": b"\x14",
+    "ctrl-x-ctrl-u": b"\x18\x15",
+    "ctrl-x-ctrl-k": b"\x18\x0b",
+}
+
+BRACKET_PASTE_START = b"\x1b[200~"
+BRACKET_PASTE_END = b"\x1b[201~"
+
+
+def resolve_key(name: str) -> bytes:
+    """Bytes for one key name: the local edit vocabulary first, then the shared
+    corpus table (which still rejects an unknown multi-character name outright,
+    so a typo can never masquerade as that many self-inserted characters)."""
+    if name in EDIT_KEYS:
+        return EDIT_KEYS[name]
+    return key_bytes(name)
+
+
+def K(name: str) -> str:
+    return "k:" + name
+
+
+def T(text: str) -> str:
+    return "t:" + _quote_payload(text)
+
+
+def P(text: str) -> str:
+    return "p:" + _quote_payload(text)
+
+
+def B(text: str) -> str:
+    return "b:" + _quote_payload(text)
+
+
+def _quote_payload(text: str) -> str:
+    from urllib.parse import quote
+    return quote(text, safe="")
+
+
+def _unquote_payload(text: str) -> str:
+    from urllib.parse import unquote
+    return unquote(text)
+
+
+class BadEditToken(ValueError):
+    """An edit token the DSL does not define."""
+
+
+def edit_validate(tokens) -> list:
+    """Reject a malformed program BEFORE any shell is booted.
+
+    Same principle as `parity_corpus.key_bytes`: a mistyped token must be an
+    error, never something that quietly turns into self-inserted characters on
+    both shells at once and reads like a passing case."""
+    out = []
+    for tok in tokens:
+        kind, sep, payload = tok.partition(":")
+        if not sep or kind not in ("k", "t", "p", "b"):
+            raise BadEditToken(f"{tok!r}: expected k:/t:/p:/b:")
+        if kind == "k":
+            resolve_key(payload)          # raises UnknownKey on a typo
+        elif not _unquote_payload(payload):
+            raise BadEditToken(f"{tok!r}: empty payload")
+        out.append(tok)
+    return out
+
+
+def edit_encode(tokens) -> str:
+    return ",".join(tokens)
+
+
+def edit_decode(spec: str) -> list:
+    return edit_validate([t for t in spec.split(",") if t])
+
+
+def edit_label(tok: str) -> str:
+    """Short human form for a report line."""
+    kind, _, payload = tok.partition(":")
+    if kind == "k":
+        return payload
+    return f"{kind}:{_unquote_payload(payload)!r}"
+
+
+def edit_program_str(tokens) -> str:
+    return "+".join(edit_label(t) for t in tokens) or "<none>"
 
 
 def resolve_dump(explicit: str | None) -> str | None:
@@ -267,7 +421,38 @@ class ShellSession:
         # name outright. The old `KEYS.get(name, name.encode())` fallback turned
         # a typo into that many self-inserted characters on BOTH shells, which
         # looked like a passing case for a key that was never sent.
-        self.send(key_bytes(name))
+        # `resolve_key` adds the local edit vocabulary (alt-b, ^T, ...) on top;
+        # it is a strict superset, so a name that used to raise still raises.
+        self.send(resolve_key(name))
+
+    def type_slow(self, text: str):
+        """Type `text` one character per write(), reading between characters.
+
+        `type_text` hands the whole string to a single write(), which the shell
+        sees as one arrival — that is the PASTE shape, not the TYPING shape.
+        Some of the bugs this mode exists to find live in the difference (a
+        keystroke queued behind another has a different path through the input
+        layer than a keystroke that arrives alone), so the two must not be the
+        same call."""
+        for ch in text:
+            self.send(ch.encode())
+            self._drain_once(0.004)
+
+    def send_edit_token(self, tok: str):
+        """Deliver one edit-program token. See the DSL comment above `EDIT_KEYS`."""
+        kind, _, payload = tok.partition(":")
+        if kind == "k":
+            self.send(resolve_key(payload))
+        elif kind == "t":
+            self.type_slow(_unquote_payload(payload))
+        elif kind == "p":
+            self.send(_unquote_payload(payload).encode())
+        elif kind == "b":
+            self.send(BRACKET_PASTE_START
+                      + _unquote_payload(payload).encode()
+                      + BRACKET_PASTE_END)
+        else:
+            raise BadEditToken(tok)
 
     # ── screen access ─────────────────────────────────────────────────────────
     def grid(self):
@@ -391,10 +576,35 @@ def user_fpath() -> list[str]:
     return list(_user_fpath_cached())
 
 
-def build_init_file(dump, fpath_dirs, zstyle_file):
+# The editing modes `--edit-fuzz` runs under. Each is a line appended to the
+# shared init file, so BOTH shells are configured identically and the mode is
+# part of the replay.
+#
+#   emacs        explicit `bindkey -e`. `zsh -f` already lands here (no
+#                $EDITOR/$VISUAL in child_env), but saying so keeps the mode a
+#                property of the fixture instead of a property of the host.
+#   vi           `bindkey -v`. A distinct keymap: completion fired from a
+#                vi-NORMAL-mode cursor position is a surface no other case in
+#                any harness reaches.
+#   emacs-nobp   emacs with bracketed paste disabled. `man zshparam`,
+#                zle_bracketed_paste: "Unsetting the parameter has the effect
+#                of ensuring that bracketed paste remains disabled." A `p:`
+#                burst therefore takes the raw type-ahead path with no
+#                ESC[200~ bracket around it.
+EDIT_MODES: dict[str, str] = {
+    "emacs": "bindkey -e\n",
+    "vi": "bindkey -v\n",
+    "emacs-nobp": "bindkey -e\nunset zle_bracketed_paste\n",
+}
+
+
+def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None):
     """Write the init script both shells source after launching with `-f`.
     Matches the spec: same fpath, same zstyles, same compinit + dump, so the
-    only variable left is the shell under test."""
+    only variable left is the shell under test.
+
+    `editing_mode` (None by default, which emits nothing and leaves every
+    pre-existing caller byte-identical) appends one of EDIT_MODES."""
     d = tempfile.mkdtemp(prefix="compsys_parity_")
     fpath_line = ""
     if fpath_dirs:
@@ -458,6 +668,9 @@ def build_init_file(dump, fpath_dirs, zstyle_file):
         compinit = "autoload -Uz compinit\ncompinit -u\n"
     ost = ref_ostype()
     ostype_line = f"OSTYPE={shlex.quote(ost)}\n" if ost else ""
+    if editing_mode is not None and editing_mode not in EDIT_MODES:
+        raise ValueError(f"unknown editing mode: {editing_mode}")
+    mode_line = EDIT_MODES.get(editing_mode, "")
     init = f"""\
 # generated by compsys_parity.py — sourced into `zsh -f` and `zshrs --zsh -f`
 PROMPT='{PROMPT_SENTINEL} '
@@ -466,7 +679,7 @@ PS2=''
 setopt no_beep
 {ostype_line}\
 
-{fpath_line}{zstyle_line}{compinit}{autoload_line}
+{fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}
 # Readiness barrier: block the prompt until the completion map is populated so
 # a keystroke fired right after the prompt isn't racing an unfinished compinit
 # (real zsh fills `_comps` synchronously; zshrs may register asynchronously).
@@ -819,6 +1032,317 @@ def gen_buffer(rng, surfaces):
     return s.name, text, list(pre)
 
 
+# ── edit surfaces ─────────────────────────────────────────────────────────────
+#
+# One entry per SHAPE of line editing, each producing a concrete edit program.
+# `expect` is the command line the generator CLAIMS the program leaves behind.
+# It is an assertion on the GENERATOR, checked against the REFERENCE shell and
+# reported in its own counted category — never a comparison between the two
+# shells, and never able to change a cell's parity verdict. `None` means the
+# generator does not claim a final line (a pure cursor move whose effect is a
+# cursor position, or a widget whose exact result is not worth asserting), and
+# the parity comparison is unaffected either way.
+@dataclass
+class EditProg:
+    gen: str
+    mode: str
+    buffer: str
+    tokens: list
+    expect: str = None
+    note: str = ""
+
+
+@dataclass
+class EditSurface:
+    name: str
+    modes: tuple          # EDIT_MODES keys this shape is meaningful under
+    note: str
+    make: object          # make(rng) -> (buffer, tokens, expect)
+
+
+EDIT_SURFACES: list = [
+    # ── emacs ────────────────────────────────────────────────────────────────
+    EditSurface("kill_word_retype", ("emacs", "emacs-nobp"),
+                "^W the argument off, type a different one over it",
+                lambda rng: _pick(rng,
+                    ("ls /usr/local", [K("ctrl-w"), T("/usr/sh")], "ls /usr/sh"),
+                    ("ls /usr/share/zsh", [K("ctrl-w"), T("/etc/pa")], "ls /etc/pa"),
+                    ("cd /usr/share", [K("ctrl-w"), T("/usr/lo")], "cd /usr/lo"))),
+    EditSurface("backspace_run", ("emacs", "emacs-nobp"),
+                "a run of backspaces walks the word back to a completable prefix",
+                lambda rng: _pick(rng,
+                    ("ls /usr/shareXYZ", [K("bs")] * 3, "ls /usr/share"),
+                    ("ls /usr/local/binQQ", [K("bs")] * 2, "ls /usr/local/bin"),
+                    ("cd /etc/pathsQ", [K("bs")], "cd /etc/paths"))),
+    EditSurface("kill_line_head", ("emacs", "emacs-nobp"),
+                "^A ^K empties the line, a different command is typed over it",
+                lambda rng: _pick(rng,
+                    ("ls /usr/sh", [K("ctrl-a"), K("ctrl-k"), T("cd /et")], "cd /et"),
+                    ("echo $PATH", [K("ctrl-a"), K("ctrl-k"), T("ls /usr/sh")],
+                     "ls /usr/sh"))),
+    EditSurface("motion_only", ("emacs", "emacs-nobp"),
+                "line unchanged, cursor moved — completion fires mid-line",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share/zsh", [K("ctrl-a"), K("alt-f")],
+                     "ls /usr/share/zsh"),
+                    ("ls /usr/share/zsh", [K("ctrl-e"), K("alt-b")],
+                     "ls /usr/share/zsh"),
+                    ("cd /usr/local/bin", [K("ctrl-a"), K("ctrl-f"), K("ctrl-f"),
+                                           K("ctrl-f")], "cd /usr/local/bin"))),
+    EditSurface("transpose", ("emacs", "emacs-nobp"),
+                "^T / M-t rewrite the tail of the word in place",
+                lambda rng: _pick(rng,
+                    ("ls /usr/sh", [K("ctrl-t")], None),
+                    ("ls /usr/share zsh", [K("alt-t")], None))),
+    EditSurface("kill_yank", ("emacs", "emacs-nobp"),
+                "^U into the kill ring, ^Y straight back out — same text, "
+                "different history",
+                lambda rng: _pick(rng,
+                    ("ls /usr/sh", [K("ctrl-u"), K("ctrl-y")], "ls /usr/sh"),
+                    ("cd /usr/share", [K("ctrl-u"), K("ctrl-y")], "cd /usr/share"))),
+    EditSurface("undo_after_kill", ("emacs", "emacs-nobp"),
+                "^W then undo — the line comes back, the completion must too",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share", [K("ctrl-w"), K("ctrl-_")], "ls /usr/share"),
+                    ("cd /usr/lo", [K("ctrl-w"), K("ctrl-x-ctrl-u")], "cd /usr/lo"))),
+    EditSurface("paste_burst", ("emacs", "emacs-nobp"),
+                "the argument arrives as ONE write() — the type-ahead path",
+                lambda rng: _pick(rng,
+                    ("ls ", [P("/usr/sh")], "ls /usr/sh"),
+                    ("cd ", [P("/usr/share/z")], "cd /usr/share/z"),
+                    ("ls ", [P("/usr/local/b")], "ls /usr/local/b"))),
+    EditSurface("bracketed_paste", ("emacs", "emacs-nobp"),
+                "the same burst inside ESC[200~ / ESC[201~ brackets",
+                lambda rng: _pick(rng,
+                    ("ls ", [B("/usr/sh")], "ls /usr/sh"),
+                    ("cd ", [B("/usr/share/z")], "cd /usr/share/z"))),
+    EditSurface("paste_then_edit", ("emacs", "emacs-nobp"),
+                "paste a long path, then kill it and retype a different one",
+                lambda rng: _pick(rng,
+                    ("ls ", [P("/usr/share/zsh"), K("ctrl-w"), T("/etc/pa")],
+                     "ls /etc/pa"),
+                    ("cd ", [B("/usr/local/bin"), K("ctrl-w"), T("/usr/sh")],
+                     "cd /usr/sh"))),
+    EditSurface("midline_insert", ("emacs", "emacs-nobp"),
+                "an option is inserted BEFORE an argument already on the line",
+                lambda rng: _pick(rng,
+                    ("ls /usr/sh", [K("ctrl-a"), K("alt-f"), T(" -l")],
+                     "ls -l /usr/sh"),
+                    ("ls /usr/share", [K("ctrl-a"), K("alt-f"), T(" -a")],
+                     "ls -a /usr/share"))),
+
+    # ── vi ───────────────────────────────────────────────────────────────────
+    #
+    # `bindkey -v` is a different keymap, and completion fired from a
+    # vi-NORMAL-mode cursor is a surface nothing else in this repo's harnesses
+    # reaches. A TAB in vicmd is not bound to a completion widget in `zsh -f`
+    # at all — the two shells still have to do the same nothing.
+    EditSurface("vi_x_delete", ("vi",),
+                "ESC to vicmd, `x` the junk off the end, `A` back to insert",
+                lambda rng: _pick(rng,
+                    ("ls /usr/shXYZ", [K("esc"), T("xxx"), T("A")], "ls /usr/sh"),
+                    ("cd /usr/shareQ", [K("esc"), T("x"), T("A")], "cd /usr/share"))),
+    EditSurface("vi_dw", ("vi",),
+                "`0` then `dw` drops the command word",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share/zsh", [K("esc"), T("0"), T("dw")], None),
+                    ("cd /usr/local", [K("esc"), T("0"), T("dw")], None))),
+    EditSurface("vi_db", ("vi",),
+                "`db` deletes backwards from the cursor",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share/zsh", [K("esc"), T("db")], None),
+                    ("cd /usr/local/bin", [K("esc"), T("b"), T("db")], None))),
+    EditSurface("vi_dd_retype", ("vi",),
+                "`dd` clears the line, `i` re-enters insert, retype",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share", [K("esc"), T("dd"), T("i"), T("cd /et")],
+                     "cd /et"),
+                    ("echo $PATH", [K("esc"), T("dd"), T("i"), T("ls /usr/sh")],
+                     "ls /usr/sh"))),
+    EditSurface("vi_cw", ("vi",),
+                "`cw` changes a word in place",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share", [K("esc"), T("b"), T("cw"), T("etc")], None),
+                    ("cd /usr/local", [K("esc"), T("cw"), T("sh")], None))),
+    EditSurface("vi_motion", ("vi",),
+                "line unchanged, cursor parked mid-line in vicmd — TAB from there",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share/zsh", [K("esc"), T("b")], "ls /usr/share/zsh"),
+                    ("ls /usr/share/zsh", [K("esc"), T("0")], "ls /usr/share/zsh"),
+                    ("cd /usr/local/bin", [K("esc"), T("b"), T("h")],
+                     "cd /usr/local/bin"),
+                    ("ls /usr/sh", [K("esc"), T("0"), T("$")], "ls /usr/sh"),
+                    ("ls /usr/sh", [K("esc"), T("e")], "ls /usr/sh"))),
+    EditSurface("vi_repeat", ("vi",),
+                "`x` then `.` — the repeat register has to carry the change",
+                lambda rng: _pick(rng,
+                    ("ls /usr/shXY", [K("esc"), T("x"), T("."), T("A")],
+                     "ls /usr/sh"),
+                    ("cd /usr/shareQQ", [K("esc"), T("x"), T("."), T("A")],
+                     "cd /usr/share"))),
+    EditSurface("vi_undo", ("vi",),
+                "`dw` then `u` — the line comes back, the completion must too",
+                lambda rng: _pick(rng,
+                    ("ls /usr/share", [K("esc"), T("dw"), T("u"), T("A")],
+                     "ls /usr/share"),
+                    ("cd /usr/local", [K("esc"), T("db"), T("u"), T("A")],
+                     "cd /usr/local"))),
+    EditSurface("vi_insert_bol", ("vi",),
+                "`I` inserts at the beginning of the line",
+                lambda rng: _pick(rng,
+                    ("s /usr/sh", [K("esc"), T("I"), T("l"), K("esc"), T("A")],
+                     "ls /usr/sh"),
+                    ("d /usr/share", [K("esc"), T("I"), T("c"), K("esc"), T("A")],
+                     "cd /usr/share"))),
+    EditSurface("vi_paste_burst", ("vi",),
+                "a burst pasted in viins, then ESC to vicmd before TAB",
+                lambda rng: _pick(rng,
+                    ("ls ", [P("/usr/share/zsh"), K("esc"), T("b")],
+                     "ls /usr/share/zsh"),
+                    ("cd ", [B("/usr/local/bin"), K("esc")],
+                     "cd /usr/local/bin"))),
+]
+
+
+def available_edit_surfaces(modes) -> list:
+    """The edit surfaces meaningful under the requested mode set."""
+    return [(s, m) for s in EDIT_SURFACES for m in s.modes if m in modes]
+
+
+def gen_edit_program(rng, pairs) -> EditProg:
+    """One fuzzed edit program. `pairs` comes from available_edit_surfaces."""
+    surface, mode = rng.choice(pairs)
+    buf, tokens, expect = surface.make(rng)
+    return EditProg(gen=surface.name, mode=mode, buffer=buf,
+                    tokens=edit_validate(list(tokens)), expect=expect,
+                    note=surface.note)
+
+
+# ── convergent edit programs ─────────────────────────────────────────────────
+#
+# A pair of DIFFERENT edit programs that produce the IDENTICAL final line. If
+# the reference shell ends both legs on the same screen and zshrs does not, the
+# difference cannot be "zshrs completes this line differently" — the line is
+# the same — so it isolates EDIT-HISTORY LEAKAGE: state carried out of the
+# editing that produced the line and into the completion that reads it. That is
+# the sharpest available evidence for this bug class, which is why the pairs are
+# generated as pairs rather than hoping two independent cells happen to land on
+# the same text.
+#
+# Convergence is never assumed. Every pair is CHECKED empirically against the
+# reference shell (`ref_A == ref_B`); a pair that does not converge there is
+# reported as a counted SKIP, because the claim the comparison rests on could
+# not be established. It is never scored as a pass.
+@dataclass
+class ConvPair:
+    name: str
+    mode: str
+    target: str
+    a: EditProg
+    b: EditProg
+    note: str = ""
+
+
+def _conv(name, mode, target, a, b, note=""):
+    """(buffer, tokens) pairs -> a ConvPair with both legs validated."""
+    return ConvPair(
+        name=name, mode=mode, target=target, note=note,
+        a=EditProg(gen=f"{name}/A", mode=mode, buffer=a[0],
+                   tokens=edit_validate(list(a[1])), expect=target),
+        b=EditProg(gen=f"{name}/B", mode=mode, buffer=b[0],
+                   tokens=edit_validate(list(b[1])), expect=target))
+
+
+CONVERGENT_PAIRS: list = [
+    _conv(
+        "bs_vs_direct", "emacs", "ls /usr/sh",
+        ("ls /usr/shXYZ", [K("bs")] * 3),
+        ("ls /usr/sh", []),
+        "three backspaces vs typing the line straight"),
+    _conv(
+        "killword_vs_bs", "emacs", "ls /usr/sh",
+        ("ls /usr/local", [K("ctrl-w"), T("/usr/sh")]),
+        ("ls /usr/local", [K("bs")] * 5 + [T("sh")]),
+        "same start, same end, two different ways of getting there"),
+    _conv(
+        "prefix_vs_direct", "emacs", "ls /usr/sh",
+        ("/usr/sh", [K("ctrl-a"), T("ls "), K("ctrl-e")]),
+        ("ls /usr/sh", []),
+        "the command word inserted in front of an argument already typed"),
+    _conv(
+        "paste_vs_typed", "emacs", "ls /usr/sh",
+        ("ls ", [P("/usr/sh")]),
+        ("ls /usr/sh", []),
+        "argument delivered in one write vs typed character by character"),
+    _conv(
+        "bpaste_vs_typed", "emacs", "ls /usr/sh",
+        ("ls ", [B("/usr/sh")]),
+        ("ls /usr/sh", []),
+        "bracketed paste vs typed"),
+    _conv(
+        "killyank_vs_direct", "emacs", "ls /usr/sh",
+        ("ls /usr/sh", [K("ctrl-u"), K("ctrl-y")]),
+        ("ls /usr/sh", []),
+        "the line round-tripped through the kill ring"),
+    _conv(
+        "undo_vs_direct", "emacs", "ls /usr/share",
+        ("ls /usr/share", [K("ctrl-w"), K("ctrl-_")]),
+        ("ls /usr/share", []),
+        "killed and undone vs never touched"),
+    _conv(
+        "vi_x_vs_direct", "vi", "ls /usr/sh",
+        ("ls /usr/shX", [K("esc"), T("x")]),
+        ("ls /usr/sh", [K("esc")]),
+        "both legs end in vicmd on the last character"),
+    _conv(
+        "vi_dw_vs_direct", "vi", "/usr/sh",
+        ("ls /usr/sh", [K("esc"), T("0"), T("dw"), T("A")]),
+        ("/usr/sh", [K("esc"), T("A")]),
+        "command word deleted vs never typed"),
+    _conv(
+        "vi_undo_vs_direct", "vi", "ls /usr/share",
+        ("ls /usr/share", [K("esc"), T("dw"), T("u"), T("A")]),
+        ("ls /usr/share", [K("esc"), T("A")]),
+        "vi undo vs never edited"),
+    _conv(
+        "vi_paste_vs_typed", "vi", "ls /usr/sh",
+        ("ls ", [P("/usr/sh"), K("esc"), T("A")]),
+        ("ls /usr/sh", [K("esc"), T("A")]),
+        "burst pasted in viins vs typed"),
+]
+
+
+def gen_conv_pair(rng, modes) -> ConvPair:
+    """One convergent pair, restricted to the requested editing modes."""
+    usable = [p for p in CONVERGENT_PAIRS if p.mode in modes]
+    if not usable:
+        return None
+    return rng.choice(usable)
+
+
+def line_after_prompt(grid, cols):
+    """The command line as the screen shows it, or None if it cannot be read
+    unambiguously.
+
+    Returns None (rather than a guess) when the line is long enough to have
+    wrapped: pyte pads every row to the window width and `normalize_rows`
+    rstrips it, which destroys the information needed to rejoin a wrapped line
+    exactly. A guess there would make the generator-sanity check report
+    mismatches that are artifacts of the reader."""
+    for row in grid:
+        idx = row.find(PROMPT_SENTINEL)
+        if idx < 0:
+            continue
+        text = row[idx + len(PROMPT_SENTINEL):]
+        if text.startswith(" "):
+            text = text[1:]
+        # Prompt + text filling the row means the next row may be a wrap.
+        if idx + len(PROMPT_SENTINEL) + 1 + len(text) >= cols:
+            return None
+        return text
+    return None
+
+
 # ── keystroke paths ──────────────────────────────────────────────────────────
 #
 # The vocabulary deliberately EXCLUDES:
@@ -863,24 +1387,43 @@ def saved_path(outdir, seed, n, suffix=""):
     return os.path.join(outdir, f"combo_{seed}_{n}{suffix}.zsh")
 
 
-def run_keyseq(init_file, buffer, keys, args, env, geom):
+def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None):
     """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
-    `buffer`, then send each key in `keys` one at a time, capturing +
-    byte-diffing BOTH screens AFTER EACH keystroke. `keys` may mix "tab",
-    arrows ("down"/"up"/...), and literal filter characters ("a".."z") — so
-    menu-cycling, list-prompt paging, arrow navigation, AND interactive-filter
-    narrowing (typing letters to filter the menu) are all verified per-key.
+    `buffer`, optionally run an EDIT PROGRAM over it, then send each key in
+    `keys` one at a time, capturing + byte-diffing BOTH screens AFTER EACH
+    STEP. `keys` may mix "tab", arrows ("down"/"up"/...), and literal filter
+    characters ("a".."z") — so menu-cycling, list-prompt paging, arrow
+    navigation, AND interactive-filter narrowing (typing letters to filter the
+    menu) are all verified per-key.
+
+    `edits` (None = no edit phase, the pre-existing behaviour) is a list of
+    edit-program tokens (see the DSL above `EDIT_KEYS`). When it is supplied
+    the screens are ALSO diffed once right after the buffer is typed and once
+    after every token, so a divergence is attributed to the exact edit that
+    caused it rather than to the completion that followed it.
 
     `geom` sizes BOTH ptys and BOTH environments identically.
 
     Returns (fail_step, records): fail_step is the 1-based index of the first
-    key whose screens diverge (0 if all match); records is
-    [(step, key, ref_grid, test_grid, diffs), ...]. Stops at first divergence
+    STEP whose screens diverge (0 if all match); records is
+    [(step, label, ref_grid, test_grid, diffs), ...]. Stops at first divergence
     (the two shells desync past that point)."""
     source_cmd = f"source {shlex.quote(init_file)}\n".encode()
     env = dict(env, COLUMNS=str(geom.cols), LINES=str(geom.rows))
     ref = ShellSession([args.zsh, "-f", "-i"], env, geom.rows, geom.cols, "zsh", args.settle)
     test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, geom.rows, geom.cols, "zshrs", args.settle)
+    records = []
+    step = [0]
+
+    def compare(label):
+        """One parity assertion. Appends a record and returns its diffs."""
+        step[0] += 1
+        rg = normalize_rows(ref.grid())
+        tg = normalize_rows(test.grid())
+        d = diff_grids(rg, tg)
+        records.append((step[0], label, rg, tg, d))
+        return d
+
     try:
         for s in (ref, test):
             s.drain_settled(max_wait=3.0, first_wait=2.0)
@@ -894,21 +1437,35 @@ def run_keyseq(init_file, buffer, keys, args, env, geom):
                 s.type_text(buffer)
             for s in (ref, test):
                 s.drain_settled(max_wait=2.0, first_wait=1.0)
-        records = []
-        for step, key in enumerate(keys, 1):
+        if edits is not None:
+            # Baseline assertion: if the two shells already disagree on the
+            # plain typed line, no edit below caused it and the report must not
+            # say one did.
+            if compare("(buffer)"):
+                return (step[0], records)
+            for tok in edits:
+                for s in (ref, test):
+                    s.send_edit_token(tok)
+                # An edit is a local line redraw, not a completion: short
+                # first-byte wait, but a real quiet window (a paste burst on a
+                # narrow terminal reflows several rows).
+                for s in (ref, test):
+                    s.drain_settled(max_wait=6.0, first_wait=1.5)
+                if compare("edit:" + edit_label(tok)):
+                    return (step[0], records)
+        for kn, key in enumerate(keys, 1):
             for s in (ref, test):
                 s.send_key(key)
             # the FIRST completion keystroke is cold (autoload chain) → long
             # first-byte wait; later keys are warm menu redraws / filter edits.
-            fw = 8.0 if step == 1 else 4.0
+            # Keyed on position within the KEY phase, not on the global step
+            # index: with an edit program in front, the cold key is no longer
+            # step 1 and it would otherwise get the warm (4s) window.
+            fw = 8.0 if kn == 1 else 4.0
             for s in (ref, test):
                 s.drain_settled(max_wait=12.0, first_wait=fw)
-            rg = normalize_rows(ref.grid())
-            tg = normalize_rows(test.grid())
-            diffs = diff_grids(rg, tg)
-            records.append((step, key, rg, tg, diffs))
-            if diffs:
-                return (step, records)
+            if compare(key):
+                return (step[0], records)
         return (0, records)
     finally:
         ref.close()
@@ -942,7 +1499,48 @@ def signature(records):
 
 # ── delta debugging ──────────────────────────────────────────────────────────
 
-def shrink_keys(cell, args, env, target_sig, budget, run):
+def shrink_edits(cell, args, env, target_sig, budget, run):
+    """Reduce the EDIT PROGRAM to a subsequence that still diverges at
+    `target_sig`.
+
+    A minimal edit program is the whole value of an edit-fuzz finding:
+    "diverges after `ls ` + paste + ^W + retype + TAB + down + q" is not a bug
+    report, "diverges after `ls /usr/local` + ^W + TAB" is. Same ddmin, same
+    first-diff-cell invariant, same probe budget as the other two axes.
+
+    Nothing is pinned here (unlike the key path, whose leading TAB is what
+    makes it a completion at all): every token of an edit program is a
+    candidate for removal, including the first."""
+    if budget <= 0 or not cell.edit_tokens:
+        return list(cell.edit_tokens or []), 0
+    probes = [0]
+
+    def still_fails(candidate):
+        probes[0] += 1
+        fs, rec = run(cell.buffer, cell.keys, cell.init_file, cell.geom,
+                      list(candidate))
+        return bool(fs) and signature(rec) == target_sig
+
+    # THE EMPTY PROGRAM IS PROBED FIRST, and it is the most valuable candidate
+    # of all: if the divergence survives with no edits at all, the edit phase is
+    # not implicated and the finding is an ordinary completion bug that this
+    # mode merely happened to be running when it fired. `parity_corpus.shrink`
+    # cannot discover that on its own — its inner loop does
+    # `if not candidate: continue`, so the empty set is never a candidate and a
+    # one-token program is its floor whether or not that token matters. Without
+    # this probe the harness would report "reduced to 1 token" for a bug the
+    # token has nothing to do with, which is a claim about causation it has not
+    # earned.
+    if still_fails([]):
+        return [], probes[0]
+    if len(cell.edit_tokens) == 1:
+        return list(cell.edit_tokens), probes[0]
+    return (ddmin(list(cell.edit_tokens), still_fails,
+                  max_probes=max(0, budget - probes[0])),
+            probes[0])
+
+
+def shrink_keys(cell, args, env, target_sig, budget, run, edits=None):
     """Reduce the key path to a subsequence that still diverges at `target_sig`.
 
     "diverges at step #7 (path tab+down+q+tab+j+up+tab)" is a report you cannot
@@ -959,14 +1557,15 @@ def shrink_keys(cell, args, env, target_sig, budget, run):
     def still_fails(candidate):
         probes[0] += 1
         keys = [cell.keys[0]] + list(candidate)
-        fs, rec = run(cell.buffer, keys, cell.init_file, cell.geom)
+        fs, rec = run(cell.buffer, keys, cell.init_file, cell.geom, edits)
         return bool(fs) and signature(rec) == target_sig
 
     tail = ddmin(list(cell.keys[1:]), still_fails, max_probes=budget)
     return [cell.keys[0]] + tail, probes[0]
 
 
-def shrink_styles(cell, args, env, target_sig, budget, run, build_init, keys):
+def shrink_styles(cell, args, env, target_sig, budget, run, build_init, keys,
+                  edits=None):
     """Reduce the zstyle set to a subset that still diverges at `target_sig`.
 
     A 100-statement random subset that diverges says nothing; the one or two
@@ -979,7 +1578,7 @@ def shrink_styles(cell, args, env, target_sig, budget, run, build_init, keys):
     def still_fails(candidate):
         probes[0] += 1
         init = build_init(list(candidate))
-        fs, rec = run(cell.buffer, keys, init, cell.geom)
+        fs, rec = run(cell.buffer, keys, init, cell.geom, edits)
         return bool(fs) and signature(rec) == target_sig
 
     return ddmin(list(cell.statements), still_fails, max_probes=budget), probes[0]
@@ -1002,6 +1601,24 @@ class Cell:
     zstyle_path: str
     init_file: str
     workdir: str
+    # ── edit-fuzz (all default to the pre-existing "no edit phase" shape) ──
+    # `edit_tokens is None` means run_keyseq takes the original path: buffer
+    # typed, no baseline assertion, straight into the key path.
+    edit_tokens: list = None
+    edit_mode: str = None
+    edit_gen: str = ""
+    expect: str = None
+
+
+@dataclass
+class ConvCell(Cell):
+    """A convergent PAIR. `buffer`/`edit_tokens` are leg A (so every field the
+    ordinary reporting path reads is populated); leg B lives alongside."""
+    b_buffer: str = ""
+    b_edit_tokens: list = field(default_factory=list)
+    b_gen: str = ""
+    target: str = ""
+    conv_note: str = ""
 
 
 @dataclass
@@ -1024,26 +1641,73 @@ class CellResult:
     # minimal set, and the report must not claim it is.
     shrink_exhausted: bool = False
     replay: str = ""
+    min_edits: list = None
+    # Which axes the reduction actually exercised, so the report never implies
+    # a key path was minimised when the divergence happened before any key was
+    # sent.
+    shrink_notes: list = field(default_factory=list)
+    # Generator-sanity annotation, NOT a parity verdict: whether the reference
+    # shell's command line matched what the edit generator claimed it would be.
+    expect_ok: object = None
+    expect_saw: str = None
 
 
-def replay_command(args, buffer, keys, geom, zstyle_path):
+def replay_command(args, buffer, keys, geom, zstyle_path,
+                   edits=None, editing_mode=None):
     """A copy-pasteable command that reproduces exactly this divergence."""
+    extra = ""
+    if edits is not None:
+        extra += f" --edit-program {shlex.quote(edit_encode(edits))}"
+    if editing_mode:
+        extra += f" --editing-mode {editing_mode}"
     return ("scripts/compsys_parity.py --lockstep"
             f" --seed {args.seed}"
             f" --zstyle {shlex.quote(zstyle_path)}"
             f" --case {shlex.quote(buffer)}"
             f" --keys {','.join(keys)}"
-            f" --rows {geom.rows} --cols {geom.cols} -v")
+            + extra
+            + f" --rows {geom.rows} --cols {geom.cols} -v")
+
+
+def conv_replay_command(args, cell, keys, zstyle_path):
+    """A copy-pasteable command that re-runs one convergent PAIR.
+
+    A convergent finding is a claim about TWO runs, so a single-leg `--lockstep`
+    line cannot reproduce it. The whole pair travels as one JSON argument."""
+    spec = {
+        "name": cell.edit_gen,
+        "mode": cell.edit_mode,
+        "target": cell.target,
+        "geom": [cell.geom.rows, cell.geom.cols],
+        "zstyle": zstyle_path,
+        "keys": list(keys),
+        "a": {"buffer": cell.buffer, "edits": edit_encode(cell.edit_tokens)},
+        "b": {"buffer": cell.b_buffer, "edits": edit_encode(cell.b_edit_tokens)},
+    }
+    return ("scripts/compsys_parity.py --conv-replay "
+            + shlex.quote(json.dumps(spec, separators=(",", ":"))) + " -v")
 
 
 def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     """One fuzz cell: lockstep run, flake labelling, then delta debugging."""
+    if isinstance(cell, ConvCell):
+        return run_conv_cell(cell, args, env, dump, fpath_dirs, outdir)
     res = CellResult(cell=cell)
 
-    def run(buffer, keys, init_file, geom):
-        return run_keyseq(init_file, buffer, keys, args, env, geom)
+    def run(buffer, keys, init_file, geom, edits=None):
+        # `edits=None` means "whatever the cell currently carries" — which is
+        # the ORIGINAL program on the first run and the REDUCED one after
+        # shrink_edits rewrote it. A default argument would have frozen the
+        # original list object at def time and quietly re-run the long program
+        # in every later probe.
+        return run_keyseq(init_file, buffer, keys, args, env, geom,
+                          edits=cell.edit_tokens if edits is None else edits)
 
     fail_step, records = run(cell.buffer, cell.keys, cell.init_file, cell.geom)
+    # Generator sanity: did the REFERENCE shell end the edit phase on the line
+    # the generator claims? Recorded and counted on its own; it can neither
+    # create nor suppress a parity verdict.
+    _check_expect(res, cell, records)
     if fail_step == 0:
         res.status = "PASS"
         return res
@@ -1057,7 +1721,8 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
         res.status = "FAIL"
         res.detail = "a shell never reached prompt"
         res.replay = replay_command(args, cell.buffer, cell.keys, cell.geom,
-                                    cell.zstyle_path)
+                                    cell.zstyle_path, cell.edit_tokens,
+                                    cell.edit_mode)
         return res
 
     res.diffs = diffs
@@ -1078,27 +1743,55 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     res.status = "FAIL" if reproduced else "FLAKY"
     res.detail = f"{len(diffs)} rows differ"
 
-    min_keys, min_styles = None, None
+    min_keys, min_styles, min_edits = None, None, None
     zstyle_for_replay = cell.zstyle_path
     # Only a REPRODUCIBLE failure is shrunk: ddmin's oracle is "does this
     # candidate still diverge at the same cell", and a flaky oracle would
     # happily delete keys that matter. A FLAKY cell keeps its full path.
     if args.shrink_probes > 0 and res.status == "FAIL":
-        min_keys, p1 = shrink_keys(cell, args, env, res.sig,
-                                   args.shrink_probes, run)
-        res.probes += p1
-        res.shrink_exhausted = p1 >= args.shrink_probes
+        # Edit program FIRST: it runs before the keys, so a shorter one usually
+        # makes every later probe cheaper as well as making the report shorter.
+        if cell.edit_tokens:
+            full = len(cell.edit_tokens)
+            min_edits, p0 = shrink_edits(cell, args, env, res.sig,
+                                         args.shrink_probes, run)
+            res.probes += p0
+            res.shrink_exhausted = p0 >= args.shrink_probes
+            cell.edit_tokens = min_edits   # later probes run the reduced program
+            res.shrink_notes.append(
+                f"edit program reduced {len(min_edits)}/{full} tokens"
+                + ("  — the divergence survives with NO edits at all, so the "
+                   "edit phase is not implicated: this is an ordinary "
+                   "completion divergence on the typed buffer"
+                   if not min_edits else ""))
+        # A divergence that happened DURING the edit phase was reached before a
+        # single completion key was sent, so the key path is not implicated and
+        # reducing it would only spend probes proving that. Say so instead of
+        # printing a reduction that means nothing.
+        edit_phase_failure = isinstance(res.fail_key, str) and (
+            res.fail_key.startswith("edit:") or res.fail_key == "(buffer)")
+        if edit_phase_failure:
+            res.shrink_notes.append(
+                "key path not reduced: the divergence happens in the edit "
+                "phase, before any completion key is sent")
+            min_keys = list(cell.keys)
+        else:
+            min_keys, p1 = shrink_keys(cell, args, env, res.sig,
+                                       args.shrink_probes, run,
+                                       cell.edit_tokens)
+            res.probes += p1
+            res.shrink_exhausted = res.shrink_exhausted or p1 >= args.shrink_probes
 
         def build_init(subset):
             d = tempfile.mkdtemp(prefix="shrink_", dir=cell.workdir)
             path = os.path.join(d, "zstyle.zsh")
             with open(path, "w") as f:
                 f.write("\n".join(subset) + "\n")
-            return build_init_file(dump, fpath_dirs, path)
+            return build_init_file(dump, fpath_dirs, path, cell.edit_mode)
 
         min_styles, p2 = shrink_styles(cell, args, env, res.sig,
                                        args.shrink_probes, run, build_init,
-                                       min_keys)
+                                       min_keys, cell.edit_tokens)
         res.probes += p2
         res.shrink_exhausted = res.shrink_exhausted or p2 >= args.shrink_probes
         if len(min_styles) < len(cell.statements):
@@ -1108,13 +1801,203 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
                         f"(seed={args.seed} combo={cell.idx} "
                         f"surface={cell.surface} geom={geom_str(cell.geom)})\n")
                 f.write("\n".join(min_styles) + "\n")
-    res.min_keys, res.min_styles = min_keys, min_styles
+    res.min_keys, res.min_styles, res.min_edits = min_keys, min_styles, min_edits
     res.replay = replay_command(args, cell.buffer, min_keys or cell.keys,
-                                cell.geom, zstyle_for_replay)
+                                cell.geom, zstyle_for_replay,
+                                cell.edit_tokens, cell.edit_mode)
     return res
 
 
-def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips):
+def _check_expect(res, cell, records):
+    """Compare the REFERENCE shell's command line after the edit phase against
+    what the generator said the program would produce.
+
+    This is an assertion on the HARNESS, not on zshrs. It is recorded and
+    counted separately and never touches the parity verdict: a mismatch means
+    a generator's `expect` is wrong (or the line wrapped and could not be read
+    back), and suppressing the cell over it would throw away a perfectly good
+    zsh-vs-zshrs comparison."""
+    if cell.expect is None or not records:
+        return
+    last_edit = None
+    for step, label, rg, tg, diffs in records:
+        if label == "(buffer)" or (isinstance(label, str)
+                                   and label.startswith("edit:")):
+            last_edit = rg
+    if last_edit is None:
+        return
+    saw = line_after_prompt(last_edit, cell.geom.cols)
+    res.expect_saw = saw
+    res.expect_ok = (saw == cell.expect) if saw is not None else None
+
+
+def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
+    """One CONVERGENT PAIR: two different edit programs that are claimed to end
+    on the same line, run under the identical init, geometry and key path.
+
+    Four verdicts, in the order the evidence supports them:
+
+      1. either leg diverges zsh-vs-zshrs per step  -> the ordinary FAIL/FLAKY,
+         reported against that leg (the pair adds nothing the single-leg report
+         does not already say);
+      2. the reference shell does NOT end both legs on the same screen -> SKIP
+         `non-convergent-in-reference`. The pair's whole claim is that the two
+         programs converge; if that could not be established in zsh, the
+         comparison it enables was not made and must not be scored as a pass;
+      3. reference identical, zshrs different              -> FAIL, edit-history
+         leakage: zshrs carries something out of HOW the line was built into
+         what completion does with it;
+      4. reference identical, zshrs identical              -> PASS.
+    """
+    res = CellResult(cell=cell)
+
+    def run(buffer, keys, init_file, geom, edits):
+        return run_keyseq(init_file, buffer, keys, args, env, geom, edits=edits)
+
+    def both_legs(keys, init_file):
+        """(bad_leg, records_A, records_B). `bad_leg` names the leg that
+        diverged zsh-vs-zshrs on its own, in which case only that leg's records
+        are returned (the pair cannot be compared past it)."""
+        fa, ra = run(cell.buffer, keys, init_file, cell.geom, cell.edit_tokens)
+        if fa:
+            return ("legA", ra, None)
+        fb, rb = run(cell.b_buffer, keys, init_file, cell.geom,
+                     cell.b_edit_tokens)
+        if fb:
+            return ("legB", rb, None)
+        return (None, ra, rb)
+
+    leg, ra, rb = both_legs(cell.keys, cell.init_file)
+    if leg is not None:
+        # Case 1 — a plain per-step divergence on ONE leg, before the pair could
+        # be compared at all. A leg is an ordinary edit cell in every respect,
+        # so hand it to the ordinary single-leg path and let it get the SAME
+        # --confirm labelling and the SAME three-axis shrinking every other edit
+        # cell gets.
+        #
+        # This is not a refactor for tidiness. The first leg divergence this
+        # harness produced (`vi_dw_vs_direct` leg A, seed 11) was reported as a
+        # flat FAIL by an earlier version of this function, which re-ran
+        # nothing — and the replay it printed then PASSED. A divergence that
+        # does not reproduce is FLAKY, and the rest of this file exists to make
+        # sure the harness says so; the convergent path must not be the one
+        # place that quietly does not.
+        leg_cell = Cell(
+            idx=cell.idx, uid=f"{cell.uid}_{leg}",
+            surface=f"{cell.surface}/{leg}",
+            buffer=cell.buffer if leg == "legA" else cell.b_buffer,
+            keys=list(cell.keys), geom=cell.geom, statements=cell.statements,
+            zstyle_path=cell.zstyle_path, init_file=cell.init_file,
+            workdir=cell.workdir,
+            edit_tokens=list(cell.edit_tokens if leg == "legA"
+                             else cell.b_edit_tokens),
+            edit_mode=cell.edit_mode,
+            edit_gen=f"{cell.edit_gen}/{leg}",
+            expect=cell.target)
+        return run_cell(leg_cell, args, env, dump, fpath_dirs, outdir)
+
+    ref_a, test_a = ra[-1][2], ra[-1][3]
+    ref_b, test_b = rb[-1][2], rb[-1][3]
+    if ref_a != ref_b:
+        # Case 2 — the pair did not converge in the REFERENCE shell.
+        res.status = "SKIP"
+        res.detail = ("non-convergent-in-reference: zsh itself ends the two "
+                      "programs on different screens, so the pair proves "
+                      "nothing about zshrs")
+        res.ref_grid, res.test_grid = ref_a, ref_b
+        res.diffs = diff_grids(ref_a, ref_b)
+        res.replay = conv_replay_command(args, cell, cell.keys, cell.zstyle_path)
+        return res
+
+    conv_diffs = diff_grids(test_a, test_b)
+    if not conv_diffs:
+        res.status = "PASS"
+        res.detail = "both programs converge on both shells"
+        return res
+
+    # Case 3 — edit-history leakage.
+    res.diffs = conv_diffs
+    res.sig = first_diff_cell(conv_diffs)
+    res.ref_grid, res.test_grid = test_a, test_b
+    res.detail = (f"edit-history leakage: zsh ends both programs on the SAME "
+                  f"screen, zshrs on {len(conv_diffs)} differing rows")
+    res.fail_step, res.fail_key = len(ra), "(convergence)"
+
+    def leakage_reproduces(keys, init_file):
+        lg, _, xa, xb, _ = both_legs(keys, init_file)
+        if lg is not None or xa is None or xb is None:
+            return False
+        r_a, t_a = xa[-1][2], xa[-1][3]
+        r_b, t_b = xb[-1][2], xb[-1][3]
+        d = diff_grids(t_a, t_b)
+        return r_a == r_b and bool(d) and first_diff_cell(d) == res.sig
+
+    reproduced = True
+    for _ in range(max(0, args.confirm)):
+        if not leakage_reproduces(cell.keys, cell.init_file):
+            reproduced = False
+            break
+    res.status = "FAIL" if reproduced else "FLAKY"
+
+    min_keys = list(cell.keys)
+    min_styles = None
+    zstyle_for_replay = cell.zstyle_path
+    if args.shrink_probes > 0 and res.status == "FAIL":
+        # The EDIT programs are deliberately NOT shrunk here. Removing a token
+        # from one leg changes the line that leg produces, which destroys the
+        # convergence the whole finding rests on — a "reduction" that no longer
+        # compares two programs with the same final line is not a reduction of
+        # this bug, it is a different (and unproven) claim. The key path and
+        # the zstyle set are identical on both legs, so both reduce soundly.
+        res.shrink_notes.append(
+            "edit programs not reduced: removing a token breaks the "
+            "convergence the finding depends on")
+        probes = [0]
+
+        def keys_still_leak(candidate):
+            probes[0] += 1
+            return leakage_reproduces([cell.keys[0]] + list(candidate),
+                                      cell.init_file)
+
+        if len(cell.keys) > 1:
+            tail = ddmin(list(cell.keys[1:]), keys_still_leak,
+                         max_probes=args.shrink_probes)
+            min_keys = [cell.keys[0]] + tail
+            res.probes += probes[0]
+            res.shrink_exhausted = probes[0] >= args.shrink_probes
+
+        sprobes = [0]
+
+        def styles_still_leak(candidate):
+            sprobes[0] += 1
+            d = tempfile.mkdtemp(prefix="shrink_", dir=cell.workdir)
+            path = os.path.join(d, "zstyle.zsh")
+            with open(path, "w") as f:
+                f.write("\n".join(candidate) + "\n")
+            return leakage_reproduces(
+                min_keys, build_init_file(dump, fpath_dirs, path, cell.edit_mode))
+
+        if len(cell.statements) > 1:
+            min_styles = ddmin(list(cell.statements), styles_still_leak,
+                               max_probes=args.shrink_probes)
+            res.probes += sprobes[0]
+            res.shrink_exhausted = (res.shrink_exhausted
+                                    or sprobes[0] >= args.shrink_probes)
+            if len(min_styles) < len(cell.statements):
+                zstyle_for_replay = saved_path(outdir, args.seed,
+                                               cell.uid, ".min")
+                with open(zstyle_for_replay, "w") as f:
+                    f.write(f"# shrunk from {len(cell.statements)} statements "
+                            f"(convergent pair {cell.edit_gen}, seed="
+                            f"{args.seed}, geom={geom_str(cell.geom)})\n")
+                    f.write("\n".join(min_styles) + "\n")
+    res.min_keys, res.min_styles = min_keys, min_styles
+    res.replay = conv_replay_command(args, cell, min_keys, zstyle_for_replay)
+    return res
+
+
+def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
+                edit_pairs=None):
     """Materialise every fuzz cell up front (zstyle subset, buffer, key path,
     geometry, init file) so the work list is fixed and reproducible from the
     seed alone before any shell is booted."""
@@ -1135,6 +2018,18 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips):
                     f"{len(subset)}/{len(statements)} statements\n")
             f.write("\n".join(subset) + "\n")
         init_file = build_init_file(dump, fpath_dirs, combo_path)
+        # One init per editing mode, built once per combo and shared by every
+        # cell of that combo (booting a shell is the expensive part; writing an
+        # init file is not, but a fresh one per cell would multiply the
+        # temp-dir churn for no benefit).
+        mode_inits = {}
+
+        def init_for(mode):
+            if mode not in mode_inits:
+                mode_inits[mode] = build_init_file(dump, fpath_dirs,
+                                                   combo_path, mode)
+            return mode_inits[mode]
+
         count = per_combo if args.buffer_fuzz else len(fixed)
         for ci in range(count):
             crng = random.Random(f"{args.seed}:{n}:{ci}")
@@ -1158,6 +2053,48 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips):
                               geom=geom, statements=subset,
                               zstyle_path=saved_path(outdir, args.seed, n),
                               init_file=init_file, workdir=workdir))
+        if not args.edit_fuzz:
+            continue
+        # ── edit-fuzz cells ─────────────────────────────────────────────────
+        for ei in range(args.edit_cases):
+            erng = random.Random(f"{args.seed}:{n}:e{ei}")
+            prog = gen_edit_program(erng, edit_pairs)
+            geom = pick_geom(erng, args)
+            longest = max([len(prog.buffer)]
+                          + [len(_unquote_payload(t.partition(':')[2]))
+                             for t in prog.tokens if t[0] in "tpb"])
+            if len(PROMPT_SENTINEL) + 1 + len(prog.buffer) + longest \
+                    >= geom.rows * geom.cols:
+                skips[f"edit-buffer-exceeds-screen:{geom_str(geom)}"] += 1
+                continue
+            keys = gen_keyseq(random.Random(f"{args.seed}:{n}:e{ei}:keys"),
+                              args.presses)
+            cells.append(Cell(
+                idx=n, uid=f"{n}_e{ei}", surface=f"edit/{prog.gen}",
+                buffer=prog.buffer, keys=keys, geom=geom, statements=subset,
+                zstyle_path=saved_path(outdir, args.seed, n),
+                init_file=init_for(prog.mode), workdir=workdir,
+                edit_tokens=prog.tokens, edit_mode=prog.mode,
+                edit_gen=prog.gen, expect=prog.expect))
+        # ── convergent pairs ────────────────────────────────────────────────
+        for vi in range(args.convergent_cases):
+            vrng = random.Random(f"{args.seed}:{n}:v{vi}")
+            pair = gen_conv_pair(vrng, args.edit_modes_list)
+            if pair is None:
+                skips["no-convergent-pair-for-modes"] += 1
+                continue
+            geom = pick_geom(vrng, args)
+            keys = gen_keyseq(random.Random(f"{args.seed}:{n}:v{vi}:keys"),
+                              args.presses)
+            cells.append(ConvCell(
+                idx=n, uid=f"{n}_v{vi}", surface=f"conv/{pair.name}",
+                buffer=pair.a.buffer, keys=keys, geom=geom, statements=subset,
+                zstyle_path=saved_path(outdir, args.seed, n),
+                init_file=init_for(pair.mode), workdir=workdir,
+                edit_tokens=pair.a.tokens, edit_mode=pair.mode,
+                edit_gen=pair.name, expect=pair.target,
+                b_buffer=pair.b.buffer, b_edit_tokens=pair.b.tokens,
+                b_gen=pair.b.gen, target=pair.target, conv_note=pair.note))
     return cells
 
 
@@ -1175,11 +2112,17 @@ def run_random_combos(args, dump, fpath_dirs, env):
     surfaces = available_surfaces(skips) if args.buffer_fuzz else []
     if args.buffer_fuzz and not surfaces:
         sys.exit("compsys_parity: --buffer-fuzz has no usable surfaces on this host")
+    edit_pairs = (available_edit_surfaces(args.edit_modes_list)
+                  if args.edit_fuzz else [])
+    if args.edit_fuzz and not edit_pairs:
+        sys.exit("compsys_parity: --edit-fuzz has no edit surfaces for modes "
+                 + ",".join(args.edit_modes_list))
     outdir = os.path.join(tempfile.gettempdir(),
                           f"compsys_parity_failing_combos_{args.seed}")
     os.makedirs(outdir, exist_ok=True)
 
-    cells = build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips)
+    cells = build_cells(args, dump, fpath_dirs, statements, surfaces, outdir,
+                        skips, edit_pairs)
 
     print(f"# random-combo fuzz: {args.random_combos} combos, {len(cells)} cells, "
           f"{args.presses}-key paths (parity asserted after EACH key)")
@@ -1189,6 +2132,14 @@ def run_random_combos(args, dump, fpath_dirs, env):
     print(f"# buffer-fuzz={args.buffer_fuzz} ({len(surfaces)} surfaces)  "
           f"geometry-fuzz={args.geometry_fuzz}  "
           f"geom={'pool' if args.geometry_fuzz else geom_str(Geom(args.rows, args.cols))}")
+    if args.edit_fuzz:
+        n_edit = sum(1 for c in cells if not isinstance(c, ConvCell)
+                     and c.edit_tokens is not None)
+        n_conv = sum(1 for c in cells if isinstance(c, ConvCell))
+        print(f"# edit-fuzz=True  modes={','.join(args.edit_modes_list)}  "
+              f"{len(edit_pairs)} (surface,mode) generators  "
+              f"{n_edit} edit cells + {n_conv} convergent pairs "
+              f"(parity asserted after EVERY edit token too)")
     print(f"# failing combos saved to: {outdir}")
     print()
 
@@ -1206,15 +2157,41 @@ def run_random_combos(args, dump, fpath_dirs, env):
         stream = (work(c) for c in cells)
 
     passed = failed = flaky = 0
+    by_category: Counter = Counter()
+    expect_bad: Counter = Counter()
     results = []
     try:
         for res in stream:
             c = res.cell
-            head = (f"{res.status:5s} combo {c.idx:3d} [{c.surface:11s}] "
+            cat = (f"{c.edit_gen}[{c.edit_mode}]" if c.edit_gen
+                   else f"{c.surface}[-]")
+            by_category[(cat, res.status)] += 1
+            if res.expect_ok is False:
+                expect_bad[f"{c.edit_gen}: claimed {c.expect!r}, "
+                           f"zsh showed {res.expect_saw!r}"] += 1
+            head = (f"{res.status:5s} combo {c.idx:3d} [{c.surface:18s}] "
                     f"{geom_str(c.geom):>7s} {c.buffer!r}")
+            if c.edit_tokens:
+                head += f" +{edit_program_str(c.edit_tokens)} ({c.edit_mode})"
             if res.status == "PASS":
                 passed += 1
                 print(f"{head}  keys={'+'.join(c.keys)}")
+                results.append(_cell_json(res))
+                continue
+            if res.status == "SKIP":
+                # A convergent pair whose two programs did not converge in the
+                # REFERENCE shell. Nothing about zshrs was established, so it
+                # is neither a pass nor a failure — it is a counted, named,
+                # printed skip.
+                skips[f"non-convergent-in-reference:{c.edit_gen}"] += 1
+                print(f"{head}  ({res.detail})")
+                print(f"      pair      : A={c.buffer!r}+"
+                      f"{edit_program_str(c.edit_tokens)}   "
+                      f"B={c.b_buffer!r}+{edit_program_str(c.b_edit_tokens)}")
+                for i, a, b in res.diffs[:4]:
+                    print(f"        row {i:2d}: zsh A = {a!r}")
+                    print(f"                 zsh B = {b!r}")
+                print(f"      replay    : {res.replay}")
                 results.append(_cell_json(res))
                 continue
             if res.status == "FLAKY":
@@ -1222,10 +2199,22 @@ def run_random_combos(args, dump, fpath_dirs, env):
             else:
                 failed += 1
             print(f"{head}  ({res.detail})")
+            if isinstance(c, ConvCell):
+                print(f"      pair      : A={c.buffer!r}+"
+                      f"{edit_program_str(c.edit_tokens)}   "
+                      f"B={c.b_buffer!r}+{edit_program_str(c.b_edit_tokens)}")
+                print(f"      target    : {c.target!r}   ({c.conv_note})")
+            elif c.edit_tokens is not None:
+                print(f"      edits     : {edit_program_str(c.edit_tokens)}"
+                      f"   mode={c.edit_mode}  gen={c.edit_gen}")
             print(f"      path      : {'+'.join(c.keys)}"
                   f"  → diverges at step #{res.fail_step} (key {res.fail_key!r})")
             if res.sig:
                 print(f"      first diff: row {res.sig[0]}, col {res.sig[1]}")
+            for note in res.shrink_notes:
+                print(f"      note      : {note}")
+            if res.min_edits is not None:
+                print(f"      reduced edits: {edit_program_str(res.min_edits)}")
             if res.min_keys is not None:
                 # "reduced", not "minimal": ddmin proves every element it KEPT
                 # was load-bearing under the probes it ran, not that no smaller
@@ -1236,10 +2225,13 @@ def run_random_combos(args, dump, fpath_dirs, env):
                 print(f"      {label}")
                 print(f"        keys  : {'+'.join(res.min_keys)}"
                       f"  ({len(res.min_keys)}/{len(c.keys)})")
-                print(f"        styles: {len(res.min_styles)}/{len(c.statements)}"
-                      f"  [{res.probes} probes]")
-                for s in res.min_styles[:8]:
-                    print(f"          {s}")
+                if res.min_styles is not None:
+                    print(f"        styles: {len(res.min_styles)}/"
+                          f"{len(c.statements)}  [{res.probes} probes]")
+                    for s in res.min_styles[:8]:
+                        print(f"          {s}")
+                else:
+                    print(f"        styles: not reduced  [{res.probes} probes]")
             elif res.status == "FLAKY":
                 print("      not shrunk: a flaky divergence is not a sound "
                       "delta-debugging oracle")
@@ -1258,9 +2250,31 @@ def run_random_combos(args, dump, fpath_dirs, env):
             pool.shutdown(wait=True)
 
     skipped = sum(skips.values())
+    # Cells that produced no verdict at all, so `passed + failed + flaky` and
+    # `cells run` visibly reconcile instead of quietly not adding up.
+    skipped_cells = sum(n for (_, st), n in by_category.items() if st == "SKIP")
     print()
     print(f"# {passed} passed, {failed} failed, {flaky} flaky, "
-          f"{len(cells)} cells run")
+          + (f"{skipped_cells} not compared, " if skipped_cells else "")
+          + f"{len(cells)} cells run")
+    if by_category and args.edit_fuzz:
+        print("# per-category (generator[mode]):")
+        cats = sorted({c for c, _ in by_category})
+        for cat in cats:
+            counts = {st: by_category[(cat, st)]
+                      for st in ("PASS", "FAIL", "FLAKY", "SKIP")
+                      if by_category[(cat, st)]}
+            total = sum(counts.values())
+            detail = "  ".join(f"{k}={v}" for k, v in counts.items())
+            print(f"#   {cat:34s} {total:3d}  {detail}")
+    if expect_bad:
+        # Generator sanity, NOT a parity result. A mismatch here says the
+        # harness's own claim about what an edit program produces is wrong
+        # (or the line wrapped and could not be read back); it changed no
+        # cell's verdict and suppressed no comparison.
+        print("# generator-sanity mismatches (harness bug, verdicts unaffected):")
+        for reason, count in sorted(expect_bad.items()):
+            print(f"#   {reason}  x{count}")
     if skips:
         print(f"# {skipped} skipped (never compared):")
         for reason, count in sorted(skips.items()):
@@ -1277,6 +2291,11 @@ def run_random_combos(args, dump, fpath_dirs, env):
             "seed": args.seed,
             "buffer_fuzz": args.buffer_fuzz,
             "geometry_fuzz": args.geometry_fuzz,
+            "edit_fuzz": args.edit_fuzz,
+            "edit_modes": list(args.edit_modes_list),
+            "categories": {f"{cat}|{st}": n
+                           for (cat, st), n in sorted(by_category.items())},
+            "generator_sanity_mismatches": dict(expect_bad),
             "geom": {"rows": args.rows, "cols": args.cols, "settle_ms": args.settle},
             "jobs": max(1, args.jobs),
             "confirm": args.confirm,
@@ -1294,7 +2313,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
 
 def _cell_json(res) -> dict:
     c = res.cell
-    return {
+    doc = {
         "id": f"combo{c.idx}.{c.surface}",
         "combo": c.idx,
         "surface": c.surface,
@@ -1312,9 +2331,29 @@ def _cell_json(res) -> dict:
         "min_styles": res.min_styles,
         "shrink_probes": res.probes,
         "shrink_exhausted": res.shrink_exhausted,
+        "shrink_notes": list(res.shrink_notes),
         "zstyle_file": c.zstyle_path,
         "replay": res.replay,
     }
+    if c.edit_tokens is not None:
+        doc.update(
+            edit_mode=c.edit_mode,
+            edit_gen=c.edit_gen,
+            edit_program=edit_encode(c.edit_tokens),
+            min_edit_program=(edit_encode(res.min_edits)
+                              if res.min_edits is not None else None),
+            expect=c.expect,
+            expect_ok=res.expect_ok,
+            expect_saw=res.expect_saw,
+        )
+    if isinstance(c, ConvCell):
+        doc.update(
+            convergent=True,
+            target=c.target,
+            leg_b_buffer=c.b_buffer,
+            leg_b_edit_program=edit_encode(c.b_edit_tokens),
+        )
+    return doc
 
 
 def _write_json(path, doc):
@@ -1335,17 +2374,22 @@ def run_lockstep_case(args, init_file, env):
     if not keys:
         sys.exit("compsys_parity: --lockstep needs at least one key in --keys")
     geom = Geom(args.rows, args.cols)
-    fail_step, records = run_keyseq(init_file, args.case, keys, args, env, geom)
+    edits = args.edit_tokens
+    fail_step, records = run_keyseq(init_file, args.case, keys, args, env, geom,
+                                    edits=edits)
     step, key, rg, tg, diffs = records[-1]
+    if edits is not None:
+        print(f"# edit program : {edit_program_str(edits)}"
+              f"   mode={args.editing_mode or 'shell default'}")
     if fail_step == 0:
         print(f"PASS lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
-              f"  ({len(records)} keys, screens identical after every one)")
+              f"  ({len(records)} steps, screens identical after every one)")
         rc = 0
         doc_res = {"status": "PASS"}
     else:
         row, col = first_diff_cell(diffs) if diffs else (-1, -1)
         print(f"FAIL lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
-              f"  diverges at step #{step} (key {key!r})"
+              f"  diverges at step #{step} (step {key!r})"
               + (f", {len(diffs)} rows differ, first diff row {row} col {col}"
                  if diffs else " (a shell never reached prompt)"))
         for i, a, b in (diffs or []):
@@ -1363,6 +2407,8 @@ def run_lockstep_case(args, init_file, env):
                                  for i, a, b in (diffs or [])[:50]]}
     if args.json:
         doc_res.update(id="lockstep", buffer=args.case, keys=keys,
+                       edit_program=(edit_encode(edits) if edits else None),
+                       editing_mode=args.editing_mode,
                        geom={"rows": geom.rows, "cols": geom.cols})
         _write_json(args.json, {
             "schema": "compsys-parity/1", "mode": "lockstep",
@@ -1372,6 +2418,69 @@ def run_lockstep_case(args, init_file, env):
             "results": [doc_res],
         })
     return rc
+
+
+def run_conv_replay(args, dump, fpath_dirs, env):
+    """`--conv-replay '<json>'`: re-run one convergent PAIR exactly as the
+    fuzzer ran it, and print the four-way comparison the verdict rests on."""
+    spec = json.loads(args.conv_replay)
+    geom = Geom(*spec["geom"])
+    keys = list(spec["keys"])
+    a_edits = edit_decode(spec["a"]["edits"])
+    b_edits = edit_decode(spec["b"]["edits"])
+    zstyle = spec.get("zstyle") or None
+    if zstyle and not os.path.exists(zstyle):
+        sys.exit(f"compsys_parity: zstyle fixture from the replay is gone: {zstyle}")
+    init = build_init_file(dump, fpath_dirs, zstyle, spec.get("mode"))
+    print(f"# convergent pair : {spec['name']}  mode={spec.get('mode')}  "
+          f"{geom_str(geom)}  keys={'+'.join(keys)}")
+    print(f"# target line     : {spec.get('target')!r}")
+    print(f"# leg A           : {spec['a']['buffer']!r} + "
+          f"{edit_program_str(a_edits)}")
+    print(f"# leg B           : {spec['b']['buffer']!r} + "
+          f"{edit_program_str(b_edits)}")
+
+    legs = {}
+    for tag, side, edits in (("A", spec["a"], a_edits), ("B", spec["b"], b_edits)):
+        fs, rec = run_keyseq(init, side["buffer"], keys, args, env, geom,
+                             edits=edits)
+        if fs:
+            step, label, rg, tg, diffs = rec[-1]
+            print(f"FAIL leg {tag} diverges zsh-vs-zshrs at step #{step} "
+                  f"({label!r}) before the pair could be compared")
+            for i, x, y in (diffs or [])[:20]:
+                print(f"  row {i:2d}: zsh  = {x!r}")
+                print(f"          zshrs= {y!r}")
+            return 1
+        legs[tag] = (rec[-1][2], rec[-1][3])
+
+    (ref_a, test_a), (ref_b, test_b) = legs["A"], legs["B"]
+    if ref_a != ref_b:
+        print("SKIP non-convergent-in-reference: zsh itself ends the two "
+              "programs on different screens — the pair establishes nothing")
+        for i, x, y in diff_grids(ref_a, ref_b)[:20]:
+            print(f"  row {i:2d}: zsh A = {x!r}")
+            print(f"          zsh B = {y!r}")
+        return 1
+    d = diff_grids(test_a, test_b)
+    if not d:
+        print("PASS both edit programs converge on BOTH shells")
+        return 0
+    row, col = first_diff_cell(d)
+    print(f"FAIL edit-history leakage: zsh ends both programs on the SAME "
+          f"screen, zshrs on {len(d)} differing rows "
+          f"(first diff row {row}, col {col})")
+    for i, x, y in d:
+        print(f"  row {i:2d}: zshrs A = {x!r}")
+        print(f"          zshrs B = {y!r}")
+    if args.verbose:
+        print("  --- zsh (both legs, identical) ---")
+        print(render_grid(ref_a))
+        print("  --- zshrs leg A ---")
+        print(render_grid(test_a))
+        print("  --- zshrs leg B ---")
+        print(render_grid(test_b))
+    return 1
 
 
 def main():
@@ -1407,6 +2516,38 @@ def main():
     ap.add_argument("--buffer-cases", type=int, default=0, metavar="N",
                     help="fuzzed buffers per combo (default: as many as "
                          "--combo-commands has entries)")
+    ap.add_argument("--edit-fuzz", action="store_true",
+                    help="fuzz the LINE EDITING that produces the buffer: "
+                         "emacs word-kills / ^A^K / motions / transpose / "
+                         "kill-yank / undo / backspace runs / retype-over, vi "
+                         "normal-mode motions and dw/db/dd/cw/x/./u under "
+                         "`bindkey -v`, and paste-shaped bursts (bracketed and "
+                         "raw). Parity is asserted after EVERY edit token as "
+                         "well as after every completion key, so a divergence "
+                         "is attributed to the edit that caused it. Also "
+                         "generates CONVERGENT PAIRS: two different edit "
+                         "programs with the same final line, which isolate "
+                         "edit-history leakage from ordinary completion "
+                         "behaviour. Implies --random-combos 1 if that is 0.")
+    ap.add_argument("--edit-cases", type=int, default=4, metavar="N",
+                    help="edit-program cells per combo (default 4)")
+    ap.add_argument("--convergent-cases", type=int, default=2, metavar="N",
+                    help="convergent PAIRS per combo; each runs two lockstep "
+                         "legs, so it costs twice an ordinary cell (default 2, "
+                         "0 disables)")
+    ap.add_argument("--edit-modes", default="emacs,vi,emacs-nobp",
+                    help="comma-separated editing modes for --edit-fuzz: "
+                         + ", ".join(EDIT_MODES))
+    ap.add_argument("--edit-program", default=None, metavar="SPEC",
+                    help="edit program for --lockstep, in the k:/t:/p:/b: DSL "
+                         "(the form the fuzzer's replay lines carry)")
+    ap.add_argument("--editing-mode", default=None, choices=sorted(EDIT_MODES),
+                    help="editing mode for --lockstep (appends bindkey -e / "
+                         "-v, and for emacs-nobp unsets zle_bracketed_paste, "
+                         "to the shared init on BOTH shells)")
+    ap.add_argument("--conv-replay", default=None, metavar="JSON",
+                    help="re-run one convergent PAIR from the JSON blob a "
+                         "convergent failure prints")
     ap.add_argument("--geometry-fuzz", action="store_true",
                     help="draw (rows, cols) per cell from the seeded pool "
                          "(narrow 40-col, tiny 6-8-row, wide 200-col, ...). Both "
@@ -1460,6 +2601,24 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
+    args.edit_modes_list = [m.strip() for m in args.edit_modes.split(",")
+                            if m.strip()]
+    unknown_modes = [m for m in args.edit_modes_list if m not in EDIT_MODES]
+    if unknown_modes:
+        sys.exit("unknown editing mode(s): " + ", ".join(unknown_modes))
+    if args.edit_fuzz and args.random_combos == 0:
+        # `--edit-fuzz` on its own is a complete request. One combo is the
+        # smallest thing that carries a zstyle subset for the cells to run
+        # under; `--random-combos N` still means exactly what it meant.
+        args.random_combos = 1
+    # `is not None`, not truthiness: `--edit-program ''` is the EMPTY program a
+    # shrunk finding prints when it proved the edits were not load-bearing, and
+    # it is not the same thing as no `--edit-program` at all. The empty program
+    # still runs the edit phase's baseline parity assertion after the buffer, so
+    # the replay's step numbering matches the report it came from.
+    args.edit_tokens = (edit_decode(args.edit_program)
+                        if args.edit_program is not None else None)
+
     sel = (args.sequences or "default").strip()
     if sel == "all":
         seq_names = list(KEY_SEQUENCES)
@@ -1488,6 +2647,10 @@ def main():
     if not os.path.exists(args.zshrs):
         sys.exit(f"zshrs binary not found: {args.zshrs} (run: cargo build --bin zshrs)")
 
+    if args.conv_replay:
+        return run_conv_replay(args, dump, fpath_dirs,
+                               child_env(args.rows, args.cols))
+
     if args.random_combos > 0:
         return run_random_combos(args, dump, fpath_dirs,
                                  child_env(args.rows, args.cols))
@@ -1495,8 +2658,10 @@ def main():
     if args.lockstep:
         if args.case is None:
             sys.exit("compsys_parity: --lockstep needs --case")
-        return run_lockstep_case(args, build_init_file(dump, fpath_dirs, zstyle_file),
-                                 child_env(args.rows, args.cols))
+        return run_lockstep_case(
+            args,
+            build_init_file(dump, fpath_dirs, zstyle_file, args.editing_mode),
+            child_env(args.rows, args.cols))
 
     if args.case is not None:
         cases = [Case("adhoc", args.case, [k.strip() for k in args.keys.split(",") if k.strip()])]
