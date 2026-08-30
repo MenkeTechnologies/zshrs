@@ -1,0 +1,94 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "files_glob_from_zle_c_widget",
+ "title": "`_files -g '*.txt'` reached from a `zle -C` widget: zsh errors and inserts the .txt match, zshrs completes a directory",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0007 a",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0007",
+   "kind": "arguments",
+   "widget": "zle-C:menu-expand-or-complete",
+   "setup": [
+    "_sfz_widget() {",
+    "  local curcontext=\"$curcontext\" state state_descr line ret=1",
+    "  typeset -A opt_args",
+    "  ",
+    "  _arguments  \\",
+    "    '*::arg name: _files -g '\\''*.txt'\\''' && ret=0",
+    "  ",
+    "  return ret",
+    "}",
+    "zle -C _sfz_w menu-expand-or-complete _sfz_widget",
+    "bindkey '^I' _sfz_w"
+   ],
+   "completer": "#compdef fzc0007\n\nlocal curcontext=\"$curcontext\" state state_descr line ret=1\ntypeset -A opt_args\n\n_arguments  \\\n  '*::arg name: _files -g '\\''*.txt'\\''' && ret=0\n\nreturn ret\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "3 row(s) differ",
+  "category": "one-sided-error",
+  "zsh_grid": [
+   "@SFZ@ fzc0007 a",
+   "(eval):1: no matches found: *.txt:globbed-files",
+   "@SFZ@ fzc0007 alpha.txt"
+  ],
+  "zshrs_grid": [
+   "@SFZ@ fzc0007 adir/"
+  ],
+  "zsh_diagnostics": [
+   "no matches found: *.txt:globbed-files"
+  ],
+  "zshrs_diagnostics": [],
+  "notes": "The widget's function IS the completer body, so there is no _main_complete frame above it. zsh reports `(eval):1: no matches found: *.txt:globbed-files` and still inserts `alpha.txt`; zshrs reports nothing and inserts the directory `adir/`, which the -g glob excludes. Two one-sided facts in one cell: the diagnostic only zsh emits, and the match set."
+ },
+ "controls": [
+  {
+   "note": "the same completer through whatever compinit left on TAB (so _main_complete IS above it): PASSES.",
+   "buffer": "fzc0007 a",
+   "keys": [
+    "tab"
+   ],
+   "spec": {
+    "widget": "default",
+    "setup": []
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "round-3 compsys_spec_fuzz widget sweep (target/spec-fuzz-900/case0007.min.zsh, destroyed with target/)"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}
