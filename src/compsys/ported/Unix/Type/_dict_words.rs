@@ -22,7 +22,7 @@
 //! selecting matching keys from the flat `opt_args` assoc. sh:12-16 approx
 //! — the `${(z)${(f)…}}` line-then-word split uses whitespace splitting.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
@@ -127,7 +127,7 @@ pub fn _dict_words(args: &[String]) -> i32 {
     cp.push("-s".to_string());
     cp.push(strat.to_string());
     cp.push(pat);
-    let _ = _call_program(&cp);
+    let _ = call_program_capture(&cp);
     // sh:12-16 approx — (f) lines then (z) words.
     let mut dictwords: Vec<String> = getsparam("REPLY")
         .unwrap_or_default()

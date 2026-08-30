@@ -28,7 +28,7 @@
 //! sh:110  return 1
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::findcmd;
 use crate::ported::modules::zutil::lookupstyle;
@@ -133,7 +133,7 @@ fn parse_printcap() -> (Vec<String>, Vec<String>) {
 
 /// sh:73-78 — append `lpstat -a` queue names not already in the cache.
 fn add_lpstat_names(cache: &mut Vec<String>) {
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "printers".to_string(),
         "lpstat".to_string(),
         "-a".to_string(),
@@ -158,7 +158,7 @@ fn add_ypcat_names(cache: &mut Vec<String>) {
     {
         return;
     }
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "printers".to_string(),
         "ypcat".to_string(),
         "printers.conf.byname".to_string(),
@@ -192,7 +192,7 @@ pub fn _printers(args: &[String]) -> i32 {
 
     // sh:6-10 — AIX: list print queues via lsallq.
     if have_command("lsallq") {
-        let _ = _call_program(&["printers".to_string(), "lsallq".to_string()]);
+        let _ = call_program_capture(&["printers".to_string(), "lsallq".to_string()]);
         let out = getsparam("REPLY").unwrap_or_default();
         let mut w = vec![
             "printers".to_string(),
@@ -240,7 +240,7 @@ pub fn _printers(args: &[String]) -> i32 {
                 let rest: String = w.chars().skip(2).collect();
                 format!("-h{}", rest)
             };
-            let _ = _call_program(&[
+            let _ = call_program_capture(&[
                 "printers".to_string(),
                 "lpstat".to_string(),
                 tmp,

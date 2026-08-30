@@ -10,7 +10,7 @@
 //! sh: 8  compadd "$@" "$expl[@]" -a seusers
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -64,7 +64,7 @@ pub fn _selinux_users(args: &[String]) -> i32 {
 pub fn _selinux_users_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_users");
     // sh:5  seusers=( ${(f)"$(_call_program selinux-users seinfo --flat -u)"} )
-    let _ = _call_program(&["selinux-users".to_string(), "seinfo --flat -u".to_string()]);
+    let _ = call_program_capture(&["selinux-users".to_string(), "seinfo --flat -u".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();
     let mut seusers: Vec<String> = out.lines().map(str::to_string).collect();
 

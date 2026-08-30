@@ -36,7 +36,7 @@
 //! populated via a real `setaparam` and only the literal argv tail is
 //! forwarded — `bin_compadd` does the expansion itself.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -121,7 +121,7 @@ fn populate_cache_if_unset() {
         parse_rgb_text(&raw, false)
     } else if has_command("showrgb") {
         // sh:22-23
-        let _ = _call_program(&["colors".to_string(), "showrgb".to_string()]);
+        let _ = call_program_capture(&["colors".to_string(), "showrgb".to_string()]);
         let raw = getsparam("REPLY").unwrap_or_default();
         parse_rgb_text(&raw, true)
     } else if let Some(path) = find_rgb_txt() {

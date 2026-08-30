@@ -22,7 +22,7 @@
 //! sh approx — the layered `${(s: :)${(ps:\t:)${…##${~ipstrip}}}}`
 //! expansions are implemented with explicit string scanning.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -147,11 +147,12 @@ pub fn _hosts_impl(args: &[String]) -> i32 {
             let mut c: Vec<String> = Vec::new();
 
             // getent hosts, else /etc/hosts.
-            if _call_program(&[
+            if call_program_capture(&[
                 "hosts".to_string(),
                 "getent".to_string(),
                 "hosts".to_string(),
-            ]) == 0
+            ])
+            .1 == 0
             {
                 c.extend(parse_hosts_body(
                     &getsparam("REPLY").unwrap_or_default(),

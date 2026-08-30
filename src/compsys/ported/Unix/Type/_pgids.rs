@@ -10,7 +10,7 @@
 //! sh:5      ${(un)$(_call_program pgids ps -A -o pgid=)}
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::getsparam;
 
@@ -18,7 +18,7 @@ use crate::ported::params::getsparam;
 pub fn _pgids(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_pgids");
     // sh:5  $(_call_program pgids ps -A -o pgid=)
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "pgids".to_string(),
         "ps".to_string(),
         "-A".to_string(),

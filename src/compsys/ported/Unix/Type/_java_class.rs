@@ -19,7 +19,7 @@
 //! `_call_program jar -tf` (REPLY), directories via a recursive `*.class`
 //! walk; both strip the `.class` suffix and map `/` → `.` to package form.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 use std::path::Path;
@@ -94,7 +94,7 @@ pub fn _java_class(args: &[String]) -> i32 {
         );
         if p.is_file() && is_archive {
             // sh:17 — jar -tf, keep `*.class`, strip `.class`, `/` → `.`.
-            let _ = _call_program(&[
+            let _ = call_program_capture(&[
                 "jar_classes".to_string(),
                 "jar".to_string(),
                 "-tf".to_string(),

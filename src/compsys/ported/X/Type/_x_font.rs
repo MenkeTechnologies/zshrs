@@ -18,7 +18,7 @@
 //! newlines (`${(f)...}`) into the `_font_cache` array. `typeset -gU`
 //! makes the array globally-scoped and duplicate-suppressing.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -39,7 +39,7 @@ fn dedupe_lines(stdout: &str) -> Vec<String> {
 /// sh:12 — populate `_font_cache` from `xlsfonts` output, deduped
 /// (`typeset -gU`) preserving first-seen order.
 fn build_font_cache() -> Vec<String> {
-    let _ = _call_program(&["fonts".to_string(), "xlsfonts".to_string()]);
+    let _ = call_program_capture(&["fonts".to_string(), "xlsfonts".to_string()]);
     let stdout = getsparam("REPLY").unwrap_or_default();
     dedupe_lines(&stdout)
 }

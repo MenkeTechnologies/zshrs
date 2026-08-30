@@ -12,7 +12,7 @@
 //! sh:13  compadd "$@" "$expl[@]" -a be_names
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -84,7 +84,7 @@ pub fn _be_name(args: &[String]) -> i32 {
     let (ty, rest) = zparse_type(args);
 
     // sh:7  be_names=( ${${(f)"$(_call_program boot-environs beadm list -H)"}%%;*} )
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "boot-environs".to_string(),
         "beadm".to_string(),
         "list".to_string(),
@@ -95,7 +95,7 @@ pub fn _be_name(args: &[String]) -> i32 {
 
     // sh:9-10  [[ -n $type[(r)all] ]] && be_names+=( ... )
     if ty.iter().any(|s| s == "all") {
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "boot-environs".to_string(),
             "beadm".to_string(),
             "list".to_string(),

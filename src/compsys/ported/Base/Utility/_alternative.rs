@@ -84,6 +84,27 @@ pub fn _alternative(args: &[String]) -> i32 {
 /// produces matches. Returns 0 on first success, 1 if none match.
 pub fn _alternative_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_alternative");
+    // sh:3  local tags def expl descr action mesgs nm="$compstate[nmatches]" subopts
+    // sh:4  local opt ws curcontext="$curcontext"
+    //
+    // Of that list this port publishes two names THROUGH the param table —
+    // `expl` (handed to `_description` at sh:28, then named again at sh:48 /
+    // sh:54 / sh:62 / sh:70) and `ws` (the array-literal target of sh:39 and
+    // sh:46's `eval ws\=\( … \)`, read back by name at sh:41 / sh:49);
+    // the rest stay Rust locals, and `curcontext` is saved/restored by hand
+    // below because sh:9/sh:11 reassign it mid-body.
+    //
+    // Without the declaration those two writes landed in the GLOBAL param
+    // table and OUTLIVED the call, so the caller got `_alternative`'s `expl`
+    // back instead of its own: the stock-utility sweep read
+    // `expl[2] = '-J' '-default-'` after `_alternative t1:first:(a1 a2)`
+    // where zsh reads `expl[0] =`. `local` in zsh SAVES and RESTORES; it
+    // neither destroys the outer binding nor leaks the inner value. Same
+    // `LocalScope` pattern `_files`/`_command_names` already use for `expl`.
+    let _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &["expl", "ws"],
+        crate::ported::zsh_h::PM_ARRAY,
+    );
     // sh:5
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let mut subopts: Vec<String> = Vec::new();
@@ -127,7 +148,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
             idx += 2;
         } else if a == "-C" && idx + 1 < args.len() {
             let _ = setsparam("OPTARG", &args[idx + 1]); // c:builtin.c:5776
-            // Replace last `:`-field of curcontext
+                                                         // Replace last `:`-field of curcontext
             if let Some(i) = curcontext.rfind(':') {
                 curcontext.truncate(i);
             }

@@ -19,7 +19,7 @@
 //! `_call_program` publishes the helper's stdout in `$REPLY`; the `$(…)`
 //! capture is reproduced by reading `REPLY` and whitespace-splitting.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -79,7 +79,7 @@ pub fn _arch_archives_impl(args: &[String]) -> i32 {
     if !name_arg.is_empty() {
         cp.push(name_arg);
     }
-    let _ = _call_program(&cp);
+    let _ = call_program_capture(&cp);
     let completions: Vec<String> = getsparam("REPLY")
         .unwrap_or_default()
         .split_whitespace()

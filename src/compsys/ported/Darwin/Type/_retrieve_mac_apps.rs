@@ -68,7 +68,7 @@
 //! ported literally (sibling-prefix scan), not "fixed".
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
 use crate::compsys::ported::_store_cache::_store_cache;
 use crate::ported::modules::zutil::{bin_zstyle, lookupstyle, testforstyle};
@@ -121,7 +121,7 @@ fn mac_apps_spotlight_retrieve(app_dir_root: &[String]) -> Vec<String> {
     let mut mac_apps = Vec::new();
     // sh:22-26
     for i in app_dir_root {
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "command".to_string(),
             "mdfind".to_string(),
             "-onlyin".to_string(),
