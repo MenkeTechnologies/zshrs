@@ -1,13 +1,13 @@
 {
  "schema": "compsys-regressions/1",
  "runner": "scripts/compsys_regressions.py",
- "started": "2026-08-30T06:00:07",
- "seconds": 402.2,
+ "started": "2026-08-30T09:02:23",
+ "seconds": 379.0,
  "argv": [
-  "--harness-dir",
-  "scripts",
+  "--zshrs",
+  "$SCRATCH/zshrs-pinned",
   "--json",
-  "$SCRATCH/sweep2.json"
+  "$SCRATCH/gateB.json"
  ],
  "harness_dir": "scripts",
  "jobs": 1,
@@ -16,11 +16,11 @@
  "controls": true,
  "reference_defects": false,
  "zshrs_binary": {
-  "path": "target/debug/zshrs",
-  "size": 101601256,
-  "mtime": "2026-08-30 05:50:47",
+  "path": "$SCRATCH/zshrs-pinned",
+  "size": 101620888,
+  "mtime": "2026-08-30 08:48:05",
   "version": "zshrs 0.12.49",
-  "sha256_16": "6420c23cecc13c35"
+  "sha256_16": "723088f811cdd366"
  },
  "fixtures": [
   "alternative_escaped_colon_split",
@@ -54,9 +54,9 @@
   "transpose_words_panic"
  ],
  "load_average": [
-  6.802734375,
-  13.3955078125,
-  17.00732421875
+  5.75390625,
+  5.63720703125,
+  5.50830078125
  ],
  "summary": {
   "cells": 47,
@@ -66,8 +66,8 @@
   "unscored": 0,
   "skipped": 1,
   "by_verdict": {
-   "STILL-DIVERGES": 28,
-   "CONTROL-HOLDS": 18,
+   "STILL-DIVERGES": 22,
+   "CONTROL-HOLDS": 24,
    "SKIPPED": 1
   }
  },
@@ -80,7 +80,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_dri3jt2f/fzc0004.min.zsh --json $TMPDIR/.../compsys_regressions_dri3jt2f/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_a6deezok/fzc0004.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_a6deezok/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -93,7 +93,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "14 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions__tqhcyqv/fzc0001.min.zsh --json $TMPDIR/.../compsys_regressions__tqhcyqv/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_79dapq56/fzc0001.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_79dapq56/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -102,11 +102,11 @@
    "id": "argv_append_discards_positionals",
    "role": "fixture",
    "harness": "shell_probe",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "3 line(s) differ",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_vcn00c1s/run.json --json $TMPDIR/.../compsys_regressions_vcn00c1s/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_qu1uj1ue/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_qu1uj1ue/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -119,7 +119,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_zsmq25n5/run.json --json $TMPDIR/.../compsys_regressions_zsmq25n5/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_re98ngvc/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_re98ngvc/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -132,7 +132,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_lbjvn7of/run.json --json $TMPDIR/.../compsys_regressions_lbjvn7of/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_t1fkvzz9/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_t1fkvzz9/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -145,7 +145,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_l0droaa_/run.json --json $TMPDIR/.../compsys_regressions_l0droaa_/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_7b9ypx5e/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_7b9ypx5e/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -158,7 +158,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "4 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'CC ' --keys tab --json $TMPDIR/.../compsys_regressions_carzpqjy/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'CC ' --keys tab --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_qu71_82s/result.json",
    "fingerprint_recorded": "cddb97b6e5",
    "fingerprint_now": "cddb97b6e5",
    "attempts": []
@@ -171,7 +171,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "4 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_6g_wc7zk/fzc0001.min.zsh --json $TMPDIR/.../compsys_regressions_6g_wc7zk/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_pytz65jo/fzc0001.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_pytz65jo/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -184,7 +184,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "4 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'CC ' --keys tab --zstyle $TMPDIR/.../compsys_regressions_btn7z92v/zstyle.zsh --json $TMPDIR/.../compsys_regressions_btn7z92v/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'CC ' --keys tab --zstyle $TMPDIR/.../compsys_regressions_9bpsnch0/zstyle.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_9bpsnch0/result.json",
    "fingerprint_recorded": "19376c78e1",
    "fingerprint_now": "19376c78e1",
    "attempts": []
@@ -197,7 +197,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_u1z3v191/fzcm.min.zsh --strict-cursor --json $TMPDIR/.../compsys_regressions_u1z3v191/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_pxhwccag/fzcm.min.zsh --zshrs $SCRATCH/zshrs-pinned --strict-cursor --json $TMPDIR/.../compsys_regressions_pxhwccag/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -210,7 +210,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_hu3spjqk/fzc0000.min.zsh --json $TMPDIR/.../compsys_regressions_hu3spjqk/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_kpjmrfpi/fzc0000.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_kpjmrfpi/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -223,7 +223,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_s325hqux/fzc0000.min.zsh --json $TMPDIR/.../compsys_regressions_s325hqux/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_4bnuan1s/fzc0000.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_4bnuan1s/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -236,7 +236,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_bric2ic5/fzc0000.min.zsh --json $TMPDIR/.../compsys_regressions_bric2ic5/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_3n29zpm4/fzc0000.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_3n29zpm4/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -249,7 +249,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "3 line(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_czsdo3y_/run.json --json $TMPDIR/.../compsys_regressions_czsdo3y_/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_6s0q2iiq/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_6s0q2iiq/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -262,7 +262,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_olxq_8e3/run.json --json $TMPDIR/.../compsys_regressions_olxq_8e3/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_8rs7w275/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_8rs7w275/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -275,7 +275,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "5 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'cat =ls' --keys tab --json $TMPDIR/.../compsys_regressions_8bucxg06/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'cat =ls' --keys tab --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_r9ojdltb/result.json",
    "fingerprint_recorded": "3819a12e50",
    "fingerprint_now": "3819a12e50",
    "attempts": []
@@ -288,7 +288,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "5 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case =ls --keys tab --json $TMPDIR/.../compsys_regressions_3mksg9bt/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case =ls --keys tab --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_h8b5y304/result.json",
    "fingerprint_recorded": "f55ac1e11f",
    "fingerprint_now": "f55ac1e11f",
    "attempts": []
@@ -297,11 +297,11 @@
    "id": "explanation_percent_escapes",
    "role": "fixture",
    "harness": "compsys_spec_fuzz",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "4 row(s) differ",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_fz1eaj6z/fzcx.min.zsh --compare-attrs --strict-stream --json $TMPDIR/.../compsys_regressions_fz1eaj6z/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_t7wru6bh/fzcx.min.zsh --zshrs $SCRATCH/zshrs-pinned --compare-attrs --strict-stream --json $TMPDIR/.../compsys_regressions_t7wru6bh/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -314,7 +314,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "3 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_jidre8lp/fzc0007.min.zsh --json $TMPDIR/.../compsys_regressions_jidre8lp/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_59c498k7/fzc0007.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_59c498k7/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -327,7 +327,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_ue2yhr9o/fzc0007.min.zsh --json $TMPDIR/.../compsys_regressions_ue2yhr9o/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_qr48p5c7/fzc0007.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_qr48p5c7/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -336,13 +336,13 @@
    "id": "format_style_percent_escapes",
    "role": "fixture",
    "harness": "comptab_parity",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "2 row(s) differ",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "0 row(s) differ from step #None (None), first row None col None",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'true && gr' --keys tab --zstyle $TMPDIR/.../compsys_regressions_belzou30/zstyle.zsh --json $TMPDIR/.../compsys_regressions_belzou30/result.json",
-   "fingerprint_recorded": "6422e7a46d",
-   "fingerprint_now": "6422e7a46d",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'true && gr' --keys tab --zstyle $TMPDIR/.../compsys_regressions_t1gffhsd/zstyle.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_t1gffhsd/result.json",
+   "fingerprint_recorded": null,
+   "fingerprint_now": null,
    "attempts": []
   },
   {
@@ -353,7 +353,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "2 line(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_tha91a3z/run.json --json $TMPDIR/.../compsys_regressions_tha91a3z/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_nlsdmij_/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_nlsdmij_/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -366,7 +366,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_h339w2rt/run.json --json $TMPDIR/.../compsys_regressions_h339w2rt/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_00g96_nj/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_00g96_nj/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -379,7 +379,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "byte-identical stdout and exit status",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_v2ywb195/run.json --json $TMPDIR/.../compsys_regressions_v2ywb195/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_uzfha8cq/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_uzfha8cq/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -392,7 +392,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'git ' --keys tab --zstyle $TMPDIR/.../compsys_regressions__nlh_xxv/zstyle.zsh --json $TMPDIR/.../compsys_regressions__nlh_xxv/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'git ' --keys tab --zstyle $TMPDIR/.../compsys_regressions_2f98cnfb/zstyle.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_2f98cnfb/result.json",
    "fingerprint_recorded": "fc1984d85b",
    "fingerprint_now": "fc1984d85b",
    "attempts": []
@@ -401,11 +401,11 @@
    "id": "listing_lost_on_window_shrink",
    "role": "fixture",
    "harness": "winch_probe",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "zsh kept 3 non-blank row(s), zshrs kept 0",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "zsh kept 3 non-blank row(s), zshrs kept 3",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_4iu21fbl/run.json --json $TMPDIR/.../compsys_regressions_4iu21fbl/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_lqlbe3ij/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_lqlbe3ij/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -418,7 +418,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "zsh kept 3 non-blank row(s), zshrs kept 3",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_awm2kb98/run.json --json $TMPDIR/.../compsys_regressions_awm2kb98/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions___y4_279/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions___y4_279/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -431,7 +431,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "zsh kept 3 non-blank row(s), zshrs kept 3",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_2ow8joc5/run.json --json $TMPDIR/.../compsys_regressions_2ow8joc5/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_fy8qc147/run.json --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_fy8qc147/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -440,11 +440,11 @@
    "id": "listing_row_erase_to_eol",
    "role": "fixture",
    "harness": "compsys_spec_fuzz",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "raw escape streams differ",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_f8jb0nvu/fzc9999.min.zsh --strict-stream --json $TMPDIR/.../compsys_regressions_f8jb0nvu/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_bls_h4pd/fzc9999.min.zsh --zshrs $SCRATCH/zshrs-pinned --strict-stream --json $TMPDIR/.../compsys_regressions_bls_h4pd/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -457,7 +457,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'fc-list ' --keys tab --json $TMPDIR/.../compsys_regressions_q60s95ih/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'fc-list ' --keys tab --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_kuj3gkcb/result.json",
    "fingerprint_recorded": "b29792c9a7",
    "fingerprint_now": "b29792c9a7",
    "attempts": []
@@ -470,7 +470,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "2 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'ls /usr/share/zsh' --keys tab,tab,tab,ctrl-d --zstyle $TMPDIR/.../compsys_regressions_2vrmbssp/zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_2vrmbssp/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'ls /usr/share/zsh' --keys tab,tab,tab,ctrl-d --zstyle $TMPDIR/.../compsys_regressions_q_2lo6mu/zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_q_2lo6mu/result.json",
    "fingerprint_recorded": "cc5fb00f9b",
    "fingerprint_now": "cc5fb00f9b",
    "attempts": []
@@ -481,9 +481,9 @@
    "harness": "compsys_parity",
    "expect": "diverges",
    "verdict": "STILL-DIVERGES",
-   "detail": "3 row(s) differ from step #1 (tab), first row 1 col 7",
+   "detail": "4 row(s) differ from step #1 (tab), first row 1 col 7",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'x=( /usr/bin\n/usr/lo' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_u5sc08x1/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'x=( /usr/bin\n/usr/lo' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_bipolld6/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -496,7 +496,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'x=( /usr/bin /usr/lo' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_ssv12fk4/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'x=( /usr/bin /usr/lo' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_ipnce8s5/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -509,7 +509,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "4 row(s) differ from step #1 (tab), first row 1 col 7",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cd \\\n/usr/sh' --keys tab --lockstep --zstyle $TMPDIR/.../compsys_regressions_k9iaernl/zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_k9iaernl/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cd \\\n/usr/sh' --keys tab --lockstep --zstyle $TMPDIR/.../compsys_regressions_ubkxx6qj/zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_ubkxx6qj/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -522,7 +522,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cd /usr/sh' --keys tab --lockstep --zstyle $TMPDIR/.../compsys_regressions_c63m0nv4/zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_c63m0nv4/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cd /usr/sh' --keys tab --lockstep --zstyle $TMPDIR/.../compsys_regressions_6w1q_et5/zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_6w1q_et5/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -535,7 +535,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "2 row(s) differ from step #1 (tab), first row 2 col 0",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'echo \"a b\n$HO' --keys tab --lockstep --no-zstyle --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_0nb7de_b/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'echo \"a b\n$HO' --keys tab --lockstep --no-zstyle --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_jtlbp9hl/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -548,7 +548,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'echo \"a b $HO' --keys tab --lockstep --no-zstyle --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_sl6yrrcz/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'echo \"a b $HO' --keys tab --lockstep --no-zstyle --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_088qa6pe/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -561,7 +561,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "24 row(s) differ from step #1 (tab), first row 0 col 0",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cat <<END\na\nEN' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_9d9_s77v/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cat <<END\na\nEN' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_yr26rd7c/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -574,7 +574,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cat EN' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_v_l2h77y/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'cat EN' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_5k7w1cwv/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -587,7 +587,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "24 row(s) differ from step #1 (tab), first row 0 col 0",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'ls '\"'\"'one\ntwo/etc/pa' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_b9cmy00w/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'ls '\"'\"'one\ntwo/etc/pa' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_ho6slmqg/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -600,7 +600,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'ls '\"'\"'one two/etc/pa' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_3jd14gy9/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case 'ls '\"'\"'one two/etc/pa' --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_9xkqe2x3/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -613,7 +613,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "4 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'ls /usr/**/z' --keys tab,tab --zstyle $TMPDIR/.../compsys_regressions_u_fvu2h8/zstyle.zsh --rows 24 --cols 40 --json $TMPDIR/.../compsys_regressions_u_fvu2h8/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case 'ls /usr/**/z' --keys tab,tab --zstyle $TMPDIR/.../compsys_regressions_5bc_5gy1/zstyle.zsh --rows 24 --cols 40 --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_5bc_5gy1/result.json",
    "fingerprint_recorded": "3757533644",
    "fingerprint_now": "3757533644",
    "attempts": []
@@ -626,7 +626,7 @@
    "verdict": "STILL-DIVERGES",
    "detail": "1 row(s) differ",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case PATH=/bin:/us --keys tab,ctrl-n --json $TMPDIR/.../compsys_regressions_f8muvypw/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case PATH=/bin:/us --keys tab,ctrl-n --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_w2bqemt1/result.json",
    "fingerprint_recorded": "13968e5a5d",
    "fingerprint_now": "13968e5a5d",
    "attempts": []
@@ -639,7 +639,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "0 row(s) differ from step #None (None), first row None col None",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case PATH=/bin:/us --keys tab --json $TMPDIR/.../compsys_regressions_j1y7l798/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case PATH=/bin:/us --keys tab --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_v2uhuerh/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -652,7 +652,7 @@
    "verdict": "CONTROL-HOLDS",
    "detail": "0 row(s) differ from step #None (None), first row None col None",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case ZZ=/bin:/us --keys tab,ctrl-n --json $TMPDIR/.../compsys_regressions_vn1um4nf/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case ZZ=/bin:/us --keys tab,ctrl-n --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_l9plcz11/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
@@ -674,16 +674,16 @@
    "id": "transpose_words_panic",
    "role": "fixture",
    "harness": "compsys_spec_fuzz",
-   "expect": "diverges",
-   "verdict": "STILL-DIVERGES",
-   "detail": "zshrs: crashed: panicked at, run with `RUST_BACKTRACE",
+   "expect": "agrees",
+   "verdict": "CONTROL-HOLDS",
+   "detail": "PASS",
    "note": "",
-   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_0npjn1_d/fzctw.min.zsh --json $TMPDIR/.../compsys_regressions_0npjn1_d/result.json",
+   "command": "/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_46_25ztj/fzctw.min.zsh --zshrs $SCRATCH/zshrs-pinned --json $TMPDIR/.../compsys_regressions_46_25ztj/result.json",
    "fingerprint_recorded": null,
    "fingerprint_now": null,
    "attempts": []
   }
  ],
  "exit": 0,
- "path_note": "Absolute paths in this document were rewritten when it was checked in: the pinned copies of the three sibling harnesses (taken with `git show HEAD:scripts/...` so a peer editing scripts/ mid-run could not change the measurement) are shown as `scripts/...`, which is what they are byte-for-byte; the session scratch directory is $SCRATCH, per-cell temp dirs are $TMPDIR/..., and the repository root and home directory are stripped. No verdict, count or detail string was touched."
+ "path_note": "Absolute paths in this document were rewritten when it was checked in: the session scratch directory is $SCRATCH, per-cell temp dirs are $TMPDIR/..., and the repository root and home directory are stripped. No verdict, count or detail string was touched. `zshrs_binary.path` is $SCRATCH/zshrs-pinned because the run was given a byte-identical COPY of target/debug/zshrs (--zshrs), taken at 2026-08-30 08:48 from the build with mtime 2026-08-30 08:46: peer instances rebuild that file every few minutes and a 47-cell sweep takes seven, so a run against the live path cannot name one binary. The sha256 prefix identifies the bytes that ran."
 }

@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/1",
  "id": "transpose_words_panic",
- "title": "M-t (transpose-words) at end of line panics zshrs at zle_word.rs:1422",
+ "title": "GUARD (fixed in 44a3b4841c) — was: M-t (transpose-words) at end of line panics zshrs at zle_word.rs:1422",
  "harness": "compsys_spec_fuzz",
  "run": {
   "buffer": "ls /usr/share zsh",
@@ -19,16 +19,49 @@
    "completer": "#compdef fzctw\n\ncompadd -- alpha beta\n"
   }
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-08-30",
+  "previous_expect": "diverges",
+  "fix_commit": "44a3b4841c",
+  "fix_commit_subject": "zle: port the SIGWINCH redraw, printfmt's % escapes + erase-to-EOL, M-t's NUL-terminator read, and insert_positions' second cline_str walk",
+  "why": "zle: … item 4 — C reads the slot at zlell legitimately: zleline is over-allocated by two cells (zle_main.c:1287, zle_utils.c:88-89) and every mutator NUL-terminates it (zle_utils.c:820), and c:666-668 restarts its backward scan at zlecs, which IS zlell at end of line. Restoring the terminator fixes the wrong transposition too.",
+  "evidence": "re-verified first-hand by scripts/compsys_regressions.py under --variants: the fixture cell scored NOW-PASSES -> NOW-PASSES -> NOW-PASSES, and every variant and control of it came back n/a (no variants or controls). The runner reported the binary MOVED since the stamp (6420c23cecc13c35 -> 723088f811cdd366), which is the 'somebody fixed the bug' branch of the two the README names, not the 'the fixture was wrong' one.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file: the cell stays in the evidence base and the gate now FAILS if the divergence comes back."
+ },
+ "guard_verified": {
+  "date": "2026-08-30",
+  "against": "/opt/homebrew/bin/zshrs -> Cellar/zshrs-all/0.12.49/bin/zshrs, the Homebrew-installed RELEASE build of the same version, 18273880 bytes, sha256 fb94500d8e1c32e7, built 2026-08-30 06:20:45 — before d555917f07 (08:04) and 44a3b4841c (08:32), so it still carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "zshrs: crashed: panicked at, run with `RUST_BACKTRACE",
+  "controls_on_the_old_binary": "none",
+  "note": "the flip is only worth something if the gate would CATCH the bug coming back, so it was pointed at a build that still has it: `compsys_regressions.py --zshrs /opt/homebrew/bin/zshrs --only transpose_words_panic`. It reported CONTROL-MOVED and exited 1. The harness detail it produced there is the same one observed_when_diverging records, so the guard fails on THIS bug and not merely on some difference."
+ },
  "group": "zle-editing-crash",
  "fingerprint": null,
  "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-08-30, commit 44a3b4841c, a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "zshrs no longer crashes: the cell completes and the two shells' screens agree. The panic at src/ported/zle/zle_word.rs:1422 (`index out of bounds: the len is 17 but the index is 17`) does not happen."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "category": "crash",
   "detail": "zshrs: crashed: panicked at, run with `RUST_BACKTRACE",
   "rows": [],
   "crash": "thread 'main' panicked at src/ported/zle/zle_word.rs:1422:48: index out of bounds: the len is 17 but the index is 17",
-  "notes": "The completer in the fixture is never reached: the buffer is a plain `ls` command line and ESC-t is transpose-words. The buffer is 17 bytes, which is the index the panic reports. Reproduced outside the harness too, on a bare `target/debug/zshrs --zsh -f -i` with ZDOTDIR unset: type the buffer, send \\x1bt, the process dies. No zstyle is involved — the combo_5_0_e0 reproducer this came from carried one, and it is not needed."
+  "notes": "The completer in the fixture is never reached: the buffer is a plain `ls` command line and ESC-t is transpose-words. The buffer is 17 bytes, which is the index the panic reports. Reproduced outside the harness too, on a bare `target/debug/zshrs --zsh -f -i` with ZDOTDIR unset: type the buffer, send \\x1bt, the process dies. No zstyle is involved — the combo_5_0_e0 reproducer this came from carried one, and it is not needed.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47), zsh 5.9.2 (aarch64-apple-darwin25.4.0) — this is the divergence AS MEASURED BEFORE 44a3b4841c. It is history, not current behaviour; the fixture now asserts the two shells AGREE."
  },
  "variants": [],
  "origin": [
@@ -36,17 +69,18 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "commit": "44a3b4841c",
   "harness_sha256_16": {
    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
+   "size": 101620888,
+   "mtime": "2026-08-30 08:46",
    "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "sha256_16": "723088f811cdd366",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical copy of this file, passed with --zshrs, because a peer instance rebuilt target/debug/zshrs MID-SWEEP during the first re-verification (6420c23cecc13c35 -> 2aa614f561de25ec -> 723088f811cdd366 in one morning). The sha256 prefix identifies the bytes that actually ran; copying was the only way to make a multi-minute sweep name one binary."
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -54,8 +88,8 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was 'zshrs: crashed: panicked at, run with `RUST_BACKTRACE'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366)",
+  "note": "RETIRED AS A GUARD. `expect` was flipped diverges -> agrees on this run: the fixture cell and all of its variants and controls came back agreeing, three attempts each, against a binary that moved since the previous stamp. The cell is no longer evidence of a bug; it is now the regression guard for 44a3b4841c."
  },
  "history": [
   {
@@ -69,6 +103,29 @@
    "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
    "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
    "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+  },
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was 'zshrs: crashed: panicked at, run with `RUST_BACKTRACE'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
   }
  ]
 }

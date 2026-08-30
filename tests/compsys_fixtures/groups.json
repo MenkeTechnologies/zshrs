@@ -15,7 +15,7 @@
  "groups": {
   "shell-core-parameters": {
    "title": "Shell-core parameters, reached through compsys",
-   "what": "Not completion bugs. They are in this evidence base because the completion system runs on them: an append that loses $@ reprices every description _description renders, and a name the reference shell refuses to create changes what a completion leaves in the parameter table."
+   "what": "Not completion bugs. They are in this evidence base because the completion system runs on them: an append that loses $@ reprices every description _description renders, and a name the reference shell refuses to create changes what a completion leaves in the parameter table. The append cell (argv_append_discards_positionals) was fixed in d555917f07 and is now a guard; the other two still diverge."
   },
   "line-token-rewrite": {
    "title": "The word on the line is rewritten during completion",
@@ -31,11 +31,11 @@
   },
   "description-escapes": {
    "title": "Escapes in descriptions and formats",
-   "what": "%-escapes that one shell expands and the other prints literally."
+   "what": "%-escapes that one shell expanded and the other printed literally. Both cells are now guards: 44a3b4841c ported printfmt's escape switch from zle_tricky.c:2438-2535, and they are kept so the escapes cannot go literal again — reached once through compadd -X and once through the `format` zstyle, which is why there are two."
   },
   "listing-render": {
    "title": "Drawing the listing, and redrawing around it",
-   "what": "What reaches the terminal once matches exist: the erase-to-end-of-line after each row, the line redrawn under the list, the count in the ask prompt, and what survives a window resize."
+   "what": "What reaches the terminal once matches exist: the erase-to-end-of-line after each row, the line redrawn under the list, the count in the ask prompt, and what survives a window resize. Two of these are now guards — the erase-to-end-of-line and the window shrink, both fixed in 44a3b4841c; the rest still diverge."
   },
   "menu-navigation": {
    "title": "Moving through a menu",
@@ -43,7 +43,7 @@
   },
   "zle-editing-crash": {
    "title": "ZLE editing: a crash, not a difference",
-   "what": "zshrs panics. There is no zsh-versus-zshrs rendering to compare — the process dies — so the cell asserts the crash."
+   "what": "zshrs panicked. There was no zsh-versus-zshrs rendering to compare — the process died — so the cell asserted the crash. Fixed in 44a3b4841c and now a guard, which is a stronger cell than it was: it no longer asserts a crash, it asserts that the two shells transpose the same words."
   },
   "upstream-defect": {
    "title": "A defect in the REFERENCE shell",
