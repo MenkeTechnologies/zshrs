@@ -37,6 +37,10 @@ diffs both screens after EVERY keystroke. Three independent axes are fuzzed:
     --edit-fuzz         the LINE EDITING that produced the buffer — see below
     --multiline-fuzz    the CONTINUATION context the completion fires in —
                         see below
+    --fstree-fuzz       the FILESYSTEM the completion runs against — a seeded,
+                        hermetic, deliberately hostile tree — see below
+    --interrupt-fuzz    what INTERRUPTS the completion (SIGWINCH, SIGINT,
+                        type-ahead) — see below
 
 and a failure is delta-debugged down to the minimal edit program, keystroke
 path and zstyle subset that still diverge at the SAME first-diff cell:
@@ -88,6 +92,58 @@ Multiline fuzz (`--multiline-fuzz`)
     Every generated buffer is deliberately INCOMPLETE at each newline, so the
     Enter that ends a line is answered with PS2 on both shells and never
     executes anything.
+
+Filesystem fuzz (`--fstree-fuzz`)
+    Path completion is the most-used surface in the shell, and every path case
+    in this file and in every sibling harness completes against whatever this
+    disk happens to contain — `/usr/`, `~/`, the repo. Nothing constructs an
+    adversarial tree, so the interesting inputs are never tried.
+
+    `--fstree-fuzz` builds a SEEDED, HERMETIC tree in a scratch directory, `cd`s
+    BOTH shells into it (identical tree, same absolute path, same init line) and
+    completes inside it. It covers spaces, tabs, leading/trailing spaces and a
+    literal newline in filenames; glob metacharacters (`*` `?` `[` `]` `{` `}`
+    `~` `#` `^`) as literal name content; quote and escape characters (`'` `"`
+    `\\` backtick `$` `!`); option-looking names (`-dash`, `--ddash`, a file
+    named `-`) and dotfiles including one beginning `..`; a NAME_MAX-length name
+    and a directory chain near PATH_MAX; a long shared prefix (ambiguous
+    completion) and a directory of a few thousand entries (the listing/paging
+    path); symlinks to a directory, to a file, dangling, and a symlink LOOP;
+    directories with no read and with no execute permission; and case-colliding
+    names on what is a case-INSENSITIVE APFS volume.
+
+    Nothing about the tree is assumed. Every planned entry is read back off the
+    filesystem after creation and classified created / folded / rejected, and a
+    category whose entries did not land is DISABLED and counted — a name the
+    filesystem folded or refused is a GENERATOR issue, named in the report,
+    never a parity finding. `--fstree-verify` builds the tree, prints exactly
+    what this disk accepted, and exits without booting a shell.
+
+    The tree is a pure function of `--fstree-seed` and `--fstree-big`, and the
+    seed is printed on every fstree result line and carried in every replay, so
+    a replay rebuilds the identical tree at the identical path first.
+
+Interruption fuzz (`--interrupt-fuzz`)
+    Nothing in this harness ever interrupts a completion, and real completions
+    are interrupted constantly. This project has shipped a SIGWINCH-triggered
+    infinite `zrefresh` recursion that reproduced only at tiny row counts, and a
+    type-ahead-eaten-after-accept bug.
+
+    Three kinds, delivered identically to both shells: a REAL terminal resize
+    (`TIOCSWINSZ` on the pty master, which is what raises SIGWINCH — not a
+    `kill -WINCH`, which would skip the size change the handler reads), SIGINT
+    to the shell's process group, and a burst of type-ahead written in one
+    write. Three anchors: `before` the first TAB, at `menu` (the first key has
+    settled, so a listing is on screen), and `midkey<N>` — delivered
+    `--interrupt-delay-ms` after key N's write and BEFORE the screen is drained,
+    which is genuinely mid-computation and therefore genuinely racy.
+
+    A shell that DIES gets its own verdict, `DIED`, naming which side went and
+    with what signal. It is never a pass, never a plain FAIL and never a
+    timeout: round 3 of this tooling established that a crashed REFERENCE shell
+    mislabelled as a timeout hid a real upstream zsh segfault for two rounds.
+    The liveness check runs on every step of every mode, not only under this
+    flag.
 
 Latency (`--latency`)
     Every assertion in this file is about WHAT the two shells drew, never how
@@ -400,6 +456,11 @@ class ShellSession:
         self._first_at = None
         self._last_at = None
         self.timing = None
+        # Latched exit status of this child, once reaped. A shell that DIED is
+        # its own verdict — never a pass and never a plain FAIL — so the harness
+        # has to be able to say which side went and with what signal. See
+        # `exit_status`.
+        self._exit = None
         self.screen = _TolerantScreen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
         with _FORK_LOCK:
@@ -607,6 +668,74 @@ class ShellSession:
         self.send(b"\x0c")   # Ctrl-L → clear-screen, redraw prompt at row 0
         self.drain_settled(max_wait=3.0, first_wait=2.0)
 
+    # ── liveness / interruption ───────────────────────────────────────────────
+    def exit_status(self):
+        """`(kind, value)` once this child has exited, else None. Never blocks.
+
+        `kind` is "signal" (value = signal number: a CRASH or a kill) or "exit"
+        (value = exit status). Latched, so a later call still reports it after
+        the pid has been reaped.
+
+        This exists because round 3 of this tooling established that a crashed
+        REFERENCE shell mislabelled as a timeout hid a real upstream zsh
+        segfault for two rounds. A shell that dies has to be NAMED — which side,
+        which signal — not folded into whatever verdict the surviving grid
+        happened to produce.
+        """
+        if self._exit is not None:
+            return self._exit
+        try:
+            pid, st = os.waitpid(self.pid, os.WNOHANG)
+        except OSError:
+            return None
+        if pid != self.pid:
+            return None
+        if os.WIFSIGNALED(st):
+            self._exit = ("signal", os.WTERMSIG(st))
+        elif os.WIFEXITED(st):
+            self._exit = ("exit", os.WEXITSTATUS(st))
+        else:                                        # pragma: no cover
+            self._exit = ("status", st)
+        return self._exit
+
+    def resize(self, rows, cols):
+        """A REAL terminal resize: TIOCSWINSZ on the pty master.
+
+        The kernel raises SIGWINCH on the slave's foreground process group as a
+        side effect, so this is the actual signal a window drag delivers — not a
+        `kill -WINCH`, which would skip the size change the handler reads. This
+        project has a documented SIGWINCH-triggered infinite `zrefresh`
+        recursion that reproduced only at tiny row counts, so the size change
+        and the signal have to arrive together the way they really do.
+
+        pyte's screen is resized to match, otherwise every row captured after
+        the resize would be compared at the old width."""
+        import fcntl
+        import struct
+        try:
+            fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", rows, cols, 0, 0))
+        except OSError:
+            return False
+        self.rows, self.cols = rows, cols
+        self.screen.resize(rows, cols)
+        return True
+
+    def send_signal(self, sig):
+        """Send `sig` to this child's process GROUP (pty.fork setsid()s the
+        child, so its pgid is its pid and the shell plus anything it forked are
+        both in it — which is what a ^C from a terminal driver reaches).
+
+        Refuses once the child is known to have exited, so a reaped-and-recycled
+        pid can never be signalled by accident."""
+        if self.exit_status() is not None:
+            return False
+        try:
+            os.killpg(self.pid, sig)
+            return True
+        except OSError:
+            return False
+
     def close(self):
         try:
             os.write(self.fd, b"\x03")   # ctrl-c out of any menu
@@ -760,13 +889,19 @@ EDIT_MODES: dict[str, str] = {
 }
 
 
-def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None):
+def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None, cwd=None):
     """Write the init script both shells source after launching with `-f`.
     Matches the spec: same fpath, same zstyles, same compinit + dump, so the
     only variable left is the shell under test.
 
     `editing_mode` (None by default, which emits nothing and leaves every
-    pre-existing caller byte-identical) appends one of EDIT_MODES."""
+    pre-existing caller byte-identical) appends one of EDIT_MODES.
+
+    `cwd` (None by default, likewise emitting nothing) `cd`s BOTH shells into
+    one directory — the hermetic tree `--fstree-fuzz` builds. It is emitted as
+    a hard `cd ... || return 1` so a shell that cannot get there fails at init
+    and is reported as never having reached a prompt, rather than silently
+    completing against $HOME and comparing two wrong screens."""
     d = tempfile.mkdtemp(prefix="compsys_parity_")
     fpath_line = ""
     if fpath_dirs:
@@ -833,6 +968,7 @@ def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None):
     if editing_mode is not None and editing_mode not in EDIT_MODES:
         raise ValueError(f"unknown editing mode: {editing_mode}")
     mode_line = EDIT_MODES.get(editing_mode, "")
+    cwd_line = f"cd {shlex.quote(cwd)} || return 1\n" if cwd else ""
     init = f"""\
 # generated by compsys_parity.py — sourced into `zsh -f` and `zshrs --zsh -f`
 PROMPT='{PROMPT_SENTINEL} '
@@ -841,7 +977,7 @@ PS2=''
 setopt no_beep
 {ostype_line}\
 
-{fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}
+{fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}{cwd_line}
 # Readiness barrier: block the prompt until the completion map is populated so
 # a keystroke fired right after the prompt isn't racing an unfinished compinit
 # (real zsh fills `_comps` synchronously; zshrs may register asynchronously).
@@ -1527,6 +1663,620 @@ MULTILINE_SURFACES: list = [
 ]
 
 
+# ── adversarial filesystem trees (`--fstree-fuzz`) ───────────────────────────
+#
+# Every path-completion case in this file and in every sibling harness completes
+# against whatever this disk happens to contain — `/usr/`, `~/`, the repo. Path
+# completion is the most-used surface in the shell and the one with the most
+# quoting, globbing and escaping in it, and none of the inputs that are actually
+# hostile to a completer are ever tried, because nothing constructs them.
+#
+# `--fstree-fuzz` builds a SEEDED, HERMETIC tree in a scratch directory, `cd`s
+# BOTH shells into it (same absolute path, same init line) and completes inside
+# it. The tree is a pure function of `--fstree-seed` and `--fstree-big`, so the
+# seed printed in every failure line rebuilds the identical tree for a replay.
+#
+# Nothing here trusts the filesystem. Every planned entry is VERIFIED on disk
+# after creation and classified created / folded / rejected:
+#
+#   created   the entry exists with the exact name that was asked for;
+#   folded    the name landed on an entry that already existed (this is a
+#             case-INSENSITIVE APFS volume, so `Coll.txt` and `coll.txt` are one
+#             file, and pretending otherwise would invent a completion case that
+#             cannot exist here);
+#   rejected  the filesystem refused the name outright (ENAMETOOLONG, ...).
+#
+# Folded and rejected entries are a GENERATOR issue, counted and named in the
+# report, and every surface built from a category is dropped when its entries
+# did not land. They are never a parity finding.
+FSTREE_NAME_LEN = 255          # APFS NAME_MAX, in bytes
+FSTREE_DEEP_TARGET = 900       # abs path length to build toward (PATH_MAX 1024)
+
+
+@dataclass
+class FsPlanEntry:
+    cat: str                   # completion category this entry belongs to
+    rel: str                   # path relative to the tree root
+    kind: str                  # "dir" | "file" | "link:<target>"
+    mode: int = None           # chmod applied after creation (dirs only)
+    note: str = ""
+
+
+@dataclass
+class FsTree:
+    root: str
+    seed: int
+    tok: str
+    plan: list
+    created: list = field(default_factory=list)     # rel paths from the plan
+    # Entries the plan cannot name because their COUNT is decided at creation
+    # time: the deep chain is extended until the ABSOLUTE path approaches
+    # PATH_MAX, which depends on how long the scratch root happens to be. Kept
+    # apart from `created` so "planned N -> created N" reconciles exactly.
+    runtime: list = field(default_factory=list)
+    folded: list = field(default_factory=list)      # (rel, note)
+    rejected: list = field(default_factory=list)    # (rel, reason)
+    skipped: list = field(default_factory=list)     # (rel, reason)
+    # cat -> [completion prefixes], only for categories whose entries landed.
+    prefixes: dict = field(default_factory=dict)
+
+    def ok(self, cat) -> bool:
+        return bool(self.prefixes.get(cat))
+
+
+def fstree_plan(seed: int, big_n: int) -> tuple:
+    """(token, [FsPlanEntry, ...]) — the tree this seed asks for.
+
+    Deterministic: same seed, same names, same order. The seeded token is woven
+    into the directory and file names so two seeds are genuinely different
+    trees, while a replay of one seed is byte-identical."""
+    rng = random.Random(f"compsys-fstree:{seed}")
+    tok = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(4))
+    fill = rng.choice("LMNXYZ")
+    p = []
+
+    def d(cat, rel, mode=None, note=""):
+        p.append(FsPlanEntry(cat, rel, "dir", mode, note))
+
+    def f(cat, rel, note=""):
+        p.append(FsPlanEntry(cat, rel, "file", None, note))
+
+    def ln(cat, rel, target, note=""):
+        p.append(FsPlanEntry(cat, rel, f"link:{target}", None, note))
+
+    # ── whitespace in names ──────────────────────────────────────────────────
+    sp = f"sp{tok}"
+    d("space", sp)
+    f("space", f"{sp}/a b.txt", "one space")
+    f("space", f"{sp}/a bb.txt", "shares the 'a b' prefix — ambiguous WITH a space")
+    f("space", f"{sp}/a\tb.txt", "literal TAB in the name")
+    f("space", f"{sp}/ lead.txt", "LEADING space")
+    f("space", f"{sp}/trail .txt", "TRAILING space before the extension")
+    f("space", f"{sp}/nl\nline.txt", "literal NEWLINE in the name")
+
+    # ── glob metacharacters as literal content ───────────────────────────────
+    mt = f"meta{tok}"
+    d("meta", mt)
+    for name, note in (("star*.txt", "literal *"), ("q?.txt", "literal ?"),
+                       ("br[x].txt", "literal [ ]"), ("br]y.txt", "unbalanced ]"),
+                       ("brace{a}.txt", "literal { }"), ("tilde~.txt", "literal ~"),
+                       ("hash#.txt", "literal #"), ("caret^.txt", "literal ^")):
+        f("meta", f"{mt}/{name}", note)
+
+    # ── quote / escape characters ────────────────────────────────────────────
+    qt = f"quote{tok}"
+    d("quote", qt)
+    for name, note in (("sq'.txt", "single quote"), ('dq".txt', "double quote"),
+                       ("bs\\.txt", "backslash"), ("back`.txt", "backtick"),
+                       ("dollar$.txt", "dollar"), ("bang!.txt", "history bang")):
+        f("quote", f"{qt}/{name}", note)
+
+    # ── option-looking and dot names ─────────────────────────────────────────
+    op = f"opt{tok}"
+    d("optname", op)
+    f("optname", f"{op}/-dash.txt", "leading -")
+    f("optname", f"{op}/--ddash.txt", "leading --")
+    f("optname", f"{op}/-", "a file named exactly -")
+    d("dotname", f"{op}/.dotdir")
+    f("dotname", f"{op}/.dot1", "dotfile")
+    f("dotname", f"{op}/.dot2", "second dotfile — ambiguous among hidden names")
+    f("dotname", f"{op}/..dotdot", "name beginning .. — adjacent to the ..  entry")
+    f("dotname", f"{op}/.{tok}hidden", "seeded dotfile")
+
+    # ── very long name, very deep path ───────────────────────────────────────
+    lg = f"long{tok}"
+    d("longname", lg)
+    f("longname", f"{lg}/{fill * (FSTREE_NAME_LEN - len(tok))}{tok}",
+      f"{FSTREE_NAME_LEN}-byte name (NAME_MAX)")
+    f("longname", f"{lg}/{fill * 40}{tok}", "short sibling sharing the prefix")
+    # deep chain: components are added until the ABSOLUTE path approaches
+    # PATH_MAX; the exact count depends on the scratch root, so it is computed
+    # at creation time and the plan just names the head.
+    d("deep", f"deep{tok}")
+
+    # ── ambiguity and a large listing ────────────────────────────────────────
+    am = f"amb{tok}"
+    d("ambiguous", am)
+    for i in range(40):
+        f("ambiguous", f"{am}/{tok}_common_{i:03d}", "shares a long common prefix")
+    bg = f"big{tok}"
+    d("bigdir", bg)
+    for i in range(big_n):
+        f("bigdir", f"{bg}/e{i:05d}", "one of a few thousand — the pager path")
+
+    # ── symlinks ─────────────────────────────────────────────────────────────
+    lk = f"link{tok}"
+    d("symlink", lk)
+    ln("symlink", f"{lk}/to_dir", f"../{am}", "symlink to a DIRECTORY")
+    ln("symlink", f"{lk}/to_file", f"../{am}/{tok}_common_000",
+       "symlink to a FILE")
+    ln("symlink", f"{lk}/to_dangling", f"./nowhere_{tok}", "DANGLING symlink")
+    ln("symlink_loop", f"{lk}/loop_a", "loop_b", "half of a symlink LOOP")
+    ln("symlink_loop", f"{lk}/loop_b", "loop_a", "other half — resolves ELOOP")
+
+    # ── unreadable / untraversable directories ───────────────────────────────
+    pm = f"perm{tok}"
+    d("perm", pm)
+    f("perm", f"{pm}/{tok}_inside_noread", "created BEFORE the chmod")
+    f("perm", f"{pm}/{tok}_inside_noexec", "created BEFORE the chmod")
+    d("perm_noread", f"{pm}/noread", 0o333, "no READ permission (--wx)")
+    f("perm_noread", f"{pm}/noread/{tok}_hidden_by_mode")
+    d("perm_noexec", f"{pm}/noexec", 0o600, "no EXECUTE permission (rw-)")
+    f("perm_noexec", f"{pm}/noexec/{tok}_hidden_by_mode")
+
+    # ── case collision (this volume is case-INSENSITIVE; verified, not assumed)
+    cs = f"case{tok}"
+    d("casecoll", cs)
+    f("casecoll", f"{cs}/Coll{tok}.txt", "upper-case first")
+    f("casecoll", f"{cs}/coll{tok}.txt", "lower-case twin — folds on APFS")
+    return tok, p
+
+
+def _fs_make(root, e):
+    """Create one planned entry. Returns (status, note): "created", "folded"
+    (the name resolved onto an entry that already existed) or "rejected"."""
+    path = os.path.join(root, e.rel)
+    pre_existing = os.path.lexists(path)
+    try:
+        if e.kind == "dir":
+            if pre_existing:
+                return ("folded", "a directory of this name already resolved")
+            os.mkdir(path)
+        elif e.kind == "file":
+            if pre_existing:
+                st = os.lstat(path)
+                return ("folded", f"resolved onto inode {st.st_ino} "
+                                  f"(case-insensitive volume)")
+            with open(path, "w") as fh:
+                fh.write(e.rel + "\n")
+        elif e.kind.startswith("link:"):
+            if pre_existing:
+                return ("folded", "a link of this name already resolved")
+            os.symlink(e.kind[5:], path)
+        else:                                        # pragma: no cover
+            return ("rejected", f"unknown kind {e.kind!r}")
+    except OSError as exc:
+        return ("rejected", f"{type(exc).__name__}: {exc.strerror or exc}")
+    return ("created", "")
+
+
+def _fs_verify(root, e) -> tuple:
+    """Read the entry BACK off the filesystem. `os.listdir` is the authority —
+    `lexists` alone would accept a case-folded match on this volume and report a
+    name as present that the shell will never see in a listing."""
+    path = os.path.join(root, e.rel)
+    parent = os.path.dirname(path) or root
+    base = os.path.basename(path)
+    try:
+        names = os.listdir(parent)
+    except OSError as exc:
+        return (False, f"parent unlistable: {exc.strerror or exc}")
+    if base in names:
+        return (True, "")
+    lowered = [n for n in names if n.lower() == base.lower()]
+    if lowered:
+        return (False, f"folded onto {lowered[0]!r}")
+    return (False, "absent after creation")
+
+
+def build_fstree(seed: int, big_n: int, root: str = None) -> FsTree:
+    """Materialise the seeded tree and VERIFY it against its own plan.
+
+    The tree root is derived from the seed, so a replay lands on the identical
+    absolute path — which matters, because the path is baked into the `cd` line
+    both shells run and into every buffer that completes inside it."""
+    root = root or os.path.join(tempfile.gettempdir(),
+                                f"compsys_parity_fstree_{seed}")
+    if os.path.isdir(root):
+        fstree_cleanup(root)
+    os.makedirs(root, exist_ok=True)
+    tok, plan = fstree_plan(seed, big_n)
+    tree = FsTree(root=root, seed=seed, tok=tok, plan=plan)
+    euid_root = (os.geteuid() == 0)
+    chmods = []
+    for e in plan:
+        if e.cat.startswith("perm_") and euid_root:
+            # As root a mode-000 directory is still readable, so the case would
+            # test nothing. Named and counted, never quietly generated.
+            tree.skipped.append((e.rel, "euid 0: permission bits do not apply"))
+            continue
+        status, note = _fs_make(root, e)
+        if status == "rejected":
+            tree.rejected.append((e.rel, note))
+            continue
+        if status == "folded":
+            tree.folded.append((e.rel, note))
+            continue
+        ok, why = _fs_verify(root, e)
+        if not ok:
+            tree.folded.append((e.rel, why))
+            continue
+        tree.created.append(e.rel)
+        if e.mode is not None:
+            chmods.append((os.path.join(root, e.rel), e.mode))
+    # The deep chain: components until the absolute path approaches PATH_MAX.
+    deep_head = f"deep{tok}"
+    deep_rel = deep_head
+    mid_rel = deep_head
+    if deep_head in tree.created:
+        i = 0
+        while len(os.path.join(root, deep_rel)) < FSTREE_DEEP_TARGET:
+            nxt = os.path.join(deep_rel, f"d{i:02d}{tok}")
+            try:
+                os.mkdir(os.path.join(root, nxt))
+            except OSError as exc:
+                tree.rejected.append((nxt, f"{type(exc).__name__}: "
+                                           f"{exc.strerror or exc}"))
+                break
+            deep_rel = nxt
+            tree.runtime.append(nxt)
+            # A MID-depth anchor as well as the near-PATH_MAX one: a buffer
+            # ~900 characters long does not fit on a small terminal and would
+            # be skipped as `fstree-buffer-exceeds-screen` at every narrow
+            # geometry, so the deep category would only ever run on the wide
+            # ones. The mid anchor keeps the category alive everywhere.
+            if len(os.path.join(root, nxt)) < FSTREE_DEEP_TARGET // 4:
+                mid_rel = nxt
+            i += 1
+        leaf = os.path.join(deep_rel, f"leaf_{tok}.txt")
+        try:
+            with open(os.path.join(root, leaf), "w") as fh:
+                fh.write("deep\n")
+            tree.runtime.append(leaf)
+        except OSError as exc:
+            tree.rejected.append((leaf, f"{type(exc).__name__}: "
+                                        f"{exc.strerror or exc}"))
+    # chmods LAST: the files inside an unreadable directory have to be created
+    # while it is still writable.
+    for path, mode in chmods:
+        try:
+            os.chmod(path, mode)
+        except OSError as exc:                       # pragma: no cover
+            tree.rejected.append((os.path.relpath(path, root),
+                                  f"chmod: {exc.strerror or exc}"))
+    tree.prefixes = fstree_prefixes(tree, deep_rel, mid_rel)
+    return tree
+
+
+def fstree_prefixes(tree: FsTree, deep_rel: str, mid_rel: str) -> dict:
+    """Completion prefixes per category, built ONLY from entries that verified.
+
+    A category whose entries did not land contributes nothing, so the harness
+    never claims to have tested a completion case the filesystem refused to
+    create."""
+    made = set(tree.created)
+    tok = tree.tok
+    out: dict = {}
+
+    def add(cat, *prefixes):
+        keep = [p for p in prefixes if p]
+        if keep:
+            out.setdefault(cat, []).extend(keep)
+
+    if f"sp{tok}/a b.txt" in made:
+        add("space", f"sp{tok}/a", f"sp{tok}/a b", f"sp{tok}/a\\ b")
+    if f"sp{tok}/ lead.txt" in made:
+        add("space_edge", f"sp{tok}/", f"sp{tok}/tr")
+    if f"sp{tok}/nl\nline.txt" in made:
+        # The PREFIX is typed; the newline lives in the completion the shell has
+        # to produce and quote. A raw newline is never typed into the buffer.
+        add("space_newline", f"sp{tok}/nl")
+    if f"meta{tok}/star*.txt" in made:
+        add("meta", f"meta{tok}/star", f"meta{tok}/q", f"meta{tok}/br",
+            f"meta{tok}/brace", f"meta{tok}/tilde", f"meta{tok}/hash",
+            f"meta{tok}/caret", f"meta{tok}/")
+    if f"quote{tok}/sq'.txt" in made:
+        add("quote", f"quote{tok}/sq", f"quote{tok}/dq", f"quote{tok}/bs",
+            f"quote{tok}/back", f"quote{tok}/dollar", f"quote{tok}/bang",
+            f"quote{tok}/")
+    if f"opt{tok}/-dash.txt" in made:
+        add("optname", f"opt{tok}/-", f"opt{tok}/--", f"opt{tok}/")
+    if f"opt{tok}/.dot1" in made:
+        add("dotname", f"opt{tok}/.", f"opt{tok}/.d", f"opt{tok}/..",
+            f"opt{tok}/.{tok}")
+    if any(r.startswith(f"long{tok}/") for r in made):
+        # The two long names share a prefix, so a short prefix is AMBIGUOUS and
+        # a longer one is unique — both against a NAME_MAX-length candidate.
+        longest = max((r for r in made if r.startswith(f"long{tok}/")),
+                      key=len, default="")
+        add("longname", f"long{tok}/",
+            longest[:len(f"long{tok}/") + 20] if longest else "",
+            longest[:len(f"long{tok}/") + 100] if longest else "")
+    if f"deep{tok}" in made and tree.runtime:
+        # The near-PATH_MAX directory itself, a mid-depth anchor that fits on a
+        # small terminal, and the very first component (ambiguous with nothing,
+        # but it exercises directory completion at the head of the chain).
+        add("deep", deep_rel + "/", mid_rel + "/", f"deep{tok}/d0")
+    if f"amb{tok}/{tok}_common_000" in made:
+        add("ambiguous", f"amb{tok}/{tok}_c", f"amb{tok}/{tok}_common_0",
+            f"amb{tok}/")
+    if f"big{tok}/e00000" in made:
+        add("bigdir", f"big{tok}/", f"big{tok}/e", f"big{tok}/e0000")
+    if f"link{tok}/to_dir" in made:
+        add("symlink", f"link{tok}/to_", f"link{tok}/to_dir/",
+            f"link{tok}/to_dangling")
+    if f"link{tok}/loop_a" in made:
+        add("symlink_loop", f"link{tok}/loop_a/", f"link{tok}/loop_")
+    if f"perm{tok}/noread" in made:
+        add("perm_noread", f"perm{tok}/noread/", f"perm{tok}/nor")
+    if f"perm{tok}/noexec" in made:
+        add("perm_noexec", f"perm{tok}/noexec/", f"perm{tok}/noe")
+    if f"case{tok}/Coll{tok}.txt" in made:
+        add("casecoll", f"case{tok}/C", f"case{tok}/c", f"case{tok}/")
+    return out
+
+
+# The completion contexts each category is driven through. `cmd` varies so the
+# same tree is reached through file completion (`ls`), directory-only completion
+# (`cd`), a redirection target and a quoted word — the four paths that quote and
+# escape a filename differently.
+FSTREE_CMDS = ("ls ", "ls -l ", "cd ", "cat ", "echo ")
+
+
+def fstree_surfaces(tree: FsTree, skips: Counter) -> list:
+    """One Surface per tree category whose entries actually landed.
+
+    A category the filesystem refused (or folded) is DROPPED here and counted
+    under `fstree-category-absent:<cat>`, exactly like a missing binary is
+    dropped from BUFFER_SURFACES — the harness does not claim coverage of a
+    completion case that could not be constructed on this host."""
+    notes = {
+        "space": "filename containing a literal space",
+        "space_edge": "leading/trailing space in a filename",
+        "space_newline": "filename containing a literal NEWLINE",
+        "meta": "glob metacharacters (* ? [ ] { } ~ # ^) as literal name content",
+        "quote": "quote and escape characters (' \" \\ ` $ !) in a filename",
+        "optname": "filename that looks like an option (-dash, --ddash, -)",
+        "dotname": "dotfiles and a name beginning ..",
+        "longname": "a NAME_MAX-length filename",
+        "deep": "a directory chain near PATH_MAX",
+        "ambiguous": "many entries sharing one long common prefix",
+        "bigdir": "a directory with thousands of entries — the listing pager",
+        "symlink": "symlinks to a dir, to a file, and dangling",
+        "symlink_loop": "a symlink LOOP (resolves ELOOP)",
+        "perm_noread": "a directory with no READ permission",
+        "perm_noexec": "a directory with no EXECUTE permission",
+        "casecoll": "case-colliding names on a case-insensitive volume",
+    }
+    out = []
+    for cat, note in notes.items():
+        prefixes = tree.prefixes.get(cat)
+        if not prefixes:
+            skips[f"fstree-category-absent:{cat}"] += 1
+            continue
+
+        def make(rng, _p=tuple(prefixes)):
+            return (rng.choice(FSTREE_CMDS) + rng.choice(_p), [])
+
+        out.append(Surface(f"fs_{cat}", note, make))
+    return out
+
+
+def fstree_report(tree: FsTree, limit=6) -> list:
+    """Lines describing what the FILESYSTEM actually accepted, for the run
+    header. This is the proof that the tree matched its specification; a
+    category that folded or was rejected is named here and disabled above."""
+    lines = [
+        f"# fstree: seed={tree.seed} token={tree.tok!r} root={tree.root}",
+        f"#   planned {len(tree.plan)} entries  ->  {len(tree.created)} created, "
+        f"{len(tree.folded)} folded, {len(tree.rejected)} rejected, "
+        f"{len(tree.skipped)} skipped",
+        f"#   plus {len(tree.runtime)} run-time entries the plan cannot name "
+        f"(the deep chain, sized against PATH_MAX from this scratch root)",
+    ]
+    for label, items in (("folded", tree.folded), ("rejected", tree.rejected),
+                         ("skipped", tree.skipped)):
+        for rel, why in items[:limit]:
+            lines.append(f"#   {label:8s} {rel!r}: {why}")
+        if len(items) > limit:
+            lines.append(f"#   {label:8s} ... {len(items) - limit} more")
+    lines.append("#   usable categories: "
+                 + (", ".join(sorted(tree.prefixes)) or "NONE"))
+    return lines
+
+
+def fstree_cleanup(root: str):
+    """Remove the tree, restoring the permission bits that would otherwise stop
+    the walk. A replay rebuilds it from the seed, so nothing is lost."""
+    if not root or not os.path.isdir(root):
+        return
+    for dirpath, dirnames, _ in os.walk(root):
+        for name in dirnames:
+            try:
+                os.chmod(os.path.join(dirpath, name), 0o755)
+            except OSError:
+                pass
+    shutil.rmtree(root, ignore_errors=True)
+
+
+# ── interruption axis (`--interrupt-fuzz`) ───────────────────────────────────
+#
+# Nothing in this harness — or any sibling — ever interrupts a completion, and
+# real completions are interrupted constantly: the window is resized, ^C is
+# pressed, the next command is typed before the current one has finished
+# drawing. This project has shipped a SIGWINCH-triggered infinite `zrefresh`
+# recursion that reproduced only at tiny row counts, and a type-ahead-eaten-
+# after-accept bug.
+#
+# Three kinds, delivered IDENTICALLY to both shells at one controlled point:
+#
+#   winch   a REAL terminal resize (TIOCSWINSZ on the pty master), which is what
+#           raises SIGWINCH on the shell — not `kill -WINCH`, which would skip
+#           the size change the handler reads.
+#   int     SIGINT to the shell's process group, the way the tty driver delivers
+#           a ^C.
+#   type    a burst of type-ahead written in ONE write while the shell is still
+#           computing.
+#
+# Three anchors:
+#
+#   before      after the buffer has settled, before the first TAB      (exact)
+#   menu        after the first completion key has SETTLED, i.e. while a
+#               listing / menu is on screen                             (exact)
+#   midkey<N>   `--interrupt-delay-ms` after key N's write, BEFORE the screen is
+#               drained — genuinely mid-computation, and therefore genuinely
+#               racy: the two shells do not compute for the same length of time,
+#               so the interrupt does not always land at the same point in each.
+#               That is a property of the thing being tested, not a defect in
+#               the harness; `--confirm` labels a non-reproducing divergence
+#               FLAKY exactly as it does everywhere else.
+INTERRUPT_KINDS = ("winch", "int", "type")
+
+# Resize targets. Small row counts first: that is the shape the known zrefresh
+# recursion needed. Both shells always get the SAME target.
+WINCH_TARGETS = [Geom(6, 100), Geom(8, 40), Geom(24, 80), Geom(40, 200),
+                 Geom(12, 60), Geom(30, 120)]
+
+# Type-ahead payloads: a plain word, a word plus a TAB (a completion queued
+# behind a completion), and a control character that is a widget in both keymaps.
+TYPEAHEAD_PAYLOADS = ["ab", "z", "e\t", "ab\t", "\x02\x02", "xy"]
+
+
+@dataclass
+class Interrupt:
+    kind: str                 # one of INTERRUPT_KINDS
+    at: str                   # "before" | "menu" | "midkey<N>"
+    geom: object = None       # winch: the target size
+    payload: str = ""         # type: the bytes written
+
+    def short(self) -> str:
+        if self.kind == "winch":
+            return f"winch->{geom_str(self.geom)}"
+        if self.kind == "type":
+            return f"type{self.payload!r}"
+        return "SIGINT"
+
+    def label(self) -> str:
+        return f"{self.short()}@{self.at}"
+
+    def midkey(self):
+        """The 1-based key index this interrupt is anchored mid-computation to,
+        or None."""
+        if self.at.startswith("midkey"):
+            try:
+                return int(self.at[len("midkey"):])
+            except ValueError:
+                return None
+        return None
+
+    def apply(self, sess) -> bool:
+        if self.kind == "winch":
+            return sess.resize(self.geom.rows, self.geom.cols)
+        if self.kind == "int":
+            return sess.send_signal(signal.SIGINT)
+        if self.kind == "type":
+            if sess.exit_status() is not None:
+                return False
+            try:
+                sess.send(self.payload.encode())
+                return True
+            except OSError:
+                return False
+        raise ValueError(f"unknown interrupt kind: {self.kind}")
+
+
+def interrupt_encode(iv: Interrupt) -> str:
+    if iv is None:
+        return ""
+    if iv.kind == "winch":
+        return f"winch@{iv.at}:{iv.geom.rows}x{iv.geom.cols}"
+    if iv.kind == "type":
+        return f"type@{iv.at}:{_quote_payload(iv.payload)}"
+    return f"int@{iv.at}"
+
+
+def interrupt_decode(spec: str) -> Interrupt:
+    """Parse `kind@anchor[:param]`. Strict — a typo is an error, never a
+    silently-skipped interrupt that would make the cell read as a pass for an
+    interruption that never happened."""
+    kind, sep, rest = spec.partition("@")
+    if not sep or kind not in INTERRUPT_KINDS:
+        raise ValueError(f"{spec!r}: expected <{'|'.join(INTERRUPT_KINDS)}>@anchor")
+    at, _, param = rest.partition(":")
+    if at != "before" and at != "menu" and not at.startswith("midkey"):
+        raise ValueError(f"{spec!r}: anchor must be before|menu|midkey<N>")
+    if at.startswith("midkey"):
+        try:
+            n = int(at[len("midkey"):])
+        except ValueError:
+            raise ValueError(f"{spec!r}: midkey needs a key index, e.g. midkey1")
+        if n < 1:
+            raise ValueError(f"{spec!r}: midkey index is 1-based")
+    if kind == "winch":
+        try:
+            r, c = param.split("x")
+            geom = Geom(int(r), int(c))
+        except Exception:
+            raise ValueError(f"{spec!r}: winch needs a :ROWSxCOLS target")
+        return Interrupt("winch", at, geom=geom)
+    if kind == "type":
+        payload = _unquote_payload(param)
+        if not payload:
+            raise ValueError(f"{spec!r}: type needs a payload")
+        return Interrupt("type", at, payload=payload)
+    return Interrupt("int", at)
+
+
+def gen_interrupt(rng, kinds, presses) -> Interrupt:
+    """One seeded interrupt. `menu` is only offered when there is a first key
+    for the menu to be drawn by, and `midkey<N>` only for keys that exist."""
+    kind = rng.choice(list(kinds))
+    anchors = ["before"]
+    if presses >= 1:
+        anchors.append("menu")
+        anchors += [f"midkey{n}" for n in range(1, min(presses, 3) + 1)]
+    at = rng.choice(anchors)
+    if kind == "winch":
+        return Interrupt("winch", at, geom=rng.choice(WINCH_TARGETS))
+    if kind == "type":
+        return Interrupt("type", at, payload=rng.choice(TYPEAHEAD_PAYLOADS))
+    return Interrupt("int", at)
+
+
+def death_report(sessions) -> list:
+    """[(label, kind, value), ...] for every session whose child has exited."""
+    out = []
+    for s in sessions:
+        st = s.exit_status()
+        if st is not None:
+            out.append((s.label, st[0], st[1]))
+    return out
+
+
+def death_str(deaths) -> str:
+    parts = []
+    for label, kind, value in deaths:
+        if kind == "signal":
+            try:
+                name = signal.Signals(value).name
+            except ValueError:                        # pragma: no cover
+                name = f"signal {value}"
+            parts.append(f"{label} killed by {name}")
+        else:
+            parts.append(f"{label} exited {value}")
+    return "; ".join(parts) or "no death"
+
+
 def available_surfaces(skips: Counter, pool=None) -> list:
     """The surfaces usable on THIS host. Every dropped surface is counted under
     `unavailable-surface:<name>` and printed in the summary — never silently
@@ -1908,7 +2658,7 @@ def saved_path(outdir, seed, n, suffix=""):
 
 
 def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
-               timings_out=None):
+               timings_out=None, interrupt=None, deaths_out=None):
     """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
     `buffer`, optionally run an EDIT PROGRAM over it, then send each key in
     `keys` one at a time, capturing + byte-diffing BOTH screens AFTER EACH
@@ -1934,6 +2684,16 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
 
     A `\\n` in `buffer` is typed as a real Return on a deliberately incomplete
     line, so both shells continue with PS2 — that is the multiline surface.
+
+    `interrupt` (None = the pre-existing behaviour, nothing is ever delivered)
+    is one Interrupt applied IDENTICALLY to both shells at its anchor: a real
+    TIOCSWINSZ resize, a SIGINT to the shell's process group, or a type-ahead
+    burst. See the Interrupt comment block.
+
+    `deaths_out` (None = not collected) is a list the harness appends
+    `(side, kind, value)` to as soon as either child is seen to have exited.
+    A shell that DIED is its own verdict upstream — never a pass and never a
+    plain FAIL — so the run stops there and names which side went and how.
 
     Returns (fail_step, records): fail_step is the 1-based index of the first
     STEP whose screens diverge (0 if all match); records is
@@ -1967,11 +2727,44 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
         records.append((step[0], label, rg, tg, d))
         return d
 
+    def died():
+        """True once either child has exited, with the fact recorded.
+
+        Checked after EVERY drain, not only under --interrupt-fuzz: a shell that
+        crashed mid-cell is a finding in its own right, and the alternative is
+        comparing a live shell's screen against a dead one's last frame and
+        calling the result a completion divergence (or, when the frames happen
+        to match, a pass). WNOHANG only — nothing here ever blocks."""
+        d = death_report((ref, test))
+        if not d:
+            return False
+        if deaths_out is not None:
+            deaths_out.extend(d)
+        return True
+
+    def interrupt_at(anchor, iv):
+        """Deliver `iv` to BOTH shells when its anchor matches. Returns the
+        diffs of the assertion that follows, or None when nothing was
+        delivered."""
+        if iv is None or iv.at != anchor:
+            return None
+        for s in (ref, test):
+            iv.apply(s)
+        drain_both(max_wait=10.0, first_wait=2.0)
+        return compare("intr:" + iv.label())
+
+    delay = max(0.0, getattr(args, "interrupt_delay_ms", 40) / 1000.0)
+
     try:
         for s in (ref, test):
             s.drain_settled(max_wait=3.0, first_wait=2.0)
             s.send(source_cmd)
             if not s.wait_for_prompt(timeout=25.0):
+                # Record a death HERE too: a shell that crashed during init also
+                # "never reached a prompt", and round 3 established that
+                # labelling that as a timeout is how a real segfault stayed
+                # hidden for two rounds.
+                died()
                 return (1, [(1, "(init)", None, None, None)])
         for s in (ref, test):
             s.fresh_prompt()
@@ -1999,9 +2792,32 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
                 drain_both(max_wait=6.0, first_wait=1.5)
                 if compare("edit:" + edit_label(tok)):
                     return (step[0], records)
+                if died():
+                    return (step[0], records)
+        # An interrupt anchored BEFORE the first completion key: the buffer is
+        # on screen and settled, nothing is computing.
+        if interrupt_at("before", interrupt):
+            return (step[0], records)
+        if died():
+            return (step[0], records)
         for kn, key in enumerate(keys, 1):
             for s in (ref, test):
                 s.send_key(key)
+            # An interrupt anchored MID-COMPUTATION: the key has been written to
+            # both shells and neither screen has been drained, so the shells are
+            # still working on it. The delay is nominal and identical on both
+            # sides, but the two shells do not compute for the same length of
+            # time, so where it lands inside each is not identical — that is
+            # inherent to interrupting a running computation, and --confirm
+            # labels a non-reproducing divergence FLAKY as usual.
+            mid = interrupt.midkey() if interrupt is not None else None
+            key_label = key
+            if mid == kn:
+                if delay:
+                    select.select([], [], [], delay)
+                for s in (ref, test):
+                    interrupt.apply(s)
+                key_label = f"{key}!intr:{interrupt.short()}"
             # the FIRST completion keystroke is cold (autoload chain) → long
             # first-byte wait; later keys are warm menu redraws / filter edits.
             # Keyed on position within the KEY phase, not on the global step
@@ -2011,7 +2827,18 @@ def run_keyseq(init_file, buffer, keys, args, env, geom, edits=None,
             drain_both(max_wait=12.0, first_wait=fw)
             if measuring:
                 timings_out.append((key, ref.timing, test.timing))
-            if compare(key):
+            if compare(key_label):
+                return (step[0], records)
+            if died():
+                return (step[0], records)
+            # An interrupt anchored at MENU: the first completion key has
+            # settled, so a listing / menu is on screen and the resize (or ^C,
+            # or type-ahead) lands on a shell that is DISPLAYING a menu rather
+            # than computing one. This is the exact anchor the known
+            # SIGWINCH/zrefresh recursion needed.
+            if kn == 1 and interrupt_at("menu", interrupt):
+                return (step[0], records)
+            if died():
                 return (step[0], records)
         return (0, records)
     finally:
@@ -2155,6 +2982,15 @@ class Cell:
     edit_mode: str = None
     edit_gen: str = ""
     expect: str = None
+    # ── fstree-fuzz: the hermetic tree BOTH shells are cd'd into (None = the
+    # pre-existing behaviour, no `cd` line in the init at all). `fstree_seed` is
+    # carried so every failure line and every replay can rebuild the identical
+    # tree from the seed alone.
+    cwd: str = None
+    fstree_seed: int = None
+    # ── interrupt-fuzz: one Interrupt applied identically to both shells at its
+    # anchor (None = nothing is ever delivered, the pre-existing behaviour).
+    interrupt: object = None
 
 
 @dataclass
@@ -2171,7 +3007,12 @@ class ConvCell(Cell):
 @dataclass
 class CellResult:
     cell: object
-    status: str = "PASS"          # PASS | FAIL | FLAKY | SKIP
+    # PASS | FAIL | FLAKY | SKIP | DIED. DIED is its OWN verdict: a shell that
+    # exited mid-cell is never a pass and never a plain FAIL — the report has to
+    # name which side went and with what signal, because a crashed reference
+    # shell mislabelled as a timeout is how a real upstream zsh segfault stayed
+    # hidden for two rounds of this tooling.
+    status: str = "PASS"
     detail: str = ""
     fail_step: int = 0
     fail_key: str = ""
@@ -2200,16 +3041,31 @@ class CellResult:
     # --latency only: [(key, ref_KeyTiming, test_KeyTiming), ...] already
     # reduced to best-of-K. Never consulted by anything that decides `status`.
     latency: list = None
+    # [(side, "signal"|"exit", value), ...] when status == "DIED".
+    deaths: list = field(default_factory=list)
 
 
 def replay_command(args, buffer, keys, geom, zstyle_path,
-                   edits=None, editing_mode=None):
-    """A copy-pasteable command that reproduces exactly this divergence."""
+                   edits=None, editing_mode=None, fstree_seed=None,
+                   interrupt=None):
+    """A copy-pasteable command that reproduces exactly this divergence.
+
+    `--fstree-seed` is what makes an fstree finding replayable: the tree is a
+    pure function of the seed (and `--fstree-big`), so the replay REBUILDS the
+    identical tree at the identical absolute path before typing the buffer. The
+    seed therefore appears in every fstree failure line, not just in the run
+    header."""
     extra = ""
     if edits is not None:
         extra += f" --edit-program {shlex.quote(edit_encode(edits))}"
     if editing_mode:
         extra += f" --editing-mode {editing_mode}"
+    if fstree_seed is not None:
+        extra += (f" --fstree-seed {fstree_seed}"
+                  f" --fstree-big {getattr(args, 'fstree_big', 3000)}")
+    if interrupt is not None:
+        extra += f" --interrupt {shlex.quote(interrupt_encode(interrupt))}"
+        extra += f" --interrupt-delay-ms {getattr(args, 'interrupt_delay_ms', 40)}"
     return ("scripts/compsys_parity.py --lockstep"
             f" --seed {args.seed}"
             f" --zstyle {shlex.quote(zstyle_path)}"
@@ -2288,16 +3144,56 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
         return run_conv_cell(cell, args, env, dump, fpath_dirs, outdir)
     res = CellResult(cell=cell)
 
-    def run(buffer, keys, init_file, geom, edits=None):
+    def run(buffer, keys, init_file, geom, edits=None, deaths_out=None):
         # `edits=None` means "whatever the cell currently carries" — which is
         # the ORIGINAL program on the first run and the REDUCED one after
         # shrink_edits rewrote it. A default argument would have frozen the
         # original list object at def time and quietly re-run the long program
         # in every later probe.
         return run_keyseq(init_file, buffer, keys, args, env, geom,
-                          edits=cell.edit_tokens if edits is None else edits)
+                          edits=cell.edit_tokens if edits is None else edits,
+                          interrupt=cell.interrupt, deaths_out=deaths_out)
 
-    fail_step, records = run(cell.buffer, cell.keys, cell.init_file, cell.geom)
+    deaths: list = []
+    fail_step, records = run(cell.buffer, cell.keys, cell.init_file, cell.geom,
+                             deaths_out=deaths)
+    if deaths:
+        # A shell DIED. This is neither a pass nor an ordinary divergence, and
+        # the report says which side and with what signal instead of comparing a
+        # live screen against a dead one's last frame. Not shrunk: ddmin's
+        # oracle is "the same first-diff cell", and a cell that has no screens
+        # to diff has no such invariant.
+        res.status = "DIED"
+        res.deaths = deaths
+        # --confirm re-runs LABEL the death, exactly as they label a divergence,
+        # and exactly as there they can only ever ADD information: the verdict
+        # stays DIED either way and the run still exits non-zero. The label
+        # matters because this box kills processes under memory pressure while
+        # sixteen agents share it, and "died once, not again" is a different
+        # claim from "dies every time" — the first is worth re-running, the
+        # second is worth reporting upstream.
+        again = 0
+        for _ in range(max(0, args.confirm)):
+            d2: list = []
+            run(cell.buffer, cell.keys, cell.init_file, cell.geom,
+                deaths_out=d2)
+            if d2:
+                again += 1
+        res.detail = (death_str(deaths)
+                      + (f"; reproduced in {again}/{args.confirm} re-runs"
+                         if args.confirm else "")
+                      + ("  — did NOT reproduce, so this may be the machine "
+                         "(memory pressure) rather than the shell"
+                         if args.confirm and again == 0 else ""))
+        step, key, rg, tg, diffs = records[-1]
+        res.fail_step, res.fail_key = step, key
+        res.ref_grid, res.test_grid = rg or [], tg or []
+        res.diffs = diffs or []
+        res.replay = replay_command(args, cell.buffer, cell.keys, cell.geom,
+                                    cell.zstyle_path, cell.edit_tokens,
+                                    cell.edit_mode, cell.fstree_seed,
+                                    cell.interrupt)
+        return res
     # Generator sanity: did the REFERENCE shell end the edit phase on the line
     # the generator claims? Recorded and counted on its own; it can neither
     # create nor suppress a parity verdict.
@@ -2322,7 +3218,8 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
         res.detail = "a shell never reached prompt"
         res.replay = replay_command(args, cell.buffer, cell.keys, cell.geom,
                                     cell.zstyle_path, cell.edit_tokens,
-                                    cell.edit_mode)
+                                    cell.edit_mode, cell.fstree_seed,
+                                    cell.interrupt)
         return res
 
     res.diffs = diffs
@@ -2387,7 +3284,8 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
             path = os.path.join(d, "zstyle.zsh")
             with open(path, "w") as f:
                 f.write("\n".join(subset) + "\n")
-            return build_init_file(dump, fpath_dirs, path, cell.edit_mode)
+            return build_init_file(dump, fpath_dirs, path, cell.edit_mode,
+                                   cell.cwd)
 
         min_styles, p2 = shrink_styles(cell, args, env, res.sig,
                                        args.shrink_probes, run, build_init,
@@ -2404,7 +3302,8 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     res.min_keys, res.min_styles, res.min_edits = min_keys, min_styles, min_edits
     res.replay = replay_command(args, cell.buffer, min_keys or cell.keys,
                                 cell.geom, zstyle_for_replay,
-                                cell.edit_tokens, cell.edit_mode)
+                                cell.edit_tokens, cell.edit_mode,
+                                cell.fstree_seed, cell.interrupt)
     return res
 
 
@@ -2450,9 +3349,14 @@ def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
       4. reference identical, zshrs identical              -> PASS.
     """
     res = CellResult(cell=cell)
+    # Liveness is checked on the PAIR path too. Without it, a cell in which BOTH
+    # shells died would leave two identical (empty) screens and score as
+    # "both programs converge on both shells" — a pass produced by two corpses.
+    pair_deaths: list = []
 
     def run(buffer, keys, init_file, geom, edits):
-        return run_keyseq(init_file, buffer, keys, args, env, geom, edits=edits)
+        return run_keyseq(init_file, buffer, keys, args, env, geom, edits=edits,
+                          deaths_out=pair_deaths)
 
     def both_legs(keys, init_file):
         """(bad_leg, records_A, records_B). `bad_leg` names the leg that
@@ -2493,8 +3397,21 @@ def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
                              else cell.b_edit_tokens),
             edit_mode=cell.edit_mode,
             edit_gen=f"{cell.edit_gen}/{leg}",
-            expect=cell.target)
+            expect=cell.target,
+            cwd=cell.cwd, fstree_seed=cell.fstree_seed,
+            interrupt=cell.interrupt)
         return run_cell(leg_cell, args, env, dump, fpath_dirs, outdir)
+
+    if pair_deaths:
+        # Checked BEFORE the convergence comparison: two dead shells draw
+        # identical (empty) screens, which is not evidence that two edit
+        # programs converge.
+        res.status = "DIED"
+        res.deaths = pair_deaths
+        res.detail = death_str(pair_deaths)
+        res.fail_step, res.fail_key = len(ra), "(convergence)"
+        res.replay = conv_replay_command(args, cell, cell.keys, cell.zstyle_path)
+        return res
 
     ref_a, test_a = ra[-1][2], ra[-1][3]
     ref_b, test_b = rb[-1][2], rb[-1][3]
@@ -2575,7 +3492,8 @@ def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
             with open(path, "w") as f:
                 f.write("\n".join(candidate) + "\n")
             return leakage_reproduces(
-                min_keys, build_init_file(dump, fpath_dirs, path, cell.edit_mode))
+                min_keys, build_init_file(dump, fpath_dirs, path,
+                                          cell.edit_mode, cell.cwd))
 
         if len(cell.statements) > 1:
             min_styles = ddmin(list(cell.statements), styles_still_leak,
@@ -2597,7 +3515,7 @@ def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
 
 
 def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
-                edit_pairs=None):
+                edit_pairs=None, tree=None, fs_surfaces=None):
     """Materialise every fuzz cell up front (zstyle subset, buffer, key path,
     geometry, init file) so the work list is fixed and reproducible from the
     seed alone before any shell is booted."""
@@ -2617,18 +3535,21 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
             f.write(f"# random combo seed={args.seed} index={n}: "
                     f"{len(subset)}/{len(statements)} statements\n")
             f.write("\n".join(subset) + "\n")
-        init_file = build_init_file(dump, fpath_dirs, combo_path)
-        # One init per editing mode, built once per combo and shared by every
-        # cell of that combo (booting a shell is the expensive part; writing an
-        # init file is not, but a fresh one per cell would multiply the
-        # temp-dir churn for no benefit).
+        # One init per (editing mode, cwd), built once per combo and shared by
+        # every cell of that combo (booting a shell is the expensive part;
+        # writing an init file is not, but a fresh one per cell would multiply
+        # the temp-dir churn for no benefit). `(None, None)` is the plain init
+        # every pre-existing cell used.
         mode_inits = {}
 
-        def init_for(mode):
-            if mode not in mode_inits:
-                mode_inits[mode] = build_init_file(dump, fpath_dirs,
-                                                   combo_path, mode)
-            return mode_inits[mode]
+        def init_for(mode=None, cwd=None):
+            key = (mode, cwd)
+            if key not in mode_inits:
+                mode_inits[key] = build_init_file(dump, fpath_dirs, combo_path,
+                                                  mode, cwd)
+            return mode_inits[key]
+
+        init_file = init_for()
 
         # `fuzz_buffers` is `--buffer-fuzz` OR `--multiline-fuzz`: both draw the
         # buffer from a surface pool, they just contribute different surfaces to
@@ -2668,6 +3589,71 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
                               geom=geom, statements=subset,
                               zstyle_path=saved_path(outdir, args.seed, n),
                               init_file=init_file, workdir=workdir))
+        # ── fstree cells (`--fstree-fuzz`) ──────────────────────────────────
+        #
+        # Their own cells rather than another entry in the shared surface pool,
+        # because they are the only ones that need BOTH shells `cd`'d into the
+        # hermetic tree — they carry `cwd` (which puts a `cd` line in their init)
+        # and `fstree_seed` (which puts `--fstree-seed` in their replay, so the
+        # replay rebuilds the identical tree before typing the buffer).
+        if fs_surfaces and tree is not None:
+            fs_init = init_for(None, tree.root)
+            for fi in range(args.fstree_cases):
+                frng = random.Random(f"{args.seed}:{n}:f{fi}")
+                surface, buf, pre = gen_buffer(frng, fs_surfaces)
+                geom = pick_geom(frng, args)
+                if len(PROMPT_SENTINEL) + 1 + len(buf) >= geom.rows * geom.cols:
+                    skips[f"fstree-buffer-exceeds-screen:{geom_str(geom)}"] += 1
+                    continue
+                keys = pre + gen_keyseq(
+                    random.Random(f"{args.seed}:{n}:f{fi}:keys"), args.presses)
+                cells.append(Cell(
+                    idx=n, uid=f"{n}_f{fi}", surface=surface, buffer=buf,
+                    keys=keys, geom=geom, statements=subset,
+                    zstyle_path=saved_path(outdir, args.seed, n),
+                    init_file=fs_init, workdir=workdir,
+                    cwd=tree.root, fstree_seed=tree.seed))
+        # ── interrupt cells (`--interrupt-fuzz`) ────────────────────────────
+        #
+        # Also their own cells: an interrupt has to be a property of a cell that
+        # the replay can carry (`--interrupt <spec>`), and folding it into the
+        # existing cells would silently change what every pre-existing surface
+        # measures. The buffer is drawn from whatever surface pools this run
+        # has — including the fstree pool, so an interrupt can land on a
+        # completion inside the adversarial tree.
+        if args.interrupt_fuzz:
+            i_pool = list(surfaces) + list(fs_surfaces or [])
+            for ii in range(args.interrupt_cases):
+                irng = random.Random(f"{args.seed}:{n}:i{ii}")
+                if i_pool:
+                    surface, buf, pre = gen_buffer(irng, i_pool)
+                    in_tree = surface.startswith("fs_")
+                elif fixed:
+                    b = irng.choice(fixed)
+                    surface, buf, pre = "fixed", (b if b.endswith(" ")
+                                                  else b + " "), []
+                    in_tree = False
+                else:
+                    skips["interrupt-no-buffer-source"] += 1
+                    continue
+                geom = pick_geom(irng, args)
+                if len(PROMPT_SENTINEL) + 1 + len(buf) >= geom.rows * geom.cols:
+                    skips[f"interrupt-buffer-exceeds-screen:{geom_str(geom)}"] += 1
+                    continue
+                keys = pre + gen_keyseq(
+                    random.Random(f"{args.seed}:{n}:i{ii}:keys"), args.presses)
+                iv = gen_interrupt(irng, args.interrupt_kinds_list, len(keys))
+                cells.append(Cell(
+                    idx=n, uid=f"{n}_i{ii}",
+                    surface=f"intr/{iv.kind}@{iv.at}/{surface}",
+                    buffer=buf, keys=keys, geom=geom, statements=subset,
+                    zstyle_path=saved_path(outdir, args.seed, n),
+                    init_file=(init_for(None, tree.root) if in_tree and tree
+                               else init_file),
+                    workdir=workdir,
+                    cwd=(tree.root if in_tree and tree else None),
+                    fstree_seed=(tree.seed if in_tree and tree else None),
+                    interrupt=iv))
         if not args.edit_fuzz:
             continue
         # ── edit-fuzz cells ─────────────────────────────────────────────────
@@ -2745,8 +3731,22 @@ def run_random_combos(args, dump, fpath_dirs, env):
                           f"compsys_parity_failing_combos_{args.seed}")
     os.makedirs(outdir, exist_ok=True)
 
+    # The hermetic filesystem tree. Built ONCE per run, verified against its own
+    # plan, and shared by every fstree cell — one tree at one absolute path, so
+    # both shells complete against literally the same directory.
+    tree = None
+    fs_surfaces = []
+    if args.fstree_fuzz:
+        tree = build_fstree(args.fstree_seed, args.fstree_big)
+        fs_surfaces = fstree_surfaces(tree, skips)
+        if not fs_surfaces:
+            fstree_cleanup(tree.root)
+            sys.exit("compsys_parity: --fstree-fuzz produced no usable "
+                     "categories — the filesystem accepted none of the planned "
+                     "entries (see the plan in fstree_plan)")
+
     cells = build_cells(args, dump, fpath_dirs, statements, surfaces, outdir,
-                        skips, edit_pairs)
+                        skips, edit_pairs, tree, fs_surfaces)
 
     print(f"# random-combo fuzz: {args.random_combos} combos, {len(cells)} cells, "
           f"{args.presses}-key paths (parity asserted after EACH key)")
@@ -2776,6 +3776,20 @@ def run_random_combos(args, dump, fpath_dirs, env):
               f"{len(edit_pairs)} (surface,mode) generators  "
               f"{n_edit} edit cells + {n_conv} convergent pairs "
               f"(parity asserted after EVERY edit token too)")
+    if tree is not None:
+        n_fs = sum(1 for c in cells if c.cwd == tree.root)
+        for line in fstree_report(tree):
+            print(line)
+        print(f"#   {len(fs_surfaces)} usable surfaces, {n_fs} cells complete "
+              f"INSIDE the tree (both shells cd'd to the same absolute path); "
+              f"a folded/rejected entry disables its category and is counted, "
+              f"never reported as a finding")
+    if args.interrupt_fuzz:
+        n_int = sum(1 for c in cells if c.interrupt is not None)
+        print(f"# interrupt-fuzz=True  kinds={','.join(args.interrupt_kinds_list)}"
+              f"  delay={args.interrupt_delay_ms}ms  {n_int} interrupted cells "
+              f"(delivered identically to both shells; a shell that DIES is its "
+              f"own verdict, never a pass and never a plain FAIL)")
     print(f"# failing combos saved to: {outdir}")
     print()
 
@@ -2792,8 +3806,9 @@ def run_random_combos(args, dump, fpath_dirs, env):
         pool = None
         stream = (work(c) for c in cells)
 
-    passed = failed = flaky = 0
+    passed = failed = flaky = died = 0
     by_category: Counter = Counter()
+    deaths_by_side: Counter = Counter()
     expect_bad: Counter = Counter()
     results = []
     book = (LatencyBook(args.latency_min_ms, args.latency_threshold,
@@ -2817,6 +3832,12 @@ def run_random_combos(args, dump, fpath_dirs, env):
                     f"{geom_str(c.geom):>7s} {c.buffer!r}")
             if c.edit_tokens:
                 head += f" +{edit_program_str(c.edit_tokens)} ({c.edit_mode})"
+            if c.interrupt is not None:
+                head += f" !{c.interrupt.label()}"
+            if c.fstree_seed is not None:
+                # The tree seed travels on EVERY fstree line, pass or fail: it
+                # is the only thing that rebuilds the tree the buffer refers to.
+                head += f" [fstree-seed {c.fstree_seed}]"
             if book is not None and res.latency:
                 # Inline, clearly namespaced `lat`, and RAW: the outlier
                 # judgement needs the whole run's distribution and is made in
@@ -2828,6 +3849,33 @@ def run_random_combos(args, dump, fpath_dirs, env):
             if res.status == "PASS":
                 passed += 1
                 print(f"{head}  keys={'+'.join(c.keys)}")
+                results.append(_cell_json(res))
+                continue
+            if res.status == "DIED":
+                # Its OWN verdict. Not a pass (the comparison never completed),
+                # not a plain FAIL (the two shells did not disagree about a
+                # screen — one of them stopped existing), and emphatically not a
+                # timeout: round 3 of this tooling established that calling a
+                # crashed reference shell a TIMEOUT hid a real upstream zsh
+                # segfault for two rounds.
+                died += 1
+                for side, kind, value in res.deaths:
+                    name = value
+                    if kind == "signal":
+                        try:
+                            name = signal.Signals(value).name
+                        except ValueError:            # pragma: no cover
+                            name = f"signal {value}"
+                    deaths_by_side[f"{side} {kind} {name}"] += 1
+                print(f"{head}  (DIED: {res.detail})")
+                print(f"      path      : {'+'.join(c.keys)}"
+                      f"  → died at step #{res.fail_step} "
+                      f"(step {res.fail_key!r})")
+                if c.interrupt is not None:
+                    print(f"      interrupt : {c.interrupt.label()}")
+                print("      note      : not shrunk — a cell with no screens to "
+                      "diff has no first-diff-cell invariant for ddmin")
+                print(f"      replay    : {res.replay}")
                 results.append(_cell_json(res))
                 continue
             if res.status == "SKIP":
@@ -2859,6 +3907,13 @@ def run_random_combos(args, dump, fpath_dirs, env):
             elif c.edit_tokens is not None:
                 print(f"      edits     : {edit_program_str(c.edit_tokens)}"
                       f"   mode={c.edit_mode}  gen={c.edit_gen}")
+            if c.interrupt is not None:
+                print(f"      interrupt : {c.interrupt.label()}"
+                      f"   (delay {args.interrupt_delay_ms}ms)")
+            if c.fstree_seed is not None:
+                print(f"      fstree    : seed={c.fstree_seed} "
+                      f"big={args.fstree_big} root={c.cwd}"
+                      f"   (the replay rebuilds this tree)")
             print(f"      path      : {'+'.join(c.keys)}"
                   f"  → diverges at step #{res.fail_step} (key {res.fail_key!r})")
             if res.sig:
@@ -2907,14 +3962,21 @@ def run_random_combos(args, dump, fpath_dirs, env):
     skipped_cells = sum(n for (_, st), n in by_category.items() if st == "SKIP")
     print()
     print(f"# {passed} passed, {failed} failed, {flaky} flaky, "
+          + (f"{died} died, " if died else "")
           + (f"{skipped_cells} not compared, " if skipped_cells else "")
           + f"{len(cells)} cells run")
-    if by_category and args.edit_fuzz:
+    if deaths_by_side:
+        print("# shells that DIED (own verdict — never a pass, never a plain "
+              "FAIL, never a timeout):")
+        for reason, count in sorted(deaths_by_side.items()):
+            print(f"#   {reason}: {count}")
+    if by_category and (args.edit_fuzz or args.fstree_fuzz
+                        or args.interrupt_fuzz):
         print("# per-category (generator[mode]):")
         cats = sorted({c for c, _ in by_category})
         for cat in cats:
             counts = {st: by_category[(cat, st)]
-                      for st in ("PASS", "FAIL", "FLAKY", "SKIP")
+                      for st in ("PASS", "FAIL", "FLAKY", "SKIP", "DIED")
                       if by_category[(cat, st)]}
             total = sum(counts.values())
             detail = "  ".join(f"{k}={v}" for k, v in counts.items())
@@ -2947,6 +4009,22 @@ def run_random_combos(args, dump, fpath_dirs, env):
             "geometry_fuzz": args.geometry_fuzz,
             "edit_fuzz": args.edit_fuzz,
             "edit_modes": list(args.edit_modes_list),
+            "fstree_fuzz": args.fstree_fuzz,
+            "fstree": ({"seed": tree.seed, "root": tree.root, "token": tree.tok,
+                        "big": args.fstree_big,
+                        "planned": len(tree.plan),
+                        "created": len(tree.created),
+                        "folded": [{"entry": r, "why": w} for r, w in tree.folded],
+                        "rejected": [{"entry": r, "why": w}
+                                     for r, w in tree.rejected],
+                        "skipped": [{"entry": r, "why": w}
+                                    for r, w in tree.skipped],
+                        "categories": sorted(tree.prefixes)}
+                       if tree is not None else None),
+            "interrupt_fuzz": args.interrupt_fuzz,
+            "interrupt_kinds": list(args.interrupt_kinds_list),
+            "interrupt_delay_ms": args.interrupt_delay_ms,
+            "deaths": dict(deaths_by_side),
             "categories": {f"{cat}|{st}": n
                            for (cat, st), n in sorted(by_category.items())},
             "generator_sanity_mismatches": dict(expect_bad),
@@ -2955,6 +4033,10 @@ def run_random_combos(args, dump, fpath_dirs, env):
             "confirm": args.confirm,
             "shrink_probes": args.shrink_probes,
             "summary": {"passed": passed, "failed": failed, "flaky": flaky,
+                        # Its own key: a DIED cell is not a parity failure and
+                        # must not be read as one, but it is also never a pass —
+                        # it makes the run exit non-zero on its own.
+                        "died": died,
                         "skipped": skipped, "cells": len(cells)},
             "skips": dict(skips),
             # Its own top-level key, never folded into `summary`: a latency
@@ -2972,7 +4054,14 @@ def run_random_combos(args, dump, fpath_dirs, env):
     # can never turn a correctness failure into a pass, and with the flag unset
     # (the default) it is always 0, so every pre-existing run keeps its exit
     # code exactly.
-    return 1 if (failed or flaky or lat_over) else 0
+    #
+    # `died` likewise only ever ADDS: a run in which a shell crashed cannot
+    # exit 0 no matter what the surviving screens said.
+    if args.fstree_fuzz and tree is not None and not args.fstree_keep:
+        fstree_cleanup(tree.root)
+    elif args.fstree_fuzz and tree is not None:
+        print(f"# fstree kept at {tree.root} (--fstree-keep)")
+    return 1 if (failed or flaky or died or lat_over) else 0
 
 
 def _cell_json(res) -> dict:
@@ -2999,6 +4088,15 @@ def _cell_json(res) -> dict:
         "zstyle_file": c.zstyle_path,
         "replay": res.replay,
     }
+    if c.fstree_seed is not None:
+        doc.update(fstree_seed=c.fstree_seed, fstree_root=c.cwd)
+    if c.interrupt is not None:
+        doc.update(interrupt=interrupt_encode(c.interrupt),
+                   interrupt_kind=c.interrupt.kind,
+                   interrupt_at=c.interrupt.at)
+    if res.deaths:
+        doc["deaths"] = [{"side": s, "kind": k, "value": v}
+                         for s, k, v in res.deaths]
     if res.latency:
         # Under `latency`, never under `status`/`detail`: the cell's parity
         # verdict is what the fields above say and nothing here modifies it.
@@ -3053,8 +4151,10 @@ def run_lockstep_case(args, init_file, env):
         sys.exit("compsys_parity: --lockstep needs at least one key in --keys")
     geom = Geom(args.rows, args.cols)
     edits = args.edit_tokens
+    deaths: list = []
     fail_step, records = run_keyseq(init_file, args.case, keys, args, env, geom,
-                                    edits=edits)
+                                    edits=edits, interrupt=args.interrupt_obj,
+                                    deaths_out=deaths)
     step, key, rg, tg, diffs = records[-1]
     # Latency, measured in its OWN runs after the verdict-producing one above,
     # so the number reported here is never the thing that decided PASS/FAIL.
@@ -3072,6 +4172,26 @@ def run_lockstep_case(args, init_file, env):
     if edits is not None:
         print(f"# edit program : {edit_program_str(edits)}"
               f"   mode={args.editing_mode or 'shell default'}")
+    if args.interrupt_obj is not None:
+        print(f"# interrupt    : {args.interrupt_obj.label()}"
+              f"   (delay {args.interrupt_delay_ms}ms)")
+    if deaths:
+        # Named BEFORE any grid comparison is reported: a dead shell's last
+        # frame is not a screen the other shell can be measured against.
+        print(f"DIED lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
+              f"  at step #{step} (step {key!r}): {death_str(deaths)}")
+        if args.json:
+            _write_json(args.json, {
+                "schema": "compsys-parity/1", "mode": "lockstep",
+                "argv": sys.argv[1:], "zshrs": args.zshrs, "zsh": args.zsh,
+                "summary": {"passed": 0, "failed": 0, "flaky": 0, "died": 1,
+                            "skipped": 0, "cells": 1},
+                "results": [{"id": "lockstep", "status": "DIED",
+                             "fail_step": step, "fail_key": key,
+                             "deaths": [{"side": s, "kind": k, "value": v}
+                                        for s, k, v in deaths]}],
+            })
+        return 1
     if fail_step == 0:
         print(f"PASS lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
               f"  ({len(records)} steps, screens identical after every one)")
@@ -3261,6 +4381,66 @@ def main():
                          "multi-row prompt is the shape of a bug this project "
                          "has already shipped. Implies --random-combos 1 if "
                          "that is 0.")
+    ap.add_argument("--fstree-fuzz", action="store_true",
+                    help="build a SEEDED, HERMETIC directory tree in a scratch "
+                         "dir, cd BOTH shells into it (same absolute path) and "
+                         "complete inside it. Covers names that are hostile to "
+                         "a completer: spaces/tabs/leading+trailing spaces and "
+                         "a literal newline; glob metacharacters (* ? [ ] { } ~ "
+                         "# ^) as literal name content; quote and escape "
+                         "characters (' \" \\ ` $ !); option-looking names "
+                         "(-dash, --ddash, -) and dotfiles; a NAME_MAX-length "
+                         "name and a chain near PATH_MAX; a long shared prefix "
+                         "and a directory of thousands of entries (the pager); "
+                         "symlinks to a dir, to a file, dangling, and a LOOP; "
+                         "directories with no read and no execute permission; "
+                         "and case-colliding names. Every planned entry is "
+                         "verified on disk and a folded/rejected one disables "
+                         "its category as a counted GENERATOR issue, never a "
+                         "finding. Implies --random-combos 1 if that is 0.")
+    ap.add_argument("--fstree-seed", type=int, default=None, metavar="N",
+                    help="seed for the tree (default: --seed). The tree is a "
+                         "pure function of this seed and --fstree-big, so this "
+                         "is what a replay rebuilds it from; it is printed on "
+                         "every fstree result line and in every replay.")
+    ap.add_argument("--fstree-big", type=int, default=3000, metavar="N",
+                    help="entries in the large directory that exercises the "
+                         "listing/paging path (default 3000)")
+    ap.add_argument("--fstree-cases", type=int, default=6, metavar="N",
+                    help="fstree cells per combo (default 6)")
+    ap.add_argument("--fstree-keep", action="store_true",
+                    help="do NOT delete the tree at the end of the run "
+                         "(default: removed; a replay rebuilds it from the seed)")
+    ap.add_argument("--fstree-verify", action="store_true",
+                    help="build the tree, print what the FILESYSTEM actually "
+                         "accepted, folded or rejected, remove it and exit. "
+                         "Runs no shell — this is the proof that the tree "
+                         "matched its specification.")
+    ap.add_argument("--interrupt-fuzz", action="store_true",
+                    help="interrupt the completion. Delivers, IDENTICALLY to "
+                         "both shells at one controlled anchor: a real terminal "
+                         "resize (TIOCSWINSZ on the pty, which is what raises "
+                         "SIGWINCH), SIGINT to the shell's process group, or a "
+                         "burst of type-ahead. Anchors are `before` (the first "
+                         "TAB), `menu` (a listing is on screen) and `midkey<N>` "
+                         "(--interrupt-delay-ms after key N's write, while the "
+                         "shell is still computing). A shell that DIES gets its "
+                         "own verdict naming the side and the signal — never a "
+                         "pass, never a plain FAIL, never a timeout. Implies "
+                         "--random-combos 1 if that is 0.")
+    ap.add_argument("--interrupt-cases", type=int, default=4, metavar="N",
+                    help="interrupted cells per combo (default 4)")
+    ap.add_argument("--interrupt-kinds", default=",".join(INTERRUPT_KINDS),
+                    help="comma-separated subset of " + ",".join(INTERRUPT_KINDS))
+    ap.add_argument("--interrupt-delay-ms", type=int, default=40, metavar="MS",
+                    help="delay between a key's write and a midkey interrupt "
+                         "(default 40). Nominal and identical on both sides; "
+                         "the two shells do not compute for the same length of "
+                         "time, so a midkey finding can legitimately be FLAKY.")
+    ap.add_argument("--interrupt", default=None, metavar="SPEC",
+                    help="interrupt for --lockstep, in the form the fuzzer's "
+                         "replay lines carry: winch@menu:8x100, int@midkey1, "
+                         "type@midkey1:<percent-encoded>")
     ap.add_argument("--latency", action="store_true",
                     help="also MEASURE how long each keystroke takes on both "
                          "shells (time to first byte and to settle) and report "
@@ -3350,6 +4530,29 @@ def main():
     args.fuzz_buffers = args.buffer_fuzz or args.multiline_fuzz
     if args.multiline_fuzz and args.random_combos == 0:
         args.random_combos = 1
+    # `--fstree-seed` defaults to the run seed, so one `--seed N` reproduces the
+    # whole run including the tree; an explicit value pins the tree alone — and
+    # in --lockstep it is ALSO the signal to rebuild the tree and cd into it,
+    # which is how a replay line printed by an fstree failure reproduces.
+    args.fstree_explicit = args.fstree_seed is not None
+    if args.fstree_seed is None:
+        args.fstree_seed = args.seed
+    if args.fstree_big < 1:
+        sys.exit("compsys_parity: --fstree-big must be at least 1")
+    args.interrupt_kinds_list = [k.strip() for k in args.interrupt_kinds.split(",")
+                                 if k.strip()]
+    bad_kinds = [k for k in args.interrupt_kinds_list if k not in INTERRUPT_KINDS]
+    if bad_kinds:
+        sys.exit("unknown interrupt kind(s): " + ", ".join(bad_kinds))
+    if args.interrupt_fuzz and not args.interrupt_kinds_list:
+        sys.exit("compsys_parity: --interrupt-fuzz needs at least one kind")
+    try:
+        args.interrupt_obj = (interrupt_decode(args.interrupt)
+                              if args.interrupt else None)
+    except ValueError as exc:
+        sys.exit(f"compsys_parity: {exc}")
+    if (args.fstree_fuzz or args.interrupt_fuzz) and args.random_combos == 0:
+        args.random_combos = 1
     # Latency is REFUSED under --jobs > 1 rather than reported with a caveat.
     # Concurrent cells contend for the same cores, so every number would be a
     # measurement of the harness's own scheduling, and a wrong number in an
@@ -3391,6 +4594,34 @@ def main():
             print(f"{c.name:16s} {c.buffer!r:20s} {'+'.join(c.keys):20s} {c.note}")
         return 0
 
+    if args.fstree_verify:
+        # Build, read back, report, remove. No shell is booted: this answers
+        # "did the filesystem accept the tree the generator specified", which is
+        # a question about THIS disk, not about either shell.
+        tree = build_fstree(args.fstree_seed, args.fstree_big)
+        try:
+            for line in fstree_report(tree, limit=200):
+                print(line)
+            # Verified from what LANDED, not assumed from the platform: the
+            # case-colliding pair is planned as two files, and whether the
+            # second one folded onto the first is a property of THIS volume.
+            case_folded = [w for r, w in tree.folded
+                           if r.startswith(f"case{tree.tok}/")]
+            print("#   case-insensitivity: "
+                  + (f"CONFIRMED — the colliding twin {case_folded[0]}"
+                     if case_folded
+                     else "the case-colliding pair did NOT fold: this volume "
+                          "is case-SENSITIVE and both names exist"))
+            for cat, prefixes in sorted(tree.prefixes.items()):
+                print(f"#   {cat:14s} {len(prefixes)} prefixes: "
+                      + ", ".join(repr(p) for p in prefixes[:3]))
+        finally:
+            if not args.fstree_keep:
+                fstree_cleanup(tree.root)
+            else:
+                print(f"# kept at {tree.root} (--fstree-keep)")
+        return 0
+
     dump = None if args.no_dump else resolve_dump(args.dump)
     if args.std_fpath:
         fpath_dirs = std_fpath_dirs() + list(args.fpath)
@@ -3413,10 +4644,25 @@ def main():
     if args.lockstep:
         if args.case is None:
             sys.exit("compsys_parity: --lockstep needs --case")
-        return run_lockstep_case(
-            args,
-            build_init_file(dump, fpath_dirs, zstyle_file, args.editing_mode),
-            child_env(args.rows, args.cols))
+        # A replay line from an fstree failure carries --fstree-seed. Rebuild
+        # the identical tree at the identical absolute path FIRST, then cd both
+        # shells into it, so the buffer's relative path means what it meant in
+        # the run that reported the failure.
+        tree = None
+        if args.fstree_explicit or args.fstree_fuzz:
+            tree = build_fstree(args.fstree_seed, args.fstree_big)
+            for line in fstree_report(tree):
+                print(line)
+        try:
+            return run_lockstep_case(
+                args,
+                build_init_file(dump, fpath_dirs, zstyle_file,
+                                args.editing_mode,
+                                tree.root if tree else None),
+                child_env(args.rows, args.cols))
+        finally:
+            if tree is not None and not args.fstree_keep:
+                fstree_cleanup(tree.root)
 
     if args.case is not None:
         cases = [Case("adhoc", args.case, [k.strip() for k in args.keys.split(",") if k.strip()])]
