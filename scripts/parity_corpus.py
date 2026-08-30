@@ -22,6 +22,22 @@ are the fixed, machine-independent floor; discovery is the ceiling (4k+ cases
 on the author's box) and is opt-in per run because its size and content depend
 on what is installed.
 
+Beyond the fixed tables, the module carries the SHARED fuzz machinery both
+harnesses need, so an input found by one is replayable by the other:
+
+  gen_keyseq(rng, n)        random key path (TAB / navigation / filter chars).
+  gen_buffer(rng)           random command line drawn from the surface classes
+                            the CASES table is grouped by.
+  mutate_buffer(buf, rng)   one small structured edit to a command line.
+  mutate_keys(keys, rng)    one small structured edit to a key path.
+  fingerprint(a, b)         stable id for a divergence, with digits, paths and
+                            hex masked out, so the same bug seen in two cells
+                            reports one id instead of two.
+
+Every generator is a pure function of the `random.Random` it is handed, so
+(seed, index) reproduces an input exactly on any machine; `_validate()` proves
+that at import for a fixed sample, along with the table invariants.
+
 Run this file directly to print the tables:
 
     scripts/parity_corpus.py --list-keys
@@ -36,6 +52,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import random
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -226,6 +244,82 @@ KEY_SEQUENCES: dict[str, list[str]] = {
     "menusel_slash_search": ["tab", "tab", "slash", "s"],
     "menusel_isearch_back": ["tab", "tab", "ctrl-r", "s"],
     "menusel_isearch_fwd": ["tab", "tab", "ctrl-s", "s"],
+
+    # ── typing a character BETWEEN two completions ──────────────────────
+    #
+    # Outside an interactive menu the character self-inserts, so the second
+    # TAB completes a DIFFERENT word than the first one did. Nothing above
+    # re-completes after a self-insert: `tab_slash_tab`/`tab_space_tab` type
+    # a word SEPARATOR, which ends the word instead of extending it.
+    "tab_char_tab": ["tab", "s", "tab"],
+    "tab_char2_tab": ["tab", "s", "r", "tab"],
+    "tab_char_bs_tab": ["tab", "s", "bs", "tab"],
+
+    # ── interactive filter: narrow, then widen again ────────────────────
+    #
+    # `menusel_type_bs` deletes the only filter character. These narrow by
+    # two and back off by one or two, which is where the filter has to
+    # RECOMPUTE a wider match set rather than drop back to the full list,
+    # and where one backspace too many leaves the menuselect keymap.
+    "menusel_filter_bs1": ["tab", "tab", "s", "r", "bs"],
+    "menusel_filter_bs2": ["tab", "tab", "s", "r", "bs", "bs"],
+    "menusel_filter_bs_over": ["tab", "tab", "s", "bs", "bs"],
+    "menusel_filter_retype": ["tab", "tab", "s", "r", "bs", "c"],
+    "menusel_filter_bs_arrows": ["tab", "tab", "s", "r", "bs", "down", "up"],
+
+    # ── undo ────────────────────────────────────────────────────────────
+    #
+    # `tab_undo` undoes a single completion. Undo after the menu has been
+    # navigated, after a second TAB, and twice in a row are different
+    # states: the change group a completion opens has to be closed exactly
+    # once no matter how many menu entries were cycled through.
+    "tab_undo2": ["tab", "ctrl-_", "ctrl-_"],
+    "tab_undo_tab": ["tab", "ctrl-_", "tab"],
+    "tab2_undo": ["tab", "tab", "ctrl-_"],
+    "tab_down_undo": ["tab", "down", "ctrl-_"],
+    "tab_accept_undo": ["tab", "down", "space", "ctrl-_"],
+
+    # ── accept-and-hold (^O) ────────────────────────────────────────────
+    #
+    # ^O is accept-line-and-down-history in BOTH shells (verified with
+    # `bindkey "^O"` under `-f`), so it is a comparable path: it accepts the
+    # line WITH a menu still open, which has to tear the menu down and leave
+    # the next prompt clean.
+    "tab_ctrl_o": ["tab", "ctrl-o"],
+    "tab_down_ctrl_o": ["tab", "down", "ctrl-o"],
+    "tab_ctrl_o2": ["tab", "ctrl-o", "ctrl-o"],
+
+    # ── list, then complete / abort ─────────────────────────────────────
+    "tab_ctrl_d_ctrl_g": ["tab", "ctrl-d", "ctrl-g"],
+    "tab_ctrl_d_tab": ["tab", "ctrl-d", "tab"],
+    "ctrl_d_tab_ctrl_g": ["ctrl-d", "tab", "ctrl-g"],
+
+    # ── long walks in the REVERSE direction ─────────────────────────────
+    #
+    # `tab_wrap_up` walks 12 up; these wrap backwards through the reverse
+    # widget, the emacs binding and the horizontal axis, and walk far enough
+    # to wrap TWICE and to come back to the entry they started on. A list
+    # that scrolls correctly forwards can still leave the pager one row off
+    # coming back.
+    "tab_wrap_btab": ["tab"] + ["btab"] * 12,
+    "tab_wrap_left": ["tab"] + ["left"] * 12,
+    "tab_wrap_ctrl_p": ["tab"] + ["ctrl-p"] * 12,
+    "tab_wrap_pgup": ["tab"] + ["pgup"] * 4,
+    "tab_wrap_down_up": ["tab"] + ["down"] * 12 + ["up"] * 12,
+    "tab_wrap_up_down": ["tab"] + ["up"] * 12 + ["down"] * 12,
+    "tab_wrap_btab_tab": ["tab"] + ["btab"] * 12 + ["tab"] * 12,
+
+    # ── deeper mid-word positions ───────────────────────────────────────
+    #
+    # `left_tab`/`left2_tab` stop one or two characters in. Three characters
+    # back lands inside a path COMPONENT rather than on its separator, and
+    # re-completing after moving right again has to rebuild PREFIX/SUFFIX
+    # from a cursor that moved without an edit.
+    "left3_tab": ["left", "left", "left", "tab"],
+    "left_tab_right_tab": ["left", "tab", "right", "tab"],
+    "left_tab_bs_tab": ["left", "tab", "bs", "tab"],
+    "left_ctrl_d": ["left", "ctrl-d"],
+    "left2_tab_tab": ["left", "left", "tab", "tab"],
 }
 
 # One sequence per printable filter character. Menu filtering is per-CHARACTER
@@ -276,6 +370,33 @@ DEFAULT_SEQUENCES = [
     "menusel_type_bs",
     "menusel_type_arrows",
     "menusel_type_ctrl_g",
+]
+
+# A second, OPT-IN battery: the paths added after DEFAULT_SEQUENCES was fixed.
+# It is deliberately NOT merged into DEFAULT_SEQUENCES — that list sizes every
+# routine sweep, and silently multiplying it would change the runtime and the
+# baseline of every harness that imports this module. A run that wants the
+# wider space asks for it (`--sequences "$(...)"` / `FUZZ_SEQUENCES`).
+FUZZ_SEQUENCES = [
+    "tab_char_tab",
+    "tab_char_bs_tab",
+    "menusel_filter_bs2",
+    "menusel_filter_bs_over",
+    "menusel_filter_retype",
+    "tab_undo2",
+    "tab_undo_tab",
+    "tab_down_undo",
+    "tab_accept_undo",
+    "tab_ctrl_o",
+    "tab_ctrl_d_ctrl_g",
+    "tab_wrap_btab",
+    "tab_wrap_left",
+    "tab_wrap_ctrl_p",
+    "tab_wrap_down_up",
+    "tab_wrap_up_down",
+    "left3_tab",
+    "left_tab_right_tab",
+    "left_tab_bs_tab",
 ]
 
 
@@ -450,10 +571,103 @@ CASES: list[Case] = [
     Case("brace_expand", "ls /usr/{b", "word inside a brace expansion", ("glob", "path")),
     Case("glob_suffix", "ls /usr/bin/z*", "trailing glob with a literal prefix", ("glob", "path")),
     Case("glob_qual_partial", "ls *(.", "partially typed glob qualifier", ("glob",)),
+
+    # ── words the cursor sits INSIDE ─────────────────────────────────────
+    #
+    # Every case above is completed with the cursor at the end of the buffer.
+    # These are written to be paired with the `left*_tab` / `home_tab`
+    # sequences: the word then has a real SUFFIX, so `compset -p`, PREFIX,
+    # SUFFIX and the inserted-suffix logic all have something to get wrong.
+    Case("midword_path", "ls /usr/share/zsh", "cursor inside a path component, text to its right", ("path", "midword")),
+    Case("midword_opt", "git log --oneline", "cursor inside a long option name", ("opt", "midword", "git")),
+    Case("midword_arg", "grep pattern file", "cursor inside a middle word of three", ("midword",)),
+
+    # ── quoted words with nothing typed yet ──────────────────────────────
+    #
+    # `quote_dq_path`/`quote_sq_path` already carry a partial path inside the
+    # quotes. An EMPTY quote is the harder shape: the completer has to decide
+    # the word is quoted from the opening character alone, and re-quote every
+    # match it inserts with no existing text to pattern off.
+    Case("quote_dq_bare", 'ls "', "completion just inside an opened double quote", ("quote", "path")),
+    Case("quote_sq_bare", "ls '", "completion just inside an opened single quote", ("quote", "path")),
+    Case("quote_bs_escaped_space", "ls /Applications/Google\\ ", "backslash-escaped space inside a path word", ("quote", "path", "optional")),
+    Case("quote_dq_var_path", 'ls "$HOME/', "path through a parameter inside double quotes", ("quote", "param", "path")),
+
+    # ── parameter expansion with nothing typed after the sigil ───────────
+    Case("param_bare", "echo $", "every parameter name — the widest param set", ("param", "huge")),
+    Case("param_bare_brace", "echo ${", "every parameter name, braced", ("param", "huge")),
+    Case("param_brace_subscript", "echo ${path[", "subscript inside a braced expansion", ("param",)),
+    Case("param_subscript_flag", "echo $path[(", "subscript-FLAG completion, not an index", ("param",)),
+    Case("param_assoc_key_partial", "echo $commands[z", "partial assoc key inside a subscript", ("param",)),
+    Case("param_arith", "echo $((", "arithmetic context — parameters without a sigil", ("param", "arith")),
+    Case("param_arith_partial", "echo $((RAN", "partial parameter name inside arithmetic", ("param", "arith")),
+    Case("param_arith_subscript", "echo $arr[$((", "arithmetic nested inside a subscript", ("param", "arith")),
+
+    # ── glob qualifier interior ──────────────────────────────────────────
+    Case("glob_qual_dir", "ls *(/", "qualifier list continuing after a type qualifier", ("glob",)),
+    Case("glob_qual_order", "ls *(om", "ordering qualifier — takes its own argument", ("glob",)),
+    Case("glob_qual_mod", "ls *(.:", "history-style modifier after a qualifier", ("glob",)),
+
+    # ── brace expansion ──────────────────────────────────────────────────
+    Case("brace_alt", "ls {a,", "second alternative of a brace expansion", ("glob",)),
+    Case("brace_alt_path", "ls {/usr/b,/etc/h", "brace alternatives that are paths", ("glob", "path")),
+
+    # ── command substitution / process substitution interiors ────────────
+    #
+    # `cmd_in_cmdsubst` stops at the command word. These continue PAST it, so
+    # the inner command's own completer has to run in a nested parse context.
+    Case("cmdsubst_arg", "echo $(git ", "subcommand completion inside `$(`", ("sub", "compound", "git")),
+    Case("cmdsubst_path", "echo $(ls /us", "path completion inside `$(`", ("path", "compound")),
+    Case("procsubst_in", "diff <(", "command position inside `<(`", ("cmd", "compound", "huge")),
+    Case("procsubst_arg", "diff <(git ", "subcommand inside `<(`", ("sub", "compound", "git")),
+    Case("procsubst_out", "tee >(", "command position inside `>(`", ("cmd", "compound", "huge")),
+
+    # ── more precommands ─────────────────────────────────────────────────
+    Case("pre_noglob", "noglob ls /us", "path completion under `noglob`", ("pre", "path")),
+    Case("pre_nocorrect", "nocorrect gi", "command position after `nocorrect`", ("pre", "cmd")),
+    Case("pre_builtin", "builtin ", "builtin-name position after `builtin`", ("pre", "builtin", "huge")),
+    Case("pre_sudo_opt", "sudo -", "sudo's OWN options, not the command it runs", ("opt", "pre", "optional")),
+
+    # ── alias / equals expansion in command position ─────────────────────
+    #
+    # Both are host-dependent (`ll` has to be aliased, `=ls` needs an `ls` on
+    # $PATH and the EQUALS option), hence `optional`.
+    Case("alias_cmd", "ll -", "options completed for an ALIASED command name", ("cmd", "alias", "optional")),
+    Case("equals_cmd", "=ls", "equals-expansion in command position", ("cmd", "equals", "optional")),
+    Case("equals_arg", "echo =gr", "equals-expansion in an argument word", ("equals", "optional")),
+
+    # ── history expansion ────────────────────────────────────────────────
+    Case("hist_bang", "echo !", "history-expansion word — the `!` must not be completed as a glob", ("hist",)),
+    Case("hist_bang_cmd", "!gi", "history-expansion in command position", ("hist", "cmd")),
+    Case("hist_modifier", "echo !!:", "history word modifier", ("hist",)),
+
+    # ── assignment right-hand sides ──────────────────────────────────────
+    #
+    # `pre_assign` completes the COMMAND after an assignment. These complete
+    # the assignment's VALUE, which is a path context the parser has to reach
+    # through the `=`, and (for PATH/fpath) a colon-separated list.
+    Case("assign_rhs_path", "FOO=/us", "path completion on an assignment RHS", ("assign", "path")),
+    Case("assign_rhs_tilde", "FOO=~/", "tilde path on an assignment RHS", ("assign", "path", "tilde")),
+    Case("assign_rhs_colon", "PATH=/usr/bin:/us", "second element of a colon-separated path list", ("assign", "path")),
+    Case("assign_array", "fpath=(/us", "path inside an array-assignment literal", ("assign", "path")),
+    Case("assign_typeset", "typeset FOO=/us", "assignment RHS as an argument of typeset", ("assign", "path", "builtin")),
+
+    # ── reserved-word contexts ───────────────────────────────────────────
+    Case("kw_function", "function ", "function-definition position — a name, not a command", ("kw",)),
+    Case("kw_always", "{ true } always { tr", "command position inside an `always` block", ("kw", "cmd", "compound")),
+    Case("kw_case", "case $x in ", "pattern position of a `case`", ("kw", "compound")),
+    Case("kw_case_body", "case $x in *) tr", "command position inside a `case` arm", ("kw", "cmd", "compound")),
+    Case("kw_do", "for f in a b; do tr", "command position inside a `do` block", ("kw", "cmd", "compound")),
+    Case("kw_if", "if tr", "command position after `if`", ("kw", "cmd", "compound")),
+    Case("kw_coproc", "coproc gr", "command position after `coproc`", ("kw", "cmd")),
 ]
 
 # Sequences that cannot say anything for a given case tag, so the matrix skips
 # them instead of burning a pty round-trip on a guaranteed-identical screen.
+# Case names are ids: they key JSON results, report rows and `--case` lookups
+# across commits, so they are restricted to a shape that survives all three.
+_CASE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
 _SKIP: dict[str, set[str]] = {
     # A command-position TAB on an empty line lists thousands of matches; the
     # paging sequences are the interesting ones there, single-tab is not.
@@ -480,12 +694,53 @@ def _validate() -> None:
             if k not in KEYS and len(k) != 1:
                 raise ValueError(
                     f"parity_corpus: sequence {seq!r} names undefined key {k!r}")
-    unknown = [s for s in DEFAULT_SEQUENCES if s not in KEY_SEQUENCES]
-    if unknown:
-        raise ValueError(f"parity_corpus: DEFAULT_SEQUENCES has unknown {unknown}")
+    for what, names in (("DEFAULT_SEQUENCES", DEFAULT_SEQUENCES),
+                        ("FUZZ_SEQUENCES", FUZZ_SEQUENCES)):
+        unknown = [s for s in names if s not in KEY_SEQUENCES]
+        if unknown:
+            raise ValueError(f"parity_corpus: {what} has unknown {unknown}")
+        dupes = sorted({s for s in names if names.count(s) > 1})
+        if dupes:
+            raise ValueError(f"parity_corpus: {what} lists {dupes} twice")
 
+    # A case with no note or no tags is unselectable by `--tag` and unreadable
+    # in a report; a name that is not a stable identifier cannot be a JSON
+    # result id. Both are silent losses, so they fail here instead.
+    for c in CASES:
+        if not c.note:
+            raise ValueError(f"parity_corpus: case {c.name!r} has no note")
+        if not c.tags:
+            raise ValueError(f"parity_corpus: case {c.name!r} has no tags")
+        if not _CASE_NAME_RE.match(c.name):
+            raise ValueError(f"parity_corpus: case name {c.name!r} is not a stable id")
 
-_validate()
+    # An empty sequence compares two screens that were never keyed, i.e. a
+    # guaranteed pass — an audit corpus must not contain one. Keys go through
+    # `key_bytes` so the sequence check is exactly the rule the harness
+    # transmits by, not a looser copy of it.
+    for seq, keys in KEY_SEQUENCES.items():
+        if not keys:
+            raise ValueError(f"parity_corpus: sequence {seq!r} is empty")
+        for k in keys:
+            try:
+                key_bytes(k)
+            except UnknownKey:
+                raise ValueError(
+                    f"parity_corpus: sequence {seq!r} names undefined key {k!r}"
+                ) from None
+
+    # A `_SKIP` entry keyed on a tag no case carries, or naming a sequence that
+    # no longer exists, silently stops skipping anything — or silently skips
+    # nothing while looking like coverage policy. Both must fail loudly.
+    all_tags = {t for c in CASES for t in c.tags}
+    for tag, seqs in _SKIP.items():
+        if tag not in all_tags:
+            raise ValueError(f"parity_corpus: _SKIP keyed on unused tag {tag!r}")
+        gone = sorted(s for s in seqs if s not in KEY_SEQUENCES)
+        if gone:
+            raise ValueError(f"parity_corpus: _SKIP[{tag!r}] names unknown {gone}")
+
+    _validate_generators()
 
 
 def _applicable(case: Case, seq: str) -> bool:
@@ -592,6 +847,411 @@ def shrink(statements: list[str], still_fails, max_probes: int = 60) -> list[str
     return current
 
 
+# ── fuzz generators ──────────────────────────────────────────────────────────
+#
+# The tables above are the reproducible floor; fuzzing is how the space gets
+# WIDE. Both harnesses want the same two random inputs (a key path and a
+# command line) and both were growing private copies — `compsys_parity.py`
+# already had one for key paths. Private generators mean an input that diverges
+# under one harness cannot be replayed under the other, which is exactly what a
+# shared corpus exists to prevent, so they live here.
+#
+# Every generator is a pure function of the `random.Random` handed in. Nothing
+# reads the global RNG, the clock, or the environment, so `(seed, index)` is a
+# complete description of an input and a failing cell replays anywhere.
+
+# Key classes, by what the keystroke DOES once a completion is on screen.
+GEN_KEY_CLASSES: dict[str, tuple[str, ...]] = {
+    # another completion keystroke — cycle the menu forwards or backwards
+    "complete": ("tab", "btab"),
+    # move the selection without changing the line
+    "nav": ("down", "up", "left", "right", "ctrl-n", "ctrl-p",
+            "pgdn", "pgup", "home", "end"),
+    # a printable character: self-inserts normally, FILTERS inside an
+    # interactive menuselect — one keystroke, two entirely different keymaps
+    "filter": tuple(MENUSELECT_FILTER_CHARS),
+    # edit the line under the completion; completion state must be discarded
+    "edit": ("bs", "ctrl-w", "ctrl-h", "delete", "space", "slash"),
+    # leave the menu; the original line has to come back intact
+    "abort": ("ctrl-g", "esc", "ctrl-_"),
+    # list without inserting
+    "list": ("ctrl-d",),
+}
+
+# Default mix. `complete`/`nav`/`filter` in these proportions is the shape the
+# harness-private generator already fuzzed with, kept so switching to the
+# shared one does not silently change what a given seed explores. `edit`,
+# `abort` and `list` are available but off by default: they END the menu, so a
+# long path spends most of its keys outside completion when they are mixed in.
+GEN_KEY_WEIGHTS: dict[str, float] = {
+    "complete": 0.35,
+    "nav": 0.25,
+    "filter": 0.40,
+}
+
+
+def gen_keyseq(rng, length: int, start: str | None = "tab",
+               weights: dict[str, float] | None = None) -> list[str]:
+    """A random key path `length` keys long, as key NAMES.
+
+    Starts with `start` (default TAB) because a path that never completes says
+    nothing about completion; pass `start=None` for a path that begins in the
+    normal keymap (e.g. `ctrl-d` first, or cursor movement before the TAB).
+
+    `weights` selects among `GEN_KEY_CLASSES` — a run that wants the abort and
+    edit paths fuzzed passes them in. Classes are iterated in SORTED order so
+    the same seed picks the same keys regardless of dict insertion order.
+
+    Every name is put through `key_bytes()` before returning: a generator that
+    can emit an undefined name would have the harness self-insert its letters
+    and report the result as a completion divergence on both shells at once.
+    """
+    if length <= 0:
+        return []
+    weights = dict(weights) if weights else dict(GEN_KEY_WEIGHTS)
+    unknown = sorted(set(weights) - set(GEN_KEY_CLASSES))
+    if unknown:
+        raise ValueError(f"gen_keyseq: unknown key class(es) {unknown}")
+    classes = sorted(weights)
+    total = sum(max(0.0, weights[c]) for c in classes)
+    if total <= 0:
+        raise ValueError("gen_keyseq: weights sum to zero")
+
+    seq: list[str] = []
+    if start is not None:
+        seq.append(start)
+    while len(seq) < length:
+        r = rng.random() * total
+        chosen = classes[-1]
+        for c in classes:
+            r -= max(0.0, weights[c])
+            if r <= 0:
+                chosen = c
+                break
+        seq.append(rng.choice(GEN_KEY_CLASSES[chosen]))
+    for name in seq[:length]:
+        key_bytes(name)
+    return seq[:length]
+
+
+# Buffer fragments, grouped by the same surfaces the CASES table is grouped by.
+# They are deliberately PARTIAL (`/usr/l`, `${(`, `*(`) — a completion bug lives
+# in what the completer does with an incomplete word, not a finished one.
+_GEN_COMMANDS = ("ls", "cd", "cat", "cp", "grep", "git", "echo", "chmod",
+                 "kill", "print", "zstyle", "man", "ssh", "find")
+_GEN_PATHS = ("/", "/usr/", "/usr/bin/", "/usr/l", "/etc/", "/et", "~/", "~ro",
+              "./", "../", "//usr//", "/usr/bin/z")
+_GEN_PARAMS = ("$", "${", "$PA", "${(", "$path[", "$commands[", "$HOME/",
+               "$((", "${HOME}/", "$HOM")
+_GEN_GLOBS = ("*", "*(", "*(.", "*(/", "**/", "z*", "{a,", "{b")
+_GEN_OPTS = ("-", "--", "-l -", "--col")
+_GEN_REDIRS = ("> ", ">> ", "< ", "2> ")
+_GEN_PREFIXES = ("", "", "", "sudo ", "command ", "noglob ", "env ",
+                 "FOO=bar ", "nocorrect ")
+_GEN_SUBCMDS = ("git ", "git log ", "git checkout ", "git log --",
+                "zstyle ", "kill -")
+_GEN_ASSIGN_NAMES = ("FOO", "PATH", "fpath", "MANPATH")
+_GEN_QUOTE_CHARS = ('"', "'")
+
+# The surface a generated buffer belongs to. Named so a run can narrow the fuzz
+# to one surface (`gen_buffer(rng, classes=("param",))`) once a bug is smelled
+# there, without hand-writing a corpus file.
+GEN_BUFFER_CLASSES = ("cmd", "path", "quoted", "param", "glob", "opt",
+                      "redir", "sub", "cmdsubst", "assign")
+
+
+def gen_buffer(rng, classes: tuple[str, ...] | None = None) -> str:
+    """A random command line to complete on, drawn from one surface class.
+
+    The classes mirror the groupings in CASES, so a generated buffer is always
+    a plausible neighbour of a curated one rather than random noise: fuzzing
+    finds bugs near the shapes that already have them, and a buffer nothing can
+    complete only costs two pty round-trips to learn nothing.
+
+    Command words are truncated at a random point, which is what makes the
+    space large: `g`, `gi`, `gre` and `grep` complete against different-sized
+    match sets and fail independently.
+    """
+    classes = tuple(classes) if classes else GEN_BUFFER_CLASSES
+    unknown = sorted(set(classes) - set(GEN_BUFFER_CLASSES))
+    if unknown:
+        raise ValueError(f"gen_buffer: unknown buffer class(es) {unknown}")
+    kind = rng.choice(classes)
+    pre = rng.choice(_GEN_PREFIXES)
+    cmd = rng.choice(_GEN_COMMANDS)
+
+    if kind == "cmd":
+        return pre + cmd[:rng.randint(0, len(cmd))]
+    if kind == "path":
+        return f"{pre}{cmd} {rng.choice(_GEN_PATHS)}"
+    if kind == "quoted":
+        return (f"{pre}{cmd} {rng.choice(_GEN_QUOTE_CHARS)}"
+                f"{rng.choice(_GEN_PATHS + _GEN_PARAMS)}")
+    if kind == "param":
+        return f"{pre}echo {rng.choice(_GEN_PARAMS)}"
+    if kind == "glob":
+        return f"{pre}{cmd} {rng.choice(_GEN_GLOBS)}"
+    if kind == "opt":
+        return f"{pre}{cmd} {rng.choice(_GEN_OPTS)}"
+    if kind == "redir":
+        return f"{cmd} x {rng.choice(_GEN_REDIRS)}{rng.choice(_GEN_PATHS)}"
+    if kind == "sub":
+        sub = rng.choice(_GEN_SUBCMDS)
+        word = rng.choice(("", "", "che", "--", "-"))
+        return pre + sub + word
+    if kind == "cmdsubst":
+        opener = rng.choice(("$(", "`", "<(", ">("))
+        inner = rng.choice(("", cmd[:rng.randint(0, len(cmd))], f"{cmd} /us"))
+        return f"echo {opener}{inner}"
+    # assign
+    name = rng.choice(_GEN_ASSIGN_NAMES)
+    if rng.random() < 0.25:
+        return f"{name}=({rng.choice(_GEN_PATHS)}"
+    return f"{name}={rng.choice(_GEN_PATHS)}"
+
+
+# One structured edit per name. Mutation fuzzing beats pure generation once a
+# divergence exists: the neighbours of a failing input are where the boundary
+# of the bug is, and a neighbour is far more likely to fail than a fresh random
+# buffer is.
+BUFFER_MUTATIONS = ("truncate", "extend", "space", "quote", "prefix",
+                    "glob", "drop")
+
+
+def _apply_buffer_mutation(buffer: str, op: str, rng) -> str:
+    """One named edit. Returns `buffer` unchanged when the edit does not apply
+    (truncating an empty buffer, dropping a word that is not there)."""
+    head, sep, word = buffer.rpartition(" ")
+    if op == "truncate":
+        return buffer[:-rng.randint(1, 3)] if buffer else buffer
+    if op == "extend":
+        return buffer + rng.choice("abcdefghijklmnopqrstuvwxyz")
+    if op == "space":
+        return buffer[:-1] if buffer.endswith(" ") else buffer + " "
+    if op == "quote":
+        if not word:
+            return buffer
+        return f"{head}{sep}{rng.choice(_GEN_QUOTE_CHARS)}{word}"
+    if op == "prefix":
+        pre = rng.choice([p for p in _GEN_PREFIXES if p])
+        return pre + buffer
+    if op == "glob":
+        return buffer + rng.choice(("*", "(", "[", "?"))
+    if op == "drop":
+        return head + sep if sep else buffer
+    raise ValueError(f"_apply_buffer_mutation: unknown op {op!r}")
+
+
+def mutate_buffer(buffer: str, rng) -> str:
+    """One small structured edit to a command line — never the input back.
+
+    Returning the input would spend two pty boots re-running a cell that was
+    already run, and (worse) would report as a fresh confirmation of whatever
+    the original said. Ops that do not apply are retried; the fallback appends
+    a letter, which always changes the buffer.
+    """
+    for _ in range(8):
+        out = _apply_buffer_mutation(buffer, rng.choice(BUFFER_MUTATIONS), rng)
+        if out != buffer:
+            return out
+    return buffer + rng.choice("abcdefghijklmnopqrstuvwxyz")
+
+
+# Keys that reach the same WIDGET by a different binding, or the same axis in
+# the other direction. Swapping within a pair is the mutation that finds
+# bindings implemented on only one of the two paths — `tab_down` passing while
+# `tab_ctrl_n` diverges is a real shape (they are different keymap entries for
+# the same menu move).
+RELATED_KEYS: dict[str, tuple[str, ...]] = {
+    "tab": ("btab",),
+    "btab": ("tab",),
+    "down": ("up", "ctrl-n"),
+    "up": ("down", "ctrl-p"),
+    "left": ("right", "ctrl-b"),
+    "right": ("left", "ctrl-f"),
+    "ctrl-n": ("down", "ctrl-p"),
+    "ctrl-p": ("up", "ctrl-n"),
+    "ctrl-f": ("right", "ctrl-b"),
+    "ctrl-b": ("left", "ctrl-f"),
+    "pgdn": ("pgup", "down"),
+    "pgup": ("pgdn", "up"),
+    "home": ("end",),
+    "end": ("home",),
+    "bs": ("ctrl-h", "delete"),
+    "ctrl-h": ("bs",),
+    "delete": ("bs",),
+    "esc": ("ctrl-g",),
+    "ctrl-g": ("esc",),
+    "ctrl-c": ("ctrl-g",),
+    "ctrl-w": ("ctrl-u",),
+    "ctrl-u": ("ctrl-w",),
+    "cr": ("ctrl-o",),
+    "ctrl-o": ("cr",),
+    "ctrl-r": ("ctrl-s",),
+    "ctrl-s": ("ctrl-r",),
+}
+
+KEY_MUTATIONS = ("swap", "insert_filter", "duplicate", "drop", "append")
+
+# Keys worth appending: each ENDS the interaction in a different way, which is
+# where the teardown paths (menu removal, line restore, listing erase) live.
+_KEY_TAILS = ("tab", "btab", "ctrl-d", "ctrl-g", "esc", "bs", "ctrl-_", "cr")
+
+
+def mutate_keys(keys: list[str], rng) -> list[str]:
+    """One small structured edit to a key path — never the input back.
+
+    Same reasoning as `mutate_buffer`: neighbours of a failing path bound the
+    bug. The result is re-checked with `key_bytes()`, because a mutation that
+    could produce an undefined name would be transmitted as literal letters.
+    """
+    for _ in range(8):
+        out = list(keys)
+        op = rng.choice(KEY_MUTATIONS)
+        if op == "swap" and out:
+            idx = [i for i, k in enumerate(out) if k in RELATED_KEYS]
+            if idx:
+                i = rng.choice(idx)
+                out[i] = rng.choice(RELATED_KEYS[out[i]])
+        elif op == "insert_filter":
+            out.insert(rng.randint(1, len(out)) if out else 0,
+                       rng.choice(MENUSELECT_FILTER_CHARS))
+        elif op == "duplicate" and out:
+            i = rng.randrange(len(out))
+            out.insert(i, out[i])
+        elif op == "drop" and len(out) > 1:
+            del out[rng.randrange(len(out))]
+        elif op == "append":
+            out.append(rng.choice(_KEY_TAILS))
+        if out and out != keys:
+            for name in out:
+                key_bytes(name)
+            return out
+    return list(keys) + ["tab"]
+
+
+# ── divergence fingerprinting ────────────────────────────────────────────────
+#
+# A fuzz run reports the same underlying bug from many cells: the pid in a
+# prompt, the temp dir in a path and the match COUNT in a listing all differ
+# per cell while the bug is one bug. Masking those before hashing collapses
+# them to one id, which is what makes a sweep's output triageable — and it is a
+# grouping key only: nothing here decides whether two screens MATCH, so it
+# cannot make a run greener.
+FINGERPRINT_NONE = "fp:none"          # the two screens do not differ at all
+FINGERPRINT_VOLATILE = "fp:volatile"  # they differ ONLY in masked-out text
+
+_VOLATILE_PATTERNS = (
+    (re.compile(r"0x[0-9a-fA-F]+"), "0xH"),      # addresses
+    (re.compile(r"\b[0-9a-f]{7,}\b"), "HEX"),    # git shas, temp-name digests
+    (re.compile(r"/[^\s'\"|,;:()\[\]]+"), "/P"), # absolute paths, incl. pids
+    (re.compile(r"\d+"), "#"),                   # pids, counts, sizes, times
+)
+
+
+def mask_volatile(text: str) -> str:
+    """Replace the per-run text in one screen row.
+
+    Order matters: paths are masked BEFORE bare digits, so `/tmp/x-1234/f`
+    becomes one `/P` token rather than `/tmp/x-#/f` — otherwise two runs in two
+    temp dirs still fingerprint differently.
+    """
+    for pattern, replacement in _VOLATILE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text.rstrip()
+
+
+def fingerprint(rows_a: list[str], rows_b: list[str]) -> str:
+    """A stable id for ONE divergence between two screens.
+
+    Built from the SET of masked (reference, test) row pairs that differ, not
+    from row indices: the same bug lands on a different screen row when the
+    prompt or the listing above it is a different height, and an id that moved
+    with the row would report one bug as several.
+
+    Returns `FINGERPRINT_NONE` when the screens are identical and
+    `FINGERPRINT_VOLATILE` when every differing row masks to the same text —
+    the caller decided there was a divergence, this only says the id carries no
+    information beyond "something volatile moved".
+    """
+    n = max(len(rows_a), len(rows_b))
+    pairs = set()
+    differed = False
+    for i in range(n):
+        a = rows_a[i] if i < len(rows_a) else ""
+        b = rows_b[i] if i < len(rows_b) else ""
+        if a == b:
+            continue
+        differed = True
+        ma, mb = mask_volatile(a), mask_volatile(b)
+        if ma != mb:
+            pairs.add((ma, mb))
+    if not differed:
+        return FINGERPRINT_NONE
+    if not pairs:
+        return FINGERPRINT_VOLATILE
+    digest = hashlib.sha1(repr(sorted(pairs)).encode()).hexdigest()[:12]
+    return f"fp:{digest}"
+
+
+def _validate_generators(samples: int = 64) -> None:
+    """Generator invariants, checked at import alongside the tables.
+
+    The generators feed a fuzzer whose whole value is that a failing cell can
+    be replayed from `(seed, index)`. A generator that reads a global RNG, or
+    that can emit a key name the harness would type as letters, breaks that
+    silently — the run still produces numbers, they are just not reproducible
+    and not about completion. So the properties are asserted, not assumed.
+    """
+    for i in range(samples):
+        rng = random.Random(f"parity_corpus-selfcheck:{i}")
+        twin = random.Random(f"parity_corpus-selfcheck:{i}")
+
+        keys = gen_keyseq(rng, 6)
+        if keys != gen_keyseq(twin, 6):
+            raise ValueError("parity_corpus: gen_keyseq is not seed-reproducible")
+        if len(keys) != 6 or keys[0] != "tab":
+            raise ValueError(f"parity_corpus: gen_keyseq shape wrong: {keys}")
+
+        buf = gen_buffer(rng)
+        if buf != gen_buffer(twin):
+            raise ValueError("parity_corpus: gen_buffer is not seed-reproducible")
+
+        mutated = mutate_buffer(buf, rng)
+        if mutated != mutate_buffer(buf, twin):
+            raise ValueError("parity_corpus: mutate_buffer is not seed-reproducible")
+        if mutated == buf:
+            raise ValueError(f"parity_corpus: mutate_buffer returned its input {buf!r}")
+
+        mkeys = mutate_keys(keys, rng)
+        if mkeys != mutate_keys(keys, twin):
+            raise ValueError("parity_corpus: mutate_keys is not seed-reproducible")
+        if not mkeys or mkeys == keys:
+            raise ValueError(f"parity_corpus: mutate_keys returned its input {keys}")
+        for name in mkeys:
+            key_bytes(name)
+
+    # Fingerprints: identical screens have no id, a purely volatile difference
+    # is labelled as such, the SAME divergence under two different match counts
+    # collapses to one id, and two DIFFERENT divergences must not.
+    if fingerprint(["x"], ["x"]) != FINGERPRINT_NONE:
+        raise ValueError("parity_corpus: fingerprint invented a divergence")
+    if fingerprint(["pid 1234"], ["pid 5678"]) != FINGERPRINT_VOLATILE:
+        raise ValueError("parity_corpus: fingerprint did not mask volatile text")
+    if (fingerprint(["3 matches: foo"], ["3 matches: bar"])
+            != fingerprint(["17 matches: foo"], ["17 matches: bar"])):
+        raise ValueError("parity_corpus: fingerprint is not stable across counts")
+    if (fingerprint(["alpha"], ["beta"])
+            == fingerprint(["gamma"], ["delta"])):
+        raise ValueError("parity_corpus: fingerprint collides distinct divergences")
+
+
+# Tables and generators are both in scope by here, so the import-time check can
+# cover both. (The call used to sit directly under `_validate`; it moved down,
+# it did not go away.)
+_validate()
+
+
 # ── host discovery ───────────────────────────────────────────────────────────
 #
 # The hand-written CASES above are a fixed floor that any machine reproduces.
@@ -688,6 +1348,11 @@ def main() -> int:
     ap.add_argument("--matrix-size", action="store_true")
     ap.add_argument("--all-sequences", action="store_true",
                     help="size the matrix against every sequence, not the default battery")
+    ap.add_argument("--gen", type=int, default=0, metavar="N",
+                    help="print N seeded (buffer, key-path) fuzz inputs")
+    ap.add_argument("--gen-keys", type=int, default=5, metavar="N",
+                    help="key-path length for --gen")
+    ap.add_argument("--seed", type=int, default=0, help="seed for --gen")
     args = ap.parse_args()
 
     if args.list_keys:
@@ -695,7 +1360,8 @@ def main() -> int:
             print(f"{name:16s} {seq!r}")
     if args.list_sequences:
         for name, keys in KEY_SEQUENCES.items():
-            mark = "*" if name in DEFAULT_SEQUENCES else " "
+            mark = "*" if name in DEFAULT_SEQUENCES else (
+                "+" if name in FUZZ_SEQUENCES else " ")
             print(f"{mark} {name:18s} {','.join(keys)}")
     if args.list_cases:
         for c in CASES:
@@ -709,6 +1375,23 @@ def main() -> int:
         seqs = list(KEY_SEQUENCES) if args.all_sequences else DEFAULT_SEQUENCES
         cells = matrix(CASES, seqs)
         print(f"cases={len(CASES)} sequences={len(seqs)} cells={len(cells)}")
+    if args.gen:
+        rng = random.Random(args.seed)
+        for _ in range(args.gen):
+            buf = gen_buffer(rng)
+            keys = gen_keyseq(rng, args.gen_keys)
+            print(f"{buf!r:34s} {','.join(keys)}")
+    if not any((args.list_keys, args.list_sequences, args.list_cases,
+                args.list_discovered, args.matrix_size, args.gen)):
+        seqs = DEFAULT_SEQUENCES
+        print(f"cases={len(CASES)} keys={len(KEYS)} "
+              f"sequences={len(KEY_SEQUENCES)} "
+              f"default={len(seqs)} fuzz={len(FUZZ_SEQUENCES)} "
+              f"cells={len(matrix(CASES, seqs))}")
+        print(f"tags={','.join(sorted({t for c in CASES for t in c.tags}))}")
+        print("generators: " + ", ".join(sorted(
+            ("gen_keyseq", "gen_buffer", "mutate_buffer", "mutate_keys",
+             "fingerprint", "mask_volatile"))))
     return 0
 
 
