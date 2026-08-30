@@ -628,9 +628,23 @@ fn cmd_or_math() -> i32 {
         // c:506 — `cmdpop();` before rewind to command-parse path.
         cmdpop();
         // Back up and try as command
-        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-                hungetc(c);
+        // c:Src/lex.c:523 — `while (lexbuf.len > oldlen && !(errflag &
+        // ERRFLAG_ERROR))`. The errflag term was missing, and C's
+        // `lexbuf.len--` (c:524) decrements unconditionally while this
+        // relied on `pop()` yielding a char: a buffer that reports a
+        // length above `oldlen` but pops nothing spun here forever.
+        // `(( $+functions[a[b] ))` -- an unbalanced `[` inside a math
+        // subscript, which zsh rejects with "invalid subscript" -- hung
+        // the lexer, and with it any file containing one. That is
+        // generated code in the wild: `_uu-coreutils` defines
+        // `_uu-coreutils__[_commands` for coreutils' `[` utility, so
+        // prewarming a corpus containing it never finished.
+        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen
+            && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
+        {
+            match LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+                Some(c) => hungetc(c),
+                None => break, // c:524 — C's len-- cannot stall
             }
         }
         hungetc('(');
@@ -676,10 +690,15 @@ fn cmd_or_math() -> i32 {
     LEX_LEXSTOP.set(false);
     hungetc(')'); // c:515-518 — the `)` dquote_parse consumed
 
-    // Back up token
-    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-        if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-            hungetc(c);
+    // Back up token. c:Src/lex.c:523-527 — same guards as the error
+    // path above: stop on ERRFLAG_ERROR, and never spin when the buffer
+    // reports length but pops nothing.
+    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen
+        && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
+    {
+        match LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+            Some(c) => hungetc(c),
+            None => break, // c:524
         }
     }
     hungetc('(');
