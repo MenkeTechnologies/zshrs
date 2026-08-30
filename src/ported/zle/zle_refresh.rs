@@ -2308,6 +2308,34 @@ pub fn zrefresh() {
         // `raw_getbyte`'s ICANON guard reported EOF, ZLE ended the line and
         // the shell exited(0) the moment a long completion list was shown.
         let _ = crate::ported::zle::zle_main::zsetterm();
+        // c:1128-1135 —
+        // ```c
+        // #ifdef TIOCGWINSZ
+        //     if (winchanged) {
+        //         moveto(0, 0);
+        //         t0 = olnct;    /* this is to clear extra lines even when */
+        //         winchanged = 0;    /* the terminal cannot TCCLEAREOD      */
+        //         listshown = 0;
+        //     }
+        // #endif
+        // ```
+        // Set by `adjustwinsize` (Src/utils.c:1956) when the window really
+        // changed size. The terminal has already reflowed/dropped rows, so
+        // the video cursor's remembered position is meaningless: re-home it
+        // and forget that a listing is on screen, which lets the
+        // `showinglist = -2` re-arm below reprint the grid under the freshly
+        // drawn command line.
+        //
+        // c:1131's `t0 = olnct` (restored at c:1154-1155 as
+        // `olnct = min(t0, winh)`) is NOT ported: it feeds C's `obuf`, which
+        // survives `resetvideo` there but is dropped by the inlined
+        // resetvideo below (`OBUF.clear()`), so a restored OLNCT would
+        // describe rows this port no longer holds. The `!clearflag`
+        // TCCLEAREOD at c:1146-1150 covers the same ground here.
+        if crate::ported::utils::WINCHANGED.swap(0, Ordering::SeqCst) != 0 {
+            moveto(0, 0); // c:1130
+            LISTSHOWN.store(0, Ordering::Relaxed); // c:1133
+        }
         // c:1191-1194 —
         // ```c
         //     /* we probably should only have explicitly set attributes */

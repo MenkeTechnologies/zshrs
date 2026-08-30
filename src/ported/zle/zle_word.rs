@@ -1406,6 +1406,28 @@ pub fn transposewords(_args: &[String]) -> i32 {
     let mut n = if neg { -n } else { n };
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
 
+    // !!! RUST-ONLY ADAPTER !!! (a closure, not a fn — src/ported/ takes no
+    // new function names). Reads `zleline[i]` the way C reads it, INCLUDING
+    // the one slot past the end of the line.
+    //
+    // C over-allocates `zleline` by two cells (`Src/Zle/zle_main.c:1287` —
+    // `zalloc(((linesz = 256) + 2) * ZLE_CHAR_SIZE)`, preserved by
+    // `sizeline`, `Src/Zle/zle_utils.c:88-89`: "One spare character for the
+    // NULL, one for the newline") and every mutator terminates it —
+    // `Src/Zle/zle_utils.c:820`, `zleline[zlell] = ZWC('\0');`. So
+    // `zleline[zlell]` is a DEFINED read of `'\0'`, and c:666-668 below
+    // indexes it on purpose: the backward scan restarts at `zlecs`, which
+    // IS `zlell` whenever the cursor sits at the end of the line.
+    //
+    // zshrs's `ZLELINE` is a `Vec<char>` sized exactly `zlell`, so that same
+    // index panicked — `index out of bounds: the len is 17 but the index is
+    // 17` on `ls /usr/share zsh` + `M-t`. `ZC_iword('\0')` is false and
+    // `'\0' != '\n'`, which is exactly how the C scan behaves there.
+    let zleline_at = |i: usize| -> char {
+        // c:zle_utils.c:820 — `zleline[zlell] = ZWC('\0');`
+        ZLELINE.lock().unwrap().get(i).copied().unwrap_or('\0')
+    };
+
     // c:662-663 — advance x to next word start (skip non-iword unless newline).
     while x != ZLELL.load(std::sync::atomic::Ordering::SeqCst) && {
         let __c = ZLELINE.lock().unwrap()[x];
@@ -1414,12 +1436,14 @@ pub fn transposewords(_args: &[String]) -> i32 {
         x += 1; // INCPOS
     }
     // c:665-682 — if at end-or-newline, search backward for word-start.
-    if x == ZLELL.load(std::sync::atomic::Ordering::SeqCst) || ZLELINE.lock().unwrap()[x] == '\n' {
+    if x == ZLELL.load(std::sync::atomic::Ordering::SeqCst) || zleline_at(x) == '\n' {
         // c:665
         x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:666
         while x > 0 {
-            // c:667
-            if zc_iword(ZLELINE.lock().unwrap()[x]) {
+            // c:667 — `x` starts at `zlecs`, which is `zlell` when the
+            // cursor is at the end of the line; C reads the `'\0'`
+            // terminator there (see `zleline_at`).
+            if zc_iword(zleline_at(x)) {
                 break;
             } // c:668
             let pos = x - 1;

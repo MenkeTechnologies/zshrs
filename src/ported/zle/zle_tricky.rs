@@ -4153,57 +4153,234 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
     // rest of the row (`brew --<TAB>` listed
     // "Display the path to Homebrewâ").
     let mut out: Vec<u8> = Vec::new();
+    // c:2440-2441 — `int arg = 0, is_fg; zattr atr;`. `arg` is re-zeroed
+    // per escape, exactly as C re-declares it inside the `if` body.
+    //
+    // The four attribute entry points are C's own
+    // (`Src/prompt.c:1719/1737/1755` + the `applytextattributes` flush at
+    // `Src/prompt.c:1645`). C's `tsetattrs`/`tunsetattrs`/`treplaceattrs`
+    // are pure STATE MUTATORS — nothing reaches the terminal until the
+    // next `applytextattributes(0)`, which is why every emitting arm below
+    // calls it first. zshrs's `tsetattrs` additionally RETURNS a rendered
+    // SGR string; that return is deliberately discarded here so the
+    // emission stays where C puts it (using it as well would print each
+    // attribute twice).
+    use crate::ported::prompt::{
+        applytextattributes, match_colour, parsehighlight, treplaceattrs, tsetattrs, tunsetattrs,
+    };
+    use crate::ported::zsh_h::{
+        TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ERROR,
+    };
+    // c:2541/2581 — `tccan(TCCLEAREOL)` is `tclen[cap] != 0` (zsh.h:2682);
+    // `tcout(cap)` is `tputs(tcstr[cap], 1, putshout)`. Both are resolved
+    // once here and appended to `out` so the erase keeps its position in
+    // the byte stream (the whole frame is written in one `shout::write`).
+    let (tceol_can, tceol_cap) = {
+        use crate::ported::zsh_h::TCCLEAREOL;
+        let can = crate::ported::init::tclen.lock().unwrap()[TCCLEAREOL as usize] != 0;
+        let cap = crate::ported::init::tcstr.lock().unwrap()[TCCLEAREOL as usize].clone();
+        (can, cap)
+    };
     while i < bytes.len() {
         let c = bytes[i];
         if doesc && c == b'%' {
             // c:2438
             i += 1;
             // c:2442 — `if (idigit(*++p)) arg = zstrtol(p, &p, 10)`.
+            let arg_start = i;
+            let mut arg = 0i32;
             while i < bytes.len() && (bytes[i]).is_ascii_digit() {
+                arg = arg
+                    .saturating_mul(10)
+                    .saturating_add((bytes[i] - b'0') as i32);
                 i += 1;
             }
+            if i == arg_start {
+                arg = 0; // c:2440 — no digits ⇒ `arg` stays 0
+            }
+            // c:2444 — `if (*p) { switch (*p) { … } } else break;`
             if i >= bytes.len() {
                 break;
             }
             match bytes[i] {
                 b'%' => {
-                    // c:2447
-                    out.push(b'%');
-                    cc += 1;
+                    // c:2446-2452
+                    if dopr {
+                        out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2448
+                        out.push(b'%'); // c:2449
+                    }
+                    cc += 1; // c:2451
                 }
                 b'n' => {
-                    // c:2455
-                    let s = n.to_string();
-                    cc += s.chars().count() as i32;
-                    out.extend_from_slice(s.as_bytes());
+                    // c:2453-2460
+                    let s = n.to_string(); // c:2454 sprintf(nc, "%d", n)
+                    if dopr {
+                        out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2456
+                        out.extend_from_slice(s.as_bytes()); // c:2457
+                    }
+                    cc += s.chars().count() as i32; // c:2459
                 }
-                b'B' | b'b' | b'S' | b's' | b'U' | b'u' | b'F' | b'f' | b'K' | b'k' => {
-                    // c:2466-2521 — text attrs (Bold/Standout/Underline/
-                    //               Foreground/Background); no-op when
-                    //               we have no curses substrate.
-                }
-                b'{' => {
-                    // c:2522 — literal `%{ ... %}`.
-                    i += 1;
-                    while i < bytes.len() && bytes[i] != b'}' {
-                        out.push(bytes[i]);
-                        i += 1;
+                b'B' => {
+                    // c:2461-2464
+                    if dopr {
+                        tsetattrs(TXTBOLDFACE); // c:2463
                     }
                 }
-                ch => {
-                    out.push(ch);
-                    cc += 1;
+                b'b' => {
+                    // c:2465-2468
+                    if dopr {
+                        tunsetattrs(TXTBOLDFACE); // c:2467
+                    }
                 }
+                b'S' => {
+                    // c:2469-2472
+                    if dopr {
+                        tsetattrs(TXTSTANDOUT); // c:2471
+                    }
+                }
+                b's' => {
+                    // c:2473-2476
+                    if dopr {
+                        tunsetattrs(TXTSTANDOUT); // c:2475
+                    }
+                }
+                b'U' => {
+                    // c:2477-2480
+                    if dopr {
+                        tsetattrs(TXTUNDERLINE); // c:2479
+                    }
+                }
+                b'u' => {
+                    // c:2481-2484
+                    if dopr {
+                        tunsetattrs(TXTUNDERLINE); // c:2483
+                    }
+                }
+                b'F' | b'K' => {
+                    // c:2485-2497
+                    let is_fg = bytes[i] == b'F'; // c:2487
+                    let atr = if bytes.get(i + 1) == Some(&b'{') {
+                        // c:2488
+                        i += 2; // c:2489 — `p += 2;` past `F{`
+                                // c:2490 — `atr = match_colour(&p, is_fg, 0);`
+                                //           the cursor is advanced past the colour name.
+                        let mut cur = i;
+                        let a = match_colour(Some(&mut cur), fmt, is_fg, 0);
+                        i = cur;
+                        // c:2491-2492 — `if (*p != '}') p--;` so the trailing
+                        // `p++` at c:2535 lands on the character after the
+                        // colour spec either way.
+                        if bytes.get(i) != Some(&b'}') {
+                            i = i.saturating_sub(1);
+                        }
+                        a
+                    } else {
+                        match_colour(None, fmt, is_fg, arg) // c:2494
+                    };
+                    if atr != TXT_ERROR {
+                        // c:2495
+                        tsetattrs(atr); // c:2496
+                    }
+                }
+                b'f' => {
+                    // c:2498-2500 — NOT gated on dopr in C.
+                    tunsetattrs(TXTFGCOLOUR); // c:2499
+                }
+                b'k' => {
+                    // c:2501-2503 — NOT gated on dopr in C.
+                    tunsetattrs(TXTBGCOLOUR); // c:2502
+                }
+                b'H' => {
+                    // c:2504-2512
+                    if bytes.get(i + 1) == Some(&b'{') {
+                        // c:2505
+                        // c:2506 — `p = parsehighlight(p + 2, '}', &atr, NULL);`
+                        // `parsehighlight` (Src/prompt.c:308-313) returns the
+                        // position AFTER the `}` (or the terminating NUL when
+                        // there is none); c:2507's `--p` then leaves c:2535's
+                        // `p++` on the character following the group spec.
+                        let spec_start = i + 2;
+                        let found = bytes[spec_start..]
+                            .iter()
+                            .position(|&b| b == b'}')
+                            .map(|o| spec_start + o);
+                        let end = found.unwrap_or(bytes.len());
+                        let atr = parsehighlight(&fmt[spec_start.min(end)..end]);
+                        // c:2507 `--p` over `parsehighlight`'s return.
+                        i = match found {
+                            Some(e) => e,                      // ep = e+1, --p ⇒ e
+                            None => bytes.len().saturating_sub(1), // ep = len, --p ⇒ len-1
+                        };
+                        if atr != TXT_ERROR {
+                            // c:2508
+                            treplaceattrs(atr); // c:2509
+                        }
+                    } else {
+                        treplaceattrs(0); // c:2511
+                    }
+                }
+                b'{' => {
+                    // c:2513-2531 — literal `%{ … %}`: `arg` declares the
+                    // visible width, the payload prints verbatim.
+                    if arg != 0 {
+                        cc += arg; // c:2515
+                    }
+                    if dopr {
+                        out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2517
+                    }
+                    // c:2518 — `for (p++; *p && (*p != '%' || p[1] != '}'); p++)`
+                    i += 1;
+                    while i < bytes.len() && !(bytes[i] == b'%' && bytes.get(i + 1) == Some(&b'}'))
+                    {
+                        if dopr {
+                            out.push(bytes[i]); // c:2525
+                        }
+                        i += 1;
+                    }
+                    // c:2527-2530 — `if (*p) p++; else p--;` (the `%` of `%}`
+                    // is at `i`, so this lands on `}` and c:2535's `p++` steps
+                    // past it).
+                    if i < bytes.len() {
+                        i += 1;
+                    } else {
+                        i = i.saturating_sub(1);
+                    }
+                }
+                // c:2532 — every other escape character falls out of the
+                // switch having emitted NOTHING and consumed both bytes.
+                // The previous port had a catch-all that PRINTED the
+                // character, so `%Hhi%h` rendered `Hhih` where zsh renders
+                // `hi`, and every unknown escape leaked its letter.
+                _ => {}
             }
-            i += 1;
+            i += 1; // c:2535
         } else if c == b'\n' {
             // c:2537-2554 — a literal newline in the format ends a display
-            // line: account the wrapped rows of the line just finished, reset
-            // the column counter, and emit the '\n' (when printing).
+            // line: erase whatever the previous frame left on the rest of
+            // that row, account the wrapped rows of the line just finished,
+            // reset the column counter, and emit the '\n'.
             cc += 1; // c:2538
+            if dopr {
+                // c:2540
+                out.extend_from_slice(applytextattributes(0).as_bytes());
+                if tceol_can {
+                    // c:2541-2542
+                    out.extend_from_slice(&crate::shout::tputs(&tceol_cap));
+                } else {
+                    // c:2544-2547 — no erase capability: pad with spaces to
+                    // the right margin instead.
+                    let mut s = zterm_columns - 1 - (cc % zterm_columns);
+                    while s > 0 {
+                        out.push(b' ');
+                        s -= 1;
+                    }
+                }
+            }
             l += 1 + ((cc - 1) / zterm_columns); // c:2550
             cc = 0; // c:2551
-            out.push(b'\n'); // c:2553
+            if dopr {
+                out.push(b'\n'); // c:2553
+            }
             i += 1;
         } else {
             // c:2555-2572 — `MB_METACHARLENCONV(p, &cchar)` takes the WHOLE
@@ -4215,12 +4392,46 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
             // `mb_niceformat` already use for every other width in this port).
             let ch = fmt[i..].chars().next().unwrap_or(c as char);
             let clen = ch.len_utf8();
-            out.extend_from_slice(&bytes[i..i + clen]);
+            if dopr {
+                out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2559
+                out.extend_from_slice(&bytes[i..i + clen]); // c:2560-2567
+            }
             cc += crate::ported::utils::zwcwidth(ch) as i32; // c:2570
+            // c:2571-2572 — `if (dopr && !(cc % zterm_columns)) fputs(" \010")`:
+            // land the cursor on the wrap column explicitly so the terminal's
+            // auto-margin does not decide it for us.
+            if dopr && (cc % zterm_columns) == 0 {
+                out.extend_from_slice(b" \x08");
+            }
             i += clen;
         }
     }
     if dopr {
+        // c:2577-2578 — `treplaceattrs(0); applytextattributes(0);` — drop
+        // back to no attributes and emit the transition, so a `%B`/`%F`
+        // opened by the format cannot bleed into whatever is drawn next.
+        treplaceattrs(0); // c:2577
+        out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2578
+                                                                  // c:2579-2580 — `if (!(cc % zterm_columns)) fputs(" \010", shout);`
+        if (cc % zterm_columns) == 0 {
+            out.extend_from_slice(b" \x08");
+        }
+        // c:2581-2588 — terminate the row with an erase-to-end-of-line
+        // (or, with no such capability, pad to the right margin). This was
+        // dropped by the previous port: every listing row zsh ends with
+        // `\e[K` zshrs ended bare, so a row shorter than the stale text
+        // beneath it left the tail of that text on screen. Both grids
+        // compare equal, which is why only `--strict-stream` sees it.
+        if tceol_can {
+            // c:2581 tccan(TCCLEAREOL)
+            out.extend_from_slice(&crate::shout::tputs(&tceol_cap)); // c:2582
+        } else {
+            let mut s = zterm_columns - 1 - (cc % zterm_columns); // c:2584
+            while s > 0 {
+                out.push(b' '); // c:2587
+                s -= 1;
+            }
+        }
         // c:2576-2595 — the C tail does TCCLEAREOL / trailing-space padding
         // but NO unconditional `putc('\n')`. printfmt emits a newline ONLY
         // where the format itself contains one (c:2552 `if (*p=='\n')

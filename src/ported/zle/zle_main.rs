@@ -492,8 +492,18 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             } else {
                 -1
             };
+            // c:588-590 — `winch_unblock(); selret = poll(...); winch_block();`
+            // SIGWINCH is BLOCKED for the whole prompt cycle (preprompt,
+            // Src/utils.c:1538-1543, unblocks then re-blocks it), and C
+            // opens exactly this window — the blocking wait for input — for
+            // a resize to be delivered. The port dropped both calls, so a
+            // SIGWINCH raised while ZLE waited for a key was held pending
+            // indefinitely: `zhandler` never ran, `adjustwinsize` never ran,
+            // and nothing repainted after the terminal reflowed.
+            crate::ported::signals_h::winch_unblock(); // c:588
             let selret =
                 unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, poll_timeout) };
+            crate::ported::signals_h::winch_block(); // c:590
 
             // c:632-634 — let a user interrupt through immediately.
             if selret < 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
@@ -615,8 +625,13 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         let mut eintr_retries = 0i32;
         let mut die = false; // c:865 — bounds the EIO tty-reattach retry to one pass
         let n = loop {
+            // c:850-852 — `winch_unblock(); ret = read(SHTTY, cptr, 1);
+            // winch_block();` (and the identical c:837-839 pair on the
+            // timed-read path). Same window as the poll above.
+            crate::ported::signals_h::winch_unblock(); // c:850
             let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             let errno = std::io::Error::last_os_error().raw_os_error();
+            crate::ported::signals_h::winch_block(); // c:852
             // c:917 — retry a signal-interrupted read unless a shell condition
             // is pending. On macOS/BSD a blocking tty read interrupted by a
             // signal (SIGCHLD from p10k's per-prompt subprocesses) can return
@@ -713,8 +728,13 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     let mut eintr_retries = 0i32;
     let mut die = false; // c:865 — bounds the EIO tty-reattach retry to one pass
     let n = loop {
+        // c:850-852 — `winch_unblock(); ret = read(SHTTY, cptr, 1);
+        // winch_block();` See the poll-path pair above: this is the other
+        // window C opens for a resize while ZLE waits for input.
+        crate::ported::signals_h::winch_unblock(); // c:850
         let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
         let errno = std::io::Error::last_os_error().raw_os_error();
+        crate::ported::signals_h::winch_block(); // c:852
         // c:917 — retry a signal-interrupted read unless a shell condition is
         // pending. On macOS/BSD a blocking tty read interrupted by a signal
         // (SIGCHLD from p10k's per-prompt subprocesses) can return 0 with

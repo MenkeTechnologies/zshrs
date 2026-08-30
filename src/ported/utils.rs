@@ -2520,8 +2520,20 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
     // c:1891 — `static int getwinsz = 1;`
     let getwinsz = ADJUSTWINSIZE_GETWINSZ.load(Ordering::SeqCst);
 
-    let mut ttyrows: i32 = 0;
-    let mut ttycols: i32 = 0;
+    // c:1893-1894 — `int ttyrows = shttyinfo.winsize.ws_row;` /
+    // `ttycols = shttyinfo.winsize.ws_col;` — the PREVIOUSLY cached
+    // geometry, read before the ioctl overwrites it, so c:1903 can tell
+    // whether the window actually changed size.
+    //
+    // !!! RUST-ONLY SOURCING !!! zshrs's `SHTTYINFO` (utils.rs) holds only
+    // the `termios` half of C's `struct ttyinfo`; there is no cached
+    // `winsize` to read. The last geometry this function published lives
+    // in `$LINES` / `$COLUMNS` (written unconditionally by the c:1931-1934
+    // arm below), so the previous size is read back from there. Same
+    // values, same comparison.
+    let mut ttyrows: i32 = crate::ported::params::getiparam("LINES") as i32; // c:1893
+    let mut ttycols: i32 = crate::ported::params::getiparam("COLUMNS") as i32; // c:1894
+    let mut resetzle = 0i32; // c:1896
 
     // c:1898-1917 — TIOCGWINSZ probe.
     if getwinsz != 0 || from == 1 {
@@ -2536,13 +2548,22 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
             let mut ws: libc::winsize = std::mem::zeroed();
             if libc::ioctl(shtty, libc::TIOCGWINSZ, &mut ws as *mut _) == 0 {
                 // c:1902
+                // c:1903-1904 — `resetzle = (ttyrows != ws_row ||
+                //                            ttycols != ws_col);`
+                // This assignment was MISSING: `resetzle` was left at 0 on
+                // the `from == 1` (SIGWINCH) path, so the c:1954 redraw
+                // never fired and a resize left the screen as the terminal
+                // had mangled it. With a completion listing displayed and
+                // the window SHRUNK, the terminal drops the top rows and
+                // nothing repaints them — zsh kept all 3 non-blank rows on
+                // a 24x80 -> 14x80 shrink, zshrs kept 0.
+                resetzle = (ttyrows != ws.ws_row as i32 || ttycols != ws.ws_col as i32) as i32;
                 ttyrows = ws.ws_row as i32; // c:1907
                 ttycols = ws.ws_col as i32; // c:1908
             }
         }
     }
 
-    let mut resetzle = 0i32;
     match from {
         // c:1921
         0 | 1 => {
@@ -2579,22 +2600,62 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
             ADJUSTWINSIZE_GETWINSZ.store(1, Ordering::SeqCst); // c:1935
         }
         2 => {
-            // c:1937
-            resetzle = adjustlines() as i32; // c:1938
+            // c:1937-1938 — `resetzle = adjustlines(0);`
+            //
+            // C's `adjustlines` RETURNS WHETHER the size changed
+            // (Src/utils.c:1852 — `return (zterm_lines != oldlines);`), and
+            // with `signalled == 0` and a positive `zterm_lines` it changes
+            // nothing, so the recursive call from `setiparam` at c:1932
+            // yields 0. This port's `adjustlines()` returns the COUNT
+            // instead, so `resetzle` was the terminal height — always
+            // truthy. That did not matter while the c:1954 branch below was
+            // a no-op; now that it repaints, recover C's boolean by
+            // comparing against the previously published `$LINES`.
+            resetzle = (adjustlines() as i32 != ttyrows) as i32; // c:1938
         }
         3 => {
-            // c:1940
-            resetzle = adjustcolumns() as i32; // c:1941
+            // c:1940-1941 — `resetzle = adjustcolumns(0);` — same
+            // count-vs-changed correction as the LINES arm above
+            // (Src/utils.c:1877 `return (zterm_columns != oldcolumns);`).
+            resetzle = (adjustcolumns() as i32 != ttycols) as i32; // c:1941
         }
         _ => {}
     }
 
-    // c:1946-1958 — resetzle + zleentry(ZLE_CMD_REFRESH) when interact.
-    if from >= 2 && resetzle != 0 {
-        // ZLE refresh dispatch via zleentry(ZLE_CMD_REFRESH) lands here
-        // once the C signal handler shape ports.
-        let _ = ttyrows;
-        let _ = ttycols;
+    // c:1945-1952 — the `interact && from >= 2` block is entirely commented
+    // out in the C (the TIOCSWINSZ write-back is disabled), so nothing to
+    // port. Keep the reads alive for the c:1954 gate below.
+    let _ = ttyrows;
+    let _ = ttycols;
+
+    // c:1954-1961 —
+    // ```c
+    //     if (zleactive && resetzle) {
+    //         winchanged = resetneeded = 1;
+    //         zleentry(ZLE_CMD_RESET_PROMPT);
+    //         zleentry(ZLE_CMD_REFRESH);
+    //     }
+    // ```
+    // The whole block was absent, which is why a SIGWINCH never repainted
+    // anything.
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 && resetzle != 0 {
+        // !!! RUST-ONLY GUARD !!! C protects this re-entry with
+        // `queue_signals()` around every critical section (Src/signals.h:90),
+        // so a SIGWINCH arriving inside zrefresh is deferred rather than
+        // recursing. zshrs has no equivalent coverage over the ZLE refresh
+        // path and its video state is behind non-reentrant `std::sync::Mutex`
+        // handles, so a signal landing mid-refresh would DEADLOCK rather than
+        // recurse. Serialise instead: a resize that arrives while this
+        // repaint is in flight is dropped, exactly as C's queued signal is
+        // superseded by the pending full redraw.
+        if !ADJUSTWINSIZE_IN_ZLE.swap(true, Ordering::SeqCst) {
+            WINCHANGED.store(1, Ordering::SeqCst); // c:1956
+            RESETNEEDED.store(1, Ordering::SeqCst); // c:1958
+            crate::ported::zle::zle_refresh::RESETNEEDED.store(1, Ordering::SeqCst); // c:1958
+            crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_RESET_PROMPT); // c:1959
+            crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH); // c:1960
+            ADJUSTWINSIZE_IN_ZLE.store(false, Ordering::SeqCst);
+        }
     }
 
     (adjustcolumns(), adjustlines())
@@ -2605,6 +2666,19 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
 /// setiparam recursion so the recursive call short-circuits.
 pub static ADJUSTWINSIZE_GETWINSZ: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(1); // c:1891
+
+/// !!! WARNING: RUST-ONLY GUARD !!! No C counterpart.
+///
+/// Set while `adjustwinsize`'s c:1954 branch is inside
+/// `zleentry(ZLE_CMD_RESET_PROMPT)` / `zleentry(ZLE_CMD_REFRESH)`.
+/// C reaches that branch from a signal handler and relies on
+/// `queue_signals()` (`Src/signals.h:90`) to defer a SIGWINCH that lands
+/// during a refresh; zshrs's ZLE video state sits behind non-reentrant
+/// `std::sync::Mutex` handles, where the same re-entry hangs instead of
+/// recursing. This flag drops the nested repaint; the outer one already
+/// re-reads the geometry.
+static ADJUSTWINSIZE_IN_ZLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Port of `check_fd_table()` from `Src/utils.c:1969` — C decl `check_fd_table(int fd)`.
 /// ```c
