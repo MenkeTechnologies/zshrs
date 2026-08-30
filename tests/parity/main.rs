@@ -41,6 +41,7 @@ mod cd_options_parity;
 mod cmdsubst_parity;
 mod command_builtin_parity;
 mod command_precedence_parity;
+mod completion_keys_parity;
 mod cond_parity;
 mod config_state_parity;
 mod coproc_parity;

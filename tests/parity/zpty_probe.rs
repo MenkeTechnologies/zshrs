@@ -69,7 +69,21 @@ sleep 3
 zpty -w w 'PS1="RDY> "'
 "#;
 
-/// Drain whatever the pty has produced into `$all`, then close it.
+/// Drain whatever the pty has produced into `$all`, close the pty, and
+/// STRIP THE ESCAPE SEQUENCES.
+///
+/// The stripping is not cosmetic. A shell redrawing the command line
+/// interleaves CSI sequences with the text it is redrawing, so the
+/// bytes for `print fxa1` can arrive as `print` + `\e[…m` + ` fxa1`.
+/// A driver matching the literal string then reports "no" while the
+/// transcript, read by a human through an escape-stripping pager, plainly
+/// shows the text — which is exactly how a correct probe was mistaken
+/// for a shell bug while these were being written. Strip once here so
+/// every driver matches against what was DISPLAYED.
+///
+/// Carriage returns are deliberately KEPT: they are the only thing
+/// separating one redraw of the line from the next, and folding them
+/// away would let two unrelated fragments match as one string.
 pub const DRAIN: &str = r#"
 local out all=
 integer i=0
@@ -77,6 +91,10 @@ while (( i++ < 60 )); do
   if zpty -r -t w out 2>/dev/null; then all+="$out"; else sleep 0.1; fi
 done
 zpty -d w 2>/dev/null
+setopt extended_glob
+all="${all//$'\e'\[[0-9;?]#[a-zA-Z]/}"
+all="${all//$'\e'\][0-9]#;[^$'\a'$'\e']#($'\a'|$'\e'\\)/}"
+all="${all//$'\e'[()][A-Za-z0-9]/}"
 "#;
 
 /// Run `driver` under `shell` and hand back its stdout. `zshrs` also
@@ -92,6 +110,12 @@ pub fn drive(shell: &Path, zshrs: bool, driver: &str) -> String {
     let out = cmd
         .args(["-f", "-c", driver])
         .env("UNDER_TEST", shell)
+        // cargo runs tests with no controlling terminal, so `$TERM` may be
+        // absent or `dumb`. ZLE then takes its TERM_UNKNOWN path — single
+        // line, no cursor addressing — and a probe would be pinning that
+        // degraded mode instead of the editor people use. Pin a normal
+        // terminal for both shells.
+        .env("TERM", "xterm-256color")
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("invoke shell");
@@ -102,14 +126,22 @@ pub fn drive(shell: &Path, zshrs: bool, driver: &str) -> String {
 /// `None` when `zsh/zpty` was unavailable, so the cell proves nothing
 /// either way.
 pub fn verdict(shell: &Path, zshrs: bool, driver: &str, key: &str) -> Option<bool> {
+    probe(shell, zshrs, driver, key).0
+}
+
+/// The verdict plus the raw driver output behind it. A `false` from the
+/// REFERENCE shell means the probe is broken rather than the shell, and
+/// the only way to see how is to look at what the pty actually said —
+/// so keep it and hand it to the assertion.
+pub fn probe(shell: &Path, zshrs: bool, driver: &str, key: &str) -> (Option<bool>, String) {
     let text = drive(shell, zshrs, driver);
     if text.contains("NOZPTY") {
-        return None;
+        return (None, text);
     }
     if text.contains(&format!("{key}=yes")) {
-        Some(true)
+        (Some(true), text)
     } else if text.contains(&format!("{key}=no")) {
-        Some(false)
+        (Some(false), text)
     } else {
         panic!(
             "driver produced no `{key}` verdict from {}:\n{text:?}",
@@ -125,18 +157,19 @@ pub fn assert_same_verdict(driver: &str, key: &str, what: &str) {
         eprintln!("skip: zsh not found");
         return;
     }
-    let Some(reference) = verdict(Path::new(zsh_path()), false, driver, key) else {
+    let (reference, reference_text) = probe(Path::new(zsh_path()), false, driver, key);
+    let Some(reference) = reference else {
         eprintln!("skip: zsh/zpty unavailable");
-        return;
-    };
-    let Some(under_test) = verdict(&zshrs_bin(), true, driver, key) else {
-        eprintln!("skip: zsh/zpty unavailable in zshrs");
         return;
     };
     assert!(
         reference,
         "reference zsh did not exhibit `{what}` — the probe itself is broken, \
-         not the shell under test"
+         not the shell under test.\n--- driver ---\n{driver}\n--- zsh said ---\n{reference_text}"
     );
+    let Some(under_test) = verdict(&zshrs_bin(), true, driver, key) else {
+        eprintln!("skip: zsh/zpty unavailable in zshrs");
+        return;
+    };
     assert_eq!(reference, under_test, "{what}: zsh did it, zshrs did not");
 }
