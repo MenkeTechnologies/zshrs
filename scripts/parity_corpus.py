@@ -28,11 +28,29 @@ harnesses need, so an input found by one is replayable by the other:
   gen_keyseq(rng, n)        random key path (TAB / navigation / filter chars).
   gen_buffer(rng)           random command line drawn from the surface classes
                             the CASES table is grouped by.
+  gen_option_set(rng)       random COHERENT set of shell options (`setopt`),
+                            the axis zstyle fuzzing cannot reach: `menucomplete`
+                            decides whether an ambiguous TAB inserts or lists,
+                            `completeinword` where the cursor is when the
+                            completer starts, `caseglob` whether a wrong-case
+                            path component matches at all.
   mutate_buffer(buf, rng)   one small structured edit to a command line.
   mutate_keys(keys, rng)    one small structured edit to a key path.
+  mutate_option_set(o, rng) one small structured edit to an option set.
   fingerprint(a, b)         stable id for a divergence, with digits, paths and
                             hex masked out, so the same bug seen in two cells
                             reports one id instead of two.
+
+The option axis carries its own tables: `SHELL_OPTIONS` (name, `zsh -f`
+default, group, doc citation), `OPTION_MASKS` / `OPTION_REQUIRES` /
+`OPTION_PAIRS` (the documented interactions, so a generated set never claims to
+test an option another member overrides), `OPTION_PROFILES` (coherent bases a
+person would actually run), and `OPTION_STYLE_MASKS` (the zstyles that override
+an option outright). `option_statements()` renders a set as `setopt`/`unsetopt`
+lines, so an option set drops into the same `random_subset()` / `shrink()`
+machinery the zstyle combos use and a two-axis failure shrinks across both.
+Cases whose outcome an option demonstrably changes carry the `optsens` tag plus
+the option's own name (`cases_for_option("completeinword")`).
 
 Every generator is a pure function of the `random.Random` it is handed, so
 (seed, index) reproduces an input exactly on any machine; `_validate()` proves
@@ -44,6 +62,9 @@ Run this file directly to print the tables:
     scripts/parity_corpus.py --list-cases
     scripts/parity_corpus.py --list-sequences
     scripts/parity_corpus.py --list-discovered
+    scripts/parity_corpus.py --list-options
+    scripts/parity_corpus.py --gen-options 5
+    scripts/parity_corpus.py --check-option-defaults
     scripts/parity_corpus.py --matrix-size
 """
 
@@ -660,6 +681,136 @@ CASES: list[Case] = [
     Case("kw_do", "for f in a b; do tr", "command position inside a `do` block", ("kw", "cmd", "compound")),
     Case("kw_if", "if tr", "command position after `if`", ("kw", "cmd", "compound")),
     Case("kw_coproc", "coproc gr", "command position after `coproc`", ("kw", "cmd")),
+
+    # ── shell OPTIONS change the answer ──────────────────────────────────
+    #
+    # Every case above is completed under one shell configuration: the `zsh -f`
+    # defaults. These are written so that a named option demonstrably moves the
+    # outcome — a mid-word cursor for COMPLETE_IN_WORD, an ambiguous prefix
+    # with nothing to insert for AUTO_LIST, a wrong-case component for
+    # CASE_GLOB. Each carries the `optsens` tag plus the NAME of every option it
+    # exercises, so `cases_for_option("recexact")` selects them and
+    # `OPTION_CASE_SEQUENCES` names the key paths that make them speak.
+    Case("optsens_ciw_midword", "ls /usr/bin",
+         "with the cursor moved back three, the word is prefix `/usr/` + suffix "
+         "`bin`: COMPLETE_IN_WORD matches from both ends (bin, sbin), otherwise "
+         "the cursor jumps to the end first and `/usr/bin` is unique",
+         ("path", "midword", "optsens", "completeinword", "alwaystoend")),
+    Case("optsens_to_end", "cd /usr/bin",
+         "the same mid-word shape for ALWAYS_TO_END, which decides where the "
+         "cursor lands once a full completion is inserted",
+         ("path", "midword", "optsens", "alwaystoend", "completeinword")),
+    Case("optsens_autolist", "ls /usr/s",
+         "ambiguous with NOTHING to insert (share/sbin/standalone share only "
+         "the typed `s`) — AUTO_LIST lists on the first TAB, BASH_AUTO_LIST "
+         "waits for the second",
+         ("path", "optsens", "autolist", "bashautolist", "listambiguous")),
+    Case("optsens_listambiguous", "ls /usr/li",
+         "ambiguous WITH an unambiguous prefix to insert (lib, libexec share "
+         "`lib`) — the one shape LIST_AMBIGUOUS changes",
+         ("path", "optsens", "listambiguous", "autolist", "bashautolist")),
+    Case("optsens_recexact", "ls /usr/lib",
+         "the typed word is itself a match and another match extends it "
+         "(libexec) — REC_EXACT accepts the exact one",
+         ("path", "optsens", "recexact")),
+    Case("optsens_menu", "cd /usr/l",
+         "an ambiguous set: MENU_COMPLETE inserts the first match at once, "
+         "AUTO_MENU only on the second request",
+         ("path", "optsens", "menucomplete", "automenu")),
+    Case("optsens_listing", "ls /usr/share/",
+         "a listing wide enough for LIST_PACKED, LIST_ROWS_FIRST and "
+         "LIST_TYPES to rearrange it",
+         ("path", "optsens", "listpacked", "listrowsfirst", "listtypes",
+          "listbeep")),
+    Case("optsens_globcomplete", "ls /usr/l*",
+         "a glob in the word — GLOB_COMPLETE generates matches and cycles them "
+         "instead of inserting the whole expansion",
+         ("glob", "path", "optsens", "globcomplete", "completeinword")),
+    Case("optsens_caseglob", "ls /usr/BI",
+         "a wrong-case path component — with NO_CASE_GLOB and no matcher set, "
+         "file matching is case-insensitive (compsys.yo:2138-2141)",
+         ("path", "optsens", "caseglob")),
+    Case("optsens_globdots", "cat ~/",
+         "a word that does NOT start with a dot — GLOB_DOTS decides whether "
+         "dotfiles are offered at all",
+         ("path", "optsens", "globdots")),
+    Case("optsens_nomatch", "ls /usr/zzzz*",
+         "a pattern with no matches — NOMATCH errors, NULL_GLOB and "
+         "CSH_NULL_GLOB delete it instead",
+         ("glob", "path", "optsens", "nomatch", "nullglob", "cshnullglob")),
+    Case("optsens_markdirs", "echo /usr/l*",
+         "a glob whose matches are directories — MARK_DIRS appends a slash to "
+         "each",
+         ("glob", "path", "optsens", "markdirs")),
+    Case("optsens_numericsort", "ls /dev/tty*",
+         "numeric filenames — NUMERIC_GLOB_SORT reorders the listing",
+         ("glob", "path", "optsens", "numericglobsort", "optional")),
+    Case("optsens_equals", "cat =ls",
+         "`=cmd` filename expansion — EQUALS decides whether it resolves to a "
+         "path or stays literal",
+         ("equals", "optsens", "optional")),
+    Case("optsens_magicequal", "echo foo=~/",
+         "an argument that merely LOOKS like an assignment — "
+         "MAGIC_EQUAL_SUBST expands the `~` after the `=`",
+         ("assign", "path", "optsens", "magicequalsubst", "kshtypeset")),
+    Case("optsens_bareglobqual", "ls /usr/*(",
+         "a trailing parenthesis — BARE_GLOB_QUAL decides whether it opens a "
+         "qualifier list or is literal text",
+         ("glob", "optsens", "bareglobqual", "extendedglob")),
+    Case("optsens_extendedglob", "ls /usr/^l",
+         "`^` in the word — EXTENDED_GLOB makes it negation rather than an "
+         "ordinary character",
+         ("glob", "optsens", "extendedglob")),
+    Case("optsens_ignorebraces", "echo /usr/{b",
+         "a brace expansion — IGNORE_BRACES turns it into literal text",
+         ("glob", "optsens", "ignorebraces")),
+    Case("optsens_pathdirs", "bin/l",
+         "a command name containing a slash — PATH_DIRS has it searched along "
+         "$PATH anyway",
+         ("cmd", "optsens", "pathdirs", "hashlistall")),
+    Case("optsens_autocd", "/usr/b",
+         "a bare directory in command position — AUTO_CD makes it a command",
+         ("cmd", "path", "optsens", "autocd")),
+    Case("optsens_banghist", "cat !",
+         "a `!` word — BANG_HIST decides whether it is history expansion or a "
+         "literal character to complete after",
+         ("hist", "optsens", "banghist")),
+    Case("optsens_rcquotes", "ls 'don''t",
+         "a doubled single quote inside single quotes — RC_QUOTES makes it one "
+         "literal quote, so the word is still open",
+         ("quote", "optsens", "rcquotes")),
+    Case("optsens_paramslash", "cd $HOM",
+         "a parameter whose value is a directory — AUTO_PARAM_SLASH appends "
+         "`/` rather than a space",
+         ("param", "optsens", "autoparamslash", "autonamedirs")),
+    Case("optsens_paramkeys", "echo ${HOM",
+         "a braced parameter — AUTO_PARAM_KEYS removes the auto-inserted "
+         "character when the next one typed has to follow the name directly",
+         ("param", "optsens", "autoparamkeys")),
+    Case("optsens_removeslash", "ls /usr",
+         "a completion that ends in a slash, followed by a delimiter — "
+         "AUTO_REMOVE_SLASH takes the slash back",
+         ("path", "optsens", "autoremoveslash", "autoparamslash")),
+    Case("optsens_shwordsplit", "ls $PATH/",
+         "an unquoted parameter expansion in the word — SH_WORD_SPLIT field-"
+         "splits it and GLOB_SUBST makes the result glob-eligible",
+         ("param", "path", "optsens", "shwordsplit", "globsubst")),
+    Case("optsens_cbases", "echo $((0x",
+         "hexadecimal in arithmetic — C_BASES changes the form the value "
+         "prints back in",
+         ("arith", "param", "optsens", "cbases")),
+    Case("optsens_kshoptionprint", "setopt no",
+         "option-name completion — KSH_OPTION_PRINT changes how `setopt` "
+         "reports state, which is the text option completion reads",
+         ("builtin", "optsens", "kshoptionprint")),
+    Case("optsens_aliases", "ll --",
+         "options for an ALIASED name — ALIASES decides whether the alias "
+         "exists and COMPLETE_ALIASES whether it is expanded before completing",
+         ("cmd", "alias", "optsens", "aliases", "completealiases", "optional")),
+    Case("optsens_correct", "grpe /usr/",
+         "a misspelled command word — CORRECT and CORRECT_ALL offer an "
+         "interactive spelling prompt on the accepted line",
+         ("cmd", "optsens", "correct", "correctall", "optional")),
 ]
 
 # Sequences that cannot say anything for a given case tag, so the matrix skips
@@ -667,6 +818,34 @@ CASES: list[Case] = [
 # Case names are ids: they key JSON results, report rows and `--case` lookups
 # across commits, so they are restricted to a shape that survives all three.
 _CASE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# `setopt` spellings: lowercase, no underscores — the form this corpus emits, so
+# that one option has exactly one id (`setopt complete_in_word` and `setopt
+# completeinword` are the same option and must not become two).
+_OPTION_NAME_RE = re.compile(r"^[a-z][a-z0-9]*$")
+
+# Every option, mask and pair has to point at the line of the zsh doc tree that
+# states the behaviour. A citation-shaped string is not proof the line says what
+# the note claims, but an EMPTY one is proof nobody looked.
+_CITE_RE = re.compile(r"^(options|compsys|zshexpn|zshmodules)\.yo:\d+(-\d+)?"
+                      r"(, ?(options|compsys|zshexpn|zshmodules)\.yo:\d+(-\d+)?)*$")
+
+# Tags that describe the completion SURFACE rather than a shell option. Kept as
+# a closed set so a typo in an option-sensitive case's tags fails at import
+# instead of silently selecting nothing.
+_SURFACE_TAGS = frozenset({
+    "adhoc", "alias", "arith", "assign", "auto", "builtin", "cmd", "compound",
+    "equals", "git", "glob", "hist", "host", "huge", "kw", "midword",
+    "opt", "opteq", "optional", "optsens", "param", "path", "pre", "quote",
+    "redir", "sub", "tilde", "zpwr",
+})
+
+# Surface tags that happen to spell an option name. `equals` was a SURFACE tag
+# on `equals_cmd` / `equals_arg` long before the option table existed, and those
+# cases are ids in saved results, so the tag cannot move. The reverse check
+# below ("names an option but is not selectable by an option run") exempts
+# exactly these, and nothing else, so a genuinely mis-tagged case still fails.
+_LEGACY_OPTION_NAME_TAGS = frozenset({"equals"})
 
 _SKIP: dict[str, set[str]] = {
     # A command-position TAB on an empty line lists thousands of matches; the
@@ -739,6 +918,117 @@ def _validate() -> None:
         gone = sorted(s for s in seqs if s not in KEY_SEQUENCES)
         if gone:
             raise ValueError(f"parity_corpus: _SKIP[{tag!r}] names unknown {gone}")
+
+    # ── shell-option tables ─────────────────────────────────────────────
+    #
+    # Same class of failure as the case tables above: an option name the shell
+    # does not know, a `default` that does not match `zsh -f`, or a mask
+    # naming an option that is not in the table all produce a run that reports
+    # on a configuration it never actually installed. `default` itself needs a
+    # live shell, so it is checked by `check_option_defaults()` rather than
+    # here — this covers everything that can be checked without booting one.
+    for name, opt in SHELL_OPTIONS.items():
+        if name != opt.name:
+            raise ValueError(
+                f"parity_corpus: option keyed {name!r} but named {opt.name!r}")
+        if not _OPTION_NAME_RE.match(name):
+            raise ValueError(
+                f"parity_corpus: option {name!r} is not a `setopt` spelling")
+        if not opt.note:
+            raise ValueError(f"parity_corpus: option {name!r} has no note")
+        if not _CITE_RE.match(opt.cite):
+            raise ValueError(
+                f"parity_corpus: option {name!r} cite {opt.cite!r} is not a "
+                "zsh doc reference")
+        if opt.group not in OPTION_GROUPS:
+            raise ValueError(
+                f"parity_corpus: option {name!r} has unknown group {opt.group!r}")
+    for name in OPTION_INTERACTIVE:
+        if name not in SHELL_OPTIONS:
+            raise ValueError(
+                f"parity_corpus: OPTION_INTERACTIVE names unknown {name!r}")
+    for m in OPTION_MASKS:
+        for field_name in (m.masking, m.masked):
+            if field_name not in SHELL_OPTIONS:
+                raise ValueError(
+                    f"parity_corpus: OPTION_MASKS names unknown {field_name!r}")
+        if m.masking == m.masked:
+            raise ValueError(f"parity_corpus: option {m.masked!r} masks itself")
+        if not _CITE_RE.match(m.cite):
+            raise ValueError(f"parity_corpus: mask cite {m.cite!r} is not a "
+                             "zsh doc reference")
+    for name, needed in OPTION_REQUIRES.items():
+        if name not in SHELL_OPTIONS:
+            raise ValueError(f"parity_corpus: OPTION_REQUIRES names unknown {name!r}")
+        unknown = [n for n in needed if n not in SHELL_OPTIONS]
+        if unknown or not needed:
+            raise ValueError(
+                f"parity_corpus: OPTION_REQUIRES[{name!r}] is {needed!r}")
+    for p in OPTION_PAIRS:
+        if p.a not in SHELL_OPTIONS or p.b not in SHELL_OPTIONS:
+            raise ValueError(f"parity_corpus: OPTION_PAIRS names unknown "
+                             f"{(p.a, p.b)!r}")
+        if p.a == p.b:
+            raise ValueError(f"parity_corpus: option {p.a!r} paired with itself")
+        if not _CITE_RE.match(p.cite):
+            raise ValueError(f"parity_corpus: pair cite {p.cite!r} is not a "
+                             "zsh doc reference")
+    for style, name, cite in OPTION_STYLE_MASKS:
+        if name not in SHELL_OPTIONS:
+            raise ValueError(
+                f"parity_corpus: OPTION_STYLE_MASKS names unknown {name!r}")
+        if not style or not _CITE_RE.match(cite):
+            raise ValueError(
+                f"parity_corpus: OPTION_STYLE_MASKS[{style!r}] cite {cite!r}")
+
+    # A profile is a DELTA: an entry that restates the default silently gives
+    # one configuration two ids. An INCOHERENT profile is worse — it claims to
+    # test an option another member overrides, so the run reports coverage it
+    # does not have.
+    for pname, deltas in OPTION_PROFILES.items():
+        if normalize_option_set(deltas) != dict(sorted(deltas.items())):
+            raise ValueError(
+                f"parity_corpus: profile {pname!r} restates a default or names "
+                "an unknown option")
+        masked = masked_options(deltas)
+        if masked:
+            raise ValueError(
+                f"parity_corpus: profile {pname!r} is incoherent: {masked}")
+
+    # Option-sensitive cases: the `optsens` tag is what a harness selects on,
+    # and the option names in the tags are what it selects BY. A tag that is
+    # neither a known option nor a known surface is a typo that silently
+    # narrows a selection to nothing.
+    for c in CASES:
+        named = [t for t in c.tags if t in SHELL_OPTIONS]
+        if OPTION_TAG in c.tags:
+            if not named:
+                raise ValueError(
+                    f"parity_corpus: case {c.name!r} is tagged {OPTION_TAG!r} "
+                    "but names no shell option")
+            unknown = [t for t in c.tags
+                       if t not in SHELL_OPTIONS and t not in _SURFACE_TAGS]
+            if unknown:
+                raise ValueError(
+                    f"parity_corpus: case {c.name!r} has unknown tag(s) {unknown}")
+        elif [t for t in named if t not in _LEGACY_OPTION_NAME_TAGS]:
+            raise ValueError(
+                f"parity_corpus: case {c.name!r} names option(s) {named} but is "
+                f"not tagged {OPTION_TAG!r}, so no option run selects it")
+    for cname, seqs in OPTION_CASE_SEQUENCES.items():
+        case = next((c for c in CASES if c.name == cname), None)
+        if case is None:
+            raise ValueError(
+                f"parity_corpus: OPTION_CASE_SEQUENCES names unknown case {cname!r}")
+        if OPTION_TAG not in case.tags:
+            raise ValueError(
+                f"parity_corpus: OPTION_CASE_SEQUENCES[{cname!r}] is not an "
+                f"{OPTION_TAG!r} case")
+        gone = [s for s in seqs if s not in KEY_SEQUENCES]
+        if gone or not seqs:
+            raise ValueError(
+                f"parity_corpus: OPTION_CASE_SEQUENCES[{cname!r}] names {gone or 'nothing'}")
+
 
     _validate_generators()
 
@@ -846,6 +1136,702 @@ def shrink(statements: list[str], still_fails, max_probes: int = 60) -> list[str
             n = min(n * 2, len(current))
     return current
 
+
+
+# ── shell options ────────────────────────────────────────────────────────────
+#
+# The zstyle machinery above fuzzes the completion SYSTEM's configuration. It
+# says nothing about the shell's own options, and those change completion just
+# as fundamentally: `menucomplete` decides whether an ambiguous TAB inserts or
+# lists, `completeinword` decides where the cursor is when the completer starts,
+# `caseglob` decides whether a wrong-case path component matches at all. A
+# corpus that never varies them reports "completion agrees" for exactly one
+# point in that space — the default one.
+#
+# Sources read for this section (line numbers in ~/forkedRepos/zsh, the tree
+# this port treats as its spec):
+#
+#   Doc/Zsh/options.yo:213-418    the whole "Completion" subsection: every
+#                                 option below whose group is menu/listing/word.
+#   Doc/Zsh/options.yo:421-760    "Expansion and Globbing": the glob group.
+#   Doc/Zsh/options.yo:861-864    BANG_HIST.
+#   Doc/Zsh/options.yo:1170-1172  ALIASES.
+#   Doc/Zsh/options.yo:1207-1231  CORRECT / CORRECT_ALL, incl. the SPROMPT
+#                                 `[nyae]` prompt that makes them interactive.
+#   Doc/Zsh/options.yo:1328-1341  PATH_DIRS.
+#   Doc/Zsh/options.yo:1379-1384  RC_QUOTES.
+#   Doc/Zsh/options.yo:1680-1688  C_BASES.
+#   Doc/Zsh/options.yo:2129-2133  KSH_OPTION_PRINT.
+#   Doc/Zsh/options.yo:2397-2400  SH_WORD_SPLIT.
+#   Doc/Zsh/compsys.yo:1929-1934  the `list` style overrides AUTO_LIST.
+#   Doc/Zsh/compsys.yo:1979-1984  the `list-packed` style overrides LIST_PACKED.
+#   Doc/Zsh/compsys.yo:2016-2020  `list-rows-first` overrides LIST_ROWS_FIRST.
+#   Doc/Zsh/compsys.yo:2138-2141  NO_CASE_GLOB makes file matching
+#                                 case-insensitive only when no matcher is set.
+#   Doc/Zsh/compsys.yo:2188-2205  the `menu` style overrides MENU_COMPLETE and
+#                                 can stand in for AUTO_MENU.
+#   Doc/Zsh/compsys.yo:2358-2365  accept-exact-dirs interacts with
+#                                 COMPLETE_IN_WORD.
+#
+# `default` is the state under `zsh -f` (`emulate zsh`), which is how both
+# harnesses boot their children — the `<D>`/`<Z>` markers in options.yo, and
+# confirmed against the two shells with
+#   zsh -f -c 'print -r -- ${options[completeinword]}'
+# (`check_option_defaults()` below re-runs exactly that for every option, so
+# the table is checkable rather than merely asserted).
+
+
+@dataclass(frozen=True)
+class Opt:
+    """One shell option this corpus is allowed to vary."""
+
+    name: str        # the spelling `setopt` takes (lowercase, no underscores)
+    default: bool    # state under `zsh -f`
+    group: str       # the completion surface it moves
+    cite: str        # file:line in the zsh doc tree
+    note: str        # what it changes, in one line
+
+
+_OPTS: tuple[Opt, ...] = (
+    # ── where the cursor is, and what counts as the word ──────────────
+    Opt("completeinword", False, "word", "options.yo:310-312",
+        "cursor stays put and completion runs from BOTH ends, instead of "
+        "jumping to the end of the word first"),
+    Opt("alwaystoend", False, "word", "options.yo:213-217",
+        "after a full completion the cursor is moved to the end of the word "
+        "— only observable when it started inside one"),
+    # ── insert vs list vs menu ────────────────────────────────────────
+    Opt("automenu", True, "menu", "options.yo:232-235",
+        "the second consecutive completion request starts menu completion"),
+    Opt("menucomplete", False, "menu", "options.yo:401-407",
+        "an ambiguous completion inserts the first match immediately rather "
+        "than listing or beeping"),
+    Opt("recexact", False, "menu", "options.yo:414-417",
+        "a word that exactly matches a completion is accepted even when "
+        "another match extends it"),
+    Opt("globcomplete", False, "menu", "options.yo:318-330",
+        "a word containing a pattern generates matches and cycles them "
+        "instead of inserting the whole expansion"),
+    Opt("autolist", True, "listing", "options.yo:224-225",
+        "an ambiguous completion lists the choices automatically"),
+    Opt("bashautolist", False, "listing", "options.yo:287-294",
+        "list only on the SECOND consecutive call; takes precedence over "
+        "AUTO_LIST and does not work with MENU_COMPLETE"),
+    Opt("listambiguous", True, "listing", "options.yo:347-353",
+        "when there is an unambiguous prefix to insert, insert it and do NOT "
+        "list; auto-listing happens only when nothing would be inserted"),
+    Opt("listbeep", True, "listing", "options.yo:361-365",
+        "an ambiguous completion returns status 1, which beeps if BEEP is "
+        "also set"),
+    Opt("listpacked", False, "listing", "options.yo:372-374",
+        "columns get individual widths so the listing occupies fewer lines"),
+    Opt("listrowsfirst", False, "listing", "options.yo:381-384",
+        "matches are laid out horizontally: the second is to the RIGHT of "
+        "the first, not under it"),
+    Opt("listtypes", True, "listing", "options.yo:392-394",
+        "file completions carry a trailing type mark in the listing"),
+    # ── what gets appended / taken back ───────────────────────────────
+    Opt("autoparamslash", True, "suffix", "options.yo:268-270",
+        "completing a parameter whose value is a directory appends `/`, not "
+        "a space"),
+    Opt("autoparamkeys", True, "suffix", "options.yo:254-262",
+        "an auto-inserted character is removed when the next character typed "
+        "has to come directly after the parameter name"),
+    Opt("autoremoveslash", True, "suffix", "options.yo:277-280",
+        "a trailing slash left by a completion is removed when the next "
+        "character typed is a word delimiter"),
+    Opt("markdirs", False, "suffix", "options.yo:675-677",
+        "directory names produced by globbing get a trailing `/`"),
+    # ── globbing, which is what file completion matches with ──────────
+    Opt("caseglob", True, "glob", "options.yo:460-466",
+        "globbing is case-sensitive; unset, any glob-special character in "
+        "the word makes matching case-insensitive"),
+    Opt("globdots", False, "glob", "options.yo:568-569",
+        "a leading `.` no longer has to be matched explicitly, so dotfiles "
+        "are offered for a word that does not start with one"),
+    Opt("extendedglob", False, "glob", "options.yo:521-524",
+        "`#`, `~` and `^` become pattern characters in the typed word"),
+    Opt("bareglobqual", True, "glob", "options.yo:439-442",
+        "a trailing parenthesised group is a qualifier list rather than "
+        "literal text"),
+    Opt("numericglobsort", False, "glob", "options.yo:733-735",
+        "numeric filenames sort numerically, which reorders the listing"),
+    Opt("nomatch", True, "glob", "options.yo:711-716",
+        "a pattern with no matches is an error instead of being left alone"),
+    Opt("nullglob", False, "glob", "options.yo:723-726",
+        "a pattern with no matches is deleted; overrides NOMATCH"),
+    Opt("cshnullglob", False, "glob", "options.yo:501-506",
+        "a non-matching pattern is deleted unless every pattern in the "
+        "command failed; overrides NOMATCH"),
+    Opt("globsubst", False, "glob", "options.yo:590-595",
+        "characters produced by parameter expansion become eligible for "
+        "filename generation"),
+    # ── word-level expansions the completer has to see through ────────
+    Opt("equals", True, "expand", "options.yo:512-514",
+        "`=cmd` is filename-expanded to the command's path"),
+    Opt("magicequalsubst", False, "expand", "options.yo:655-667",
+        "an argument that merely LOOKS like an assignment gets filename "
+        "expansion on its right-hand side; respects KSH_TYPESET"),
+    Opt("kshtypeset", False, "expand", "options.yo:2140",
+        "assignment-looking arguments to typeset and friends are not word "
+        "split — the option MAGIC_EQUAL_SUBST defers to"),
+    Opt("ignorebraces", False, "expand", "options.yo:614-616",
+        "brace expansion is off, so a `{a,b}` word is literal text"),
+    Opt("rcquotes", False, "expand", "options.yo:1379-1383",
+        "`''` inside a single-quoted string is one literal quote"),
+    Opt("shwordsplit", False, "expand", "options.yo:2397-2400",
+        "unquoted parameter expansions are field-split"),
+    Opt("banghist", True, "expand", "options.yo:861-863",
+        "`!` starts csh-style history expansion instead of being literal"),
+    # ── command position ──────────────────────────────────────────────
+    Opt("aliases", True, "command", "options.yo:1170-1171",
+        "aliases are expanded at all"),
+    Opt("completealiases", False, "command", "options.yo:301-304",
+        "an alias is NOT substituted before completion, so it completes as a "
+        "command of its own"),
+    Opt("pathdirs", False, "command", "options.yo:1328-1340",
+        "command names containing a slash are still searched along $PATH"),
+    Opt("hashlistall", True, "command", "options.yo:336-339",
+        "the whole command path is hashed before a command completion or a "
+        "spelling correction"),
+    Opt("autocd", False, "command", "options.yo:65-72",
+        "a bare directory name in command position is a `cd`"),
+    Opt("autonamedirs", False, "command", "options.yo:242-248",
+        "any parameter holding an absolute directory becomes a `~name`, so "
+        "it shows up when completing a word starting with `~`"),
+    Opt("correct", False, "command", "options.yo:1207-1217",
+        "command words are spell-checked, with an interactive [nyae] prompt"),
+    Opt("correctall", False, "command", "options.yo:1223-1230",
+        "every argument is spell-checked as a filename, each prompting"),
+    # ── output shapes a completer reads back ──────────────────────────
+    Opt("kshoptionprint", False, "misc", "options.yo:2129-2132",
+        "`setopt` prints every option marked on/off instead of two lists — "
+        "which is the text option completion parses"),
+    Opt("cbases", False, "misc", "options.yo:1680-1687",
+        "hexadecimal arithmetic output is `0xFF`, not `16#FF`"),
+)
+
+SHELL_OPTIONS: dict[str, Opt] = {o.name: o for o in _OPTS}
+
+# Group -> the options in it, sorted. A run that suspects the listing code can
+# fuzz `OPTION_GROUPS["listing"]` alone instead of the whole space.
+OPTION_GROUPS: dict[str, tuple[str, ...]] = {
+    g: tuple(sorted(o.name for o in _OPTS if o.group == g))
+    for g in sorted({o.group for o in _OPTS})
+}
+
+# Options that make the shell STOP AND ASK. CORRECT/CORRECT_ALL print the
+# SPROMPT `[nyae]` prompt and wait for a keypress (options.yo:1213-1214), which
+# a pty harness replaying a fixed key path cannot answer: the run does not fail,
+# it hangs or captures a prompt instead of a completion. Excluded from
+# generation unless a caller asks for them explicitly — this suppresses no
+# comparison, it keeps the generator from emitting inputs that measure the
+# harness's timeout rather than either shell's completion.
+OPTION_INTERACTIVE = frozenset({"correct", "correctall"})
+
+
+@dataclass(frozen=True)
+class OptionMask:
+    """`masking` in state `state` makes `masked` unobservable."""
+
+    masking: str
+    state: bool
+    masked: str
+    cite: str
+    note: str
+
+
+# The documented overrides. Generating `menucomplete` and `automenu` together
+# is not a bug in the shell — it is a wasted cell: options.yo:407 says the
+# second one has no effect, so the run learns nothing about AUTO_MENU while
+# reporting that it tested it. `gen_option_set` drops the masked half.
+OPTION_MASKS: tuple[OptionMask, ...] = (
+    OptionMask("menucomplete", True, "automenu", "options.yo:407",
+               "MENU_COMPLETE overrides AUTO_MENU"),
+    OptionMask("menucomplete", True, "bashautolist", "options.yo:292-294",
+               "BASH_AUTO_LIST does not work with MENU_COMPLETE, because "
+               "repeated calls cycle the list immediately"),
+    OptionMask("bashautolist", True, "autolist", "options.yo:290",
+               "BASH_AUTO_LIST takes precedence over AUTO_LIST"),
+    OptionMask("nullglob", True, "nomatch", "options.yo:726",
+               "NULL_GLOB overrides NOMATCH"),
+    OptionMask("cshnullglob", True, "nomatch", "options.yo:506",
+               "CSH_NULL_GLOB overrides NOMATCH"),
+)
+
+# Options that only do anything while something else is ON. LIST_AMBIGUOUS is
+# defined as a modifier of the auto-listing options (options.yo:348-349), so an
+# otherwise-fine set that turns both of those off cannot observe it.
+OPTION_REQUIRES: dict[str, tuple[str, ...]] = {
+    "listambiguous": ("autolist", "bashautolist"),
+}
+
+
+@dataclass(frozen=True)
+class OptionPair:
+    """Two options whose behaviour is defined in terms of each other."""
+
+    a: str
+    b: str
+    cite: str
+    note: str
+
+
+# Not masks — these are the combinations worth generating TOGETHER, because the
+# documented behaviour of one is stated in terms of the other. Fuzzing them
+# independently reaches the interesting quadrant only by accident.
+OPTION_PAIRS: tuple[OptionPair, ...] = (
+    OptionPair("globcomplete", "completeinword", "options.yo:322-323",
+               "the implicit `*` is appended, or inserted AT THE CURSOR when "
+               "COMPLETE_IN_WORD is set"),
+    OptionPair("alwaystoend", "completeinword", "options.yo:213-217",
+               "ALWAYS_TO_END only has a cursor to move when completion "
+               "started inside a word"),
+    OptionPair("magicequalsubst", "kshtypeset", "options.yo:665-667",
+               "MAGIC_EQUAL_SUBST respects KSH_TYPESET: together, "
+               "assignment-looking arguments are not word split"),
+    OptionPair("correct", "hashlistall", "options.yo:1209-1211",
+               "without HASH_LIST_ALL, CORRECT falsely reports spelling "
+               "errors the first time a command is used"),
+    OptionPair("caseglob", "bareglobqual", "options.yo:464-466",
+               "the NO_CASE_GLOB example depends on the trailing `(/)` being "
+               "read as a qualifier, i.e. on BARE_GLOB_QUAL"),
+    OptionPair("nullglob", "cshnullglob", "options.yo:501-506, options.yo:723-726",
+               "two different answers to the same question — a pattern that "
+               "matched nothing"),
+    OptionPair("listpacked", "listrowsfirst", "options.yo:372-384",
+               "both rewrite the listing geometry, and the layout code has to "
+               "compose them"),
+    OptionPair("autoparamslash", "autoremoveslash", "options.yo:268-280",
+               "one adds the trailing slash, the other takes it back"),
+)
+
+_OPTION_PARTNERS: dict[str, tuple[str, ...]] = {}
+for _p in OPTION_PAIRS:
+    for _x, _y in ((_p.a, _p.b), (_p.b, _p.a)):
+        _OPTION_PARTNERS[_x] = _OPTION_PARTNERS.get(_x, ()) + (_y,)
+del _p, _x, _y
+
+# A zstyle that overrides an option outright. A combo run that fuzzes both axes
+# at once can pull these out of the zstyle subset when it wants the OPTION
+# measured; nothing here drops anything on its own.
+OPTION_STYLE_MASKS: tuple[tuple[str, str, str], ...] = (
+    ("list", "autolist", "compsys.yo:1929-1934"),
+    ("list-packed", "listpacked", "compsys.yo:1979-1984"),
+    ("list-rows-first", "listrowsfirst", "compsys.yo:2016-2020"),
+    ("menu", "menucomplete", "compsys.yo:2198-2200"),
+    ("menu", "automenu", "compsys.yo:2194-2196"),
+    ("matcher-list", "caseglob", "compsys.yo:2138-2141"),
+    ("matcher", "caseglob", "compsys.yo:2138-2141"),
+)
+
+
+def styles_masking(opts: dict) -> set[str]:
+    """Style names that would override an option in `opts` if the same run also
+    installed them. Advisory: the caller decides what to do about it."""
+    return {style for style, opt, _ in OPTION_STYLE_MASKS if opt in opts}
+
+
+# Coherent starting points, each one a delta from the `zsh -f` defaults. Named
+# rather than generated because the interesting configurations are the ones a
+# PERSON would write: the whole point of `menucomplete` is that someone turns
+# it on and lives in it, and the bugs live in that lived-in state.
+OPTION_PROFILES: dict[str, dict[str, bool]] = {
+    # the baseline: what every existing cell in this corpus already runs under
+    "zsh_default": {},
+    # menu behaviour
+    "menu_complete": {"menucomplete": True},
+    "menu_off": {"automenu": False, "autolist": False},
+    "bash_style": {"bashautolist": True, "automenu": False},
+    "bash_style_menu": {"bashautolist": True},
+    "rec_exact": {"recexact": True},
+    "glob_complete": {"globcomplete": True, "completeinword": True},
+    # listing geometry
+    "packed_rows": {"listpacked": True, "listrowsfirst": True},
+    "list_always": {"listambiguous": False},
+    "quiet_list": {"listbeep": False, "listtypes": False},
+    # cursor / word
+    "in_word": {"completeinword": True},
+    "in_word_to_end": {"completeinword": True, "alwaystoend": True},
+    # suffixes
+    "slash_off": {"autoparamslash": False, "autoremoveslash": False},
+    "mark_dirs": {"markdirs": True},
+    # globbing
+    "case_insensitive": {"caseglob": False},
+    "dotfiles": {"globdots": True},
+    "extended_glob": {"extendedglob": True},
+    "no_glob_qual": {"bareglobqual": False},
+    "null_glob": {"nullglob": True},
+    "csh_null_glob": {"cshnullglob": True},
+    "no_match_off": {"nomatch": False},
+    "numeric_sort": {"numericglobsort": True},
+    # word expansions
+    "expansion_off": {"equals": False, "banghist": False, "ignorebraces": True},
+    "ksh_ish": {"shwordsplit": True, "kshtypeset": True,
+                "kshoptionprint": True, "magicequalsubst": True},
+    "rc_quotes": {"rcquotes": True},
+    "glob_subst": {"globsubst": True},
+    # command position
+    "no_aliases": {"aliases": False},
+    "complete_aliases": {"completealiases": True},
+    "path_hunting": {"pathdirs": True, "autocd": True},
+    "named_dirs": {"autonamedirs": True},
+    "no_hash": {"hashlistall": False},
+    "c_bases": {"cbases": True},
+    # interactive — excluded from generation unless asked for by name
+    "correcting": {"correct": True, "correctall": True},
+}
+
+
+def option_defaults() -> dict[str, bool]:
+    """The `zsh -f` state of every option this module varies."""
+    return {name: o.default for name, o in SHELL_OPTIONS.items()}
+
+
+def normalize_option_set(opts: dict) -> dict[str, bool]:
+    """Drop entries that restate the default, and reject unknown names.
+
+    An option set is a DELTA from `zsh -f`, so `{"autolist": True}` and `{}`
+    describe the same shell. Keeping both spellings would give one
+    configuration two `option_set_id`s and split its results in a report.
+    """
+    out: dict[str, bool] = {}
+    for name, value in opts.items():
+        opt = SHELL_OPTIONS.get(name)
+        if opt is None:
+            raise ValueError(f"parity_corpus: unknown shell option {name!r}")
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"parity_corpus: option {name!r} wants a bool, got {value!r}")
+        if value != opt.default:
+            out[name] = value
+    return dict(sorted(out.items()))
+
+
+def effective_options(opts: dict) -> dict[str, bool]:
+    """Defaults with the delta applied — the state the shell actually runs in."""
+    eff = option_defaults()
+    eff.update(normalize_option_set(opts))
+    return eff
+
+
+def masked_options(opts: dict) -> list[tuple[str, str]]:
+    """`(masked, reason)` for every entry the set cannot observe.
+
+    A diagnostic, not a filter: a caller that WANTS the masked combination
+    (both shells still have to agree on it) passes `allow_masked=True` to the
+    generator and ignores this.
+    """
+    opts = normalize_option_set(opts)
+    eff = effective_options(opts)
+    out: set[tuple[str, str]] = set()
+    for m in OPTION_MASKS:
+        if m.masked in opts and eff[m.masking] == m.state:
+            out.add((m.masked, f"{m.masking}={'on' if m.state else 'off'}"))
+    for name, needed in OPTION_REQUIRES.items():
+        if name in opts and not any(eff[n] for n in needed):
+            out.add((name, "needs " + " or ".join(needed)))
+    return sorted(out)
+
+
+def cohere_option_set(opts: dict) -> dict[str, bool]:
+    """Drop every entry another member makes unobservable, until stable."""
+    current = normalize_option_set(opts)
+    while True:
+        masked = masked_options(current)
+        if not masked:
+            return current
+        current = {k: v for k, v in current.items()
+                   if k not in {name for name, _ in masked}}
+
+
+def option_statements(opts: dict) -> list[str]:
+    """The shell lines that install an option set, sorted.
+
+    Statements, not a blob, so an option set drops straight into the same
+    `random_subset()` / `shrink()` machinery the zstyle combos use: a failing
+    run carrying both axes can be delta-debugged down to the one `setopt` line
+    and the one `zstyle` line that matter, together.
+    """
+    return [f"{'setopt' if value else 'unsetopt'} {name}"
+            for name, value in normalize_option_set(opts).items()]
+
+
+def parse_option_statements(lines) -> dict[str, bool]:
+    """Inverse of `option_statements` — read a set back off a fixture file."""
+    out: dict[str, bool] = {}
+    for line in lines:
+        text = line.split("#", 1)[0].strip()
+        if not text:
+            continue
+        parts = text.split()
+        if len(parts) != 2 or parts[0] not in ("setopt", "unsetopt"):
+            raise ValueError(f"parity_corpus: not an option statement: {line!r}")
+        out[parts[1]] = parts[0] == "setopt"
+    return normalize_option_set(out)
+
+
+def describe_option_set(opts: dict) -> str:
+    """`+menucomplete -automenu` — short enough for a result row."""
+    opts = normalize_option_set(opts)
+    if not opts:
+        return "zsh-default"
+    return " ".join(f"{'+' if v else '-'}{n}" for n, v in opts.items())
+
+
+def option_set_id(opts: dict) -> str:
+    """A stable id for one option set, for JSON result keys and fixture names."""
+    statements = option_statements(opts)
+    if not statements:
+        return "opt:default"
+    digest = hashlib.sha1("\n".join(statements).encode()).hexdigest()[:10]
+    return f"opt:{digest}"
+
+
+def render_option_set(opts: dict, header: str | None = None) -> str:
+    """The text of a sourceable fixture: a header comment plus the statements."""
+    lines = [f"# {header}"] if header else []
+    lines.append(f"# option set {option_set_id(opts)}: {describe_option_set(opts)}")
+    lines.extend(option_statements(opts))
+    return "\n".join(lines) + "\n"
+
+
+def write_option_file(opts: dict, path: str, header: str | None = None) -> str:
+    """Write a set where a harness's init file can `source` it. Returns `path`."""
+    with open(path, "w") as f:
+        f.write(render_option_set(opts, header))
+    return path
+
+
+def gen_option_set(rng, profile: str | None = None, max_extra: int = 3,
+                   include_interactive: bool = False,
+                   allow_masked: bool = False,
+                   pair_prob: float = 0.5) -> dict[str, bool]:
+    """A random, COHERENT option set: a delta from the `zsh -f` defaults.
+
+    Coherent, not independent coin flips, in three senses:
+
+      * it starts from an `OPTION_PROFILES` base, so the common axes arrive as
+        a person would set them rather than as an unlikely scattering;
+      * an option drawn on top of that pulls in its documented partner with
+        probability `pair_prob` (`OPTION_PAIRS`), because the behaviour of one
+        is DEFINED in terms of the other;
+      * the result is put through `cohere_option_set()`, which drops any entry
+        another member overrides (`OPTION_MASKS`, `OPTION_REQUIRES`) — a cell
+        that sets `automenu` under `menucomplete` measures nothing while
+        reporting that it measured AUTO_MENU.
+
+    Pure in `rng`: every choice iterates a SORTED sequence, so `(seed, index)`
+    reproduces a set on any machine and in any Python.
+    """
+    if max_extra < 0:
+        raise ValueError("gen_option_set: max_extra must be >= 0")
+    names = sorted(OPTION_PROFILES)
+    if profile is None:
+        if not include_interactive:
+            names = [n for n in names
+                     if not (set(OPTION_PROFILES[n]) & OPTION_INTERACTIVE)]
+        profile = rng.choice(names)
+    if profile not in OPTION_PROFILES:
+        raise ValueError(f"gen_option_set: unknown profile {profile!r}")
+
+    opts = dict(OPTION_PROFILES[profile])
+    pool = [n for n in sorted(SHELL_OPTIONS)
+            if n not in opts
+            and (include_interactive or n not in OPTION_INTERACTIVE)]
+    for name in rng.sample(pool, min(rng.randint(0, max_extra), len(pool))):
+        opts[name] = not SHELL_OPTIONS[name].default
+        for partner in _OPTION_PARTNERS.get(name, ()):
+            if partner in opts:
+                continue
+            if not include_interactive and partner in OPTION_INTERACTIVE:
+                continue
+            if rng.random() < pair_prob:
+                opts[partner] = not SHELL_OPTIONS[partner].default
+    opts = normalize_option_set(opts)
+    return opts if allow_masked else cohere_option_set(opts)
+
+
+OPTION_MUTATIONS = ("add", "drop", "swap_in_group", "add_partner",
+                    "merge_profile")
+
+
+def _apply_option_mutation(opts: dict, op: str, rng,
+                           include_interactive: bool) -> dict:
+    """One named edit. Returns `opts` unchanged when the edit does not apply."""
+    out = dict(opts)
+    pool = [n for n in sorted(SHELL_OPTIONS)
+            if n not in out
+            and (include_interactive or n not in OPTION_INTERACTIVE)]
+    if op == "add":
+        if not pool:
+            return out
+        name = rng.choice(pool)
+        out[name] = not SHELL_OPTIONS[name].default
+        return out
+    if op == "drop":
+        if not out:
+            return out
+        del out[rng.choice(sorted(out))]
+        return out
+    if op == "swap_in_group":
+        # Replace one member with another option from the SAME group: the
+        # surface under test stays put while the knob moves, which is the edit
+        # that separates "the listing code is wrong" from "LIST_PACKED is
+        # wrong".
+        if not out:
+            return out
+        name = rng.choice(sorted(out))
+        siblings = [n for n in OPTION_GROUPS[SHELL_OPTIONS[name].group]
+                    if n not in out
+                    and (include_interactive or n not in OPTION_INTERACTIVE)]
+        if not siblings:
+            return out
+        del out[name]
+        pick = rng.choice(siblings)
+        out[pick] = not SHELL_OPTIONS[pick].default
+        return out
+    if op == "add_partner":
+        candidates = [(n, p) for n in sorted(out)
+                      for p in _OPTION_PARTNERS.get(n, ())
+                      if p not in out
+                      and (include_interactive or p not in OPTION_INTERACTIVE)]
+        if not candidates:
+            return out
+        _, partner = rng.choice(candidates)
+        out[partner] = not SHELL_OPTIONS[partner].default
+        return out
+    if op == "merge_profile":
+        names = sorted(OPTION_PROFILES)
+        if not include_interactive:
+            names = [n for n in names
+                     if not (set(OPTION_PROFILES[n]) & OPTION_INTERACTIVE)]
+        out.update(OPTION_PROFILES[rng.choice(names)])
+        return out
+    raise ValueError(f"_apply_option_mutation: unknown op {op!r}")
+
+
+def mutate_option_set(opts: dict, rng, include_interactive: bool = False,
+                      allow_masked: bool = False) -> dict[str, bool]:
+    """One small structured edit to an option set — never the input back, and
+    never empty.
+
+    Same reasoning as `mutate_buffer`/`mutate_keys`: once a set diverges, its
+    neighbours bound the bug, and the neighbour that differs by ONE option is
+    the shrink step a report can name. An empty result would silently re-run
+    the default configuration every other existing cell already covers, so the
+    fallback adds an option instead of returning it.
+    """
+    base = normalize_option_set(opts)
+    for _ in range(8):
+        out = _apply_option_mutation(base, rng.choice(OPTION_MUTATIONS), rng,
+                                     include_interactive)
+        out = normalize_option_set(out)
+        if not allow_masked:
+            out = cohere_option_set(out)
+        if out and out != base:
+            return out
+    pool = [n for n in sorted(SHELL_OPTIONS)
+            if n not in base
+            and (include_interactive or n not in OPTION_INTERACTIVE)]
+    fallback = dict(base)
+    if pool:
+        name = rng.choice(pool)
+        fallback[name] = not SHELL_OPTIONS[name].default
+    elif not fallback:
+        fallback["completeinword"] = True
+    return normalize_option_set(fallback)
+
+
+# Cases the harness should run an option set against, per option. Built from
+# the case tags rather than a second hand-written table, so a case added below
+# is selectable the moment it names the option it exercises.
+OPTION_TAG = "optsens"
+
+
+def cases_for_option(name: str) -> list[Case]:
+    """Curated cases whose outcome the named option demonstrably changes."""
+    if name not in SHELL_OPTIONS:
+        raise ValueError(f"parity_corpus: unknown shell option {name!r}")
+    return [c for c in CASES if OPTION_TAG in c.tags and name in c.tags]
+
+
+def option_cases() -> list[Case]:
+    """Every option-sensitive case."""
+    return [c for c in CASES if OPTION_TAG in c.tags]
+
+
+def options_exercised_by(case: Case) -> tuple[str, ...]:
+    """The options a case was written to expose, from its tags."""
+    return tuple(t for t in case.tags if t in SHELL_OPTIONS)
+
+
+# The key paths that make an option-sensitive case actually say something.
+# `optsens_ciw_midword` under `tab1` completes at the end of the buffer, where
+# COMPLETE_IN_WORD has nothing to change; it needs a cursor that moved first.
+# Advisory, and deliberately NOT merged into DEFAULT_SEQUENCES, which sizes
+# every routine sweep.
+OPTION_CASE_SEQUENCES: dict[str, tuple[str, ...]] = {
+    "optsens_ciw_midword": ("left3_tab", "left_tab_right_tab", "left2_tab_tab"),
+    "optsens_to_end": ("left3_tab", "left_tab_bs_tab"),
+    "optsens_autolist": ("tab1", "tab2", "tab3"),
+    "optsens_listambiguous": ("tab1", "tab2", "tab3"),
+    "optsens_menu": ("tab1", "tab2", "tab_btab"),
+    "optsens_listing": ("ctrl_d", "tab2"),
+    "optsens_globcomplete": ("tab1", "tab2"),
+    "optsens_removeslash": ("tab_space_tab", "tab_slash_tab"),
+    "optsens_paramkeys": ("tab_char_tab",),
+    "optsens_correct": ("tab_cr",),
+}
+
+
+def sequences_for_case(case: Case, fallback=None) -> list[str]:
+    """The recommended key paths for a case, or `fallback` (DEFAULT_SEQUENCES)."""
+    named = OPTION_CASE_SEQUENCES.get(case.name)
+    if named:
+        return list(named)
+    return list(fallback if fallback is not None else DEFAULT_SEQUENCES)
+
+
+# ── option defaults, checked against a real shell ────────────────────────────
+#
+# The `default` column above is the whole basis for `normalize_option_set`: get
+# one wrong and a "delta" silently installs the default, so the run reports on a
+# configuration it never set. `_validate()` cannot check it — it must not boot a
+# shell at import — so the check is a function a run calls, and `main()` exposes
+# it as `--check-option-defaults`.
+
+_OPTION_PROBE = ("for o in {names}; do print -r -- \"$o=${{options[$o]}}\"; done")
+
+
+def probe_option_defaults(argv=("zsh", "-f"), timeout: int = 20) -> dict[str, bool]:
+    """Ask a real shell for the `-f` state of every option in the table."""
+    script = _OPTION_PROBE.format(names=" ".join(sorted(SHELL_OPTIONS)))
+    out = subprocess.run(list(argv) + ["-c", script],
+                         capture_output=True, text=True, timeout=timeout).stdout
+    state: dict[str, bool] = {}
+    for line in out.splitlines():
+        name, _, value = line.partition("=")
+        if name in SHELL_OPTIONS and value in ("on", "off"):
+            state[name] = value == "on"
+    return state
+
+
+def check_option_defaults(argv=("zsh", "-f")) -> list[tuple[str, bool, str]]:
+    """`(option, table_default, shell_state)` for every disagreement.
+
+    An option the shell does not know comes back as `"missing"`, which is just
+    as wrong as a flipped default: the generator would emit a `setopt` line
+    that shell ignores.
+    """
+    state = probe_option_defaults(argv)
+    bad = []
+    for name, opt in sorted(SHELL_OPTIONS.items()):
+        if name not in state:
+            bad.append((name, opt.default, "missing"))
+        elif state[name] != opt.default:
+            bad.append((name, opt.default, "on" if state[name] else "off"))
+    return bad
 
 # ── fuzz generators ──────────────────────────────────────────────────────────
 #
@@ -1231,6 +2217,56 @@ def _validate_generators(samples: int = 64) -> None:
         for name in mkeys:
             key_bytes(name)
 
+        # Option sets: same reproducibility contract as the buffers and key
+        # paths above, plus the two invariants the option axis adds — a
+        # generated set is COHERENT (nothing in it is overridden by something
+        # else in it, so the cell measures what it says it measures) and it
+        # round-trips through the shell statements a harness sources.
+        opts = gen_option_set(rng)
+        if opts != gen_option_set(twin):
+            raise ValueError("parity_corpus: gen_option_set is not seed-reproducible")
+        if masked_options(opts):
+            raise ValueError(
+                f"parity_corpus: gen_option_set emitted a masked set {opts}")
+        stray = sorted(set(opts) & OPTION_INTERACTIVE)
+        if stray:
+            raise ValueError(
+                f"parity_corpus: gen_option_set emitted interactive {stray} "
+                "without being asked for it")
+        if parse_option_statements(option_statements(opts)) != opts:
+            raise ValueError(
+                f"parity_corpus: option statements do not round-trip: {opts}")
+        if normalize_option_set(opts) != opts:
+            raise ValueError(
+                f"parity_corpus: gen_option_set emitted a non-normal set {opts}")
+
+        mopts = mutate_option_set(opts, rng)
+        if mopts != mutate_option_set(opts, twin):
+            raise ValueError("parity_corpus: mutate_option_set is not seed-reproducible")
+        if not mopts or mopts == opts:
+            raise ValueError(
+                f"parity_corpus: mutate_option_set returned its input {opts}")
+        if masked_options(mopts):
+            raise ValueError(
+                f"parity_corpus: mutate_option_set emitted a masked set {mopts}")
+        if sorted(set(mopts) & OPTION_INTERACTIVE):
+            raise ValueError(
+                f"parity_corpus: mutate_option_set emitted interactive options {mopts}")
+        if option_set_id(mopts) == option_set_id(opts):
+            raise ValueError(
+                f"parity_corpus: two different option sets share an id {opts} {mopts}")
+
+
+    # The empty delta is a legal configuration — it is the `zsh -f` baseline
+    # every other cell in this corpus already runs under — and it must have its
+    # own stable id rather than colliding with a real set.
+    if option_set_id({}) != "opt:default" or option_statements({}):
+        raise ValueError("parity_corpus: the empty option set is not the baseline")
+    if cohere_option_set({"automenu": False, "menucomplete": True}) != {"menucomplete": True}:
+        raise ValueError("parity_corpus: cohere_option_set did not drop a masked option")
+    if cohere_option_set({"listambiguous": False, "autolist": False}) != {"autolist": False}:
+        raise ValueError("parity_corpus: cohere_option_set ignored OPTION_REQUIRES")
+
     # Fingerprints: identical screens have no id, a purely volatile difference
     # is labelled as such, the SAME divergence under two different match counts
     # collapses to one id, and two DIFFERENT divergences must not.
@@ -1345,6 +2381,19 @@ def main() -> int:
     ap.add_argument("--discover-limit", type=int, default=None)
     ap.add_argument("--discover-all", action="store_true",
                     help="include commands whose completer may execute them")
+    ap.add_argument("--list-options", action="store_true",
+                    help="the shell options this corpus varies, with their "
+                         "`zsh -f` default and doc citation")
+    ap.add_argument("--list-option-cases", action="store_true",
+                    help="cases whose outcome a shell option changes")
+    ap.add_argument("--gen-options", type=int, default=0, metavar="N",
+                    help="print N seeded option sets")
+    ap.add_argument("--option-profile", default=None,
+                    help="force a profile for --gen-options")
+    ap.add_argument("--check-option-defaults", nargs="*", default=None,
+                    metavar="SHELL",
+                    help="verify the option DEFAULT column against a real "
+                         "shell (default: `zsh -f`); repeatable")
     ap.add_argument("--matrix-size", action="store_true")
     ap.add_argument("--all-sequences", action="store_true",
                     help="size the matrix against every sequence, not the default battery")
@@ -1371,6 +2420,51 @@ def main() -> int:
         for c in found:
             print(f"{c.name:32s} {c.buffer!r}")
         print(f"# {len(found)} discovered case(s) on this host")
+    if args.list_options:
+        for group in OPTION_GROUPS:
+            print(f"# {group}")
+            for name in OPTION_GROUPS[group]:
+                o = SHELL_OPTIONS[name]
+                flag = "on " if o.default else "off"
+                mark = "!" if name in OPTION_INTERACTIVE else " "
+                print(f"{mark} {name:18s} {flag}  {o.cite:24s} {o.note}")
+        print(f"# {len(SHELL_OPTIONS)} option(s) in {len(OPTION_GROUPS)} group(s), "
+              f"{len(OPTION_PROFILES)} profile(s), {len(OPTION_MASKS)} mask(s), "
+              f"{len(OPTION_PAIRS)} pair(s), "
+              f"{len(OPTION_INTERACTIVE)} interactive")
+    if args.list_option_cases:
+        for c in option_cases():
+            seqs = OPTION_CASE_SEQUENCES.get(c.name, ())
+            print(f"{c.name:24s} {c.buffer!r:20s} "
+                  f"[{','.join(options_exercised_by(c))}]"
+                  + (f" seqs={','.join(seqs)}" if seqs else ""))
+        print(f"# {len(option_cases())} option-sensitive case(s), "
+              f"{len({o for c in option_cases() for o in options_exercised_by(c)})}"
+              f"/{len(SHELL_OPTIONS)} option(s) covered")
+    if args.gen_options:
+        rng = random.Random(args.seed)
+        for _ in range(args.gen_options):
+            opts = gen_option_set(rng, profile=args.option_profile)
+            print(f"{option_set_id(opts):16s} {describe_option_set(opts)}")
+    if args.check_option_defaults is not None:
+        shells = args.check_option_defaults or ["zsh -f"]
+        rc = 0
+        for shell in shells:
+            argv = shell.split()
+            try:
+                bad = check_option_defaults(argv)
+            except Exception as exc:            # noqa: BLE001 — report, not raise
+                print(f"{shell}: could not probe: {exc}")
+                rc = 1
+                continue
+            for name, want, got in bad:
+                print(f"{shell}: {name}: table says "
+                      f"{'on' if want else 'off'}, shell says {got}")
+            print(f"# {shell}: {len(SHELL_OPTIONS) - len(bad)}/"
+                  f"{len(SHELL_OPTIONS)} option default(s) agree")
+            rc = rc or (1 if bad else 0)
+        if rc:
+            return rc
     if args.matrix_size:
         seqs = list(KEY_SEQUENCES) if args.all_sequences else DEFAULT_SEQUENCES
         cells = matrix(CASES, seqs)
@@ -1382,16 +2476,25 @@ def main() -> int:
             keys = gen_keyseq(rng, args.gen_keys)
             print(f"{buf!r:34s} {','.join(keys)}")
     if not any((args.list_keys, args.list_sequences, args.list_cases,
-                args.list_discovered, args.matrix_size, args.gen)):
+                args.list_discovered, args.matrix_size, args.gen,
+                args.list_options, args.list_option_cases, args.gen_options,
+                args.check_option_defaults is not None)):
         seqs = DEFAULT_SEQUENCES
         print(f"cases={len(CASES)} keys={len(KEYS)} "
               f"sequences={len(KEY_SEQUENCES)} "
               f"default={len(seqs)} fuzz={len(FUZZ_SEQUENCES)} "
               f"cells={len(matrix(CASES, seqs))}")
         print(f"tags={','.join(sorted({t for c in CASES for t in c.tags}))}")
+        covered = {o for c in option_cases() for o in options_exercised_by(c)}
+        print(f"options={len(SHELL_OPTIONS)} groups={len(OPTION_GROUPS)} "
+              f"profiles={len(OPTION_PROFILES)} masks={len(OPTION_MASKS)} "
+              f"pairs={len(OPTION_PAIRS)} style-masks={len(OPTION_STYLE_MASKS)} "
+              f"option-cases={len(option_cases())} "
+              f"options-covered={len(covered)}/{len(SHELL_OPTIONS)}")
         print("generators: " + ", ".join(sorted(
-            ("gen_keyseq", "gen_buffer", "mutate_buffer", "mutate_keys",
-             "fingerprint", "mask_volatile"))))
+            ("gen_keyseq", "gen_buffer", "gen_option_set", "mutate_buffer",
+             "mutate_keys", "mutate_option_set", "fingerprint",
+             "mask_volatile"))))
     return 0
 
 
