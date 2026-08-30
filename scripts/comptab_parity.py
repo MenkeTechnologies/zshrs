@@ -40,6 +40,15 @@ Cases come from the shared corpus (`parity_corpus.CASES`), a corpus file (one
 command-line prefix per line, `#` comments ignored), `--case`, or `--discover`
 (every installed command on this host that ships a `_name` completer).
 
+`--layout-fuzz` runs the same comparison over a different axis: not what is
+typed or how the shell is configured, but where the completers are STORED and
+how `compinit` is told to FIND them — `.zwc` digest composition and precedence,
+fpath composition, the compinit flag matrix, the dump's state (including one
+written by the OTHER shell), and compaudit's security conditions. Both shells
+always get the byte-identical layout; a layout the reference zsh itself refuses
+is counted as INVALID-LAYOUT and never run, exactly as `--style-fuzz` treats a
+config zsh's `zstyle` rejects.
+
 Four verdicts, and the difference between them is the whole point:
 
     PASS      both screens are byte-identical.
@@ -84,6 +93,9 @@ Usage:
     scripts/comptab_parity.py --mutate 20           # 20 MUTATED corpus inputs
     scripts/comptab_parity.py --style-fuzz 20       # 20 GENERATED zstyle configs
     scripts/comptab_parity.py --style-fuzz-list 30 # just show what it generates
+    scripts/comptab_parity.py --layout-fuzz 8      # 8 STORAGE/LOOKUP layouts
+    scripts/comptab_parity.py --layout-list        # the layout catalog
+    scripts/comptab_parity.py --dump-xshell        # cross-shell .zcompdump report
 
 Exit status: 0 only when every case is byte-identical (a TIMEOUT or a SKIP is
 not byte-identical evidence, so neither one exits 0 either).
@@ -3854,6 +3866,1102 @@ def _cov_admit(args, keep, n_new):
     return True
 
 
+# ── storage and lookup: how a completer is STORED and FOUND (--layout-fuzz) ──
+#
+# Everything above this line varies what is TYPED (`--mutate`), what the shell
+# is CONFIGURED with (`--style-fuzz`), or which case is run. None of it varies
+# the layer underneath: every cell so far has used one fpath (the user's real
+# dirs), one dump, loaded one way (`compinit -C -d`). That layer is not inert —
+# round 3 traced seven "timeouts" to the REFERENCE zsh segfaulting while
+# autoloading out of a 35MB `.zwc` digest, which vanished when the same
+# completers were plain files.
+#
+# So this axis varies the store and the lookup, and holds both shells to what
+# the documentation says, quoted here so a verdict can be argued from the spec
+# rather than from this script's opinion:
+#
+#   Doc/Zsh/func.yo:93-130   For each fpath `element` the shell looks for
+#       `element.zwc`, `element/function.zwc` and `element/function`, "the
+#       newest of which is used to load the definition for the function", and
+#       "if element already includes a .zwc extension ... element is searched
+#       for the definition of the function without comparing its age to that
+#       of other files".  Also: "if more than one of these contains a
+#       definition for the function that is sought, the leftmost in the fpath
+#       is chosen".
+#   Doc/Zsh/compsys.yo:154-171  `-D` turns dumping off; `-d dumpfile` names
+#       it; "The check performed to see if there are new functions can be
+#       omitted by giving the option -C".
+#   Doc/Zsh/compsys.yo:182-201  The security check; `-u` uses everything
+#       found without asking, `-i` "silently ignore[s] all insecure files and
+#       directories", and "This security check is skipped entirely when the
+#       -C option is given, provided the dumpfile exists".  Setting `_compdir`
+#       to the empty string forces "a check of exactly the directories
+#       currently named in fpath" — which is what makes a scratch fpath a
+#       controlled experiment instead of a suggestion.
+#   Completion/compinit:469-499  The dump is sourced unconditionally under
+#       `-C`; otherwise only when its `#files:` count equals `$#_i_files` AND
+#       its `version:` equals `$ZSH_VERSION`.
+#   Completion/compinit:504-528  The registration scan reads the FIRST LINE of
+#       every non-`.zwc` file in each fpath dir, in fpath order, and
+#       `compdef -na` keeps the first claim on a command name.
+#   Completion/compaudit:125-163  What "insecure" means: a group- or
+#       world-writable fpath directory (or the PARENT of one), or a file in
+#       one, not owned by root or by this user.
+#
+# Both shells always get the byte-identical layout, the byte-identical init
+# file, and the same reset of any dump the layout defines — a shell that
+# autodumps must not hand the second shell a different starting state.
+
+LAYOUT_MARK = "@LY@"
+
+# Which implementation body a lookup resolved to. It is the completion output,
+# so a precedence bug is visible on the screen instead of having to be inferred.
+IMPL_PLAIN, IMPL_DIGEST = "PLAIN", "DIGEST"
+
+# How the implementation helper is stored next to the registration stubs.
+LAYOUT_STORES = (
+    "plain",            # `_zzimpl` is a plain file. The control.
+    "digest",           # only in `<dir>.zwc`; the plain file is gone.
+    "digest-stale",     # both, digest mtime forced OLD -> the dir must win.
+    "digest-shadow",    # both, digest mtime forced NEW -> the digest must win.
+    "digest-explicit",  # fpath names the `.zwc` itself (func.yo:105-112).
+    "digest-corrupt",   # `<dir>.zwc` truncated mid-file; the plain file remains.
+)
+
+# How the dirs are threaded onto fpath.
+LAYOUT_FPATHS = (
+    "single",           # one dir. The control.
+    "dup",              # the same dir twice.
+    "missing",          # a nonexistent dir first.
+    "unreadable",       # a mode-000 dir first.
+    "symlink",          # reached through a symlink instead of its real path.
+    "two-dirs",         # the same completer in two dirs, different bodies.
+    "tag-mismatch",     # `_zzalt` whose `#compdef` claims zz01, ahead of `_zz01`.
+)
+
+# How compinit is called.
+LAYOUT_COMPINITS = (
+    "C-d",              # -C -d DUMP   skip the check, source the dump as-is
+    "i-d",              # -i -d DUMP   ignore insecure
+    "u-d",              # -u -d DUMP   use everything found
+    "d",                # -d DUMP      checked load, autodump on mismatch
+    "D",                # -D           no dump at all
+    "bare",             # compinit     dump at $ZDOTDIR/.zcompdump
+    "ask",              # compinit     with the default insecure-dir prompt
+)
+
+# What is sitting at the dump path when compinit starts.
+LAYOUT_DUMPS = (
+    "zsh-written",      # written by the reference zsh from THIS layout
+    "zshrs-written",    # written by zshrs from THIS layout
+    "missing",          # no file there
+    "stale",            # a real dump whose `#files:` count does not match
+    "corrupt",          # not a dump at all
+    "none",             # the layout names no dump (-D / bare)
+)
+
+LAYOUT_SECURITY = (
+    "secure",           # every fpath dir 0755, owned by this user
+    "world-writable",   # the completer dir is 0777 (compaudit:125)
+    "other-owner",      # a file owned by another user — needs privileges
+)
+
+
+class Layout:
+    """One storage/lookup configuration, and everything built for it."""
+
+    def __init__(self, name, store, fpath, compinit, dump, security, note=""):
+        self.name = name
+        self.store, self.fpath = store, fpath
+        self.compinit, self.dump, self.security = compinit, dump, security
+        self.note = note
+        self.dirs = []              # the fpath list BOTH shells get
+        self.init_file = None
+        self.dump_path = None
+        self.dump_template = None
+        self.notes = []             # generator facts, printed verbatim
+        self.unbuildable = None     # why this host cannot construct it
+        self.preflight = None       # (rc, stdout, stderr) from real zsh
+        self.restore = []           # (path, mode) to put back before rmtree
+
+    @property
+    def axes(self):
+        return "store=%s fpath=%s compinit=%s dump=%s sec=%s" % (
+            self.store, self.fpath, self.compinit, self.dump, self.security)
+
+    def spec_note(self):
+        """The documented rule this layout is holding both shells to."""
+        return {
+            "plain": "func.yo:120-122 — element/function is the definition",
+            "digest": "func.yo:97-103 — element.zwc is searched like the directory",
+            "digest-stale": "func.yo:93-94,125-130 — the NEWER of digest and directory wins",
+            "digest-shadow": "func.yo:93-94,125-130 — the NEWER of digest and directory wins",
+            "digest-explicit": "func.yo:105-112 — an explicit .zwc element is used without an age comparison",
+            "digest-corrupt": "no documented behaviour: both shells must reject it identically and fall back",
+        }.get(self.store, "")
+
+
+def layout_catalog():
+    """The curated matrix, in a fixed order so `--layout-fuzz N` is the same N.
+
+    Ordered so the cheapest and most load-bearing conditions come first: the
+    control, then the digest precedence rules, then fpath composition, then the
+    compinit/dump matrix, then security.
+    """
+    L = Layout
+    return [
+        # ── the control, and the digest precedence rules ──
+        L("plain-C", "plain", "single", "C-d", "zsh-written", "secure",
+          "control: plain files, prebuilt dump, security check skipped"),
+        L("digest-only", "digest", "single", "C-d", "zsh-written", "secure",
+          "the helper exists ONLY inside <dir>.zwc"),
+        L("digest-stale", "digest-stale", "single", "C-d", "zsh-written", "secure",
+          "digest older than the directory: the plain file must win"),
+        L("digest-shadow", "digest-shadow", "single", "C-d", "zsh-written", "secure",
+          "digest newer than the directory: the digest must win"),
+        L("digest-explicit", "digest-explicit", "single", "C-d", "zsh-written", "secure",
+          "fpath element IS the .zwc, no directory of that name"),
+        L("digest-corrupt", "digest-corrupt", "single", "C-d", "zsh-written", "secure",
+          "truncated digest: both shells must reject it and fall back"),
+        L("digest-corrupt-D", "digest-corrupt", "single", "D", "none", "secure",
+          "truncated digest with no dump: the scan itself has to survive it"),
+        # ── fpath composition ──
+        L("fpath-dup", "plain", "dup", "C-d", "zsh-written", "secure",
+          "the same directory listed twice"),
+        L("fpath-missing", "plain", "missing", "C-d", "zsh-written", "secure",
+          "a nonexistent directory ahead of the real one"),
+        L("fpath-unreadable", "plain", "unreadable", "C-d", "zsh-written", "secure",
+          "a mode-000 directory ahead of the real one"),
+        L("fpath-symlink", "plain", "symlink", "C-d", "zsh-written", "secure",
+          "the directory reached through a symlink"),
+        L("fpath-two-dirs", "plain", "two-dirs", "D", "none", "secure",
+          "same completer in two dirs: func.yo:128-129 leftmost wins"),
+        L("fpath-tag-mismatch", "plain", "tag-mismatch", "D", "none", "secure",
+          "a file whose #compdef claims a command another file is named for"),
+        L("fpath-two-dirs-dump", "plain", "two-dirs", "u-d", "missing", "secure",
+          "leftmost-wins, then dumped: the dump must record the same winner"),
+        # ── compinit mode / dump state ──
+        L("dump-missing-u", "plain", "single", "u-d", "missing", "secure",
+          "no dump: full scan, then autodump"),
+        L("dump-missing-i", "plain", "single", "i-d", "missing", "secure",
+          "-i with nothing insecure: must behave as -u does here"),
+        L("dump-stale-C", "plain", "single", "C-d", "stale", "secure",
+          "-C sources the stale dump unconditionally (compinit:493-496)"),
+        L("dump-stale-d", "plain", "single", "d", "stale", "secure",
+          "no -C: the #files count must be rechecked and the dump rebuilt"),
+        L("dump-corrupt-C", "plain", "single", "C-d", "corrupt", "secure",
+          "-C sources garbage: both shells must fail the same way"),
+        L("dump-corrupt-d", "plain", "single", "d", "corrupt", "secure",
+          "checked load of garbage"),
+        L("dump-foreign-zsh", "plain", "single", "C-d", "zsh-written", "secure",
+          "a dump written by the REFERENCE zsh, read by both"),
+        L("dump-foreign-zshrs", "plain", "single", "C-d", "zshrs-written", "secure",
+          "a dump written by ZSHRS, read by both"),
+        L("dump-foreign-zshrs-d", "plain", "single", "d", "zshrs-written", "secure",
+          "a zshrs-written dump under the CHECKED load path"),
+        L("dump-none-D", "plain", "single", "D", "none", "secure",
+          "-D: no dump is read and none is written"),
+        L("dump-bare", "plain", "single", "bare", "missing", "secure",
+          "no -d: the dump lands at $ZDOTDIR/.zcompdump (compsys.yo:157-159)"),
+        # ── security ──
+        L("insecure-C", "plain", "single", "C-d", "zsh-written", "world-writable",
+          "-C skips the check entirely (compsys.yo:189-190)"),
+        L("insecure-i", "plain", "single", "i-d", "missing", "world-writable",
+          "-i must silently drop the insecure dir from fpath"),
+        L("insecure-u", "plain", "single", "u-d", "missing", "world-writable",
+          "-u must use it anyway"),
+        L("insecure-ask", "plain", "single", "ask", "missing", "world-writable",
+          "the default prompt path (compinit:436-451)"),
+        L("insecure-other-owner", "plain", "single", "i-d", "missing", "other-owner",
+          "a completer owned by another user"),
+    ]
+
+
+def layout_random(rng, n, catalog_names):
+    """Seeded combinations beyond the curated catalog.
+
+    Only combinations that are internally consistent are emitted: a `-D` or
+    `bare` compinit does not read a named dump, and `-C` with no dump file is
+    the one case the documentation calls out as NOT skipping the security check
+    ("provided the dumpfile exists", compsys.yo:189-190), so it is generated
+    deliberately rather than avoided.
+    """
+    out = []
+    for i in range(n):
+        store = rng.choice(LAYOUT_STORES)
+        fp = rng.choice(LAYOUT_FPATHS)
+        ci = rng.choice(LAYOUT_COMPINITS)
+        sec = rng.choice(("secure", "secure", "world-writable"))
+        if ci in ("D", "bare", "ask"):
+            dump = "none" if ci == "D" else "missing"
+        else:
+            dump = rng.choice([d for d in LAYOUT_DUMPS if d != "none"])
+        name = "rnd%03d" % i
+        if name in catalog_names:
+            continue
+        out.append(Layout(name, store, fp, ci, dump, sec, "seeded combination"))
+    return out
+
+
+# ── materialising a layout on disk ───────────────────────────────────────────
+
+# `#autoload` with no options on purpose: compinit:522-524 autoloads it and
+# stores it in `_compautos` ONLY when the tag line carries options, so this file
+# also pins that branch.
+_IMPL_BODY = """\
+#autoload
+compadd -- ${1}-%(mark)s-alpha ${1}-%(mark)s-beta ${1}-%(mark)s-gamma
+"""
+
+# The registration stub. Every store variant keeps these, so the `#compdef`
+# scan is constant and the only thing that moves is where `_zzimpl` came from.
+_STUB_BODY = """\
+#compdef %(cmd)s
+_zzimpl %(tag)s
+"""
+
+
+def _write(path, text, mode=0o644):
+    with open(path, "w") as f:
+        f.write(text)
+    os.chmod(path, mode)
+
+
+def _impl_text(mark):
+    return _IMPL_BODY % {"mark": mark}
+
+
+def _zcompile(zsh, cwd, out, sources):
+    """Build a `.zwc` with the REFERENCE zsh's own zcompile.
+
+    Deliberately zsh's: the digest format is zsh's, and a digest zshrs wrote is
+    a different experiment (one this axis does not claim to have run).
+    """
+    import subprocess
+    cmd = "zcompile -U %s %s" % (shlex.quote(out),
+                                 " ".join(shlex.quote(s) for s in sources))
+    p = subprocess.run([zsh, "-f", "-c", cmd], cwd=cwd,
+                       capture_output=True, text=True, timeout=60)
+    return p.returncode, (p.stderr or "").strip()
+
+
+def _set_mtime(path, when):
+    os.utime(path, (when, when))
+
+
+OLD_TIME = 946684800.0      # 2000-01-01, unambiguously older than anything here
+NEW_TIME = 1893456000.0     # 2030-01-01, unambiguously newer
+
+
+def build_layout(base, lay, args, sysdir, nfuncs=6):
+    """Create every file this layout needs and fill in lay.dirs / lay.init_file.
+
+    `base` is the run's scratch root, `sysdir` a private copy of the zsh
+    distribution functions (compinit, compaudit, compdump, _main_complete, ...)
+    with sane modes — the Homebrew copy on this host is 0777, which makes every
+    layout insecure and would have made the security axis untestable.
+    """
+    root = os.path.join(base, "L_" + lay.name)
+    os.makedirs(root, exist_ok=True)
+    d = os.path.join(root, "fp")
+    os.makedirs(d, exist_ok=True)
+
+    # Registration stubs: one per synthetic command, constant across variants.
+    for i in range(1, nfuncs + 1):
+        cmd = "zz%02d" % i
+        _write(os.path.join(d, "_" + cmd), _STUB_BODY % {"cmd": cmd, "tag": cmd})
+
+    impl = os.path.join(d, "_zzimpl")
+    zwc = d + ".zwc"
+    src = os.path.join(root, "src")
+    os.makedirs(src, exist_ok=True)
+
+    # ── store ──
+    if lay.store == "plain":
+        _write(impl, _impl_text(IMPL_PLAIN))
+    elif lay.store == "digest":
+        _write(os.path.join(src, "_zzimpl"), _impl_text(IMPL_DIGEST))
+        rc, err = _zcompile(args.zsh, root, "fp.zwc", ["src/_zzimpl"])
+        if rc != 0:
+            lay.unbuildable = "zcompile failed: %s" % err
+            return lay
+        _set_mtime(zwc, NEW_TIME)
+    elif lay.store in ("digest-stale", "digest-shadow"):
+        _write(impl, _impl_text(IMPL_PLAIN))
+        _write(os.path.join(src, "_zzimpl"), _impl_text(IMPL_DIGEST))
+        rc, err = _zcompile(args.zsh, root, "fp.zwc", ["src/_zzimpl"])
+        if rc != 0:
+            lay.unbuildable = "zcompile failed: %s" % err
+            return lay
+        if lay.store == "digest-stale":
+            _set_mtime(zwc, OLD_TIME)
+            _set_mtime(d, NEW_TIME)
+            lay.notes.append("digest mtime 2000-01-01, directory mtime 2030-01-01")
+        else:
+            _set_mtime(d, OLD_TIME)
+            _set_mtime(zwc, NEW_TIME)
+            lay.notes.append("directory mtime 2000-01-01, digest mtime 2030-01-01")
+    elif lay.store == "digest-explicit":
+        _write(os.path.join(src, "_zzimpl"), _impl_text(IMPL_DIGEST))
+        rc, err = _zcompile(args.zsh, root, "explicit.zwc", ["src/_zzimpl"])
+        if rc != 0:
+            lay.unbuildable = "zcompile failed: %s" % err
+            return lay
+    elif lay.store == "digest-corrupt":
+        _write(impl, _impl_text(IMPL_PLAIN))
+        _write(os.path.join(src, "_zzimpl"), _impl_text(IMPL_DIGEST))
+        rc, err = _zcompile(args.zsh, root, "fp.zwc", ["src/_zzimpl"])
+        if rc != 0:
+            lay.unbuildable = "zcompile failed: %s" % err
+            return lay
+        os.chmod(zwc, 0o644)
+        with open(zwc, "r+b") as f:
+            f.truncate(60)
+        _set_mtime(zwc, NEW_TIME)
+        lay.notes.append("digest truncated to 60 bytes, mtime 2030-01-01")
+    else:
+        lay.unbuildable = "unknown store %r" % lay.store
+        return lay
+
+    # ── fpath composition ──
+    dirs = []
+    if lay.fpath == "single":
+        dirs = [d]
+    elif lay.fpath == "dup":
+        dirs = [d, d]
+    elif lay.fpath == "missing":
+        dirs = [os.path.join(root, "does-not-exist"), d]
+    elif lay.fpath == "unreadable":
+        u = os.path.join(root, "unreadable")
+        os.makedirs(u, exist_ok=True)
+        _write(os.path.join(u, "_zz01"), _STUB_BODY % {"cmd": "zz01", "tag": "UNREADABLE"})
+        os.chmod(u, 0o000)
+        lay.restore.append((u, 0o755))
+        dirs = [u, d]
+    elif lay.fpath == "symlink":
+        link = os.path.join(root, "link")
+        if not os.path.islink(link):
+            os.symlink(d, link)
+        dirs = [link]
+    elif lay.fpath == "two-dirs":
+        b = os.path.join(root, "fpB")
+        os.makedirs(b, exist_ok=True)
+        _write(os.path.join(b, "_zz01"), _STUB_BODY % {"cmd": "zz01", "tag": "DIRB"})
+        _write(os.path.join(b, "_zzimpl"), _impl_text(IMPL_PLAIN))
+        dirs = [d, b]
+    elif lay.fpath == "tag-mismatch":
+        a = os.path.join(root, "fpA")
+        os.makedirs(a, exist_ok=True)
+        # Named _zzalt, but its tag line claims zz01 — compinit:519 registers by
+        # the TAG, `compdef -na` keeps the first claim, and the file name only
+        # decides which function gets autoloaded.
+        _write(os.path.join(a, "_zzalt"), _STUB_BODY % {"cmd": "zz01", "tag": "ALTFILE"})
+        _write(os.path.join(a, "_zzimpl"), _impl_text(IMPL_PLAIN))
+        dirs = [a, d]
+    else:
+        lay.unbuildable = "unknown fpath composition %r" % lay.fpath
+        return lay
+
+    if lay.store == "digest-explicit":
+        dirs = dirs + [os.path.join(root, "explicit.zwc")]
+
+    # ── security ──
+    if lay.security == "world-writable":
+        os.chmod(d, 0o777)
+        lay.restore.append((d, 0o755))
+        lay.notes.append("%s is mode 0777 (compaudit:125 calls that insecure)" % d)
+    elif lay.security == "other-owner":
+        # compaudit flags files not owned by root or by this user. Creating one
+        # needs a second uid, which this harness does not have; say so instead
+        # of quietly running a DIFFERENT layout under the same name.
+        lay.unbuildable = ("needs a file owned by another user; chown to a "
+                           "second uid requires privileges this process does "
+                           "not have (euid %d)" % os.geteuid())
+        return lay
+    elif lay.security != "secure":
+        lay.unbuildable = "unknown security condition %r" % lay.security
+        return lay
+
+    lay.dirs = dirs + [sysdir]
+    return lay
+
+
+def _layout_script(lay, dump_line, compinit_line, zstyle_file=None,
+                   prompt=True, zdotdir=None):
+    """The init BOTH shells source. One text, no per-shell branches."""
+    lines = []
+    if prompt:
+        lines += ["# generated by comptab_parity.py --layout-fuzz",
+                  "PROMPT='%s '" % SENTINEL, "RPROMPT=''", "PS2='> '",
+                  "setopt no_beep"]
+    if zdotdir:
+        lines.append("ZDOTDIR=%s" % shlex.quote(zdotdir))
+    # compsys.yo:199-201 — force compaudit to check EXACTLY these directories
+    # instead of wandering off to add _compdir's siblings, which would make the
+    # scratch fpath a suggestion rather than the experiment.
+    lines.append("_compdir=''")
+    lines.append("fpath=( %s )" % " ".join(shlex.quote(p) for p in lay.dirs))
+    if zstyle_file and os.path.exists(zstyle_file):
+        lines.append("source %s" % shlex.quote(zstyle_file))
+    if dump_line:
+        lines.append(dump_line)
+    lines.append("autoload -Uz compinit")
+    lines.append(compinit_line)
+    if prompt:
+        lines.append("print -u2 ''")
+    return "\n".join(lines) + "\n"
+
+
+def _dump_reset_line(lay):
+    """The line that puts the dump back into its layout-defined state.
+
+    It runs INSIDE the measured shell, identically on both sides, because a
+    compinit that autodumps would otherwise hand whichever shell runs second a
+    dump the first one wrote — a different input under the same layout name.
+    """
+    if not lay.dump_path:
+        return ""
+    if lay.dump == "missing":
+        return "command rm -f %s" % shlex.quote(lay.dump_path)
+    if lay.dump_template:
+        return "command cp -f %s %s" % (shlex.quote(lay.dump_template),
+                                        shlex.quote(lay.dump_path))
+    return ""
+
+
+def _compinit_line(lay):
+    flags = {
+        "C-d": "-C -d %s",
+        "i-d": "-i -d %s",
+        "u-d": "-u -d %s",
+        "d": "-d %s",
+    }
+    if lay.compinit in flags:
+        return "compinit " + flags[lay.compinit] % shlex.quote(lay.dump_path)
+    if lay.compinit == "D":
+        return "compinit -D -u"
+    if lay.compinit == "bare":
+        return "compinit"
+    if lay.compinit == "ask":
+        return "compinit"
+    return None
+
+
+def write_layout_dump(shell_argv, lay, base, path, args):
+    """Have one shell write a dump for THIS layout, and report how.
+
+    Returns (ok, how, stderr). `how` is "autodump" when `compinit -d` produced
+    the file by itself and "explicit-compdump" when it did not and `compdump`
+    had to be called by hand — a difference between the two shells that is
+    printed, never smoothed over.
+    """
+    import subprocess
+    script = _layout_script(
+        lay, "command rm -f %s" % shlex.quote(path),
+        "compinit -u -d %s" % shlex.quote(path), prompt=False)
+    script += (
+        "if [[ ! -f %(p)s ]]; then\n"
+        "  autoload -Uz compdump\n"
+        "  typeset -g _comp_dumpfile=%(p)s\n"
+        "  compdump\n"
+        "  print -r -- '%(m)s fallback'\n"
+        "else\n"
+        "  print -r -- '%(m)s autodump'\n"
+        "fi\n" % {"p": shlex.quote(path), "m": LAYOUT_MARK})
+    sf = os.path.join(base, "mkdump_%s_%s.zsh"
+                      % (lay.name, os.path.basename(shell_argv[0])))
+    _write(sf, script)
+    try:
+        p = subprocess.run(list(shell_argv) + ["-f", "-c", "source " + shlex.quote(sf)],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, "error", str(exc)
+    how = "autodump" if (LAYOUT_MARK + " autodump") in (p.stdout or "") else \
+          ("explicit-compdump" if (LAYOUT_MARK + " fallback") in (p.stdout or "")
+           else "no-marker")
+    return os.path.exists(path), how, (p.stderr or "").strip()
+
+
+def prepare_layout_dump(lay, base, args, env):
+    """Materialise the dump TEMPLATE this layout starts from."""
+    if lay.dump == "none":
+        lay.dump_path = None
+        return
+    root = os.path.join(base, "L_" + lay.name)
+    lay.dump_path = (os.path.join(root, ".zcompdump") if lay.compinit in ("bare", "ask")
+                     else os.path.join(root, "dump"))
+    if lay.dump == "missing":
+        lay.dump_template = None
+        return
+    tpl = os.path.join(root, "dump.template")
+    if lay.dump == "corrupt":
+        with open(tpl, "wb") as f:
+            f.write(b"#files: 12\tversion: 5.9.2\n\x00\x01\x02not a dump("
+                    b"\nunterminated=( 'x'\n")
+        lay.dump_template = tpl
+        lay.notes.append("dump template is deliberate garbage")
+        return
+    if lay.dump == "stale":
+        # A REAL dump, with the one field compinit:472-473 checks made wrong.
+        ok, how, err = write_layout_dump([args.zsh], lay, base, tpl, args)
+        if not ok:
+            lay.unbuildable = "could not write a dump to make stale: %s" % err
+            return
+        with open(tpl) as f:
+            text = f.read()
+        head, rest = text.split("\n", 1)
+        with open(tpl, "w") as f:
+            f.write("#files: 3\tversion: 5.9.2\n" + rest)
+        lay.dump_template = tpl
+        lay.notes.append("dump `#files:` count rewritten from its real value to 3 "
+                         "(compinit:472 compares it with $#_i_files)")
+        return
+    writer = [args.zsh] if lay.dump == "zsh-written" else [args.zshrs]
+    if lay.dump == "zshrs-written" and args.mode == "zsh":
+        writer = [args.zshrs, "--zsh"]
+    ok, how, err = write_layout_dump(writer, lay, base, tpl, args)
+    if not ok:
+        lay.unbuildable = ("%s could not write a dump for this layout: %s"
+                           % (os.path.basename(writer[0]), err or "no file produced"))
+        return
+    lay.dump_template = tpl
+    lay.notes.append("dump written by %s via %s (%d bytes)"
+                     % (os.path.basename(writer[0]), how, os.path.getsize(tpl)))
+    if how == "explicit-compdump":
+        lay.notes.append("!! %s's `compinit -d FILE` did NOT write the dump; "
+                         "compdump had to be called by hand"
+                         % os.path.basename(writer[0]))
+
+
+def finish_layout(lay, base, args, zstyle_file):
+    """Write the init file both shells will source."""
+    line = _compinit_line(lay)
+    if line is None:
+        lay.unbuildable = "unknown compinit mode %r" % lay.compinit
+        return
+    zdot = os.path.join(base, "L_" + lay.name) if lay.compinit in ("bare", "ask") else None
+    script = _layout_script(lay, _dump_reset_line(lay), line, zstyle_file,
+                            zdotdir=zdot)
+    path = os.path.join(base, "L_" + lay.name, "init.zsh")
+    _write(path, script)
+    lay.init_file = path
+
+
+# ── letting REAL zsh vet the layout before any pty boots ─────────────────────
+#
+# Identical in spirit to validate_config: a layout the reference shell itself
+# refuses is a fact about the GENERATOR (or about zsh), not a zshrs finding.
+# Scoring one as a divergence would invent a bug; scoring it as a pass would be
+# worse. So it gets its own counted, printed category and the cell is not run.
+
+def preflight_layout(lay, args, env):
+    """Ask the reference zsh what it makes of this layout.
+
+    Returns (verdict, detail) where verdict is one of:
+      "ok"        zsh initialised cleanly and registered the test command
+      "warned"    zsh initialised but printed something
+      "invalid"   zsh refused: compinit aborted, or nothing got registered
+    """
+    import subprocess
+    probe = os.path.join(os.path.dirname(lay.init_file), "preflight.zsh")
+    _write(probe,
+           "source %s\n"
+           "print -r -- '%s' comps=${#_comps} zz01=${_comps[zz01]-<unset>}\n"
+           % (shlex.quote(lay.init_file), LAYOUT_MARK))
+    try:
+        p = subprocess.run([args.zsh, "-f", "-c", "source " + shlex.quote(probe)],
+                           capture_output=True, text=True, timeout=120, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "invalid", "could not run %s: %s" % (args.zsh, exc)
+    out = (p.stdout or "")
+    err = "\n".join(l for l in (p.stderr or "").splitlines() if l.strip())
+    marker = [l for l in out.splitlines() if l.startswith(LAYOUT_MARK)]
+    if not marker:
+        return "invalid", ("reference zsh produced no marker (rc=%d): %s"
+                           % (p.returncode, err.splitlines()[0] if err else "<silent>"))
+    line = marker[0]
+    if "comps=0" in line:
+        return "invalid", ("reference zsh registered NO completions under this "
+                           "layout: %s%s" % (line, ("; " + err.splitlines()[0]) if err else ""))
+    if err:
+        return "warned", "%s || zsh said: %s" % (line, err.splitlines()[0])
+    return "ok", line
+
+
+# ── the runner ───────────────────────────────────────────────────────────────
+
+def _layout_selection(args):
+    catalog = layout_catalog()
+    names = {l.name for l in catalog}
+    if args.layout_only:
+        want = [s.strip() for s in args.layout_only.split(",") if s.strip()]
+        unknown = [w for w in want if w not in names]
+        if unknown:
+            sys.exit("--layout-only names unknown layout(s): %s\nknown: %s"
+                     % (", ".join(unknown), ", ".join(sorted(names))))
+        return [l for l in catalog if l.name in want]
+    if args.layout_random > 0:
+        # Seeded combinations INSTEAD of the catalog: the catalog is the set of
+        # conditions someone thought of, this is the set nobody did.
+        rng = random.Random((args.seed << 21) ^ 0x1A70)
+        return layout_random(rng, args.layout_random, names)
+    n = args.layout_fuzz
+    if n <= len(catalog):
+        return catalog[:n]
+    rng = random.Random((args.seed << 21) ^ 0x1A70)
+    return catalog + layout_random(rng, n - len(catalog), names)
+
+
+def build_layout_base(args, env):
+    """The per-run scratch root: a private, SECURE copy of the zsh functions,
+    plus executable stubs for the synthetic commands.
+
+    The distribution functions are copied because the installed copy on this
+    host is mode 0777 (`/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions`),
+    which compaudit:125 flags as insecure — every layout would have been
+    "insecure" and the security axis would have measured nothing.
+    """
+    import shutil
+    import subprocess
+    base = tempfile.mkdtemp(prefix="comptab_layout_")
+    os.chmod(base, 0o755)
+    sysdir = os.path.join(base, "sys")
+    src = None
+    try:
+        p = subprocess.run([args.zsh, "-f", "-c", "print -rl -- $fpath"],
+                           capture_output=True, text=True, timeout=20,
+                           env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        for cand in (p.stdout or "").splitlines():
+            if os.path.isdir(cand) and os.path.exists(os.path.join(cand, "compinit")):
+                src = cand
+                break
+    except (OSError, subprocess.SubprocessError):
+        src = None
+    if src is None:
+        shutil.rmtree(base, ignore_errors=True)
+        sys.exit("--layout-fuzz needs the zsh distribution functions directory "
+                 "(the one holding `compinit`); none of $fpath under `zsh -f` "
+                 "contains it")
+    shutil.copytree(src, sysdir)
+    for root, dirs, files in os.walk(sysdir):
+        os.chmod(root, 0o755)
+        for f in files:
+            os.chmod(os.path.join(root, f), 0o644)
+    bindir = os.path.join(base, "bin")
+    os.makedirs(bindir)
+    for i in range(1, 7):
+        stub = os.path.join(bindir, "zz%02d" % i)
+        _write(stub, "#!/bin/sh\nexit 0\n", 0o755)
+    return base, sysdir, bindir, src
+
+
+def layout_repro_cmd(args, lay, v):
+    """The command that replays THIS cell — layout included.
+
+    `print_failure`'s repro line is `--case ... --keys ...`, which replays the
+    buffer against the DEFAULT fpath and dump: for a layout cell that is a
+    different experiment under the same name, and the scratch tree it needs is
+    deleted when the run ends. So the layout replay is printed next to it,
+    named, and `--layout-keep` is spelled out because the tree a failure was
+    read out of is otherwise gone.
+    """
+    cmd = [SELF]
+    if args.mode != "native":
+        cmd += ["--mode", args.mode]
+    if args.zshrs != os.path.join(REPO, "target", "debug", "zshrs"):
+        cmd += ["--zshrs", shlex.quote(args.zshrs)]
+    if args.zsh != "zsh":
+        cmd += ["--zsh", shlex.quote(args.zsh)]
+    if args.zstyle:
+        cmd += ["--zstyle", shlex.quote(args.zstyle)]
+    if lay.name.startswith("rnd"):
+        # A seeded combination has no name to ask for; (seed, count) is its id.
+        cmd += ["--layout-random", str(args.layout_random or 0),
+                "--seed", str(args.seed)]
+    else:
+        cmd += ["--layout-only", lay.name]
+    cmd += ["--layout-cases", shlex.quote(v.case.buffer),
+            "--combo-sequence", args.combo_sequence,
+            "--rows", str(args.rows), "--cols", str(args.cols)]
+    if args.settle != 300:
+        cmd += ["--settle", str(args.settle)]
+    return " ".join(cmd)
+
+
+def print_layout_table(layouts, header):
+    print(header)
+    for l in layouts:
+        print("#   %-22s %s" % (l.name, l.axes))
+        if l.note:
+            print("#     %s" % l.note)
+        if l.spec_note():
+            print("#     spec: %s" % l.spec_note())
+
+
+def run_layout_list(args):
+    """The catalog, and what each entry holds the shells to. No shell booted."""
+    layouts = _layout_selection(args) \
+        if (args.layout_only or args.layout_fuzz or args.layout_random) \
+        else layout_catalog()
+    print("# %d storage/lookup layout(s)" % len(layouts))
+    print("# axes: store=%s" % ", ".join(LAYOUT_STORES))
+    print("#       fpath=%s" % ", ".join(LAYOUT_FPATHS))
+    print("#       compinit=%s" % ", ".join(LAYOUT_COMPINITS))
+    print("#       dump=%s" % ", ".join(LAYOUT_DUMPS))
+    print("#       security=%s" % ", ".join(LAYOUT_SECURITY))
+    print()
+    print_layout_table(layouts, "# catalog:")
+    return 0
+
+
+def run_dump_xshell(args, env):
+    """Answer the cross-shell dump question, in both directions, with evidence.
+
+    Not a parity cell: this is a direct experiment. One layout, four
+    combinations — each shell WRITES a dump, then each shell READS both dumps —
+    and the state each one ends up with is printed. Nothing here is scored, and
+    nothing here can turn a divergence into a pass; it exists because "does
+    zshrs read a zsh-written .zcompdump identically, and vice versa" had never
+    been measured.
+    """
+    import shutil
+    import subprocess
+    base, sysdir, bindir, srcdir = build_layout_base(args, env)
+    try:
+        lay = Layout("xshell", "plain", "single", "u-d", "missing", "secure")
+        build_layout(base, lay, args, sysdir)
+        if lay.unbuildable:
+            print("# UNBUILDABLE: %s" % lay.unbuildable)
+            return 1
+        print("# cross-shell .zcompdump compatibility")
+        print("# fpath  : %s" % " ".join(lay.dirs))
+        print("# zsh    : %s" % args.zsh)
+        print("# zshrs  : %s" % " ".join(args.test_argv[:2]))
+        print()
+        dumps = {}
+        for label, argv in (("zsh", [args.zsh]),
+                            ("zshrs", args.test_argv[:1] if args.mode == "native"
+                             else args.test_argv[:2])):
+            path = os.path.join(base, "dump.%s" % label)
+            ok, how, err = write_layout_dump(argv, lay, base, path, args)
+            dumps[label] = path if ok else None
+            print("# WRITE %-6s -> %-8s %s"
+                  % (label, "ok" if ok else "FAILED",
+                     ("%d bytes, produced by %s" % (os.path.getsize(path), how))
+                     if ok else (err or "no file")))
+            if ok and how == "explicit-compdump":
+                print("#   !! `compinit -u -d FILE` wrote NOTHING on %s; the "
+                      "dump above exists only because compdump was called by "
+                      "hand afterwards. zsh writes it from compinit itself "
+                      "(compinit:532-535)." % label)
+            if ok:
+                with open(path) as f:
+                    print("#   header: %s" % f.readline().rstrip("\n").replace("\t", "\\t"))
+        print()
+        if dumps["zsh"] and dumps["zshrs"]:
+            a = open(dumps["zsh"]).read().splitlines()
+            b = open(dumps["zshrs"]).read().splitlines()
+            diff = list(difflib.unified_diff(a, b, "zsh-written", "zshrs-written",
+                                             lineterm="", n=0))
+            print("# WRITE comparison: %d line(s) differ" % max(0, len(diff) - 2))
+            for line in diff[:24]:
+                print("#   %s" % line)
+            if len(diff) > 24:
+                print("#   ... %d more diff line(s)" % (len(diff) - 24))
+            print()
+        print("# READ back — each shell sources each dump under `compinit -C -d`")
+        rows = []
+        for writer, path in dumps.items():
+            if not path:
+                continue
+            for reader, argv in (("zsh", [args.zsh]),
+                                 ("zshrs", args.test_argv[:1] if args.mode == "native"
+                                  else args.test_argv[:2])):
+                probe = os.path.join(base, "read.zsh")
+                copy = os.path.join(base, "read.dump")
+                shutil.copyfile(path, copy)
+                _write(probe, _layout_script(
+                    lay, "", "compinit -C -d %s" % shlex.quote(copy), prompt=False)
+                    + "print -r -- comps=${#_comps} services=${#_services} "
+                      "compautos=${#_compautos} patcomps=${#_patcomps} "
+                      "zz01=${_comps[zz01]-<unset>}\n")
+                try:
+                    p = subprocess.run(list(argv) + ["-f", "-c", "source " + shlex.quote(probe)],
+                                       capture_output=True, text=True, timeout=120, env=env)
+                    out = [l for l in (p.stdout or "").splitlines() if l.startswith("comps=")]
+                    state = out[-1] if out else "<no output> rc=%d %s" % (
+                        p.returncode, (p.stderr or "").strip().splitlines()[:1])
+                except (OSError, subprocess.SubprocessError) as exc:
+                    state = "error: %s" % exc
+                rows.append((writer, reader, state))
+                print("#   %-6s dump read by %-6s -> %s" % (writer, reader, state))
+        print()
+        states = {}
+        for writer, reader, state in rows:
+            states.setdefault(writer, set()).add(state)
+        verdict = []
+        for writer, seen in states.items():
+            if len(seen) == 1:
+                verdict.append("both shells end in the SAME state from the "
+                               "%s-written dump" % writer)
+            else:
+                verdict.append("the two shells end in DIFFERENT states from the "
+                               "%s-written dump: %s" % (writer, " | ".join(sorted(seen))))
+        for v in verdict:
+            print("# %s" % v)
+        return 0
+    finally:
+        if not args.layout_keep:
+            shutil.rmtree(base, ignore_errors=True)
+        else:
+            print("# kept: %s" % base)
+
+
+def run_layout_fuzz(args, env):
+    """Fuzz the STORAGE and LOOKUP layer instead of the typed line or the config.
+
+    Downstream of the layout, everything is the machinery that already exists:
+    the same Cell / cell_stream / run_case path, the same fingerprints, the same
+    crash and timeout separation. What is new is only where the completers live
+    and how compinit is told to find them.
+
+    Categories, and why each is separate:
+
+        PASS / FAIL / FLAKY / TIMEOUT / SKIP   unchanged meanings.
+        INVALID-LAYOUT   the REFERENCE zsh refused this layout (compinit
+                         aborted, or it registered nothing at all). The cell is
+                         not run: comparing two shells on a layout neither can
+                         hold says nothing. A fact about the generator or about
+                         zsh, never a zshrs finding, never a pass.
+        REF-WARNED       zsh initialised but printed a diagnostic (an insecure
+                         directory, an invalid digest). The cell IS run and IS
+                         compared — zshrs must complain identically — but it is
+                         tallied apart so a green sweep cannot be assembled out
+                         of layouts zsh itself grumbles about.
+        UNBUILDABLE      this host cannot construct the layout (a file owned by
+                         another user needs privileges). Counted, printed, never
+                         a pass.
+    """
+    import shutil
+    layouts = _layout_selection(args)
+    if not layouts:
+        sys.exit("--layout-fuzz selected no layouts")
+    keys = KEY_SEQUENCES[args.combo_sequence]
+    buffers = [b for b in (args.layout_cases or "zz01 ").split(",") if b]
+    cases = [adhoc_case(b, prefix="layout") for b in buffers]
+
+    base, sysdir, bindir, srcdir = build_layout_base(args, env)
+    # The synthetic commands have to be runnable for `skip_reason` to let the
+    # cell run at all, and BOTH shells get the identical PATH.
+    env = dict(env)
+    env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+    os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
+
+    print("# storage/lookup fuzz (how completers are STORED and FOUND)")
+    print("# layouts : %d   seed=%d" % (len(layouts), args.seed))
+    print("# cases   : %s   sequence=%s (%s)"
+          % (", ".join(repr(b) for b in buffers), args.combo_sequence, "+".join(keys)))
+    print("# mode    : %s (%s)" % (args.mode, " ".join(args.test_argv)))
+    print("# scratch : %s" % base)
+    print("# sysdir  : copied from %s (0755/0644 — the installed copy is 0777, "
+          "which compaudit calls insecure)" % srcdir)
+    print("# jobs    : %d" % max(1, args.jobs))
+    print()
+
+    try:
+        built, unbuildable, invalid, warned = [], [], [], []
+        for lay in layouts:
+            build_layout(base, lay, args, sysdir)
+            if not lay.unbuildable:
+                prepare_layout_dump(lay, base, args, env)
+            if not lay.unbuildable:
+                finish_layout(lay, base, args, args.zstyle)
+            if lay.unbuildable:
+                unbuildable.append(lay)
+                continue
+            verdict, detail = preflight_layout(lay, args, env)
+            lay.preflight = (verdict, detail)
+            if verdict == "invalid":
+                invalid.append(lay)
+                continue
+            if verdict == "warned":
+                warned.append(lay)
+            built.append(lay)
+
+        if unbuildable:
+            print("# %d layout(s) UNBUILDABLE on this host — not run, not passed:"
+                  % len(unbuildable))
+            for l in unbuildable:
+                print("#   %-22s %s" % (l.name, l.unbuildable))
+            print()
+        if invalid:
+            print("# %d layout(s) the REFERENCE zsh REFUSED — a fact about the "
+                  "layout, not a zshrs finding. Not run, not passed:" % len(invalid))
+            for l in invalid:
+                print("#   %-22s %s" % (l.name, l.axes))
+                print("#     %s" % l.preflight[1])
+            print()
+
+        cells = []
+        for lay in built:
+            for c in cases:
+                cells.append(Cell(c, lay.name, keys, lay.init_file,
+                                  origin="layout/%s" % lay.name))
+        by_seq = {lay.name: lay for lay in built}
+
+        counts = {"PASS": 0, "FAIL": 0, "FLAKY": 0, "TIMEOUT": 0, "SKIP": 0}
+        failures, results, unobserved = [], [], []
+        for v in cell_stream(args, env, cells):
+            results.append(v)
+            counts[v.status] = counts.get(v.status, 0) + 1
+            lay = by_seq.get(v.seq)
+            label = v.status
+            if lay is not None and lay.preflight and lay.preflight[0] == "warned":
+                label = "%s(ref-warned)" % v.status
+            line = "%-20s %-22s %r" % (label, v.seq, v.case.buffer)
+            if v.status in ("FAIL", "FLAKY"):
+                line += "  [%s]" % v.fingerprint
+            print(line + (("  (%s)" % v.detail) if v.detail else ""))
+            if lay is not None:
+                print("        %s" % lay.axes)
+                if lay.spec_note():
+                    print("        spec: %s" % lay.spec_note())
+                for n in lay.notes:
+                    print("        note: %s" % n)
+                if lay.preflight and lay.preflight[0] == "warned":
+                    print("        ! zsh itself warned about this layout: %s"
+                          % lay.preflight[1])
+                print("        init: %s" % lay.init_file)
+            sys.stdout.flush()
+            if v.status in ("FAIL", "FLAKY"):
+                failures.append(v)
+                print_failure(v, args)
+            elif v.status == "TIMEOUT":
+                print_timeout(v, args)
+            elif v.status in CRASH_STATUSES:
+                print_crash(v, args)
+            if v.status == "PASS":
+                # A PASS where NEITHER screen carries a marker from the
+                # layout's own completer means both shells agreed about
+                # something else — the layout was never actually observed. That
+                # is not a divergence, but it is worth strictly less than a
+                # pass that saw the completer run, so it is counted and printed
+                # rather than folded into the total silently.
+                seen = "\n".join((v.test.grid or []) + (v.ref.grid or []))
+                if not any(m in seen for m in (IMPL_PLAIN, IMPL_DIGEST,
+                                               "ALTFILE", "DIRB")):
+                    unobserved.append(v)
+                    print("        ~ neither shell ran this layout's completer: "
+                          "the two screens agree, but the layout was not observed")
+                if args.verbose:
+                    print(render(v.test.grid or []))
+            if v.status not in ("PASS", "SKIP") and lay is not None:
+                # The line above it replays the BUFFER; this one replays the
+                # buffer AND the layout, which is the thing under test here.
+                print("  --- layout replay (the repro line above does NOT "
+                      "rebuild this layout) ---")
+                print("  " + layout_repro_cmd(args, lay, v))
+                print("  add --layout-keep to keep the scratch fpath tree")
+                print()
+            sys.stdout.flush()
+
+        print()
+        groups = print_fingerprint_groups(failures, args) if failures else {}
+        if not failures:
+            print("# 0 failing cell(s), 0 distinct fingerprint(s)")
+
+        print("\n# %d passed, %d failed, %d cell(s) over %d layout(s)"
+              % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], len(cells),
+                 len(built)))
+        print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
+              "INVALID-LAYOUT=%d REF-WARNED=%d UNBUILDABLE=%d REF-CRASHED=%d "
+              "TEST-CRASHED=%d"
+              % (counts["PASS"], counts["FAIL"], counts["FLAKY"],
+                 counts["TIMEOUT"], counts["SKIP"], len(invalid), len(warned),
+                 len(unbuildable), counts.get("REF-CRASHED", 0),
+                 counts.get("TEST-CRASHED", 0)))
+        print_crash_counts(counts)
+
+        # Per-layout breakdown: the point of the axis is which STORE / LOOKUP
+        # broke, so the summary is indexed by layout, not only by fingerprint.
+        print("# per-layout:")
+        seen = {}
+        for v in results:
+            seen.setdefault(v.seq, []).append(v.status)
+        for lay in layouts:
+            if lay in unbuildable:
+                st = "UNBUILDABLE"
+            elif lay in invalid:
+                st = "INVALID-LAYOUT"
+            else:
+                st = ",".join(sorted(set(seen.get(lay.name, ["<not run>"]))))
+                if lay in warned:
+                    st += " (ref-warned)"
+            print("#   %-22s %-28s %s" % (lay.name, st, lay.axes))
+        if counts["TIMEOUT"]:
+            print("# %d cell(s) ran out of MEASUREMENT budget — not divergences, "
+                  "not passes; re-run them at --jobs 1" % counts["TIMEOUT"])
+        if counts["SKIP"]:
+            print("# %d cell(s) skipped: command not installed here" % counts["SKIP"])
+        if unobserved:
+            print("# %d pass(es) where NEITHER shell ran the layout's own "
+                  "completer — the screens agreed, but nothing about the layout "
+                  "was exercised. Worth less than an observed pass:"
+                  % len(unobserved))
+            for v in unobserved[:20]:
+                print("#   %s" % v.seq)
+
+        if args.json:
+            write_json(args, {
+                "schema": "comptab-parity-layout-fuzz/1",
+                "mode": args.mode,
+                "argv": sys.argv[1:],
+                "seed": args.seed,
+                "scratch": base,
+                "sysdir_source": srcdir,
+                "summary": {
+                    "layouts": len(layouts),
+                    "run": len(built),
+                    "passed": counts["PASS"],
+                    "failed": counts["FAIL"] + counts["FLAKY"],
+                    "timeout": counts["TIMEOUT"],
+                    "skipped": counts["SKIP"],
+                    "invalid_layout": len(invalid),
+                    "ref_warned": len(warned),
+                    "unbuildable": len(unbuildable),
+                    "unobserved_passes": len(unobserved),
+                    "fingerprints": len(groups),
+                },
+                "layouts": [{
+                    "name": l.name,
+                    "store": l.store, "fpath": l.fpath,
+                    "compinit": l.compinit, "dump": l.dump,
+                    "security": l.security,
+                    "note": l.note,
+                    "spec": l.spec_note(),
+                    "dirs": l.dirs,
+                    "notes": l.notes,
+                    "unbuildable": l.unbuildable,
+                    "preflight": list(l.preflight) if l.preflight else None,
+                } for l in layouts],
+                "fingerprints": fingerprint_doc(groups),
+                "results": [to_json(v) for v in results],
+            })
+        return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"] or invalid
+                     or unbuildable or crashed(counts)) else 0
+    finally:
+        for lay in layouts:
+            for path, mode in lay.restore:
+                try:
+                    os.chmod(path, mode)
+                except OSError:
+                    pass
+        if args.layout_keep:
+            print("# kept scratch tree: %s" % base)
+        else:
+            shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zshrs", default=os.path.join(REPO, "target", "debug", "zshrs"))
@@ -3951,6 +5059,44 @@ def main():
                     help="print N generated statements with zsh's verdict on "
                          "each and exit, without booting any shell pair. The "
                          "generator's own self-check.")
+    # ── storage and lookup (how completers are stored and found) ──
+    ap.add_argument("--layout-fuzz", type=int, default=0, metavar="N",
+                    help="run N STORAGE/LOOKUP layouts: .zwc digest "
+                         "composition (plain / digest / stale digest / digest "
+                         "shadowed by a newer file / explicit .zwc element / "
+                         "truncated digest), fpath composition (duplicate, "
+                         "missing, unreadable, symlinked, two dirs claiming "
+                         "one command, a #compdef tag naming another command), "
+                         "the compinit mode matrix (-C/-i/-u/-D/-d/bare) and "
+                         "the dump state (missing, stale, corrupt, written by "
+                         "the OTHER shell). Both shells always get the "
+                         "byte-identical layout. A layout the reference zsh "
+                         "itself refuses is counted as INVALID-LAYOUT, never "
+                         "as a finding and never as a pass.")
+    ap.add_argument("--layout-only", default=None, metavar="NAMES",
+                    help="run only these comma-separated layout names "
+                         "(--layout-list prints them)")
+    ap.add_argument("--layout-random", type=int, default=0, metavar="N",
+                    help="run N SEEDED RANDOM layouts instead of the curated "
+                         "catalog: a store, an fpath composition, a compinit "
+                         "mode, a dump state and a security condition drawn "
+                         "independently. (seed, index) reproduces one exactly.")
+    ap.add_argument("--layout-list", action="store_true",
+                    help="print the layout catalog, the axes and the "
+                         "documented rule each one holds the shells to, then "
+                         "exit without booting a shell")
+    ap.add_argument("--layout-cases", default=None, metavar="BUFFERS",
+                    help="comma-separated case buffers the layouts are judged "
+                         "on (default 'zz01 ', the synthetic command the "
+                         "scratch fpath provides a completer for)")
+    ap.add_argument("--layout-keep", action="store_true",
+                    help="keep the scratch fpath tree instead of removing it, "
+                         "so a failing layout can be inspected by hand")
+    ap.add_argument("--dump-xshell", action="store_true",
+                    help="answer the cross-shell .zcompdump question directly: "
+                         "each shell writes a dump for one controlled layout, "
+                         "then each shell reads BOTH dumps, and the state each "
+                         "ends up in is printed. Not scored.")
     # ── coverage-guided fuzzing ──
     ap.add_argument("--guided", type=int, default=0, metavar="N",
                     help="run N cells COVERAGE-GUIDED: keep an input in the "
@@ -4066,6 +5212,19 @@ def main():
               % (written, len(corpus_load(args.corpus_dir))))
         if args.mutate <= 0:
             return 0
+
+    if args.layout_list:
+        return run_layout_list(args)
+
+    if args.dump_xshell:
+        return run_dump_xshell(args, env)
+
+    if args.layout_fuzz > 0 or args.layout_only or args.layout_random > 0:
+        if args.combo_sequence not in KEY_SEQUENCES:
+            sys.exit("unknown --combo-sequence: %s" % args.combo_sequence)
+        if (args.layout_only or args.layout_random > 0) and args.layout_fuzz <= 0:
+            args.layout_fuzz = len(layout_catalog())
+        return run_layout_fuzz(args, env)
 
     if args.style_fuzz_list > 0:
         return run_style_fuzz_list(args)

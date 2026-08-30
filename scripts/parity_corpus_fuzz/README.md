@@ -127,6 +127,23 @@ REFERENCE shell will not accept can never be dressed up as evidence:
   still run and still compared — zshrs is required to refuse it identically —
   but it is tallied apart from the clean passes.
 
+`--layout-fuzz` adds three more, for the same reason applied to the layer
+underneath a config — where the completers physically live and how `compinit`
+is told to find them:
+
+* `INVALID-LAYOUT` — the REFERENCE zsh refused the layout: `compinit` aborted,
+  or it registered no completions at all. Detected before any pty boots, by
+  sourcing the same init file under `zsh -f -c`. The cell is not run. A
+  corrupt `.zcompdump` under `-C` and a world-writable directory under the
+  default (prompting) `compinit` both land here.
+* `REF-WARNED` — zsh initialised but printed a diagnostic (an insecure
+  directory, an `invalid zwc file`). The cell IS run and IS compared — zshrs
+  has to complain identically — but it is tallied apart from the clean passes.
+* `UNBUILDABLE` — this host cannot construct the layout. Only one condition is
+  in that state today: a completer owned by ANOTHER user, which needs
+  privileges this process does not have. It is named and counted rather than
+  quietly replaced by a layout that can be built.
+
 Two more exist for the case where a shell does not survive the cell:
 
 * `REF-CRASHED` — the REFERENCE zsh died (SIGSEGV / SIGBUS / SIGABRT / ..., or
@@ -246,3 +263,103 @@ entries are territory the corpus did not previously reach, and they persist.
 Settling whether the scheduling half pays needs a run one or two orders of
 magnitude larger — at ~15 s/cell that is hours, which is why `--guide-off`
 exists rather than an assertion.
+
+
+## Storage and lookup (`--layout-fuzz`)
+
+`--mutate` varies what is TYPED, `--style-fuzz` varies how the shell is
+CONFIGURED. Neither touches the layer underneath: every other mode runs one
+fpath (the user's real directories), one dump, loaded one way
+(`compinit -C -d`). `--layout-fuzz` varies that layer — where a completer is
+stored and how it is found — and holds both shells to what the documentation
+says, quoted in the source next to each rule
+(`Doc/Zsh/func.yo:93-130`, `Doc/Zsh/compsys.yo:154-201`,
+`Completion/compinit:469-528`, `Completion/compaudit:125-163`).
+
+It is not a hypothetical axis: round 3 traced seven "timeouts" to the reference
+zsh SEGFAULTING while autoloading out of a 35MB `.zwc` digest, which vanished
+when the same completers were plain files.
+
+```sh
+# the catalog, the axes and the documented rule each entry pins — no shells
+scripts/comptab_parity.py --layout-list
+
+# the first N layouts of the catalog
+scripts/comptab_parity.py --layout-fuzz 8
+
+# one named layout, which is also what a failure prints as its replay
+scripts/comptab_parity.py --layout-only insecure-i --layout-keep
+
+# seeded random combinations instead of the catalog
+scripts/comptab_parity.py --layout-random 6 --seed 7
+
+# the cross-shell .zcompdump report (each shell writes one, both read both)
+scripts/comptab_parity.py --dump-xshell
+```
+
+### The axes
+
+| axis | values |
+| --- | --- |
+| store | `plain`, `digest` (only inside `<dir>.zwc`), `digest-stale` (digest older than the directory — the plain file must win), `digest-shadow` (digest newer — the digest must win), `digest-explicit` (the fpath element IS the `.zwc`), `digest-corrupt` (truncated mid-file) |
+| fpath | `single`, `dup`, `missing` (a nonexistent dir first), `unreadable` (mode 000), `symlink`, `two-dirs` (same completer twice, leftmost must win), `tag-mismatch` (a file whose `#compdef` claims a command another file is named for) |
+| compinit | `-C -d`, `-i -d`, `-u -d`, `-d`, `-D`, bare (`$ZDOTDIR/.zcompdump`), and the default prompting path |
+| dump | written by zsh, written by ZSHRS, missing, stale (`#files:` count rewritten), corrupt, none |
+| security | secure, world-writable completer directory, file owned by another user |
+
+Both shells always get the byte-identical layout and the byte-identical init
+file, and the init file itself resets the dump to the layout's defined state —
+otherwise a `compinit` that autodumps hands whichever shell runs second a dump
+the first one wrote, which is a different input under the same name.
+
+The scratch tree lives under `$TMPDIR` and is removed at the end
+(`--layout-keep` keeps it). It contains a private copy of the zsh distribution
+functions at 0755/0644, because the installed copy on this host is mode 0777 —
+which `compaudit` calls insecure, which would have made every layout insecure
+and the security axis meaningless.
+
+A PASS is only counted as an OBSERVED pass when at least one of the two screens
+carries a marker from the layout's own completer; a pass where neither shell ran
+it means the two shells agreed about something else and the layout was never
+exercised, so it is counted and printed apart. On the 30-layout run below all 22
+passes were observed, and `-v` prints the screen for each.
+
+### What it found on its first run
+
+30 layouts, 27 run: 22 PASS, 5 FAIL over 4 fingerprints, 2 INVALID-LAYOUT,
+2 REF-WARNED, 1 UNBUILDABLE.
+
+* **An undeclared `_name` in `$fpath` is executable in zshrs.** With
+  `fpath=(DIR)` and `DIR/_zzimpl` (or `DIR.zwc` containing it) and no
+  `autoload` anywhere, zsh answers `command not found: _zzimpl` and zshrs runs
+  it. A non-underscore name is `command not found` on both, so the rule zshrs
+  is applying is "unknown command starting with `_` → search fpath and
+  autoload". Two layouts (`digest-only`, `digest-explicit`).
+* **`compinit -i` does not drop an insecure directory.** With a 0777 completer
+  directory, zsh removes it from `fpath` (`Completion/compinit:452`) and
+  completes nothing; zshrs keeps it and runs the completer. `-u` and `-C` agree
+  on both shells, so it is `-i` specifically (`insecure-i`).
+* **Error locations from inside a completion carry a doubled colon and the
+  wrong frame.** On a truncated digest, zsh emits `_complete:117:`,
+  `_main_complete:218:`, `(eval):1:`; zshrs emits `_main_complete::117:`,
+  `_main_complete::`, `(eval)::1:` — always the outermost frame, and one colon
+  too many. Visible from the shell as well: `zsh:1: invalid zwc file:` versus
+  `zshrs::1: invalid zwc file:` (`digest-corrupt`, `digest-corrupt-D`).
+
+### Cross-shell `.zcompdump` compatibility (`--dump-xshell`)
+
+Measured, both directions, on one controlled layout:
+
+* **Reading is compatible.** Each shell reads either shell's dump to the same
+  state: `comps=1855 services=48 patcomps=1` from either file, in either shell.
+* **Writing is not identical.** zsh's dump is 52559 bytes, zshrs's 57771, and
+  they differ on 670 lines — all of them `_compautos` entries with empty
+  values. `Completion/compinit:524` stores a `#autoload` file in `_compautos`
+  only when its tag line carries options; zshrs stores every one. Read back,
+  that is `compautos=1` from the zsh-written dump against `compautos=178` from
+  the zshrs-written one, in both shells.
+* **zshrs's `compinit -d FILE` writes no dump at all.** zsh produces it from
+  `compinit` itself (`Completion/compinit:532-535`); on zshrs the file only
+  appears if `compdump` is called by hand afterwards, and `compdump` on its own
+  works. The report prints which path produced each dump rather than papering
+  over the difference.
