@@ -1,0 +1,12 @@
+{
+  "buffer": "true && gr",
+  "fingerprint": "6422e7a46d",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/`external command', `global alias', `alias', `shell function', `builtin command', `suffix alias', `reserved wo | test/{yellow}`external command', `global alias', `alias', `shell",
+  "origin": "style-fuzz/cfg0011",
+  "statements": [
+    "zstyle ':completion:*' format '%F{yellow}%d%f'"
+  ]
+}

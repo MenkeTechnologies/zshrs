@@ -1,0 +1,12 @@
+{
+  "buffer": "git ",
+  "fingerprint": "fc1984d85b",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowlist/col0 | ref/$ git | test/<absent>",
+  "origin": "style-fuzz/cfg0017",
+  "statements": [
+    "zstyle ':completion:*:*:*:*:*' last-prompt false"
+  ]
+}
