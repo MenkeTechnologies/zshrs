@@ -1876,16 +1876,19 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
     if assign & PREFORK_TYPESET != 0 {
         // c:677
         // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`.
-        // C searches for the Equals TOKEN (subst.c:678). zshrs's
-        // pipeline can deliver the arg in either form:
-        //   - Tokenized (lexer-emitted assignment word, fusevm
-        //     compile_zsh re-tokenized words): `=` chars come in as
-        //     `Equals` (\u{8d}) and `~` as `Tilde` (\u{98}).
-        //   - Untokenized (some entry sites): literal ASCII `=`/`~`.
-        // Accept both forms so the magic-equals filesub trigger fires
-        // regardless of which entry path delivered the arg. C's
-        // strict-Equals-only behavior is preserved by checking the
-        // token form first.
+        // C searches for the Equals TOKEN (subst.c:678) and NOTHING
+        // else. That token is emitted only for an UNQUOTED `=`; a
+        // quoted one stays the literal ASCII `=`. The distinction IS
+        // the quoting rule: `print -r -- --a='b:=c'` must print
+        // `--a=b:=c` because the `:=` inside the quotes is inert.
+        // This port also accepted literal `=`/`~` here and at the two
+        // trigger tests below, so quoted text was expanded as though
+        // it were bare: with MAGIC_EQUAL_SUBST set,
+        // `A=( --height='${X:=75%}' )` reported `75%} not found` and
+        // dropped the word (fzf-tab.plugin.zsh:117-128 builds exactly
+        // that array, so the plugin errored at load and took the rest
+        // of the zinit turbo `atload` chain with it). Match C: TOKENS
+        // ONLY.
         if namptr.len() >= 2 {
             // c:678
             // c:678 — `strchr(*namptr + 1, Equals)`. Look for Equals
@@ -1895,9 +1898,8 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
             let eql_pos = chars
                 .iter()
                 .skip(1)
-                .position(|&c| c == Equals)
-                .map(|p| p + 1)
-                .or_else(|| chars.iter().skip(1).position(|&c| c == '=').map(|p| p + 1));
+                .position(|&c| c == Equals) // c:678 — the Equals TOKEN only
+                .map(|p| p + 1);
             if let Some(sub_char_idx) = eql_pos {
                 // c:678 — `sub` points at the Equals position.
                 // sub_char_idx is the CHAR offset; convert to byte
@@ -1911,13 +1913,10 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
                 // c:679 — `str = sub + 1` (byte after the Equals).
                 let str_start = sub_byte + chars[sub_char_idx].len_utf8();
                 if str_start < namptr.len() {
-                    // c:680 — `sub[1] == Tilde || sub[1] == Equals`.
-                    //   Accept token AND ASCII for both.
+                    // c:680 — `sub[1] == Tilde || sub[1] == Equals`: the
+                    // TOKENS, so a quoted `~`/`=` does not trigger.
                     let next_char = namptr[str_start..].chars().next().unwrap_or('\0');
-                    let trigger = matches!(
-                        next_char,
-                        '~' | '=' | '\u{98}' /* Tilde */ | '\u{8d}' /* Equals */
-                    );
+                    let trigger = matches!(next_char, Tilde | Equals);
                     if trigger {
                         // c:680 — `filesubstr(&str, assign)`.
                         let rhs = &namptr[str_start..];
@@ -1942,10 +1941,10 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
 
     // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
     // Walk `:`-separated path components, reapply filesubstr on each
-    // suffix that starts with `~` or `=`. Accept both ASCII (`~`/`=`)
-    // and the lexer's TOKEN forms (Tilde \u{98} / Equals \u{8d}) —
-    // the bridge passthru path delivers TOKEN form for unquoted
-    // tildes in assignment RHS like `X=/usr/bin:~/bin`.
+    // suffix that starts with the Tilde or Equals TOKEN (c:694). The
+    // colon itself is matched literally, exactly as C does, but the
+    // character after it must be the token — an ASCII `~`/`=` there
+    // came from quoted text and C leaves it alone.
     let mut ptr_off = 0_usize; // c:689
     loop {
         // c:690
@@ -1967,7 +1966,7 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
         let starts_with_tilde_or_equals = if str_start < namptr.len() {
             let suffix = &namptr[str_start..];
             let first = suffix.chars().next();
-            matches!(first, Some('~') | Some('=') | Some('\u{98}') | Some(Equals))
+            matches!(first, Some(Tilde) | Some(Equals)) // c:694
         } else {
             false
         };
