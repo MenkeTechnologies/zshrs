@@ -17,6 +17,7 @@
 #![allow(clippy::needless_raw_string_hashes)]
 
 mod parser_lock;
+mod zpty_probe;
 
 mod advanced_parity;
 mod alias_parity;
@@ -131,6 +132,7 @@ mod zpwr_corpus_parity;
 mod always_break_parity;
 mod terminfo_parity;
 mod zsh_arrays_parity;
+mod zle_editing_parity;
 mod zsh_compat_parity_gaps;
 mod zsh_idioms_parity;
 mod zsh_modules_corpus_parity;
