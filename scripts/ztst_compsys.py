@@ -45,11 +45,36 @@ compsys functions next to them (a 5.9.999-era ``Completion/compinit`` uses
 "bad substitution", which kills ``compdef`` and hangs the whole suite).
 
 ``--zsh-build`` points at that tree.  With no flag the gitignored ``src/zsh``
-inside this repo is used, which needs no setup but only carries Y01-Y03; the
-reference checkout carries all six.  To build that one::
+inside this repo is used, which needs no setup but is a 5.9.0.3-test checkout
+carrying **70 of the 76** .ztst files: it is missing Y04regexargs, Y05describe,
+Y06values (so a Y run there scores 188 assertions, not 229) and A09zwc,
+V15nearcolor, Z04zgetopt (so a ``--core`` run there scores 2416 over 67 files,
+not 2523 over 70).  It also lacks both files whose current hang triggers are in
+the dev tree only -- D04parameter's ``zsh_eval_context resizing`` and
+D07multibyte's "Raw bytes ... part 2" assertions simply do not exist in it.
+A run that lands on it stamps ``[PARTIAL ...]`` on every line of output and
+refuses to ``--pin`` or ``--gate``.  Build the complete tree::
 
-    cp -a ~/forkedRepos/zsh /tmp/zshsrc && cd /tmp/zshsrc
+    cp -a <a 5.9.999-era zsh checkout> /tmp/zshsrc && cd /tmp/zshsrc
     ./Util/preconfig && ./configure && make
+
+then pass ``--zsh-build /tmp/zshsrc`` or export ``ZTST_ZSH_BUILD``.  When more
+than one candidate is built, the one carrying the whole Y corpus wins.
+
+Reference identity
+------------------
+A score is a number *plus what produced it*.  Every run records the zsh source
+tree (path, ``VERSION``, git rev), the zsh binary that drove it (path, version,
+size, mtime, sha256 prefix), the shell under test, and the corpus (which files,
+how many assertions, a digest over their bytes plus ``ztst.zsh`` and
+``comptest``).  ``--identity`` prints it without running anything.
+
+``--gate``, ``--compare-to`` and ``--cluster`` refuse to compare two runs whose
+reference differs, and say which field differs; ``--allow-cross-reference``
+performs the comparison with every verdict labelled CROSS-REFERENCE.  A pin
+taken before this block existed reports UNVERIFIABLE rather than passing the
+check silently.  Corpus content is compared file by file over the intersection,
+so a deliberate ``--tests`` subset of a pinned corpus is still like-for-like.
 
 Adaptations (declared, because they change what is being measured)
 ------------------------------------------------------------------
@@ -103,6 +128,43 @@ Gate a run against a pinned state (``--pin`` / ``--gate``)::
 
   Exit codes: 0 unchanged, 1 something regressed, 2 something moved without
   regressing, 3 the runner itself failed.
+
+Measure a root cause's yield instead of counting its symptom (``--yield``)::
+
+    ztst_compsys.py --yield BEFORE.json [--yield-after AFTER.json]
+
+  Symptom counting -- "N failing assertions mention this" -- is not a yield.  An
+  assertion that fails for two independent reasons keeps failing when one of
+  them is fixed, and this tool reported 75 and 53 for two causes whose measured
+  results were 4 and 24.  So every element of an assertion's expected-vs-actual
+  diff is attributed to a cause, and the report separates:
+
+    mentions           the symptom count.  Never a yield.
+    sole               assertions whose ENTIRE diff is that one cause.  Labelled
+                       UPPER BOUND, because it still assumes the fix emits
+                       exactly the expected lines and perturbs nothing else.
+    flipped            with --yield-after: what actually passes in the later
+                       run.  Measured, not estimated.
+
+  It also reports "layers" -- how many independent causes each assertion's
+  divergence splits into -- and ``--cluster`` carries the same column, so a
+  cluster one fix can clear looks different from a cluster that will still be
+  failing underneath.
+
+Neutralise a cause for real (``--yield-patch``)::
+
+    ztst_compsys.py --sut <shell> --zsh-build <tree> \
+        --yield-patch /tmp/_description
+
+  Runs the suite twice through the same symlink mirror of ``Test/``,
+  ``Completion/`` and ``Functions/``: once with the given file substituted for
+  the same-named completion function, once without.  ``comptestinit`` builds
+  ``$fpath`` from ``$ZTST_srcdir/../{Functions,Completion}`` and ``ZTST_srcdir``
+  is ``${0%/*}`` of the invoked ztst.zsh, so redirecting it is enough -- no
+  upstream file is written.  The control arm goes through the same mirror, so
+  whatever the mirror perturbs cancels.  A zero result means "no effect"; prove
+  the substitution is live with a deliberately wrong patch, which must break
+  assertions.
 
 Run the wider suite (``--core``)::
 
@@ -216,16 +278,32 @@ class FileResult:
 
 
 def find_zsh_build(explicit: str | None) -> Path:
-    """Locate a *built* zsh source tree (Src/zsh + Completion/ + Test/*.ztst)."""
+    """Locate a *built* zsh source tree (Src/zsh + Completion/ + Test/*.ztst).
+
+    Among candidates that are built, a tree carrying the *whole* Y corpus wins
+    over one that carries part of it.  ``REPO/src/zsh`` is a vendored 5.9.0.3
+    checkout that is missing Y04/Y05/Y06 (and A09zwc, V15nearcolor, Z04zgetopt);
+    running against it silently scores 188 assertions instead of 229, which is
+    how two rounds of this tool reported numbers over different populations
+    without either being wrong.  It stays as the last-resort default because it
+    is the only tree that is always present, but it is selected only when
+    nothing complete is available, and every line of a partial run says so.
+    """
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit).expanduser())
     if os.environ.get("ZTST_ZSH_BUILD"):
         candidates.append(Path(os.environ["ZTST_ZSH_BUILD"]).expanduser())
     candidates.append(REPO / "src" / "zsh")
-    for cand in candidates:
-        if (cand / "Src" / "zsh").is_file() and (cand / "Test" / "comptest").is_file():
+    built = [
+        c for c in candidates
+        if (c / "Src" / "zsh").is_file() and (c / "Test" / "comptest").is_file()
+    ]
+    for cand in built:  # a complete corpus beats an earlier but partial one
+        if all((cand / "Test" / f"{t}.ztst").is_file() for t in ALL_TESTS):
             return cand.resolve()
+    if built:
+        return built[0].resolve()
     tried = "\n  ".join(str(c) for c in candidates)
     die(
         "no built zsh source tree found (need Src/zsh + Test/comptest). Tried:\n  "
@@ -234,6 +312,224 @@ def find_zsh_build(explicit: str | None) -> Path:
         "  cp -a ~/forkedRepos/zsh /tmp/zshsrc && cd /tmp/zshsrc\n"
         "  ./Util/preconfig && ./configure && make\n"
         "then pass --zsh-build /tmp/zshsrc"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reference identity.
+#
+# A score is not a number, it is a number *plus what produced it*.  Two runs
+# are comparable only if the zsh source tree, the zsh binary that drove them,
+# the corpus of .ztst files and the set of assertions in that corpus are the
+# same.  Every run records all of it; the gate and --compare-to refuse to
+# pretend otherwise.
+# ---------------------------------------------------------------------------
+
+
+def sha256_of(path: Path, prefix: int = 16) -> str:
+    h = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+    except OSError:
+        return ""
+    return h.hexdigest()[:prefix]
+
+
+def git_rev_of(tree: Path) -> str:
+    """``<short rev>`` or ``<short rev>-dirty``; empty if not a git checkout."""
+    try:
+        rev = subprocess.run(
+            ["git", "-C", str(tree), "rev-parse", "--short=10", "HEAD"],
+            capture_output=True, timeout=20,
+        )
+        if rev.returncode != 0:
+            return ""
+        out = rev.stdout.decode().strip()
+        st = subprocess.run(
+            ["git", "-C", str(tree), "status", "--porcelain"],
+            capture_output=True, timeout=30,
+        )
+        return out + ("-dirty" if st.stdout.strip() else "")
+    except Exception:
+        return ""
+
+
+def tree_version(zsh_build: Path) -> str:
+    try:
+        return next(
+            (
+                ln.split("=", 1)[1]
+                for ln in (zsh_build / "Config" / "version.mk").read_text().splitlines()
+                if ln.startswith("VERSION=")
+            ),
+            "?",
+        )
+    except OSError:
+        return "?"
+
+
+def corpus_identity(zsh_build: Path, tests: list[str], core_mode: bool) -> dict:
+    """What corpus this run scores over: which files, how many assertions.
+
+    ``digest`` covers the content of every .ztst actually run plus the two
+    driver files (``ztst.zsh``, ``comptest``), so a tree that renumbers or
+    extends an assertion produces a different reference and cannot be diffed
+    against a pin taken on the old one.
+    """
+    tdir = zsh_build / "Test"
+    present: list[str] = []
+    missing: list[str] = []
+    per_file: dict[str, int] = {}
+    per_file_digest: dict[str, str] = {}
+    h = hashlib.sha256()
+    for name in tests:
+        f = tdir / f"{name}.ztst"
+        if not f.is_file():
+            missing.append(name)
+            continue
+        present.append(name)
+        per_file[name] = len(parse_expected_assertions(f))
+        per_file_digest[name] = sha256_of(f, 16)
+        h.update(name.encode())
+        h.update(b"\0")
+        h.update(sha256_of(f, 64).encode())
+        h.update(b"\n")
+    d = hashlib.sha256()
+    for driver in ("ztst.zsh", "comptest"):
+        h.update(driver.encode())
+        h.update(b"\0")
+        h.update(sha256_of(tdir / driver, 64).encode())
+        h.update(b"\n")
+        d.update(sha256_of(tdir / driver, 64).encode())
+    # The Y series is a closed, upstream-defined set of six files, so a Y run
+    # can name what is absent.  The core suite is "everything else in the
+    # tree", so absence there is only visible through the digest and the count.
+    canonical = None if core_mode else list(ALL_TESTS)
+    return {
+        "requested": list(tests),
+        "present": present,
+        "missing": missing,
+        "canonical": canonical,
+        "files": len(present),
+        "assertions": sum(per_file.values()),
+        "per_file_assertions": per_file,
+        "per_file_digest": per_file_digest,
+        "drivers_digest": d.hexdigest()[:16],
+        "ztst_files_in_tree": len(sorted(tdir.glob("*.ztst"))),
+        "digest": h.hexdigest()[:16],
+    }
+
+
+def reference_identity(
+    zsh_build: Path, harness: Path, tests: list[str], core_mode: bool
+) -> dict:
+    """Source tree + driving binary + corpus, and one id that covers all three."""
+    tree = {
+        "path": str(zsh_build),
+        "version": tree_version(zsh_build),
+        "git_rev": git_rev_of(zsh_build),
+    }
+    hb = binary_identity(harness)
+    corpus = corpus_identity(zsh_build, tests, core_mode)
+    seed = json.dumps(
+        [tree["version"], tree["git_rev"], hb.get("sha256_prefix", ""), corpus["digest"]],
+        sort_keys=True,
+    )
+    return {
+        "tree": tree,
+        "harness_binary": hb,
+        "corpus": corpus,
+        "reference_id": hashlib.sha256(seed.encode()).hexdigest()[:12],
+    }
+
+
+# Fields whose disagreement makes two runs incomparable.  Each is a path into
+# the reference dict; a field missing on either side is UNVERIFIABLE, never
+# "equal" -- old pins predate this block and must not silently pass the check.
+REFERENCE_FIELDS = (
+    ("tree.version", ("tree", "version")),
+    ("tree.git_rev", ("tree", "git_rev")),
+    ("harness.sha256", ("harness_binary", "sha256_prefix")),
+    ("corpus.drivers", ("corpus", "drivers_digest")),
+)
+
+
+def _dig(doc: dict | None, path: tuple[str, ...]):
+    cur = doc
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def reference_delta(pinned: dict | None, now: dict | None) -> tuple[list[str], list[str]]:
+    """``(differs, unverifiable)`` -- field labels, in REFERENCE_FIELDS order.
+
+    Corpus content is compared file by file over the *intersection*, so running
+    a deliberate subset of a pinned corpus stays a like-for-like comparison
+    (the gate already reports the pinned files a subset run did not reach),
+    while a file whose bytes changed -- a different tree, a renumbered
+    assertion -- is a hard reference difference.
+    """
+    differs: list[str] = []
+    unverifiable: list[str] = []
+    for label, path in REFERENCE_FIELDS:
+        a = _dig(pinned, path)
+        b = _dig(now, path)
+        if a is None or b is None:
+            unverifiable.append(label)
+        elif a != b:
+            differs.append(f"{label}: {a!r} -> {b!r}")
+    pa = _dig(pinned, ("corpus", "per_file_digest"))
+    pb = _dig(now, ("corpus", "per_file_digest"))
+    if not isinstance(pa, dict) or not isinstance(pb, dict):
+        unverifiable.append("corpus.per_file_digest")
+    else:
+        shared = sorted(set(pa) & set(pb))
+        if not shared:
+            unverifiable.append("corpus.per_file_digest (no file in common)")
+        for name in shared:
+            if pa[name] != pb[name]:
+                differs.append(f"corpus.{name}: {pa[name]} -> {pb[name]}")
+    return differs, unverifiable
+
+
+def render_reference(ref: dict) -> list[str]:
+    c = ref["corpus"]
+    out = [
+        "## reference identity",
+        f"reference id     : {ref['reference_id']}",
+        f"zsh source tree  : {ref['tree']['path']}",
+        f"  VERSION        : {ref['tree']['version']}",
+        f"  git rev        : {ref['tree']['git_rev'] or '(not a git checkout)'}",
+        f"zsh binary driven: {ref['harness_binary'].get('path')}",
+        f"  version        : {ref['harness_binary'].get('version')}",
+        f"  size/mtime/sha : {ref['harness_binary'].get('size')} "
+        f"{ref['harness_binary'].get('mtime')} {ref['harness_binary'].get('sha256_prefix')}",
+        f"corpus           : {c['files']} file(s), {c['assertions']} assertion(s), "
+        f"digest {c['digest']}",
+        f"  tree holds     : {c['ztst_files_in_tree']} .ztst file(s)",
+        f"  files run      : {' '.join(c['present']) or '(none)'}",
+    ]
+    if c["missing"]:
+        out.append(
+            f"  ABSENT         : {' '.join(c['missing'])}  <-- not in this tree, "
+            "so not scored and not counted"
+        )
+    return out
+
+
+def corpus_banner(ref: dict) -> str:
+    """The prefix stamped on every output line of a partial-corpus run."""
+    c = ref["corpus"]
+    if not c["missing"]:
+        return ""
+    return (
+        f"[PARTIAL {c['files']}/{len(c['requested'])} requested files, "
+        f"{c['assertions']} assertions] "
     )
 
 
@@ -255,6 +551,52 @@ def collect_modules(zsh_build: Path, dest: Path) -> int:
         link.symlink_to(so)
         count += 1
     return count
+
+
+def build_overlay(zsh_build: Path, dest: Path, patches: list[Path]) -> dict:
+    """A symlink mirror of Test/, Completion/ and Functions/, with substitutions.
+
+    ``comptestinit`` builds the shell-under-test's ``$fpath`` out of
+    ``$ZTST_srcdir/../Functions/*(/)`` and ``$ZTST_srcdir/../Completion``
+    (Test/comptest:4-6), and ``ZTST_srcdir`` is just ``${0%/*}`` of the ztst.zsh
+    that was invoked (Test/ztst.zsh:105).  Pointing that at a mirror is
+    therefore enough to put a modified completion function in front of the real
+    one WITHOUT writing to the zsh tree, which is read-only here, and without
+    touching any .ztst file.
+
+    This is the mechanism that proved ``argv+=`` was the cause of the ``h:``
+    descriptions: swap one function body, re-run, count what changed.  The
+    control arm is the SAME mirror with nothing substituted, so whatever the
+    mirror itself perturbs is common to both arms and cancels.
+    """
+    report = {"replaced": {}, "unmatched": [], "ambiguous": {}}
+    for sub in ("Test", "Completion", "Functions"):
+        src = zsh_build / sub
+        if not src.is_dir():
+            continue
+        for root, dirs, files in os.walk(src):
+            rel = Path(root).relative_to(zsh_build)
+            (dest / rel).mkdir(parents=True, exist_ok=True)
+            for f in files:
+                link = dest / rel / f
+                if link.exists() or link.is_symlink():
+                    link.unlink()
+                link.symlink_to(Path(root) / f)
+    for p in patches:
+        hits = [
+            q for q in dest.rglob(p.name)
+            if q.is_symlink() and q.parts[len(dest.parts)] in ("Completion", "Functions")
+        ]
+        if not hits:
+            report["unmatched"].append(str(p))
+            continue
+        if len(hits) > 1:
+            report["ambiguous"][str(p)] = [str(q) for q in hits]
+            continue
+        hits[0].unlink()
+        shutil.copy2(p, hits[0])
+        report["replaced"][str(p)] = str(hits[0].relative_to(dest))
+    return report
 
 
 def parse_expected_assertions(ztst: Path) -> list[tuple[int, str, str]]:
@@ -371,9 +713,11 @@ def run_one(
     timeout: int,
     sut_env: dict[str, str],
     verbose: bool,
+    test_dir: Path | None = None,
 ) -> FileResult:
     """Run a single Y0*.ztst file against ``sut`` and parse the result."""
-    ztst = zsh_build / "Test" / f"{name}.ztst"
+    test_dir = test_dir or (zsh_build / "Test")
+    ztst = test_dir / f"{name}.ztst"
     res = FileResult(name=name)
     if not ztst.is_file():
         res.unimplemented = f"{ztst} not present in this zsh source tree"
@@ -411,7 +755,7 @@ def run_one(
     env.update(sut_env)
     (run_root / "tmp").mkdir(exist_ok=True)
 
-    cmd = [str(harness), "+Z", "-f", str(zsh_build / "Test" / "ztst.zsh"), str(ztst)]
+    cmd = [str(harness), "+Z", "-f", str(test_dir / "ztst.zsh"), str(ztst)]
     started = time.time()
     # Own session + killpg on timeout: Y03arguments hangs by design here (the
     # shell under test exits and the driver waits forever on zpty), and killing
@@ -478,11 +822,18 @@ def summarise(results: list[FileResult]) -> dict:
     }
 
 
-def render_report(label: str, meta: dict, results: list[FileResult]) -> str:
+def render_report(
+    label: str, meta: dict, results: list[FileResult], ref: dict | None = None
+) -> str:
     out: list[str] = []
     out.append(f"# ztst Y-series completion suite -- {label}")
     out.append("")
+    if ref:
+        out += render_reference(ref)
+        out.append("")
     for k in sorted(meta):
+        if k == "reference":
+            continue
         out.append(f"{k}: {meta[k]}")
     out.append("")
     summary = summarise(results)
@@ -512,6 +863,21 @@ def render_report(label: str, meta: dict, results: list[FileResult]) -> str:
             }.get(a.status, a.status)
             out.append(f"  {mark} {a.index:3d} {a.message}")
         out.append("")
+    banner = corpus_banner(ref) if ref else ""
+    if banner:
+        # "Explicit in every line of output": a partial-corpus score must not be
+        # quotable one line at a time without the qualification travelling with
+        # it.  That is exactly how a 188-assertion run got compared with a
+        # 229-assertion one.
+        out = [banner + ln if ln else banner.rstrip() for ln in out]
+        out.insert(
+            0,
+            "!! PARTIAL CORPUS: "
+            + ", ".join(ref["corpus"]["missing"])
+            + " absent from "
+            + ref["tree"]["path"]
+            + " -- these counts are NOT over the full suite",
+        )
     return "\n".join(out)
 
 
@@ -2179,14 +2545,349 @@ def cluster_key_witness(rec: dict) -> str:
     return "output: same number of lines, different values"
 
 
-def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
+# ---------------------------------------------------------------------------
+# Cause attribution, layers, and yield.
+#
+# The failure this section exists to prevent: reporting "N assertions mention
+# this symptom" as "N assertions would be fixed by this".  Round 7 did that
+# twice -- 75 claimed against 4 measured for ``argv+=``, 53 claimed against 24
+# measured for ``lc=``/``rc=`` -- because an assertion that fails for two
+# independent reasons still shows the symptom of each of them.
+#
+# So every element of an assertion's expected-vs-actual diff is attributed to a
+# cause, and an assertion is only ever a yield candidate for cause X if X
+# accounts for ALL of its diff.  Even that is an UPPER BOUND and is labelled
+# one: it assumes fixing X makes the shell emit exactly the expected lines and
+# perturbs nothing else.  The only number that is not a bound is the one
+# measured by diffing two runs, which is what --yield-after does.
+# ---------------------------------------------------------------------------
+
+# comptest turns a listed match into a line tagged with the two-letter file-type
+# code from the list-colors zstyle it sets (Test/comptest:44,159): NO, DI, FI,
+# LN, PI, SO, BD, CD, EX, MI, SP.  Everything else it prints is one of the named
+# channels below.
+RE_COLOUR_TAG = re.compile(r"^[A-Z][A-Z]$")
+
+# One cause per comptest emission channel, plus the two shapes that are known
+# to span channels.  "what" is what the cause IS, not what it looks like.
+CAUSE_WHAT = {
+    "colour-tags": "no colour-tagged match line at all (lc=/rc= ignored, so "
+                   "comptest's <LC>xx<RC>...<EC> never matches)",
+    "h-prefix-description": "descriptions carry an 'h:' prefix (zformat spec list "
+                            "built by _description:83 with argv+=)",
+    "line-buffer": "the edit buffer comptest reports differs",
+    "description": "a description differs (not the h: prefix shape)",
+    "message": "a <MESSAGE> differs",
+    "compadd": "a <COMPADD> trace differs",
+    "insert-positions": "$compstate[insert_positions] differs",
+}
+
+
+def diff_elements(expected: list[str], actual: list[str]) -> list[tuple[str, str]]:
+    """The individual lines the two sides disagree about, in order."""
+    import difflib
+
+    sm = difflib.SequenceMatcher(a=expected, b=actual, autojunk=False)
+    els: list[tuple[str, str]] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag in ("delete", "replace"):
+            els += [("-", x) for x in expected[i1:i2]]
+        if tag in ("insert", "replace"):
+            els += [("+", x) for x in actual[j1:j2]]
+    return els
+
+
+def attribute(expected: list[str], actual: list[str]) -> dict:
+    """Split an assertion's divergence into causes; nothing is left over.
+
+    Named causes claim their elements first; whatever is left is bucketed by
+    the kind of line it is (``other:<kind>``) so that "layers" counts facets
+    that really are independent rather than collapsing them into one.
+    """
+    els = diff_elements(expected, actual)
+    causes: dict[str, list[int]] = {}
+    used: set[int] = set()
+
+    def claim(cid: str, idx: list[int]) -> None:
+        idx = [i for i in idx if i not in used]
+        if idx:
+            causes[cid] = idx
+            used.update(idx)
+
+    exp_colour = [x for x in expected if RE_COLOUR_TAG.match(line_kind(x))]
+    act_colour = [x for x in actual if RE_COLOUR_TAG.match(line_kind(x))]
+    # The lc=/rc= shape is not "some match lines are missing", it is "the shell
+    # produced no colour-tagged line at all while upstream expected some".
+    if exp_colour and not act_colour:
+        claim(
+            "colour-tags",
+            [i for i, (s, l) in enumerate(els)
+             if s == "-" and RE_COLOUR_TAG.match(line_kind(l))],
+        )
+    if any(x.strip().startswith("DESCRIPTION:{h:") for x in actual) and not any(
+        x.strip().startswith("DESCRIPTION:{h:") for x in expected
+    ):
+        claim(
+            "h-prefix-description",
+            [i for i, (s, l) in enumerate(els) if line_kind(l) == "DESCRIPTION"],
+        )
+    for kind, cid in (
+        ("line", "line-buffer"),
+        ("DESCRIPTION", "description"),
+        ("MESSAGE", "message"),
+        ("COMPADD", "compadd"),
+        ("INSERT_POSITIONS", "insert-positions"),
+    ):
+        claim(cid, [i for i, (s, l) in enumerate(els) if line_kind(l) == kind])
+    leftover: dict[str, list[int]] = {}
+    for i, (s, l) in enumerate(els):
+        if i in used:
+            continue
+        leftover.setdefault("other:" + line_kind(l), []).append(i)
+    causes.update(leftover)
+    named = [k for k in causes if not k.startswith("other:")]
+    return {
+        "elements": len(els),
+        "causes": {k: len(v) for k, v in causes.items()},
+        "layers": len(causes),
+        # How much of the split is a real cause rather than a bucket.  The Y
+        # series has named causes because comptest emits on fixed channels; the
+        # core suite's output is arbitrary shell text, so its "layers" is a
+        # count of distinct line kinds -- an upper bound on independent causes,
+        # not a count of them.  Anything reading `layers` must say which it has.
+        "named": len(named),
+    }
+
+
+def attribute_assertion(a: dict) -> dict:
+    return attribute(a.get("expected", []), a.get("actual", []))
+
+
+def _load_run(path: str) -> tuple[dict, dict]:
+    doc = json.loads(Path(path).read_text())
+    by_key = {}
+    for r in doc["results"]:
+        for a in r["assertions"]:
+            by_key[(r["name"], a["index"])] = a
+    return doc, by_key
+
+
+def do_yield(run_path: str, after_path: str | None, min_n: int, out: str | None,
+             allow_cross: bool) -> int:
+    before_doc, before = _load_run(run_path)
+    lines: list[str] = ["# per-cause yield", ""]
+    lines.append(f"run       : {run_path}")
+    bref = (before_doc.get("meta") or {}).get("reference")
+    lines.append(f"reference : {(bref or {}).get('reference_id', '(unrecorded)')}"
+                 f"  corpus {(bref or {}).get('corpus', {}).get('assertions', '?')} assertions")
+
+    after = None
+    if after_path:
+        after_doc, after = _load_run(after_path)
+        aref = (after_doc.get("meta") or {}).get("reference")
+        differs, unverifiable = reference_delta(bref, aref)
+        lines.append(f"after     : {after_path}")
+        lines.append(f"reference : {(aref or {}).get('reference_id', '(unrecorded)')}")
+        if differs:
+            if not allow_cross:
+                die("refusing to measure yield across differing references:\n  "
+                    + "\n  ".join(differs)
+                    + "\n  the two runs did not score the same assertions.\n"
+                    "  pass --allow-cross-reference to do it anyway, labelled.")
+            lines.append("!! CROSS-REFERENCE: " + "; ".join(differs))
+        elif unverifiable:
+            lines.append("!! reference NOT fully checkable: " + ", ".join(unverifiable))
+    lines.append("")
+
+    failing = {k: v for k, v in before.items() if v["status"] in ("fail", "xpass")}
+    attrs = {k: attribute_assertion(v) for k, v in failing.items()}
+    mentions: dict[str, set] = {}
+    sole: dict[str, set] = {}
+    for k, at in attrs.items():
+        for cid in at["causes"]:
+            mentions.setdefault(cid, set()).add(k)
+            if at["layers"] == 1:
+                sole.setdefault(cid, set()).add(k)
+
+    flipped: set = set()
+    if after is not None:
+        flipped = {
+            k for k in failing if after.get(k, {}).get("status") == "pass"
+        }
+
+    lines.append(f"failing assertions in the run: {len(failing)}")
+    dist: dict[int, int] = {}
+    for at in attrs.values():
+        dist[at["layers"]] = dist.get(at["layers"], 0) + 1
+    lines.append(
+        "layers (independent causes per assertion): "
+        + " ".join(f"{n}x{dist[n]}" for n in sorted(dist))
+    )
+    lines.append(
+        f"  single-cause: {dist.get(1, 0)}    stacked (2+): "
+        f"{sum(v for n, v in dist.items() if n > 1)}"
+    )
+    if after is not None:
+        lines.append(f"measured flips fail -> pass between the two runs: {len(flipped)}")
+    lines.append("")
+
+    header = "| cause | mentions | sole (UPPER BOUND) |"
+    sep = "|---|---|---|"
+    if after is not None:
+        header += " flipped (MEASURED) | of which sole |"
+        sep += "---|---|"
+    lines.append(header)
+    lines.append(sep)
+    for cid in sorted(mentions, key=lambda c: (-len(mentions[c]), c)):
+        if len(mentions[cid]) < min_n:
+            continue
+        row = f"| {cid} | {len(mentions[cid])} | {len(sole.get(cid, ()))} |"
+        if after is not None:
+            fl = mentions[cid] & flipped
+            row += f" {len(fl)} | {len(sole.get(cid, set()) & flipped)} |"
+        lines.append(row)
+    lines.append("")
+    lines.append(
+        "mentions           = assertions whose divergence includes this cause.  This is\n"
+        "                     the number symptom counting reports.  It is NOT a yield:\n"
+        "                     an assertion that also diverges for another reason keeps\n"
+        "                     failing after this cause is fixed."
+    )
+    lines.append(
+        "sole (UPPER BOUND) = assertions whose ENTIRE divergence is this cause, so no\n"
+        "                     other known cause has to be fixed first.  Still a bound,\n"
+        "                     not a prediction: it assumes the fix makes the shell emit\n"
+        "                     exactly the expected lines and perturbs nothing else."
+    )
+    if after is not None:
+        lines.append(
+            "flipped (MEASURED) = actually passes in the later run.  This is a real\n"
+            "                     counterfactual, not an estimate -- but it attributes\n"
+            "                     to a cause only in the sense that the assertion carried\n"
+            "                     that cause before and passes after; if several fixes\n"
+            "                     landed between the two runs it cannot separate them."
+        )
+    lines.append("")
+    lines.append("## what each cause is")
+    for cid in sorted(mentions):
+        if cid.startswith("other:"):
+            lines.append(f"  {cid}: unattributed divergence on a {cid[6:]} line")
+        else:
+            lines.append(f"  {cid}: {CAUSE_WHAT.get(cid, '(unnamed)')}")
+    lines.append("")
+
+    lines.append("## per assertion")
+    lines.append("| assertion | layers | causes | " + ("after |" if after is not None else ""))
+    lines.append("|---|---|---|" + ("---|" if after is not None else ""))
+    for k in sorted(attrs, key=lambda k: (k[0], k[1])):
+        at = attrs[k]
+        cs = " ".join(f"{c}({n})" for c, n in sorted(at["causes"].items()))
+        row = f"| {k[0]}#{k[1]} | {at['layers']} | {cs} |"
+        if after is not None:
+            row += f" {after.get(k, {}).get('status', 'absent')} |"
+        lines.append(row)
+
+    if after is not None:
+        unexplained = flipped - set().union(*mentions.values()) if mentions else flipped
+        if unexplained:
+            lines.append("")
+            lines.append("## flipped but carrying no attributed cause")
+            lines += [f"  {k[0]}#{k[1]}" for k in sorted(unexplained)]
+        still = {
+            k for k in failing
+            if k not in flipped and after.get(k, {}).get("status") in ("fail", "xpass")
+        }
+        two_layer_survivors = {k for k in still if attrs[k]["layers"] > 1}
+        lines.append("")
+        lines.append(
+            f"## still failing after: {len(still)}, of which {len(two_layer_survivors)} "
+            "were already stacked (2+ causes) before"
+        )
+
+    text = "\n".join(lines)
+    if out:
+        Path(out).write_text(text + "\n")
+    else:
+        print(text)
+    return 0
+
+
+def render_patch_yield(
+    control: list[FileResult],
+    patched: list[FileResult],
+    rep: dict,
+    ref: dict,
+    meta: dict,
+) -> str:
+    """The measured result of neutralising a cause in the functions under test."""
+    c = {(r.name, a.index): a for r in control for a in r.assertions}
+    p = {(r.name, a.index): a for r in patched for a in r.assertions}
+    flipped = [k for k in sorted(c) if c[k].status != "pass" and p.get(k) and p[k].status == "pass"]
+    broke = [k for k in sorted(c) if c[k].status == "pass" and p.get(k) and p[k].status != "pass"]
+    moved = [
+        k for k in sorted(c)
+        if p.get(k) and c[k].status != p[k].status and k not in flipped and k not in broke
+    ]
+    out = ["# patched-function counterfactual", ""]
+    out += render_reference(ref)
+    out.append("")
+    out.append(f"shell under test : {meta['sut']}  ({meta['sut_version']})")
+    out.append("substitutions    :")
+    for src, dst in rep["replaced"].items():
+        out.append(f"  {dst}  <-  {src}")
+    out.append("")
+    out.append("Both arms run through the same symlink mirror of Test/, Completion/ and")
+    out.append("Functions/; only the second has the substitutions above.  No .ztst file,")
+    out.append("Test/comptest or Test/ztst.zsh is modified -- the mirror redirects")
+    out.append("$ZTST_srcdir, it does not rewrite the tree.")
+    out.append("")
+    cc = summarise(control)["by_status"]
+    pc = summarise(patched)["by_status"]
+    out.append("control: " + " ".join(f"{k}={v}" for k, v in sorted(cc.items())))
+    out.append("patched: " + " ".join(f"{k}={v}" for k, v in sorted(pc.items())))
+    out.append("")
+    out.append(f"MEASURED YIELD (non-pass -> pass): {len(flipped)}")
+    out += [f"  + {k[0]}#{k[1]}" for k in flipped]
+    out.append(f"broken by the patch (pass -> non-pass): {len(broke)}")
+    out += [f"  - {k[0]}#{k[1]}" for k in broke]
+    out.append(f"other status movement: {len(moved)}")
+    out += [f"  ~ {k[0]}#{k[1]} {c[k].status} -> {p[k].status}" for k in moved]
+    out.append("")
+    if not flipped and not broke and not moved:
+        out.append(
+            "Nothing moved.  Either the substituted function is not the cause of any\n"
+            "failure in this corpus, or the behaviour it neutralises is already correct\n"
+            "in this shell.  It is NOT evidence that the substitution took effect --\n"
+            "check that with a deliberately wrong patch, which must break assertions."
+        )
+    still = [
+        k for k in sorted(c)
+        if c[k].status in ("fail", "xpass") and p.get(k) and p[k].status in ("fail", "xpass")
+    ]
+    out.append(
+        f"still failing with the cause neutralised: {len(still)} -- these carry a "
+        "second cause underneath"
+    )
+    for k in still:
+        at = attribute(p[k].expected, p[k].actual)
+        out.append(
+            f"  {k[0]}#{k[1]} layers={at['layers']} "
+            + " ".join(f"{n}({v})" for n, v in sorted(at["causes"].items()))
+        )
+    return "\n".join(out)
+
+
+def do_cluster(paths: list[str], out: str | None, min_size: int,
+               allow_cross: bool = False) -> int:
     groups: dict[str, list[dict]] = {}
     total = 0
+    refs: dict[str, dict | None] = {}
     for path in paths:
         doc = json.loads(Path(path).read_text())
         if isinstance(doc, list):  # a minimization report
             for rec in doc:
                 total += 1
+                at = attribute(rec.get("zsh", []), rec.get("sut", []))
                 groups.setdefault(cluster_key_witness(rec), []).append(
                     {
                         "origin": rec["origin"],
@@ -2197,14 +2898,19 @@ def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
                         "zsh": rec.get("zsh", []),
                         "sut": rec.get("sut", []),
                         "converged": rec.get("converged", False),
+                        "layers": at["layers"],
+                        "causes": at["causes"],
+                        "named": at["named"],
                     }
                 )
         else:  # a --json run
+            refs[path] = (doc.get("meta") or {}).get("reference")
             for r in doc["results"]:
                 for a in r["assertions"]:
                     if a["status"] not in ("fail", "xpass"):
                         continue
                     total += 1
+                    at = attribute_assertion(a)
                     groups.setdefault(
                         cluster_key_diff(a.get("expected", []), a.get("actual", []))
                     , []).append(
@@ -2217,8 +2923,22 @@ def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
                             "zsh": a.get("expected", []),
                             "sut": a.get("actual", []),
                             "converged": False,
+                            "layers": at["layers"],
+                            "causes": at["causes"],
+                            "named": at["named"],
                         }
                     )
+    # Merging clusters from runs that measured different things would produce a
+    # single table over two populations, which is how a 188-assertion run and a
+    # 229-assertion one got quoted side by side.
+    if len(refs) > 1:
+        items = list(refs.items())
+        for p, rr in items[1:]:
+            differs, _ = reference_delta(items[0][1], rr)
+            if differs and not allow_cross:
+                die(f"refusing to cluster {items[0][0]} together with {p}:\n  "
+                    + "\n  ".join(differs)
+                    + "\n  pass --allow-cross-reference to merge them anyway.")
 
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     lines: list[str] = []
@@ -2230,14 +2950,34 @@ def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
     singles = sum(1 for _, v in ordered if len(v) == 1)
     lines.append(f"            {len(ordered) - singles} with 2+ members, {singles} singletons")
     lines.append("")
-    lines.append("| n | files | key |")
-    lines.append("|---|---|---|")
+    lines.append(
+        "layers = how many independent causes an assertion's divergence splits into.\n"
+        "A cluster whose members are all layers=1 is a cluster one fix can clear; a\n"
+        "cluster of layers>=2 members will still be failing after its named cause is\n"
+        "fixed, on whatever else is underneath.  n is a symptom count, never a yield.\n"
+        "\n"
+        "attributed = members with at least one NAMED cause (a comptest emission\n"
+        "channel).  Where it is 0 -- the whole core suite, whose output is arbitrary\n"
+        "shell text rather than comptest's fixed channels -- `layers` is a count of\n"
+        "distinct line kinds in the diff: an upper bound on the number of independent\n"
+        "causes, not a count of them.  Those rows are marked `~`."
+    )
+    lines.append("")
+    lines.append("| n | layers | single-cause | attributed | files | key |")
+    lines.append("|---|---|---|---|---|---|")
     for key, members in ordered:
         if len(members) < min_size:
             continue
         files = sorted({mm["file"] for mm in members})
+        dist: dict[int, int] = {}
+        for mm in members:
+            dist[mm["layers"]] = dist.get(mm["layers"], 0) + 1
+        attributed = sum(1 for mm in members if mm["named"])
+        mark = "" if attributed else "~"
         lines.append(
-            f"| {len(members)} | {','.join(files)} | {key} |"
+            f"| {len(members)} | {mark}"
+            f"{' '.join(f'{n}x{dist[n]}' for n in sorted(dist))} "
+            f"| {dist.get(1, 0)} | {attributed} | {','.join(files)} | {key} |"
         )
     lines.append("")
     lines.append("## clusters in detail")
@@ -2247,8 +2987,15 @@ def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
         lines.append("")
         lines.append(f"### [{len(members)}] {key}")
         lines.append(
-            "members: " + " ".join(mm["origin"] for mm in members)
+            "members: "
+            + " ".join(f"{mm['origin']}(L{mm['layers']})" for mm in members)
         )
+        stacked = [mm for mm in members if mm["layers"] > 1]
+        if stacked:
+            lines.append(
+                f"  stacked: {len(stacked)} of {len(members)} members carry a second "
+                "cause and will not flip on this one alone"
+            )
         rep = next((mm for mm in members if mm["converged"]), members[0])
         if rep["kept"]:
             lines.append(f"representative: {rep['origin']}  ({rep['repro']})")
@@ -2349,9 +3096,60 @@ def gate_compare(pinned: dict, now: dict) -> tuple[dict[str, list[str]], dict[st
     return verdicts, tally
 
 
-def render_gate(pinned_doc: dict, now_map: dict, now_ident: dict, meta: dict) -> tuple[str, int]:
+def reference_verdict(pinned_doc: dict, now_ref: dict) -> tuple[str, list[str]]:
+    """``(verdict, lines)`` -- SAME / CROSS-REFERENCE / UNVERIFIABLE.
+
+    A pin taken before this runner recorded reference identity cannot be
+    checked in full; what it *does* record (tree version, test list) is checked,
+    and anything it does not is reported as unverifiable rather than assumed
+    equal.  Silence here is how a pin against one corpus gets scored against
+    another.
+    """
+    pinned_ref = pinned_doc.get("reference")
+    if pinned_ref is None:
+        # Reconstruct the little a pre-reference pin does carry.
+        pinned_ref = {
+            "tree": {"version": pinned_doc.get("zsh_build", {}).get("version")},
+        }
+    differs, unverifiable = reference_delta(pinned_ref, now_ref)
+    lines = [
+        f"pinned reference : {(pinned_doc.get('reference') or {}).get('reference_id', '(unrecorded)')}",
+        f"current reference: {now_ref['reference_id']}",
+    ]
+    if differs:
+        verdict = "CROSS-REFERENCE"
+        lines.append("reference differs:")
+        lines += [f"  {d}" for d in differs]
+    elif unverifiable:
+        verdict = "UNVERIFIABLE"
+        lines.append("reference NOT fully checkable: " + ", ".join(unverifiable))
+    else:
+        verdict = "SAME"
+        lines.append("reference: identical to the pin")
+    return verdict, lines
+
+
+def render_gate(
+    pinned_doc: dict,
+    now_map: dict,
+    now_ident: dict,
+    meta: dict,
+    now_ref: dict | None = None,
+    ref_verdict: str = "SAME",
+    ref_lines: list[str] | None = None,
+) -> tuple[str, int]:
     out: list[str] = []
     out.append("# ztst_compsys gate")
+    out.append("")
+    if now_ref:
+        out += render_reference(now_ref)
+        out.append("")
+    out += ref_lines or []
+    if ref_verdict != "SAME":
+        out.append(
+            f"!! {ref_verdict}: this is not a like-for-like gate; every verdict below "
+            "describes two runs that did not measure the same thing"
+        )
     out.append("")
     out.append(f"pinned at   : {pinned_doc.get('pinned_at')}")
     out.append(f"pinned sut  : {pinned_doc.get('sut', {}).get('version')} "
@@ -2388,15 +3186,16 @@ def render_gate(pinned_doc: dict, now_map: dict, now_ident: dict, meta: dict) ->
             )
         out.append("")
 
+    suffix = "" if ref_verdict == "SAME" else f"  [{ref_verdict} comparison]"
     if tally.get("REGRESSED"):
         code = EXIT_REGRESSED
-        out.append("verdict: REGRESSED")
+        out.append("verdict: REGRESSED" + suffix)
     elif any(tally.get(k) for k in ("FIXED", "CHANGED", "NEW", "MISSING")):
         code = EXIT_MOVED
-        out.append("verdict: MOVED (no regression)")
+        out.append("verdict: MOVED (no regression)" + suffix)
     else:
         code = EXIT_UNCHANGED
-        out.append("verdict: UNCHANGED")
+        out.append("verdict: UNCHANGED" + suffix)
     return "\n".join(out), code
 
 
@@ -2458,6 +3257,15 @@ def main() -> int:
              "(a concurrent rebuild can then corrupt the results)",
     )
 
+    g = ap.add_argument_group("reference identity")
+    g.add_argument("--identity", action="store_true",
+                   help="print the reference identity for this tree/corpus and exit")
+    g.add_argument("--allow-cross-reference", action="store_true",
+                   help="permit a gate or --compare-to across differing references, "
+                        "labelled CROSS-REFERENCE in every verdict")
+    g.add_argument("--allow-partial-corpus", action="store_true",
+                   help="permit pinning or gating a tree that is missing corpus files")
+
     g = ap.add_argument_group("gate")
     g.add_argument("--pin", action="store_true",
                    help="write this run's per-assertion state as the pin")
@@ -2494,6 +3302,21 @@ def main() -> int:
                    help="group failing assertions by root-cause key (repeatable)")
     g.add_argument("--cluster-min", type=int, default=1,
                    help="only report clusters with at least this many members")
+
+    g = ap.add_argument_group("yield (counterfactual, not symptom counting)")
+    g.add_argument("--yield", dest="yield_run", metavar="RUN.json",
+                   help="per-cause yield over a --json run: how many assertions this "
+                        "cause could account for, bounded, never estimated")
+    g.add_argument("--yield-after", metavar="RUN.json",
+                   help="a later --json run of the same corpus: turns the bound into a "
+                        "MEASURED counterfactual (which assertions actually flipped)")
+    g.add_argument("--yield-patch", action="append", default=[], metavar="FILE",
+                   help="a replacement for a Completion/ or Functions/ file of the same "
+                        "basename: runs the suite twice through the same mirror, once "
+                        "with it and once without, and reports what ACTUALLY flipped")
+    g.add_argument("--yield-min", type=int, default=1,
+                   help="only report causes present in at least this many assertions")
+
     args = ap.parse_args()
 
     zsh_build = find_zsh_build(args.zsh_build)
@@ -2531,8 +3354,26 @@ def main() -> int:
         k, _, v = kv.partition("=")
         sut_env[k] = v
 
+    if args.identity:
+        ref = reference_identity(zsh_build, zsh_build / "Src" / "zsh", tests, core_mode)
+        ref["sut"] = binary_identity(sut)
+        print("\n".join(render_reference(ref)))
+        print(f"shell under test : {sut}")
+        print(f"  version        : {ref['sut'].get('version')}")
+        print(f"  size/mtime/sha : {ref['sut'].get('size')} {ref['sut'].get('mtime')} "
+              f"{ref['sut'].get('sha256_prefix')}")
+        if ref["corpus"]["missing"]:
+            print("!! PARTIAL CORPUS: " + ", ".join(ref["corpus"]["missing"])
+                  + " absent from this tree")
+        return EXIT_UNCHANGED
+
+    if args.yield_run:
+        return do_yield(args.yield_run, args.yield_after, args.yield_min, args.out,
+                        args.allow_cross_reference)
+
     if args.cluster:
-        return do_cluster(args.cluster, args.out, args.cluster_min)
+        return do_cluster(args.cluster, args.out, args.cluster_min,
+                          args.allow_cross_reference)
 
     if args.core_minimize or args.core_minimize_from:
         return do_core_minimize(args, zsh_build, sut, sut_env)
@@ -2576,6 +3417,41 @@ def main() -> int:
         # harness, so the shell under test has to be the harness for those.
         file_harness = run_sut
 
+    # The reference is the zsh side of the comparison: the source tree, the zsh
+    # binary that drives the pty (or, in core mode, is only the corpus's
+    # provenance), and the corpus itself.  It is computed against the ORIGINAL
+    # zsh build, never the snapshot, and it is what the gate checks.
+    ref = reference_identity(
+        zsh_build, zsh_build / "Src" / "zsh", tests, core_mode
+    )
+    ref["sut"] = binary_identity(sut)
+    ref["sut_env"] = " ".join(f"{k}={v}" for k, v in sorted(sut_env.items())) or "(none)"
+    banner = corpus_banner(ref)
+    if not ref["corpus"]["present"]:
+        die(
+            "none of the requested tests exist in "
+            f"{zsh_build}/Test: {', '.join(ref['corpus']['missing'])}\n"
+            "  there is nothing to score; pass --zsh-build for a tree that has them."
+        )
+    if ref["corpus"]["missing"]:
+        msg = (
+            "PARTIAL CORPUS: "
+            + ", ".join(ref["corpus"]["missing"])
+            + f" absent from {zsh_build}\n"
+            f"  this run scores {ref['corpus']['assertions']} assertions over "
+            f"{ref['corpus']['files']} files, not the full Y suite.\n"
+            "  build a complete tree (Util/preconfig && configure && make on a\n"
+            "  5.9.999-era checkout) and pass --zsh-build, or pass\n"
+            "  --allow-partial-corpus to score the subset on purpose."
+        )
+        if (args.pin or args.gate) and not args.allow_partial_corpus:
+            die(
+                msg
+                + "\n  refusing to pin or gate a partial corpus: a pin taken here would\n"
+                "  silently score against a different assertion population later."
+            )
+        print("!! " + msg, file=sys.stderr)
+
     meta = {
         "mode": "core (shell parity)" if core_mode else "compsys (Y series)",
         "sut_snapshot": "yes" if run_sut != sut else "no (--no-sut-snapshot)",
@@ -2584,14 +3460,13 @@ def main() -> int:
         "harness": str(file_harness),
         "harness_version": version_of(file_harness),
         "zsh_build": str(zsh_build),
-        "zsh_build_version": next(
-            (
-                ln.split("=", 1)[1]
-                for ln in (zsh_build / "Config" / "version.mk").read_text().splitlines()
-                if ln.startswith("VERSION=")
-            ),
-            "?",
-        ),
+        "zsh_build_version": ref["tree"]["version"],
+        "zsh_build_git_rev": ref["tree"]["git_rev"] or "(not a git checkout)",
+        "reference_id": ref["reference_id"],
+        "corpus_digest": ref["corpus"]["digest"],
+        "corpus_files": ref["corpus"]["files"],
+        "corpus_assertions": ref["corpus"]["assertions"],
+        "corpus_missing": ",".join(ref["corpus"]["missing"]) or "(none)",
         "modules_linked": nmods,
         "fx": args.fx,
         "sut_env": " ".join(f"{k}={v}" for k, v in sorted(sut_env.items())) or "(none)",
@@ -2600,26 +3475,68 @@ def main() -> int:
         "date": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
 
-    print(f"[ztst_compsys] {label}", file=sys.stderr)
+    meta["reference"] = ref
+
+    print(f"[ztst_compsys] {banner}{label}", file=sys.stderr)
+    for ln in render_reference(ref):
+        print(f"  {banner}{ln}", file=sys.stderr)
     for k, v in meta.items():
-        print(f"  {k}: {v}", file=sys.stderr)
+        if k == "reference":
+            continue
+        print(f"  {banner}{k}: {v}", file=sys.stderr)
 
-    results = [
-        run_one(
-            name=name,
-            sut=run_sut,
-            zsh_build=zsh_build,
-            harness=file_harness,
-            modules=modules,
-            run_root=run_root,
-            timeout=timeout,
-            sut_env=sut_env,
-            verbose=True,
-        )
-        for name in tests
-    ]
+    def run_suite(test_dir: Path | None = None) -> list[FileResult]:
+        return [
+            run_one(
+                name=name,
+                sut=run_sut,
+                zsh_build=zsh_build,
+                harness=file_harness,
+                modules=modules,
+                run_root=run_root,
+                timeout=timeout,
+                sut_env=sut_env,
+                verbose=True,
+                test_dir=test_dir,
+            )
+            for name in tests
+        ]
 
-    report = render_report(label, meta, results)
+    if args.yield_patch:
+        if core_mode:
+            die("--yield-patch overrides completion functions; it only applies to the "
+                "Y series, not --core")
+        patches = [Path(p).expanduser().resolve() for p in args.yield_patch]
+        for p in patches:
+            if not p.is_file():
+                die(f"--yield-patch file not found: {p}")
+        # Both arms run through a mirror; only one of them has substitutions, so
+        # anything the mirror itself changes cancels out of the difference.
+        print("[yield-patch] control arm (mirror, no substitution)", file=sys.stderr)
+        ctl_dir = run_root / "overlay_control"
+        build_overlay(zsh_build, ctl_dir, [])
+        control = run_suite(ctl_dir / "Test")
+        print("[yield-patch] patched arm", file=sys.stderr)
+        pat_dir = run_root / "overlay_patched"
+        rep = build_overlay(zsh_build, pat_dir, patches)
+        if rep["unmatched"] or rep["ambiguous"]:
+            die("--yield-patch could not place: "
+                + ", ".join(rep["unmatched"])
+                + ("; ambiguous: " + json.dumps(rep["ambiguous"]) if rep["ambiguous"] else ""))
+        patched = run_suite(pat_dir / "Test")
+        text = render_patch_yield(control, patched, rep, ref, meta)
+        print(text)
+        if args.out:
+            Path(args.out).write_text(text + "\n")
+        if not args.keep:
+            shutil.rmtree(run_root, ignore_errors=True)
+        else:
+            print(f"[ztst_compsys] run dir kept: {run_root}", file=sys.stderr)
+        return EXIT_UNCHANGED
+
+    results = run_suite()
+
+    report = render_report(label, meta, results, ref)
     print(report)
     if args.out:
         Path(args.out).write_text(report + "\n")
@@ -2635,6 +3552,16 @@ def main() -> int:
         )
     if args.compare_to:
         prev = json.loads(Path(args.compare_to).read_text())
+        prev_ref = (prev.get("meta") or {}).get("reference")
+        differs, unverifiable = reference_delta(prev_ref, ref)
+        if differs and not args.allow_cross_reference:
+            die(
+                "refusing to diff two runs with different reference identities:\n  "
+                + "\n  ".join(differs)
+                + f"\n  {args.compare_to} was measured against a different corpus or a\n"
+                "  different zsh; the two scores are over different populations.\n"
+                "  pass --allow-cross-reference to print the diff labelled as such."
+            )
         prev_results = [
             FileResult(
                 name=r["name"],
@@ -2646,6 +3573,10 @@ def main() -> int:
             for r in prev["results"]
         ]
         print()
+        if differs:
+            print("!! CROSS-REFERENCE diff, not like-for-like: " + "; ".join(differs))
+        elif unverifiable:
+            print("!! reference NOT fully checkable: " + ", ".join(unverifiable))
         print(compare(prev_results, results))
 
     gate_code: int | None = None
@@ -2670,6 +3601,9 @@ def main() -> int:
                 "zsh_build": {"path": str(zsh_build), "version": meta["zsh_build_version"]},
                 "fx": args.fx,
                 "sut_env": meta["sut_env"],
+                # What produced this pin.  A later run whose reference differs
+                # is refused rather than scored against it.
+                "reference": ref,
                 "tests": tests,
                 # Y03arguments hangs on purpose; which of its assertions come
                 # out "notrun" depends on when the runner gives up, so the
@@ -2689,11 +3623,23 @@ def main() -> int:
                 print(f"[gate] no pin at {gate_path}; run with --pin first", file=sys.stderr)
                 return EXIT_RUNNER_FAILED
             pinned_doc = json.loads(gate_path.read_text())
+            ref_verdict, ref_lines = reference_verdict(pinned_doc, ref)
+            if ref_verdict == "CROSS-REFERENCE" and not args.allow_cross_reference:
+                print("\n".join(ref_lines), file=sys.stderr)
+                die(
+                    f"refusing to gate against {gate_path}: it was pinned against a "
+                    "different reference.\n"
+                    "  A pin recorded on one corpus must not be scored against another.\n"
+                    "  Re-pin against this reference, or pass --allow-cross-reference to\n"
+                    "  print the comparison labelled CROSS-REFERENCE."
+                )
             skipped = sorted(set(pinned_doc.get("suite", {})) - set(now_map))
             pinned_doc["suite"] = {
                 k: v for k, v in pinned_doc.get("suite", {}).items() if k in now_map
             }
-            text, gate_code = render_gate(pinned_doc, now_map, now_ident, meta)
+            text, gate_code = render_gate(
+                pinned_doc, now_map, now_ident, meta, ref, ref_verdict, ref_lines
+            )
             print()
             print(text)
             if skipped:

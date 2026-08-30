@@ -1,0 +1,115 @@
+# patched-function counterfactual: --yield-patch
+
+Three arms, same shell binary (zshrs 0.12.49 sha256 dde99902f0fa812d), same
+corpus (Y01completion,Y05describe,Y06values = 65 assertions of the dev tree),
+each a pair of runs through the same symlink mirror of Test/, Completion/ and
+Functions/ -- one with a substituted Completion/Base/Core/_description, one
+without.  No upstream file is modified.
+
+| arm | substitution | control | patched | broke |
+|---|---|---|---|---|
+| noop | byte-identical copy (control for the mirror itself) | fail=16 pass=49 | fail=16 pass=49 | 0 |
+| poison | zformat spec "d:$1" -> "d:ZZ$1" (proof the substitution reaches the shell) | fail=16 pass=49 | fail=50 pass=15 | 34 |
+| argvbug | line 83 argv+=( h:... ) -> argv=( h:... ), the pre-fix zshrs behaviour | fail=16 pass=49 | fail=49 pass=16 | 33 |
+
+Reading:
+
+* noop moves nothing, so the mirror does not perturb the suite and the two arms
+  of every other run are comparable.
+* poison breaks 34 of 49 passing assertions, so a substitution really does reach
+  the shell under test -- a zero from this mechanism means "no effect", not
+  "not wired up".
+* argvbug breaks 33.  That is the measured blast radius of the argv+= bug on
+  TODAY's shell, over 65 assertions.
+
+The last number is the point.  When argv+= was actually live (binary @06:25),
+symptom counting said it explained 50 of 93 failures and the measured flip when
+it was fixed was 1 (see yield_argv_append.txt).  Both are correct: at that time
+73 of the 93 were already dead on the lc=/rc= bug, so fixing argv+= could not
+show up.  Once lc=/rc= was fixed, the same cause is worth 33 assertions in three
+files.  A cause's yield is not a property of the cause; it is a property of the
+cause AND everything stacked on top of it, which is why it has to be measured
+against the shell you are about to fix rather than counted off a stale run.
+
+## argvbug arm, full report
+
+# patched-function counterfactual
+
+## reference identity
+reference id     : 5643c0fec78f
+zsh source tree  : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+  VERSION        : 5.9.999.3-test
+  git rev        : 599af4604f
+zsh binary driven: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+  version        : zsh 5.9.999.3-test [zsh-5.9.0.3-test-357-g599af46] (aarch64-apple-darwin25.5.0)
+  size/mtime/sha : 737776 2026-08-30T05:05:21 f14c87e66dadde72
+corpus           : 3 file(s), 65 assertion(s), digest 704c1d7448f862a7
+  tree holds     : 76 .ztst file(s)
+  files run      : Y01completion Y05describe Y06values
+
+shell under test : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/zshrs.now  (5.9.2 zsh-5.9.2-0-gddee3e7)
+substitutions    :
+  Completion/Base/Core/_description  <-  /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/r8_ztst/patches/argvbug/_description
+
+Both arms run through the same symlink mirror of Test/, Completion/ and
+Functions/; only the second has the substitutions above.  No .ztst file,
+Test/comptest or Test/ztst.zsh is modified -- the mirror redirects
+$ZTST_srcdir, it does not rewrite the tree.
+
+control: fail=16 pass=49
+patched: fail=49 pass=16
+
+MEASURED YIELD (non-pass -> pass): 0
+broken by the patch (pass -> non-pass): 33
+  - Y01completion#11
+  - Y01completion#15
+  - Y01completion#23
+  - Y01completion#25
+  - Y01completion#27
+  - Y01completion#29
+  - Y01completion#32
+  - Y05describe#1
+  - Y05describe#4
+  - Y05describe#6
+  - Y06values#1
+  - Y06values#2
+  - Y06values#3
+  - Y06values#4
+  - Y06values#5
+  - Y06values#6
+  - Y06values#7
+  - Y06values#8
+  - Y06values#9
+  - Y06values#10
+  - Y06values#11
+  - Y06values#12
+  - Y06values#13
+  - Y06values#14
+  - Y06values#15
+  - Y06values#16
+  - Y06values#17
+  - Y06values#18
+  - Y06values#19
+  - Y06values#20
+  - Y06values#23
+  - Y06values#24
+  - Y06values#25
+other status movement: 0
+
+still failing with the cause neutralised: 16 -- these carry a second cause underneath
+  Y01completion#1 layers=4 h-prefix-description(8) line-buffer(12) other:DI(12) other:FI(12)
+  Y01completion#2 layers=3 h-prefix-description(7) line-buffer(8) other:DI(6)
+  Y01completion#3 layers=3 h-prefix-description(7) line-buffer(8) other:DI(6)
+  Y01completion#6 layers=2 h-prefix-description(2) line-buffer(10)
+  Y01completion#8 layers=2 line-buffer(6) other:NO(6)
+  Y01completion#9 layers=3 h-prefix-description(4) line-buffer(4) other:NO(4)
+  Y01completion#10 layers=3 h-prefix-description(13) line-buffer(8) other:NO(30)
+  Y01completion#16 layers=1 line-buffer(4)
+  Y01completion#28 layers=2 description(1) other:NO(15)
+  Y01completion#30 layers=2 h-prefix-description(2) other:NO(6)
+  Y01completion#31 layers=2 colour-tags(2) description(1)
+  Y01completion#33 layers=1 colour-tags(5)
+  Y05describe#2 layers=1 line-buffer(2)
+  Y05describe#3 layers=3 h-prefix-description(3) line-buffer(2) other:NO(3)
+  Y05describe#5 layers=3 h-prefix-description(3) line-buffer(2) other:NO(3)
+  Y05describe#7 layers=3 h-prefix-description(6) line-buffer(2) other:NO(6)
