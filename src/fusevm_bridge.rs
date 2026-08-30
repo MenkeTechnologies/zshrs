@@ -11603,8 +11603,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // identifier test is the right one (that arm is about
                         // not path-globbing an assignment RHS without
                         // GLOB_ASSIGN).
-                        let has_nonleading_equals =
-                            s.as_bytes().iter().skip(1).any(|&b| b == b'=');
+                        // c:Src/subst.c:678 — filesub's own gate is
+                        // `strchr(*namptr + 1, Equals)`: the Equals TOKEN,
+                        // which the lexer emits ONLY for an unquoted `=`.
+                        // Test the still-TOKENIZED word so a quoted `=` does
+                        // not arm the arm below.
+                        let has_nonleading_equals = s_tok
+                            .chars()
+                            .skip(1)
+                            .any(|c| c == crate::ported::zsh_h::Equals);
                         if is_glob_pre && !is_assignment_shape {
                             exec.expand_glob(&s_tok)
                         } else if has_nonleading_equals
@@ -11616,14 +11623,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // filesub(PREFORK_TYPESET): the `~`/`=` after the
                             // first `=` (and after each `:`) undergo filename
                             // expansion. `print foo=~/bar` → `foo=$HOME/bar`.
-                            // filesubstr (subst.c:741) keys on the Tilde TOKEN,
-                            // not literal `~`; this `s` was already untokenized
-                            // above, so re-tokenize (as BUILTIN_MAGIC_EQUALS_PREFORK
-                            // does) before filesub, then untokenize the result.
-                            let mut tokd = s.clone();
-                            crate::ported::glob::shtokenize(&mut tokd);
+                            // filesub (subst.c:667) keys on the Tilde/Equals
+                            // TOKENS, not the literal chars, because that is
+                            // exactly what tells a quoted `~`/`=` from a live
+                            // one. This arm used to `untokenize` the word and
+                            // then `shtokenize` it back, which re-marks EVERY
+                            // literal `~`/`=` as a token — including the ones
+                            // that came out of quotes. With MAGIC_EQUAL_SUBST
+                            // set, `print -r -- --a='b:=c'` then did `=`
+                            // filename expansion on the quoted `=c` and failed
+                            // with `c not found` (zsh prints `--a=b:=c`), and
+                            // `A=( --height='${X:=75%}' )` — fzf-tab.plugin.zsh
+                            // sh:117-128 — errored `75%} not found` at plugin
+                            // load, aborting the rest of the zinit turbo
+                            // `atload` chain. Hand filesub the word C hands it:
+                            // the one the lexer produced.
                             let exp = crate::ported::subst::filesub(
-                                &tokd,
+                                &s_tok,
                                 crate::ported::zsh_h::PREFORK_TYPESET,
                             );
                             vec![crate::lex::untokenize(&exp).to_string()]
