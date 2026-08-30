@@ -51,7 +51,7 @@ The fusevm `Chunk` is the pivot point. Three deployment rungs use the same Chunk
 | Rung | Payload | Launch cost | Status |
 |------|---------|-------------|--------|
 | 1 — source trailer | UTF-8 source appended to binary copy | parse + compile + JIT (~1-2 ms) | What stryke ships today |
-| 2 — bytecode trailer | bincode `Chunk` appended to binary copy | JIT or interp only (~µs) | Available to zshrs because Chunks are serde-ready (`BUILTIN_REGISTER_COMPILED_FN` already round-trips them via base64-bincode) |
+| 2 — bytecode trailer | bincode `Chunk` appended to binary copy | JIT or interp only (~µs) | Available to zshrs because Chunks are serde-ready (`bincode::serialize`/`deserialize` round-trips a whole `Chunk`, `sub_chunks` included) |
 | 3 — native object | Cranelift-emitted `.o` linked into a static binary | Zero codegen at launch | **Shipped** — `zbuild --native` |
 
 Stryke chose rung 1 because its `Arc<HeapObject>` runtime values aren't serde-ready. zshrs has no such constraint, so rungs 1 and 2 are stepping stones we don't need. **Ship rung 3 directly.**

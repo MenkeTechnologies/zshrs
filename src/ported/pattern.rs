@@ -1782,8 +1782,23 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         } else {
             last_tail as i64
         };
+        // !!! WARNING: RUST-ONLY HELPER !!!
+        //
+        // C has no such guard here because it cannot need one: c:1336's
+        // `DPUTS(patparse == str0, "BUG: matched nothing in patcomppiece.")`
+        // is a debug-only assertion resting on the invariant that every
+        // `patcomppiece` arm advances `patparse`. When a Rust arm broke that
+        // invariant (the multibyte `é#` backtrack, pattern.rs:2960) the loop
+        // below became an unkillable CPU spin that ate the whole shell.
+        // Turning the same invariant into a hard bail keeps a future
+        // regression a "bad pattern" error instead of a hang.
+        let off_before_piece = patparse_off.load(Ordering::Relaxed);
         let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
         if piece < 0 {
+            return -1;
+        }
+        if patparse_off.load(Ordering::Relaxed) <= off_before_piece {
+            // c:1336 — the DPUTS condition, made fatal.
             return -1;
         }
         if chain_start < 0 {
@@ -2957,21 +2972,65 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 drop(p);
                 hash_at || count_at || ksh_count_at
             };
-            if buf.len() > 1 && has_trailing_quantifier {
-                // c:1322 — `patprev = patparse; METACHARINC(patparse);`, so
-                // `patprev` is the START of the last character, which may be
-                // multibyte. Rewind to that boundary rather than one byte.
+            // c:1322 — `patprev = patparse; METACHARINC(patparse);`, so
+            // `patprev` is the START of the LAST character of the run, which
+            // may be multibyte. `last_char_start` is that boundary: walk back
+            // over UTF-8 continuation bytes, exactly what METACHARINC's
+            // stride implies.
+            let last_char_start = {
                 let mut cut = buf.len() - 1;
                 while cut > 0 && (buf[cut] & 0xC0) == 0x80 {
                     cut -= 1;
                 }
-                let popped = buf.len() - cut;
-                buf.truncate(cut);
+                cut
+            };
+            // c:1338 — `morelen = (patprev > str0);`. This is "the run holds
+            // MORE THAN ONE CHARACTER", not more than one BYTE. The previous
+            // port tested `buf.len() > 1`, so a run consisting of a SINGLE
+            // multibyte character followed by `#` (`é#` under EXTENDEDGLOB)
+            // took the backtrack branch, popped the whole 2-byte character,
+            // rewound `local_off` to where the piece started, and returned a
+            // zero-length P_EXACTLY having consumed NOTHING — so
+            // `patcompbranch`'s piece loop (pattern.rs:1406) span forever
+            // emitting empty nodes. C cannot reach that state: c:1336's
+            // `DPUTS(patparse == str0, "BUG: matched nothing in
+            // patcomppiece.")` records that a piece always consumes, and
+            // `morelen` being character-based is what guarantees it — the
+            // backtrack can only ever give back a character that was NOT the
+            // first one in the run.
+            let morelen = last_char_start > 0; // c:1338
+            // c:1340-1351 — "If we have more than one character, a following
+            // hash or (#c...) only applies to the last, so backtrack one
+            // character."  `if (… ) && morelen) patparse = patprev;`
+            if morelen && has_trailing_quantifier {
+                let popped = buf.len() - last_char_start;
+                buf.truncate(last_char_start);
                 local_off -= popped;
             }
             patparse_off.store(local_off, Ordering::Relaxed);
-            *flagp |= P_SIMPLE;
-            // If it's a single char, mark simple; multi-char run stays pure-string.
+            // c:1352-1357 — "If len is 1, we can't have an active # following,
+            // so doesn't matter that we don't make X in `XX#' simple."
+            //     if (!morelen) flags |= P_SIMPLE;
+            // Only a ONE-character run can be the operand of a following
+            // closure; a multi-character run stays non-simple (and pure
+            // string). This port used to set P_SIMPLE unconditionally.
+            if !morelen {
+                *flagp |= P_SIMPLE; // c:1357
+            }
+            // c:1372-1376 —
+            //     if ((patglobflags & GF_MULTIBYTE) && slen > 1)
+            //         /* for multibyte single characters, treat x# as (x)# */
+            //         flags &= ~P_SIMPLE;
+            // `slen` is the run's UNMETAFIED byte length (c:1371), which for
+            // this port is simply `buf.len()`. The P_SIMPLE closure path
+            // (c:1718-1720 `patinsert(op, starter, NULL, 0)`, matched by
+            // `patrepeat` at c:4121-4129, which asserts `P_LS_LEN(p) == 1`)
+            // assumes a ONE-BYTE operand, so a single multibyte character
+            // has to go through the general `(x)#` branch construction
+            // instead.
+            if (patglobflags.load(Ordering::Relaxed) & GF_MULTIBYTE) != 0 && buf.len() > 1 {
+                *flagp &= !P_SIMPLE; // c:1375
+            }
             let lit_off = patnode(P_EXACTLY);
             let mut buf_lit = patout.lock().unwrap();
             let len = buf.len() as u32;
@@ -7228,6 +7287,52 @@ mod tests {
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "aaa"));
         crate::ported::options::opt_state_set("extendedglob", saved);
+    }
+
+    /// c:1338 / c:1372-1376 — a closure over a SINGLE MULTIBYTE character.
+    ///
+    /// `morelen` (c:1338 `patprev > str0`) counts CHARACTERS, not bytes, and
+    /// this port used to test bytes. A one-character run whose character is
+    /// multibyte therefore took the "backtrack one character so the `#`
+    /// applies to the last one" branch (c:1343-1351), gave back the ONLY
+    /// character in the run, and returned a piece that had consumed nothing —
+    /// so `patcompbranch`'s piece loop never terminated. `[[ éé = é# ]]`
+    /// burned 100% CPU forever (D07multibyte, "Multibyte handling of
+    /// functions parameter" neighbourhood).
+    ///
+    /// The bound below is what makes this a hang test rather than a
+    /// correctness test: compiling and matching six short patterns is
+    /// microseconds of work, and the pre-fix code never returns at all, so
+    /// any generous wall-clock ceiling separates the two. It is deliberately
+    /// loose (this box runs many concurrent build/test sessions).
+    #[test]
+    fn multibyte_closure_terminates() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
+        let started = std::time::Instant::now();
+        // c:1375 — `é#` compiles as `(é)#`, so it matches zero or more `é`.
+        let prog = compile("é#");
+        assert!(pattry(&prog, ""), "é# matches the empty string");
+        assert!(pattry(&prog, "é"), "é# matches one é");
+        assert!(pattry(&prog, "éé"), "é# matches two é");
+        assert!(!pattry(&prog, "x"), "é# does not match x");
+        // `##` (one or more) over the same single multibyte character.
+        let prog2 = compile("é##");
+        assert!(!pattry(&prog2, ""), "é## needs at least one é");
+        assert!(pattry(&prog2, "ééé"), "é## matches three é");
+        // A MULTI-character run ending in a multibyte character still
+        // backtracks (c:1343-1351): `aé#` is `a` followed by `é#`.
+        let prog3 = compile("aé#");
+        assert!(pattry(&prog3, "a"), "aé# matches a");
+        assert!(pattry(&prog3, "aéé"), "aé# matches a then two é");
+        assert!(!pattry(&prog3, "aa"), "aé# does not match aa");
+        crate::ported::options::opt_state_set("extendedglob", saved);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "multibyte closure compile/match must terminate promptly, took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

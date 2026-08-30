@@ -9921,8 +9921,25 @@ impl ZshCompiler {
         body_compiler.is_function_body = true;
         let lineno_off = body_compiler.lineno_offset;
         let body_chunk = body_compiler.compile(&f.body);
-        let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
-        let body_str = base64_encode(&body_bytes);
+        // The body chunk rides along in the ENCLOSING chunk's `sub_chunks`
+        // (fusevm chunk.rs:35-40 lists "function bodies when they're stored as
+        // separate chunks" as exactly this slot's purpose), and only its index
+        // travels through the constant pool. It used to travel as
+        // `base64(bincode(chunk))` in a string constant, which made every
+        // enclosing definition re-encode the whole nested blob: base64 costs
+        // 4/3, so a definition nested N deep paid (4/3)^N. `() { … }` nests
+        // per level, and D04parameter's "zsh_eval_context resizing" test
+        // (`repeat 48 cmd="() { $cmd }"`) is 49 levels deep — (4/3)^49 ≈ 1.4e6.
+        // Measured on a 253-byte program: 0.33s at depth 24, 7.15s at depth 36,
+        // and the real test never finished. A sub-chunk index is O(1) per
+        // level and keeps the chunk self-contained, so the on-disk bytecode
+        // cache still round-trips.
+        let body_sub_idx = self.builder.add_sub_chunk(body_chunk);
+        // `#` is outside the base64 alphabet (`A-Za-z0-9+/=`), so the marker
+        // can never collide with a body encoded the old way — a chunk restored
+        // from a bytecode cache written by an older binary still decodes
+        // through the base64 fallback in the handler.
+        let body_str = format!("#{}", body_sub_idx);
         let source_text = f.body_source.clone().unwrap_or_default();
         // c:Src/exec.c:5409 — `shf->lineno = lineno;` records the line
         // of the funcdef STATEMENT (where `name()` sits), which
@@ -16152,9 +16169,16 @@ fn untokenize_keep_braces(s: &str) -> String {
 }
 
 /// Tiny base64 encoder for embedding bincode-serialized chunks inside
-/// constant strings (the BUILTIN_REGISTER_COMPILED_FN handler decodes).
-/// Avoids dragging in a base64 crate dependency just for this one call
-/// site.
+/// constant strings. Avoids dragging in a base64 crate dependency.
+///
+/// `compile_funcdef` no longer calls it: a function body now rides in the
+/// enclosing chunk's `sub_chunks` and only its index goes through the
+/// constant pool, because re-encoding the payload once per enclosing
+/// definition cost (4/3)^depth. The decoding half in
+/// `BUILTIN_REGISTER_COMPILED_FN` still accepts the old form so a chunk
+/// restored from a bytecode cache written by an older binary keeps working,
+/// and this is the matching encoder for it.
+#[allow(dead_code)]
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -16533,10 +16557,20 @@ mod tests {
     #[test]
     fn compile_function_def_registers_via_builtin() {
         // Observation (compile dump): function defs route through
-        // CallBuiltin(305, 4) — the function-register builtin — with
-        // the name + body loaded from the constant pool. They do NOT
-        // populate sub_entries/sub_chunks at compile time.
+        // CallBuiltin(305, 6) — the function-register builtin — with the name
+        // + a reference to the body loaded from the constant pool. The body
+        // itself is a `sub_chunks` entry and the constant is the `#<idx>`
+        // marker naming it; `sub_entries` stays empty.
         let chunk = compile_src("greet() { echo hello; }");
+        assert_eq!(
+            chunk.sub_chunks.len(),
+            1,
+            "function body is carried as one sub-chunk"
+        );
+        assert!(
+            chunk.constants.iter().any(|c| c.to_str() == "#0"),
+            "the body constant is the sub-chunk index marker, not an encoded chunk"
+        );
         assert!(
             has_op(&chunk, |op| matches!(op, Op::CallBuiltin(305, _))),
             "function def should emit CallBuiltin(305, _)"
@@ -16545,6 +16579,45 @@ mod tests {
         assert!(
             chunk.constants.len() >= 2,
             "function def needs name + body in constants"
+        );
+    }
+
+    /// Deeply nested anonymous functions must parse + compile in time
+    /// proportional to the source, not exponential in the nesting depth.
+    ///
+    /// `compile_funcdef` used to hand the compiled body to the register
+    /// builtin as `base64(bincode(chunk))` in a string constant. base64 costs
+    /// 4/3, so a body nested N deep was re-encoded N times and the innermost
+    /// bytes grew by (4/3)^N. Measured with `zshrs --zsh -n` on a program of
+    /// `'() { ' * d + ':' + ' }' * d`: 0.33s at d=24, 1.29s at d=30, 7.15s at
+    /// d=36 — a clean geometric curve. D04parameter's "zsh_eval_context
+    /// resizing" assertion builds d=49 (`repeat 48 cmd="() { $cmd }"`), which
+    /// never finished, so nothing after it in the file ran either.
+    ///
+    /// The depth below is that test's depth. The budget is deliberately loose
+    /// — this box runs many concurrent sessions and the fixed path is
+    /// milliseconds — while the pre-fix path extrapolates to minutes at d=49,
+    /// so the two never overlap.
+    #[test]
+    fn parse_and_compile_deeply_nested_anon_funcdefs_is_not_exponential() {
+        const DEPTH: usize = 49;
+        let src = format!("{}:{}", "() { ".repeat(DEPTH), " }".repeat(DEPTH));
+        let started = std::time::Instant::now();
+        let chunk = compile_src(&src);
+        let elapsed = started.elapsed();
+        // Each level contributes exactly one sub-chunk to its parent.
+        let mut level = &chunk;
+        let mut depth = 0usize;
+        while let Some(next) = level.sub_chunks.first() {
+            depth += 1;
+            level = next;
+        }
+        assert_eq!(depth, DEPTH, "one sub-chunk per nesting level");
+        assert!(
+            elapsed < std::time::Duration::from_secs(20),
+            "nested anon-fn compile must not blow up: depth {} took {:?}",
+            DEPTH,
+            elapsed
         );
     }
 
