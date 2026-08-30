@@ -138,7 +138,46 @@ pub fn tputs(s: &str) -> Vec<u8> {
 /// straight off the tty and `xon` / `pb` / `npc` / `pad` from the entry
 /// `init_term` loaded. When stdout is not a tty the speed is 0, which is
 /// ncurses' own "emit no pad bytes" case.
+///
+/// CACHED, because this is on the ZLE write path. ncurses does the same: it
+/// samples `ospeed` once inside `setupterm` and stores it on the terminal,
+/// and `tputs` reads the stored value rather than re-querying the tty. The
+/// uncached version cost a `tcgetattr` plus four mutex-guarded terminfo
+/// lookups for EVERY padded capability written, which under `TERM=vt100` —
+/// where nearly every capability carries a `$<…>` delay, and which is what
+/// `Test/comptest` sets — took `comptestinit` from 0.25s to 2.1s and pushed
+/// the ztst harness past its 10s prep budget.
+///
+/// Invalidated by [`invalidate_pad_info`] whenever a new entry is loaded, so
+/// a `TERM` change during the session is still picked up.
 fn pad_info() -> crate::tparm::PadInfo {
+    if let Ok(g) = pad_cache().lock() {
+        if let Some(p) = *g {
+            return p;
+        }
+    }
+    let computed = compute_pad_info();
+    if let Ok(mut g) = pad_cache().lock() {
+        *g = Some(computed);
+    }
+    computed
+}
+
+fn pad_cache() -> &'static std::sync::Mutex<Option<crate::tparm::PadInfo>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<Option<crate::tparm::PadInfo>>> =
+        std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Drop the cached [`PadInfo`]. Called when `setupterm` installs a different
+/// terminal, since every field is derived from that entry or its tty.
+pub fn invalidate_pad_info() {
+    if let Ok(mut g) = pad_cache().lock() {
+        *g = None;
+    }
+}
+
+fn compute_pad_info() -> crate::tparm::PadInfo {
     use crate::terminfo_db;
     let baud = unsafe {
         let mut t: libc::termios = std::mem::zeroed();
