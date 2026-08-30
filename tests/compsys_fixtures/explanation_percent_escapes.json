@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/1",
  "id": "explanation_percent_escapes",
- "title": "compadd -X leaves %F %K %H %{%} and the %B/%U/%S attributes unexpanded",
+ "title": "GUARD (fixed in 44a3b4841c) — was: compadd -X leaves %F %K %H %{%} and the %B/%U/%S attributes unexpanded",
  "harness": "compsys_spec_fuzz",
  "run": {
   "buffer": "fzcx ",
@@ -21,10 +21,42 @@
    "completer": "#compdef fzcx\n\ncompadd -J gB -X '%Bbold%b' -- b1 b2\ncompadd -J gU -X '%Uunder%u' -- u1 u2\ncompadd -J gS -X '%Sstand%s' -- s1 s2\ncompadd -J gF -X '%F{red}fg%f' -- f1 f2\ncompadd -J gK -X '%K{blue}bg%k' -- k1 k2\ncompadd -J gH -X '%Hhi%h' -- h1 h2\ncompadd -J gZ -X '%{X%}zero' -- z1 z2\ncompadd -J gP -X '100%% pct' -- p1 p2\n"
   }
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-08-30",
+  "previous_expect": "diverges",
+  "fix_commit": "44a3b4841c",
+  "fix_commit_subject": "zle: port the SIGWINCH redraw, printfmt's % escapes + erase-to-EOL, M-t's NUL-terminator read, and insert_positions' second cline_str walk",
+  "why": "zle: … item 2 — printfmt's escape switch is now a line-by-line port of zle_tricky.c:2438-2535: %B/%b/%S/%s/%U/%u through tsetattrs/tunsetattrs, %F/%K through match_colour consuming the `{colour}` payload, %H through parsehighlight, %{ … %} terminated on `%}`, and an unknown escape emitting nothing instead of leaking its letter — which is exactly the `%Hhi%h` -> `Hhih` row this fixture recorded.",
+  "evidence": "re-verified first-hand by scripts/compsys_regressions.py under --variants: the fixture cell scored NOW-PASSES -> NOW-PASSES -> NOW-PASSES, and every variant and control of it came back NOW-PASSES. The runner reported the binary MOVED since the stamp (6420c23cecc13c35 -> 723088f811cdd366), which is the 'somebody fixed the bug' branch of the two the README names, not the 'the fixture was wrong' one.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file: the cell stays in the evidence base and the gate now FAILS if the divergence comes back."
+ },
+ "guard_verified": {
+  "date": "2026-08-30",
+  "against": "/opt/homebrew/bin/zshrs -> Cellar/zshrs-all/0.12.49/bin/zshrs, the Homebrew-installed RELEASE build of the same version, 18273880 bytes, sha256 fb94500d8e1c32e7, built 2026-08-30 06:20:45 — before d555917f07 (08:04) and 44a3b4841c (08:32), so it still carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "4 row(s) differ",
+  "controls_on_the_old_binary": "none",
+  "note": "the flip is only worth something if the gate would CATCH the bug coming back, so it was pointed at a build that still has it: `compsys_regressions.py --zshrs /opt/homebrew/bin/zshrs --only explanation_percent_escapes`. It reported CONTROL-MOVED and exited 1. The harness detail it produced there is the same one observed_when_diverging records, so the guard fails on THIS bug and not merely on some difference."
+ },
  "group": "description-escapes",
  "fingerprint": null,
  "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-08-30, commit 44a3b4841c, a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "the whole listing agrees under BOTH strict modes the fixture always ran with — `--strict-stream` (the raw escape byte stream, not just the rendered grid) and `--compare-attrs` (SGR attributes, which is what rows 1/3/5 differed in). All eight -X groups agree, including the %F{red}, %H and %{X%} rows that carried the literal text."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "category": "grid-diff",
   "detail": "4 row(s) differ",
@@ -64,12 +96,13 @@
    "after \\e[7mstand",
    "  zsh   - \\e[27m\\e[K"
   ],
-  "notes": "One completer adds eight groups, each with a different escape in its -X explanation. %F{red} -> zshrs prints the literal '{red}'; %H -> zshrs prints 'Hhih'; %{X%} -> zshrs leaves a stray '%'. %B/%U/%S produce identical TEXT but zshrs emits no SGR at all (rows 1/3/5 differ in attributes only, so --compare-attrs is required to fail them). Only %% behaved identically. The trailing \\e[K in the raw diff is fixture listing_row_erase_to_eol showing through."
+  "notes": "One completer adds eight groups, each with a different escape in its -X explanation. %F{red} -> zshrs prints the literal '{red}'; %H -> zshrs prints 'Hhih'; %{X%} -> zshrs leaves a stray '%'. %B/%U/%S produce identical TEXT but zshrs emits no SGR at all (rows 1/3/5 differ in attributes only, so --compare-attrs is required to fail them). Only %% behaved identically. The trailing \\e[K in the raw diff is fixture listing_row_erase_to_eol showing through.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47), zsh 5.9.2 (aarch64-apple-darwin25.4.0) — this is the divergence AS MEASURED BEFORE 44a3b4841c. It is history, not current behaviour; the fixture now asserts the two shells AGREE."
  },
  "variants": [
   {
    "origin": "target/spec-fuzz-11/case0002.min.zsh",
-   "note": "fuzz-found witness for %K{blue}, confirmed 2026-08-30 (FAIL, 1 row): zsh 'bg expl' vs zshrs '{blue}bg expl'.",
+   "note": "WHEN THIS FIXTURE DIVERGED: fuzz-found witness for %K{blue}, confirmed 2026-08-30 (FAIL, 1 row): zsh 'bg expl' vs zshrs '{blue}bg expl'.  NOW: agrees (NOW-PASSES -> NOW-PASSES -> NOW-PASSES; harness detail 'PASS').",
    "buffer": "fzc0002 x",
    "keys": [
     "tab",
@@ -89,7 +122,7 @@
   },
   {
    "origin": "target/spec-fuzz-22/case0002.min.zsh",
-   "note": "fuzz-found witness for %{...%}, confirmed 2026-08-30 (FAIL, 1 row): zsh '\\e[32mzero-width\\e[0m expl' vs zshrs '\\e[32m%zero-width\\e[0m% expl' — the %{ %} delimiters survive.",
+   "note": "WHEN THIS FIXTURE DIVERGED: fuzz-found witness for %{...%}, confirmed 2026-08-30 (FAIL, 1 row): zsh '\\e[32mzero-width\\e[0m expl' vs zshrs '\\e[32m%zero-width\\e[0m% expl' — the %{ %} delimiters survive.  NOW: agrees (NOW-PASSES -> NOW-PASSES -> NOW-PASSES; harness detail 'PASS').",
    "buffer": "fzc0002 -",
    "keys": [
     "tab",
@@ -108,7 +141,7 @@
   },
   {
    "origin": "target/spec-fuzz-probe/expl_attrs.zsh",
-   "note": "attribute-only witness, confirmed 2026-08-30 (FAIL only under --compare-attrs): %B/%U/%S text matches, SGR does not.",
+   "note": "WHEN THIS FIXTURE DIVERGED: attribute-only witness, confirmed 2026-08-30 (FAIL only under --compare-attrs): %B/%U/%S text matches, SGR does not.  NOW: agrees (NOW-PASSES -> NOW-PASSES -> NOW-PASSES; harness detail 'PASS').",
    "buffer": "fzca ",
    "keys": [
     "tab"
@@ -134,17 +167,18 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "commit": "44a3b4841c",
   "harness_sha256_16": {
    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
+   "size": 101620888,
+   "mtime": "2026-08-30 08:46",
    "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "sha256_16": "723088f811cdd366",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical copy of this file, passed with --zshrs, because a peer instance rebuilt target/debug/zshrs MID-SWEEP during the first re-verification (6420c23cecc13c35 -> 2aa614f561de25ec -> 723088f811cdd366 in one morning). The sha256 prefix identifies the bytes that actually ran; copying was the only way to make a multi-minute sweep name one binary."
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -152,8 +186,8 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366)",
+  "note": "RETIRED AS A GUARD. `expect` was flipped diverges -> agrees on this run: the fixture cell and all of its variants and controls came back agreeing, three attempts each, against a binary that moved since the previous stamp. The cell is no longer evidence of a bug; it is now the regression guard for 44a3b4841c."
  },
  "history": [
   {
@@ -167,6 +201,29 @@
    "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
    "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
    "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+  },
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
   }
  ]
 }
