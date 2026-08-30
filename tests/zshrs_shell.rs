@@ -9488,11 +9488,27 @@ fn test_bindkey_unknown_flag_errors() {
 
 #[test]
 fn test_zparseopts_no_args_errors() {
-    // zsh: bare `zparseopts` -> `zparseopts:1: not enough arguments`
-    // exit 1. zshrs silently returned 0.
+    // Bare `zparseopts` must fail with status 1 and a diagnostic; zshrs
+    // once silently returned 0.
+    //
+    // The diagnostic text moved upstream. zsh 5.9.2 declares the builtin
+    // with minargs 1 and a NULL optstring, so execbuiltin rejects the empty
+    // argument list first: `zparseopts:1: not enough arguments`. Current
+    // zsh declares it `BUILTIN("zparseopts", 0, bin_zparseopts, 0, -1, 0,
+    // "a:A:DEFGKMn:v:", NULL)` (Src/Modules/zutil.c:2150) — minargs 0, so
+    // the empty list reaches the builtin and hits
+    // Src/Modules/zutil.c:1885-1888 `zwarnnam(nam, "missing option
+    // descriptions"); return 1;`. minargs 0 is load-bearing, not cosmetic:
+    // with minargs 1 the `zparseopts -a ''` case in upstream's
+    // Test/V12zparseopts.ztst ("zparseopts missing/empty optargs") would
+    // report "not enough arguments" instead of the required
+    // "missing array name for -a".
     let (status, _, stderr) = run_zshrs("zparseopts");
     assert_eq!(status, 1);
-    assert!(stderr.contains("not enough arguments"), "got: {stderr}");
+    assert!(
+        stderr.contains("missing option descriptions"),
+        "got: {stderr}"
+    );
 }
 
 #[test]

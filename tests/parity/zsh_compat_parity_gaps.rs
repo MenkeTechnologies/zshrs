@@ -310,7 +310,20 @@ mod parse_and_options_builtin {
         setopt_numeric_token_rejected => (r#"setopt 999"#, r#"setopt 999"#);
         unsetopt_mixed_with_unknown => (r#"unsetopt nonomatch + unknown"#, r#"unsetopt nonomatch badoptx_gap_unknown; print after"#);
         zparseopts_simple_opt_arg => (r#"zparseopts a=aval -- -a"#, r#"zparseopts a=aval -- -a 2>&1; print -r "aval=$aval""#);
-        zparseopts_only_double_dash => (r#"zparseopts --"#, r#"zparseopts -- 2>&1; print after"#);
+        // The `--`-with-NO-descriptions shape used to be pinned here as
+        // `zparseopts --` (status 0, silent). That shape is no longer a
+        // valid differential probe: upstream zsh moved zparseopts's own
+        // flags onto the generic builtin option parser
+        // (Src/Modules/zutil.c:2150 `"a:A:DEFGKMn:v:"`), so `--` is now
+        // consumed before the builtin runs and the empty spec list hits
+        // Src/Modules/zutil.c:1885-1888 `zwarnnam(nam, "missing option
+        // descriptions"); return 1;`. Upstream's own Test/V12zparseopts.ztst
+        // asserts the error (`() { zparseopts -F -- } -x` →
+        // `?(anon):zparseopts: missing option descriptions`), while the
+        // installed zsh 5.9.2 this harness diffs against still returns 0.
+        // Keep the `--` terminator under test, with descriptions after it,
+        // where both revisions agree.
+        zparseopts_only_double_dash => (r#"zparseopts -- <specs>"#, r#"set -- -x rest; zparseopts -a arr3 -- x 2>&1; print -r "after ex=$? arr=$arr3""#);
     }
 }
 
@@ -1034,7 +1047,12 @@ mod corpus_dash_fc_bulk_c {
         bulk_c_setopt_localoptions_nominal => (r#"setopt localoptions"#, r##"setopt localoptions 2>&1; print -r "lox=$?""##);
         bulk_c_function_localtraps_option => (r#"localtraps fn"#, r#"fn_lt() { setopt localtraps; print fn_lt_inner; }; fn_lt"#);
         bulk_c_autoload_zle_hook_helper => (r#"autoload add-zle-hook"#, r##"autoload -U add-zle-hook-widget 2>&1; print -r "alz=$?""##);
-        bulk_c_zparseopts_array_accumulate => (r#"zparseopts -a"#, r##"typeset -a zpo_c=(); zparseopts -a zpo_c -- 2>&1; print -r "n=$#zpo_c ex=$?""##);
+        // Was `zparseopts -a zpo_c --` with no descriptions, which pinned
+        // zsh 5.9.2's silent status 0; upstream now errors "missing option
+        // descriptions" there (Src/Modules/zutil.c:1885-1888, reachable
+        // because c:2150's optstring makes the generic parser eat the `--`).
+        // Give it real specs so the probe measures what its name says.
+        bulk_c_zparseopts_array_accumulate => (r#"zparseopts -a"#, r##"set -- -a -b bval rest; typeset -a zpo_c=(); zparseopts -a zpo_c -- a b: 2>&1; print -r "n=$#zpo_c ex=$? v=$zpo_c""##);
         bulk_c_zmodload_parameter_module => (r#"zmodload zsh/parameter"#, r##"zmodload zsh/parameter 2>&1; print -r "ex=$?""##);
         bulk_c_printf_q_escaped => (r#"printf %q"#, r##"printf '%q\n' 'two words c'"##);
         bulk_c_ifs_read_two_parts => (r#"IFS read :"#, r#"IFS=: read -r rc1_c rc2_c <<< 'u:v'; print $rc1_c $rc2_c"#);
@@ -1242,7 +1260,10 @@ print -r "$hde""##);
         bulk_e_print_zsh_name_version => (r#"ZSH_NAME"#, r##"print -r "$ZSH_NAME $ZSH_VERSION""##);
         bulk_e_argv0_default => (r#"ARGV0"#, r#"print ${ARGV0:-nil_argv0}"#);
         bulk_e_word_begin_end_match_arrays => (r#"mbegin mend"#, r##"[[ 123 =~ ([0-9]+) ]]; print -r "$#mbegin $#mend""##);
-        bulk_e_zparseopts_capital_D => (r#"zparseopts -D"#, r##"typeset -a zpd_e=(); zparseopts -D -a zpd_e -- 2>&1; print -r "n=$#zpd_e ex=$?""##);
+        // Same correction as bulk_c_zparseopts_array_accumulate above: the
+        // no-descriptions `--` form is now an error upstream
+        // (Src/Modules/zutil.c:1885-1888), so probe -D with real specs.
+        bulk_e_zparseopts_capital_D => (r#"zparseopts -D"#, r##"set -- -a -b bval rest; typeset -a zpd_e=(); zparseopts -D -a zpd_e -- a b: 2>&1; print -r "n=$#zpd_e ex=$? argv=$*""##);
         bulk_e_opt_correctall => (r#"options[correctall]"#, r#"print $options[correctall]"#);
         bulk_e_opt_histallowclobber => (r#"options[histallowclobber]"#, r#"print $options[histallowclobber]"#);
         bulk_e_opt_magicequalsubst => (r#"options[magicequalsubst]"#, r#"print $options[magicequalsubst]"#);
