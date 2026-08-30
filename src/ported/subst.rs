@@ -4021,6 +4021,56 @@ pub fn paramsubst(
         out
     };
 
+    // c:Src/subst.c:3371-3427 — the PATTERN operand of `${x#pat}` /
+    // `${x##pat}` / `${x%pat}` / `${x%%pat}` / `${x/pat/repl}` /
+    // `${x//pat/repl}` / `${x:/pat/repl}` / `${x:#pat}` is expanded by
+    //     singsub(&s);                                   /* c:3412 */
+    // which re-enters `paramsubst` for any nested `${…}` in the pattern.
+    //
+    // C's `${~spec}` switch (c:2596-2602) assigns to `int globsubst`, a
+    // paramsubst LOCAL declared at c:1671 (`int globsubst = isset(GLOBSUBST);`).
+    // So a `~` inside the pattern tokenizes only the value THAT nested call
+    // splices into the pattern; the ENCLOSING paramsubst's own `globsubst` —
+    // the one `strcatsub(…, globsubst, …)` at c:4352/4397/4436/4475 consults to
+    // decide whether its RESULT is offered to filename generation — is
+    // untouched.
+    //
+    // zshrs carries that switch through the GLOBAL option table instead
+    // (documented deviation at the TILDE_GLOBSUBST_CARRIER declaration above)
+    // and unwinds the carrier only at the command-dispatch boundary, so a
+    // nested `${~…}` left GLOB_SUBST on for the rest of the word and the
+    // OUTER expansion's own value was then tokenized and filename-globbed:
+    //     cm=X; v='a|b'; print -r -- ${v%%${~cm}*}
+    //     zsh   -> a|b
+    //     zshrs -> "no matches found: a|b"
+    // That is the whole of Test/X04zlehighlight (20 assertions): its
+    // `zpty_line` helper ends every line with
+    //     print -r -- ${${REPLY%%${~cm}*}##[[:space:]]##}
+    // and every captured terminal line carries `|` (the test's own
+    // `fg_start_code:"CDE|3"` zle_highlight), so each one died with
+    // "bad pattern"/"no matches found" instead of being printed.
+    //
+    // Saving and restoring GLOB_SUBST (and the carrier) around the whole
+    // pre-tokenize/singsub/literalize triple re-creates C's local scoping.
+    // The restore MUST come after `literalize_spliced_metas`, not merely
+    // after `singsub`: that pass is the c:1669 GLOBSUBST gate that decides
+    // whether the spliced value's metacharacters stay literal or stay
+    // active, i.e. it is where the nested `~` actually takes effect
+    // (`${v#*${~cm}}` with cm='[0-9]' must still strip through the digit).
+    // Unlike `singsub_replstr` the result is NOT untokenized — c:3412 has no
+    // `untokenize`, because the pattern's tokens are exactly what patcompile
+    // needs.
+    let pat_operand = |raw_pat: &str| -> String {
+        let saved_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        let saved_carrier = TILDE_GLOBSUBST_CARRIER.with(|c| c.get());
+        let out = literalize_spliced_metas(&singsub(&pretokenize_src_pat(raw_pat))); // c:3412
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) != saved_globsubst {
+            crate::ported::options::opt_state_set("globsubst", saved_globsubst);
+        }
+        TILDE_GLOBSUBST_CARRIER.with(|c| c.set(saved_carrier));
+        out
+    };
+
     // Check what follows the $
     let c = chars.get(pos).copied().unwrap_or('\0'); // c:1625
 
@@ -11367,7 +11417,7 @@ pub fn paramsubst(
                             .or_else(|| assoc_get(&var_name).map(|m| m.values().cloned().collect()))
                             .or_else(|| split_parts.clone())
                             .unwrap_or_default();
-                        let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat))); // c:3540
+                        let p = pat_operand(pat); // c:3540
                         let invert = (sub_flags_bits & SUB_MATCH) != 0; // c:2171 SUB_MATCH
                         arr_src
                             .iter()
@@ -12388,9 +12438,9 @@ pub fn paramsubst(
                 // parity_ignore_fix_patterns: "shared SUB_FLAGS clobber by
                 // nested paramsubst". c:2171 SUB_MATCH.
                 let invert = (sub_flags_get() & 0x0008) != 0;
-                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat))); // c:3540
-                                                                                       // c:Src/glob.c:2674-2677 — patcompile failure → "bad
-                                                                                       // pattern" diagnostic. Sibling of #605/#606. Bug #607.
+                let p = pat_operand(pat); // c:3540
+                // c:Src/glob.c:2674-2677 — patcompile failure → "bad
+                // pattern" diagnostic. Sibling of #605/#606. Bug #607.
                 if !p.is_empty()
                     && patcompile(
                         &{
@@ -13179,7 +13229,7 @@ pub fn paramsubst(
                 // singsub splices raw, literalize leftover raw metas
                 // (GLOBSUBST-gated, c:1669). Same contract as the
                 // `//`/`/` arms below.
-                let pat = literalize_spliced_metas(&singsub(&pretokenize_src_pat(parts[0])));
+                let pat = pat_operand(parts[0]);
                 // c:Src/glob.c:2680 — the replacement must be evaluated
                 // AFTER the pattern match when it references match state
                 // (`(#m)$MATCH` / `(#b)$match`); `pattry` publishes
@@ -13423,8 +13473,7 @@ pub fn paramsubst(
                 // Src/pattern.c:248 (handled inside the pre-tokenize
                 // closure; subsumes the old escape_bare_alt_pipes
                 // call here). Bug #596.
-                let pat =
-                    literalize_spliced_metas(&singsub(&pretokenize_src_pat(&pat_after_anchor)));
+                let pat = pat_operand(&pat_after_anchor);
                 // c:Src/glob.c:2674-2677 — `p = patcompile(pat,
                 // patflags, NULL); if (!p) { zerr("bad pattern: %s",
                 // pat); return NULL; }`. The replace path silently
@@ -14343,8 +14392,7 @@ pub fn paramsubst(
                 // stays literal per Src/pattern.c:248 (handled inside
                 // the pre-tokenize closure; subsumes the old
                 // escape_bare_alt_pipes call). Bug #596.
-                let pat_body =
-                    literalize_spliced_metas(&singsub(&pretokenize_src_pat(&pat_after_anchor)));
+                let pat_body = pat_operand(&pat_after_anchor);
                 // c:Src/glob.c:2674-2677 — `patcompile` failure → "bad
                 // pattern" diagnostic. Single replace arm same as `//`
                 // arm above. Bug #605.
@@ -14987,7 +15035,7 @@ pub fn paramsubst(
                 // singsub splices raw, literalize leftover raw metas
                 // (GLOBSUBST-gated, c:1669). See the closure pair at
                 // the top of this fn for the full contract.
-                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
+                let p = pat_operand(pat);
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -15243,7 +15291,7 @@ pub fn paramsubst(
                 // singsub splices raw, literalize leftover raw metas
                 // (GLOBSUBST-gated, c:1669). See the closure pair at
                 // the top of this fn for the full contract.
-                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
+                let p = pat_operand(pat);
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -15485,7 +15533,7 @@ pub fn paramsubst(
                 // singsub splices raw, literalize leftover raw metas
                 // (GLOBSUBST-gated, c:1669). See the closure pair at
                 // the top of this fn for the full contract.
-                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
+                let p = pat_operand(pat);
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -15734,7 +15782,7 @@ pub fn paramsubst(
                 // singsub splices raw, literalize leftover raw metas
                 // (GLOBSUBST-gated, c:1669). See the closure pair at
                 // the top of this fn for the full contract.
-                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
+                let p = pat_operand(pat);
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
