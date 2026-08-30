@@ -593,6 +593,9 @@ pub fn setupterm(term: Option<&str>) -> Result<(), SetupError> {
     if let Ok(mut g) = cur_term().lock() {
         *g = Some(e);
     }
+    // The pad parameters `crate::shout::tputs` caches are all derived from
+    // this entry, so a new one invalidates them.
+    crate::shout::invalidate_pad_info();
     Ok(())
 }
 
