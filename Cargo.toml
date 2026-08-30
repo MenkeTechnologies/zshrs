@@ -230,6 +230,11 @@ tempfile = "3"
 ureq = { version = "2", default-features = false, features = ["json"] }
 base64 = "0.22"
 
+[build-dependencies]
+# Same crate as the runtime dep: build.rs compresses the bundled zsh
+# function tree that `bundled_functions` materialises into ~/.zshrs/functions.
+zstd = "0.13"
+
 [workspace]
 members = [".", "daemon", "znative", "runtime"]
 

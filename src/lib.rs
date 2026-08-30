@@ -101,6 +101,8 @@ pub mod autoload_cache;
 /// `autoload_prewarm` submodule.
 #[path = "extensions/autoload_prewarm.rs"]
 pub mod autoload_prewarm;
+#[path = "extensions/bundled_functions.rs"]
+pub mod bundled_functions;
 /// `bash_complete` submodule.
 #[path = "extensions/bash_complete.rs"]
 pub mod bash_complete;
@@ -276,6 +278,9 @@ pub mod history_lazy;
 /// `log` submodule.
 #[path = "extensions/log.rs"]
 pub mod log;
+/// `startup_trace` submodule — phase timer for time-to-first-prompt work.
+#[path = "extensions/startup_trace.rs"]
+pub mod startup_trace;
 /// `lowfd` submodule — keeps the shell's own descriptors out of the user's fd space.
 #[path = "extensions/lowfd.rs"]
 pub mod lowfd;
