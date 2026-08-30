@@ -1,7 +1,8 @@
 # parity_corpus_fuzz — the completion fuzzer's persistent corpus
 
-Inputs for `scripts/comptab_parity.py --mutate N`. One small JSON file per
-input; an input is a complete cell:
+Inputs for `scripts/comptab_parity.py --mutate N`, and the place both fuzz
+modes (`--mutate` and `--style-fuzz`) write what they find. One small JSON file
+per input; an input is a complete cell:
 
 ```json
 {
@@ -30,11 +31,11 @@ seeds.
 
 Mutation parents are drawn with weights, not uniformly — evidence earns weight:
 
-| origin                    | weight | what it is                              |
-| ------------------------- | -----: | --------------------------------------- |
-| `promoted/*`              |     12 | a reproducer this fuzzer mined and shrank |
-| `divergent-cases/*`       |      6 | a buffer from `comptab_divergent_cases.txt`, each serially confirmed |
-| `CASES/*`                 |      1 | a hand-written case from `parity_corpus.py` |
+| entry                                | weight | what it is                              |
+| ------------------------------------ | -----: | --------------------------------------- |
+| carries a `fingerprint`              |     12 | a reproducer a fuzz run mined and shrank — `origin` is `promoted/*` from `--mutate` or `style-fuzz/*` from `--style-fuzz` |
+| `origin` starts `divergent-cases/`   |      6 | a buffer from `comptab_divergent_cases.txt`, each serially confirmed |
+| `origin` starts `CASES/`             |      1 | a hand-written case from `parity_corpus.py` |
 
 ## What is tracked in git, and what is not
 
@@ -53,6 +54,13 @@ scripts/comptab_parity.py --corpus-seed --zstyle scripts/parity_zstyle.zsh
 
 ## Running the fuzzer
 
+Two fuzzers write here. `--mutate` starts from what the corpus already holds
+and steps just off it. `--style-fuzz` GENERATES zstyle statements instead of
+sampling a fixture, which is the only way the VALUE grammar of a style
+(match specifications, completer chain order, tag-order, menu, format,
+list-colors, ...) gets exercised at all — subset sampling can only ever replay
+values that were already in `scripts/parity_zstyle.zsh`.
+
 ```sh
 # 20 mutated inputs, anywhere in the corpus
 scripts/comptab_parity.py --mutate 20
@@ -62,6 +70,19 @@ scripts/comptab_parity.py --mutate 20 --corpus-origin divergent-cases
 
 # fuzz around what the fuzzer already found
 scripts/comptab_parity.py --mutate 20 --corpus-origin promoted
+
+# 20 GENERATED zstyle configurations, 5 statements each
+scripts/comptab_parity.py --style-fuzz 20 --style-fuzz-styles 5
+
+# hammer one surface — every statement is a generated matcher-list
+scripts/comptab_parity.py --style-fuzz 40 --style-fuzz-only matcher-list
+
+# compose: a generated config layered on a subset of the real fixture
+scripts/comptab_parity.py --style-fuzz 20 --style-fuzz-mix 0.3 \
+                          --zstyle scripts/parity_zstyle.zsh
+
+# see what the generator emits, and what zsh makes of it — no shells booted
+scripts/comptab_parity.py --style-fuzz-list 40
 
 # replay one promoted reproducer exactly
 scripts/comptab_parity.py --zstyle scripts/parity_corpus_fuzz/fp_<hash>_styles.zsh \
@@ -78,5 +99,21 @@ pty, so budget ~5-30s per cell and expect a shrink to spend up to
 measurement budget, so the two screens were never both final — counted and
 printed separately, re-measured once serially, and never scored as a pass.
 `SKIP` means the case's command is not installed on this host, so neither shell
-can reach a completer; also never scored as a pass. Only `PASS` is evidence of
-parity.
+can reach a completer; also never scored as a pass, and ON by default
+(`--no-skip-missing` reverts to scoring "both rendered nothing" as a pass).
+
+`--style-fuzz` adds two more, both of which exist so that a config the
+REFERENCE shell will not accept can never be dressed up as evidence:
+
+* `INVALID-CONFIG` — zsh's own `zstyle` refused the generated statement at
+  definition time (an invalid context pattern). The cell is not run at all,
+  because comparing two shells on a config neither can hold says nothing. This
+  is a bug in the generator, not in zshrs.
+* `REF-REFUSED` — the statement parsed, but the reference zsh complained about
+  the VALUE at completion time (an unknown match-specification character, an
+  unterminated character class, a completer that does not exist). The cell IS
+  still run and still compared — zshrs is required to refuse it identically —
+  but it is tallied apart from the clean passes.
+
+Only a `PASS` under a config zsh accepted is evidence of parity, and every
+other category keeps the exit status non-zero.
