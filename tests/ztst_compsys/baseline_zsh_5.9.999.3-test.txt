@@ -1,0 +1,257 @@
+# ztst Y-series completion suite -- zsh baseline (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc)
+
+date: 2026-08-30T04:33:39-0400
+fx: off
+harness: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+harness_version: 5.9.999.3-test
+modules_linked: 38
+sut: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+sut_env: ZSHRS_NATIVE_ZLE_FX=0
+sut_version: 5.9.999.3-test
+tests: Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values
+zsh_build: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+zsh_build_version: 5.9.999.3-test
+
+files=6 assertions=229 pass=222 xfail=7
+
+## Y01completion  exit=0  pass=33
+  ok     1 directories and files
+  ok     2 unambiguous prefix and autoremovable suffix
+  ok     3 unambiguous prefix and autoremovable suffix with _prefix completer
+  ok     4 compstate[insert]=1 compstate[list]=
+  ok     5 compstate[insert]=1 compstate[list]= with _prefix completer
+  ok     6 _expand shows file types
+  ok     7 _expand preserves array form
+  ok     8 tilde
+  ok     9 dynamic directory names after ~[
+  ok    10 dynamic directory names inside ~[...]
+  ok    11 directories and files before separator
+  ok    12 custom description with formatting sequences
+  ok    13 command
+  ok    14 command after separator
+  ok    15 redirection after "for ...; do"
+  ok    16 directory name is not a glob qualifier
+  ok    17 remove exact number of characters from a prefix
+  ok    18 remove exact number of characters from a suffix
+  ok    19 try to remove excess characters from prefix and suffix
+  ok    20 remove multibyte character from a prefix
+  ok    21 allow for suffixes when moving cursor to end of match (with ignored suffix)
+  ok    22 allow for suffixes when moving cursor to end of match (without ignored suffix)
+  ok    23 ignore backslashes when sorting completion matches
+  ok    24 reverse numeric sorting of matches
+  ok    25 reverse numeric sorting of matches via a style
+  ok    26 sort in match rather than display name order
+  ok    27 sorting disabled via the sort style
+  ok    28 -F does not break _sequence
+  ok    29 multiple envarrays
+  ok    30 extra-verbose shows parameter values
+  ok    31 verbose doesn't show special or hidden parameter values
+  ok    32 parameter values not shown without verbose
+  ok    33  menu select=long-list starts menu selection for list widgets
+
+## Y02compmatch  exit=0  pass=51 xfail=7
+  ok     1 Match Error for "z:"
+  ok     2 Match Error for "m:"
+  ok     3 Match Error for "M:"
+  ok     4 Match Error "r:"
+  ok     5 Match Error "R:"
+  ok     6 Match Error for "l:"
+  ok     7 Match Error for "L:"
+  ok     8 Match Error for "m:{0-9"
+  ok     9 Match Error for "m:{0-9}"
+  ok    10 Match Error for "m:{0-9}={"
+  ok    11 Match Error for "m:{0-9}={0-"
+  ok    12 Match Error for "m:{0-9}={-"
+  ok    13 Match Error "r:"
+  ok    14 Documentation example for options, input "nolistbee"
+  ok    15 Documentation example for options, input "list_bee"
+  ok    16 Documentation example for options, input "ListBee"
+  ok    17 Documentation example for options, input "NOList"
+  ok    18 Documentation example for options, input "NO_List\t__\tB\t"
+  ok    19 Documentation example for options, input "__\tN\t__o\t___\tlist_\tbeep__\t" 
+  ok    20 Documentation example for options, input "__\tNo\t___\tlist_\tbeep__\t" 
+  ok    21 Documentation example for options, input "___\tlist_\tbeep__\t" 
+  ok    22 Documentation example for options, input "__no_listbe"
+  ok    23 Documentation example for options, input "nonono_listbe"
+  ok    24 Documentation example for lowercase insenitive M, input "ab\tC\t"
+  ok    25 Documentation example for lowercase insenitive m, input "A\t\t" 
+  ok    26 Documentation example for case insenitive M, input "aB\t\t"
+  ok    27 Documentation example for case insenitive m, input "aB\t\t"
+  ok    28 r:|.=* should complete .s.u
+  xfail  29 r:[^.]||.=* should not complete .s.u, but should complete c.s.u
+  ok    30 r:|.=* should complete .g.
+  xfail  31 r:[^.]||.=* should not complete .g., but should complete c.g.
+  ok    32 r:|.=* should complete ...pag
+  xfail  33 r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p
+  ok    34 Documentation example using input c...pa\tg\t
+  ok    35 r:|[.,_-]=* should complete .c and .h
+  xfail  36 r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h
+  ok    37 Documentation example using "r:|[A-Z0-9]=* r:|=*", input H
+  ok    38 Documentation example using "r:|[A-Z0-9]=* r:|=*", input 2
+  ok    39 Documentation example using "r:|[A-Z0-9]=** r:|=*", input H
+  ok    40 Documentation example using "r:|[A-Z0-9]=** r:|=*", input 2
+  xfail  41 r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.
+  xfail  42 r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.
+  xfail  43 r:[^.]||.=* and l:.||[^.]=* should work symmetrically.
+  ok    44 Bug from workers 7311
+  ok    45 Bug from workers_7311 
+  ok    46 Bug from workers 10886
+  ok    47 Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]
+  ok    48 Non-bug from workers 11388
+  ok    49 Non-bug from workers 11388
+  ok    50 Disappearing characters bug from workers 11586: c00\t -> c0[], c00\t -> c0.abc[], c00.\t -> c0.abc[]
+  ok    51 First test from workers 12995
+  ok    52 Second test from workers 12995
+  ok    53 Incorrect cursor position bug from workers 13320: glibc-2.1\t -> glibc-2[.]1.94-3.i386.rpm
+  ok    54 Test from workers 13320
+  ok    55 First test from workers 13345
+  ok    56 Disappearing character bug from workers 13345: a-b_2\t -> a-b__
+  ok    57 Test for insert positions
+  ok    58 Test for wildcard left anchor with partial word right anchors
+
+## Y03arguments  exit=0  pass=100
+  ok     1 one non-option argument
+  ok     2 a and b
+  ok     3 a and b with descriptions
+  ok     4 three arguments
+  ok     5 first argument
+  ok     6 second argument but no first argument
+  ok     7 second and rest arguments but no first argument
+  ok     8 -+
+  ok     9 option beginning with + and -.
+  ok    10 option beginning with + and -, specified the other way around
+  ok    11 mix of + and - and exclusion of stacked options
+  ok    12 mix of + and - and exclusion of stacked options
+  ok    13 two option arguments
+  ok    14 option argument to ignored option
+  ok    15 ignored option not completed
+  ok    16 ignored option is not taken to be the normal argument
+  ok    17 unrecognised option has no effect on proceedings with no normal arguments
+  ok    18 unrecognised option is taken to be the normal argument
+  ok    19 option argument follows in next argument
+  ok    20 option argument either direct or in following argument
+  ok    21 option argument follows directly
+  ok    22 option argument follows optional equals
+  ok    23 option argument follows optional equals, with -s
+  ok    24 option argument follows mandatory equals
+  ok    25 sticky option argument
+  ok    26 option argument with prefix that passes option prefix-needed test
+  ok    27 end of option sequence
+  ok    28 argument beginning with minus
+  ok    29 argument beginning with minus, guard on rest argument
+  ok    30 optional option argument
+  ok    31 variable length option arguments
+  ok    32 opt_args
+  ok    33 opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour
+  ok    34 opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping
+  ok    35 option completion with rest arguments on the line but not in the specs
+  ok    36 optarg completion following rest operand on line (workers/42141)
+  ok    37 rest arguments
+  ok    38 rest arguments with single colon
+  ok    39 rest arguments with two colons
+  ok    40 rest arguments with three colons
+  ok    41 rest arguments with three colons following optional argument
+  ok    42 rest arguments with three colons following optional argument to an option
+  ok    43 words array in rest arguments
+  ok    44 opt_args
+  ok    45 options and words (zsh-workers:12257)
+  ok    46 matcher applies to options but not rest arguments
+  ok    47 matcher in combination with sets (implies separate cadef structure)
+  ok    48 option after --
+  ok    49 -S: disallowed option after --
+  ok    50 -S: allowed option after -
+  ok    51 -S: allowed option before --
+  ok    52 -S: only first of duplicate -- is ignored
+  ok    53 -S -S: disallowed option after --
+  ok    54 -S -S: disallowed option after -
+  ok    55 option after a word
+  ok    56 long option after word that doesn't match -A pattern
+  ok    57 option after word that doesn't match -A pattern, no space before pattern
+  ok    58 option before a word that doesn't match -A pattern, separate -A from pattern
+  ok    59 continue completion after rest argument that looks like an option
+  ok    60 word matching -A pattern doesn't exclude options
+  ok    61 unrecognised word matching -A pattern not treated as a rest argument
+  ok    62 exclusion from option following word matching -A pattern should not apply
+  ok    63 repeatable options
+  ok    64 rest arguments from another set not completed after option from first set
+  ok    65 continue completion after rest argument that looks like an option (with sets)
+  ok    66 foreign option disables whole set (without -A)
+  ok    67 foreign option disables whole set (with -A)
+  ok    68 exclude option common to two sets and from one common option
+  ok    69 rest argument rule in two sets
+  ok    70 exclude various forms of rest argument in set specific form
+  ok    71 exclusion lists
+  ok    72 exclude option from normal argument to the right of the cursor
+  ok    73 exclude own set from an option
+  ok    74 exclude later set from an option common to both
+  ok    75 exclude earlier set from an option common to both
+  ok    76 single option sets are still mutually exclusive
+  ok    77 excluding a set doesn't exclude common options as part of the set
+  ok    78 exclude all other options
+  ok    79 exclude all options from a normal argument
+  ok    80 exclusion only applies to later words
+  ok    81 exclusion with clumped options, in, after and before
+  ok    82 don't prematurely exclude option that current word is a prefix of
+  ok    83 don't prematurely exclude option that current word is a prefix of (with sets)
+  ok    84 option clumping mixed with real option that looks like clump
+  ok    85 option clumping mixed with direct argument
+  ok    86 exclusion with option argument that looks like an option
+  ok    87 exclude group options
+  ok    88 single option groups are not mutually exclusive
+  ok    89 exclude rest args listed within a group
+  ok    90 two forms of same option in different groups
+  ok    91 normal argument excludes options in internally mutually exclusive group
+  ok    92 mix sets, groups and option stacking
+  ok    93 sets and groups with - in their name
+  ok    94 with message and bashautolist, a third tab will get menu completion
+  ok    95 with message and bashautolist, a third tab is needed to display the list
+  ok    96 with message and noautomenu second tab redisplays the list
+  ok    97 with message two tabs will start menu completion
+  ok    98 with message and _oldlist, two tabs will start menu completion
+  ok    99 partial completion of option with an argument
+  ok   100 with -W options mixed with arguments
+
+## Y04regexargs  exit=0  pass=6
+  ok     1 standalone spec
+  ok     2 simple alternation, use of _message for description with no matches
+  ok     3 optional fields after a suffix
+  ok     4 simple repetition, note zero repititions allowed
+  ok     5 non-matching pattern to separate matches from consuming patterns
+  ok     6 use guard and $match to reference prior argument
+
+## Y05describe  exit=0  pass=7
+  ok     1 name1 as (...), description, escaped colon in name
+  ok     2 name1 as ((...)) not supported
+  ok     3 name2 as (...)
+  ok     4 multiple groups
+  ok     5 arrays by name
+  ok     6 compadd options, basic
+  ok     7 compadd options, complex
+
+## Y06values  exit=0  pass=25
+  ok     1 basic value
+  ok     2 basic value, next word
+  ok     3 basic value with description
+  ok     4 display of escaped char in value name
+  ok     5 display of hidden value
+  ok     6 basic sequence
+  ok     7 sequence in quotes
+  ok     8 sequence continues after hidden value
+  ok     9 sequence continues after value with escaped meta char
+  ok    10 sequence continues after value with escaped non-meta char
+  ok    11 multi value offered again
+  ok    12 xor value not offered
+  ok    13 xor value with escaped char not offered
+  ok    14 value with argument not enumerated
+  ok    15 value with argument enumerated
+  ok    16 value with argument enumerated with description
+  ok    17 value with argument enumerated with description, escaped colon
+  ok    18 value with argument enumerated with description, escaped colon with \\
+  ok    19 value with argument enumerated with description, escaped colon in arg name
+  ok    20 value with argument enumerated with description, un-escaped colon in arg desc
+  ok    21 value with argument eval string, braces
+  ok    22 value with argument eval string, leading space
+  ok    23 -s and -S
+  ok    24 -w without -s
+  ok    25 -w with -s
+
