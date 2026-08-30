@@ -6362,26 +6362,68 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
             }
         }
     }
+
     // c:Src/params.c:570-575 — nameref deref before the type check.
     let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
     let name: &str = &resolved;
-    if let Ok(tab) = paramtab().read() {
-        if let Some(pm) = tab.get(name) {
-            // c:Src/Modules/param_private.c:678 — getnode hook; same
-            // canonical walk as getsparam/getaparam. (Values below
-            // still come from the name-keyed hashed storage — a
-            // single slot per name; per-scope assoc shadowing is a
-            // storage-model limitation predating this walk.)
-            let visible =
-                crate::ported::modules::param_private::getprivatenode(&**pm as *const param);
-            if visible.is_null() {
-                return None;
+    // c:Src/params.c:717 — `paramvalarr(v->pm->gsu.h->getfn(v->pm),
+    // v->scanflags)`. For a SPECIALPMDEF magic hash (`commands`,
+    // `functions`, `builtins`, `parameters`, `jobtexts`, …) that `getfn`
+    // hands back a FAKE HashTable whose `scantab` is the module's
+    // `scanpm*` fn (Src/module.c createspecialhash), so the SCAN below —
+    // not any stored map — is the backing. zshrs keeps ordinary assoc
+    // contents in the name-keyed `paramtab_hashed_storage` map, and the
+    // seeded row for a magic name left an EMPTY map there which answered
+    // first and shadowed the scanfn: `compadd -k commands`
+    // (Completion/Unix/Type/_path_commands sh:103) returned ZERO matches
+    // in a fresh shell, so command-name completion offered builtins only
+    // until some other `$commands` read had gone through the scanfn
+    // (which runs `fillcmdnamtable` under HASH_LIST_ALL,
+    // Src/Modules/parameter.c:253). A `local -A commands` shadow makes
+    // `magic_special_shadowed` true and the map wins again.
+    //
+    // Computed BEFORE the `paramtab()` read below: `magic_special_shadowed`
+    // takes its own `paramtab().read()`, and a recursive read while a
+    // writer is queued deadlocks on a writer-preferring RwLock.
+    let magic_ = crate::ported::modules::parameter::PARTAB
+        .iter()
+        .any(|e_| e_.name == name)
+        && !crate::vm_helper::magic_special_shadowed(name);
+    // !!! RUST-ONLY LOCK NOTE (C has no locks here) !!!
+    // Resolve visibility + type under `paramtab()`, then DROP the guard:
+    // the PARTAB scan below reaches `createparam`, which wants
+    // `paramtab().write()`, and a write request from a thread already
+    // holding a read deadlocks. Same reasoning as `gethkparam`.
+    //
+    // c:Src/Modules/param_private.c:678 — getnode hook; same canonical
+    // walk as getsparam/getaparam. (Values below still come from the
+    // name-keyed hashed storage — a single slot per name; per-scope
+    // assoc shadowing is a storage-model limitation predating this walk.)
+    let (hidden_, is_hashed_) = match paramtab().read() {
+        Ok(tab) => match tab.get(name) {
+            Some(pm) => {
+                let visible =
+                    crate::ported::modules::param_private::getprivatenode(&**pm as *const param);
+                if visible.is_null() {
+                    (true, false)
+                } else {
+                    let pm: &param = unsafe { &*visible };
+                    (false, PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+                }
             }
-            let pm: &param = unsafe { &*visible };
-            if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
+            None => (false, false),
+        },
+        Err(_) => (false, false),
+    };
+    if hidden_ {
+        return None;
+    }
+    {
+        {
+            if is_hashed_ {
                 // c:3123
                 // c:3124 — `paramvalarr(hashgetfn(pm), SCANPM_WANTVALS)`.
                 // Read values directly from the canonical hashed-storage
@@ -6391,28 +6433,6 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
                 // an empty Vec so the C "param exists, no entries" shape
                 // is preserved (vs returning None which means "param
                 // doesn't exist").
-                // c:Src/params.c:717 — `paramvalarr(v->pm->gsu.h->getfn(v->pm),
-                // v->scanflags)`. For a SPECIALPMDEF magic hash (`commands`,
-                // `functions`, `builtins`, `parameters`, `jobtexts`, …) that
-                // `getfn` hands back a FAKE HashTable whose `scantab` is the
-                // module's `scanpm*` fn (Src/module.c createspecialhash), so
-                // the scan below — not any stored map — is the backing. zshrs
-                // keeps ordinary assoc contents in the name-keyed
-                // `paramtab_hashed_storage` map, and the seeded row for a
-                // magic name left an EMPTY map there which answered first and
-                // shadowed the scanfn. `compadd -k commands`
-                // (Completion/Unix/Type/_path_commands sh:103) then returned
-                // ZERO matches in a fresh shell — command-name completion
-                // offered builtins only, and only started working once some
-                // other `$commands` read had gone through the scanfn (which
-                // runs `fillcmdnamtable` under HASH_LIST_ALL,
-                // Src/Modules/parameter.c:253). Skip the map for a live
-                // (non-shadowed) PARTAB name; a `local -A commands` shadow
-                // makes `magic_special_shadowed` true and the map wins again.
-                let magic_ = crate::ported::modules::parameter::PARTAB
-                    .iter()
-                    .any(|e_| e_.name == name)
-                    && !crate::vm_helper::magic_special_shadowed(name);
                 if !magic_ {
                     let store = paramtab_hashed_storage().lock().ok()?;
                     if let Some(m) = store.get(name) {
@@ -6488,22 +6508,41 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
             }
         }
     }
-    if let Ok(tab) = paramtab().read() {
-        if let Some(pm) = tab.get(name) {
-            if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
+    // c:Src/params.c:717 — same magic-hash rule as `gethparam` above: the
+    // scanfn IS the backing for a PARTAB name, so an empty
+    // `paramtab_hashed_storage` row must not answer for it. Computed
+    // before the `paramtab()` read for the same recursive-lock reason.
+    let magic_ = crate::ported::modules::parameter::PARTAB
+        .iter()
+        .any(|e_| e_.name == name)
+        && !crate::vm_helper::magic_special_shadowed(name);
+    // !!! RUST-ONLY LOCK NOTE (C has no locks here) !!!
+    // Read the TYPE under `paramtab()`, then DROP the guard before the
+    // storage read or the PARTAB scan below. The scan's
+    // `mark_module_param_used` → `materialize_module_param` →
+    // `createparam` takes `paramtab().write()`, and asking for a write
+    // while this thread still holds a read deadlocks on the
+    // writer-preferring queue lock (`std::sys::sync::rwlock::queue`).
+    // The scan arm was only reachable for names with no
+    // `paramtab_hashed_storage` row before, so the hazard sat latent
+    // until the magic-hash routing above started using it.
+    let is_hashed_ = paramtab()
+        .read()
+        .ok()
+        .and_then(|tab| {
+            tab.get(name)
+                .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED) // c:3137
+        })
+        .unwrap_or(false);
+    {
+        {
+            if is_hashed_ {
                 // c:3137
                 // c:3138 — `paramvalarr(pm->gsu.h->getfn(pm),
                 // SCANPM_WANTKEYS)`. Same backing as gethparam —
                 // return keys instead of values. Empty-storage
                 // fallback identical: Some(empty Vec) for "exists,
                 // no entries" shape.
-                // c:Src/params.c:717 — same magic-hash rule as `gethparam`
-                // above: the scanfn IS the backing for a PARTAB name, so an
-                // empty `paramtab_hashed_storage` row must not answer for it.
-                let magic_ = crate::ported::modules::parameter::PARTAB
-                    .iter()
-                    .any(|e_| e_.name == name)
-                    && !crate::vm_helper::magic_special_shadowed(name);
                 if !magic_ {
                     let store = paramtab_hashed_storage().lock().ok()?;
                     if let Some(m) = store.get(name) {
@@ -18370,6 +18409,54 @@ mod tests {
             .lock()
             .unwrap()
             .remove("zshrs_test_gethp_hash");
+    }
+
+    /// c:Src/params.c:717 — `paramvalarr(v->pm->gsu.h->getfn(v->pm),
+    /// v->scanflags)`. For a SPECIALPMDEF magic hash that `getfn` hands
+    /// back the fake `HashTable` whose `scantab` IS the module's
+    /// `scanpm*` function (`Src/module.c` createspecialhash), so the
+    /// SCAN is the backing — there is no stored map to read.
+    ///
+    /// zshrs keeps ordinary assoc contents in the name-keyed
+    /// `paramtab_hashed_storage` map, and a seeded row for a magic name
+    /// left an EMPTY map there which `gethparam`/`gethkparam` consulted
+    /// FIRST, shadowing the scanfn. Symptom: `compadd -k commands`
+    /// (`Completion/Unix/Type/_path_commands` sh:103) reaches
+    /// `get_data_arr` → `gethkparam` and returned ZERO matches in a
+    /// fresh shell, so command-name completion offered builtins only —
+    /// and only started working once some other `$commands` read had run
+    /// the scan, which is what calls `fillcmdnamtable` under
+    /// HASH_LIST_ALL (`Src/Modules/parameter.c:253`).
+    ///
+    /// `builtins` is the probe rather than `commands` because
+    /// `scanpmbuiltins` enumerates the builtin table, which is populated
+    /// in every process and does not depend on `$PATH` state left behind
+    /// by another test.
+    #[test]
+    fn magic_hash_scanfn_outranks_an_empty_hashed_storage_row() {
+        let _g = crate::test_util::global_state_lock();
+        crate::vm_helper::seed_partab_param("builtins");
+        // Exactly the row that used to answer instead of the scan.
+        paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .insert("builtins".to_string(), IndexMap::new());
+
+        let keys = gethkparam("builtins").expect("c:3137 — `builtins` is PM_HASHED");
+        assert!(
+            keys.iter().any(|k| k == "print"),
+            "c:3138 — an empty hashed-storage row must not shadow scanpmbuiltins \
+             (got {} key(s))",
+            keys.len()
+        );
+        let vals = gethparam("builtins").expect("c:3123 — `builtins` is PM_HASHED");
+        assert_eq!(
+            vals.len(),
+            keys.len(),
+            "c:3124 — the value scan must answer from the same source as the keys"
+        );
+
+        paramtab_hashed_storage().lock().unwrap().remove("builtins");
     }
 
     /// Pin `getaparam` to its canonical C body at `Src/params.c:3101-3110`.
