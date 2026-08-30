@@ -1,46 +1,121 @@
-//! !!! RUST-ONLY — NO C COUNTERPART !!!
+//! Startup phase timer for time-to-first-prompt work.
 //!
-//! Phase timer for shell startup. Inert unless `ZSHRS_STARTUP_TRACE` is set,
-//! in which case each `mark()` prints
-//! `[startup <ms since process start>] <label>` to stderr, ending with
-//! `FIRST PROMPT PAINTED`.
+//! **zshrs-original infrastructure — no C source counterpart.** C zsh
+//! has no startup instrumentation; profiling its init means attaching
+//! `dtrace`/`perf` from outside. zshrs marks its own init phases so a
+//! regression in time-to-first-prompt can be attributed to a phase
+//! without an external profiler.
 //!
-//! This is the measurement tool for time-to-first-prompt: it is what found the
-//! history `SELECT COUNT(*)` (37 ms) and the `module_path` shell-out (7 ms).
-//! Output is opt-in and goes to stderr, so the no-startup-chatter rule holds
-//! for every normal launch.
+//! [`mark`] is called from the init path (`ShellExecutor::new`,
+//! `ShellExecutor::exec_init`) at each phase boundary. It records the
+//! elapsed time since process start and since the previous mark.
+//!
+//! Tracing is **off** unless `ZSHRS_STARTUP_TRACE` is set in the
+//! environment, so the steady-state cost of a mark is one relaxed
+//! atomic load. Per the project's "no startup chatter" rule, marks go
+//! to `~/.zshrs/zshrs.log` via `tracing::info!`; setting
+//! `ZSHRS_STARTUP_TRACE=stderr` additionally mirrors them to stderr,
+//! which is explicit user-requested output.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
-static T0: OnceLock<Instant> = OnceLock::new();
-static ON: OnceLock<bool> = OnceLock::new();
+/// Where marks go, decided once from `ZSHRS_STARTUP_TRACE`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sink {
+    /// Tracing disabled — `mark` returns immediately.
+    Off,
+    /// `~/.zshrs/zshrs.log` only.
+    Log,
+    /// The log plus stderr.
+    LogAndStderr,
+}
 
+static SINK: OnceLock<Sink> = OnceLock::new();
+static START: OnceLock<Instant> = OnceLock::new();
+
+/// Micros since [`START`] at the previous mark, for the delta column.
+static PREV_US: AtomicU64 = AtomicU64::new(0);
+
+fn sink() -> Sink {
+    *SINK.get_or_init(|| match std::env::var("ZSHRS_STARTUP_TRACE") {
+        Err(_) => Sink::Off,
+        Ok(v) if v.is_empty() || v == "0" => Sink::Off,
+        Ok(v) if v.eq_ignore_ascii_case("stderr") => Sink::LogAndStderr,
+        Ok(_) => Sink::Log,
+    })
+}
+
+/// Process start, as first observed. Called from [`mark`] and from
+/// [`start`]; whichever runs first wins.
+fn origin() -> Instant {
+    *START.get_or_init(Instant::now)
+}
+
+/// Pin the zero point of the trace. Optional — the first [`mark`]
+/// pins it otherwise. Call from `main` to include pre-init work.
+pub fn start() {
+    let _ = origin();
+}
+
+/// Pin the zero point to an instant the CALLER captured.
+///
+/// `main` takes `Instant::now()` as its very first statement, before
+/// any shell state exists, so handing that in makes the trace measure
+/// from real process start rather than from whenever the first mark
+/// happens to run. [`start`] remains for callers with no such instant
+/// to give.
+///
+/// Resolving the sink here too means the `ZSHRS_STARTUP_TRACE` read
+/// happens once, up front, instead of on the first mark.
 pub fn init(t0: Instant) {
-    let _ = T0.set(t0);
-    let _ = ON.set(std::env::var_os("ZSHRS_STARTUP_TRACE").is_some());
+    let _ = START.set(t0);
+    let _ = sink();
 }
 
-pub fn enabled() -> bool {
-    *ON.get_or_init(|| std::env::var_os("ZSHRS_STARTUP_TRACE").is_some())
+/// Micros since the zero point, regardless of whether tracing is on.
+pub fn elapsed_us() -> u64 {
+    u64::try_from(origin().elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
-/// One-shot mark for the first prompt paint — the end of "time to first
-/// prompt". `zrefresh` runs on every keystroke, so the mark is armed once and
-/// costs a relaxed load afterwards.
+/// Record a startup phase boundary.
+///
+/// No-op unless `ZSHRS_STARTUP_TRACE` is set. `label` names the phase
+/// that just *finished*.
+pub fn mark(label: &str) {
+    let sink = sink();
+    if sink == Sink::Off {
+        return;
+    }
+    let total_us = elapsed_us();
+    let prev_us = PREV_US.swap(total_us, Ordering::Relaxed);
+    let delta_us = total_us.saturating_sub(prev_us);
+    tracing::info!(
+        target: "startup",
+        phase = label,
+        total_us,
+        delta_us,
+        "startup phase"
+    );
+    if sink == Sink::LogAndStderr {
+        eprintln!(
+            "startup: {:>9.3}ms (+{:>8.3}ms)  {label}",
+            total_us as f64 / 1000.0,
+            delta_us as f64 / 1000.0
+        );
+    }
+}
+
+/// One-shot mark for the first prompt paint — the end of "time to
+/// first prompt", which is the number this module exists to measure.
+///
+/// `zrefresh` runs on every keystroke, so this is armed once: every
+/// call after the first costs a relaxed swap and returns.
 pub fn mark_first_prompt() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     static FIRED: AtomicBool = AtomicBool::new(false);
     if FIRED.swap(true, Ordering::Relaxed) {
         return;
     }
     mark("FIRST PROMPT PAINTED");
-}
-
-pub fn mark(label: &str) {
-    if !enabled() {
-        return;
-    }
-    let t0 = T0.get_or_init(Instant::now);
-    eprintln!("[startup {:>8.3}ms] {}", t0.elapsed().as_secs_f64() * 1000.0, label);
 }
