@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zshrs completion parity — consolidated state</title>
+<style>
+:root { color-scheme: light dark;
+  --bg:#fbfbfc; --fg:#14161a; --mut:#5d6470; --line:#dfe3e8; --card:#fff;
+  --ok:#0a7d3e; --moved:#b45309; --warn:#8a6d00; --code:#f2f4f7; }
+@media (prefers-color-scheme: dark) { :root {
+  --bg:#0e1116; --fg:#e6e9ee; --mut:#9aa3b2; --line:#242a33; --card:#151a21;
+  --ok:#4ade80; --moved:#fbbf24; --warn:#fcd34d; --code:#1b212a; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
+main { max-width:1180px; margin:0 auto; padding:2rem 1.2rem 5rem; }
+h1 { font-size:1.7rem; margin:0 0 .3rem; letter-spacing:-.01em; }
+h2 { font-size:1.25rem; margin:2.6rem 0 .6rem; padding-top:1.2rem;
+     border-top:1px solid var(--line); }
+h3 { font-size:1.02rem; margin:1.6rem 0 .2rem; }
+h3 .count { color:var(--mut); font-weight:400; font-size:.85rem; }
+p.lede, p.what { color:var(--mut); margin:.2rem 0 .8rem; max-width:78ch; }
+code { background:var(--code); padding:.08em .35em; border-radius:3px;
+  font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-word; }
+.cards { display:grid; gap:.7rem; grid-template-columns:repeat(auto-fit,minmax(165px,1fr));
+  margin:1.2rem 0 .4rem; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:9px;
+  padding:.8rem .9rem; }
+.card .n { font-size:1.7rem; font-weight:650; letter-spacing:-.02em; }
+.card .k { font-size:.83rem; font-weight:600; }
+.card .s { font-size:.76rem; color:var(--mut); margin-top:.15rem; }
+table.fx { width:100%; border-collapse:collapse; margin:.5rem 0 1.4rem;
+  font-size:.88rem; }
+table.fx th { text-align:left; font-size:.74rem; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--mut); border-bottom:1px solid var(--line);
+  padding:.35rem .5rem; }
+table.fx td { border-bottom:1px solid var(--line); padding:.5rem; vertical-align:top; }
+table.fx td.id { white-space:nowrap; }
+table.fx tr.tot td { font-weight:650; }
+.sub { color:var(--mut); font-size:.79rem; margin-top:.25rem; }
+.note-inline { color:var(--moved); font-size:.79rem; margin-top:.25rem; }
+.repro { background:var(--code); border-radius:5px; padding:.35rem .5rem;
+  margin-top:.35rem; font:11.5px/1.5 ui-monospace,Menlo,monospace;
+  overflow-x:auto; white-space:pre; }
+.tag { font-size:.72rem; font-weight:650; padding:.1rem .4rem; border-radius:4px;
+  border:1px solid currentColor; white-space:nowrap; }
+.tag.ok { color:var(--ok); } .tag.moved { color:var(--moved); }
+.tag.warn { color:var(--warn); }
+.alarm { border:2px solid var(--moved); color:var(--moved); border-radius:9px;
+  padding:.9rem 1rem; margin:1rem 0; }
+.meta { color:var(--mut); font-size:.8rem; }
+.meta code { font-size:11.5px; }
+</style></head><body><main>
+
+<h1>zshrs completion parity — consolidated state</h1>
+<p class="meta">Generated 2026-08-30 10:10 UTC by <code>scripts/gen_compsys_parity_report.py --state</code>.
+Every number is computed at generation time from the files listed under Provenance.
+Nothing on this page is typed in.</p>
+<p class="meta">Gate run: <code>2026-08-30T06:00:07</code>,
+402.2s, jobs=1,
+load average 6.8, 13.4, 17.0,
+exit 0.<br>
+zshrs under test: <code>target/debug/zshrs  zshrs 0.12.49  101601256 bytes  sha256:6420c23cecc13c35  built 2026-08-30 05:50:47</code></p>
+
+
+
+<div class="cards"><div class="card"><div class="n">29</div><div class="k">Fixtures pinned</div><div class="s">one JSON document per confirmed finding</div></div>
+<div class="card"><div class="n">47</div><div class="k">Cells in the gate</div><div class="s">29 fixture, 18 control, 0 variant</div></div>
+<div class="card"><div class="n">28</div><div class="k">Still reproducing</div><div class="s">fixture cells that diverge in the shape they recorded</div></div>
+<div class="card"><div class="n">0</div><div class="k">No longer reproducing</div><div class="s">fixture cells where the two shells now agree</div></div>
+<div class="card"><div class="n">18</div><div class="k">Controls holding</div><div class="s">cells pinned as AGREEING that still agree</div></div>
+<div class="card"><div class="n">1</div><div class="k">Not scored</div><div class="s">opt-in or out of budget — neither a pass nor a divergence</div></div></div>
+
+<h2>The gate</h2>
+<p class="lede"><code>scripts/compsys_regressions.py</code> replays every checked-in
+fixture and exits non-zero if anything moved <em>in either direction</em>: a fixture
+that stopped diverging is as much a failure of the run as one that started. Controls
+are cells a fixture pins as <em>agreeing</em> — they are what make the fixture's
+variable the variable, and a control that starts diverging fails the run too.</p>
+
+<h2>Divergences, grouped by what they touch</h2>
+<p class="lede">A group says what surface the two shells disagree on, not what the Rust
+bug is: none of these has been traced to a line of zshrs, and a grouping that claimed
+otherwise would assert something no run here measured. Each fixture declares its own
+group; the reproducer under each row is the exact command the gate ran.</p>
+<!-- BEGIN-GROUP id=shell-core-parameters n=3 -->
+<h3 id="g-shell-core-parameters">Shell-core parameters, reached through compsys <span class="count">3</span></h3><p class="what">Not completion bugs. They are in this evidence base because the completion system runs on them: an append that loses $@ reprices every description _description renders, and a name the reference shell refuses to create changes what a completion leaves in the parameter table.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=argv_append_discards_positionals group=shell-core-parameters verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>argv_append_discards_positionals</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">shell_probe</td><td class="t">`argv+=( ... )` throws the positional parameters away and keeps the appended array ACROSS calls — zsh n=4 &lt;1,2,3,X&gt; three times, zshrs n=1 &lt;X&gt;, n=2 &lt;X,X&gt;, n=3 &lt;X,X,X&gt;<div class="sub">script <code>f() { argv+=( X ); print -r -- &quot;n=$# argv=&lt;${(j:,:)argv}&gt;&quot; } ; f 1 2 3 ; f 1 2 3 ; f 1 2 3</code> &middot; 3 control(s) &middot; 1 variant(s) &middot; detail: <em>3 line(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only argv_append_discards_positionals
+/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_vcn00c1s/run.json --json $TMPDIR/.../compsys_regressions_vcn00c1s/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=dotted_parameter_name_accepted group=shell-core-parameters verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>dotted_parameter_name_accepted</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">shell_probe</td><td class="t">`typeset -gHi .shadow.depth=0` — zsh 5.9.2 REJECTS a dotted parameter name, zshrs creates it; this is what puts `.shadow.depth`/`.shadow.stack` in zshrs&#x27;s parameter table after a completion that calls `_shadow`<div class="sub">script <code>zmodload zsh/parameter ; builtin typeset -gHi .shadow.depth=0 ; print -r -- &quot;rc=$? present=${+parameters[.shadow.depth]}&quot; ; builtin typeset -gHa .shad</code> &middot; 1 control(s) &middot; 1 variant(s) &middot; detail: <em>3 line(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only dotted_parameter_name_accepted
+/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_czsdo3y_/run.json --json $TMPDIR/.../compsys_regressions_czsdo3y_/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=fpath_underscore_name_runs_undeclared group=shell-core-parameters verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>fpath_underscore_name_runs_undeclared</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">shell_probe</td><td class="t">an UNDECLARED `_name` sitting in $fpath is executable on zshrs — zsh reports command not found, zshrs autoloads the file, runs it and leaves the function defined<div class="sub">script <code>fpath=( ${0:h}/fp ) ; _zzimpl ; print -r -- &quot;rc=$? defined=${+functions[_zzimpl]}&quot;</code> &middot; 2 control(s) &middot; detail: <em>2 line(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only fpath_underscore_name_runs_undeclared
+/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/shell_probe.py --run $TMPDIR/.../compsys_regressions_tha91a3z/run.json --json $TMPDIR/.../compsys_regressions_tha91a3z/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=line-token-rewrite n=2 -->
+<h3 id="g-line-token-rewrite">The word on the line is rewritten during completion <span class="count">2</span></h3><p class="what">zshrs replaces the typed word with what it resolved to, where zsh keeps the word and offers matches. Both cells are `zsh -f` defaults — no compsys, no zstyle — so nothing in the completion system is involved.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=equals_word_arg_position group=line-token-rewrite verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>equals_word_arg_position</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`cat =ls&lt;TAB&gt;`: the `=word` rewrite happens in ARGUMENT position too — zsh lists ls* commands, zshrs rewrites the word to /bin/ls<div class="sub">buffer <code>&#x27;cat =ls&#x27;</code> keys <code>tab</code> &middot; detail: <em>5 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only equals_word_arg_position
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;cat =ls&#x27; --keys tab --json $TMPDIR/.../compsys_regressions_8bucxg06/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=equals_word_line_rewrite group=line-token-rewrite verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>equals_word_line_rewrite</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`=ls&lt;TAB&gt;`: zsh keeps the word and lists commands, zshrs rewrites the line to the resolved path<div class="sub">buffer <code>&#x27;=ls&#x27;</code> keys <code>tab</code> &middot; detail: <em>5 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only equals_word_line_rewrite
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case =ls --keys tab --json $TMPDIR/.../compsys_regressions_3mksg9bt/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=multiline-buffer n=5 -->
+<h3 id="g-multiline-buffer">Completing on a continuation line <span class="count">5</span></h3><p class="what">Every one of these carries a control that runs the same completion on ONE physical line and AGREES, so the newline is the variable, not the completion. Owned by compsys_parity, the only harness whose buffer may contain a newline.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=multiline_array_literal group=multiline-buffer verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>multiline_array_literal</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_parity</td><td class="t">`x=( /usr/bin`&lt;newline&gt;`/usr/lo`: zsh inserts /usr/local/, zshrs leaves the word and prints two _describe errors<div class="sub">buffer <code>&#x27;x=( /usr/bin\n/usr/lo&#x27;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>3 row(s) differ from step #1 (tab), first row 1 col 7</em></div><div class="repro">scripts/compsys_regressions.py --only multiline_array_literal
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case &#x27;x=( /usr/bin
+/usr/lo&#x27; --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_u5sc08x1/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=multiline_backslash_continuation_cd group=multiline-buffer verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>multiline_backslash_continuation_cd</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_parity</td><td class="t">`cd \`&lt;newline&gt;`/usr/sh`: zsh completes /usr/share/, zshrs leaves the word and prints two _describe errors<div class="sub">buffer <code>&#x27;cd \\\n/usr/sh&#x27;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>4 row(s) differ from step #1 (tab), first row 1 col 7</em></div><div class="repro">scripts/compsys_regressions.py --only multiline_backslash_continuation_cd
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case &#x27;cd \
+/usr/sh&#x27; --keys tab --lockstep --zstyle $TMPDIR/.../compsys_regressions_k9iaernl/zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_k9iaernl/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=multiline_dquote_parameter_list group=multiline-buffer verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>multiline_dquote_parameter_list</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_parity</td><td class="t">`echo &quot;a b`&lt;newline&gt;`$HO`: zsh offers nothing inside the unterminated quote, zshrs lists HOME/HOST<div class="sub">buffer <code>&#x27;echo &quot;a b\n$HO&#x27;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>2 row(s) differ from step #1 (tab), first row 2 col 0</em></div><div class="repro">scripts/compsys_regressions.py --only multiline_dquote_parameter_list
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case &#x27;echo &quot;a b
+$HO&#x27; --keys tab --lockstep --no-zstyle --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_0nb7de_b/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=multiline_heredoc_terminator group=multiline-buffer verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>multiline_heredoc_terminator</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_parity</td><td class="t">`cat &lt;&lt;END`&lt;newline&gt;`a`&lt;newline&gt;`EN`: completing on a heredoc terminator line puts the two shells on entirely different screens<div class="sub">buffer <code>&#x27;cat &lt;&lt;END\na\nEN&#x27;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>24 row(s) differ from step #1 (tab), first row 0 col 0</em></div><div class="repro">scripts/compsys_regressions.py --only multiline_heredoc_terminator
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case &#x27;cat &lt;&lt;END
+a
+EN&#x27; --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_9d9_s77v/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=multiline_squote_corrections group=multiline-buffer verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>multiline_squote_corrections</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_parity</td><td class="t">`ls &#x27;one`&lt;newline&gt;`two/etc/pa`: zsh offers nothing, zshrs runs the whole completer chain down to corrections<div class="sub">buffer <code>&quot;ls &#x27;one\ntwo/etc/pa&quot;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>24 row(s) differ from step #1 (tab), first row 0 col 0</em></div><div class="repro">scripts/compsys_regressions.py --only multiline_squote_corrections
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_parity.py --case &#x27;ls &#x27;&quot;&#x27;&quot;&#x27;one
+two/etc/pa&#x27; --keys tab --lockstep --zstyle scripts/parity_zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_b9cmy00w/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=completer-machinery n=8 -->
+<h3 id="g-completer-machinery">The completer machinery: specs, tags, compstate, widget context <span class="count">8</span></h3><p class="what">What _alternative, _values, compset, compadd and $compstate hand back. Mostly hermetic generated completers, so the case carries its own completer source and no host state is in the picture.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=alternative_escaped_colon_split group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>alternative_escaped_colon_split</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">_alternative splits a spec at a backslash-escaped colon on zsh but not on zshrs<div class="sub">buffer <code>&#x27;fzc0004 -&#x27;</code> keys <code>tab</code> &middot; 1 variant(s) &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only alternative_escaped_colon_split
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_dri3jt2f/fzc0004.min.zsh --json $TMPDIR/.../compsys_regressions_dri3jt2f/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=alternative_nested_action_bad_option group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>alternative_nested_action_bad_option</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">a nested _values/_alternative action makes zsh report &#x27;bad option&#x27;; zshrs completes silently<div class="sub">buffer <code>&#x27;fzc0001 &#x27;</code> keys <code>tab</code> &middot; 1 variant(s) &middot; detail: <em>14 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only alternative_nested_action_bad_option
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions__tqhcyqv/fzc0001.min.zsh --json $TMPDIR/.../compsys_regressions__tqhcyqv/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=cc_match_set group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>cc_match_set</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`CC &lt;TAB&gt;` resolves to a different match set: zsh inserts a unique match, zshrs lists directories<div class="sub">buffer <code>&#x27;CC &#x27;</code> keys <code>tab</code> &middot; detail: <em>4 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only cc_match_set
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;CC &#x27; --keys tab --json $TMPDIR/.../compsys_regressions_carzpqjy/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=complete_help_caller_frame group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>complete_help_caller_frame</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">_complete_help attributes every tag to one caller too many: zshrs adds `_normal`<div class="sub">buffer <code>&#x27;fzc0001 -d&#x27;</code> keys <code>tab</code> &middot; 1 variant(s) &middot; detail: <em>4 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only complete_help_caller_frame
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_6g_wc7zk/fzc0001.min.zsh --json $TMPDIR/.../compsys_regressions_6g_wc7zk/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=completer_style_missing_function group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>completer_style_missing_function</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">a `completer` style naming a function that does not exist: zsh reports it, zshrs ignores it<div class="sub">buffer <code>&#x27;CC &#x27;</code> keys <code>tab</code> &middot; 2 variant(s) &middot; detail: <em>4 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only completer_style_missing_function
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;CC &#x27; --keys tab --zstyle $TMPDIR/.../compsys_regressions_btn7z92v/zstyle.zsh --json $TMPDIR/.../compsys_regressions_btn7z92v/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=compset_p_iprefix_retained group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>compset_p_iprefix_retained</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">after compset -P, zshrs leaves the matched prefix on the command line; zsh removes it<div class="sub">buffer <code>&#x27;fzcm a=b=c&#x27;</code> keys <code>tab</code> &middot; 1 variant(s) &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only compset_p_iprefix_retained
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_u1z3v191/fzcm.min.zsh --strict-cursor --json $TMPDIR/.../compsys_regressions_u1z3v191/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=compstate_old_list_shown group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>compstate_old_list_shown</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">a re-invoked completion widget reads $compstate[old_list] as `yes` where zsh reads `shown`<div class="sub">buffer <code>&#x27;fzc0000 &#x27;</code> keys <code>cx-v,cx-v</code> &middot; 2 control(s) &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only compstate_old_list_shown
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_hu3spjqk/fzc0000.min.zsh --json $TMPDIR/.../compsys_regressions_hu3spjqk/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=files_glob_from_zle_c_widget group=completer-machinery verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>files_glob_from_zle_c_widget</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">`_files -g &#x27;*.txt&#x27;` reached from a `zle -C` widget: zsh errors and inserts the .txt match, zshrs completes a directory<div class="sub">buffer <code>&#x27;fzc0007 a&#x27;</code> keys <code>tab</code> &middot; 1 control(s) &middot; detail: <em>3 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only files_glob_from_zle_c_widget
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_jidre8lp/fzc0007.min.zsh --json $TMPDIR/.../compsys_regressions_jidre8lp/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=description-escapes n=2 -->
+<h3 id="g-description-escapes">Escapes in descriptions and formats <span class="count">2</span></h3><p class="what">%-escapes that one shell expands and the other prints literally.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=explanation_percent_escapes group=description-escapes verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>explanation_percent_escapes</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">compadd -X leaves %F %K %H %{%} and the %B/%U/%S attributes unexpanded<div class="sub">buffer <code>&#x27;fzcx &#x27;</code> keys <code>tab</code> &middot; 3 variant(s) &middot; detail: <em>4 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only explanation_percent_escapes
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_fz1eaj6z/fzcx.min.zsh --compare-attrs --strict-stream --json $TMPDIR/.../compsys_regressions_fz1eaj6z/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=format_style_percent_escapes group=description-escapes verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>format_style_percent_escapes</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">the `format` style&#x27;s %F{...}/%f are printed literally by zshrs<div class="sub">buffer <code>&#x27;true &amp;&amp; gr&#x27;</code> keys <code>tab</code> &middot; detail: <em>2 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only format_style_percent_escapes
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;true &amp;&amp; gr&#x27; --keys tab --zstyle $TMPDIR/.../compsys_regressions_belzou30/zstyle.zsh --json $TMPDIR/.../compsys_regressions_belzou30/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=listing-render n=5 -->
+<h3 id="g-listing-render">Drawing the listing, and redrawing around it <span class="count">5</span></h3><p class="what">What reaches the terminal once matches exist: the erase-to-end-of-line after each row, the line redrawn under the list, the count in the ask prompt, and what survives a window resize.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=last_prompt_false_no_redraw group=listing-render verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>last_prompt_false_no_redraw</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`last-prompt false` — zsh redraws the command line under the list, zshrs draws nothing<div class="sub">buffer <code>&#x27;git &#x27;</code> keys <code>tab</code> &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only last_prompt_false_no_redraw
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;git &#x27; --keys tab --zstyle $TMPDIR/.../compsys_regressions__nlh_xxv/zstyle.zsh --json $TMPDIR/.../compsys_regressions__nlh_xxv/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=listing_lost_on_window_shrink group=listing-render verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>listing_lost_on_window_shrink</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">winch_probe</td><td class="t">shrinking the window while a completion listing is displayed blanks zshrs&#x27;s screen — zsh keeps all 3 non-blank rows at 24x80 -&gt; 14x80, zshrs keeps 0<div class="sub">buffer <code>&#x27;ls /usr/&#x27;</code> keys <code>tab,tab</code> &middot; 2 control(s) &middot; 2 variant(s) &middot; detail: <em>zsh kept 3 non-blank row(s), zshrs kept 0</em></div><div class="repro">scripts/compsys_regressions.py --only listing_lost_on_window_shrink
+/opt/homebrew/opt/python@3.14/bin/python3.14 tests/compsys_fixtures/winch_probe.py --run $TMPDIR/.../compsys_regressions_4iu21fbl/run.json --json $TMPDIR/.../compsys_regressions_4iu21fbl/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=listing_row_erase_to_eol group=listing-render verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>listing_row_erase_to_eol</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">zsh emits \e[K after every completion-listing row; zshrs emits none<div class="sub">buffer <code>&#x27;fzc9999 &#x27;</code> keys <code>tab</code> &middot; 1 variant(s) &middot; detail: <em>raw escape streams differ</em></div><div class="repro">scripts/compsys_regressions.py --only listing_row_erase_to_eol
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_f8jb0nvu/fzc9999.min.zsh --strict-stream --json $TMPDIR/.../compsys_regressions_f8jb0nvu/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=match_count_ask_prompt group=listing-render verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>match_count_ask_prompt</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">the &#x27;do you wish to see all N possibilities (M lines)?&#x27; prompt reports a different N/M<div class="sub">buffer <code>&#x27;fc-list &#x27;</code> keys <code>tab</code> &middot; 5 variant(s) &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only match_count_ask_prompt
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;fc-list &#x27; --keys tab --json $TMPDIR/.../compsys_regressions_q60s95ih/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=narrow_terminal_error_redraw group=listing-render verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>narrow_terminal_error_redraw</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">a completer error message at 40 columns: zsh interleaves it with the redrawn line, zshrs does not<div class="sub">buffer <code>&#x27;ls /usr/**/z&#x27;</code> keys <code>tab,tab</code> &middot; detail: <em>4 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only narrow_terminal_error_redraw
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;ls /usr/**/z&#x27; --keys tab,tab --zstyle $TMPDIR/.../compsys_regressions_u_fvu2h8/zstyle.zsh --rows 24 --cols 40 --json $TMPDIR/.../compsys_regressions_u_fvu2h8/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=menu-navigation n=2 -->
+<h3 id="g-menu-navigation">Moving through a menu <span class="count">2</span></h3><p class="what">The completion itself agrees; what diverges is the state after a navigation key. Each cell&#x27;s control is the same buffer without that key.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=menu_select_interactive_extra_level group=menu-navigation verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>menu_select_interactive_extra_level</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`menu select=0 interactive` — zshrs descends one directory level further than zsh<div class="sub">buffer <code>&#x27;ls /usr/share/zsh&#x27;</code> keys <code>tab,tab,tab,ctrl-d</code> &middot; detail: <em>2 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only menu_select_interactive_extra_level
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case &#x27;ls /usr/share/zsh&#x27; --keys tab,tab,tab,ctrl-d --zstyle $TMPDIR/.../compsys_regressions_2vrmbssp/zstyle.zsh --rows 24 --cols 80 --json $TMPDIR/.../compsys_regressions_2vrmbssp/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE -->
+<!-- BEGIN-FIXTURE id=path_assign_menu_next_trailing_slash group=menu-navigation verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>path_assign_menu_next_trailing_slash</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">comptab_parity</td><td class="t">`PATH=/bin:/us&lt;TAB&gt;` then ctrl-n: zsh leaves `PATH=/bin:/usr`, zshrs leaves `PATH=/bin:/usr/` — the menu&#x27;s next match arrives with a trailing slash<div class="sub">buffer <code>&#x27;PATH=/bin:/us&#x27;</code> keys <code>tab,ctrl-n</code> &middot; 2 control(s) &middot; 1 variant(s) &middot; detail: <em>1 row(s) differ</em></div><div class="repro">scripts/compsys_regressions.py --only path_assign_menu_next_trailing_slash
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/comptab_parity.py --case PATH=/bin:/us --keys tab,ctrl-n --json $TMPDIR/.../compsys_regressions_f8muvypw/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=zle-editing-crash n=1 -->
+<h3 id="g-zle-editing-crash">ZLE editing: a crash, not a difference <span class="count">1</span></h3><p class="what">zshrs panics. There is no zsh-versus-zshrs rendering to compare — the process dies — so the cell asserts the crash.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=transpose_words_panic group=zle-editing-crash verdict=STILL-DIVERGES -->
+<tr class="ok"><td class="id"><code>transpose_words_panic</code></td><td class="v"><span class="tag ok">STILL-DIVERGES</span></td><td class="h">compsys_spec_fuzz</td><td class="t">M-t (transpose-words) at end of line panics zshrs at zle_word.rs:1422<div class="sub">buffer <code>&#x27;ls /usr/share zsh&#x27;</code> keys <code>esc,t</code> &middot; detail: <em>zshrs: crashed: panicked at, run with `RUST_BACKTRACE</em></div><div class="repro">scripts/compsys_regressions.py --only transpose_words_panic
+/opt/homebrew/opt/python@3.14/bin/python3.14 scripts/compsys_spec_fuzz.py --replay $TMPDIR/.../compsys_regressions_0npjn1_d/fzctw.min.zsh --json $TMPDIR/.../compsys_regressions_0npjn1_d/result.json</div><div class="sub">confirmed 2026-08-30 at 3b4a01f0cd, against zshrs 0.12.49</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP --><!-- BEGIN-GROUP id=upstream-defect n=1 -->
+<h3 id="g-upstream-defect">A defect in the REFERENCE shell <span class="count">1</span></h3><p class="what">Pinned so a dead shell is not read as a slow one on the next sweep. Says nothing about zshrs, and is not run by default.</p><table class="fx"><thead><tr><th>fixture</th><th>verdict</th><th>harness</th><th>what the two shells do</th></tr></thead><tbody><!-- BEGIN-FIXTURE id=reference_crash_uppercase_autoload group=upstream-defect verdict=SKIPPED -->
+<tr class="warn"><td class="id"><code>reference_crash_uppercase_autoload</code></td><td class="v"><span class="tag warn">SKIPPED</span></td><td class="h">zsh_reference_probe</td><td class="t">UPSTREAM ZSH DEFECT (not a zshrs divergence): `BATCH &lt;TAB&gt;` kills zsh 5.9.2 under the zpwr dump<div class="sub">word <code>&#x27;BATCH &#x27;</code> &middot; detail: <em>not run by default</em></div><div class="repro">scripts/compsys_regressions.py --only reference_crash_uppercase_autoload</div><div class="note-inline">an UPSTREAM reference-shell defect; run it with --reference-defects</div><div class="sub">confirmed 2026-08-30 at d1d16a132d, against zshrs 0.12.46</div></td></tr>
+<!-- END-FIXTURE --></tbody></table>
+<!-- END-GROUP -->
+
+<h2>Against zsh's own completion suite</h2>
+<p class="lede">Upstream's own completion suite, run against both shells: <strong>32/229 against the oracle&#x27;s 222/229</strong>. A file that timed out leaves its remaining assertions unrun, and an unrun assertion is counted as unrun — never as a pass.</p><h3>zsh baseline ($SCRATCH/zshsrc)</h3><p class="what">shell under test <code>$SCRATCH/zshsrc/Src/zsh</code> &middot; reports <code>5.9.999.3-test</code> &middot; driver <code>5.9.999.3-test</code> &middot; ZSHRS_NATIVE_ZLE_FX=0 &middot; run 2026-08-30T04:33:39-0400 &middot; source <code>baseline_zsh_5.9.999.3-test.json</code></p><table class="fx"><thead><tr><th>test file</th><th>assertions</th><th>fail</th><th>notrun</th><th>pass</th><th>unknown</th><th>xfail</th></tr></thead><tbody><tr><td class="id"><code>Y01completion</code></td><td>33</td><td></td><td></td><td>33</td><td></td><td></td></tr><tr><td class="id"><code>Y02compmatch</code></td><td>58</td><td></td><td></td><td>51</td><td></td><td>7</td></tr><tr><td class="id"><code>Y03arguments</code></td><td>100</td><td></td><td></td><td>100</td><td></td><td></td></tr><tr><td class="id"><code>Y04regexargs</code></td><td>6</td><td></td><td></td><td>6</td><td></td><td></td></tr><tr><td class="id"><code>Y05describe</code></td><td>7</td><td></td><td></td><td>7</td><td></td><td></td></tr><tr><td class="id"><code>Y06values</code></td><td>25</td><td></td><td></td><td>25</td><td></td><td></td></tr><tr class="tot"><td>total</td><td>229</td><td></td><td></td><td>222</td><td></td><td>7</td></tr></tbody></table><h3>zshrs target/debug (fx off)</h3><p class="what">shell under test <code>target/debug/zshrs</code> &middot; reports <code>5.9.2 zsh-5.9.2-0-gddee3e7</code> &middot; driver <code>5.9.999.3-test</code> &middot; ZSHRS_NATIVE_ZLE_FX=0 &middot; run 2026-08-30T04:34:03-0400 &middot; source <code>zshrs_0.12.46_fxoff.json</code></p><table class="fx"><thead><tr><th>test file</th><th>assertions</th><th>fail</th><th>notrun</th><th>pass</th><th>unknown</th><th>xfail</th></tr></thead><tbody><tr><td class="id"><code>Y01completion</code></td><td>33</td><td>23</td><td></td><td>10</td><td></td><td></td></tr><tr><td class="id"><code>Y02compmatch</code></td><td>58</td><td>33</td><td></td><td>18</td><td></td><td>7</td></tr><tr><td class="id"><code>Y03arguments</code> <span class="tag warn">timed out</span></td><td>100</td><td>2</td><td>1</td><td>1</td><td>96</td><td></td></tr><tr><td class="id"><code>Y04regexargs</code></td><td>6</td><td>5</td><td></td><td>1</td><td></td><td></td></tr><tr><td class="id"><code>Y05describe</code></td><td>7</td><td>7</td><td></td><td></td><td></td><td></td></tr><tr><td class="id"><code>Y06values</code></td><td>25</td><td>23</td><td></td><td>2</td><td></td><td></td></tr><tr class="tot"><td>total</td><td>229</td><td>93</td><td>1</td><td>32</td><td>96</td><td>7</td></tr></tbody></table>
+
+<h2>Provenance</h2>
+<table class="fx"><thead><tr><th>input</th><th>size</th><th>modified</th></tr></thead>
+<tbody><tr><td class="id"><code>tests/compsys_fixtures/last_gate.json</code></td><td>27008 bytes</td><td>2026-08-30 06:07</td></tr><tr><td class="id"><code>tests/compsys_fixtures/groups.json</code></td><td>3101 bytes</td><td>2026-08-30 06:07</td></tr><tr><td class="id"><code>tests/ztst_compsys/baseline_zsh_5.9.999.3-test.json</code></td><td>65315 bytes</td><td>2026-08-30 04:54</td></tr><tr><td class="id"><code>tests/ztst_compsys/zshrs_0.12.46_fxoff.json</code></td><td>176993 bytes</td><td>2026-08-30 04:54</td></tr></tbody></table>
+<p class="meta">Fixture documents: <code>tests/compsys_fixtures/*.json</code> —
+29 of them, 67 cell(s) declared including controls and
+variants, 47 run by the gate document above (variants are opt-in;
+<code>--variants</code> replays them).
+Harness split: compsys_parity 5, compsys_spec_fuzz 9, comptab_parity 10, shell_probe 3, winch_probe 1, zsh_reference_probe 1.</p>
+
+<script id="compsys-state-report-data" type="application/json">
+{
+ &quot;generated&quot;: &quot;2026-08-30 10:10 UTC&quot;,
+ &quot;gate&quot;: {
+  &quot;schema&quot;: &quot;compsys-regressions/1&quot;,
+  &quot;runner&quot;: &quot;scripts/compsys_regressions.py&quot;,
+  &quot;started&quot;: &quot;2026-08-30T06:00:07&quot;,
+  &quot;seconds&quot;: 402.2,
+  &quot;argv&quot;: [
+   &quot;--harness-dir&quot;,
+   &quot;scripts&quot;,
+   &quot;--json&quot;,
+   &quot;$SCRATCH/sweep2.json&quot;
+  ],
+  &quot;harness_dir&quot;: &quot;scripts&quot;,
+  &quot;jobs&quot;: 1,
+  &quot;quick&quot;: false,
+  &quot;variants&quot;: false,
+  &quot;controls&quot;: true,
+  &quot;reference_defects&quot;: false,
+  &quot;zshrs_binary&quot;: {
+   &quot;path&quot;: &quot;target/debug/zshrs&quot;,
+   &quot;size&quot;: 101601256,
+   &quot;mtime&quot;: &quot;2026-08-30 05:50:47&quot;,
+   &quot;version&quot;: &quot;zshrs 0.12.49&quot;,
+   &quot;sha256_16&quot;: &quot;6420c23cecc13c35&quot;
+  },
+  &quot;fixtures&quot;: [
+   &quot;alternative_escaped_colon_split&quot;,
+   &quot;alternative_nested_action_bad_option&quot;,
+   &quot;argv_append_discards_positionals&quot;,
+   &quot;cc_match_set&quot;,
+   &quot;complete_help_caller_frame&quot;,
+   &quot;completer_style_missing_function&quot;,
+   &quot;compset_p_iprefix_retained&quot;,
+   &quot;compstate_old_list_shown&quot;,
+   &quot;dotted_parameter_name_accepted&quot;,
+   &quot;equals_word_arg_position&quot;,
+   &quot;equals_word_line_rewrite&quot;,
+   &quot;explanation_percent_escapes&quot;,
+   &quot;files_glob_from_zle_c_widget&quot;,
+   &quot;format_style_percent_escapes&quot;,
+   &quot;fpath_underscore_name_runs_undeclared&quot;,
+   &quot;last_prompt_false_no_redraw&quot;,
+   &quot;listing_lost_on_window_shrink&quot;,
+   &quot;listing_row_erase_to_eol&quot;,
+   &quot;match_count_ask_prompt&quot;,
+   &quot;menu_select_interactive_extra_level&quot;,
+   &quot;multiline_array_literal&quot;,
+   &quot;multiline_backslash_continuation_cd&quot;,
+   &quot;multiline_dquote_parameter_list&quot;,
+   &quot;multiline_heredoc_terminator&quot;,
+   &quot;multiline_squote_corrections&quot;,
+   &quot;narrow_terminal_error_redraw&quot;,
+   &quot;path_assign_menu_next_trailing_slash&quot;,
+   &quot;reference_crash_uppercase_autoload&quot;,
+   &quot;transpose_words_panic&quot;
+  ],
+  &quot;load_average&quot;: [
+   6.802734375,
+   13.3955078125,
+   17.00732421875
+  ],
+  &quot;summary&quot;: {
+   &quot;cells&quot;: 47,
+   &quot;replicated&quot;: 0,
+   &quot;unchanged&quot;: 46,
+   &quot;moved&quot;: 0,
+   &quot;unscored&quot;: 0,
+   &quot;skipped&quot;: 1,
+   &quot;by_verdict&quot;: {
+    &quot;STILL-DIVERGES&quot;: 28,
+    &quot;CONTROL-HOLDS&quot;: 18,
+    &quot;SKIPPED&quot;: 1
+   }
+  },
+  &quot;exit&quot;: 0,
+  &quot;path_note&quot;: &quot;Absolute paths in this document were rewritten when it was checked in: the pinned copies of the three sibling harnesses (taken with `git show HEAD:scripts/...` so a peer editing scripts/ mid-run could not change the measurement) are shown as `scripts/...`, which is what they are byte-for-byte; the session scratch directory is $SCRATCH, per-cell temp dirs are $TMPDIR/..., and the repository root and home directory are stripped. No verdict, count or detail string was touched.&quot;
+ },
+ &quot;totals&quot;: {
+  &quot;fixtures&quot;: 29,
+  &quot;cells_declared&quot;: 67,
+  &quot;cells_run&quot;: 47,
+  &quot;fixture_rows&quot;: 29,
+  &quot;control_rows&quot;: 18,
+  &quot;variant_rows&quot;: 0,
+  &quot;verdicts&quot;: {
+   &quot;STILL-DIVERGES&quot;: 28,
+   &quot;CONTROL-HOLDS&quot;: 18,
+   &quot;REF-CRASHES&quot;: 0,
+   &quot;NOW-PASSES&quot;: 0,
+   &quot;CONTROL-MOVED&quot;: 0,
+   &quot;REF-SURVIVES&quot;: 0,
+   &quot;TIMEOUT&quot;: 0,
+   &quot;ERROR&quot;: 0,
+   &quot;SKIPPED&quot;: 1
+  },
+  &quot;unknown_verdicts&quot;: [],
+  &quot;unchanged&quot;: 46,
+  &quot;moved&quot;: 0,
+  &quot;unscored&quot;: 0,
+  &quot;skipped&quot;: 1,
+  &quot;still_reproducing&quot;: 28,
+  &quot;now_passing&quot;: 0,
+  &quot;by_harness&quot;: {
+   &quot;compsys_parity&quot;: 5,
+   &quot;compsys_spec_fuzz&quot;: 9,
+   &quot;comptab_parity&quot;: 10,
+   &quot;shell_probe&quot;: 3,
+   &quot;winch_probe&quot;: 1,
+   &quot;zsh_reference_probe&quot;: 1
+  }
+ },
+ &quot;fixtures&quot;: [
+  {
+   &quot;id&quot;: &quot;alternative_escaped_colon_split&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;_alternative splits a spec at a backslash-escaped colon on zsh but not on zshrs&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;alternative_nested_action_bad_option&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;a nested _values/_alternative action makes zsh report &#x27;bad option&#x27;; zshrs completes silently&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;argv_append_discards_positionals&quot;,
+   &quot;group&quot;: &quot;shell-core-parameters&quot;,
+   &quot;harness&quot;: &quot;shell_probe&quot;,
+   &quot;title&quot;: &quot;`argv+=( ... )` throws the positional parameters away and keeps the appended array ACROSS calls \u2014 zsh n=4 &lt;1,2,3,X&gt; three times, zshrs n=1 &lt;X&gt;, n=2 &lt;X,X&gt;, n=3 &lt;X,X,X&gt;&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;cc_match_set&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`CC &lt;TAB&gt;` resolves to a different match set: zsh inserts a unique match, zshrs lists directories&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;complete_help_caller_frame&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;_complete_help attributes every tag to one caller too many: zshrs adds `_normal`&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;completer_style_missing_function&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;a `completer` style naming a function that does not exist: zsh reports it, zshrs ignores it&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;compset_p_iprefix_retained&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;after compset -P, zshrs leaves the matched prefix on the command line; zsh removes it&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;compstate_old_list_shown&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;a re-invoked completion widget reads $compstate[old_list] as `yes` where zsh reads `shown`&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;dotted_parameter_name_accepted&quot;,
+   &quot;group&quot;: &quot;shell-core-parameters&quot;,
+   &quot;harness&quot;: &quot;shell_probe&quot;,
+   &quot;title&quot;: &quot;`typeset -gHi .shadow.depth=0` \u2014 zsh 5.9.2 REJECTS a dotted parameter name, zshrs creates it; this is what puts `.shadow.depth`/`.shadow.stack` in zshrs&#x27;s parameter table after a completion that calls `_shadow`&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;equals_word_arg_position&quot;,
+   &quot;group&quot;: &quot;line-token-rewrite&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`cat =ls&lt;TAB&gt;`: the `=word` rewrite happens in ARGUMENT position too \u2014 zsh lists ls* commands, zshrs rewrites the word to /bin/ls&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;equals_word_line_rewrite&quot;,
+   &quot;group&quot;: &quot;line-token-rewrite&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`=ls&lt;TAB&gt;`: zsh keeps the word and lists commands, zshrs rewrites the line to the resolved path&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;explanation_percent_escapes&quot;,
+   &quot;group&quot;: &quot;description-escapes&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;compadd -X leaves %F %K %H %{%} and the %B/%U/%S attributes unexpanded&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;files_glob_from_zle_c_widget&quot;,
+   &quot;group&quot;: &quot;completer-machinery&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;`_files -g &#x27;*.txt&#x27;` reached from a `zle -C` widget: zsh errors and inserts the .txt match, zshrs completes a directory&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;format_style_percent_escapes&quot;,
+   &quot;group&quot;: &quot;description-escapes&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;the `format` style&#x27;s %F{...}/%f are printed literally by zshrs&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;fpath_underscore_name_runs_undeclared&quot;,
+   &quot;group&quot;: &quot;shell-core-parameters&quot;,
+   &quot;harness&quot;: &quot;shell_probe&quot;,
+   &quot;title&quot;: &quot;an UNDECLARED `_name` sitting in $fpath is executable on zshrs \u2014 zsh reports command not found, zshrs autoloads the file, runs it and leaves the function defined&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;last_prompt_false_no_redraw&quot;,
+   &quot;group&quot;: &quot;listing-render&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`last-prompt false` \u2014 zsh redraws the command line under the list, zshrs draws nothing&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;listing_lost_on_window_shrink&quot;,
+   &quot;group&quot;: &quot;listing-render&quot;,
+   &quot;harness&quot;: &quot;winch_probe&quot;,
+   &quot;title&quot;: &quot;shrinking the window while a completion listing is displayed blanks zshrs&#x27;s screen \u2014 zsh keeps all 3 non-blank rows at 24x80 -&gt; 14x80, zshrs keeps 0&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;listing_row_erase_to_eol&quot;,
+   &quot;group&quot;: &quot;listing-render&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;zsh emits \\e[K after every completion-listing row; zshrs emits none&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;match_count_ask_prompt&quot;,
+   &quot;group&quot;: &quot;listing-render&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;the &#x27;do you wish to see all N possibilities (M lines)?&#x27; prompt reports a different N/M&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;menu_select_interactive_extra_level&quot;,
+   &quot;group&quot;: &quot;menu-navigation&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`menu select=0 interactive` \u2014 zshrs descends one directory level further than zsh&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;multiline_array_literal&quot;,
+   &quot;group&quot;: &quot;multiline-buffer&quot;,
+   &quot;harness&quot;: &quot;compsys_parity&quot;,
+   &quot;title&quot;: &quot;`x=( /usr/bin`&lt;newline&gt;`/usr/lo`: zsh inserts /usr/local/, zshrs leaves the word and prints two _describe errors&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;multiline_backslash_continuation_cd&quot;,
+   &quot;group&quot;: &quot;multiline-buffer&quot;,
+   &quot;harness&quot;: &quot;compsys_parity&quot;,
+   &quot;title&quot;: &quot;`cd \\`&lt;newline&gt;`/usr/sh`: zsh completes /usr/share/, zshrs leaves the word and prints two _describe errors&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;multiline_dquote_parameter_list&quot;,
+   &quot;group&quot;: &quot;multiline-buffer&quot;,
+   &quot;harness&quot;: &quot;compsys_parity&quot;,
+   &quot;title&quot;: &quot;`echo \&quot;a b`&lt;newline&gt;`$HO`: zsh offers nothing inside the unterminated quote, zshrs lists HOME/HOST&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;multiline_heredoc_terminator&quot;,
+   &quot;group&quot;: &quot;multiline-buffer&quot;,
+   &quot;harness&quot;: &quot;compsys_parity&quot;,
+   &quot;title&quot;: &quot;`cat &lt;&lt;END`&lt;newline&gt;`a`&lt;newline&gt;`EN`: completing on a heredoc terminator line puts the two shells on entirely different screens&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;multiline_squote_corrections&quot;,
+   &quot;group&quot;: &quot;multiline-buffer&quot;,
+   &quot;harness&quot;: &quot;compsys_parity&quot;,
+   &quot;title&quot;: &quot;`ls &#x27;one`&lt;newline&gt;`two/etc/pa`: zsh offers nothing, zshrs runs the whole completer chain down to corrections&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;narrow_terminal_error_redraw&quot;,
+   &quot;group&quot;: &quot;listing-render&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;a completer error message at 40 columns: zsh interleaves it with the redrawn line, zshrs does not&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;path_assign_menu_next_trailing_slash&quot;,
+   &quot;group&quot;: &quot;menu-navigation&quot;,
+   &quot;harness&quot;: &quot;comptab_parity&quot;,
+   &quot;title&quot;: &quot;`PATH=/bin:/us&lt;TAB&gt;` then ctrl-n: zsh leaves `PATH=/bin:/usr`, zshrs leaves `PATH=/bin:/usr/` \u2014 the menu&#x27;s next match arrives with a trailing slash&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  },
+  {
+   &quot;id&quot;: &quot;reference_crash_uppercase_autoload&quot;,
+   &quot;group&quot;: &quot;upstream-defect&quot;,
+   &quot;harness&quot;: &quot;zsh_reference_probe&quot;,
+   &quot;title&quot;: &quot;UPSTREAM ZSH DEFECT (not a zshrs divergence): `BATCH &lt;TAB&gt;` kills zsh 5.9.2 under the zpwr dump&quot;,
+   &quot;verdict&quot;: &quot;SKIPPED&quot;
+  },
+  {
+   &quot;id&quot;: &quot;transpose_words_panic&quot;,
+   &quot;group&quot;: &quot;zle-editing-crash&quot;,
+   &quot;harness&quot;: &quot;compsys_spec_fuzz&quot;,
+   &quot;title&quot;: &quot;M-t (transpose-words) at end of line panics zshrs at zle_word.rs:1422&quot;,
+   &quot;verdict&quot;: &quot;STILL-DIVERGES&quot;
+  }
+ ],
+ &quot;ztst&quot;: [
+  {
+   &quot;label&quot;: &quot;zsh baseline ($SCRATCH/zshsrc)&quot;,
+   &quot;file&quot;: &quot;baseline_zsh_5.9.999.3-test.json&quot;,
+   &quot;meta&quot;: {
+    &quot;sut&quot;: &quot;$SCRATCH/zshsrc/Src/zsh&quot;,
+    &quot;sut_version&quot;: &quot;5.9.999.3-test&quot;,
+    &quot;harness&quot;: &quot;$SCRATCH/zshsrc/Src/zsh&quot;,
+    &quot;harness_version&quot;: &quot;5.9.999.3-test&quot;,
+    &quot;zsh_build&quot;: &quot;$SCRATCH/zshsrc&quot;,
+    &quot;zsh_build_version&quot;: &quot;5.9.999.3-test&quot;,
+    &quot;modules_linked&quot;: 38,
+    &quot;fx&quot;: &quot;off&quot;,
+    &quot;sut_env&quot;: &quot;ZSHRS_NATIVE_ZLE_FX=0&quot;,
+    &quot;tests&quot;: &quot;Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values&quot;,
+    &quot;date&quot;: &quot;2026-08-30T04:33:39-0400&quot;
+   },
+   &quot;files&quot;: [
+    {
+     &quot;name&quot;: &quot;Y01completion&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 33,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 33
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y02compmatch&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 58,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 51,
+      &quot;xfail&quot;: 7
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y03arguments&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 100,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 100
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y04regexargs&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 6,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 6
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y05describe&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 7,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 7
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y06values&quot;,
+     &quot;exit_code&quot;: 0,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 25,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 25
+     }
+    }
+   ],
+   &quot;total&quot;: {
+    &quot;pass&quot;: 222,
+    &quot;assertions&quot;: 229,
+    &quot;xfail&quot;: 7
+   }
+  },
+  {
+   &quot;label&quot;: &quot;zshrs target/debug (fx off)&quot;,
+   &quot;file&quot;: &quot;zshrs_0.12.46_fxoff.json&quot;,
+   &quot;meta&quot;: {
+    &quot;sut&quot;: &quot;target/debug/zshrs&quot;,
+    &quot;sut_version&quot;: &quot;5.9.2 zsh-5.9.2-0-gddee3e7&quot;,
+    &quot;harness&quot;: &quot;$SCRATCH/zshsrc/Src/zsh&quot;,
+    &quot;harness_version&quot;: &quot;5.9.999.3-test&quot;,
+    &quot;zsh_build&quot;: &quot;$SCRATCH/zshsrc&quot;,
+    &quot;zsh_build_version&quot;: &quot;5.9.999.3-test&quot;,
+    &quot;modules_linked&quot;: 38,
+    &quot;fx&quot;: &quot;off&quot;,
+    &quot;sut_env&quot;: &quot;ZSHRS_NATIVE_ZLE_FX=0&quot;,
+    &quot;tests&quot;: &quot;Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values&quot;,
+    &quot;date&quot;: &quot;2026-08-30T04:34:03-0400&quot;
+   },
+   &quot;files&quot;: [
+    {
+     &quot;name&quot;: &quot;Y01completion&quot;,
+     &quot;exit_code&quot;: 1,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 33,
+     &quot;by_status&quot;: {
+      &quot;fail&quot;: 23,
+      &quot;pass&quot;: 10
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y02compmatch&quot;,
+     &quot;exit_code&quot;: 1,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 58,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 18,
+      &quot;fail&quot;: 33,
+      &quot;xfail&quot;: 7
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y03arguments&quot;,
+     &quot;exit_code&quot;: -9,
+     &quot;timed_out&quot;: true,
+     &quot;assertions&quot;: 100,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 1,
+      &quot;fail&quot;: 2,
+      &quot;notrun&quot;: 1,
+      &quot;unknown&quot;: 96
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y04regexargs&quot;,
+     &quot;exit_code&quot;: 1,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 6,
+     &quot;by_status&quot;: {
+      &quot;pass&quot;: 1,
+      &quot;fail&quot;: 5
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y05describe&quot;,
+     &quot;exit_code&quot;: 1,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 7,
+     &quot;by_status&quot;: {
+      &quot;fail&quot;: 7
+     }
+    },
+    {
+     &quot;name&quot;: &quot;Y06values&quot;,
+     &quot;exit_code&quot;: 1,
+     &quot;timed_out&quot;: false,
+     &quot;assertions&quot;: 25,
+     &quot;by_status&quot;: {
+      &quot;fail&quot;: 23,
+      &quot;pass&quot;: 2
+     }
+    }
+   ],
+   &quot;total&quot;: {
+    &quot;fail&quot;: 93,
+    &quot;pass&quot;: 32,
+    &quot;assertions&quot;: 229,
+    &quot;xfail&quot;: 7,
+    &quot;notrun&quot;: 1,
+    &quot;unknown&quot;: 96
+   }
+  }
+ ],
+ &quot;reconcile_problems&quot;: []
+}
+</script>
+</main></body></html>
