@@ -75,6 +75,7 @@ mod let_arith_command_parity;
 mod lexer_parity;
 mod local_tied_special_parity;
 mod loops_parity;
+mod magic_equal_subst_parity;
 mod man_zshall_corpus_parity;
 mod math_parity;
 mod modules_parity;
