@@ -17516,17 +17516,23 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             "zparseopts",
             0,
             Some(crate::ported::modules::zutil::bin_zparseopts as HandlerFunc),
-            1,
+            0,
             -1,
             0,
-            // c:Src/Modules/zutil.c:2137 — NULL optstring: bin_zparseopts
-            // parses its own flags (-D/-E/-F/-K/-M/-a/-A/-v) inline. The
-            // previous Rust spec ("D-EFK-M-a:") let execbuiltin pre-eat
-            // them via the option-byte parser, leaving bin_zparseopts
-            // with empty argv and `if i >= args.len()` firing
-            // "missing option descriptions" for the canonical
-            // `zparseopts -a foo --` invocation.
-            None,
+            // c:Src/Modules/zutil.c:2150 —
+            //   BUILTIN("zparseopts", 0, bin_zparseopts, 0, -1, 0,
+            //           "a:A:DEFGKMn:v:", NULL)
+            // zparseopts's own flags go through the generic option parser
+            // (Src/builtin.c:341-390); `bin_zparseopts` reads them back
+            // with OPT_ISSET/OPT_ARG (c:1835-1874). Routing them here is
+            // what makes `-DF` stack exactly like `-D -F`, `-nprog`
+            // cuddle like `-n prog`, and a lone `-` / `--` terminate the
+            // flag list before the option specs — none of which the old
+            // hand-rolled loop inside bin_zparseopts did. minargs is 0
+            // (c:2150) because `zparseopts -a ''` must reach the builtin
+            // to emit "missing array name for -a" rather than being
+            // rejected by execbuiltin as "not enough arguments".
+            Some("a:A:DEFGKMn:v:"),
             None,
         ),
         BUILTIN(

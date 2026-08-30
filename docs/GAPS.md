@@ -2198,6 +2198,7 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 ### `zparseopts` (no args) silently returned 0 instead of erroring
 
 - zsh: bare `zparseopts` -> `zparseopts:1: not enough arguments` exit 1. zshrs returned 0 silently. Added an early `args.is_empty()` check. Test: `test_zparseopts_no_args_errors`.
+  - **Amended (diagnostic text moved upstream).** The `not enough arguments` wording came from zsh 5.9's `BUILTIN("zparseopts", …, 1, -1, 0, NULL, NULL)` (minargs 1, no optstring), where `execbuiltin` rejected the empty argument list before the builtin ran. Current zsh declares it `BUILTIN("zparseopts", 0, bin_zparseopts, 0, -1, 0, "a:A:DEFGKMn:v:", NULL)` (`Src/Modules/zutil.c:2150`): minargs 0, so the empty list reaches the builtin and hits `Src/Modules/zutil.c:1885-1888` `zwarnnam(nam, "missing option descriptions"); return 1;`. zshrs now emits that. minargs 0 is required, not cosmetic — with minargs 1 the `zparseopts -a ''` case in upstream `Test/V12zparseopts.ztst` would say `not enough arguments` instead of the required `missing array name for -a`.
 
 ### `pwd extra arg` printed cwd instead of erroring "too many arguments"
 
