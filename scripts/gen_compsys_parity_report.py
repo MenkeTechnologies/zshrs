@@ -869,8 +869,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=DEFAULT_GLOB,
                     help=f"glob of harness output dirs (default: {DEFAULT_GLOB})")
-    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--state", action="store_true",
+                    help="render the CONSOLIDATED STATE report instead: the "
+                         "fixture gate, the divergences grouped by what they "
+                         "touch, and the score against zsh's own Y0*.ztst "
+                         "suite. Different inputs entirely — see --gate")
+    ap.add_argument("--gate", type=Path, default=DEFAULT_GATE,
+                    help="--state only: the scripts/compsys_regressions.py "
+                         "--json document to render (default: %(default)s)")
     args = ap.parse_args()
+
+    if args.state:
+        return state_report(args.out or STATE_OUT, args.gate)
+    args.out = args.out or OUT
 
     run_dirs = [p for p in sorted(ROOT.glob(args.runs)) if p.is_dir()]
     if not run_dirs:
@@ -907,6 +919,565 @@ def main() -> int:
     print(f"  reconciled: {len(data.get('per_log', []))} combo log(s) + "
           f"{len(data['randoms'])} random-combo log(s), rows match every "
           f"harness summary line")
+    return 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The CONSOLIDATED STATE report (`--state`)
+#
+# A different question from the one the rest of this file answers. The parity
+# report above says "how did the last matrix sweep score"; this one says "what
+# is pinned, what still reproduces, and how do we score against zsh's own test
+# suite" — the three things a reader has to hold at once to know where
+# completion parity actually stands.
+#
+# Three inputs, all of them files somebody else's tool produced:
+#
+#   * tests/compsys_fixtures/*.json  — the evidence base, one document per
+#     finding, each naming its `group`
+#   * tests/compsys_fixtures/groups.json — what those group names mean
+#   * a `scripts/compsys_regressions.py --json` document — one full gate run:
+#     which cells were attempted, what each scored, and the identity of the
+#     zshrs binary it ran
+#   * tests/ztst_compsys/*.json — one run of zsh's own Y0*.ztst completion
+#     suite against each shell, per assertion
+#
+# Nothing on the page is typed. Every count is computed here from those files,
+# and the RECONCILE pass below refuses to let a number ship that does not agree
+# with the source document's own totals.
+# ═════════════════════════════════════════════════════════════════════════════
+
+STATE_OUT = ROOT / "docs" / "compsys_state_report.html"
+FIXTURE_DIR = ROOT / "tests" / "compsys_fixtures"
+GROUPS_FILE = FIXTURE_DIR / "groups.json"
+DEFAULT_GATE = FIXTURE_DIR / "last_gate.json"
+ZTST_DIR = ROOT / "tests" / "ztst_compsys"
+
+# compsys_regressions.py:112-124 — the verdicts a gate run can emit, and which
+# of them mean the pinned evidence is unchanged.
+GATE_UNCHANGED = ("STILL-DIVERGES", "CONTROL-HOLDS", "REF-CRASHES")
+GATE_MOVED = ("NOW-PASSES", "CONTROL-MOVED", "REF-SURVIVES")
+GATE_UNSCORED = ("TIMEOUT", "ERROR")
+GATE_SKIPPED = ("SKIPPED",)
+GATE_VERDICTS = GATE_UNCHANGED + GATE_MOVED + GATE_UNSCORED + GATE_SKIPPED
+
+
+# Every string that reaches the page passes through here first. `docs/` is
+# published, and the inputs are run documents full of absolute paths — the
+# oracle tree in a scratch directory, the binary under test, per-cell temp
+# dirs — several of which spell out the account name. A report describes the
+# software, so the account name does not ship with it. Verdicts, counts and
+# detail strings are untouched: this only rewrites paths.
+_SCRATCH_RE = re.compile(r"/private/tmp/[^\s\"',)]*?/scratchpad")
+_TMP_RE = re.compile(r"/var/folders/[^/]+/[^/]+/[^/\s\"',)]+")
+
+
+def scrub(value):
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    if not isinstance(value, str):
+        return value
+    out = _SCRATCH_RE.sub("$SCRATCH", value)
+    out = _TMP_RE.sub("$TMPDIR/...", out)
+    out = out.replace(str(ROOT) + "/", "").replace(str(ROOT), ".")
+    home = os.path.expanduser("~")
+    out = out.replace(home, "~")
+    user = os.path.basename(home)
+    return out.replace("/" + user + "/", "/<user>/") if user else out
+
+
+def load_state_inputs(gate_path: Path) -> dict:
+    """Read the three sources. Missing input is fatal, never rendered as empty."""
+    if not gate_path.exists():
+        sys.exit(f"gen_compsys_parity_report --state: no gate document at "
+                 f"{gate_path} — run scripts/compsys_regressions.py --json {gate_path}")
+    gate = json.loads(gate_path.read_text())
+    if not GROUPS_FILE.exists():
+        sys.exit(f"gen_compsys_parity_report --state: {GROUPS_FILE} is missing")
+    groups = json.loads(GROUPS_FILE.read_text())
+
+    fixtures = []
+    for p in sorted(FIXTURE_DIR.glob("*.json")):
+        if p.name in (GROUPS_FILE.name, DEFAULT_GATE.name):
+            continue
+        doc = json.loads(p.read_text())
+        doc["_file"] = p.name
+        fixtures.append(doc)
+    if not fixtures:
+        sys.exit("gen_compsys_parity_report --state: no fixtures found. Refusing "
+                 "to emit a report that would read as 'nothing is broken'.")
+
+    ztst = []
+    for p in sorted(ZTST_DIR.glob("*.json")):
+        doc = json.loads(p.read_text())
+        doc["_file"] = p.name
+        ztst.append(doc)
+    return scrub({"gate": gate, "groups": groups,
+                  "fixtures": fixtures, "ztst": ztst}) | {"gate_path": gate_path}
+
+
+def ztst_counts(doc: dict) -> dict:
+    """Per-file and total assertion counts, recomputed from the assertions."""
+    files, total = [], defaultdict(int)
+    for f in doc.get("results", []):
+        n = defaultdict(int)
+        for a in f.get("assertions", []):
+            n[a.get("status", "unknown")] += 1
+        row = {"name": f["name"], "exit_code": f.get("exit_code"),
+               "timed_out": bool(f.get("timed_out")),
+               "assertions": len(f.get("assertions", [])), "by_status": dict(n)}
+        files.append(row)
+        for k, v in n.items():
+            total[k] += v
+        total["assertions"] += row["assertions"]
+    return {"label": doc.get("label", doc["_file"]), "file": doc["_file"],
+            "meta": doc.get("meta", {}), "files": files, "total": dict(total)}
+
+
+def state_totals(data: dict) -> dict:
+    """Everything the page counts, derived here and nowhere else."""
+    gate = data["gate"]
+    rows = gate.get("results", [])
+    fixtures = data["fixtures"]
+
+    by_id = {f["id"]: f for f in fixtures}
+    # A gate row's id is the fixture id for a fixture cell and "  id/controlN"
+    # for a control (compsys_regressions.py:296) — the role field says which.
+    fixture_rows = [r for r in rows if r.get("role") == "fixture"]
+    control_rows = [r for r in rows if r.get("role") == "control"]
+    variant_rows = [r for r in rows if r.get("role") == "variant"]
+
+    verdicts = {v: sum(1 for r in rows if r["verdict"] == v) for v in GATE_VERDICTS}
+    unknown = sorted({r["verdict"] for r in rows if r["verdict"] not in GATE_VERDICTS})
+
+    cells_declared = 0
+    for f in fixtures:
+        cells_declared += 1 + len(f.get("controls") or []) + len(f.get("variants") or [])
+
+    # Group -> fixtures, in the order groups.json declares.
+    order = data["groups"].get("order", [])
+    per_group = {g: [] for g in order}
+    ungrouped = []
+    for f in sorted(fixtures, key=lambda d: d["id"]):
+        g = f.get("group")
+        if g in per_group:
+            per_group[g].append(f)
+        else:
+            ungrouped.append(f)
+
+    ztst = [ztst_counts(d) for d in data["ztst"]]
+    # Which of those is the oracle and which the candidate is read off the
+    # documents themselves (the baseline's `sut` IS its own `zsh_build`), never
+    # off the filename.
+    baseline = next((z for z in ztst
+                     if z["meta"].get("sut") == z["meta"].get("harness")), None)
+    candidates = [z for z in ztst if z is not baseline]
+
+    return {
+        "fixtures": len(fixtures),
+        "cells_declared": cells_declared,
+        "cells_run": len(rows),
+        "fixture_rows": len(fixture_rows),
+        "control_rows": len(control_rows),
+        "variant_rows": len(variant_rows),
+        "verdicts": verdicts,
+        "unknown_verdicts": unknown,
+        "unchanged": sum(verdicts[v] for v in GATE_UNCHANGED),
+        "moved": sum(verdicts[v] for v in GATE_MOVED),
+        "unscored": sum(verdicts[v] for v in GATE_UNSCORED),
+        "skipped": sum(verdicts[v] for v in GATE_SKIPPED),
+        "still_reproducing": sum(1 for r in fixture_rows
+                                 if r["verdict"] == "STILL-DIVERGES"),
+        "now_passing": sum(1 for r in fixture_rows if r["verdict"] == "NOW-PASSES"),
+        "by_harness": {h: sum(1 for f in fixtures if f["harness"] == h)
+                       for h in sorted({f["harness"] for f in fixtures})},
+        "per_group": per_group,
+        "ungrouped": ungrouped,
+        "by_id": by_id,
+        "rows_by_id": {r["id"].strip(): r for r in rows},
+        "ztst": ztst,
+        "baseline": baseline,
+        "candidates": candidates,
+    }
+
+
+def state_reconcile(data: dict, t: dict) -> list[str]:
+    """Do the numbers on this page agree with the documents they came from?
+
+    Same discipline as `reconcile()` above and for the same reason: a renderer
+    that silently drops a row publishes a smaller, greener table under the
+    project's name. Every disagreement is returned; the caller banners them on
+    the page AND exits non-zero.
+    """
+    out: list[str] = []
+    gate, summary = data["gate"], data["gate"].get("summary") or {}
+
+    if not summary:
+        out.append(f"{data['gate_path'].name}: no `summary` block — the row "
+                   f"counts on this page cannot be checked against the run's own")
+    else:
+        if summary.get("cells") != t["cells_run"]:
+            out.append(f"{data['gate_path'].name}: rendered {t['cells_run']} cell "
+                       f"row(s), the run's own summary says {summary.get('cells')}")
+        for key, mine in (("unchanged", t["unchanged"]), ("moved", t["moved"]),
+                          ("unscored", t["unscored"]), ("skipped", t["skipped"])):
+            if summary.get(key) is not None and summary[key] != mine:
+                out.append(f"{data['gate_path'].name}: counted {mine} {key} "
+                           f"cell(s), the run's summary says {summary[key]}")
+        by_verdict = summary.get("by_verdict") or {}
+        for v, n in sorted(by_verdict.items()):
+            if v not in GATE_VERDICTS:
+                out.append(f"{data['gate_path'].name}: the run reported a verdict "
+                           f"{v}={n} this renderer does not know")
+            elif t["verdicts"].get(v) != n:
+                out.append(f"{data['gate_path'].name}: rendered "
+                           f"{t['verdicts'].get(v)} {v} row(s), the run's summary "
+                           f"says {n}")
+    if t["unknown_verdicts"]:
+        out.append(f"{data['gate_path'].name}: unrecognised verdict(s) "
+                   f"{', '.join(t['unknown_verdicts'])} in the result rows")
+
+    # The gate document and the fixture directory must describe the same set.
+    ran = {r["id"].strip() for r in gate.get("results", []) if r.get("role") == "fixture"}
+    pinned = set(t["by_id"])
+    for fid in sorted(pinned - ran):
+        out.append(f"fixture {fid} is checked in but was NOT attempted by the "
+                   f"gate run this page renders — it is on the page with no verdict")
+    for fid in sorted(ran - pinned):
+        out.append(f"the gate run scored {fid}, which is no longer a checked-in "
+                   f"fixture — this page's group counts do not include it")
+    for f in t["ungrouped"]:
+        out.append(f"fixture {f['id']} names group {f.get('group')!r}, which "
+                   f"groups.json does not declare — it is rendered ungrouped")
+    for g in data["groups"].get("order", []):
+        if g not in data["groups"].get("groups", {}):
+            out.append(f"groups.json lists {g} in `order` but does not define it")
+
+    # ztst: the two runs must be the same suite, or the comparison is not one.
+    base = t["baseline"]
+    if base is None:
+        out.append("tests/ztst_compsys: no run whose shell-under-test IS the "
+                   "oracle build — without a baseline there is nothing to score "
+                   "against")
+    else:
+        bfiles = {f["name"]: f["assertions"] for f in base["files"]}
+        for cand in t["candidates"]:
+            cfiles = {f["name"]: f["assertions"] for f in cand["files"]}
+            if set(bfiles) != set(cfiles):
+                out.append(f"{cand['file']}: covers {sorted(cfiles)} but the "
+                           f"baseline covers {sorted(bfiles)} — not the same suite")
+            for name in sorted(set(bfiles) & set(cfiles)):
+                if bfiles[name] != cfiles[name]:
+                    out.append(f"{cand['file']}: {name} has {cfiles[name]} "
+                               f"assertion(s), the baseline has {bfiles[name]} — "
+                               f"a per-file score computed across those is not a "
+                               f"comparison")
+    return out
+
+
+def _fmt_binary(b: dict | None) -> str:
+    if not b:
+        return "<unknown>"
+    return "%s  %s  %s bytes  sha256:%s  built %s" % (
+        b.get("path"), b.get("version"), b.get("size"),
+        b.get("sha256_16") or "-", b.get("mtime"))
+
+
+def render_state(data: dict, t: dict, problems: list[str]) -> str:
+    gate = data["gate"]
+    gen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    g = data["groups"].get("groups", {})
+
+    alarm = ""
+    if problems:
+        items = "\n".join("<li>%s</li>" % html.escape(p) for p in problems)
+        alarm = (f'<div class="alarm"><strong>These counts do not reconcile.</strong> '
+                 f'Every number below is derived from the documents named in '
+                 f'Provenance, and the derivation disagrees with what those '
+                 f'documents say about themselves. Read nothing here as settled '
+                 f'until this is resolved.<ul>{items}</ul></div>')
+
+    # ── stat cards ───────────────────────────────────────────────────────────
+    cards = [
+        ("Fixtures pinned", t["fixtures"], "one JSON document per confirmed finding"),
+        ("Cells in the gate", t["cells_run"],
+         f"{t['fixture_rows']} fixture, {t['control_rows']} control, "
+         f"{t['variant_rows']} variant"),
+        ("Still reproducing", t["still_reproducing"],
+         "fixture cells that diverge in the shape they recorded"),
+        ("No longer reproducing", t["now_passing"],
+         "fixture cells where the two shells now agree"),
+        ("Controls holding", t["verdicts"].get("CONTROL-HOLDS", 0),
+         "cells pinned as AGREEING that still agree"),
+        ("Not scored", t["unscored"] + t["skipped"],
+         "opt-in or out of budget — neither a pass nor a divergence"),
+    ]
+    card_html = "\n".join(
+        f'<div class="card"><div class="n">{v}</div><div class="k">{html.escape(k)}</div>'
+        f'<div class="s">{html.escape(s)}</div></div>' for k, v, s in cards)
+
+    # ── the gate table, grouped ──────────────────────────────────────────────
+    group_html = []
+    for gid in list(data["groups"].get("order", [])) + (["<ungrouped>"] if t["ungrouped"] else []):
+        members = t["ungrouped"] if gid == "<ungrouped>" else t["per_group"].get(gid, [])
+        if not members:
+            continue
+        meta = g.get(gid, {})
+        rows = []
+        for f in members:
+            r = t["rows_by_id"].get(f["id"], {})
+            verdict = r.get("verdict", "NOT RUN")
+            cls = ("ok" if verdict in GATE_UNCHANGED else
+                   "moved" if verdict in GATE_MOVED else "warn")
+            run = f.get("run", {})
+            # Two lines: the canonical replay (always runnable, no paths in
+            # it) and, underneath, the exact argv the gate used.
+            repro = "scripts/compsys_regressions.py --only %s" % f["id"]
+            if r.get("command"):
+                repro += "\n" + r["command"]
+            what = (f'buffer <code>{html.escape(repr(run["buffer"]))}</code> '
+                    f'keys <code>{html.escape(",".join(run.get("keys", [])))}</code>'
+                    if "buffer" in run else
+                    f'script <code>{html.escape(" ; ".join(run.get("script", []))[:150])}</code>'
+                    if "script" in run else
+                    f'word <code>{html.escape(repr(run.get("word", "")))}</code>')
+            conf = f.get("confirmed") or {}
+            rows.append(
+                f'<!-- BEGIN-FIXTURE id={f["id"]} group={gid} verdict={verdict} -->\n'
+                f'<tr class="{cls}">'
+                f'<td class="id"><code>{html.escape(f["id"])}</code></td>'
+                f'<td class="v"><span class="tag {cls}">{html.escape(verdict)}</span></td>'
+                f'<td class="h">{html.escape(f["harness"])}</td>'
+                f'<td class="t">{html.escape(f["title"])}'
+                f'<div class="sub">{what}'
+                f'{" &middot; " + str(len(f.get("controls") or [])) + " control(s)" if f.get("controls") else ""}'
+                f'{" &middot; " + str(len(f.get("variants") or [])) + " variant(s)" if f.get("variants") else ""}'
+                f' &middot; detail: <em>{html.escape(r.get("detail", "-"))}</em></div>'
+                + (f'<div class="repro">{html.escape(repro)}</div>' if repro else "")
+                + (f'<div class="note-inline">{html.escape(r["note"])}</div>'
+                   if r.get("note") else "")
+                + f'<div class="sub">confirmed {html.escape(str(conf.get("date")))} '
+                  f'at {html.escape(str(conf.get("commit")))}'
+                + (f', against {html.escape(str((conf.get("zshrs_binary") or {}).get("version")))}'
+                   if conf.get("zshrs_binary") else ", no binary stamp")
+                + '</div>'
+                f'</td></tr>\n<!-- END-FIXTURE -->')
+        group_html.append(
+            f'<!-- BEGIN-GROUP id={gid} n={len(members)} -->\n'
+            f'<h3 id="g-{html.escape(gid)}">{html.escape(meta.get("title", gid))} '
+            f'<span class="count">{len(members)}</span></h3>'
+            f'<p class="what">{html.escape(meta.get("what", ""))}</p>'
+            f'<table class="fx"><thead><tr><th>fixture</th><th>verdict</th>'
+            f'<th>harness</th><th>what the two shells do</th></tr></thead><tbody>'
+            + "\n".join(rows) + '</tbody></table>\n<!-- END-GROUP -->')
+
+    # ── ztst ─────────────────────────────────────────────────────────────────
+    base = t["baseline"]
+    ztst_html = ""
+    if base:
+        statuses = sorted({s for z in t["ztst"] for f in z["files"]
+                           for s in f["by_status"]})
+        head = "".join(f"<th>{html.escape(s)}</th>" for s in statuses)
+        blocks = []
+        for z in [base] + t["candidates"]:
+            body = []
+            for f in z["files"]:
+                cells = "".join(
+                    f'<td>{f["by_status"].get(s, 0) or ""}</td>' for s in statuses)
+                flag = ' <span class="tag warn">timed out</span>' if f["timed_out"] else ""
+                body.append(f'<tr><td class="id"><code>{html.escape(f["name"])}</code>'
+                            f'{flag}</td><td>{f["assertions"]}</td>{cells}</tr>')
+            tot = z["total"]
+            body.append('<tr class="tot"><td>total</td>'
+                        f'<td>{tot.get("assertions", 0)}</td>'
+                        + "".join(f'<td>{tot.get(s, 0) or ""}</td>' for s in statuses)
+                        + "</tr>")
+            m = z["meta"]
+            blocks.append(
+                f'<h3>{html.escape(z["label"])}</h3>'
+                f'<p class="what">shell under test <code>{html.escape(str(m.get("sut")))}</code>'
+                f' &middot; reports <code>{html.escape(str(m.get("sut_version")))}</code>'
+                f' &middot; driver <code>{html.escape(str(m.get("harness_version")))}</code>'
+                f'{" &middot; " + html.escape(str(m.get("sut_env"))) if m.get("sut_env") else ""}'
+                f' &middot; run {html.escape(str(m.get("date")))}'
+                f' &middot; source <code>{html.escape(z["file"])}</code></p>'
+                f'<table class="fx"><thead><tr><th>test file</th><th>assertions</th>'
+                f'{head}</tr></thead><tbody>' + "".join(body) + '</tbody></table>')
+        b, c = base["total"], (t["candidates"][0]["total"] if t["candidates"] else {})
+        headline = (f'{c.get("pass", 0)}/{c.get("assertions", 0)} against the oracle\'s '
+                    f'{b.get("pass", 0)}/{b.get("assertions", 0)}'
+                    if t["candidates"] else "no candidate run present")
+        ztst_html = (f'<p class="lede">Upstream\'s own completion suite, run against both '
+                     f'shells: <strong>{html.escape(headline)}</strong>. A file that timed '
+                     f'out leaves its remaining assertions unrun, and an unrun assertion is '
+                     f'counted as unrun — never as a pass.</p>' + "".join(blocks))
+
+    # ── provenance ───────────────────────────────────────────────────────────
+    inputs = [data["gate_path"], GROUPS_FILE] + \
+             [ZTST_DIR / z["file"] for z in t["ztst"]]
+    def _rel(p: Path) -> str:
+        # An input given with --gate can live outside the tree (a run kept in a
+        # scratch directory). Never let that raise: this table exists to say
+        # WHERE each number came from, and failing to render it would hide that.
+        try:
+            return str(p.relative_to(ROOT))
+        except ValueError:
+            return str(p)
+
+    prov = "".join(
+        f'<tr><td class="id"><code>{html.escape(_rel(p))}</code></td>'
+        f'<td>{p.stat().st_size} bytes</td>'
+        f'<td>{datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}</td></tr>'
+        for p in inputs if p.exists())
+
+    payload = json.dumps({
+        "generated": gen,
+        "gate": {k: v for k, v in gate.items() if k != "results"},
+        "totals": {k: v for k, v in t.items()
+                   if k not in ("per_group", "ungrouped", "by_id", "rows_by_id",
+                                "ztst", "baseline", "candidates")},
+        "fixtures": [{"id": f["id"], "group": f.get("group"),
+                      "harness": f["harness"], "title": f["title"],
+                      "verdict": t["rows_by_id"].get(f["id"], {}).get("verdict")}
+                     for f in sorted(data["fixtures"], key=lambda d: d["id"])],
+        "ztst": t["ztst"],
+        "reconcile_problems": problems,
+    }, indent=1)
+
+    load = gate.get("load_average") or []
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zshrs completion parity — consolidated state</title>
+<style>
+:root {{ color-scheme: light dark;
+  --bg:#fbfbfc; --fg:#14161a; --mut:#5d6470; --line:#dfe3e8; --card:#fff;
+  --ok:#0a7d3e; --moved:#b45309; --warn:#8a6d00; --code:#f2f4f7; }}
+@media (prefers-color-scheme: dark) {{ :root {{
+  --bg:#0e1116; --fg:#e6e9ee; --mut:#9aa3b2; --line:#242a33; --card:#151a21;
+  --ok:#4ade80; --moved:#fbbf24; --warn:#fcd34d; --code:#1b212a; }} }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }}
+main {{ max-width:1180px; margin:0 auto; padding:2rem 1.2rem 5rem; }}
+h1 {{ font-size:1.7rem; margin:0 0 .3rem; letter-spacing:-.01em; }}
+h2 {{ font-size:1.25rem; margin:2.6rem 0 .6rem; padding-top:1.2rem;
+     border-top:1px solid var(--line); }}
+h3 {{ font-size:1.02rem; margin:1.6rem 0 .2rem; }}
+h3 .count {{ color:var(--mut); font-weight:400; font-size:.85rem; }}
+p.lede, p.what {{ color:var(--mut); margin:.2rem 0 .8rem; max-width:78ch; }}
+code {{ background:var(--code); padding:.08em .35em; border-radius:3px;
+  font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-word; }}
+.cards {{ display:grid; gap:.7rem; grid-template-columns:repeat(auto-fit,minmax(165px,1fr));
+  margin:1.2rem 0 .4rem; }}
+.card {{ background:var(--card); border:1px solid var(--line); border-radius:9px;
+  padding:.8rem .9rem; }}
+.card .n {{ font-size:1.7rem; font-weight:650; letter-spacing:-.02em; }}
+.card .k {{ font-size:.83rem; font-weight:600; }}
+.card .s {{ font-size:.76rem; color:var(--mut); margin-top:.15rem; }}
+table.fx {{ width:100%; border-collapse:collapse; margin:.5rem 0 1.4rem;
+  font-size:.88rem; }}
+table.fx th {{ text-align:left; font-size:.74rem; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--mut); border-bottom:1px solid var(--line);
+  padding:.35rem .5rem; }}
+table.fx td {{ border-bottom:1px solid var(--line); padding:.5rem; vertical-align:top; }}
+table.fx td.id {{ white-space:nowrap; }}
+table.fx tr.tot td {{ font-weight:650; }}
+.sub {{ color:var(--mut); font-size:.79rem; margin-top:.25rem; }}
+.note-inline {{ color:var(--moved); font-size:.79rem; margin-top:.25rem; }}
+.repro {{ background:var(--code); border-radius:5px; padding:.35rem .5rem;
+  margin-top:.35rem; font:11.5px/1.5 ui-monospace,Menlo,monospace;
+  overflow-x:auto; white-space:pre; }}
+.tag {{ font-size:.72rem; font-weight:650; padding:.1rem .4rem; border-radius:4px;
+  border:1px solid currentColor; white-space:nowrap; }}
+.tag.ok {{ color:var(--ok); }} .tag.moved {{ color:var(--moved); }}
+.tag.warn {{ color:var(--warn); }}
+.alarm {{ border:2px solid var(--moved); color:var(--moved); border-radius:9px;
+  padding:.9rem 1rem; margin:1rem 0; }}
+.meta {{ color:var(--mut); font-size:.8rem; }}
+.meta code {{ font-size:11.5px; }}
+</style></head><body><main>
+
+<h1>zshrs completion parity — consolidated state</h1>
+<p class="meta">Generated {gen} by <code>scripts/gen_compsys_parity_report.py --state</code>.
+Every number is computed at generation time from the files listed under Provenance.
+Nothing on this page is typed in.</p>
+<p class="meta">Gate run: <code>{html.escape(str(gate.get('started')))}</code>,
+{gate.get('seconds')}s, jobs={gate.get('jobs')},
+load average {', '.join(f'{x:.1f}' for x in load) if load else 'n/a'},
+exit {gate.get('exit')}.<br>
+zshrs under test: <code>{html.escape(_fmt_binary(gate.get('zshrs_binary')))}</code></p>
+
+{alarm}
+
+<div class="cards">{card_html}</div>
+
+<h2>The gate</h2>
+<p class="lede"><code>scripts/compsys_regressions.py</code> replays every checked-in
+fixture and exits non-zero if anything moved <em>in either direction</em>: a fixture
+that stopped diverging is as much a failure of the run as one that started. Controls
+are cells a fixture pins as <em>agreeing</em> — they are what make the fixture's
+variable the variable, and a control that starts diverging fails the run too.</p>
+
+<h2>Divergences, grouped by what they touch</h2>
+<p class="lede">A group says what surface the two shells disagree on, not what the Rust
+bug is: none of these has been traced to a line of zshrs, and a grouping that claimed
+otherwise would assert something no run here measured. Each fixture declares its own
+group; the reproducer under each row is the exact command the gate ran.</p>
+{''.join(group_html)}
+
+<h2>Against zsh's own completion suite</h2>
+{ztst_html}
+
+<h2>Provenance</h2>
+<table class="fx"><thead><tr><th>input</th><th>size</th><th>modified</th></tr></thead>
+<tbody>{prov}</tbody></table>
+<p class="meta">Fixture documents: <code>tests/compsys_fixtures/*.json</code> —
+{t['fixtures']} of them, {t['cells_declared']} cell(s) declared including controls and
+variants, {t['cells_run']} run by the gate document above (variants are opt-in;
+<code>--variants</code> replays them).
+Harness split: {html.escape(', '.join(f'{k} {v}' for k, v in t['by_harness'].items()))}.</p>
+
+<script id="compsys-state-report-data" type="application/json">
+{html.escape(payload)}
+</script>
+</main></body></html>
+"""
+
+
+def _rel_to_root(p: Path) -> str:
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def state_report(out: Path, gate_path: Path) -> int:
+    data = load_state_inputs(gate_path)
+    t = state_totals(data)
+    problems = state_reconcile(data, t)
+    out.write_text(render_state(data, t, problems))
+    print(f"{_rel_to_root(out)}: {t['fixtures']} fixture(s), "
+          f"{t['cells_run']} gate cell(s) — {t['still_reproducing']} still "
+          f"reproducing, {t['now_passing']} no longer reproducing, "
+          f"{t['verdicts'].get('CONTROL-HOLDS', 0)} control(s) holding, "
+          f"{t['unscored'] + t['skipped']} not scored")
+    if t["candidates"]:
+        b, c = t["baseline"]["total"], t["candidates"][0]["total"]
+        print(f"  ztst: zshrs {c.get('pass', 0)}/{c.get('assertions', 0)} "
+              f"against the oracle's {b.get('pass', 0)}/{b.get('assertions', 0)}")
+    if problems:
+        print("gen_compsys_parity_report --state: COUNTS DO NOT RECONCILE:",
+              file=sys.stderr)
+        for x in problems:
+            print("  ! " + x, file=sys.stderr)
+        print("  the page was still written, with a banner, so the discrepancy is "
+              "visible rather than silent.", file=sys.stderr)
+        return 2
+    print("  reconciled: gate summary, fixture set, group table and both ztst runs "
+          "agree with what this page renders")
     return 0
 
 
