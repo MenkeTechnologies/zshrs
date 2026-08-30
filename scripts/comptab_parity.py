@@ -54,7 +54,10 @@ Four verdicts, and the difference between them is the whole point:
               promoted to FAIL. Counted and printed separately, NEVER
               scored as a pass, and still a non-zero exit.
     SKIP      the case cannot run here at all (its command is not installed
-              on this host). Counted and printed, never a pass.
+              on this host, so neither shell can reach a completer and "both
+              rendered nothing" is not evidence of parity). Counted and
+              printed, never a pass. ON by default — `--no-skip-missing`
+              scores those cells the old way, as passes.
 
 TIMEOUT exists because ~80% of the failures in a --jobs 8..10 sweep were the
 debug build missing the harness's per-key budget under load, not a divergence
@@ -2075,11 +2078,13 @@ def main():
     ap.add_argument("--no-timeout-recheck", dest="timeout_recheck",
                     action="store_false")
     ap.add_argument("--skip-missing", action="store_true", default=None,
-                    help="SKIP a case whose command is not installed here (default "
-                         "in --mutate mode, where the corpus travels between hosts; "
-                         "off elsewhere). Skips are counted and printed, never "
-                         "counted as passes.")
-    ap.add_argument("--no-skip-missing", dest="skip_missing", action="store_false")
+                    help="SKIP a case whose command is not installed here. ON by "
+                         "default: without it, such a cell is scored PASS because "
+                         "both shells complete nothing, which is a FAKE pass. "
+                         "Skips are counted and printed, never counted as passes.")
+    ap.add_argument("--no-skip-missing", dest="skip_missing", action="store_false",
+                    help="run those cells anyway, scoring 'both completed nothing' "
+                         "as a PASS. Only for reproducing a pre-flip number.")
     ap.add_argument("--rows", type=int, default=40)
     ap.add_argument("--cols", type=int, default=110)
     ap.add_argument("--settle", type=int, default=300)
@@ -2122,10 +2127,16 @@ def main():
                       else [args.zshrs, "--zsh", "-f", "-i"])
 
     if args.skip_missing is None:
-        # Off by default so an ordinary run's verdicts are exactly what they
-        # always were; on for the fuzz corpus, whose entries were mined on some
-        # host and may name a command this one does not have.
-        args.skip_missing = args.mutate > 0
+        # ON by default. A case that names a command this host does not have
+        # cannot reach a completer on EITHER shell, so both render nothing and
+        # the cell was scored PASS — a pass that says nothing about parity and
+        # that silently inflated every sweep (42 of the 3360 cells in the
+        # default shared-corpus sweep on this host, 6 of the 513 fuzz-corpus
+        # inputs). Flipping it can only ever move a cell from PASS to an
+        # explicitly counted SKIP; it can never turn a FAIL into a pass, and a
+        # SKIP is still a non-zero exit. `--no-skip-missing` reproduces the old
+        # number.
+        args.skip_missing = True
 
     dump = None if args.no_dump else resolve_dump(args.dump)
     fpath_dirs = user_fpath()
