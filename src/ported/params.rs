@@ -9792,7 +9792,21 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 // c:194 path in Src/utils.c. Match the existing
                 // readonly check at params.rs:3951 (assignstrvalue
                 // arm) — same call shape, same behavior.
-                zerr(&format!("read-only variable: {}", pm.node.nam));
+                //
+                // The name is copied and the paramtab guard DROPPED before
+                // reporting. `zerr` is not a leaf: it reaches zwarning ->
+                // zleentry -> zle_main_entry -> trashzle -> zrefresh, and the
+                // refresh reads a parameter (getaparam -> is_nameref), which
+                // takes this same RwLock. std's RwLock is not reentrant, so
+                // reporting under the write guard deadlocked the shell against
+                // itself on one thread — a live interactive session was caught
+                // parked in lock_contended with exactly that 98-frame stack.
+                // Reached whenever a widget publishes a read-only ZLE
+                // parameter (makezleparams -> setiparam -> here), which is why
+                // it presented as "the prompt froze".
+                let nam = pm.node.nam.clone();
+                drop(tab);
+                zerr(&format!("read-only variable: {}", nam));
                 return None;
             }
             // c:3671 `v->pm->node.flags &= ~PM_DEFAULTED;` — PM_DECLARED
