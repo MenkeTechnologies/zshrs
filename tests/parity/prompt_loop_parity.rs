@@ -57,7 +57,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, DRAIN, OPEN};
+use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Hook functions — these DO run, and must keep running
@@ -118,6 +118,34 @@ fn periodic_runs_on_its_period() {
 #[test]
 fn chpwd_runs_on_a_directory_change() {
     assert_same_verdict(&hooks_driver(), "CHPWD", "chpwd ran after cd");
+}
+
+
+/// A background job's output reaches the terminal, and the shell keeps
+/// taking commands while it runs. This is the one piece of job control
+/// this harness can actually observe.
+///
+/// It cannot observe the rest: inside `zpty` the inner shell is not the
+/// FOREGROUND process group of its tty, so tty-generated signals never
+/// reach it — `^Z` suspends nothing on EITHER shell, and `jobs` / `bg` /
+/// `kill %1` probes built on it report "no" on both sides, which is
+/// false agreement rather than parity. Those need a different vehicle
+/// and are deliberately absent instead of present-and-meaningless.
+#[test]
+fn a_background_job_delivers_its_output() {
+    let driver = format!(
+        "{OPEN}
+zpty -w w 'unsetopt beep'
+zpty -w w {}
+sleep 4
+zpty -w w 'print TURN'
+sleep 2
+{DRAIN}
+if [[ $all == *OUTBGJ* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+",
+        sq("{ sleep 1; print OUTBG${:-}J } &")
+    );
+    assert_same_verdict(&driver, "K", "a background job delivered its output");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
