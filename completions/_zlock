@@ -1,0 +1,29 @@
+#compdef zlock
+
+# Acquire / release / try a named cross-shell lock. `zlock acquire
+# NAME [TIMEOUT]` / `zlock release NAME TOKEN` / `zlock try NAME` /
+# `zlock do NAME -- cmd …`. PID-tagged so the daemon GCs stale
+# entries.
+#
+# zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
+# (daemon/builtins.rs); verbs mirror the dispatch in daemon/builtins.rs.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+local -a verbs
+verbs=(
+    try
+    acquire
+    release
+    list
+)
+
+_arguments -C \
+    '1:sub-command:->verb' \
+    '*::arg:->rest' && return 0
+
+case $state in
+    verb) _describe -t commands 'sub-command' verbs && return 0 ;;
+    rest) _default && return 0 ;;
+esac
+
+return 1
