@@ -697,6 +697,45 @@ def exit_note(status):
     return None
 
 
+# Signals the harness itself sends during teardown. A child that ends on one of
+# these says nothing about the shell (see `Session.close`).
+_TEARDOWN_SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGKILL)
+# What a real crash ends on. SIGSEGV/SIGBUS are the memory faults; SIGILL,
+# SIGFPE, SIGABRT and SIGTRAP are the other ways a shell dies of its own bug.
+_CRASH_SIGNALS = (signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGFPE,
+                  signal.SIGABRT, signal.SIGTRAP, signal.SIGSYS)
+
+
+def crash_note(cap):
+    """How this shell DIED, or None if it did not.
+
+    A crashed shell is not a slow shell. Before this existed, a reference zsh
+    that took SIGSEGV produced no output, missed the boot budget, and was
+    labelled "budget exhausted, not a divergence" — factually wrong, and the
+    reason a real upstream zsh crash (`stripkshdef` <- `loadautofn`, faulting
+    on a large `.zwc` digest in `fpath`) sat unnoticed across two rounds of
+    sweeps. The evidence was already in hand on both sides: the child's
+    `waitpid` status, and the crash markers `Session.crashed()` scans the pty
+    text for.
+    """
+    if cap is None:
+        return None
+    st = cap.status
+    if st is not None and os.WIFSIGNALED(st):
+        sig = os.WTERMSIG(st)
+        if sig in _CRASH_SIGNALS:
+            try:
+                name = signal.Signals(sig).name
+            except ValueError:
+                name = "?"
+            return "died on signal %d (%s)" % (sig, name)
+        if sig not in _TEARDOWN_SIGNALS:
+            return "died on signal %d" % sig
+    if cap.crash:
+        return "crash marker(s) on the terminal: %s" % ", ".join(cap.crash)
+    return None
+
+
 # ── one shell's capture for one case ─────────────────────────────────────────
 
 def _secs(v):
@@ -834,6 +873,10 @@ class Verdict:
         # run at all (SKIP). Both stay empty on a real PASS or FAIL.
         self.timeouts = []
         self.skip_reason = None
+        # Which side died, and how. Set only on REF-CRASHED / TEST-CRASHED,
+        # which — exactly like TIMEOUT — is neither a pass nor a divergence: a
+        # shell that crashed produced no comparison to judge.
+        self.crashes = []
         self.recheck = None       # verdict of the serial TIMEOUT re-run
         # The zstyle statements this cell ran under, when it came from the fuzz
         # corpus rather than the fixture as a whole. Needed to write a
@@ -1081,6 +1124,7 @@ def to_json(v):
         "fingerprint": v.fingerprint,
         "fingerprint_label": fp_label(v) if v.fingerprint else None,
         "timeouts": list(v.timeouts),
+        "crashes": [{"side": side, "note": note} for side, note in v.crashes],
         "timeout_recheck": v.recheck,
         "skip_reason": v.skip_reason,
         "statements": list(v.statements) if v.statements is not None else None,
@@ -1189,6 +1233,20 @@ def run_case(args, env, init_file, case, seq_name, keys):
 
     status, detail, diffs = judge(ref, test)
     v = Verdict(case, seq_name, keys, status, detail, ref, test, diffs)
+
+    # A crash outranks a budget label: a dead shell exhausts every budget it
+    # was given, so checking TIMEOUT first would keep mislabelling it. It also
+    # outranks FAIL — the two screens were never both produced, so the row diff
+    # describes one shell's output against a blank, not a divergence.
+    ref_crash, test_crash = crash_note(ref), crash_note(test)
+    if ref_crash or test_crash:
+        v.status = "REF-CRASHED" if ref_crash else "TEST-CRASHED"
+        v.crashes = [("zsh", ref_crash)] if ref_crash else []
+        if test_crash:
+            v.crashes.append(("zshrs", test_crash))
+        v.detail = "; ".join("%s %s" % (side, note) for side, note in v.crashes)
+        v.duration = time.monotonic() - t0
+        return v
 
     if v.status != "PASS":
         v.timeouts = timeout_reasons(ref, test)
@@ -1328,6 +1386,49 @@ def cell_stream(args, env, cells, on_done=None):
     else:
         for cell in cells:
             yield work(cell)
+
+
+# Categories that are NOT a pass and NOT a divergence. Each is counted, printed
+# and keeps the exit status non-zero; none is ever folded into PASS.
+CRASH_STATUSES = ("REF-CRASHED", "TEST-CRASHED")
+
+
+def print_crash_counts(counts):
+    """The lines a summary adds when a shell died. Silent when none did, so no
+    existing output changes on a run with no crashes."""
+    if counts.get("REF-CRASHED"):
+        print("# %d cell(s) where the REFERENCE zsh CRASHED — an upstream zsh "
+              "bug, not a zshrs divergence, and not a measurement failure "
+              "either. No comparison happened; never scored as a pass."
+              % counts["REF-CRASHED"])
+    if counts.get("TEST-CRASHED"):
+        print("# %d cell(s) where ZSHRS CRASHED. Not fingerprinted as a "
+              "divergence (there was no second screen to diverge from), but it "
+              "is a zshrs bug and the repro is printed above."
+              % counts["TEST-CRASHED"])
+
+
+def crashed(counts):
+    return sum(counts.get(k, 0) for k in CRASH_STATUSES)
+
+
+def print_crash(v, args):
+    """A crashed shell is not a bug report about parity — it is a bug report
+    about that shell, so it gets what is needed to chase it there."""
+    print("  --- a shell CRASHED (no verdict on parity) ---")
+    for side, note in v.crashes:
+        print("  ! %s %s" % (side, note))
+    if any(side == "zsh" for side, _n in v.crashes):
+        print("  ! the REFERENCE shell died. This is an upstream zsh bug, not a "
+              "zshrs divergence; the comparison never happened.")
+    print("  ! the OS may have written a report: "
+          "~/Library/Logs/DiagnosticReports/ (macOS), coredumpctl (systemd)")
+    for side, cap in (("zsh", v.ref), ("zshrs", v.test)):
+        if cap is not None and cap.reason:
+            print("  ! %s also reported: %s" % (side, cap.reason))
+    print("  --- repro ---")
+    print("  %s" % repro_cmd(args, v.case.buffer, v.keys,
+                             zstyle=v.zstyle_file))
 
 
 def print_timeout(v, args):
@@ -1731,16 +1832,29 @@ def corpus_weight(inp):
         return 12
     if inp.origin.startswith("divergent-cases"):
         return 6
+    # An entry the coverage-guided run kept because it reached a screen shape
+    # or an engine path nothing in the corpus had reached before. It has no
+    # fingerprint (it did not fail), but it is evidence of new territory, so it
+    # outranks a seed that has only ever produced what everything else does.
+    if inp.origin.startswith("cov/"):
+        return 3
     return 1
 
 
-def mutate_input(inp, rng, pool):
-    """One or two small edits applied to a corpus entry."""
+def mutate_input(inp, rng, pool, mut_weights=None):
+    """One or two small edits applied to a corpus entry.
+
+    `mut_weights` is the coverage-guided schedule's only reach into mutation:
+    a per-mutator weight vector, in `MUTATORS(pool)` order, so a mutation kind
+    that has been buying features gets drawn more often. `None` (every caller
+    that existed before guidance) keeps the uniform draw exactly as it was.
+    """
     buf, keys, stmts = inp.buffer, list(inp.keys), list(inp.statements)
     muts = MUTATORS(pool)
     applied = []
     for _ in range(rng.choice((1, 1, 2))):
-        m = rng.choice(muts)
+        m = (rng.choices(muts, mut_weights)[0] if mut_weights
+             else rng.choice(muts))
         buf, keys, stmts = m(buf, keys, stmts, rng)
         applied.append(m.__name__.replace("_mut_", ""))
     keys = [k for k in keys if _key_ok(k)] or ["tab"]
@@ -1901,6 +2015,8 @@ def run_mutate(args, env, dump, fpath_dirs):
             print_failure(v, args)
         elif v.status == "TIMEOUT":
             print_timeout(v, args)
+        elif v.status in ("REF-CRASHED", "TEST-CRASHED"):
+            print_crash(v, args)
         sys.stdout.flush()
 
     print()
@@ -1941,9 +2057,12 @@ def run_mutate(args, env, dump, fpath_dirs):
     total = len(inputs)
     print("\n# %d passed, %d failed, %d cell(s)"
           % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], total))
-    print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d"
+    print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
+          "REF-CRASHED=%d TEST-CRASHED=%d"
           % (counts["PASS"], counts["FAIL"], counts["FLAKY"],
-             counts["TIMEOUT"], counts["SKIP"]))
+             counts["TIMEOUT"], counts["SKIP"],
+             counts.get("REF-CRASHED", 0), counts.get("TEST-CRASHED", 0)))
+    print_crash_counts(counts)
     if counts["TIMEOUT"]:
         print("# %d cell(s) ran out of MEASUREMENT budget — not divergences, not "
               "passes; re-run them at --jobs 1" % counts["TIMEOUT"])
@@ -1971,7 +2090,8 @@ def run_mutate(args, env, dump, fpath_dirs):
             "fingerprints": fingerprint_doc(groups),
             "results": [to_json(v) for v in results],
         })
-    return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]) else 0
+    return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]
+                 or crashed(counts)) else 0
 
 
 # ── generated zstyle VALUES (--style-fuzz) ───────────────────────────────────
@@ -2722,6 +2842,8 @@ def run_style_fuzz(args, env, dump, fpath_dirs):
             print_failure(v, args)
         elif v.status == "TIMEOUT":
             print_timeout(v, args)
+        elif v.status in ("REF-CRASHED", "TEST-CRASHED"):
+            print_crash(v, args)
         sys.stdout.flush()
 
     print()
@@ -2770,9 +2892,11 @@ def run_style_fuzz(args, env, dump, fpath_dirs):
     print("\n# %d passed, %d failed, %d config(s)"
           % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], total))
     print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
-          "INVALID-CONFIG=%d REF-REFUSED=%d"
+          "INVALID-CONFIG=%d REF-REFUSED=%d REF-CRASHED=%d TEST-CRASHED=%d"
           % (counts["PASS"], counts["FAIL"], counts["FLAKY"], counts["TIMEOUT"],
-             counts["SKIP"], len(invalid), len(refused)))
+             counts["SKIP"], len(invalid), len(refused),
+             counts.get("REF-CRASHED", 0), counts.get("TEST-CRASHED", 0)))
+    print_crash_counts(counts)
     if invalid:
         print("# %d config(s) INVALID: zsh's own `zstyle` refused the statement, "
               "so the cell was never run. This is a bug in the GENERATOR, not "
@@ -2818,7 +2942,7 @@ def run_style_fuzz(args, env, dump, fpath_dirs):
             "results": [to_json(v) for v in results],
         })
     return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]
-                 or invalid or refused) else 0
+                 or invalid or refused or crashed(counts)) else 0
 
 
 def run_style_fuzz_list(args):
@@ -2877,6 +3001,857 @@ def write_json(args, doc):
         with open(args.json, "w") as f:
             f.write(text + "\n")
         print("# json: %s" % args.json)
+
+
+# ── feedback: what did this cell TEACH the fuzzer? ───────────────────────────
+#
+# Everything above this line is BLIND. `--mutate` draws a weighted parent and
+# re-rolls the mutator dice; `--style-fuzz` re-rolls the generator's dice. Both
+# spend one pty pair (~5-19s) per input and keep an input only if it FAILED.
+# An input that passed is thrown away even when it was the first input in the
+# corpus's history to reach `_approximate`, render a described listing, or draw
+# a menu — so the fuzzer cannot become better at reaching new code than it was
+# on its first run, and a thousand inputs that all drive `_complete` -> `_files`
+# cost a thousand pty boots and buy one bit.
+#
+# A coverage-guided fuzzer fixes this by keeping an input that produced a NEW
+# EDGE, failure or not. That needs an execution signal. What zshrs actually
+# exposes, measured (see `SIGNAL` below), is two of them:
+#
+#   1. OUTPUT SHAPE — free, always available, and symmetric: it is computed
+#      from the two `Capture`s the harness already takes, so it costs nothing,
+#      cannot perturb the run, works at any `--jobs`, and describes the
+#      REFERENCE shell as well as zshrs. It is a proxy for the code path, not
+#      the code path: two inputs with the same shape may still have taken
+#      different routes to it. It is the default.
+#
+#   2. ENGINE TRACE — real execution feedback, opt-in (`--cov-log`), serial
+#      only. zshrs's `compsys_args` tracing target names the completer that
+#      resolved, the tag context, the `_arguments` gate outcome, the
+#      `addmatches` candidate loop and the `do_completion` branch taken. That
+#      IS the code path. Its cost is the constraint, not the CPU: see below.
+#
+# ─ SIGNAL: what settled the choice ───────────────────────────────────────────
+#
+# `src/extensions/log.rs:53-67` — the log directory is `$ZSHRS_HOME`, else
+# `$HOME/.zshrs`, and the file is unconditionally `zshrs.log`. There is no
+# separate path knob: the ONLY way to redirect the log is `ZSHRS_HOME`, which
+# also relocates `compsys.db` (194 MB here), `autoloads.rkyv`, `plugins.db`,
+# `zshrs.toml` and the history db. A child pointed at a scratch `ZSHRS_HOME` is
+# a cold, unconfigured shell — a DIFFERENT shell from the one under test — so
+# redirecting the log to isolate it would silently change what is being
+# compared. Rejected on that ground alone.
+#
+# `src/extensions/log.rs:163` — the level comes from `$ZSHRS_LOG` (NOT
+# `RUST_LOG`: `strings target/debug/zshrs | grep -c RUST_LOG` == 0), defaulting
+# to `info`. `child_env` already forwards it, so no new plumbing is needed.
+#
+# Measured, `ZSHRS_LOG=debug` on `--case 'git ' --keys tab`: 70 lines, 10773
+# bytes, of which 22 carry the `compsys_args` target and name the path taken.
+# `compsys_args` is a dedicated target (39 `tracing::debug!` sites), so
+# `ZSHRS_LOG=compsys_args=debug` narrows the same 8306 bytes to nothing BUT the
+# completion trace —
+#
+#     compsys_args: zlecore widget resolution name=expand-or-complete variant="Comp"
+#     compsys_args: get_comp_string result s=Some("") wb=4 we=4 lincmd=0 inwhat=0
+#     compsys_args: _dispatch resolution argv=[...] comp=_git name=git last_arg=-default-
+#     compsys_args: _tags default sort done order=["common-commands"] ... ctx=:completion::complete:git:argument-1:
+#     compsys_args: _arguments options gate requested_options=0 hasopts=false matched=false aret=true
+#     compsys_args: addmatches candidate-loop done added=23 mnum=23 doadd=true
+#     compsys_args: makecomplist RETURN nm=23 nmsg=0 errset=false
+#     compsys_args: do_completion branch point nm=23 dm=1 useline=1 uselist=3 iforcemenu=0
+#
+# `ZSHRS_LOG` is also the gate for `ftime` (src/extensions/ftime.rs:21 — a
+# SUBSTRING test on the same variable, so `compsys_args=debug,ftime` turns on
+# both). `ftime` instruments `dispatch_function_call` (src/ported/exec.rs:8573)
+# and a Drop guard in `docomplete` (src/ported/zle/zle_tricky.rs:733-739) dumps
+# the per-function inclusive times to /tmp/ftime.log once per completion —
+#
+#      total_ms   calls  name (inclusive)
+#       336.063       1  _normal
+#       325.332       1  _dispatch
+#         8.683       1  _set_command
+#         2.773       5  _tags
+#         2.328       2  _next_label
+#
+# The NAMES are the point: that is the set of compsys shell functions this
+# completion actually entered, which is function-level edge coverage and the
+# single most direct signal available. The file is rewritten (not appended) per
+# completion, so it needs no slicing at all — only the same `--jobs 1`, since
+# the path is hardcoded.
+#
+# Cost is NOT the objection — three runs each, same cell: 4.74 / 4.72 / 4.73 s
+# without, 4.61 / 4.73 / 4.77 s with. 70 log writes are nothing against a 4.7 s
+# pty boot, so turning it on does not push a cell towards the TIMEOUT budget.
+#
+# ATTRIBUTION is the objection. The log is one shared append-only file (461 MB
+# on this host) and only the single `zshrs starting ... pid=N` line carries a
+# pid — every other line is `TS LEVEL <thread> <target>: ...` with the thread
+# named `main` in every process. So lines cannot be attributed to a process
+# after the fact. Slicing by byte offset around a cell is exact only while this
+# harness is the sole writer: with `--jobs > 1` this harness's OWN children
+# interleave, and on a busy host a peer zshrs would too (measured ambient
+# growth here: 0 bytes / 8 s, but that is a reading, not a guarantee).
+#
+# Hence: `--cov-log` is opt-in, forces `--jobs 1`, and every slice is reported
+# with the number of shell boots it contains so contamination is visible rather
+# than silently folded into the coverage set. Shape coverage carries the run
+# when it is off.
+#
+# Everything else the binary exposes was checked and is not a per-completion
+# signal: `--doctor` is a one-shot environment report (and refuses under
+# `--zsh`), `zprof`/`--features profiling|flamegraph|prometheus` are compile-time
+# (`zshrs --doctor` prints "disabled (build with --features ...)"), and the three
+# env-gated diagnostics that DO take a path — `ZSHRS_COMPLIST_LOG`
+# (src/ported/zle/complist.rs:3704, compresult.rs:3977), `ZSHRS_CAPDBG`
+# (src/compsys/in_editor.rs:223), `ZSHRS_CSDBG` -> hardcoded /tmp/cs.log
+# (src/compsys/ported/Base/Utility/_call_program.rs:167) — are three narrow
+# probes, not coverage. The first two are folded in when `--cov-log` is on,
+# since they cost nothing extra and DO get a per-cell path.
+#
+# ─ THE RULE THIS CODE MUST NOT BREAK ─────────────────────────────────────────
+#
+# Guidance decides WHICH inputs are run. It must never touch how a run input is
+# JUDGED. Nothing below reads or writes `Verdict.status`, `fingerprint`,
+# `timeouts` or `skip_reason`; `run_cell` is called unmodified, promotion of a
+# new failure fingerprint is the same code `--mutate` uses, and TIMEOUT / SKIP
+# / INVALID-CONFIG keep every property they had. A guided run and a blind run
+# reach identical verdicts on identical inputs — `--guide-off` runs the same
+# loop with the feedback disabled precisely so that can be measured.
+
+# Coarse, monotone buckets. Exact counts would make almost every cell unique,
+# which is indistinguishable from having no signal: the set of seen features
+# would grow linearly with the number of cells and "new feature" would stop
+# meaning anything. Buckets make "the listing got materially bigger" the
+# observation instead of "the listing has 24 rows rather than 23".
+_SHAPE_BUCKETS = (0, 1, 2, 3, 5, 8, 13, 21, 34, 55)
+
+# A row carrying an interior run of 2+ spaces between two non-blanks is a
+# COLUMNED row — a described completion listing (`_describe`, `verbose`), or a
+# multi-column match list. Distinguishing that from a plain listing is most of
+# what "did the display shape change" means for compsys.
+_SHAPE_COLGAP_RE = re.compile(r"\S {2,}(?=\S)")
+
+
+def _bucket(n):
+    for b in _SHAPE_BUCKETS:
+        if n <= b:
+            return str(b)
+    return "%d+" % _SHAPE_BUCKETS[-1]
+
+
+def side_shape(side, cap):
+    """The SHAPE of one shell's rendered result, as a set of feature strings.
+
+    Deliberately about the display's structure, never its correctness: a
+    feature fires the same way whether the shell was right or wrong. That is
+    what keeps guidance and judging separate.
+    """
+    if cap is None:
+        return {"%s/absent" % side}
+    out = set()
+    if cap.reason:
+        out.add("%s/reason/%s" % (side, fp_normalize(cap.reason)[:60]))
+    for m in cap.diags:
+        out.add("%s/diag/%s" % (side, fp_normalize(m)[:60]))
+    if cap.grid is None:
+        out.add("%s/nogrid" % side)
+        return out
+
+    rows = [r.rstrip() for r in cap.grid]
+    filled = [r for r in rows if r.strip()]
+    out.add("%s/rows/%s" % (side, _bucket(len(filled))))
+
+    # More than one prompt on screen means the shell redrew one — the
+    # duplicate-prompt and trailing-prompt families of bug live here.
+    out.add("%s/prompts/%s" % (side, _bucket(sum(r.count(SENTINEL) for r in rows))))
+
+    # Anything drawn below the command line that is not itself a prompt.
+    listing = [r for r in filled[1:] if SENTINEL not in r]
+    out.add("%s/list/%s" % (side, _bucket(len(listing))))
+    gaps = max((len(_SHAPE_COLGAP_RE.findall(r)) for r in listing), default=0)
+    out.add("%s/desc/%s" % (side, "yes" if gaps else "no"))
+    if gaps:
+        out.add("%s/cols/%s" % (side, _bucket(gaps + 1)))
+
+    # What the completion did to the line itself — the effect, as opposed to
+    # the display. `lineclass` is the masked text, so `ls foo` and `ls bar`
+    # collapse but `ls -` and `ls foo` do not.
+    line0 = rows[0] if rows else ""
+    if SENTINEL in line0:
+        typed = line0.split(SENTINEL, 1)[1].strip()
+        out.add("%s/line/%s" % (side, _bucket(len(typed))))
+        out.add("%s/lineclass/%s" % (side, fp_normalize(typed)[:40]))
+
+    if cap.cursor:
+        out.add("%s/cur/row%s" % (side, _bucket(cap.cursor[0])))
+        out.add("%s/cur/col%s" % (side, _bucket(cap.cursor[1] // 8)))
+
+    # Distinct SGR signatures on screen: a menu selection highlight, a
+    # `list-colors` run and a plain listing are three different numbers here
+    # and identical as text.
+    if cap.attrs:
+        sigs = {c for row in cap.attrs for c in row}
+        out.add("%s/attrs/%s" % (side, _bucket(len(sigs))))
+    return out
+
+
+def shape_features(v):
+    """The shape of a whole cell: both sides, plus how they related.
+
+    `status/` is included because reaching a TIMEOUT or a SKIP for the first
+    time on a given class of input IS new information about where the budget
+    goes — but it is a feature, not a verdict, and nothing here feeds back into
+    what the cell was scored.
+    """
+    out = {"status/%s" % v.status}
+    out |= side_shape("zsh", v.ref)
+    out |= side_shape("zshrs", v.test)
+    out.add("diff/rows/%s" % _bucket(len(v.diffs)))
+    if v.diffs:
+        row, a, b = v.diffs[0]
+        out.add("diff/first/%s/col%d" % (fp_row_class(row), first_diff_cell(a, b) // 10))
+    if v.attr_rows:
+        out.add("diff/attrs/%s" % _bucket(len(v.attr_rows)))
+    if v.cursor_differs:
+        out.add("diff/cursor")
+    return out
+
+
+# ── engine trace features (--cov-log) ────────────────────────────────────────
+
+# `TS LEVEL <span> <span> ... <target>: <message> <field>=<value> ...`
+_ENG_LINE_RE = re.compile(r"^\S+Z\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+(.*)$")
+# The head of a message is everything before the first `ident=` field, which is
+# where the per-case detail starts.
+_ENG_HEAD_RE = re.compile(r"^(.*?)(?:\s+[a-z_][a-z0-9_]*=|$)")
+# Fields whose VALUE names a code path rather than a datum. A completer name, a
+# tag context or a widget variant is an edge; `nm=23` is not.
+_ENG_PATH_FIELDS = ("comp", "ctx", "context", "variant", "fn_name", "func_name",
+                    "widget", "group", "exp", "linwhat", "inwhat", "branch")
+_ENG_FIELD_RE = re.compile(
+    r"\b(%s)=(\"[^\"]*\"|\S+)" % "|".join(_ENG_PATH_FIELDS))
+# Only targets that say something about the completion engine. `zsh::lowfd`
+# registering a descriptor is noise that fires identically on every cell.
+_ENG_TARGETS = ("compsys_args", "zsh::compsys", "zshrs::compsys",
+                "zsh::ext_builtins", "zsh::plugin_cache")
+
+
+def engine_features(text):
+    """Features from one cell's slice of zshrs's own tracing log."""
+    out = set()
+    for line in text.splitlines():
+        m = _ENG_LINE_RE.match(line)
+        if not m:
+            continue
+        body = m.group(1)
+        # Keep the LAST target on the line: `DEBUG main execute_script:
+        # compsys_args: ...` is a span then a target, and the target is the one
+        # that names the subsystem.
+        best = None
+        for t in _ENG_TARGETS:
+            i = body.rfind(t + ": ")
+            if i >= 0 and (best is None or i > best[0]):
+                best = (i, t)
+        if best is None:
+            continue
+        msg = body[best[0] + len(best[1]) + 2:]
+        head = _ENG_HEAD_RE.match(msg).group(1)
+        out.add("eng/%s/%s" % (best[1], fp_normalize(head)[:80]))
+        for name, val in _ENG_FIELD_RE.findall(msg):
+            out.add("eng/f/%s=%s" % (name, fp_normalize(val.strip('"'))[:60]))
+    # The two env-gated per-path probes, folded in for free when they are on.
+    return out
+
+
+# src/extensions/ftime.rs:70 — hardcoded, rewritten per completion.
+FTIME_PATH = "/tmp/ftime.log"
+_FTIME_ROW_RE = re.compile(r"^\s*[\d.]+\s+(\d+)\s+(\S+)")
+
+
+def ftime_features(text):
+    """Which compsys shell functions this completion entered, and how hard.
+
+    The closest thing to real edge coverage this binary offers without a custom
+    build: one row per function that `dispatch_function_call` saw. The call
+    COUNT is bucketed in as well — `_tags` called once and `_tags` called five
+    times are different traversals of `_arguments`.
+    """
+    out = set()
+    for line in text.splitlines():
+        m = _FTIME_ROW_RE.match(line)
+        if m:
+            out.add("fn/%s" % m.group(2))
+            out.add("fn/%s/x%s" % (m.group(2), _bucket(int(m.group(1)))))
+    return out
+
+
+def probe_features(text, kind):
+    """Features from `ZSHRS_COMPLIST_LOG` / `ZSHRS_CAPDBG`, which take a PATH
+    and so are already per-cell — no slicing, no attribution problem."""
+    out = set()
+    for line in text.splitlines():
+        out.add("%s/%s" % (kind, fp_normalize(line)[:80]))
+    return out
+
+
+def log_path_for(env):
+    """Where the child under `env` will write `zshrs.log`.
+
+    src/extensions/log.rs:53-67 — `$ZSHRS_HOME` else `$HOME/.zshrs`, then
+    `zshrs.log`. Mirrored rather than assumed, because the harness builds the
+    child env from scratch and pins HOME itself.
+    """
+    home = env.get("ZSHRS_HOME") or os.path.join(
+        env.get("HOME", os.path.expanduser("~")), ".zshrs")
+    return os.path.join(home, "zshrs.log")
+
+
+def _read_slice(path, start, end):
+    try:
+        with open(path, "rb") as f:
+            f.seek(start)
+            return f.read(max(0, end - start)).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _drain(path):
+    """Read and remove a per-cell probe file."""
+    try:
+        with open(path, "r", errors="replace") as f:
+            text = f.read()
+        os.unlink(path)
+        return text
+    except OSError:
+        return ""
+
+
+# ── input classes, and the yield each one has actually earned ────────────────
+#
+# Task: spend pty boots where they pay. To do that at all, an input has to be
+# CLASSIFIABLE — the fuzzer has to be able to say "inputs like this one" — and
+# the classes have to be the axes the generator can actually steer. Four:
+#
+#   style:<name>  the zstyle surface a config exercises (matcher-list,
+#                 completer, tag-order, ...). This is the axis the round-2
+#                 value generator opened up.
+#   case:<class>  what the buffer is completing (a command word, an option, a
+#                 path, a parameter, a subcommand) — derived from the buffer so
+#                 it works for a mutated ad-hoc case, which carries no tags.
+#   keys:<sig>    the key path through ZLE (one tab, two tabs, tab then menu
+#                 navigation, a filter letter, ...).
+#   mut:<kind>    the mutation that produced the input.
+#
+# The table below is deliberately a RATE, not a count: a class that finds two
+# features in 90 s is worse than one that finds one in 5 s, and the whole point
+# is to allocate seconds. Both numerator and denominator get a prior, so an
+# untried class scores like a mediocre one rather than like a dead one — that
+# plus the explore floor is what stops a class being starved permanently on the
+# strength of one unlucky sample.
+
+_STYLE_NAME_RE = re.compile(r"^\s*zstyle\s+(?:-\S+\s+)*(?:'[^']*'|\"[^\"]*\"|\S+)\s+(\S+)")
+
+
+def statement_styles(stmts):
+    out = set()
+    for s in stmts or ():
+        m = _STYLE_NAME_RE.match(s)
+        if m:
+            out.add(m.group(1).strip("'\""))
+    return out
+
+
+def buffer_class(buf):
+    """What the trailing word of a buffer is asking the completion system for.
+
+    Mirrors the shared corpus's tag vocabulary (cmd / opt / path / param / sub)
+    without needing the case object, because a mutated buffer is an ad-hoc case
+    with no tags at all.
+    """
+    tail = buf.split()[-1] if buf.split() else ""
+    trailing_space = buf != buf.rstrip()
+    if not buf.strip():
+        return "empty"
+    if trailing_space:
+        tail = ""
+    if tail.startswith("$"):
+        return "param"
+    if tail.startswith("-"):
+        return "opt"
+    if "/" in tail or tail.startswith("~"):
+        return "path"
+    if "=" in tail:
+        return "assign"
+    if len(buf.split()) <= 1 and not trailing_space:
+        return "cmd"
+    return "sub"
+
+
+_MUT_ORIGIN_RE = re.compile(r"^mutate\(([^)]*)\)")
+
+
+def input_classes(inp):
+    """The classes one input belongs to. An input belongs to several — it has a
+    buffer AND a key path AND a style set — and the schedule scores it on all
+    of them, so a productive style can lift a mediocre buffer and vice versa."""
+    out = ["case:%s" % buffer_class(inp.buffer),
+           "keys:%s" % ",".join(inp.keys[:4])]
+    m = _MUT_ORIGIN_RE.match(inp.origin or "")
+    for kind in (m.group(1).split("+") if m else ["seed"]):
+        out.append("mut:%s" % kind)
+    for s in sorted(statement_styles(inp.statements))[:4]:
+        out.append("style:%s" % s)
+    if not inp.statements:
+        out.append("style:<none>")
+    return out
+
+
+class YieldTable:
+    """Per-class reward rate, and the sampling weight that follows from it."""
+
+    # A new fingerprint is the thing the fuzzer exists to find; a new feature is
+    # progress towards one. Weighted 4:1 so a class that finds bugs outranks a
+    # class that merely finds novel screens.
+    FP_WEIGHT = 4.0
+
+    def __init__(self, prior_reward=1.0, prior_secs=8.0):
+        self.prior_reward = prior_reward
+        self.prior_secs = prior_secs
+        self.cells = {}
+        self.secs = {}
+        self.feats = {}
+        self.fps = {}
+
+    def observe(self, classes, secs, new_feats, new_fps):
+        for c in classes:
+            self.cells[c] = self.cells.get(c, 0) + 1
+            self.secs[c] = self.secs.get(c, 0.0) + secs
+            self.feats[c] = self.feats.get(c, 0) + new_feats
+            self.fps[c] = self.fps.get(c, 0) + new_fps
+
+    def score(self, cls):
+        reward = self.feats.get(cls, 0) + self.FP_WEIGHT * self.fps.get(cls, 0)
+        return ((reward + self.prior_reward)
+                / (self.secs.get(cls, 0.0) + self.prior_secs))
+
+    def weight(self, classes):
+        """One input's sampling weight: the MEAN of its classes' rates.
+
+        Mean, not product: a product would let one cold class veto an input
+        that is otherwise in the hottest region of the corpus, and would make
+        the weight depend on how many classes an input happens to have.
+        """
+        if not classes:
+            return self.score("<none>")
+        return sum(self.score(c) for c in classes) / len(classes)
+
+    def rows(self):
+        out = []
+        for c in sorted(set(self.cells)):
+            out.append((c, self.cells[c], self.secs[c], self.feats[c],
+                        self.fps[c], self.score(c)))
+        # Hottest first — the head of this table is the finding.
+        out.sort(key=lambda r: (-r[5], r[0]))
+        return out
+
+
+def print_yield_table(table, limit=28):
+    rows = table.rows()
+    if not rows:
+        return
+    print("# per-class yield — where the budget went and what it bought")
+    print("#   %-28s %5s %8s %6s %5s %9s"
+          % ("class", "cells", "secs", "feats", "fps", "rate/s"))
+    for c, cells, secs, feats, fps, score in rows[:limit]:
+        print("#   %-28s %5d %8.1f %6d %5d %9.4f"
+              % (c[:28], cells, secs, feats, fps, score))
+    if len(rows) > limit:
+        print("#   ... %d more class(es)" % (len(rows) - limit))
+    dead = [c for c, _n, _s, f, p, _sc in rows if f == 0 and p == 0]
+    if dead:
+        print("# %d class(es) bought nothing this run: %s"
+              % (len(dead), ", ".join(dead[:8]) + (" ..." if len(dead) > 8 else "")))
+
+
+# ── the guided loop ──────────────────────────────────────────────────────────
+
+def _cov_note(feats, n_new):
+    return "coverage: %d feature(s), %d new" % (len(feats), n_new)
+
+
+def run_guided(args, env, dump, fpath_dirs):
+    """Coverage-guided fuzzing over the persistent corpus.
+
+    The difference from `--mutate` is one sentence: an input is RETAINED when
+    it produced information, not only when it failed. Everything about how a
+    cell is judged is `--mutate`'s code, unchanged and untouched.
+
+    The loop, per step:
+      1. choose a parent — uniformly with probability `--explore-floor`, else
+         weighted by `corpus_weight` x the parent's classes' observed yield;
+      2. mutate it, choosing the mutator the same way;
+      3. run the cell through the ordinary `run_cell`;
+      4. extract features (shape always; engine trace under `--cov-log`);
+      5. retain the input in the corpus if it carried a feature never seen
+         before in this run, and promote+shrink it if it carried a failure
+         fingerprint the corpus has never recorded — the existing rule;
+      6. credit the observation to every class the input belonged to.
+    """
+    pool = read_statements(args.zstyle) if args.zstyle else []
+    outdir = os.path.join(REPO, "target", "parity-guided-%d" % args.seed)
+    os.makedirs(outdir, exist_ok=True)
+
+    corpus = corpus_load(args.corpus_dir)
+    if not corpus:
+        _, written = corpus_seed(args, pool)
+        print("# corpus was empty — seeded %d input(s) into %s"
+              % (written, args.corpus_dir))
+        corpus = corpus_load(args.corpus_dir)
+    if not corpus:
+        sys.exit("fuzz corpus is empty and could not be seeded: %s" % args.corpus_dir)
+
+    if args.corpus_origin:
+        picked = [i for i in corpus if args.corpus_origin in i.origin]
+        if not picked:
+            sys.exit("--corpus-origin %r matches none of the %d corpus input(s)"
+                     % (args.corpus_origin, len(corpus)))
+    else:
+        picked = list(corpus)
+
+    known_fps = {i.fingerprint for i in corpus if i.fingerprint}
+    guided = not args.guide_off
+    rng = random.Random((args.seed << 24) ^ (args.guided * 7919))
+
+    # Engine coverage needs the log slice attributed to one child, which is
+    # only sound while this harness is the log's sole writer.
+    logpath = None
+    # The env a PLAIN run uses. `--cov-log` has to put `ZSHRS_LOG` (and the two
+    # probe paths) into the child environment, and a completion that enumerates
+    # the environment — `tee >(<TAB><TAB>` reaches the parameter listing — then
+    # renders those variables as MATCHES. Both shells get the identical dict so
+    # a PASS is still a valid PASS, but a reproducer minted under instrumented
+    # env would carry `ZSHRS_LOG -- compsys_args=debug,ftime` in its own
+    # fingerprint and would NOT reproduce from the `replay:` command printed
+    # next to it. Measured: one such fingerprint was manufactured on `tee >(`
+    # before this was added. So promotion re-measures on THIS env, and only a
+    # divergence that survives without the instrumentation is written to the
+    # corpus.
+    base_env = env
+    if args.cov_log:
+        env = dict(env)
+        # The narrow target filter, not `debug`: 8306 bytes of pure completion
+        # trace instead of 10773 bytes of mostly `zsh::lowfd` noise, and
+        # `ftime` rides on the same variable.
+        env.setdefault("ZSHRS_LOG", "compsys_args=debug,ftime")
+        logpath = log_path_for(env)
+        print("# --cov-log: reading zshrs's own trace from %s (ZSHRS_LOG=%s)"
+              % (logpath, env["ZSHRS_LOG"]))
+        print("#            + per-function coverage from %s" % FTIME_PATH)
+        _drain(FTIME_PATH)          # a stale dump is not this run's coverage
+
+    table = YieldTable()
+    seen = set()
+    mutators = MUTATORS(pool)
+    # The loop is sequential by construction: the whole point is that cell N+1
+    # is chosen with cell N's result in hand, so there is nothing for --jobs to
+    # parallelise. One gate for the whole run, as `cell_stream` would build.
+    gate = SerialGate()
+
+    print("# coverage-guided fuzz%s" % ("" if guided else "  [--guide-off: BLIND control run]"))
+    print("# corpus : %s (%d input(s), %d known fingerprint(s))"
+          % (args.corpus_dir, len(corpus), len(known_fps)))
+    print("# parents: %d drawn from%s" % (len(picked),
+          "" if not args.corpus_origin else "  --corpus-origin %r" % args.corpus_origin))
+    print("# cells  : %d   seed=%d   explore-floor=%.2f   fixture=%s (%d statement(s))"
+          % (args.guided, args.seed, args.explore_floor,
+             args.zstyle or "<none>", len(pool)))
+    print("# signal : shape%s"
+          % ("  +  engine trace (compsys_args) + ftime function coverage"
+             if args.cov_log else ""))
+    print("# mode   : %s (%s)" % (args.mode, " ".join(args.test_argv)))
+    print("# jobs   : 1 (a feedback loop is sequential by construction)   "
+          "shrink=%s probes<=%d" % (args.shrink, args.shrink_probes))
+    print("# outdir : %s" % outdir)
+    print()
+
+    counts = {"PASS": 0, "FAIL": 0, "FLAKY": 0, "TIMEOUT": 0, "SKIP": 0}
+    failures, results = [], []
+    retained, promoted, artifacts, tried = 0, 0, 0, set()
+    curve = []                      # (cell index, cumulative distinct features)
+    contaminated = 0
+
+    def pick_parent():
+        if not guided or rng.random() < args.explore_floor:
+            return rng.choice(picked), "explore"
+        w = [corpus_weight(i) * table.weight(input_classes(i)) for i in picked]
+        if not any(w):
+            return rng.choice(picked), "explore"
+        return rng.choices(picked, w)[0], "exploit"
+
+    def pick_mutator():
+        if not guided or rng.random() < args.explore_floor:
+            return None             # mutate_input picks uniformly, as always
+        w = [table.score("mut:%s" % m.__name__.replace("_mut_", ""))
+             for m in mutators]
+        return w if any(w) else None
+
+    for n in range(args.guided):
+        parent, how = pick_parent()
+        inp = None
+        for _ in range(40):
+            cand = mutate_input(parent, rng, pool, mut_weights=pick_mutator())
+            if cand.key() not in tried:
+                inp = cand
+                break
+        if inp is None:
+            inp = mutate_input(parent, rng, pool)
+        tried.add(inp.key())
+        classes = input_classes(inp)
+
+        zfile = write_statements(inp.statements, outdir, "gui%04d" % n)
+        cell = Cell(adhoc_case(inp.buffer), "gui%04d" % n, inp.keys,
+                    build_init(dump, fpath_dirs, zfile),
+                    inp.statements, zfile, inp.origin)
+
+        if logpath:
+            # Per-cell probe files: these take a PATH, so they need no slicing.
+            env["ZSHRS_COMPLIST_LOG"] = os.path.join(outdir, "clist%04d.log" % n)
+            env["ZSHRS_CAPDBG"] = os.path.join(outdir, "capdbg%04d.log" % n)
+        start = os.path.getsize(logpath) if logpath and os.path.exists(logpath) else 0
+        t0 = time.monotonic()
+        v = run_cell(args, env, cell, gate)
+        secs = time.monotonic() - t0
+
+        feats = shape_features(v)
+        if logpath:
+            end = os.path.getsize(logpath) if os.path.exists(logpath) else start
+            sl = _read_slice(logpath, start, end)
+            boots = sl.count("zshrs starting")
+            # One boot per capture; a confirm re-run legitimately adds more. Any
+            # OTHER writer's lines are in here too and cannot be separated, so
+            # the count is reported rather than silently trusted.
+            if boots > 1 + args.confirm:
+                contaminated += 1
+            feats |= engine_features(sl)
+            feats |= probe_features(_drain(env["ZSHRS_COMPLIST_LOG"]), "clist")
+            feats |= probe_features(_drain(env["ZSHRS_CAPDBG"]), "capdbg")
+            feats |= ftime_features(_drain(FTIME_PATH))
+
+        new = feats - seen
+        seen |= feats
+        curve.append((n + 1, len(seen)))
+        table.observe(classes, secs, len(new), 0)
+
+        results.append(v)
+        counts[v.status] = counts.get(v.status, 0) + 1
+        line = "%-7s %-8s %r" % (v.status, v.seq, v.case.buffer)
+        if v.status in ("FAIL", "FLAKY"):
+            line += "  [%s]" % v.fingerprint
+        print(line + (("  (%s)" % v.detail) if v.detail else ""))
+        print("        keys=%s  styles=%d  pick=%s  from %s"
+              % (",".join(v.keys), len(v.statements or ()), how, cell.origin))
+        print("        %s%s" % (_cov_note(feats, len(new)),
+                                "  <- RETAINED" if (new and guided) else ""))
+        for f in sorted(new)[:6]:
+            print("          + %s" % f)
+        if len(new) > 6:
+            print("          + ... %d more" % (len(new) - 6))
+        sys.stdout.flush()
+
+        if v.status in ("FAIL", "FLAKY"):
+            failures.append(v)
+            print_failure(v, args)
+        elif v.status == "TIMEOUT":
+            print_timeout(v, args)
+        elif v.status in ("REF-CRASHED", "TEST-CRASHED"):
+            print_crash(v, args)
+
+        # Retention for INFORMATION. A failing input is promoted below by the
+        # existing rule regardless; this is the addition — an input that merely
+        # went somewhere new becomes a parent for every later run.
+        if new and guided and v.status not in ("FAIL", "FLAKY"):
+            keep = FuzzInput(inp.buffer, inp.keys, inp.statements,
+                             origin="cov/%s" % (inp.origin or "?"),
+                             note="%d new feature(s): %s"
+                                  % (len(new), ", ".join(sorted(new)[:3])))
+            if _cov_admit(args, keep, len(new)):
+                picked.append(keep)
+                corpus.append(keep)
+                retained += 1
+        sys.stdout.flush()
+
+    print()
+    groups = print_fingerprint_groups(failures, args) if failures else {}
+    if not failures:
+        print("# 0 failing cell(s), 0 distinct fingerprint(s)")
+
+    # Promotion + three-dimension shrink: byte-for-byte the rule `--mutate`
+    # uses. Guidance changed which inputs were run, and nothing else.
+    for fp, vs in groups.items():
+        if fp in known_fps:
+            print("# fingerprint %s already in the corpus — not re-promoted" % fp)
+            continue
+        rep = min(vs, key=lambda v: v.size())
+        if args.cov_log:
+            # One extra cell, on the un-instrumented env, before anything is
+            # written down. This can only ever REMOVE a reproducer the fuzzer
+            # would otherwise have claimed; the cell itself is still reported
+            # above as the FAIL it was.
+            zf = write_statements(rep.statements, outdir, "clean_%s" % fp)
+            clean = run_case(args, base_env,
+                             build_init(dump, fpath_dirs, zf),
+                             rep.case, rep.seq, rep.keys)
+            if clean.status not in ("FAIL", "FLAKY"):
+                artifacts += 1
+                print("# fingerprint %s does NOT survive without --cov-log's env "
+                      "(clean re-run: %s) — an artefact of the instrumentation, "
+                      "not promoted" % (fp, clean.status))
+                continue
+            if clean.fingerprint != fp:
+                artifacts += 1
+                print("# fingerprint %s became %s without --cov-log's env — the "
+                      "instrumentation was part of the evidence, so this "
+                      "reproducer would not replay. Not promoted; re-run "
+                      "without --cov-log to mine it."
+                      % (fp, clean.fingerprint))
+                continue
+            rep = clean
+        inp = FuzzInput(rep.case.buffer, rep.keys, rep.statements or [],
+                        origin="guided/%s" % rep.seq, fingerprint=fp,
+                        note=fp_label(rep))
+        buf, keys, stmts, probes = (rep.case.buffer, list(rep.keys),
+                                    list(rep.statements or []), 0)
+        if args.shrink:
+            # Clean env here too: a shrink probe judged under instrumentation
+            # could keep a reduction that only holds while ZSHRS_LOG is set.
+            buf, keys, stmts, probes = shrink_input(
+                args, base_env, dump, fpath_dirs, inp, fp, outdir,
+                args.shrink_probes)
+        minimal = FuzzInput(buf, keys, stmts, origin="guided/%s" % rep.seq,
+                            fingerprint=fp, note=fp_label(rep))
+        zfile = write_statements(stmts, args.corpus_dir,
+                                 minimal.stem("fp") + "_styles")
+        path = corpus_write(args.corpus_dir, minimal, "fp")
+        promoted += 1
+        table.observe(input_classes(minimal), 0.0, 0, 1)
+        print("# NEW fingerprint %s promoted into the corpus" % fp)
+        print("#   before: buffer=%r keys=%s statements=%d"
+              % (rep.case.buffer, ",".join(rep.keys), len(rep.statements or ())))
+        print("#   after : buffer=%r keys=%s statements=%d  (%d shrink probe(s) spent)"
+              % (buf, ",".join(keys), len(stmts), probes))
+        print("#   file  : %s" % path)
+        print("#   replay: %s" % repro_cmd(args, buf, keys, zstyle=zfile))
+        known_fps.add(fp)
+
+    total = args.guided
+    print("\n# %d passed, %d failed, %d cell(s)"
+          % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], total))
+    print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
+          "REF-CRASHED=%d TEST-CRASHED=%d"
+          % (counts["PASS"], counts["FAIL"], counts["FLAKY"],
+             counts["TIMEOUT"], counts["SKIP"],
+             counts.get("REF-CRASHED", 0), counts.get("TEST-CRASHED", 0)))
+    print_crash_counts(counts)
+    if counts["TIMEOUT"]:
+        print("# %d cell(s) ran out of MEASUREMENT budget — not divergences, not "
+              "passes; re-run them at --jobs 1" % counts["TIMEOUT"])
+    if counts["SKIP"]:
+        print("# %d cell(s) skipped: command not installed here (--no-skip-missing "
+              "to run them anyway)" % counts["SKIP"])
+    print()
+
+    # ── what the run LEARNED ──
+    print("# coverage")
+    print("#   %d distinct feature(s) seen across %d cell(s)" % (len(seen), total))
+    if curve:
+        first_half = curve[len(curve) // 2][1]
+        print("#   discovery curve: %s"
+              % " ".join("%d:%d" % (i, f) for i, f in curve[::max(1, len(curve) // 8)]))
+        print("#   %d feature(s) by the halfway point, %d by the end — %d found in "
+              "the second half" % (first_half, len(seen), len(seen) - first_half))
+    print("#   %.2f new feature(s) per cell" % (len(seen) / total if total else 0.0))
+    print("#   %d input(s) RETAINED for information (a new feature, no failure)"
+          % retained)
+    print("#   %d fingerprint(s) promoted for failing" % promoted)
+    if artifacts:
+        print("#   %d fingerprint(s) withheld: they did not survive a re-run on "
+              "the un-instrumented env, so they were the instrumentation's, not "
+              "zshrs's" % artifacts)
+    cov_entries = [i for i in corpus if (i.origin or "").startswith("cov/")]
+    print("#   corpus now holds %d entry(ies), %d of them retained for coverage"
+          % (len(corpus), len(cov_entries)))
+    if contaminated:
+        print("#   ! %d log slice(s) contained more shell boots than this run "
+              "started — another zshrs was writing the shared log, so those "
+              "engine features may not be this harness's. Re-run alone to be "
+              "sure." % contaminated)
+    print()
+    print_yield_table(table)
+
+    if args.json:
+        write_json(args, {
+            "schema": "comptab-parity-guided/1",
+            "mode": args.mode,
+            "argv": sys.argv[1:],
+            "corpus_dir": args.corpus_dir,
+            "seed": args.seed,
+            "guided": guided,
+            "summary": {
+                "cells": total,
+                "passed": counts["PASS"],
+                "failed": counts["FAIL"] + counts["FLAKY"],
+                "timeout": counts["TIMEOUT"],
+                "skipped": counts["SKIP"],
+                "fingerprints": len(groups),
+                "promoted": promoted,
+                "withheld_as_instrumentation_artefacts": artifacts,
+                "features": len(seen),
+                "retained": retained,
+                "contaminated_slices": contaminated,
+            },
+            "features": sorted(seen),
+            "discovery_curve": curve,
+            "yield": [{"class": c, "cells": n, "secs": round(s, 2),
+                       "features": f, "fingerprints": p, "rate": round(sc, 5)}
+                      for c, n, s, f, p, sc in table.rows()],
+            "fingerprints": fingerprint_doc(groups),
+            "results": [to_json(v) for v in results],
+        })
+    return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]
+                 or crashed(counts)) else 0
+
+
+def _cov_admit(args, keep, n_new):
+    """Write a coverage-retained input, keeping the corpus bounded.
+
+    A corpus that grows without limit makes every later run slower to load and
+    dilutes the weighted draw. At the cap, the least informative coverage entry
+    is evicted — never a `fp_*` reproducer, which is a finding and is not the
+    fuzzer's to discard.
+    """
+    d = args.corpus_dir
+    existing = sorted(f for f in os.listdir(d) if f.startswith("cov_")
+                      and f.endswith(".json")) if os.path.isdir(d) else []
+    if len(existing) >= args.cov_corpus_max:
+        worst, worst_n = None, None
+        for name in existing:
+            try:
+                with open(os.path.join(d, name)) as f:
+                    m = re.match(r"(\d+) new", json.load(f).get("note", ""))
+            except (OSError, ValueError):
+                m = None
+            n = int(m.group(1)) if m else 0
+            if worst_n is None or n < worst_n:
+                worst, worst_n = name, n
+        if worst is None or worst_n >= n_new:
+            return False
+        try:
+            os.unlink(os.path.join(d, worst))
+        except OSError:
+            return False
+    corpus_write(d, keep, "cov")
+    return True
 
 
 def main():
@@ -2976,6 +3951,36 @@ def main():
                     help="print N generated statements with zsh's verdict on "
                          "each and exit, without booting any shell pair. The "
                          "generator's own self-check.")
+    # ── coverage-guided fuzzing ──
+    ap.add_argument("--guided", type=int, default=0, metavar="N",
+                    help="run N cells COVERAGE-GUIDED: keep an input in the "
+                         "corpus when it produced a feature no earlier input "
+                         "produced, not only when it failed, and bias the next "
+                         "draw towards the classes that have been buying "
+                         "features per second. Judging is untouched — guidance "
+                         "only chooses which inputs get run.")
+    ap.add_argument("--guide-off", action="store_true",
+                    help="run the --guided loop with the feedback DISABLED: "
+                         "same loop, same RNG stream, uniform parent draw, no "
+                         "coverage retention. The blind control for measuring "
+                         "whether guidance is actually worth anything.")
+    ap.add_argument("--cov-log", action="store_true",
+                    help="add REAL execution coverage from zshrs's own tracing "
+                         "(ZSHRS_LOG=compsys_args=debug,ftime) on top of the "
+                         "output-shape signal: which completer resolved, which "
+                         "tag context, which _arguments branch, and which "
+                         "compsys shell functions ran. Requires --jobs 1 — the "
+                         "log is one shared append-only file whose lines carry "
+                         "no pid, so a slice can only be attributed to a cell "
+                         "while this harness is its sole writer.")
+    ap.add_argument("--explore-floor", type=float, default=0.25, metavar="P",
+                    help="probability a draw ignores the yield table entirely "
+                         "and picks uniformly. The floor is what stops a class "
+                         "being starved permanently on one unlucky sample.")
+    ap.add_argument("--cov-corpus-max", type=int, default=160, metavar="N",
+                    help="cap on coverage-retained (`cov_*.json`) corpus "
+                         "entries. At the cap the least informative one is "
+                         "evicted; a `fp_*` reproducer is never evicted.")
     ap.add_argument("--timeout-recheck", action="store_true", default=True,
                     help="re-run a budget-exhausted cell ONCE serially, with every "
                          "other cell drained, before labelling it TIMEOUT. A clean "
@@ -3069,6 +4074,16 @@ def main():
         if args.combo_sequence not in KEY_SEQUENCES:
             sys.exit("unknown --combo-sequence: %s" % args.combo_sequence)
         return run_style_fuzz(args, env, dump, fpath_dirs)
+
+    if args.guided > 0:
+        if args.cov_log and args.jobs > 1:
+            sys.exit("--cov-log needs --jobs 1: zshrs's log is a single shared "
+                     "append-only file and its lines carry no pid, so with "
+                     "concurrent children a byte slice cannot be attributed to "
+                     "the cell that produced it. Drop --cov-log to keep --jobs "
+                     "%d (shape coverage is unaffected by concurrency)."
+                     % args.jobs)
+        return run_guided(args, env, dump, fpath_dirs)
 
     if args.mutate > 0:
         return run_mutate(args, env, dump, fpath_dirs)
@@ -3170,6 +4185,7 @@ def main():
     failures = []
     timeouts = []
     skipped = []
+    crashes = []
     warned = attr_only = cursor_only = stream_only = 0
     try:
         for v in stream:
@@ -3214,6 +4230,11 @@ def main():
                 print_timeout(v, args)
                 sys.stdout.flush()
                 continue
+            if v.status in CRASH_STATUSES:
+                crashes.append(v)
+                print_crash(v, args)
+                sys.stdout.flush()
+                continue
             if v.status == "SKIP":
                 skipped.append(v)
                 sys.stdout.flush()
@@ -3229,8 +4250,11 @@ def main():
     # Consumed by gen_compsys_parity_report.py and parity_matrix.py — keep the
     # wording.
     print("\n# %d passed, %d failed, %d cell(s)" % (passed, len(failures), len(cells)))
-    print("# categories: PASS=%d FAIL=%d TIMEOUT=%d SKIP=%d"
-          % (passed, len(failures), len(timeouts), len(skipped)))
+    print("# categories: PASS=%d FAIL=%d TIMEOUT=%d SKIP=%d "
+          "REF-CRASHED=%d TEST-CRASHED=%d"
+          % (passed, len(failures), len(timeouts), len(skipped),
+             sum(1 for v in crashes if v.status == "REF-CRASHED"),
+             sum(1 for v in crashes if v.status == "TEST-CRASHED")))
     print("# elapsed: %.1fs (%.1fs/cell)" % (elapsed, elapsed / max(1, len(cells))))
     if timeouts:
         # Named, counted, printed — and NOT a pass. The reason this category
@@ -3246,6 +4270,19 @@ def main():
                      v.timeouts[0] if v.timeouts else "?"))
         if len(timeouts) > 20:
             print("#   ... %d more" % (len(timeouts) - 20))
+    if crashes:
+        print("# %d cell(s) where a SHELL CRASHED (not run to a comparison, not "
+              "passed, and NOT a TIMEOUT — a dead shell is not a slow one):"
+              % len(crashes))
+        for v in crashes[:20]:
+            print("#   --case %s --keys %s   (%s)"
+                  % (shlex.quote(v.case.buffer), ",".join(v.keys), v.detail))
+        if len(crashes) > 20:
+            print("#   ... %d more" % (len(crashes) - 20))
+        print_crash_counts({"REF-CRASHED": sum(1 for v in crashes
+                                               if v.status == "REF-CRASHED"),
+                            "TEST-CRASHED": sum(1 for v in crashes
+                                                if v.status == "TEST-CRASHED")})
     if skipped:
         print("# %d cell(s) SKIPPED (not run, not passed):" % len(skipped))
         for v in skipped[:20]:
@@ -3312,7 +4349,7 @@ def main():
         }
         write_json(args, doc)
     # A TIMEOUT or a SKIP is not byte-identical evidence, so neither exits 0.
-    return 1 if (failures or timeouts or skipped) else 0
+    return 1 if (failures or timeouts or skipped or crashes) else 0
 
 
 if __name__ == "__main__":

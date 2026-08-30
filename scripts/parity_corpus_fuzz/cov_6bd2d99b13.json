@@ -1,0 +1,11 @@
+{
+  "buffer": "fg %",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "10 new feature(s): eng/f/comp=_jobs_fg, eng/f/ctx=:completion::complete:fg::, fn/_description/x1",
+  "origin": "cov/mutate(dup_key)<-CASES/ns_jobs/tab1",
+  "statements": []
+}

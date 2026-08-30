@@ -1,0 +1,10 @@
+{
+  "buffer": "-~",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "27 new feature(s): eng/f/ctx=:completion::complete:-command-::, fn/__zpwr_aliases, fn/__zpwr_aliases/x1",
+  "origin": "cov/mutate(toggle_dash)<-CASES/cmd_tilde/tab1",
+  "statements": []
+}

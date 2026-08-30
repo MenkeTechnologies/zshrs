@@ -1,0 +1,10 @@
+{
+  "buffer": "busted -",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "10 new feature(s): eng/f/comp=_busted, eng/f/ctx=:completion::complete:busted::, eng/f/ctx=:completion::complete:busted:argument-rest:",
+  "origin": "cov/mutate(drop_key)<-divergent-cases/tab1",
+  "statements": []
+}

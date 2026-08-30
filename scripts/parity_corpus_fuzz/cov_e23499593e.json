@@ -1,0 +1,11 @@
+{
+  "buffer": "nocorrect f",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "8 new feature(s): zsh/cols/13, zsh/lineclass/nocorrect fignore, zsh/list/13",
+  "origin": "cov/mutate(retype_word+retype_word)<-CASES/pre_nocorrect/tab2",
+  "statements": []
+}

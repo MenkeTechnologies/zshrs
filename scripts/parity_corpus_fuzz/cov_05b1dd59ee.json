@@ -1,0 +1,12 @@
+{
+  "buffer": "PATH=/usr/bin:/us",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "20 new feature(s): eng/f/comp=_value, eng/f/context=value, eng/f/ctx=:completion::complete:-value-,PATH,::",
+  "origin": "cov/mutate(dup_key)<-CASES/assign_rhs_colon/tab2",
+  "statements": []
+}

@@ -1,0 +1,11 @@
+{
+  "buffer": "ls -//usr//",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "105 new feature(s): diff/rows/0, eng/compsys_args/_arguments _tags(subcs+options), eng/compsys_args/_arguments option branch",
+  "origin": "cov/mutate(toggle_dash)<-CASES/path_squeeze/tab2",
+  "statements": []
+}

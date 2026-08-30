@@ -1,0 +1,10 @@
+{
+  "buffer": "echo $",
+  "fingerprint": null,
+  "keys": [
+    "btab"
+  ],
+  "note": "4 new feature(s): zsh/line/8, zsh/lineclass/echo $, zshrs/line/8",
+  "origin": "cov/mutate(swap_key)<-CASES/param_bare/tab1",
+  "statements": []
+}

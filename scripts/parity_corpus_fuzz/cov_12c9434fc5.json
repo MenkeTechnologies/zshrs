@@ -1,0 +1,11 @@
+{
+  "buffer": "ls ~root/",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "34 new feature(s): eng/f/comp=_ls, eng/f/ctx=:completion::complete:ls::, eng/f/ctx=:completion::complete:ls:argument-rest:",
+  "origin": "cov/mutate(dup_key)<-CASES/tilde_user/tab1",
+  "statements": []
+}
