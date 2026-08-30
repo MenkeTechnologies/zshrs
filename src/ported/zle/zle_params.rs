@@ -435,8 +435,17 @@ pub fn makezleparams(ro: i32) {
                 // KEYS_QUEUED_COUNT" — which aborted the widget mid-call and
                 // took zsh-autosuggestions and syntax-highlighting down with
                 // it ("widgets can only be called when ZLE is active").
+                // For a name this table declares PM_READONLY the stamp test is
+                // the wrong gate too: the node may predate the stamping (an
+                // older build's leak, or a publish that failed part-way), and
+                // then it is locked with no way back. The user cannot
+                // legitimately own KEYS / KEYS_QUEUED_COUNT / PENDING — zsh
+                // defines them read-only — so unlock them unconditionally.
+                // Everything else keeps both guards, so a user's
+                // `readonly BUFFER` at level 0 is still left alone.
                 let self_readonly = (*decl & PM_READONLY) != 0;
-                if (self_readonly || pm.level > 0) && pm.node.flags as u32 & stamp == stamp {
+                let ours = pm.node.flags as u32 & stamp == stamp;
+                if self_readonly || (pm.level > 0 && ours) {
                     pm.node.flags &= !((PM_READONLY | PM_UNSET) as i32);
                 }
             }
