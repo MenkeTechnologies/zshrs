@@ -1,14 +1,17 @@
 # ztst Y-series completion suite -- zsh baseline (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc)
 
-date: 2026-08-30T04:33:39-0400
+date: 2026-08-30T06:55:33-0400
 fx: off
 harness: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
-harness_version: 5.9.999.3-test
+harness_version: 5.9.999.3-test zsh-5.9.0.3-test-357-g599af46
+mode: compsys (Y series)
 modules_linked: 38
 sut: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
 sut_env: ZSHRS_NATIVE_ZLE_FX=0
-sut_version: 5.9.999.3-test
+sut_snapshot: yes
+sut_version: 5.9.999.3-test zsh-5.9.0.3-test-357-g599af46
 tests: Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values
+timeout: 180
 zsh_build: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
 zsh_build_version: 5.9.999.3-test
 
