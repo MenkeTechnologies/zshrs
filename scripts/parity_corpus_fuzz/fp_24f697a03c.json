@@ -1,0 +1,13 @@
+{
+  "buffer": "CC   i",
+  "fingerprint": "7b20398e3e",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/row0/col1 | ref/$ CC i_main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC i",
+  "origin": "promoted/mut002",
+  "statements": [
+    "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger",
+    "zstyle ':completion:*' format $'\\C-[[1;31m-<<\\C-[[0;34m%d\\C-[[1;31m>>-\\C-[[0m'"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "buffer": "CC   ib",
+  "fingerprint": "2c3fbfd907",
+  "keys": [
+    "tab",
+    "ctrl-g"
+  ],
+  "note": "cell/row0/col1 | ref/$ CC ib_main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC bench",
+  "origin": "promoted/mut004",
+  "statements": [
+    "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger"
+  ]
+}
