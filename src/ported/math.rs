@@ -313,9 +313,34 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             // C mathevall at math.c:367 does the same xyy* save/restore
             // around recursive entry.
             let saved = save_state();
-            let idx_val = matheval(idx_str)
-                .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
-                .unwrap_or(0);
+            // c:Src/math.c:382 — a recursion-limit bail is FATAL in C: the
+            // guard calls `zerr`, which sets errflag and unwinds the whole
+            // evaluation. Collapsing it into `unwrap_or(0)` here made it
+            // survivable: getmathparam carried on with index 0, the caller
+            // re-entered, and the MAX_MLEVEL cap was defeated on this path
+            // while still working for a direct self-reference (`x=x`). A
+            // p10k widget doing subscript arithmetic recursed ~1800 deep,
+            // each level re-copying the variable map in
+            // `m_string_variables_set`, and pegged a core. Report the bail
+            // through the same in-band channel the rest of getmathparam
+            // uses (`m_error_set`, drained by mathevall at the `m_error_take`
+            // below) so it propagates instead of being discarded. An
+            // ordinary unevaluable index still yields 0, as before.
+            let idx_val = match matheval(idx_str) {
+                Ok(n) => {
+                    if n.type_ == MN_FLOAT {
+                        n.d as i64
+                    } else {
+                        n.l
+                    }
+                }
+                Err(e) => {
+                    if M_LEVEL.with(|c| c.get()) > MAX_MLEVEL {
+                        m_error_set(e);
+                    }
+                    0
+                }
+            };
             restore_state(saved);
             // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
             if let Ok(tab) = crate::ported::params::paramtab().read() {
@@ -683,7 +708,6 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     // fails cleanly (0 result) instead of crashing. thefuck's config
     // tripped this the moment the cmd-subst deadlock that used to mask
     // it was fixed.
-    const MAX_MLEVEL: i32 = 256; // c:Src/math.c MAX_MLEVEL
     if M_LEVEL.with(|c| c.get()) > MAX_MLEVEL {
         let expr = m_input_clone();
         return Err(format!("math recursion limit exceeded: {}", expr.trim()));
@@ -1465,6 +1489,10 @@ thread_local! {
     /// decide whether the output radix is a fresh one (c:1486).
     static M_LEVEL: Cell<i32> = const { Cell::new(0) };                     // c:67
 }
+
+/// c:Src/math.c:65 — `#define MAX_MLEVEL 256`, the recursion cap on nested
+/// `mathevall` entries.
+const MAX_MLEVEL: i32 = 256;
 
 /// RAII bracket for C's `mlevel++` (math.c:386) / `--mlevel` (math.c:446).
 ///
