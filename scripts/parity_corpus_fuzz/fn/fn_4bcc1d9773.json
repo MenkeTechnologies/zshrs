@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "-V",
+    "zpfgrp",
+    "files",
+    "expl",
+    "file"
+  ],
+  "call": "_description '-V' 'zpfgrp' 'files' 'expl' 'file'",
+  "call_label": "group-V",
+  "fingerprint": "4bcc1d9773",
+  "function": "_description",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'expl' | test/_lastdescr[#] = 'expl'",
+  "ref_rows": [
+    "  _lastdescr[2] = '' 'expl'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _description --fn-call group-V --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_description:3-20 (zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+  "test_rows": [
+    "  _lastdescr[1] = 'expl'"
+  ]
+}

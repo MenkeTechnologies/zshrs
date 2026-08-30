@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "t1:first:(a1 a2)",
+    "t2:second:(b1 b2)"
+  ],
+  "call": "_alternative 't1:first:(a1 a2)' 't2:second:(b1 b2)'",
+  "call_label": "two-specs",
+  "fingerprint": "3de4771a42",
+  "function": "_alternative",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/expl[#] = | test/expl[#] = '-J' '-default-'",
+  "ref_rows": [
+    "  expl[0] ="
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _alternative --fn-call two-specs --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Utility/_alternative:5-14 (getopts 'O:C:'; then tag:descr:action specs)",
+  "test_rows": [
+    "  expl[2] = '-J' '-default-'"
+  ]
+}

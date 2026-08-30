@@ -1,0 +1,38 @@
+{
+  "argv": [
+    "-c",
+    "echo",
+    "-r",
+    "zpfvar",
+    "gnu=hello",
+    "unknown",
+    "hello"
+  ],
+  "call": "_pick_variant '-c' 'echo' '-r' 'zpfvar' 'gnu=hello' 'unknown' 'hello'",
+  "call_label": "echo-gnu",
+  "fingerprint": "5c6b1d2ee2",
+  "function": "_pick_variant",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/-- rc: # | test/hello",
+  "ref_rows": [
+    "-- rc: 0",
+    "  nmatches: 0 -> 0",
+    "  zpfvar = 'gnu'",
+    "@CT@",
+    "<absent>"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _pick_variant --fn-call echo-gnu --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Utility/_pick_variant:6-16 (zparseopts -D -A opts b: c: r:; label=pattern...; [label]; [args])",
+  "test_rows": [
+    "hello",
+    "-- rc: 0",
+    "  nmatches: 0 -> 0",
+    "  zpfvar = 'gnu'",
+    "@CT@"
+  ]
+}

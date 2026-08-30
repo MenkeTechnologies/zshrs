@@ -40,6 +40,19 @@ Cases come from the shared corpus (`parity_corpus.CASES`), a corpus file (one
 command-line prefix per line, `#` comments ignored), `--case`, or `--discover`
 (every installed command on this host that ships a `_name` completer).
 
+`--fn-sweep` runs the same comparison over a third axis: not what is typed and
+not how the shell is configured, but the stock completion UTILITY FUNCTIONS
+themselves — `_description`, `_wanted`, `_tags`, `_describe`, `_arguments`,
+`_call_program` and the rest that nearly every completer calls. Each is invoked
+DIRECTLY inside a real completion context with arguments derived from its own
+documented interface, and both shells report what they observed. This matters
+because zshrs replaces many of these with a NATIVE RUST PORT that intercepts
+the name (src/compsys/router.rs), so a port and the stock shell function can
+disagree with nothing comparing them; `--fn-list` prints which name is served
+by which backend in the current configuration. A generated call real zsh
+refuses to parse is INVALID-CALL — a bug in this file's generator, never a
+finding.
+
 `--layout-fuzz` runs the same comparison over a different axis: not what is
 typed or how the shell is configured, but where the completers are STORED and
 how `compinit` is told to FIND them — `.zwc` digest composition and precedence,
@@ -93,6 +106,10 @@ Usage:
     scripts/comptab_parity.py --mutate 20           # 20 MUTATED corpus inputs
     scripts/comptab_parity.py --style-fuzz 20       # 20 GENERATED zstyle configs
     scripts/comptab_parity.py --style-fuzz-list 30 # just show what it generates
+    scripts/comptab_parity.py --fn-sweep            # drive the stock UTILITY
+                                                    # functions directly
+    scripts/comptab_parity.py --fn-list             # port-vs-shell split map
+    scripts/comptab_parity.py --fn-sweep --fn-keys ctrl-d   # compare LISTINGS
     scripts/comptab_parity.py --layout-fuzz 8      # 8 STORAGE/LOOKUP layouts
     scripts/comptab_parity.py --layout-list        # the layout catalog
     scripts/comptab_parity.py --dump-xshell        # cross-shell .zcompdump report
@@ -319,8 +336,20 @@ def user_fpath():
         return []
 
 
-def build_init(dump, fpath_dirs, zstyle_file):
+def build_init(dump, fpath_dirs, zstyle_file, extra="", dirhook=None):
+    """The init file BOTH shells source.
+
+    `extra` is appended AFTER `compinit` and before the final `print -u2 ''`,
+    which is the only place a `compdef` can go (compinit is what defines it).
+    Default `""` leaves the file byte-identical to what it has always been, so
+    no existing mode changes. `dirhook`, when given, is called with the scratch
+    directory so a caller that needs to place files beside the init (the
+    utility-function sweep writes its probe report there) can format them into
+    `extra` without a second mkdtemp.
+    """
     d = tempfile.mkdtemp(prefix="comptab_parity_")
+    if dirhook is not None:
+        extra = dirhook(d)
     fpath_line = ""
     if fpath_dirs:
         fpath_line = "fpath=( %s )\n" % " ".join(shlex.quote(p) for p in fpath_dirs)
@@ -340,7 +369,7 @@ PROMPT='{SENTINEL} '
 RPROMPT=''
 PS2='> '
 setopt no_beep
-{fpath_line}{zstyle_line}{compinit}
+{fpath_line}{zstyle_line}{compinit}{extra}
 print -u2 ''
 """
     path = os.path.join(d, "init.zsh")
@@ -4962,6 +4991,1041 @@ def run_layout_fuzz(args, env):
             shutil.rmtree(base, ignore_errors=True)
 
 
+# ── stock utility functions, driven DIRECTLY ────────────────────────────────
+#
+# Every other mode in this file reaches a completion utility only by accident:
+# something has to be typed on a command line that happens to route through
+# `_description` or `_pick_variant`. That leaves the utilities themselves —
+# the two dozen functions nearly every completer in the tree calls — measured
+# only where some case happened to cover them, and zshrs replaces many of them
+# with a NATIVE RUST PORT that intercepts the name (src/compsys/router.rs), so
+# a port and the stock shell function can disagree with nothing comparing them.
+#
+# This mode calls each utility directly, inside a real completion context, with
+# arguments generated from its own documented interface, and compares what both
+# shells observe: the return status, the arrays it fills, the `$compstate`
+# delta it caused, anything it wrote to stdout/stderr, and the matches it added
+# (which the terminal lists exactly as it would for a real completion).
+#
+# It reuses the existing pty driver end to end — Cell / cell_stream / run_case /
+# Verdict / fingerprint are untouched. What is new is only the init file each
+# cell runs under and the aggregation of the verdicts BY FUNCTION.
+
+ROUTER_RS = os.path.join(REPO, "src", "compsys", "router.rs")
+
+# `$compstate` keys the probe watches across a call. A curated list rather than
+# `${(k)compstate}` so the report is deterministic: the key ORDER of a special
+# association is not something either shell promises, and a report whose lines
+# are in a different order would diff as a divergence that is not one.
+FN_CS_KEYS = (
+    "nmatches", "insert", "list", "list_max", "list_lines", "unambiguous",
+    "exact", "exact_string", "pattern_match", "matcher", "matcher_string",
+    "ignored", "to_end", "old_insert", "old_list", "quote", "quoting",
+    "restore", "context", "parameter", "redirect", "vared",
+)
+
+# The command whose completer the probe hijacks. It has to be a command this
+# host really has, or `skip_reason` would (correctly) SKIP the cell — the same
+# rule every other case obeys. `true` is in every PATH and its own completer is
+# trivial, so nothing of the stock tree is displaced except the dispatch.
+FN_HOST_CMD = "true"
+
+
+def _zq(s):
+    """One zsh single-quoted word."""
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+class FnProbe:
+    """One utility function and the calls to drive it with.
+
+    `source` is the citation for the interface the calls were derived from —
+    a path under ~/forkedRepos/zsh/Completion plus the line range of the
+    argument parsing. A call this file invents that real zsh REJECTS is a
+    GENERATOR fact, reported as INVALID-CALL and never as a finding.
+    """
+
+    def __init__(self, name, source, calls, setup="", dump=(), template=None,
+                 note=""):
+        self.name = name
+        self.source = source
+        self.calls = calls            # [(label, [arg, ...]), ...]
+        self.setup = setup            # zsh lines run inside the probe first
+        self.dump = tuple(dump)       # variable names dumped after the call
+        self.template = template or (name + " %s")
+        self.note = note
+
+    def call_line(self, argv):
+        return self.template % " ".join(_zq(a) for a in argv)
+
+
+# Arrays and helper functions some probes need in scope. Defined once in the
+# init, not per call, so the probe body stays the thing under test.
+FN_FIXTURE = r"""
+typeset -ga _zpf_words=( 'alpha:the first one' 'beta:the second one' 'gamma' )
+typeset -ga _zpf_plain=( one two three )
+typeset -gA _zpf_assoc=( k1 'value one' k2 'value two' )
+_zpf_ra_dummy() { : }
+"""
+
+# Each entry's `source` cites the interface the arguments were derived from.
+FN_PROBES = [
+    FnProbe(
+        "_description",
+        "Completion/Base/Core/_description:3-20 "
+        "(zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+        [
+            ("plain", ["files", "expl", "file"]),
+            ("group-V", ["-V", "zpfgrp", "files", "expl", "file"]),
+            ("group-J", ["-J", "zpfgrp", "files", "expl", "file"]),
+            ("numbered-1", ["-1", "files", "expl", "file"]),
+            ("numbered-2", ["-2", "files", "expl", "file"]),
+            ("x-flag", ["-x", "files", "expl", "file"]),
+            # `3="${${3##[[:blank:]]#}%%[[:blank:]]#}"` at sh:12 trims the
+            # description in place, then sh:13 appends it to `_lastdescr`.
+            ("blank-padded-descr", ["files", "expl", "   padded file   "]),
+            ("empty-descr", ["files", "expl", ""]),
+            ("extra-compadd-opts", ["files", "expl", "file", "-J", "zz", "-P", "p"]),
+            ("unknown-tag", ["zpf-no-such-tag", "expl", "nothing"]),
+        ],
+        dump=("expl", "_lastdescr", "_comp_colors"),
+    ),
+    FnProbe(
+        "_wanted",
+        "Completion/Base/Core/_wanted:3-13 "
+        "(zparseopts -D -a __gopt 1 2 V J x C:=__targs; TAG NAME DESCR ACTION...)",
+        [
+            ("compadd", ["values", "expl", "value", "compadd", "a", "b"]),
+            ("context", ["-C", "zpfsub", "files", "expl", "file", "compadd", "x"]),
+            ("group", ["-2", "-V", "g", "options", "expl", "opt", "compadd", "-o"]),
+            ("no-action", ["values", "expl", "value"]),
+        ],
+        dump=("expl", "_comp_tags"),
+    ),
+    FnProbe(
+        "_requested",
+        "Completion/Base/Core/_requested:3-18 "
+        "(zparseopts -D -a __gopt 1 2 V J x; TAG [NAME DESCR [ACTION...]])",
+        [
+            ("tag-only", ["values"]),
+            ("with-descr", ["values", "expl", "value"]),
+            ("with-action", ["values", "expl", "value", "compadd", "q", "r"]),
+            ("untagged", ["zpf-no-such-tag", "expl", "nothing"]),
+        ],
+        setup="_tags values files options",
+        dump=("expl", "_comp_tags"),
+    ),
+    FnProbe(
+        "_tags",
+        "Completion/Base/Core/_tags:3-32 "
+        "(leading `--`; -Ccontext / -C context; then the tag list)",
+        [
+            ("three-tags", ["values", "files", "options"]),
+            ("ctx-joined", ["-Czpfsub", "values", "files"]),
+            ("ctx-split", ["-C", "zpfsub", "values", "files"]),
+            ("dashdash", ["--", "values", "files"]),
+            ("single", ["values"]),
+        ],
+        dump=("_comp_tags", "curtag"),
+    ),
+    FnProbe(
+        "_next_label",
+        "Completion/Base/Core/_next_label:3-25 "
+        "(zparseopts -D -a __gopt 1 2 V J x; TAG NAME DESCR [OPTS...])",
+        [
+            ("plain", ["values", "expl", "value"]),
+            ("with-opts", ["values", "expl", "value", "-P", "pre"]),
+            ("numbered", ["-2", "values", "expl", "value"]),
+        ],
+        setup="_tags values files; _tags",
+        dump=("expl", "curtag", "_comp_tags"),
+    ),
+    FnProbe(
+        "_all_labels",
+        "Completion/Base/Core/_all_labels:3-30 "
+        "(leading `-`; zparseopts -D -a __gopt 1 2 V J x; TAG NAME DESCR ACTION...)",
+        [
+            ("compadd", ["values", "expl", "value", "compadd", "l1", "l2"]),
+            ("dash-prev", ["-", "values", "expl", "value", "compadd", "l3"]),
+            ("dash-marker", ["values", "expl", "value", "compadd", "-", "l4"]),
+            ("no-action", ["values", "expl", "value"]),
+        ],
+        setup="_tags values files; _tags",
+        dump=("expl", "curtag", "_comp_tags"),
+    ),
+    FnProbe(
+        "_setup",
+        "Completion/Base/Core/_setup:3-6 ([[ $# -eq 1 ]] && 2=\"$1\"; TAG [GROUP])",
+        [
+            ("one-arg", ["files"]),
+            ("two-args", ["files", "zpfgrp"]),
+            ("default", ["default"]),
+            ("default-group", ["default", "-default-"]),
+        ],
+        dump=("_comp_colors", "_ambiguous_color", "ZLS_COLORS"),
+    ),
+    FnProbe(
+        "_message",
+        "Completion/Base/Core/_message:3-40 (-e TAG DESCR | [-r12VJ] DESCR)",
+        [
+            ("plain", ["a plain message"]),
+            ("raw", ["-r", "a raw message"]),
+            ("e-tag-descr", ["-e", "values", "a tagged message"]),
+            ("e-descr-only", ["-e", "a message with no tag"]),
+            ("numbered", ["-2", "numbered message"]),
+        ],
+        dump=("_comp_mesg", "_comp_tags"),
+    ),
+    FnProbe(
+        "_describe",
+        "Completion/Base/Utility/_describe:3-30 "
+        "([-12JVx] [-oO|-t TAG] DESCR NAME [NAME] [-- OPTS])",
+        [
+            ("array", ["things", "_zpf_words"]),
+            ("tagged", ["-t", "zpftag", "things", "_zpf_words"]),
+            ("two-arrays", ["things", "_zpf_words", "_zpf_plain"]),
+            ("options", ["-o", "things", "_zpf_words"]),
+            # `_describe` takes the compadd options straight after the array
+            # names, with no `--` separator: sh:88 `[[ "$1" = (|-*) ]]` ends
+            # the name list at the first `-…`, and a stray `--` then reaches
+            # sh:82's `eval … =( "${'$1'[@]}" )` on the NEXT word and makes
+            # real zsh say `(eval):1: bad substitution`. Measured — the form
+            # with `--` was a generator bug, not a finding.
+            ("with-compadd-opts", ["things", "_zpf_words", "-P", "pre"]),
+            ("empty-array", ["things", "_zpf_empty"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_alternative",
+        "Completion/Base/Utility/_alternative:5-14 "
+        "(getopts 'O:C:'; then tag:descr:action specs)",
+        [
+            ("two-specs", ["t1:first:(a1 a2)", "t2:second:(b1 b2)"]),
+            ("compadd-action", ["t1:first:compadd c1 c2"]),
+            ("context", ["-C", "zpfsub", "t1:first:(a1 a2)"]),
+            ("function-action", ["t1:first: _describe things _zpf_words"]),
+            ("empty-action", ["t1:first:"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_values",
+        "Completion/Base/Utility/_values:3-20 "
+        "([-O name] [-s sep] [-S sep] [-w] DESCR SPEC...)",
+        [
+            ("plain", ["desc", "one", "two", "three"]),
+            ("sep-comma", ["-s", ",", "desc", "one", "two"]),
+            ("with-arg", ["desc", "one:first arg:(x y)", "two"]),
+            ("bracket-descr", ["desc", "one[the first]", "two[the second]"]),
+            ("wide", ["-w", "desc", "one", "two"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_arguments",
+        "Completion/Base/Utility/_arguments:3-60 "
+        "(-s/-S/-A/-w/-C/-M etc, then option and positional specs)",
+        [
+            ("simple", ["-a[all]", "-b[bee]", "*:rest:(r1 r2)"]),
+            ("stacked", ["-s", "-a[all]", "-b[bee]"]),
+            ("optarg", ["-s", "-f+[file]:file:(f1 f2)", "*:rest:(r1)"]),
+            ("shared-descr", ["-s", "{-h,--help}[show help]"]),
+            ("rest-args", ["-s", "-a[all]", "*::rest:(r1 r2)"]),
+            ("C-context", ["-C", "-a[all]", "*:rest:(r1)"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_files",
+        "Completion/Unix/Type/_files:3-30 ([-/] [-g PAT] [-W dir] ... )",
+        [
+            ("bare", []),
+            ("dirs-only", ["-/"]),
+            ("glob", ["-g", "*"]),
+            ("with-W", ["-W", "/usr"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_path_files",
+        "Completion/Unix/Type/_path_files:3-40 ([-/] [-g PAT] [-W dir] [-P pre])",
+        [
+            ("bare", []),
+            ("dirs-only", ["-/"]),
+            ("glob", ["-g", "*"]),
+            ("with-W", ["-W", "/usr"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_multi_parts",
+        "Completion/Base/Utility/_multi_parts:3-22 (SEP ARRAY; array by name or "
+        "literal `(a b c)`)",
+        [
+            ("literal-slash", ["/", "(usr/bin usr/lib var/log)"]),
+            ("literal-colon", [":", "(a:b a:c b:d)"]),
+            ("by-name", ["/", "_zpf_plain"]),
+            ("immediate", ["-i", "/", "(usr/bin usr/lib)"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_sep_parts",
+        "Completion/Base/Utility/_sep_parts:20-27 (alternating ARRAY and SEP)",
+        [
+            ("two-arrays", ["(foo bar)", "@", "(host1 host2)"]),
+            ("by-name", ["_zpf_plain", "@", "(host1 host2)"]),
+            ("one-array", ["(foo bar)"]),
+        ],
+        dump=("expl",),
+    ),
+    FnProbe(
+        "_call_program",
+        "Completion/Base/Utility/_call_program:4-26 ([-p|-l] TAG COMMAND...)",
+        [
+            ("echo", ["zpftag", "echo hello world"]),
+            ("locale-off", ["-l", "zpftag", "echo hello"]),
+            ("failing", ["zpftag", "false"]),
+            ("stderr", ["zpftag", "echo oops >&2"]),
+            ("nonexistent", ["zpftag", "zpf_no_such_command_xyz"]),
+        ],
+        template="_call_program %s",
+        dump=(),
+    ),
+    FnProbe(
+        "_pick_variant",
+        "Completion/Base/Utility/_pick_variant:6-16 "
+        "(zparseopts -D -A opts b: c: r:; label=pattern...; [label]; [args])",
+        [
+            ("echo-gnu", ["-c", "echo", "-r", "zpfvar", "gnu=hello", "unknown",
+                          "hello"]),
+            ("echo-nomatch", ["-c", "echo", "-r", "zpfvar", "gnu=zzz", "unknown",
+                              "hello"]),
+            ("builtin", ["-b", "zpfbuiltin", "-c", "true", "-r", "zpfvar",
+                         "gnu=x", "unknown"]),
+        ],
+        dump=("zpfvar",),
+    ),
+    FnProbe(
+        "_guard",
+        "Completion/Base/Utility/_guard:3-11 "
+        "(zparseopts -K -D -a garbage M+: J+: V+: 1 2 o+: n F: X+:; PATTERN DESCR)",
+        [
+            ("star", ["*", "anything"]),
+            ("digits", ["[0-9]#", "a number"]),
+            ("no-dash", ["^-*", "not an option"]),
+            ("with-opts", ["-M", "m:{a-z}={A-Z}", "*", "anything"]),
+        ],
+        dump=("_comp_mesg",),
+    ),
+    FnProbe(
+        "_regex_arguments",
+        "Completion/Base/Utility/_regex_arguments:1-32 "
+        "(NAME then the /pattern/ :tag:descr:action program)",
+        [
+            ("simple", ["/$/", ":zpft:a thing:(a b)"]),
+            ("two-states", ["/[^ ]#/", ":zpft:word:(w1 w2)", "/ #/",
+                            ":zpft2:second:(s1 s2)"]),
+        ],
+        template="_regex_arguments _zpf_ra %s && _zpf_ra",
+        dump=(),
+    ),
+    FnProbe(
+        "_normal",
+        "Completion/Base/Core/_normal:6 (zparseopts -A opts -D - P p+:-=precommand s)",
+        [
+            ("bare", []),
+            ("dash-P", ["-P"]),
+            ("dash-s", ["-s"]),
+            ("precommand", ["-p", "sudo"]),
+        ],
+        dump=("_comp_tags", "precommands"),
+    ),
+    FnProbe(
+        "_dispatch",
+        "Completion/Base/Core/_dispatch:3-12 ([-s] CONTEXT NAME...)",
+        [
+            ("default", ["zpfctx", "_default"]),
+            ("two-names", ["zpfctx", "-zpf-no-such-", "_default"]),
+            ("dash-s", ["-s", "zpfctx", "_default"]),
+        ],
+        dump=("_comp_tags",),
+    ),
+    FnProbe(
+        "_complete",
+        "Completion/Base/Core/_complete:1-30 (no arguments; reads $compstate)",
+        [("bare", [])],
+        dump=("_comp_tags",),
+        note="re-enters the completer chain; the probe's depth guard stops the "
+             "recursion back into itself",
+    ),
+    FnProbe(
+        "_main_complete",
+        "Completion/Base/Core/_main_complete:1-40 (the top of the chain)",
+        [("bare", [])],
+        dump=("_comp_tags",),
+        note="re-enters the whole chain from inside itself",
+    ),
+]
+
+FN_BY_NAME = {p.name: p for p in FN_PROBES}
+
+# Complaints the REFERENCE zsh makes about a generated CALL at completion time,
+# on top of the shared REF_REJECT_RE (which is about generated zstyle values).
+# A call zsh parses but then chokes on is not the same thing as a divergence in
+# zshrs, and it is not a clean pass either — labelling it REF-REFUSED is what
+# keeps the two apart. Labelling changes NOTHING about scoring: the cell is
+# still compared, still counted under its own verdict, and still keeps the exit
+# status non-zero. `_describe things arr -- -P pre` is the case that motivated
+# this: zsh's own sh:82 `eval … =( "${'$1'[@]}" )` said `bad substitution`,
+# zshrs said nothing, and the cell read as a plain FAIL with no hint that the
+# reference had refused the call.
+FN_REF_REJECT_RE = tuple(re.compile(p, re.I) for p in (
+    r"bad substitution",
+    r"bad pattern",
+    r"bad math expression",
+    r"parse error",
+    r"not valid in this context",
+    r"unknown file attribute",
+    r"bad set of key/value pairs",
+    r"invalid argument",
+    r"bad option",
+    r"can only be called from",
+    r"maximum nested function level reached",
+))
+
+
+def fn_ref_rejects(cap):
+    """The reference shell's own complaints about a generated CALL."""
+    if cap is None:
+        return []
+    return sorted(m for m in cap.diags
+                  if any(r.search(m) for r in REF_REJECT_RE + FN_REF_REJECT_RE))
+
+
+def router_registry(path=ROUTER_RS):
+    """The `_NAME`s zshrs has a native Rust port for.
+
+    Read straight out of the router's own dispatch table — the match arms of
+    `fn rust_compsys_lookup` in src/compsys/router.rs:258. That table IS the
+    registry: `dispatch_compsys` (router.rs:225) consults nothing else.
+    """
+    try:
+        with open(path) as f:
+            src = f.read()
+    except OSError:
+        return set()
+    if "fn rust_compsys_lookup" not in src:
+        return set()
+    body = src.split("fn rust_compsys_lookup", 1)[1].split("\n}\n", 1)[0]
+    return set(re.findall(r'^\s*"(_[A-Za-z0-9_]+)"\s*=>', body, re.M))
+
+
+def _is_stock_fpath_dir(d):
+    """router.rs:150 `is_stock_functions_dir` — the shipped Completion tree."""
+    return "/share/zsh/" in d and os.path.basename(d.rstrip("/")) == "functions"
+
+
+def fn_backend_map(fpath_dirs, names=None):
+    """Which backend zshrs really serves each `_NAME` from, in THIS config.
+
+    Replays the router's own arbitration (src/compsys/router.rs:41-64) against
+    the live `$fpath`:
+
+      * not in the dispatch table            -> the shell function, always;
+      * `$fpath`'s FIRST file for the name is in a non-stock directory that
+        sits AHEAD of the stock tree           -> `has_fpath_override`
+        (router.rs:186-215) makes the port step aside -> the shell function;
+      * otherwise                            -> the native Rust port.
+
+    `has_shfunc_override` (router.rs:89) is the third gate and cannot be
+    decided from outside the process: it fires only for a body the user
+    DEFINED (not an autoload stub, not a stock-directory load). The init this
+    harness writes defines none of these names, so it is inert here; it is
+    named in the report rather than silently assumed away.
+    """
+    reg = router_registry()
+    stock_pos = next((i for i, d in enumerate(fpath_dirs)
+                      if _is_stock_fpath_dir(d)), None)
+    out = {}
+    for name in sorted(names if names is not None else reg):
+        if name not in reg:
+            out[name] = ("shell", "no Rust port registered in router.rs")
+            continue
+        hit = None
+        for i, d in enumerate(fpath_dirs):
+            if os.path.isfile(os.path.join(d, name)):
+                hit = (i, d)
+                break
+        if hit and not _is_stock_fpath_dir(hit[1]) and (
+                stock_pos is None or hit[0] < stock_pos):
+            out[name] = ("shell", "fpath override at position %d: %s"
+                         % (hit[0], hit[1]))
+        else:
+            out[name] = ("port", "router.rs dispatch table")
+    return out
+
+
+def fn_probe_block(scratch, probe, label, argv):
+    """The zsh the init file gains so ONE utility call can be observed.
+
+    Mechanism, and why each piece is the way it is:
+
+      * `compdef _zpf_probe true` makes the probe the completer for a real
+        command, so the call happens inside a genuine completion context —
+        `compadd`, `comptags`, `$compstate` and `$curcontext` are all live.
+        Faking that context from a plain command line is not possible: every
+        one of these utilities calls a builtin that errors outside it.
+      * the observations go to a FILE, not the terminal, because a completion
+        widget owns the screen while it runs. `^O` is then rebound to a widget
+        that puts `cat -- $ZPF_OUT` on the line and accepts it, so the report
+        lands on the terminal as ordinary command output and is compared by
+        the same grid diff as everything else. The path is written unexpanded
+        so the two shells' scratch names never reach the screen.
+      * the probe adds exactly ONE match of its own, `zpfEND`, and only after
+        every observation has been written down — so it cannot move a number
+        in the report, and the listing the terminal draws is the function's
+        matches plus that one constant. It exists because an empty match list
+        makes `ctrl-d` draw nothing and both shells then sit out the full
+        per-key budget producing no bytes.
+      * a depth guard makes `_complete` / `_normal` / `_main_complete` safe to
+        call: they re-enter the chain, which comes back to this same probe.
+
+    With the default keys the listing is scrolled off by `^O`'s accept-line,
+    so what is compared is the report. `--fn-keys ctrl-d` is the complementary
+    axis: no report, and the two grids ARE the listings.
+    """
+    cs_keys = " ".join(FN_CS_KEYS)
+    dump_names = " ".join(_zq(n) for n in probe.dump) or "''"
+    call = probe.call_line(argv)
+    shown = " ".join(_zq(a) for a in argv)
+    return r"""
+ZPF_DIR=%(dir)s
+ZPF_OUT=$ZPF_DIR/report.txt
+: > $ZPF_OUT
+typeset -g _zpf_depth=0
+typeset -gA _zpf_cs0
+typeset -ga _zpf_empty=( )
+%(fixture)s
+_zpf_dump() {
+  local n t
+  local -a v
+  for n in "$@"; do
+    [[ -z $n ]] && continue
+    t=${(tP)n}
+    if [[ -z $t ]]; then
+      print -r -- "  $n = <unset>"
+    elif [[ $t = *array* || $t = *association* ]]; then
+      v=( "${(@P)n}" )
+      print -r -- "  ${n}[$#v] = ${(j: :)${(@qq)v}}"
+    else
+      print -r -- "  $n = ${(qq)${(P)n}}"
+    fi
+  done
+}
+
+_zpf_snap() {
+  local k
+  _zpf_cs0=( )
+  for k in %(cs_keys)s; do _zpf_cs0[$k]="$compstate[$k]"; done
+}
+
+_zpf_delta() {
+  local k
+  print -r -- "  nmatches: ${_zpf_cs0[nmatches]} -> $compstate[nmatches]"
+  for k in %(cs_keys)s; do
+    [[ $k = nmatches ]] && continue
+    [[ "$compstate[$k]" = "${_zpf_cs0[$k]}" ]] ||
+      print -r -- "  compstate[$k]: ${(qq)_zpf_cs0[$k]} -> ${(qq)compstate[$k]}"
+  done
+}
+
+_zpf_probe() {
+  (( _zpf_depth++ ))
+  if (( _zpf_depth > 1 )); then
+    print -r -- "-- reentered at depth $_zpf_depth, not re-run" >>$ZPF_OUT
+    (( _zpf_depth-- ))
+    return 1
+  fi
+  local -a expl reply match mbegin mend
+  local -i _zpf_rc
+  {
+    print -r -- "== %(fname)s / %(label)s"
+    print -r -- "-- argv: %(shown)s"
+    _zpf_snap
+    %(setup)s
+  } >>$ZPF_OUT 2>>$ZPF_OUT
+  %(call)s >>$ZPF_OUT 2>>$ZPF_OUT
+  _zpf_rc=$?
+  {
+    print -r -- "-- rc: $_zpf_rc"
+    _zpf_delta
+    _zpf_dump %(dump)s
+  } >>$ZPF_OUT 2>>$ZPF_OUT
+  # One sentinel match, added AFTER every observation is recorded, so it
+  # cannot move any number in the report. Without it a probe whose function
+  # added nothing leaves an empty match list, `ctrl-d` has nothing to draw,
+  # and BOTH shells sit out the harness's full per-key budget producing no
+  # bytes — 10s a side, on every such cell, measuring nothing. Returning 0
+  # stops the completer chain here for the same reason: a second completer
+  # would run the probe again.
+  compadd -U -Q -S '' -- zpfEND
+  (( _zpf_depth-- ))
+  return 0
+}
+
+compdef _zpf_probe %(host)s
+
+_zpf_show() { BUFFER='cat -- $ZPF_OUT'; CURSOR=$#BUFFER; zle accept-line }
+zle -N _zpf_show
+bindkey '^O' _zpf_show
+""" % {
+        "dir": shlex.quote(scratch),
+        "fixture": FN_FIXTURE,
+        "cs_keys": cs_keys,
+        "fname": probe.name,
+        "label": label,
+        "shown": shown,
+        "setup": probe.setup or ":",
+        "call": call,
+        "dump": dump_names,
+        "host": FN_HOST_CMD,
+    }
+
+
+# What the utility sweep does to the line. `ctrl-d` is list-choices on a
+# committed word, so the completion runs and the function's matches are LISTED
+# without anything being inserted; `ctrl-c` abandons the line; `ctrl-o` is the
+# rebound widget that prints the observation report. Both shells get the
+# identical three keys.
+#
+# Measured caveat, so nobody reads more into the default than it delivers: the
+# listing does NOT survive to the final grid — `^C` and `^O`'s accept-line both
+# clear it — so the default sequence compares the REPORT (rc, arrays,
+# `$compstate` delta, stderr), and the match COUNT is what carries the
+# matches-added evidence (`nmatches`, `compstate[list_lines]`). To compare the
+# match TEXT, run the same calls with `--fn-keys ctrl-d`: nothing then scrolls
+# the listing away and the two grids are the listings themselves.
+FN_KEYS = ["ctrl-d", "ctrl-c", "ctrl-o"]
+
+
+def fn_validate_call(probe, label, argv, zsh, scratch):
+    """Ask REAL zsh whether it can even PARSE this call.
+
+    Same contract as `validate_config` for generated zstyle statements: a call
+    the reference shell itself refuses is a bug in THIS FILE's argument
+    generation, counted as INVALID-CALL and never run, because comparing two
+    shells on a call neither can make says nothing.
+
+    The check is deliberately `zsh -n` — parse, do not execute. That is the
+    only rejection this cheap check can make WITHOUT false positives: every one
+    of these utilities calls `compadd` / `comptags` / `comparguments`, which
+    refuse to run outside a completion widget, so an executing check would
+    report "can only be called from completion function" for almost every
+    probe and throw away real cells. A call zsh parses but then complains about
+    AT COMPLETION TIME is a different thing and already has its own category —
+    `ref_rejects` puts it in REF-REFUSED, still compared, never a clean pass.
+
+    Returns a complaint string, or None when zsh parsed the line.
+    """
+    import subprocess
+    path = os.path.join(scratch, "validate_%s_%s.zsh" % (probe.name, label))
+    with open(path, "w") as f:
+        f.write(probe.call_line(argv) + "\n")
+    try:
+        p = subprocess.run([zsh, "-f", "-n", path], capture_output=True,
+                           text=True, timeout=25)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "could not run %s: %s" % (zsh, exc)
+    err = (p.stderr or "").strip()
+    if err:
+        return err.splitlines()[0]
+    if p.returncode != 0:
+        return "zsh -n exited %d with no message" % p.returncode
+    return None
+
+
+# Where a utility-sweep divergence is recorded. A SUBDIRECTORY of the fuzz
+# corpus on purpose: `corpus_load` takes every `*.json` in `--corpus-dir` as a
+# mutation parent, and a fn-sweep finding is not one — its identity is
+# (function, call label), and its buffer/keys alone replay nothing without the
+# probe init that `fn_probe_block` writes. Filing them beside the mutation
+# inputs would seed `--mutate` with parents that cannot reproduce anything.
+# A directory has no `.json` suffix, so `corpus_load` skips it.
+def fn_corpus_dir(args):
+    return os.path.join(args.corpus_dir, "fn")
+
+
+def fn_corpus_load(d):
+    """{fingerprint: record} already on file."""
+    out = {}
+    if not os.path.isdir(d):
+        return out
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, name)) as f:
+                obj = json.load(f)
+        except (OSError, ValueError) as exc:
+            print("# fn-corpus: skipping %s (%s)" % (name, exc))
+            continue
+        if obj.get("fingerprint"):
+            out[obj["fingerprint"]] = obj
+    return out
+
+
+def fn_corpus_write(d, rec):
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "fn_%s.json" % rec["fingerprint"])
+    with open(path, "w") as f:
+        json.dump(rec, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
+
+
+def fn_selection(args):
+    """The (probe, label, argv) triples this run drives."""
+    names = list(FN_BY_NAME)
+    if args.fn_only:
+        want = [n.strip() for n in args.fn_only.split(",") if n.strip()]
+        unknown = [n for n in want if n not in FN_BY_NAME]
+        if unknown:
+            sys.exit("--fn-only names no probe for: %s\nknown: %s"
+                     % (", ".join(unknown), ", ".join(sorted(FN_BY_NAME))))
+        names = want
+    out = []
+    for n in names:
+        p = FN_BY_NAME[n]
+        calls = p.calls
+        if args.fn_call:
+            want = {c.strip() for c in args.fn_call.split(",") if c.strip()}
+            calls = [c for c in calls if c[0] in want]
+        if args.fn_sweep > 0:
+            calls = calls[:args.fn_sweep]
+        for label, argv in calls:
+            out.append((p, label, argv))
+    return out
+
+
+def stock_fpath_functions(fpath_dirs):
+    """Every `_NAME` the shipped `Completion/` tree puts on this `$fpath`."""
+    out = set()
+    for d in fpath_dirs:
+        if not _is_stock_fpath_dir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if f.startswith("_") and not f.endswith(".zwc"):
+                    out.add(f)
+    return out
+
+
+def print_fn_split(backends, swept=None, prefix="# ", fpath_dirs=()):
+    """The map: which `_NAME` zshrs serves natively and which it does not.
+
+    Three populations, and the difference between them is the point:
+
+      * the ROUTER TABLE — names zshrs has a Rust port for at all;
+      * the STOCK TREE on this `$fpath` — names the shipped `Completion/`
+        directory provides. A stock name with no router arm is served by the
+        shell function, unconditionally;
+      * the OVERRIDES — names that have a port but whose first `$fpath` hit is
+        somebody else's file ahead of the stock tree, so the port stands down
+        (router.rs:186-215) and the shell function runs on both shells.
+    """
+    reg = router_registry()
+    stock = stock_fpath_functions(fpath_dirs)
+    ports = [n for n, (b, _w) in backends.items() if b == "port"]
+    shells = [n for n, (b, _w) in backends.items() if b == "shell"]
+    print("%srouter table  : %d `_NAME` arms in %s"
+          % (prefix, len(reg), os.path.relpath(ROUTER_RS, REPO)))
+    if stock:
+        print("%sstock tree    : %d `_NAME` file(s) on this $fpath; %d of them "
+              "have a port, %d have none and are SHELL-only"
+              % (prefix, len(stock), len(reg & stock), len(stock - reg)))
+    print("%sbackend split : %d served by the NATIVE RUST PORT, %d by the SHELL "
+          "function" % (prefix, len(ports), len(shells)))
+    for n in sorted(shells):
+        print("%s  SHELL  %-18s %s" % (prefix, n, backends[n][1]))
+    print("%s  (a defined shfunc body also beats a port — router.rs:89 "
+          "`has_shfunc_override`. Nothing in this init defines one, so that "
+          "gate is inert here; it is named rather than assumed away.)" % prefix)
+    if swept is not None:
+        print("%sswept here    : %d function(s)" % (prefix, len(swept)))
+
+
+def run_fn_list(args, fpath_dirs):
+    """Print the split map and the probe table; boot no shell."""
+    swept = sorted(FN_BY_NAME)
+    backends = fn_backend_map(fpath_dirs, names=sorted(router_registry()))
+    print_fn_split(backends, swept=swept, fpath_dirs=fpath_dirs)
+    print()
+    print("%-18s %-6s %-5s %s" % ("function", "serves", "calls", "interface source"))
+    for n in swept:
+        p = FN_BY_NAME[n]
+        b = backends.get(n, ("shell", "not in router table"))
+        print("%-18s %-6s %-5d %s" % (n, b[0], len(p.calls), p.source))
+        if b[0] == "shell":
+            print("%-18s %-6s %-5s -> %s" % ("", "", "", b[1]))
+        if p.note:
+            print("%-18s %-6s %-5s .. %s" % ("", "", "", p.note))
+    print()
+    print("# %d function(s), %d generated call(s)"
+          % (len(swept), sum(len(FN_BY_NAME[n].calls) for n in swept)))
+    return 0
+
+
+def run_fn_sweep(args, env, dump, fpath_dirs):
+    """Drive each stock utility function directly and compare both shells.
+
+    Categories, and why each is separate — the same discipline every other mode
+    in this file holds to:
+
+        PASS          both shells reported byte-identical observations.
+        FAIL / FLAKY  they did not. A divergence in the utility itself.
+        TIMEOUT/SKIP  unchanged meaning (measurement budget / host).
+        INVALID-CALL  the reference zsh refused the generated call outright.
+                      A bug in THIS FILE's argument generation, never a
+                      finding, and the cell is not run.
+        REF-REFUSED   zsh ran it but complained. Still compared — zshrs has to
+                      complain identically — but tallied apart so a green
+                      sweep can never be built out of calls zsh itself rejects.
+    """
+    outdir = os.path.join(REPO, "target", "parity-fn-sweep-%d" % args.seed)
+    os.makedirs(outdir, exist_ok=True)
+    sel = fn_selection(args)
+    keys = [k.strip() for k in getattr(args, "fn_keys", "").split(",") if k.strip()] \
+        or list(FN_KEYS)
+    for k in keys:
+        try:
+            key_bytes(k)
+        except UnknownKey:
+            sys.exit("--fn-keys names undefined key %r "
+                     "(add it to parity_corpus.KEYS)" % k)
+    swept = sorted({p.name for p, _l, _a in sel})
+    backends = fn_backend_map(fpath_dirs, names=sorted(
+        set(router_registry()) | set(FN_BY_NAME)))
+
+    print("# stock-utility sweep (each function called DIRECTLY, in context)")
+    print("# host cmd: %r — its completer is replaced by the probe" % FN_HOST_CMD)
+    print("# keys    : %s" % ",".join(keys))
+    print("# mode    : %s (%s)" % (args.mode, " ".join(args.test_argv)))
+    print("# dump    : %s" % (dump or "<none>"))
+    print("# jobs    : %d   geom=%dx%d settle=%dms"
+          % (max(1, args.jobs), args.rows, args.cols, args.settle))
+    print("# outdir  : %s" % outdir)
+    print_fn_split(backends, swept=swept, fpath_dirs=fpath_dirs)
+    print("# calls   : %d across %d function(s)" % (len(sel), len(swept)))
+    print()
+
+    # ── let real zsh vet every generated call before any pty boots ──
+    cells, invalid = [], []
+    for probe, label, argv in sel:
+        bad = None
+        if args.fn_validate:
+            bad = fn_validate_call(probe, label, argv, args.zsh, outdir)
+        if bad:
+            invalid.append((probe, label, argv, bad))
+            continue
+        case = adhoc_case(FN_HOST_CMD + " ", prefix="fn")
+        init = build_init(dump, fpath_dirs, args.zstyle,
+                          dirhook=lambda d, p=probe, l=label, a=argv:
+                          fn_probe_block(d, p, l, a))
+        cells.append((probe, label, argv,
+                      Cell(case, "%s/%s" % (probe.name, label), list(keys),
+                           init, origin="fn-sweep/%s/%s" % (probe.name, label))))
+
+    if invalid:
+        print("# %d generated call(s) REFUSED BY zsh ITSELF — generator bugs in "
+              "%s, not findings. Not run, not passed:" % (len(invalid), SELF))
+        for probe, label, argv, err in invalid:
+            print("#   %s/%s: %s" % (probe.name, label, err))
+            print("#     %s" % probe.call_line(argv))
+        print()
+
+    counts = {"PASS": 0, "FAIL": 0, "FLAKY": 0, "TIMEOUT": 0, "SKIP": 0}
+    per_fn = {}
+    failures, results, refused = [], [], []
+    for (probe, label, argv, cell), v in zip(cells, cell_stream(
+            args, env, [c for _p, _l, _a, c in cells])):
+        results.append((probe, label, argv, v))
+        counts[v.status] = counts.get(v.status, 0) + 1
+        slot = per_fn.setdefault(probe.name, {})
+        slot[v.status] = slot.get(v.status, 0) + 1
+        rejects = fn_ref_rejects(v.ref)
+        lab = v.status
+        if rejects:
+            refused.append((probe, label, v, rejects))
+            lab = "%s(ref-refused)" % v.status
+        line = "%-20s %-30s %s" % (lab, v.seq, probe.call_line(argv))
+        if v.status in ("FAIL", "FLAKY"):
+            line += "  [%s]" % v.fingerprint
+        print(line + (("  (%s)" % v.detail) if v.detail else ""))
+        for m in rejects:
+            print("        ! zsh itself complained: %s" % m)
+        if args.verbose and v.status == "PASS":
+            print(render(v.test.grid or []))
+        sys.stdout.flush()
+        if v.status in ("FAIL", "FLAKY"):
+            failures.append((probe, label, argv, v))
+            print_failure(v, args)
+            print("  --- direct replay ---")
+            print("  " + fn_repro_cmd(args, probe, label))
+        elif v.status == "TIMEOUT":
+            print_timeout(v, args)
+        elif v.status in ("REF-CRASHED", "TEST-CRASHED"):
+            print_crash(v, args)
+        sys.stdout.flush()
+
+    print()
+    print("# ── per-function verdicts ──")
+    print("# %-18s %-6s %5s %5s %5s %5s %5s  %s"
+          % ("function", "serves", "PASS", "FAIL", "TMO", "SKIP", "INV", "note"))
+    inv_by_fn = {}
+    for probe, label, _a, _e in invalid:
+        inv_by_fn[probe.name] = inv_by_fn.get(probe.name, 0) + 1
+    for n in swept:
+        s = per_fn.get(n, {})
+        b = backends.get(n, ("shell", "not in router table"))
+        note = "" if s.get("FAIL", 0) + s.get("FLAKY", 0) == 0 else "DIVERGES"
+        print("# %-18s %-6s %5d %5d %5d %5d %5d  %s"
+              % (n, b[0], s.get("PASS", 0),
+                 s.get("FAIL", 0) + s.get("FLAKY", 0), s.get("TIMEOUT", 0),
+                 s.get("SKIP", 0), inv_by_fn.get(n, 0), note))
+    print()
+
+    groups = print_fingerprint_groups([v for _p, _l, _a, v in failures], args) \
+        if failures else {}
+    if not failures:
+        print("# 0 failing cell(s), 0 distinct fingerprint(s)")
+
+    # ── record every NEW divergence, keyed by fingerprint ──
+    # The minimal call is already minimal: one function, one argument vector.
+    # There is no delta-debugging to do, so promotion is just "write the
+    # smallest cell of each unseen fingerprint down, with the replay".
+    fndir = fn_corpus_dir(args)
+    known = fn_corpus_load(fndir)
+    promoted = 0
+    for fp, vs in groups.items():
+        if fp in known:
+            print("# fingerprint %s already recorded in %s" % (fp, fndir))
+            continue
+        rep = min(vs, key=lambda v: v.size())
+        probe, label, argv = next(
+            ((p, l, a) for p, l, a, v in failures if v is rep),
+            (None, None, None))
+        if probe is None:
+            continue
+        rec = {
+            "fingerprint": fp,
+            "label": fp_label(rep),
+            "function": probe.name,
+            "serves": backends.get(probe.name, ("shell", ""))[0],
+            "source": probe.source,
+            "call_label": label,
+            "argv": list(argv),
+            "call": probe.call_line(argv),
+            "keys": list(keys),
+            "ref_rows": [a for _i, a, _b in rep.diffs][:8],
+            "test_rows": [b for _i, _a, b in rep.diffs][:8],
+            "replay": fn_repro_cmd(args, probe, label),
+        }
+        path = fn_corpus_write(fndir, rec)
+        promoted += 1
+        print("# NEW divergence %s recorded" % fp)
+        print("#   %s" % probe.call_line(argv))
+        print("#   zsh  : %s" % (rec["ref_rows"][0] if rec["ref_rows"] else ""))
+        print("#   zshrs: %s" % (rec["test_rows"][0] if rec["test_rows"] else ""))
+        print("#   file : %s" % path)
+        print("#   replay: %s" % rec["replay"])
+        known[fp] = rec
+
+    print("\n# %d passed, %d failed, %d call(s)"
+          % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], len(sel)))
+    print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
+          "INVALID-CALL=%d REF-REFUSED=%d REF-CRASHED=%d TEST-CRASHED=%d"
+          % (counts["PASS"], counts["FAIL"], counts["FLAKY"], counts["TIMEOUT"],
+             counts["SKIP"], len(invalid), len(refused),
+             counts.get("REF-CRASHED", 0), counts.get("TEST-CRASHED", 0)))
+    print_crash_counts(counts)
+    if invalid:
+        print("# %d call(s) INVALID: zsh's own parser refused them, so nothing "
+              "was compared. Fix the argument generation above." % len(invalid))
+    if refused:
+        print("# %d cell(s) ran under a call the reference zsh complained about. "
+              "Still compared, NOT clean passes:" % len(refused))
+        for probe, label, _v, ms in refused[:10]:
+            print("#   %s/%s: %s" % (probe.name, label, ms[0]))
+    if counts["TIMEOUT"]:
+        print("# %d cell(s) ran out of MEASUREMENT budget — not divergences, "
+              "not passes; re-run them at --jobs 1" % counts["TIMEOUT"])
+    if counts["SKIP"]:
+        print("# %d cell(s) skipped: %r is not installed here"
+              % (counts["SKIP"], FN_HOST_CMD))
+    print("# %d new divergence(s) recorded in %s" % (promoted, fn_corpus_dir(args)))
+    if failures:
+        print("# failing calls:")
+        for probe, label, _a, _v in failures:
+            print("#   %s" % fn_repro_cmd(args, probe, label))
+
+    if args.json:
+        write_json(args, {
+            "schema": "comptab-parity-fn-sweep/1",
+            "mode": args.mode,
+            "argv": sys.argv[1:],
+            "host_command": FN_HOST_CMD,
+            "keys": keys,
+            "backends": {n: {"serves": b, "why": w}
+                         for n, (b, w) in backends.items()},
+            "summary": {
+                "calls": len(sel),
+                "functions": len(swept),
+                "passed": counts["PASS"],
+                "failed": counts["FAIL"] + counts["FLAKY"],
+                "timeout": counts["TIMEOUT"],
+                "skipped": counts["SKIP"],
+                "invalid_call": len(invalid),
+                "ref_refused": len(refused),
+                "fingerprints": len(groups),
+            },
+            "per_function": {
+                n: {"serves": backends.get(n, ("shell", ""))[0],
+                    "source": FN_BY_NAME[n].source,
+                    "verdicts": per_fn.get(n, {}),
+                    "invalid": inv_by_fn.get(n, 0)}
+                for n in swept},
+            "invalid_calls": [{"function": p.name, "label": l, "argv": a,
+                               "error": e} for p, l, a, e in invalid],
+            "ref_refused": [{"function": p.name, "label": l, "id": v.id,
+                             "messages": ms} for p, l, v, ms in refused],
+            "fingerprints": fingerprint_doc(groups),
+            "results": [to_json(v) for _p, _l, _a, v in results],
+        })
+    return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"] or invalid
+                 or refused or crashed(counts)) else 0
+
+
+def fn_repro_cmd(args, probe, label):
+    """A command line that replays exactly one utility call."""
+    cmd = [SELF, "--fn-only", probe.name, "--fn-call", label]
+    if args.mode != "native":
+        cmd += ["--mode", args.mode]
+    if args.zshrs != os.path.join(REPO, "target", "debug", "zshrs"):
+        cmd += ["--zshrs", shlex.quote(args.zshrs)]
+    if args.zsh != "zsh":
+        cmd += ["--zsh", shlex.quote(args.zsh)]
+    if args.no_dump:
+        cmd += ["--no-dump"]
+    elif args.dump:
+        cmd += ["--dump", shlex.quote(args.dump)]
+    cmd += ["--rows", str(args.rows), "--cols", str(args.cols)]
+    if args.settle != 300:
+        cmd += ["--settle", str(args.settle)]
+    return " ".join(cmd)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zshrs", default=os.path.join(REPO, "target", "debug", "zshrs"))
@@ -5097,6 +6161,50 @@ def main():
                          "each shell writes a dump for one controlled layout, "
                          "then each shell reads BOTH dumps, and the state each "
                          "ends up in is printed. Not scored.")
+    # ── stock utility functions, driven directly ──
+    ap.add_argument("--fn-sweep", type=int, default=0, nargs="?", const=-1,
+                    metavar="N",
+                    help="drive the stock completion UTILITY functions "
+                         "(_description, _wanted, _tags, _describe, "
+                         "_arguments, _call_program, ...) DIRECTLY inside a "
+                         "real completion context, instead of hoping a "
+                         "generated command line happens to route through "
+                         "them, and compare what each shell observes: return "
+                         "status, the arrays it filled, its $compstate delta, "
+                         "what it wrote to stdout/stderr and the matches it "
+                         "added. N caps the calls per function (omit the "
+                         "value for all of them). Prints a PER-FUNCTION "
+                         "verdict table, and says for each name whether zshrs "
+                         "served the SHELL function or its NATIVE RUST PORT.")
+    ap.add_argument("--fn-only", default=None, metavar="NAMES",
+                    help="restrict --fn-sweep to these comma-separated "
+                         "function names (--fn-list prints them)")
+    ap.add_argument("--fn-call", default=None, metavar="LABELS",
+                    help="restrict --fn-sweep to these comma-separated call "
+                         "labels (the second column of a sweep's cell id)")
+    ap.add_argument("--fn-keys", default=",".join(FN_KEYS), metavar="KEYS",
+                    help="comma-separated keys the utility sweep replays. "
+                         "The default %(default)s compares the OBSERVATION "
+                         "REPORT — return status, the arrays the function "
+                         "filled, its $compstate delta, its stderr — because "
+                         "^O's accept-line scrolls the completion listing off "
+                         "the final grid. Pass `--fn-keys ctrl-d` for the "
+                         "complementary axis: no report, and the listing "
+                         "ITSELF (every match the function added, with its "
+                         "description and column layout) is what the two "
+                         "grids are compared on. Both shells always get the "
+                         "identical keys.")
+    ap.add_argument("--fn-list", action="store_true",
+                    help="print the shell-function vs native-Rust-port split "
+                         "for every `_NAME` in the router's dispatch table, "
+                         "plus the probe table and the interface citation each "
+                         "call set was derived from, then exit without booting "
+                         "a shell")
+    ap.add_argument("--fn-validate", action="store_true", default=True,
+                    help="have the reference zsh PARSE every generated call "
+                         "before any pty boots; one it refuses is counted "
+                         "INVALID-CALL (a generator bug) and never run")
+    ap.add_argument("--no-fn-validate", dest="fn_validate", action="store_false")
     # ── coverage-guided fuzzing ──
     ap.add_argument("--guided", type=int, default=0, metavar="N",
                     help="run N cells COVERAGE-GUIDED: keep an input in the "
@@ -5212,6 +6320,16 @@ def main():
               % (written, len(corpus_load(args.corpus_dir))))
         if args.mutate <= 0:
             return 0
+
+    if args.fn_list:
+        return run_fn_list(args, fpath_dirs)
+
+    if args.fn_sweep != 0 or args.fn_only or args.fn_call:
+        # `--fn-sweep` with no value means "every generated call"; the sweep
+        # itself reads <= 0 as uncapped.
+        if args.fn_sweep < 0:
+            args.fn_sweep = 0
+        return run_fn_sweep(args, env, dump, fpath_dirs)
 
     if args.layout_list:
         return run_layout_list(args)

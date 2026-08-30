@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "-/"
+  ],
+  "call": "_files '-/'",
+  "call_label": "dirs-only",
+  "fingerprint": "21055f3134",
+  "function": "_files",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/expl[#] = | test/expl[#] = ''",
+  "ref_rows": [
+    "  expl[0] ="
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _files --fn-call dirs-only --rows 40 --cols 110",
+  "serves": "shell",
+  "source": "Completion/Unix/Type/_files:3-30 ([-/] [-g PAT] [-W dir] ... )",
+  "test_rows": [
+    "  expl[1] = ''"
+  ]
+}

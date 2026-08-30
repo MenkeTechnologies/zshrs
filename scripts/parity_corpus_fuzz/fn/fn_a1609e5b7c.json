@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "files",
+    "expl",
+    "   padded file   "
+  ],
+  "call": "_description 'files' 'expl' '   padded file   '",
+  "call_label": "blank-padded-descr",
+  "fingerprint": "a1609e5b7c",
+  "function": "_description",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'padded file' | test/_lastdescr[#] = 'padded file'",
+  "ref_rows": [
+    "  _lastdescr[2] = '' 'padded file'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _description --fn-call blank-padded-descr --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_description:3-20 (zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+  "test_rows": [
+    "  _lastdescr[1] = 'padded file'"
+  ]
+}

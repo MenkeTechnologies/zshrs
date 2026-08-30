@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "files",
+    "expl",
+    "file"
+  ],
+  "call": "_description 'files' 'expl' 'file'",
+  "call_label": "plain",
+  "fingerprint": "b3c97da2eb",
+  "function": "_description",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'file' | test/_lastdescr[#] = 'file'",
+  "ref_rows": [
+    "  _lastdescr[2] = '' 'file'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _description --fn-call plain --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_description:3-20 (zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+  "test_rows": [
+    "  _lastdescr[1] = 'file'"
+  ]
+}

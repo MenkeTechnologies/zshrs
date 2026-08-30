@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "-",
+    "values",
+    "expl",
+    "value",
+    "compadd",
+    "l3"
+  ],
+  "call": "_all_labels '-' 'values' 'expl' 'value' 'compadd' 'l3'",
+  "call_label": "dash-prev",
+  "fingerprint": "8379d2af48",
+  "function": "_all_labels",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col2 | ref/_all_labels:comptags:#: no tags registered | test/_all_labels:comptags: no tags registered",
+  "ref_rows": [
+    "_all_labels:comptags:26: no tags registered"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _all_labels --fn-call dash-prev --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_all_labels:3-30 (leading `-`; zparseopts -D -a __gopt 1 2 V J x; TAG NAME DESCR ACTION...)",
+  "test_rows": [
+    "_all_labels:comptags: no tags registered"
+  ]
+}

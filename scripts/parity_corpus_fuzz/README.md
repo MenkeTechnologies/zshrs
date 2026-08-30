@@ -1,8 +1,8 @@
 # parity_corpus_fuzz — the completion fuzzer's persistent corpus
 
-Inputs for `scripts/comptab_parity.py --mutate N`, and the place all three fuzz
-modes (`--mutate`, `--style-fuzz`, `--guided`) write what they find. One small
-JSON file per input; an input is a complete cell:
+Inputs for `scripts/comptab_parity.py --mutate N`, and the place the fuzz modes
+(`--mutate`, `--style-fuzz`, `--guided`) write what they find. One small JSON
+file per input; an input is a complete cell:
 
 ```json
 {
@@ -54,6 +54,12 @@ unvalidated at small budgets.
   was the first input in the corpus's history to produce some feature. Capped
   at `--cov-corpus-max` (160); at the cap the least informative one is evicted,
   never an `fp_*`.
+* **Tracked: `fn/fn_*.json`.** One per divergence `--fn-sweep` found calling a
+  stock utility function directly. Kept in a SUBDIRECTORY because `--mutate`
+  reads every `*.json` in this directory as a mutation parent, and a fn-sweep
+  finding is not one: its identity is (function, call label) and its buffer and
+  keys replay nothing without the probe init the sweep generates. Its `replay`
+  field is the command that reproduces it.
 * **Not tracked: `seed_*.json`.** 500+ files that are a mechanical product of
   `parity_corpus.CASES` x `--seed-sequences` plus
   `scripts/comptab_divergent_cases.txt`. Regenerate them in one command; there
@@ -263,6 +269,120 @@ entries are territory the corpus did not previously reach, and they persist.
 Settling whether the scheduling half pays needs a run one or two orders of
 magnitude larger — at ~15 s/cell that is hours, which is why `--guide-off`
 exists rather than an assertion.
+
+
+## The stock utility functions (`--fn-sweep`)
+
+`--mutate` varies what is TYPED, `--style-fuzz` varies how the shell is
+CONFIGURED, `--layout-fuzz` varies where completers are STORED. All three reach
+a utility function like `_description` only by accident — something has to be
+typed that happens to route through it. `--fn-sweep` calls the utility
+DIRECTLY, inside a real completion context, with arguments derived from its own
+documented interface, and compares what each shell observed.
+
+That matters because zshrs replaces most of these functions with a native Rust
+port that intercepts the name. `--fn-list` prints the map, derived from the
+router's own dispatch table plus the arbitration it applies to the live
+`$fpath`:
+
+```
+# router table  : 246 `_NAME` arms in src/compsys/router.rs
+# stock tree    : 998 `_NAME` file(s) on this $fpath; 240 of them have a port, 758 have none and are SHELL-only
+# backend split : 243 served by the NATIVE RUST PORT, 3 by the SHELL function
+#   SHELL  _command_names     fpath override at position 17: ~/.zpwr/autoload/comp_utils
+#   SHELL  _files             fpath override at position 17: ~/.zpwr/autoload/comp_utils
+#   SHELL  _parameters        fpath override at position 17: ~/.zpwr/autoload/comp_utils
+```
+
+Method: the arms of `fn rust_compsys_lookup` (`src/compsys/router.rs:258`) are
+the registry — `dispatch_compsys` consults nothing else. A registered name
+still stands down when `$fpath`'s FIRST file for it sits in a non-stock
+directory ahead of the shipped tree (`has_fpath_override`, router.rs:186-215).
+A third gate, `has_shfunc_override` (router.rs:89), fires for a shfunc body the
+user DEFINED; nothing in the harness's init defines one, so it is inert here
+and is printed as a caveat rather than assumed away.
+
+### How a call is observed
+
+`compdef _zpf_probe true` makes a generated probe the completer for a real
+command, so the utility runs where `compadd`, `comptags`, `$compstate` and
+`$curcontext` are all live — none of these functions can be called from an
+ordinary command line. The probe writes its observations to a file, and `^O` is
+rebound to a widget that puts `cat -- $ZPF_OUT` on the line and accepts it, so
+the report reaches the terminal as ordinary output and is compared by the same
+grid diff as every other cell.
+
+Two axes, selected by `--fn-keys`:
+
+```sh
+# every call, both shells, per-function verdict table
+scripts/comptab_parity.py --fn-sweep
+
+# the split map and the probe table; no shell is booted
+scripts/comptab_parity.py --fn-list
+
+# one call, which is what a failure prints as its replay
+scripts/comptab_parity.py --fn-only _setup --fn-call one-arg
+
+# the LISTING axis: no report, the two grids ARE the completion listings
+scripts/comptab_parity.py --fn-sweep --fn-keys ctrl-d
+```
+
+The default keys compare the REPORT — return status, the arrays the function
+filled, its `$compstate` delta, its stderr — because `^O`'s accept-line scrolls
+the listing off the final grid. `--fn-keys ctrl-d` compares the listing itself.
+The two answer different questions and disagree in practice: see below.
+
+`--fn-sweep` adds one verdict of its own, for the same reason `--style-fuzz`
+has `INVALID-CONFIG`:
+
+* `INVALID-CALL` — the reference zsh could not even PARSE the generated call
+  (`zsh -n`). A bug in the harness's argument generation, never a finding; the
+  cell is not run. The check is parse-only on purpose: an executing check would
+  report `can only be called from completion function` for nearly every probe
+  and throw away real cells.
+
+`REF-REFUSED` keeps its meaning, widened to runtime complaints about a CALL
+(`bad substitution`, `invalid argument`, ...). Those cells are still run and
+still compared — zshrs is required to complain identically — but they are
+tallied apart so a green sweep cannot be assembled out of calls zsh itself
+rejects.
+
+A new fingerprint is written to `parity_corpus_fuzz/fn/fn_<hash>.json` with its
+call, its two rows and its replay. It is a SUBDIRECTORY on purpose: `--mutate`
+takes every `*.json` in the corpus root as a parent, and a fn-sweep finding is
+not one — its buffer and keys replay nothing without the probe init.
+
+### What the first full run found
+
+99 calls across 24 functions: 62 PASS, 36 FAIL over 13 fingerprints, 1 TIMEOUT,
+2 REF-REFUSED, 0 INVALID-CALL. Ten of the 24 functions diverge. The same six
+match-adding functions re-run on the LISTING axis (28 calls) were 28/28
+byte-identical — so every divergence below is in the STATE a utility leaves
+behind, not yet in what it displays.
+
+| fingerprint | cells | what differs |
+| --- | ---: | --- |
+| `3de4771a42` | 9 | `_alternative`, `_path_files`: the caller's `expl` comes back holding the callee's value (`'-J' '-default-'`). zsh leaves it untouched — both declare `local … expl` |
+| `b3c97da2eb` + 3 siblings | 8 | `_description`: `_lastdescr` gains one element, zsh's gains two. `_main_complete:54` declares `typeset -U _lastdescr` with no `-a`, so it is a SCALAR when `_description:14` runs `_lastdescr=( "$_lastdescr[@]" "$3" )`, and `"$scalar[@]"` on an empty scalar is one empty word. The port appends to an array instead |
+| `df47ae1cbe` | 5 | `_values`: the caller's `expl` comes back UNSET. `_values.rs:128-143` emulates zsh's `local` by `unsetparam` on return, which DELETES the caller's binding instead of restoring it |
+| `5e5ca020b9` | 4 | `_setup` returns 0; zsh returns 1. zsh's last statement is the `force-list` `&&` chain, which fails when no `force-list` style is set — the common case. The port has a unit test named `returns_zero` |
+| `4a4f853fa6` | 2 | `_all_labels` / `_wanted` with no action word: zsh runs the leftover group options as a command and says `command not found: -J`; zshrs accepts silently |
+| `5c6b1d2ee2` | 2 | `_pick_variant`: the probed command's stdout reaches the TERMINAL. zsh captures it in `$output` |
+| `3dd81d7db8` | 2 | `_normal`: leaves `precommands` as `('')`; zsh leaves it empty |
+| `8379d2af48` | 1 | nested diagnostic loses its line number: `_all_labels:comptags:26:` vs `_all_labels:comptags:` |
+| `15256af8f2` | 1 | `_call_program` runs the command with `Command::new("sh")` (`_call_program.rs:104`); zsh uses its own `eval` (sh:26-33). Different diagnostic (`sh: …` vs `(eval):1: …`) AND different status (1 vs 127) |
+| `21055f3134` | 1 | `_files -/` (the SHELL function on both shells, via the ported `_path_files`) leaves `expl` as `('')` |
+
+Three of these are one bug family — a native port that does not reproduce the
+shell function's `local` shadowing of `expl`, in both directions (leaking a
+value out, and deleting the caller's binding). The base shell is not at fault:
+`local -a expl` in a caller with `local`/`set -A`/`eval`/`${(P)}` writes in a
+callee is byte-identical on both shells.
+
+The TIMEOUT (`_wanted -2 -V g options expl opt compadd -o`) is one-sided
+silence from the REFERENCE zsh — no output for 10s, twice, including the serial
+re-run. Not scored as a pass, and named rather than folded into FAIL.
 
 
 ## Storage and lookup (`--layout-fuzz`)

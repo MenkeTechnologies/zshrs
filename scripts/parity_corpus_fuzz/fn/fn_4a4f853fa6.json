@@ -1,0 +1,36 @@
+{
+  "argv": [
+    "values",
+    "expl",
+    "value"
+  ],
+  "call": "_wanted 'values' 'expl' 'value'",
+  "call_label": "no-action",
+  "fingerprint": "4a4f853fa6",
+  "function": "_wanted",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_all_labels:#: command not found: -J | test/-- rc: #",
+  "ref_rows": [
+    "_all_labels:39: command not found: -J",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[2] = '-J' '-default-'",
+    "  _comp_tags = ' values '",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _wanted --fn-call no-action --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_wanted:3-13 (zparseopts -D -a __gopt 1 2 V J x C:=__targs; TAG NAME DESCR ACTION...)",
+  "test_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[2] = '-J' '-default-'",
+    "  _comp_tags = ' values '",
+    "@CT@",
+    "<absent>"
+  ]
+}
