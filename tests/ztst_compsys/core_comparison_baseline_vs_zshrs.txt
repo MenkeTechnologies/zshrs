@@ -1,0 +1,714 @@
+# baseline vs candidate, per assertion
+
+REGRESSION: 565
+both-nonpass: 106
+both-pass: 1816
+candidate-only-pass: 36
+
+REGRESSION           A01grammar # 15 base=pass    cand=fail    exclamation marks without following commands
+REGRESSION           A01grammar # 17 base=pass    cand=fail    `-' precommand modifier
+REGRESSION           A01grammar # 23 base=pass    cand=fail    rationalisation of arguments to exec -a
+REGRESSION           A01grammar # 29 base=pass    cand=fail    command -p in combination
+REGRESSION           A01grammar # 55 base=pass    cand=fail    Always block with error reset
+REGRESSION           A01grammar # 92 base=pass    cand=fail     case word handling in sh emulation (SH_GLOB parentheses)
+REGRESSION           A01grammar #104 base=pass    cand=fail    Status on bad substitution in if without else
+REGRESSION           A02alias #  7 base=pass    cand=fail    We can now alias special tokens.  Woo hoo.
+REGRESSION           A02alias # 15 base=pass    cand=fail    ALIAS_FUNC_DEF off by default.
+REGRESSION           A02alias # 16 base=pass    cand=fail    ALIAS_FUNC_DEF reports original alias if multiple
+REGRESSION           A03quoting #  5 base=pass    cand=fail    $'-style quote with metafied backslash
+REGRESSION           A03quoting #  9 base=pass    cand=fail    Embedded null characters in $'...' strings.
+REGRESSION           A04redirect # 24 base=pass    cand=fail    '>&-' with attempt to use closed fd
+REGRESSION           A04redirect # 37 base=pass    cand=fail    read multio input with pipe
+REGRESSION           A04redirect # 73 base=pass    cand=fail    Two here-documents in a line are shown correctly.
+REGRESSION           A04redirect # 74 base=pass    cand=fail    Combination of HERE-document and |&
+REGRESSION           A05execution # 31 base=pass    cand=fail    Background job exit does not affect reaping foreground job
+REGRESSION           A05execution # 33 base=pass    cand=fail    'wait' exit status and warning for unknown ID
+REGRESSION           A05execution # 34 base=pass    cand=fail    'wait' exit status for unknown ID (POSIX mode)
+REGRESSION           A05execution # 39 base=pass    cand=fail    shebang-less scripts are to be run by sh even when their file paths start with - or + (workers/52515)
+REGRESSION           A06assign # 42 base=pass    cand=fail    add scalar to association
+REGRESSION           A06assign # 64 base=pass    cand=fail    attempt to add to indexed integer variable
+REGRESSION           A06assign # 65 base=pass    cand=fail    attempt to add to slice of float variable
+REGRESSION           A06assign # 70 base=pass    cand=fail    attempt to insert array into string
+REGRESSION           A06assign # 77 base=pass    cand=fail    GLOB_ASSIGN with numeric types
+REGRESSION           A06assign # 80 base=pass    cand=fail    command execution with assignments shadowing array parameter
+REGRESSION           A06assign # 81 base=pass    cand=fail    command execution with assignments shadowing array parameter with ksharrays
+REGRESSION           A06assign #101 base=pass    cand=fail    overwrite [6,3] characters in short string
+REGRESSION           A09zwc #  2 base=pass    cand=fail    workers/54571: Malformed .zwc with implausible npats does not crash the shell
+REGRESSION           B01cd #  5 base=pass    cand=fail    Implicit cd with unset HOME.
+both-nonpass         B01cd #  6 base=xfail   cand=xfail   (workers/45367) cd -P squashes multiple leading slashes
+REGRESSION           B01cd #  7 base=pass    cand=fail    cd . with moved PWD
+REGRESSION           B02typeset # 17 base=pass    cand=fail    Tied parameters and uniquified arrays with meta-character as separator
+REGRESSION           B02typeset # 18 base=pass    cand=fail    Tied parameters and uniquified arrays with NUL-character as separator
+REGRESSION           B02typeset # 21 base=pass    cand=fail    Tied arrays with separator specified
+REGRESSION           B02typeset # 38 base=pass    cand=fail    Parameter hiding and tagging, printing types and values
+REGRESSION           B02typeset # 41 base=pass    cand=fail    Upper case conversion, does not apply to values used internally
+REGRESSION           B02typeset # 42 base=pass    cand=fail    Lower case conversion, does not apply to values used internally
+REGRESSION           B02typeset # 46 base=pass    cand=fail    readonly with POSIX_BUILTINS
+REGRESSION           B02typeset # 51 base=pass    cand=fail    reserved word and builtin interfaces
+REGRESSION           B02typeset # 52 base=pass    cand=fail    typeset preserves existing variable types
+REGRESSION           B02typeset # 55 base=pass    cand=fail    can update array slices in typeset
+REGRESSION           B02typeset # 58 base=pass    cand=fail    when cannot change UID, the command isn't run
+REGRESSION           B02typeset # 60 base=pass    cand=fail    [key]=val for normal arrays
+REGRESSION           B02typeset # 61 base=pass    cand=fail    Substitution in [key]=val syntax
+REGRESSION           B02typeset # 62 base=pass    cand=fail    mixed syntax [key]=val with normal arrays
+REGRESSION           B02typeset # 66 base=pass    cand=fail    parameter hiding preserved by "typeset -p"
+REGRESSION           B02typeset # 69 base=pass    cand=fail    redeclare a tied variable with different attributes
+REGRESSION           B02typeset # 70 base=pass    cand=fail    colonarray re-split when changing the join character
+REGRESSION           B02typeset # 71 base=pass    cand=fail    cannot change the join character on a readonly tied variable
+REGRESSION           B02typeset # 76 base=pass    cand=fail    OK to run typeset -T on tied specials as long as peer and joinchar are unchanged
+REGRESSION           B02typeset # 78 base=pass    cand=fail     readonly/export output for exported+readonly+special when started as sh
+REGRESSION           B02typeset # 79 base=pass    cand=fail     readonly/export output for exported+readonly+tied+special after switching to sh emulation
+REGRESSION           B02typeset # 82 base=pass    cand=fail    Global non -h variable doesn't hide special variable
+REGRESSION           B02typeset # 83 base=pass    cand=fail    Global non -h variable doesn't hide autoload variable
+REGRESSION           B02typeset # 84 base=pass    cand=fail    Global -h variable doesn't hide autoload variable
+REGRESSION           B02typeset # 85 base=pass    cand=fail    Local non -h variable doesn't hide special variable
+REGRESSION           B02typeset # 86 base=pass    cand=fail    Local non -h variable hides autoload variable
+REGRESSION           B02typeset # 87 base=pass    cand=fail    Local -h variable hides autoload variable
+REGRESSION           B03print # 22 base=pass    cand=fail    numeric value of high numbered character
+REGRESSION           B04read # 16 base=pass    cand=fail    return status on failing to set parameter
+REGRESSION           B07emulate # 20 base=pass    cand=fail    emulate sh uses subshell for last pipe entry
+REGRESSION           B08shift #  3 base=pass    cand=fail    shifting more elements than exist in array
+REGRESSION           B10getopts # 21 base=pass    cand=fail    POSIX_BUILTINS disables '+' variant handling
+REGRESSION           B10getopts # 22 base=pass    cand=fail    -p works like POSIX_BUILTINS
+REGRESSION           B10getopts # 23 base=pass    cand=fail    option parsing
+REGRESSION           B11kill #  3 base=pass    cand=fail    kill with multiple wrong inputs should increment status
+REGRESSION           B11kill #  4 base=pass    cand=fail    kill with sigspec and wrong inputs should increment status
+REGRESSION           B11kill #  7 base=pass    cand=fail    kill with empty pid and sigspec should not send signal to current process group
+REGRESSION           B11kill #  8 base=pass    cand=fail    Plain kill with empty pid should not send signal to current process group
+REGRESSION           B12limit #  7 base=pass    cand=fail    bad multibyte option letter
+REGRESSION           B13whence #  3 base=pass    cand=fail    (workers/53524) whence -s doesn't print arrows for symlink-free paths
+REGRESSION           C01arith # 73 base=pass    cand=fail    Arithmetic, NO_UNSET part 3
+REGRESSION           C02cond # 36 base=pass    cand=fail    string comparisons with `[' builtin
+REGRESSION           C02cond # 37 base=pass    cand=fail    string comparison with strings that look like operators
+REGRESSION           C02cond # 61 base=pass    cand=fail    -o invalidoption
+REGRESSION           C03traps #  7 base=pass    cand=fail     Outputting traps correctly
+REGRESSION           C03traps # 11 base=pass    cand=fail     Nested `trap ... TERM', triggered on inner loop
+REGRESSION           C03traps # 12 base=pass    cand=fail     Nested `trap ... TERM', triggered on outer loop
+REGRESSION           C03traps # 18 base=pass    cand=fail     autoloaded TRAPEXIT (exit status > 128 indicates an old bug is back)
+REGRESSION           C03traps # 19 base=pass    cand=fail    waiting for trapped signal
+REGRESSION           C03traps # 25 base=pass    cand=fail    DDD
+REGRESSION           C03traps # 26 base=pass    cand=fail     EXIT trap set in current shell at left of pipeline
+REGRESSION           C03traps # 32 base=pass    cand=fail    POSIX EXIT trap can have nested native mode EXIT trap
+REGRESSION           C03traps # 66 base=pass    cand=fail    ERR_EXIT not triggered by status 1 at end of always
+REGRESSION           C03traps # 81 base=pass    cand=fail    ERR_EXIT is triggered by last command in an AND-OR list
+REGRESSION           C04funcdef # 12 base=pass    cand=fail    User-defined math functions, string arguments
+REGRESSION           C04funcdef # 19 base=pass    cand=fail    Process substitution with anonymous functions
+REGRESSION           C04funcdef # 22 base=pass    cand=fail    Anonymous function arguments and command arguments
+REGRESSION           C04funcdef # 24 base=pass    cand=fail    sticky emulation applies to autoloads and autoloaded function execution
+REGRESSION           C04funcdef # 25 base=pass    cand=fail    Anonymous function with arguments in a form nobody sane would ever use but unfortunately we have to support anyway
+REGRESSION           C04funcdef # 47 base=pass    cand=fail    autoload containing dash
+REGRESSION           C04funcdef # 51 base=pass    cand=fail    functions -c preserves file information
+REGRESSION           D01prompt # 17 base=pass    cand=fail    Attribute optimisation - preserve initial disabling of attribute but drop useless later one
+both-nonpass         D01prompt # 19 base=xfail   cand=xfail   RPS1 and RPROMPT are aliases (regression from 5.0.6) (workers/49600)
+REGRESSION           D02glob #  2 base=pass    cand=fail    ksh compatibility
+REGRESSION           D02glob #  4 base=pass    cand=fail    exclusions regression test
+REGRESSION           D02glob # 24 base=pass    cand=fail    disable -p
+REGRESSION           D02glob # 28 base=pass    cand=fail    redirect to a non-matching pattern is an error even with flag (N)
+REGRESSION           D02glob # 44 base=pass    cand=fail    quoted - works in pattern in parameter
+REGRESSION           D02glob # 50 base=pass    cand=fail    character set specified as active variable
+REGRESSION           D02glob # 53 base=pass    cand=fail    modifier ':A' resolves '..' components before symlinks
+both-nonpass         D02glob # 63 base=xfail   cand=xfail   (workers/45367) modifier ':P' squashes multiple slashes
+REGRESSION           D02glob # 74 base=pass    cand=fail    e glob qualifier delimiters, quoting, and expansion
+REGRESSION           D02glob # 75 base=pass    cand=fail    the '*' qualfier enables extended_glob for pattern matching
+both-nonpass         D03procsubst #  1 base=unknown cand=unknown <(...) substitution
+both-nonpass         D03procsubst #  2 base=unknown cand=unknown >(...) substitution
+both-nonpass         D03procsubst #  3 base=unknown cand=unknown =(...) substitution
+both-nonpass         D03procsubst #  4 base=unknown cand=unknown FDs remain open for external commands called from functions
+both-nonpass         D03procsubst #  5 base=unknown cand=unknown <(...) when embedded within an argument
+both-nonpass         D03procsubst #  6 base=unknown cand=unknown >(...) when embedded within an argument
+both-nonpass         D03procsubst #  7 base=unknown cand=unknown =(...) followed by something else without a break
+both-nonpass         D03procsubst #  8 base=unknown cand=unknown =(...) preceded by other stuff has no special effect
+both-nonpass         D03procsubst #  9 base=unknown cand=unknown Graceful handling of bad substitution in enclosed context
+both-nonpass         D03procsubst # 10 base=unknown cand=unknown Process environment of anonymous functions
+both-nonpass         D03procsubst # 11 base=unknown cand=unknown Process substitution as anonymous function argument
+both-nonpass         D03procsubst # 12 base=unknown cand=unknown backtacking within command string parsing with alias still pending
+both-nonpass         D03procsubst # 13 base=unknown cand=unknown full alias expanded when substitution starts in alias
+both-nonpass         D03procsubst # 14 base=unknown cand=unknown proc subst fd in forked subshell closed in parent
+both-nonpass         D03procsubst # 15 base=unknown cand=unknown proc subst fd in forked subshell closed in parent (external command)
+both-nonpass         D03procsubst # 16 base=unknown cand=unknown With /proc/self file descriptors must not be tidied up too early
+both-nonpass         D03procsubst # 17 base=unknown cand=unknown EQUALS expansion followed by =(...) (sh ordering) should work
+both-nonpass         D03procsubst # 18 base=unknown cand=unknown external command with =(...) on LHS of pipeline cleans up its tempfiles
+both-nonpass         D03procsubst # 19 base=unknown cand=unknown regression test: exit in shell function cleans up tempfiles
+both-nonpass         D03procsubst # 20 base=unknown cand=unknown regression test: race condition with pipe and procsubst
+REGRESSION           D04parameter #  9 base=pass    cand=fail    ::= respects expansion flags
+REGRESSION           D04parameter # 10 base=pass    cand=fail    ${#${(A)=array=word}} counts array elements
+REGRESSION           D04parameter # 12 base=pass    cand=fail    interactive shell returns to top level on ${...?...} error
+REGRESSION           D04parameter # 25 base=pass    cand=fail    "|" array exclusion and "*" array intersection
+REGRESSION           D04parameter # 33 base=pass    cand=fail    globsubst together with nested quoted expansion
+REGRESSION           D04parameter # 34 base=pass    cand=fail    splitting of $(...) inside ${...}
+REGRESSION           D04parameter # 35 base=pass    cand=fail    SH_WORD_SPLIT inside $(...) inside ${...}
+REGRESSION           D04parameter # 41 base=pass    cand=fail    ${(g)...}
+REGRESSION           D04parameter # 53 base=pass    cand=fail    ${(z)...} and ${(Q)...} for some hard to parse cases
+REGRESSION           D04parameter # 54 base=pass    cand=fail    Some syntactical expressions that are hard to split into words with (z).
+REGRESSION           D04parameter # 55 base=pass    cand=fail    Comments with (z)
+REGRESSION           D04parameter # 59 base=pass    cand=fail    $($(z)} with parse error in command substitution.
+REGRESSION           D04parameter # 60 base=pass    cand=fail    ${(z)} regression test: multiple array assignments
+REGRESSION           D04parameter # 63 base=pass    cand=fail    ${(QX)...}
+REGRESSION           D04parameter # 71 base=pass    cand=fail    regression test for <-> in flags
+REGRESSION           D04parameter # 84 base=pass    cand=fail    Rule 2: Parameter subscripting
+REGRESSION           D04parameter # 90 base=pass    cand=fail    Rule 9: Shell Word Splitting
+REGRESSION           D04parameter # 96 base=pass    cand=fail    Regression test of ${=1+"$@"} bug and some related expansions
+REGRESSION           D04parameter # 97 base=pass    cand=fail    More bourne-shell-compatible nested word-splitting with wildcards and ~
+REGRESSION           D04parameter # 98 base=pass    cand=fail    Test of nested word splitting with and without quotes
+REGRESSION           D04parameter #101 base=pass    cand=fail    Unsetting and recreation of tied special parameters
+REGRESSION           D04parameter #102 base=pass    cand=fail    Unsetting and recreation of tied normal parameters
+REGRESSION           D04parameter #107 base=pass    cand=fail    (#m) flag with tokenized input
+REGRESSION           D04parameter #130 base=pass    cand=fail    ZSH_SUBSHELL
+REGRESSION           D04parameter #132 base=pass    cand=fail    GLOBSUBST only on parameter substitution arguments
+REGRESSION           D04parameter #133 base=pass    cand=fail    Lookup failures on elements of arrays with RC_EXPAND_PARAM
+REGRESSION           D04parameter #134 base=pass    cand=fail    $ZSH_EVAL_CONTEXT and $zsh_eval_context
+REGRESSION           D04parameter #135 base=pass    cand=notrun  zsh_eval_context resizing
+REGRESSION           D04parameter #136 base=pass    cand=unknown more math context
+REGRESSION           D04parameter #137 base=pass    cand=unknown Bash-style offsets, scalar
+REGRESSION           D04parameter #138 base=pass    cand=unknown Bash-style offsets, array
+REGRESSION           D04parameter #139 base=pass    cand=unknown Bash-style offsets, Bourne-style indexing
+REGRESSION           D04parameter #140 base=pass    cand=unknown Bash-style offsets, quoted array
+REGRESSION           D04parameter #141 base=pass    cand=unknown Regression test for identifier test
+REGRESSION           D04parameter #142 base=pass    cand=unknown Regression test for missing length after offset
+REGRESSION           D04parameter #143 base=pass    cand=unknown Regression test for total length < 0 in string
+REGRESSION           D04parameter #144 base=pass    cand=unknown Regression test for total length < 0 in array
+REGRESSION           D04parameter #145 base=pass    cand=unknown Nularg removed from split empty string
+REGRESSION           D04parameter #146 base=pass    cand=unknown Regression test for shwordsplit with null or unset IFS and quoted array
+REGRESSION           D04parameter #147 base=pass    cand=unknown Empty parameter should not cause modifiers to crash the shell
+REGRESSION           D04parameter #148 base=pass    cand=unknown repeated upper/lowercase modifiers
+REGRESSION           D04parameter #149 base=pass    cand=unknown Intersection and disjunction with empty parameters
+REGRESSION           D04parameter #150 base=pass    cand=unknown Zipping arrays, correct output
+REGRESSION           D04parameter #151 base=pass    cand=unknown Zipping arrays, one or both inputs empty
+REGRESSION           D04parameter #152 base=pass    cand=unknown Zipping arrays, scalar input
+REGRESSION           D04parameter #153 base=pass    cand=unknown Zipping arrays, parsing
+REGRESSION           D04parameter #154 base=pass    cand=unknown Zipping arrays, NO_UNSET part 1
+REGRESSION           D04parameter #155 base=pass    cand=unknown Zipping arrays, NO_UNSET part 2
+REGRESSION           D04parameter #156 base=pass    cand=unknown Use of variable to get separator when splitting parameter
+REGRESSION           D04parameter #157 base=pass    cand=unknown SHLVL appears sensible when about to exit shell
+REGRESSION           D04parameter #158 base=pass    cand=unknown SHLVL decremented upon implicit exec optimisation
+REGRESSION           D04parameter #159 base=pass    cand=unknown SHLVL not decremented upon exec in subshells
+REGRESSION           D04parameter #160 base=pass    cand=unknown Alias expansion in command substitution in parameter evaluation
+REGRESSION           D04parameter #161 base=pass    cand=unknown $_ with anonymous function
+REGRESSION           D04parameter #162 base=pass    cand=unknown $_ with anonymous function without arguments
+REGRESSION           D04parameter #163 base=pass    cand=unknown ${(b)...} quoting protects from GLOB_SUBST
+REGRESSION           D04parameter #164 base=pass    cand=unknown Avoid confusion after overloaded characters in braceless substitution in sh
+REGRESSION           D04parameter #165 base=pass    cand=unknown History modifier works the same for scalar and array substitution
+REGRESSION           D04parameter #166 base=pass    cand=unknown Complicated backtracking with match counts
+REGRESSION           D04parameter #167 base=pass    cand=unknown We Love SH_WORD_SPLIT Day celebrated with space at start of internal subst
+REGRESSION           D04parameter #168 base=pass    cand=unknown We Love NO_SH_WORD_SPLIT Even More Day celebrated as sanity check
+REGRESSION           D04parameter #169 base=pass    cand=unknown ${(P)...} with normal subscripting
+REGRESSION           D04parameter #170 base=pass    cand=unknown ${(P)...} with array as name
+REGRESSION           D04parameter #171 base=pass    cand=unknown ${(P)...} with internal subscripting
+REGRESSION           D04parameter #172 base=pass    cand=unknown nested parameter name references
+REGRESSION           D04parameter #173 base=pass    cand=unknown Local special variables with loose typing
+REGRESSION           D04parameter #174 base=pass    cand=unknown ${(q+)...}
+REGRESSION           D04parameter #175 base=pass    cand=unknown "-" works after "[" in same expression (Dash problem)
+REGRESSION           D04parameter #176 base=pass    cand=unknown Splitting of $@ on IFS: single element
+REGRESSION           D04parameter #177 base=pass    cand=unknown Splitting of $@ on IFS: multiple elements
+REGRESSION           D04parameter #178 base=pass    cand=unknown Splitting of $@ on (s): multiple elements
+REGRESSION           D04parameter #179 base=pass    cand=unknown Splitting of $@ on (@s): multiple elements
+REGRESSION           D04parameter #180 base=pass    cand=unknown Joining of $@ does not happen when IFS is empty, but splitting $* does
+REGRESSION           D04parameter #181 base=pass    cand=unknown Use of @ does not prevent forced join with j
+REGRESSION           D04parameter #182 base=pass    cand=unknown (q) and (b) quoting deal with the EQUALS option
+REGRESSION           D04parameter #183 base=pass    cand=unknown Out-of-range multiple array subscripts with quoting, with and without (@)
+REGRESSION           D04parameter #184 base=pass    cand=unknown Regression: "-" became Dash in workers/37689, breaking ~- expansion
+REGRESSION           D04parameter #185 base=pass    cand=unknown Assigning $@, $*, "$@", "$*" to var with various shwordsplit/IFS settings
+REGRESSION           D04parameter #186 base=pass    cand=unknown reset IFS to default if it contains invalid character
+REGRESSION           D04parameter #187 base=pass    cand=unknown eight bit chars in IFS should work if multibute option is off
+REGRESSION           D04parameter #188 base=pass    cand=unknown $- expansion correctly handles Dash token
+REGRESSION           D04parameter #189 base=pass    cand=unknown Zero-length string match in parameter substitution
+REGRESSION           D04parameter #190 base=pass    cand=unknown Zero-length string match at end
+REGRESSION           D04parameter #191 base=pass    cand=unknown Fully anchored string must be fully searched
+REGRESSION           D04parameter #192 base=pass    cand=unknown Respect anchors
+REGRESSION           D04parameter #193 base=pass    cand=unknown Test substitution that uses P,Q,A,s,r,m flags
+REGRESSION           D04parameter #194 base=pass    cand=unknown (z) splitting with remaining tokens
+REGRESSION           D04parameter #195 base=pass    cand=unknown [key]=val for hashes
+REGRESSION           D04parameter #196 base=pass    cand=unknown [key]=val for normal arrays
+REGRESSION           D04parameter #197 base=pass    cand=unknown [key]=val for normal arrays with KSH_ARRAYS
+REGRESSION           D04parameter #198 base=pass    cand=unknown Substitution in [key]=val syntax
+REGRESSION           D04parameter #199 base=pass    cand=unknown append to normal array using [key]=val
+REGRESSION           D04parameter #200 base=pass    cand=unknown append to normal array using [key]=val with KSH_ARRAYS
+REGRESSION           D04parameter #201 base=pass    cand=unknown quoting in [key]=value syntax
+REGRESSION           D04parameter #202 base=pass    cand=unknown mixed syntax [key]=val with normal arrays
+REGRESSION           D04parameter #203 base=pass    cand=unknown mixed syntax [key]=val with normal arrays with KSH_ARRAYS
+REGRESSION           D04parameter #204 base=pass    cand=unknown Mixed syntax with [key]=val not allowed for hash.
+REGRESSION           D04parameter #205 base=pass    cand=unknown Globbing in non-[key]=val parts of mixed syntax.
+REGRESSION           D04parameter #206 base=pass    cand=unknown Globbing in non-[key]=val parts of mixed syntax with KSH_ARRAYS
+REGRESSION           D04parameter #207 base=pass    cand=unknown Append to element(s) of array
+REGRESSION           D04parameter #208 base=pass    cand=unknown Append to element(s) of array with KSH_ARRAYS
+REGRESSION           D04parameter #209 base=pass    cand=unknown Append to element(s) of associative array
+REGRESSION           D04parameter #210 base=pass    cand=unknown Append to element of array on creation
+REGRESSION           D04parameter #211 base=pass    cand=unknown Append to element of array on creation with KSH_ARRAYS
+REGRESSION           D04parameter #212 base=pass    cand=unknown Append to element of associative array on creation
+REGRESSION           D04parameter #213 base=pass    cand=unknown (Z) flag splitting with $( closed after embedded newline
+REGRESSION           D04parameter #214 base=pass    cand=unknown (z) flag with CSH_JUNKIE_QUOTES
+REGRESSION           D04parameter #215 base=pass    cand=unknown Use of parameter subst + to test element of hash with KSH_ARRAYS.
+REGRESSION           D04parameter #216 base=pass    cand=unknown double-quoted nested evaluation of empty string
+REGRESSION           D04parameter #217 base=pass    cand=unknown Separation / join logic regression test
+REGRESSION           D04parameter #218 base=pass    cand=unknown t with trailing digits
+REGRESSION           D04parameter #219 base=pass    cand=unknown h with trailing digits
+REGRESSION           D04parameter #220 base=pass    cand=unknown Combinations of :h and :t with and without trailing digits
+REGRESSION           D04parameter #221 base=pass    cand=unknown Multiple slashes are treated as one in :h and :t but are not removed
+REGRESSION           D04parameter #222 base=pass    cand=unknown Modifiers :h and :t remove trailing slashes before examining path
+REGRESSION           D04parameter #223 base=pass    cand=unknown Global variables are not trashed by "foo=bar builtin" (regression test)
+REGRESSION           D04parameter #224 base=pass    cand=unknown Smallest match at end can match zero-length string
+REGRESSION           D04parameter #225 base=pass    cand=unknown Smallest match at end with a character always matches one
+REGRESSION           D04parameter #226 base=pass    cand=unknown Smallest / largest match with non-trivial closure
+REGRESSION           D04parameter #227 base=pass    cand=unknown Largest match at end matches entire string
+REGRESSION           D04parameter #228 base=pass    cand=unknown (S) with zero-length matches at start
+REGRESSION           D04parameter #229 base=pass    cand=unknown (S) with zero-length matches at end, part 1 (workers/45164)
+REGRESSION           D04parameter #230 base=pass    cand=unknown (S) with zero-length matches at end, part 2
+REGRESSION           D04parameter #231 base=pass    cand=unknown broken length in ${name:offset:length} (workers/45843#1)
+REGRESSION           D04parameter #232 base=pass    cand=unknown regression test for workers/45843#2: escaped newline in command substitution start token
+REGRESSION           D04parameter #233 base=pass    cand=unknown Normal command substitution with escaped newline
+REGRESSION           D04parameter #234 base=pass    cand=unknown Normal math eval with escaped newline after $
+REGRESSION           D04parameter #235 base=pass    cand=unknown Normal math eval with escaped newline after $(
+REGRESSION           D04parameter #236 base=pass    cand=unknown Backslash character other than newline is normal after $(
+REGRESSION           D04parameter #237 base=pass    cand=unknown parameter expansion flags parsing error gives a clue
+REGRESSION           D04parameter #238 base=pass    cand=unknown (users/28784) substituting a single-quoted backslash, part #1: slash
+REGRESSION           D04parameter #239 base=pass    cand=unknown (users/28784) substituting a single-quoted backslash, part #2: single quote
+REGRESSION           D04parameter #240 base=pass    cand=unknown (users/28784 inspired this) substituting a single-quoted backslash, part #3: control
+REGRESSION           D04parameter #241 base=pass    cand=unknown Different behaviour of :s and :S modifiers
+REGRESSION           D04parameter #242 base=pass    cand=unknown ${(#X)...}: bad math expression
+REGRESSION           D04parameter #243 base=pass    cand=unknown ${(#)...}: bad math expression
+REGRESSION           D04parameter #244 base=pass    cand=unknown ${(#)...}: bad math expression, printf
+REGRESSION           D04parameter #245 base=pass    cand=unknown ${(#X)...}: array of bad math expressions
+REGRESSION           D04parameter #246 base=pass    cand=unknown ${(#)...}: array of bad math expressions, printf
+REGRESSION           D04parameter #247 base=pass    cand=unknown ${(#X)...}: out-of-range character
+REGRESSION           D04parameter #248 base=pass    cand=unknown ${(#)...}: out-of-range character
+REGRESSION           D04parameter #249 base=pass    cand=unknown ${(#)...}: array of out-of-range characters
+REGRESSION           D04parameter #250 base=pass    cand=unknown ${(#X)...}: array of out-of-range characters
+REGRESSION           D04parameter #251 base=pass    cand=unknown regression for workers/53179 unicode ZDOTDIR
+REGRESSION           D04parameter #252 base=pass    cand=unknown ZSH_EXEPATH
+REGRESSION           D04parameter #253 base=pass    cand=unknown COLUMNS and LINES preserved from environment when non-interactive
+REGRESSION           D06subscript #  2 base=pass    cand=fail    Scalar pattern subscripts with wildcards
+REGRESSION           D06subscript #  4 base=pass    cand=fail    Scalar subscripting using a pattern subscript to get the index
+REGRESSION           D06subscript # 11 base=pass    cand=fail    Associative array assignment
+REGRESSION           D06subscript # 13 base=pass    cand=fail    Associative array lookup using a pattern subscript to get the key
+REGRESSION           D06subscript # 17 base=pass    cand=fail    Associative array keys with double quotes
+REGRESSION           D06subscript # 18 base=pass    cand=fail    More keys with double quotes, used in assignment-expansion
+REGRESSION           D06subscript # 19 base=pass    cand=fail    Keys with double quotes and the (P) expansion flag
+REGRESSION           D06subscript # 33 base=pass    cand=fail     Parsing subscript with non-trivial tokenisation
+both-nonpass         D06subscript # 36 base=xfail   cand=xfail   Math evaluation of commas in array subscripts
+REGRESSION           D06subscript # 38 base=pass    cand=fail    Can check off end of zero length string
+REGRESSION           D07multibyte #  5 base=pass    cand=fail    Subscript searching with initial offset
+REGRESSION           D07multibyte #  6 base=pass    cand=fail    Subscript searching with count
+REGRESSION           D07multibyte # 12 base=pass    cand=fail    POSIX_IDENTIFIERS option
+both-nonpass         D07multibyte # 29 base=xfail   cand=xfail   POSIX: width in %s should be computed in bytes, not in characters
+both-nonpass         D07multibyte # 30 base=xfail   cand=xfail   POSIX: precision should also be computed in bytes, not in characers
+REGRESSION           D07multibyte # 32 base=pass    cand=fail    evaluated character number with multibyte characters
+REGRESSION           D07multibyte # 35 base=pass    cand=fail    error handling in Unicode quoting
+REGRESSION           D07multibyte # 39 base=pass    cand=fail    read passes through invalid multibyte characters
+REGRESSION           D07multibyte # 41 base=pass    cand=fail    Invalid parameter name with following tokenized input
+REGRESSION           D07multibyte # 44 base=pass    cand=fail    Invalid characters in pattern matching
+REGRESSION           D07multibyte # 47 base=pass    cand=notrun  Raw bytes don't match multibyte characters part 2
+REGRESSION           D07multibyte # 48 base=pass    cand=unknown ${(q+)...} with printable multibyte characters
+REGRESSION           D07multibyte # 49 base=pass    cand=unknown Multibyte handling of functions parameter
+REGRESSION           D07multibyte # 50 base=pass    cand=unknown Sorting of metafied characters
+REGRESSION           D07multibyte # 51 base=pass    cand=unknown printf %q and quotestring and general metafy / token madness
+REGRESSION           D07multibyte # 52 base=pass    cand=unknown print and printf into a variable with multibyte text
+REGRESSION           D07multibyte # 53 base=pass    cand=unknown Ensure no confusion on metafied input to regex module
+REGRESSION           D07multibyte # 54 base=pass    cand=unknown locale gets restored when locale parameters go out of scope (regression test for 45772)
+REGRESSION           D07multibyte # 55 base=pass    cand=unknown (workers/50150) zsh/stat with Unicode and metafication
+REGRESSION           D07multibyte # 56 base=pass    cand=unknown workers/54583: select with multi-byte word
+REGRESSION           D08cmdsubst # 26 base=pass    cand=fail    Aliases with braces in command substitution can cause havoc
+REGRESSION           D10nofork # 11 base=pass    cand=fail    globsubst on result
+REGRESSION           D10nofork # 13 base=pass    cand=fail    newline removal in ${ ... }, zsh mode
+REGRESSION           D10nofork # 15 base=pass    cand=fail    newline removal should not occur, part 2
+REGRESSION           D10nofork # 18 base=pass    cand=fail    unclosed braces are sometimes a bad substitution
+REGRESSION           D10nofork # 30 base=pass    cand=fail    capture stdout
+REGRESSION           D10nofork # 35 base=pass    cand=notrun  return statement inside, part 1
+REGRESSION           D10nofork # 36 base=pass    cand=unknown return status propages in assignment like $(...)
+REGRESSION           D10nofork # 37 base=pass    cand=unknown return statement inside, part 2
+REGRESSION           D10nofork # 38 base=pass    cand=unknown errreturn works inside and remains outside
+REGRESSION           D10nofork # 39 base=pass    cand=unknown exit statement inside
+REGRESSION           D10nofork # 40 base=pass    cand=unknown errexit inside
+REGRESSION           D10nofork # 41 base=pass    cand=unknown local declaration inside
+REGRESSION           D10nofork # 42 base=pass    cand=unknown local declaration, global assignment, part 1
+REGRESSION           D10nofork # 43 base=pass    cand=unknown local declaration, global assignment, part 2 (evaluation order)
+REGRESSION           D10nofork # 44 base=pass    cand=unknown function definition, brace nesting, quote nesting
+REGRESSION           D10nofork # 45 base=pass    cand=unknown here-document behavior
+REGRESSION           D10nofork # 46 base=pass    cand=unknown here-string behavior
+REGRESSION           D10nofork # 47 base=pass    cand=unknown another capture stdout
+REGRESSION           D10nofork # 48 base=pass    cand=unknown assignment context
+REGRESSION           D10nofork # 49 base=pass    cand=unknown return statement inside, part 1+
+REGRESSION           D10nofork # 50 base=pass    cand=unknown return status propages in stdout capture
+REGRESSION           D10nofork # 51 base=pass    cand=unknown return statement inside, part 2+
+REGRESSION           D10nofork # 52 base=pass    cand=unknown errreturn works inside stdout capture
+REGRESSION           D10nofork # 53 base=pass    cand=unknown exit statement inside stdout capture
+REGRESSION           D10nofork # 54 base=pass    cand=unknown errexit inside stdout capture
+REGRESSION           D10nofork # 55 base=pass    cand=unknown dummy test to set option soon enough
+REGRESSION           D10nofork # 56 base=pass    cand=unknown ignored braces, part 1
+REGRESSION           D10nofork # 57 base=pass    cand=unknown ignored braces, part 2
+REGRESSION           D10nofork # 58 base=pass    cand=unknown ignored braces, part 3
+REGRESSION           D10nofork # 59 base=pass    cand=unknown ignored braces, part 4
+REGRESSION           D10nofork # 60 base=pass    cand=unknown break N propagates
+REGRESSION           D10nofork # 61 base=pass    cand=unknown break after assignment completes the assignment
+REGRESSION           D10nofork # 62 base=pass    cand=unknown error handling (without crashing)
+REGRESSION           D10nofork # 63 base=pass    cand=unknown reserved parameter name (without crashing)
+REGRESSION           E01options #  1 base=pass    cand=fail    zsh --version output
+REGRESSION           E01options # 12 base=pass    cand=fail    CDABLE_VARS option
+REGRESSION           E01options # 18 base=pass    cand=fail    EQUALS option
+REGRESSION           E01options # 19 base=pass    cand=fail    ERR_EXIT option
+REGRESSION           E01options # 28 base=pass    cand=fail    NO_EXEC does recognize bad substitution syntax
+REGRESSION           E01options # 37 base=pass    cand=fail    HIST_SUBST_PATTERN option
+REGRESSION           E01options # 42 base=pass    cand=fail    KSH_TYPESET option
+REGRESSION           E01options # 43 base=pass    cand=fail    LOCAL_OPTIONS option
+REGRESSION           E01options # 44 base=pass    cand=fail    MAGIC_EQUAL_SUBST option
+REGRESSION           E01options # 48 base=pass    cand=fail    Fix for race with input multios
+REGRESSION           E01options # 49 base=pass    cand=fail    regression test: multios with nullexec
+REGRESSION           E01options # 54 base=pass    cand=fail    PATH_DIRS option
+REGRESSION           E01options # 59 base=pass    cand=fail    POSIX_BUILTINS and exec
+REGRESSION           E01options # 70 base=pass    cand=fail    SH_FILE_EXPANSION option
+REGRESSION           E01options # 71 base=pass    cand=fail    SH_FILE_EXPANSION option with GLOB_SUBST et al.
+REGRESSION           E01options # 73 base=pass    cand=fail    SH_GLOB option
+REGRESSION           E01options # 79 base=pass    cand=fail    WARN_CREATE_GLOBAL option
+REGRESSION           E01options # 81 base=pass    cand=fail    WARN_NESTED_VAR option
+REGRESSION           E01options # 87 base=pass    cand=fail    PIPE_FAIL option
+REGRESSION           E01options # 98 base=pass    cand=fail    RM_STAR_SILENT
+REGRESSION           E01options #103 base=pass    cand=fail    workers/54309: AUTO_NAME_DIRS: local parameter not considered
+REGRESSION           E02xtrace #  1 base=pass    cand=fail    xtrace with and without redirection
+REGRESSION           E02xtrace #  6 base=pass    cand=fail    a function that redefines itself preserves tracing
+REGRESSION           E03posix #  1 base=pass    cand=fail    Parameter hiding and tagging, printing types and values
+REGRESSION           E03posix #  2 base=pass    cand=fail    readonly -p output (no readonly specials)
+REGRESSION           E03posix #  3 base=pass    cand=fail    typeset -p1 output for array
+REGRESSION           E03posix #  4 base=pass    cand=fail    typeset -p1 output for associative array
+REGRESSION           E03posix #  5 base=pass    cand=fail    ${(t)...}
+REGRESSION           E03posix #  6 base=pass    cand=fail    (i) and (I) return nothing for empty array
+REGRESSION           E03posix #  7 base=pass    cand=fail    KSH_TYPESET option
+REGRESSION           E03posix #  8 base=pass    cand=fail    (t) returns correct type
+REGRESSION           E03posix #  9 base=pass    cand=fail    readonly with typeset -p
+both-nonpass         E03posix # 10 base=xfail   cand=xfail   A single "-" for echo does not end the arguments
+both-nonpass         E03posix # 11 base=xfail   cand=xfail   "foreach" is not a reserved word
+both-nonpass         E03posix # 12 base=xfail   cand=xfail   "end" is not a reserved word
+both-nonpass         E03posix # 13 base=xfail   cand=xfail   IFS is a separator, not a delimiter
+both-nonpass         E03posix # 14 base=xfail   cand=xfail   All whitespace characters are "IFS whitespace"
+both-nonpass         E03posix # 15 base=xfail   cand=xfail   IFS applies to math results (numbers treated as strings)
+REGRESSION           E03posix # 16 base=pass    cand=fail    All identifiers are variable references in POSIX arithmetic
+both-nonpass         E03posix # 17 base=xfail   cand=xfail   EUID is not a special variable
+both-nonpass         E03posix # 18 base=xfail   cand=xfail   PPID is not a readonly variable
+REGRESSION           K01nameref # 20 base=pass    cand=fail    assign/typeset existing array via nameref
+REGRESSION           K01nameref # 21 base=pass    cand=fail    assign/typeset existing array via nameref
+REGRESSION           K01nameref # 24 base=pass    cand=fail    unset via nameref
+REGRESSION           K01nameref # 46 base=pass    cand=fail    invalid nameref
+REGRESSION           K01nameref # 53 base=pass    cand=fail    up-reference part 3, hidden global
+REGRESSION           K01nameref # 57 base=pass    cand=fail    up-reference part 7, upscope namerefs, end not in scope
+REGRESSION           K01nameref # 59 base=pass    cand=fail    up-reference part 9, autoloading with hidden special
+both-nonpass         K01nameref # 64 base=xfail   cand=xfail   up-reference part 14, typeset -g to enclosing scope, skip local
+REGRESSION           K01nameref # 77 base=pass    cand=fail    unset various types via nameref, including a readonly special
+REGRESSION           K01nameref # 79 base=pass    cand=fail    for-loop variable is a reference, part 5, errors
+REGRESSION           K01nameref # 88 base=pass    cand=fail    assignment at different scope than declaration, '' 0
+REGRESSION           K01nameref # 91 base=pass    cand=fail    assignment at different scope than declaration, '' 6
+REGRESSION           K01nameref # 92 base=pass    cand=fail    Transitive references with scoping changes
+REGRESSION           K01nameref # 94 base=pass    cand=fail    references to invalid variable names
+REGRESSION           K01nameref # 95 base=pass    cand=fail    references to builtin specials
+REGRESSION           K01nameref # 96 base=pass    cand=fail    references to positional parameters
+REGRESSION           K01nameref #101 base=pass    cand=fail    Referring and dereferring an autoload variable loads it
+REGRESSION           K01nameref #102 base=pass    cand=fail    Dereferring an autoload variable fails to load it if its hidden
+REGRESSION           K01nameref #105 base=pass    cand=fail    incidental reference loop triggers error
+REGRESSION           K01nameref #107 base=pass    cand=fail    can't change type of hidden variables via assignments to references
+REGRESSION           K01nameref #109 base=pass    cand=fail    type changes via typed typeset to references
+REGRESSION           K01nameref #118 base=pass    cand=fail    unsetting references with -n unsets the references
+REGRESSION           K01nameref #119 base=pass    cand=fail    unsetting references without -n unsets the referred parameters
+REGRESSION           K01nameref #120 base=pass    cand=fail    unsetting subscripted references unsets the referred elements
+REGRESSION           K01nameref #121 base=pass    cand=fail    unsetting read-only parameter triggers an error
+REGRESSION           K01nameref #122 base=pass    cand=fail    unsetting placeholder references or their referents has no effect
+REGRESSION           K01nameref #124 base=pass    cand=fail    unsetting references referring to parameters in enclosing scopes unsets the parameters
+REGRESSION           K01nameref #125 base=pass    cand=fail    unsetting references referring to hidden parameters unsets the hidden parameters
+REGRESSION           K01nameref #126 base=pass    cand=fail    hidden reference refers to a nested variable
+REGRESSION           K01nameref #127 base=pass    cand=fail    reference refers successively to multiple variables in multiple nested scopes
+REGRESSION           K02parameter #  9 base=pass    cand=fail    ${(z)...} and ${(Q)...} for some hard to parse cases
+REGRESSION           K02parameter # 11 base=pass    cand=fail    namerefs with namespaces
+REGRESSION           K02parameter # 25 base=pass    cand=fail    Nested namespace is not usable
+both-nonpass         P01privileged #  1 base=unknown cand=unknown PRIVILEGED automatically enabled when RUID != EUID
+both-nonpass         P01privileged #  2 base=unknown cand=unknown PRIVILEGED automatically enabled when RGID != EGID
+both-nonpass         P01privileged #  3 base=unknown cand=unknown EUID set to RUID after disabling PRIVILEGED
+both-nonpass         P01privileged #  4 base=unknown cand=unknown RUID/EUID set to 0/0 when privileged after disabling PRIVILEGED
+both-nonpass         P01privileged #  5 base=unknown cand=unknown not possible to regain EUID when unprivileged after disabling PRIVILEGED
+both-nonpass         P01privileged #  6 base=unknown cand=unknown EGID set to RGID after disabling PRIVILEGED
+both-nonpass         P01privileged #  7 base=unknown cand=unknown not possible to regain EGID when unprivileged after disabling PRIVILEGED
+both-nonpass         P01privileged #  8 base=unknown cand=unknown getpwuid() fails with non-existent RUID and 0 EUID
+both-nonpass         V01zmodload #  3 base=fail    cand=fail    Test loading of all compiled modules
+both-nonpass         V01zmodload #  4 base=fail    cand=fail    Check that zsh believes the modules did load
+REGRESSION           V01zmodload # 17 base=pass    cand=fail    Failed builtin autoload
+REGRESSION           V01zmodload # 18 base=pass    cand=fail    Failed parameter autoload
+REGRESSION           V01zmodload # 19 base=pass    cand=fail    Failed condition autoload
+REGRESSION           V01zmodload # 20 base=pass    cand=fail    Failed math function autoload
+REGRESSION           V01zmodload # 22 base=pass    cand=fail    Autoloads checked on loading but don't necessarily effect current command
+REGRESSION           V01zmodload # 23 base=pass    cand=fail    List default autoloads
+REGRESSION           V01zmodload # 24 base=pass    cand=fail    Autoload a module via a condition
+REGRESSION           V01zmodload # 25 base=pass    cand=fail    Autoload a module via a parameter
+REGRESSION           V01zmodload # 26 base=pass    cand=fail    Autoload a module via a math function
+REGRESSION           V01zmodload # 27 base=pass    cand=fail    Autoload tied parameters
+REGRESSION           V01zmodload # 29 base=pass    cand=fail    Unload/autoload the module via its alias
+both-nonpass         V01zmodload # 31 base=fail    cand=fail    Listing with zmodload should give all our modules.
+both-nonpass         V01zmodload # 32 base=fail    cand=fail    Unload the modules loaded by this test suite
+REGRESSION           V01zmodload # 34 base=pass    cand=fail    Regression tests for index bug with math functions.
+REGRESSION           V01zmodload # 35 base=pass    cand=fail    Module Features for math functions
+both-nonpass         V01zmodload # 36 base=xfail   cand=xpass   can unset a non-readonly autoloadable parameter before loading the module
+both-nonpass         V01zmodload # 38 base=xfail   cand=xfail   can't unset a readonly autoloadable parameter before loading the module
+REGRESSION           V04features # 19 base=pass    cand=fail    Successfully unloaded a module despite a parameter being hidden
+REGRESSION           V04features # 21 base=pass    cand=fail    Enabling and disabling of builtins as features
+REGRESSION           V06parameter #  5 base=pass    cand=fail    workers/54617: $commands look-up with no_hash_list_all
+candidate-only-pass  V07pcre #  1 base=unknown cand=pass    Basic non-ASCII regexp matching
+both-nonpass         V07pcre #  2 base=unknown cand=fail    Raw IMETA characters in input string
+candidate-only-pass  V07pcre #  3 base=unknown cand=pass    Regex result inversion detection
+candidate-only-pass  V07pcre #  4 base=unknown cand=pass    pcre_compile interface testing: basic, anchored & case-insensitive
+candidate-only-pass  V07pcre #  5 base=unknown cand=pass    Empty string for optional captures that don't match
+candidate-only-pass  V07pcre #  6 base=unknown cand=pass    pcre_match -b and pcre_match -n
+candidate-only-pass  V07pcre #  7 base=unknown cand=pass    ensure ASCII NUL passes in and out of matched plaintext
+candidate-only-pass  V07pcre #  8 base=unknown cand=pass    ensure ASCII NUL works also in the regex
+candidate-only-pass  V07pcre #  9 base=unknown cand=pass    infix -pcre-match works
+candidate-only-pass  V07pcre # 10 base=unknown cand=pass    bash-compatibility works
+candidate-only-pass  V07pcre # 11 base=unknown cand=pass    regression for segmentation fault, workers/38307
+both-nonpass         V07pcre # 12 base=unknown cand=fail    switch between C/UTF-8 locales
+candidate-only-pass  V07pcre # 13 base=unknown cand=pass    empty capture
+both-nonpass         V07pcre # 14 base=unknown cand=fail    named captures
+both-nonpass         V07pcre # 15 base=unknown cand=fail    pcre_match -d
+both-nonpass         V09datetime #  3 base=skip    cand=skip    alternate format extensions
+both-nonpass         V09datetime #  4 base=skip    cand=skip    various extensions
+candidate-only-pass  V10private #  1 base=unknown cand=pass    unload and reload the module without crashing
+both-nonpass         V10private #  2 base=unknown cand=fail    basic scope hiding
+candidate-only-pass  V10private #  3 base=unknown cand=pass    enter and exit a scope
+both-nonpass         V10private #  4 base=unknown cand=fail    variable defined only in scope
+both-nonpass         V10private #  5 base=unknown cand=fail    nested scope with different type, correctly restored
+candidate-only-pass  V10private #  6 base=unknown cand=pass    type of private may not be changed by assignment
+candidate-only-pass  V10private #  7 base=unknown cand=pass    associative array fields may not be private
+candidate-only-pass  V10private #  8 base=unknown cand=pass    tied params may not be private, part 1
+candidate-only-pass  V10private #  9 base=unknown cand=pass    tied params may not be private, part 2
+candidate-only-pass  V10private # 10 base=unknown cand=pass    privates may hide tied parameters
+both-nonpass         V10private # 11 base=unknown cand=fail    private hides value from surrounding scope in nested scope
+candidate-only-pass  V10private # 12 base=unknown cand=pass    private cannot be re-declared as local
+candidate-only-pass  V10private # 13 base=unknown cand=pass    local cannot be re-declared as private
+candidate-only-pass  V10private # 14 base=unknown cand=pass    exported private behaves like a local, part 1
+candidate-only-pass  V10private # 15 base=unknown cand=pass    exported private behaves like a local, part 2 (arrays do not export)
+candidate-only-pass  V10private # 16 base=unknown cand=pass    exported private behaves like a local, part 3 (export does not change scope)
+both-nonpass         V10private # 17 base=unknown cand=fail    privates are not visible in anonymous functions, part 1
+both-nonpass         V10private # 18 base=unknown cand=fail    privates are not visible in anonymous functions, part 2
+both-nonpass         V10private # 19 base=unknown cand=fail    privates are not visible in anonymous functions, part 3
+both-nonpass         V10private # 20 base=unknown cand=fail    privates are not visible in anonymous functions, part 4
+both-nonpass         V10private # 21 base=unknown cand=fail    privates are not visible in anonymous functions, part 5
+candidate-only-pass  V10private # 22 base=unknown cand=pass    special parameters cannot be made private
+candidate-only-pass  V10private # 23 base=unknown cand=pass    private parameter may hide a special parameter
+both-nonpass         V10private # 24 base=unknown cand=fail    typeset still works with zsh/param/private module loaded
+candidate-only-pass  V10private # 25 base=unknown cand=pass    nameref can be declared private
+both-nonpass         V10private # 26 base=unknown cand=fail    assignment to private nameref in wrong scope, part 1
+both-nonpass         V10private # 27 base=unknown cand=fail    assignment to private nameref in wrong scope, part 2
+both-nonpass         V10private # 28 base=unknown cand=fail    up-reference for private namerefs, end unset and not in scope
+both-nonpass         V10private # 29 base=unknown cand=fail    up-reference for private namerefs, end not in scope
+both-nonpass         V10private # 30 base=unknown cand=fail    up-reference for private namerefs, end is in scope
+candidate-only-pass  V10private # 31 base=unknown cand=pass    up-reference for private namerefs, end is in scope but private
+candidate-only-pass  V10private # 32 base=unknown cand=pass    regression test for invalid reference detection
+candidate-only-pass  V10private # 33 base=unknown cand=pass    regression test for unset private
+candidate-only-pass  V10private # 34 base=unknown cand=pass    private may be called twice
+candidate-only-pass  V10private # 35 base=unknown cand=pass    private may not change parameter type
+both-nonpass         V10private # 36 base=unknown cand=fail    redirection cannot assign private in wrong scope
+candidate-only-pass  V10private # 37 base=unknown cand=pass    nofork may read private in calling function
+candidate-only-pass  V10private # 38 base=unknown cand=pass    nofork may write to private in calling function
+candidate-only-pass  V10private # 39 base=unknown cand=pass    nofork cannot see private in surrounding nofork
+both-nonpass         V10private # 40 base=unknown cand=fail    nofork may not change private in surrounding nofork
+both-nonpass         V10private # 41 base=unknown cand=fail    function may not access private from inside nofork
+both-nonpass         V10private # 42 base=unknown cand=fail    function may not access private declared in nofork
+candidate-only-pass  V11db_gdbm #  1 base=unknown cand=pass    unload and reload the module without crashing
+both-nonpass         V11db_gdbm #  2 base=unknown cand=fail    create the database
+both-nonpass         V11db_gdbm #  3 base=unknown cand=fail    open the database read-only
+both-nonpass         V11db_gdbm #  4 base=unknown cand=fail    store key in database
+both-nonpass         V11db_gdbm #  5 base=unknown cand=fail    remove key from database (different variables)
+both-nonpass         V11db_gdbm #  6 base=unknown cand=fail    store & remove key from database (the same variables)
+both-nonpass         V11db_gdbm #  7 base=unknown cand=fail    store 2 keys fetching 1st
+both-nonpass         V11db_gdbm #  8 base=unknown cand=fail    unset key that was fetched
+both-nonpass         V11db_gdbm #  9 base=unknown cand=fail    scan read-only tied hash, directly assign local -a
+both-nonpass         V11db_gdbm # 10 base=unknown cand=fail    Use scan directly, read-write mode
+both-nonpass         V11db_gdbm # 11 base=unknown cand=fail    replace hash / database, scan
+both-nonpass         V11db_gdbm # 12 base=unknown cand=fail    scan with no (kv)
+both-nonpass         V11db_gdbm # 13 base=unknown cand=fail    scan with keys only (k)
+both-nonpass         V11db_gdbm # 14 base=unknown cand=fail    scan with keys only explicit (v)
+candidate-only-pass  V11db_gdbm # 15 base=unknown cand=pass    read-only open non-existent database
+both-nonpass         V11db_gdbm # 16 base=unknown cand=fail    Append with +=( ), also with existing data, also (kv) scan
+both-nonpass         V11db_gdbm # 17 base=unknown cand=fail    Type of tied parameter
+both-nonpass         V11db_gdbm # 18 base=unknown cand=fail    Type of tied parameter, with preceding unset
+both-nonpass         V11db_gdbm # 19 base=unknown cand=fail    Type of tied parameter, with local parameter already existing
+both-nonpass         V11db_gdbm # 20 base=unknown cand=fail    Test of automatic untie (use of local scope) and of scoping
+both-nonpass         V11db_gdbm # 21 base=unknown cand=fail    Test of tie to hidden local via named reference
+both-nonpass         V11db_gdbm # 22 base=unknown cand=fail    zgdbm_tied parameter
+both-nonpass         V11db_gdbm # 23 base=unknown cand=fail    unset of read-only zgdbm_tied parameter
+both-nonpass         V11db_gdbm # 24 base=unknown cand=fail    Unicode test
+both-nonpass         V11db_gdbm # 25 base=unknown cand=fail    Metafication of $'\0'
+both-nonpass         V11db_gdbm # 26 base=unknown cand=fail    Unicode & metafication test, different hash access
+both-nonpass         V11db_gdbm # 27 base=unknown cand=fail    Hash scanning and metafication
+both-nonpass         V11db_gdbm # 28 base=unknown cand=fail    Sorted hash scanning and metafication
+both-nonpass         V11db_gdbm # 29 base=unknown cand=fail    zgdbmpath builtin
+both-nonpass         V11db_gdbm # 30 base=unknown cand=fail    Test store in forked Zsh
+REGRESSION           V12zparseopts #  1 base=pass    cand=fail    zparseopts with empty option spec (no options recognised)
+REGRESSION           V12zparseopts #  2 base=pass    cand=fail    zparseopts without option specs, without array
+REGRESSION           V12zparseopts #  8 base=pass    cand=fail    zparseopts -F
+REGRESSION           V12zparseopts # 11 base=pass    cand=fail    zparseopts -M
+REGRESSION           V12zparseopts # 20 base=pass    cand=fail    missing optarg
+REGRESSION           V12zparseopts # 23 base=pass    cand=fail    zparseopts -G, single parameter, without =
+REGRESSION           V12zparseopts # 27 base=pass    cand=fail    Sun-style long options, with and without -G
+REGRESSION           V12zparseopts # 28 base=pass    cand=fail    only -- acts as explicit parsing terminator with -G
+REGRESSION           V12zparseopts # 29 base=pass    cand=fail    zparseopts -n, internal vs external usage errors
+REGRESSION           V12zparseopts # 30 base=pass    cand=fail    zparseopts option stacking
+REGRESSION           V12zparseopts # 31 base=pass    cand=fail    zparseopts long-option spec guarding
+REGRESSION           V12zparseopts # 32 base=pass    cand=fail    zparseopts missing/empty optargs
+REGRESSION           V13zformat #  7 base=pass    cand=fail    one of -f -F -a required
+REGRESSION           V13zformat #  8 base=pass    cand=fail    duplicate -f -F -a ignored
+REGRESSION           V13zformat #  9 base=pass    cand=fail    more than one of -f -F -a not allowed
+both-nonpass         V13zformat # 13 base=xfail   cand=xpass   width specifier is multi-byte-aware
+REGRESSION           V13zformat # 15 base=pass    cand=fail    impossible spec in format string
+REGRESSION           V13zformat # 16 base=pass    cand=fail    %% and %) in format string
+REGRESSION           V13zformat # 17 base=pass    cand=fail    more literal % in format string
+REGRESSION           V13zformat # 18 base=pass    cand=fail    spec with invalid char
+REGRESSION           V13zformat # 19 base=pass    cand=fail    spec char longer than 1 byte
+REGRESSION           V13zformat # 20 base=pass    cand=fail    weird spec char
+REGRESSION           V13zformat # 21 base=pass    cand=fail    %( at end of format string
+REGRESSION           V13zformat # 22 base=pass    cand=fail    incomplete ternary expression
+REGRESSION           V13zformat # 23 base=pass    cand=fail    ternary expression with impossible spec char
+REGRESSION           V13zformat # 27 base=pass    cand=fail    ternary expression returning impossible spec
+REGRESSION           V13zformat # 29 base=pass    cand=fail    -a + -q not allowed
+REGRESSION           V13zformat # 30 base=pass    cand=fail    optional argument to -q
+REGRESSION           V13zformat # 31 base=pass    cand=fail    -q with and without optarg
+REGRESSION           V13zformat # 32 base=pass    cand=fail    -q with ternary expression
+REGRESSION           V13zformat # 33 base=pass    cand=fail    -q: min-width specifier ignores extra %s
+REGRESSION           V13zformat # 34 base=pass    cand=fail    -q: max-width specifier ignores extra %s
+REGRESSION           V13zformat # 35 base=pass    cand=fail    -q: ternary width test ignores extra %s
+REGRESSION           V13zformat # 36 base=pass    cand=fail    -Q, -Q0, -Q1
+both-nonpass         V14system # 10 base=xfail   cand=xfail   sysread read error
+both-nonpass         V14system # 16 base=xfail   cand=xfail   successful sysread with both -o and a parameter
+REGRESSION           V15nearcolor #  1 base=pass    cand=unknown automatically loaded without truecolor extension
+REGRESSION           V15nearcolor #  2 base=pass    cand=unknown not automatically loaded with truecolor extension
+REGRESSION           V15nearcolor #  3 base=pass    cand=unknown 88-colour conversion
+REGRESSION           V15nearcolor #  4 base=pass    cand=unknown 256-colour conversion
+REGRESSION           W01history #  7 base=pass    cand=fail    Lines ending in backslash saved and restored to history
+REGRESSION           W02jobs #  1 base=pass    cand=fail    job notification with no_long_list_jobs
+REGRESSION           W02jobs #  2 base=pass    cand=fail    job notification with long_list_jobs
+REGRESSION           W02jobs #  6 base=pass    cand=fail    running job with check_jobs + check_running_jobs
+REGRESSION           W02jobs #  9 base=pass    cand=fail    `jobs -d` with running job
+REGRESSION           W02jobs # 10 base=pass    cand=fail    `jobs -r` and `jobs -s` with running job
+REGRESSION           W02jobs # 11 base=pass    cand=notrun  various `kill` signals with multiple running jobs
+REGRESSION           W02jobs # 12 base=pass    cand=unknown jobs with no jobs
+REGRESSION           W02jobs # 13 base=pass    cand=unknown jobs in sub-shell with job in parent shell
+REGRESSION           W02jobs # 14 base=pass    cand=unknown jobs in sub-shell with job in same shell
+REGRESSION           W02jobs # 15 base=pass    cand=unknown jobs in sub-shell with job in parent + same shell
+REGRESSION           W02jobs # 16 base=pass    cand=unknown jobs in sub-shell with two jobs in same shell
+REGRESSION           W02jobs # 17 base=pass    cand=unknown disown current job
+REGRESSION           W02jobs # 18 base=pass    cand=unknown disown with no jobs
+REGRESSION           W02jobs # 19 base=pass    cand=unknown disown in sub-shell with job in parent shell
+REGRESSION           W02jobs # 20 base=pass    cand=unknown disown in sub-shell with job in same shell
+REGRESSION           W02jobs # 21 base=pass    cand=unknown disown in sub-shell with job in parent + same shell
+REGRESSION           W02jobs # 22 base=pass    cand=unknown disown -a
+REGRESSION           W02jobs # 23 base=pass    cand=unknown disown -a in sub-shell
+REGRESSION           W02jobs # 24 base=pass    cand=unknown background and disown with &| and &!
+REGRESSION           W02jobs # 25 base=pass    cand=unknown fg + bg in sub-shell
+REGRESSION           W02jobs # 26 base=pass    cand=unknown fg %- with function superjob does not pick internal job as previous
+REGRESSION           W03jobparameters #  2 base=pass    cand=fail    $jobstate shows one job started in main shell or one started in subshell
+REGRESSION           W03jobparameters #  3 base=pass    cand=fail    $jobstate shows no job started in main shell but one started in subshell
+REGRESSION           X02zlevi #  1 base=pass    cand=fail    change last character in buffer
+REGRESSION           X02zlevi #  2 base=pass    cand=fail    change forward to matching bracket
+REGRESSION           X02zlevi #  3 base=pass    cand=fail    delete backwards to matching bracket
+REGRESSION           X02zlevi #  5 base=pass    cand=fail    yank and paste blank line
+REGRESSION           X02zlevi #  9 base=pass    cand=fail    join lines with line count
+REGRESSION           X02zlevi # 11 base=pass    cand=fail    don't indent blank lines
+REGRESSION           X02zlevi # 12 base=pass    cand=fail    additional indentation
+REGRESSION           X02zlevi # 13 base=pass    cand=fail    indent with one character on final line
+REGRESSION           X02zlevi # 18 base=pass    cand=fail    yank up clears lastcol
+REGRESSION           X02zlevi # 20 base=pass    cand=fail    delete up clears lastcol
+REGRESSION           X02zlevi # 23 base=pass    cand=fail    numeric args to both action and movement are multiplied (and saved for any repeat)
+REGRESSION           X02zlevi # 24 base=pass    cand=fail    paste register 1 to get last deletion
+REGRESSION           X02zlevi # 25 base=pass    cand=fail    paste register 0 to get last yank
+REGRESSION           X02zlevi # 27 base=pass    cand=fail    appending to named register
+REGRESSION           X02zlevi # 28 base=pass    cand=fail    set one and then a different register
+REGRESSION           X02zlevi # 29 base=pass    cand=fail    set register then set black hole register
+REGRESSION           X02zlevi # 31 base=pass    cand=fail    retrieve unnamed register after appending
+REGRESSION           X02zlevi # 32 base=pass    cand=fail    repeat advances to next killring register
+REGRESSION           X02zlevi # 33 base=pass    cand=fail    yank and delete to black hole register
+REGRESSION           X02zlevi # 34 base=pass    cand=fail    paste from black hole register and repeat
+REGRESSION           X02zlevi # 35 base=pass    cand=fail    repeat paste from named register
+REGRESSION           X02zlevi # 37 base=pass    cand=fail    character based put before followed by line based yank-pop
+REGRESSION           X02zlevi # 40 base=pass    cand=fail    character based after before followed by line based yank-pop
+REGRESSION           X02zlevi # 41 base=pass    cand=fail    undo initial change
+REGRESSION           X02zlevi # 42 base=pass    cand=fail    repeat initial edit
+REGRESSION           X02zlevi # 43 base=pass    cand=fail    repeat initial edit with non-blank starting line
+REGRESSION           X02zlevi # 44 base=pass    cand=fail    repeat initial edit with overstrike set
+REGRESSION           X02zlevi # 47 base=pass    cand=fail    vi mode undo of initial and subsequent change
+REGRESSION           X02zlevi # 48 base=pass    cand=fail    undo invoked twice
+REGRESSION           X02zlevi # 49 base=pass    cand=fail    undo in insert mode, redo in command
+REGRESSION           X02zlevi # 50 base=pass    cand=fail    undo and redo in insert mode, undo in command
+REGRESSION           X02zlevi # 52 base=pass    cand=fail    split the undo sequence
+REGRESSION           X02zlevi # 53 base=pass    cand=fail    setting mark and returning to original position
+REGRESSION           X02zlevi # 54 base=pass    cand=fail    force character-wise change to join lines
+REGRESSION           X02zlevi # 55 base=pass    cand=fail    character-wise delete to beginning of line leaves the newline'
+REGRESSION           X02zlevi # 56 base=pass    cand=fail    force line-wise delete of line
+REGRESSION           X02zlevi # 57 base=pass    cand=fail    line-wise force of a text object
+REGRESSION           X02zlevi # 58 base=pass    cand=fail    change selection
+REGRESSION           X02zlevi # 59 base=pass    cand=fail    change character wise selection with C acts linewise
+REGRESSION           X02zlevi # 60 base=pass    cand=fail    x kills selections
+REGRESSION           X02zlevi # 63 base=pass    cand=fail    put over selection at end of buffer
+REGRESSION           X02zlevi # 68 base=pass    cand=fail    yank linewise and put over linewise selection at end of buffer
+REGRESSION           X02zlevi # 71 base=pass    cand=fail    yank linewise and put over character-wise selection in middle of buffer
+REGRESSION           X02zlevi # 72 base=pass    cand=fail    yank linewise and put over character-wise selection at end of buffer
+REGRESSION           X02zlevi # 73 base=pass    cand=fail    paste last (9th) register over a selection
+REGRESSION           X02zlevi # 74 base=pass    cand=fail    delete blank line using selection
+REGRESSION           X02zlevi # 75 base=pass    cand=fail    toggle case of selection
+REGRESSION           X02zlevi # 76 base=pass    cand=fail    backward word
+REGRESSION           X02zlevi # 84 base=pass    cand=fail    word motion with multibyte characters
+REGRESSION           X02zlevi # 85 base=pass    cand=fail    delete all word on blanks
+REGRESSION           X02zlevi # 86 base=pass    cand=fail    delete all word on alphanumerics
+REGRESSION           X02zlevi # 87 base=pass    cand=fail    delete all word on other characters
+REGRESSION           X02zlevi # 89 base=pass    cand=fail    all word with existing selection and cursor before mark
+REGRESSION           X02zlevi # 90 base=pass    cand=fail    all word with existing selection and mark before cursor
+REGRESSION           X02zlevi # 91 base=pass    cand=fail    in word with existing selection and cursor before mark
+REGRESSION           X02zlevi # 92 base=pass    cand=fail    in word with existing selection and mark before cursor
+REGRESSION           X02zlevi # 93 base=pass    cand=fail    all argument for different arguments
+REGRESSION           X02zlevi # 94 base=pass    cand=fail    in argument for different arguments
+REGRESSION           X03zlebindkey #  4 base=pass    cand=fail    binding to CSI introduction is not used if a full sequence arrives
+REGRESSION           X03zlebindkey # 10 base=pass    cand=fail    bindkey -s multibyte characters
+REGRESSION           X04zlehighlight #  1 base=pass    cand=fail    region highlight - standout overlapping on other region_highlight entry
+REGRESSION           X04zlehighlight #  2 base=pass    cand=fail    basic region_highlight with 8 colors
+REGRESSION           X04zlehighlight #  3 base=pass    cand=fail    later highlight attribute takes precedence over earlier one that contradicts
+REGRESSION           X04zlehighlight #  4 base=pass    cand=fail    unrecognised highlight attribute and any subsequent ones ignored
+REGRESSION           X04zlehighlight #  5 base=pass    cand=fail    disable highlight attribute with "no" prefix
+REGRESSION           X04zlehighlight #  6 base=pass    cand=fail    use layers to override precedence of ordering
+REGRESSION           X04zlehighlight #  7 base=pass    cand=fail    region_highlight memo information round trips
+REGRESSION           X04zlehighlight #  8 base=pass    cand=fail    region_highlight memo information forward compatibility, #1
+REGRESSION           X04zlehighlight #  9 base=pass    cand=fail    region_highlight memo information forward compatibility, #2
+REGRESSION           X04zlehighlight # 10 base=pass    cand=fail    region_highlight memo information forward compatibility, #3: NULs
+REGRESSION           X04zlehighlight # 11 base=pass    cand=fail    basic region_highlight with true-color (hex-triplets)
+REGRESSION           X04zlehighlight # 12 base=pass    cand=fail    basic region_highlight with near-color (hex-triplets at input)
+REGRESSION           X04zlehighlight # 13 base=pass    cand=fail    basic region_highlight with near-color using extremes - all black and all white
+REGRESSION           X04zlehighlight # 14 base=pass    cand=fail    overlapping region_highlight with 8 colors
+REGRESSION           X04zlehighlight # 15 base=pass    cand=fail    overlapping region_highlight with true-color
+REGRESSION           X04zlehighlight # 16 base=pass    cand=fail    overlapping region_highlight with near-color (hex-triplets at input)
+REGRESSION           X04zlehighlight # 17 base=pass    cand=fail    zle $widgetname -f nolast
+REGRESSION           X04zlehighlight # 18 base=pass    cand=fail    overlapping backgrounds with opacity and nearcolor
+REGRESSION           X04zlehighlight # 19 base=pass    cand=fail    opacity with an unknown base colour
+REGRESSION           X04zlehighlight # 20 base=pass    cand=fail    foreground and background opacity
+REGRESSION           X05zleincarg # 22 base=pass    cand=fail    incarg works when the result has more number of digits than the original
+REGRESSION           X05zleincarg # 23 base=pass    cand=fail    decargs works on integers with leading zeros when the result has more digits than the original
+REGRESSION           X05zleincarg # 91 base=pass    cand=fail    Repeats of vim-incarg takes the numeric argument into account
+REGRESSION           X05zleincarg # 92 base=pass    cand=fail    Repeats of vim-backward-incarg takes the numeric argument into account
+REGRESSION           X06termquery #  1 base=pass    cand=notrun  foot response to terminal queries
+REGRESSION           X06termquery #  2 base=pass    cand=unknown wayst response to terminal queries (shorter colour sequences)
+REGRESSION           X06termquery #  3 base=pass    cand=unknown WezTerm response to terminal queries (space separates version and longer RGB response)
+REGRESSION           X06termquery #  4 base=pass    cand=unknown urxvt response to terminal queries (bug in end of colour sequences)
+REGRESSION           X06termquery #  5 base=pass    cand=unknown kitty response to terminal queries (responds with error to RGB request)
+REGRESSION           X06termquery #  6 base=pass    cand=unknown xterm response to terminal queries
+REGRESSION           X06termquery #  7 base=pass    cand=unknown type-ahead
+REGRESSION           X06termquery #  8 base=pass    cand=unknown no response - timeout
+REGRESSION           X06termquery #  9 base=pass    cand=unknown paste after from clipboard
+REGRESSION           X06termquery # 10 base=pass    cand=unknown paste before from clipboard
+REGRESSION           X06termquery # 11 base=pass    cand=unknown paste over from clipboard
+both-nonpass         Z01is-at-least #  2 base=xfail   cand=xfail   regression test: Two trailing zeroes are filled in
+REGRESSION           Z04zgetopt #  1 base=pass    cand=fail    -o or -l required (usage error)
+REGRESSION           Z04zgetopt #  2 base=pass    cand=fail    weird short-option specs
+REGRESSION           Z04zgetopt #  3 base=pass    cand=fail    weird long-option specs
+REGRESSION           Z04zgetopt #  4 base=pass    cand=fail    short options
+REGRESSION           Z04zgetopt #  5 base=pass    cand=fail    long options
+REGRESSION           Z04zgetopt #  6 base=pass    cand=fail    zero args to parse
+REGRESSION           Z04zgetopt #  7 base=pass    cand=fail    parsing terminator
+REGRESSION           Z04zgetopt #  8 base=pass    cand=fail    POSIXLY_CORRECT
+REGRESSION           Z04zgetopt #  9 base=pass    cand=fail    function-mode quoting style
+REGRESSION           Z04zgetopt # 10 base=pass    cand=fail    bad options
+REGRESSION           Z04zgetopt # 11 base=pass    cand=fail    missing optargs
+REGRESSION           Z04zgetopt # 12 base=pass    cand=fail    return status
+REGRESSION           Z04zgetopt # 13 base=pass    cand=fail    array output
+REGRESSION           Z04zgetopt # 14 base=pass    cand=fail    automatic name
+REGRESSION           Z04zgetopt # 15 base=pass    cand=fail    manual name with -n
+REGRESSION           Z04zgetopt # 16 base=pass    cand=fail    example from util-linux's getopt-example.bash
+REGRESSION           Z04zgetopt # 17 base=pass    cand=fail    result immediately after auto-load
+REGRESSION           Z04zgetopt # 18 base=pass    cand=fail    error name with no_function_argzero
