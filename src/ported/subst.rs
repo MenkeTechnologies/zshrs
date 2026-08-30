@@ -8078,8 +8078,11 @@ pub fn paramsubst(
                 // c:Src/params.c:1090-1115 createparam — a `local NAME` /
                 // `typeset NAME` inside a function replaces the special's
                 // paramtab node with a plain one, so the magic getfn/scanfn is
-                // unreachable until the scope pops.
-                if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+                // unreachable until the scope pops. A shadow that is ITSELF
+                // PM_HASHED (`local -A commands`) owns a table and must still
+                // be served from it — c:2270 `PM_TYPE(pm->node.flags) &
+                // (PM_ARRAY|PM_HASHED)` decides, not the name.
+                if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
                     return None;
                 }
                 // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a
@@ -24899,7 +24902,13 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
     // lookup in C finds the PLAIN node and the magic getfn/scanfn is
     // unreachable until the scope pops. zshrs keeps the magic rows in
     // separate static tables matched BY NAME, so re-impose the shadow.
-    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+    //
+    // A shadow that is ITSELF PM_HASHED (`local -A commands`) owns a table
+    // of its own, and C dispatches on the TYPE of the node paramtab returned
+    // (c:2270 `PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED)`), not on the
+    // name — so it must still be served from that table. Only a NON-hash
+    // shadow (`local options`, `local -a options`) hides the row.
+    if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
     // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
@@ -25117,7 +25126,13 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     // lookup in C finds the PLAIN node and the magic getfn/scanfn is
     // unreachable until the scope pops. zshrs keeps the magic rows in
     // separate static tables matched BY NAME, so re-impose the shadow.
-    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+    //
+    // A shadow that is ITSELF PM_HASHED (`local -A commands`) owns a table
+    // of its own, and C dispatches on the TYPE of the node paramtab returned
+    // (c:2270 `PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED)`), not on the
+    // name — so it must still be served from that table. Only a NON-hash
+    // shadow (`local options`, `local -a options`) hides the row.
+    if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
     // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a live gsu
@@ -25292,7 +25307,13 @@ fn assoc_contains(name: &str) -> bool {
     // lookup in C finds the PLAIN node and the magic getfn/scanfn is
     // unreachable until the scope pops. zshrs keeps the magic rows in
     // separate static tables matched BY NAME, so re-impose the shadow.
-    if crate::vm_helper::magic_special_shadowed(resolved.as_str()) {
+    //
+    // A shadow that is ITSELF PM_HASHED (`local -A commands`) owns a table
+    // of its own, and C dispatches on the TYPE of the node paramtab returned
+    // (c:2270 `PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED)`), not on the
+    // name — so it must still be served from that table. Only a NON-hash
+    // shadow (`local options`, `local -a options`) hides the row.
+    if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return false;
     }
     if paramtab_hashed_storage()

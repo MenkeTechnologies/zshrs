@@ -122,32 +122,11 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
     // subscript arm (`${options[1]}` came back empty for a local).
     //
     // …but "no longer the magic row" is NOT the same as "no longer a
-    // hash". C decides the subscript dispatch from the TYPE of the node
-    // paramtab actually returned:
-    //   c:Src/params.c:2270 `if (PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED))`
-    //   c:Src/params.c:1597-1606 getarg —
-    //       if (ishash) {
-    //           HashTable ht = v->pm->gsu.h->getfn(v->pm);
-    //           ...
-    //           if (!(v->pm = (Param) ht->getnode(ht, s))) ...
-    // — so a shadow that IS itself PM_HASHED (`local -A commands`,
-    // `local -A +h commands` as in Completion/Zsh/Type/_command_names:70)
-    // owns a table of its own and the key read must be served FROM IT.
-    // Bailing on every shadowed magic name swallowed every write:
-    //   f() { local -A commands; commands=(fake /bin/fake)
-    //         print "[$commands[fake]]" }; f
-    // printed `[]` where zsh prints `[/bin/fake]` — the value was in
-    // `paramtab_hashed_storage` all along (`${commands[@]}` found it),
-    // only the keyed read refused to look. Restrict the bail to a
-    // NON-hash shadow, which is the case the note above describes.
-    if magic_special_shadowed(resolved.as_str())
-        && crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(resolved.as_str()).map(|pm| pm.node.flags as u32))
-            // c:2270 — PM_TYPE decides; absent node ⇒ nothing to serve.
-            .map_or(true, |f| crate::ported::zsh_h::PM_TYPE(f) != PM_HASHED)
-    {
+    // hash": a `local -A commands` shadow owns a table of its own and the
+    // key read must be served FROM IT (c:Src/params.c:2270 / :1597-1606).
+    // See `magic_special_shadowed_by_nonhash`, which every sibling
+    // dispatch site shares so the qualification cannot drift.
+    if magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return None;
     }
     // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a LIVE gsu
@@ -7360,6 +7339,41 @@ pub fn magic_special_shadowed(name: &str) -> bool {
                 (f & crate::ported::zsh_h::PM_SPECIAL) == 0
             }
         })
+}
+
+/// [`magic_special_shadowed`] AND the shadow is not itself a hash.
+///
+/// "No longer the magic row" is not the same as "no longer a hash". C
+/// decides the subscript dispatch — and every whole-map read — from the
+/// TYPE of the node paramtab actually returned:
+///   c:Src/params.c:2270 `if (PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED))`
+///   c:Src/params.c:1597-1606 getarg —
+///       if (ishash) {
+///           HashTable ht = v->pm->gsu.h->getfn(v->pm);
+///           ...
+///           if (!(v->pm = (Param) ht->getnode(ht, s))) ...
+/// So a shadow that IS itself PM_HASHED (`local -A commands`, or
+/// `local -A +h commands` as in Completion/Zsh/Type/_command_names:70)
+/// owns a table of its own and must be SERVED FROM IT, while a scalar or
+/// array shadow (`local options`, `local -a options`) must fall through
+/// to the non-hash arms.
+///
+/// Bailing on every shadowed magic name made the hashed shadow invisible
+/// to each reader in turn: the keyed read (`$commands[fake]`), then
+/// `${#commands}`, `${(k)commands}`, `${(kv)commands}` and
+/// `${commands[(I)pat]}`. The values were in `paramtab_hashed_storage`
+/// the whole time — `${commands[@]}` found them — only these guards
+/// refused to look. Every dispatch site that means "the magic row is not
+/// the visible binding, and there is no hash behind it either" asks
+/// through here so the qualification cannot drift between them.
+pub fn magic_special_shadowed_by_nonhash(name: &str) -> bool {
+    magic_special_shadowed(name)
+        && crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(name).map(|pm| pm.node.flags as u32))
+            // c:2270 — PM_TYPE decides; absent node ⇒ nothing to serve.
+            .map_or(true, |f| crate::ported::zsh_h::PM_TYPE(f) != PM_HASHED)
 }
 
 pub fn partab_get(name: &str, key: &str) -> Option<String> {
