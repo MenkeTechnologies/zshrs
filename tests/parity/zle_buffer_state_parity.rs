@@ -119,6 +119,36 @@ mod emacs {
             "ESC-b landed the cursor on the word start",
         );
     }
+
+    /// `ESC-d` (kill-word) from column 0 takes the first word and stops
+    /// at the separator, leaving the cursor where the word began.
+    #[test]
+    fn meta_d_kills_the_word_and_stops_at_the_separator() {
+        assert_same_dump(
+            &driver("-e", &["abc def", "\\C-a", "\\ed"]),
+            "ESC-d killed the first word and stopped at the separator",
+        );
+    }
+
+    /// `^K` from column 0 empties the line — buffer AND cursor.
+    #[test]
+    fn ctrl_k_empties_the_line_from_column_zero() {
+        assert_same_dump(
+            &driver("-e", &["abc def", "\\C-a", "\\C-k"]),
+            "^K emptied the line from column zero",
+        );
+    }
+
+    /// `^K` then `^Y` restores the text and leaves the cursor at the
+    /// END of what was yanked — the cursor half is what distinguishes a
+    /// correct yank from one that merely reinserts the text.
+    #[test]
+    fn ctrl_y_leaves_the_cursor_after_the_yanked_text() {
+        assert_same_dump(
+            &driver("-e", &["abc def", "\\C-a", "\\C-k", "\\C-y"]),
+            "^Y left the cursor after the yanked text",
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -155,6 +185,138 @@ mod vi {
         assert_same_dump(
             &driver("-v", &["abc def", "\\e", "0", "dw"]),
             "vi dw deleted the word and its separator",
+        );
+    }
+
+    /// `w`, `e` and `b` are the three word motions, and they land on
+    /// three DIFFERENT columns for the same line — which is the whole
+    /// reason to pin the cursor rather than the text.
+    #[test]
+    fn w_moves_to_the_next_word_start() {
+        assert_same_dump(
+            &driver("-v", &["abc def", "\\e", "0", "w"]),
+            "vi w moved to the next word start",
+        );
+    }
+
+    #[test]
+    fn e_moves_to_the_current_word_end() {
+        assert_same_dump(
+            &driver("-v", &["abc def", "\\e", "0", "e"]),
+            "vi e moved to the current word end",
+        );
+    }
+
+    #[test]
+    fn b_moves_back_to_the_word_start() {
+        assert_same_dump(
+            &driver("-v", &["abc def", "\\e", "b"]),
+            "vi b moved back to the word start",
+        );
+    }
+
+    /// `r` replaces exactly one character and does NOT advance the
+    /// cursor — an off-by-one here is the difference between `Zbcd` and
+    /// `aZcd` on the next keystroke.
+    #[test]
+    fn r_replaces_one_character_without_advancing() {
+        assert_same_dump(
+            &driver("-v", &["abcd", "\\e", "0", "rZ"]),
+            "vi r replaced one character without advancing",
+        );
+    }
+
+    /// `D` deletes from the cursor to end of line, leaving the cursor
+    /// on the last surviving character.
+    #[test]
+    fn D_deletes_to_the_end_of_the_line() {
+        assert_same_dump(
+            &driver("-v", &["abc def", "\\e", "0", "w", "D"]),
+            "vi D deleted to the end of the line",
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Multibyte text — indices are CHARACTERS, never bytes
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `$CURSOR` counts characters. `héllo` is 6 BYTES and 5 characters, so
+/// a shell that indexes bytes reports 6 here and every motion below
+/// lands one position off — the failure mode that makes an accented
+/// word impossible to edit.
+///
+/// The CJK cases go further: those characters are three bytes each AND
+/// two columns wide, so byte, character and display-column counts are
+/// three different numbers. `$CURSOR` must be the character count.
+mod multibyte {
+    use super::*;
+
+    #[test]
+    fn cursor_counts_characters_not_bytes() {
+        assert_same_dump(
+            &driver("-e", &["héllo", "\\C-a", "\\C-e"]),
+            "$CURSOR counted characters rather than bytes",
+        );
+    }
+
+    #[test]
+    fn forward_char_steps_over_a_whole_character() {
+        assert_same_dump(
+            &driver("-e", &["héllo", "\\C-a", "\\C-f", "\\C-f"]),
+            "^F stepped over the accented character as one unit",
+        );
+    }
+
+    #[test]
+    fn word_motion_counts_accented_characters() {
+        assert_same_dump(
+            &driver("-e", &["héllo wörld", "\\C-a", "\\ef"]),
+            "ESC-f counted the accented word correctly",
+        );
+    }
+
+    #[test]
+    fn backward_kill_word_takes_a_whole_accented_word() {
+        assert_same_dump(
+            &driver("-e", &["print héllo", "\\C-w"]),
+            "^W removed the whole accented word",
+        );
+    }
+
+    #[test]
+    fn vi_dollar_lands_on_the_last_character_not_the_last_byte() {
+        assert_same_dump(
+            &driver("-v", &["héllo", "\\e", "0", "$"]),
+            "vi $ landed on the last character, not the last byte",
+        );
+    }
+
+    /// `x` on a two-byte character must remove BOTH bytes — a byte-wise
+    /// delete leaves an invalid sequence behind.
+    #[test]
+    fn vi_x_deletes_a_whole_multibyte_character() {
+        assert_same_dump(
+            &driver("-v", &["héllo", "\\e", "0", "l", "x"]),
+            "vi x deleted the whole multibyte character",
+        );
+    }
+
+    #[test]
+    fn cjk_end_of_line_is_the_character_count() {
+        assert_same_dump(
+            &driver("-e", &["日本語", "\\C-a", "\\C-e"]),
+            "^E on CJK text reported the character count",
+        );
+    }
+
+    /// One `^F` crosses one CJK character — three bytes, two display
+    /// columns, one cursor position.
+    #[test]
+    fn cjk_forward_char_crosses_one_character() {
+        assert_same_dump(
+            &driver("-e", &["日本語", "\\C-a", "\\C-f"]),
+            "^F crossed exactly one CJK character",
         );
     }
 }
