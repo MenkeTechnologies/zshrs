@@ -134,6 +134,7 @@ mod always_break_parity;
 mod terminfo_parity;
 mod zsh_arrays_parity;
 mod zle_editing_parity;
+mod zle_widget_parity;
 mod zsh_compat_parity_gaps;
 mod zsh_idioms_parity;
 mod zsh_modules_corpus_parity;
