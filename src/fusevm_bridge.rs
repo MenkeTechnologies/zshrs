@@ -11895,8 +11895,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             0
         }; // c:5387
-        let bytes = base64_decode(&body_b64);
-        let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
+        // `#<idx>` — the body lives in the ENCLOSING chunk's `sub_chunks` and
+        // only its index travelled through the constant pool (see
+        // compile_zsh.rs `compile_funcdef`). `vm.chunk` is the chunk currently
+        // executing this CallBuiltin, i.e. the one that owns the sub-chunk:
+        // at top level the script chunk, and inside a function body the body
+        // chunk that `vm_pool::acquire` (vm_helper.rs:4098) is running.
+        //
+        // Anything else is the historical `base64(bincode(chunk))` payload —
+        // still accepted so a chunk restored from a bytecode cache written by
+        // an older binary keeps working. `#` is outside the base64 alphabet so
+        // the two forms cannot be confused.
+        let sub_chunk = body_b64
+            .strip_prefix('#')
+            .and_then(|n| n.parse::<usize>().ok())
+            .map(|idx| vm.chunk.sub_chunks.get(idx).cloned().ok_or(()));
+        let decoded = match sub_chunk {
+            Some(Ok(chunk)) => Ok(chunk),
+            Some(Err(())) => Err(()),
+            None => {
+                let bytes = base64_decode(&body_b64);
+                bincode::deserialize::<fusevm::Chunk>(&bytes).map_err(|_| ())
+            }
+        };
+        let status = match decoded {
             Ok(chunk) => with_executor(|exec| {
                 // c:Src/exec.c:5383 — `shf->filename =
                 // ztrdup(scriptfilename);` — the function's
