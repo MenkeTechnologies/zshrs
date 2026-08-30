@@ -867,15 +867,31 @@ pub fn getopts_optind_internal(param_value: i64) -> i64 {
 /// within-argument cursor, so the next `getopts` re-scans that argument from
 /// its first character.
 ///
-/// bash, ksh93, mksh and `/bin/sh` treat a changed `$OPTIND` as a full reset;
-/// dash and ash keep their character pointer regardless; zsh rewinds only when
-/// the new value is 1 AND its internal index was elsewhere:
+/// Every POSIX shell measured treats a CHANGED `$OPTIND` as a full reset,
+/// dash included — its `getoptsreset()` drops the within-argument offset when
+/// the variable is assigned. zsh instead rewinds only when the new value is 1
+/// AND its internal index was elsewhere. Measured on this host:
 ///
 /// ```text
-/// $ <shell> -c 'OPTIND=1; getopts "ab" o -b; OPTIND=1; getopts "ab" o -b;
+/// $ <shell> -c 'OPTIND=1; getopts "ab" o -ab; OPTIND=1; getopts "ab" o -ab;
 ///               printf "%s/%s\n" "$o" "$OPTIND"'
-/// bash/ksh/mksh//bin/sh → b/2        dash/ash → ?/2
+/// dash a/2      bash a/1      mksh a/2
 /// ```
+///
+/// What separates the families is an assignment of the SAME value, which bash
+/// treats as a reset (it hooks the assignment) while dash and mksh do not
+/// (they compare values):
+///
+/// ```text
+/// $ <shell> -c 'OPTIND=1; getopts "ab" o -ab; OPTIND=$OPTIND;
+///               getopts "ab" o -ab; printf "%s/%s\n" "$o" "$OPTIND"'
+/// dash ?/2      bash a/1      mksh ?/2
+/// ```
+///
+/// The value comparison below is therefore right for the dash family too; it
+/// used to be suppressed by a `dash_strict()` guard on the strength of the
+/// first table having been recorded as `dash/ash → ?/2`, which no dash tested
+/// here produces.
 ///
 /// `raw_param` is `$OPTIND` exactly as the parameter table holds it, BEFORE
 /// [`getopts_optind_internal`] removes the reporting bias; anything other than
@@ -889,7 +905,7 @@ pub fn getopts_optind_internal(param_value: i64) -> i64 {
 /// → bash `a`, here `b`). Catching that needs an `$OPTIND` assignment hook in
 /// the parameter table; pinned by an ignored parity test rather than faked.
 pub fn getopts_optind_user_reset(raw_param: i64) -> bool {
-    if !posix_faithful() || dash_strict() {
+    if !posix_faithful() {
         return false;
     }
     raw_param != GETOPTS_REPORTED.load(Ordering::Relaxed) as i64
