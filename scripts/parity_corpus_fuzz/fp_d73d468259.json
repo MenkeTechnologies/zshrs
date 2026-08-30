@@ -1,0 +1,12 @@
+{
+  "buffer": "tee >(",
+  "fingerprint": "b29792c9a7",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?",
+  "origin": "style-fuzz/cfg0005",
+  "statements": [
+    "zstyle :completion::prefix:-command-::urls sort off"
+  ]
+}

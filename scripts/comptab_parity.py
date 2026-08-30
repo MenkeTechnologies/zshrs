@@ -82,6 +82,8 @@ Usage:
     scripts/comptab_parity.py --mode zsh            # emulation path instead
     scripts/comptab_parity.py --corpus-seed         # fill the fuzz corpus dir
     scripts/comptab_parity.py --mutate 20           # 20 MUTATED corpus inputs
+    scripts/comptab_parity.py --style-fuzz 20       # 20 GENERATED zstyle configs
+    scripts/comptab_parity.py --style-fuzz-list 30 # just show what it generates
 
 Exit status: 0 only when every case is byte-identical (a TIMEOUT or a SKIP is
 not byte-identical evidence, so neither one exits 0 either).
@@ -1972,6 +1974,883 @@ def run_mutate(args, env, dump, fpath_dirs):
     return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]) else 0
 
 
+# ── generated zstyle VALUES (--style-fuzz) ───────────────────────────────────
+#
+# `--random-combos` and `--mutate` only ever sample SUBSETS of a fixed fixture
+# (scripts/parity_zstyle.zsh, the user's real styles). Every value they run is
+# a value that was already in that file, so the richest part of the compsys
+# configuration surface — the VALUE grammar of each style — was never
+# exercised at all. That is the part this codebase's history keeps naming as
+# the root cause: matcher reconstruction, tag-order, group-order, list-colors,
+# ignore_prefix/ignore_suffix and completer-chain ORDER have each been a
+# shipped bug.
+#
+# So this GENERATES statements instead of picking them. The grammar is taken
+# from the zsh sources, not invented — the citations are `~/forkedRepos/zsh`:
+#
+#   Doc/Zsh/compwid.yo:937-1161   match specifications ("Completion Matching
+#                                 Control"): a matcher is a case-sensitive
+#                                 letter, `:`, one or more `|`-separated
+#                                 patterns, `=`, and another pattern.
+#   Src/Zle/complete.c:259-292    the parser: unknown letter -> `unknown match
+#                                 specification character`, missing `:` ->
+#                                 `missing ':'`.
+#   Src/Zle/complete.c:359-378    `*`/`**` must be the WHOLE match-pat and need
+#                                 an l/L/r/R matcher (`need anchor for '*'`);
+#                                 word-pat and match-pat both empty is an error
+#                                 (`need non-empty word or line pattern`).
+#   Doc/Zsh/compwid.yo:970-1002   brace correspondence classes; no negation;
+#                                 nth element on the left pairs with the nth on
+#                                 the right.
+#   Doc/Zsh/compsys.yo:2092-2098  a matcher-list element prefixed `+` ADDS to
+#                                 the previous element instead of replacing it.
+#   Doc/Zsh/compsys.yo:2131-2133  each element is a separate, complete pass.
+#   Doc/Zsh/compsys.yo:2655-2698  tag-order: `-`, `!tags`, `tag:label`,
+#                                 `tag:label:description`, `{pat1,pat2}`.
+#   Completion/Base/Core/_tags:47-51  the three arms that actually parse it.
+#   Doc/Zsh/compsys.yo:1297-1326  completer: `_name` or `_name:label`; a label
+#                                 starting with `-` is appended to the name.
+#   Doc/Zsh/compsys.yo:2189-2245  menu: the yes=/no=, select= and mode words
+#                                 combine as separate list elements.
+#   Doc/Zsh/compsys.yo:2146-2173  max-errors: `N`, `N numeric`, `N not-numeric`.
+#   Completion/Unix/Type/_path_files:156-166  file-sort: the value is
+#                                 SUBSTRING-matched, and `reverse`/`follow` are
+#                                 independent substrings.
+#   Doc/Zsh/mod_complist.yo:20-146  list-colors element forms.
+#   Doc/Zsh/compsys.yo:573        the context layout.
+#
+# Three things are deliberately NOT generated, because the sources say they do
+# not exist and emitting them would manufacture a finding out of a generator
+# bug: `||` as an "or end of word" anchor (it is only anchor||coanchor),
+# `lpat==tpat` as a distinct form (the parser splits on the FIRST `=`, so the
+# second is a literal), and `*` as the match-pat of an `m:`/`M:` matcher.
+
+# Standard tags — from the live fixture (scripts/parity_zstyle.zsh, captured
+# from a real `zstyle -L`) plus the tags the file and option paths use, so a
+# generated context names something that actually occurs.
+GEN_TAGS = (
+    "options", "arguments", "values", "commands", "aliases", "builtins",
+    "functions", "parameters", "files", "globbed-files", "all-files",
+    "directories", "local-directories", "named-directories", "corrections",
+    "original", "expansions", "jobs", "signals", "users", "hosts", "packages",
+    "history-words", "argument-rest", "strings", "descriptions", "messages",
+    "warnings", "default", "paths", "reserved-words", "suffix-aliases",
+    "global-aliases", "urls", "contexts",
+)
+
+# Commands whose completers exist on essentially any host, plus the special
+# `-command-` context (Doc/Zsh/compsys.yo:317-379), so a command-specific
+# context is not silently dead.
+GEN_COMMANDS = ("git", "ls", "ssh", "kill", "make", "grep", "find", "tar",
+                "cd", "chmod", "man", "-command-", "-default-")
+
+# The `completer` field: the completer function's name with the leading `_`
+# stripped and remaining `_` turned into `-`. `_approximate` / `_correct`
+# rewrite it to `approximate-<n>` / `correct-<n>`, which is why those are here.
+GEN_COMPLETER_FIELDS = ("complete", "approximate", "approximate-1",
+                        "correct", "correct-1", "expand", "match", "prefix",
+                        "ignored", "list", "menu", "oldlist", "history", "*")
+
+# The `function` field: empty for an ordinary TAB, the widget name otherwise.
+GEN_FUNCTIONS = ("*", "", "_complete_help", "_correct_word", "_expand_word")
+
+
+def gen_context(rng, tag=None):
+    """A `:completion:` context PATTERN, at a random specificity.
+
+    Specificity is its own fuzzing axis: the same style at `':completion:*'`
+    and at `':completion:*:*:git:*:*'` is a different configuration, a literal
+    context beats a pattern and a longer pattern beats `*`
+    (Doc/Zsh/compsys.yo:699-705), and equally specific statements resolve in
+    DEFINITION order — so both the pattern and its position in the file are
+    part of the input being fuzzed.
+    """
+    t = tag or rng.choice(GEN_TAGS)
+    cmd = rng.choice(GEN_COMMANDS)
+    comp = rng.choice(GEN_COMPLETER_FIELDS)
+    fn = rng.choice(GEN_FUNCTIONS)
+    forms = (
+        ":completion:*",
+        ":completion:*:*",
+        ":completion:*:%s" % t,
+        ":completion:*:*:%s:*" % cmd,
+        ":completion:*:*:%s:*:*" % cmd,
+        ":completion:*:%s:*" % comp,
+        ":completion:*:*:*:*:%s" % t,
+        ":completion:*:*:*:*:*",
+        ":completion:%s:%s:%s:*:*" % (fn, comp, cmd),
+        ":completion:*:*:*:*:default",
+        ":completion:*:%s:%s:*:%s" % (comp, cmd, t),
+        ":completion:%s:%s:%s::%s" % (fn, comp, cmd, t),
+    )
+    return rng.choice(forms)
+
+
+# ── match specifications ─────────────────────────────────────────────────────
+#
+# compwid.yo:970-1002 — a brace expression is a list of literal characters,
+# ranges and character classes, and the nth element on the left corresponds to
+# the nth on the right. These are the correspondences that MEAN something (case
+# folding, the user's own `-`/`_` fold), not random braces.
+MATCH_BRACE_PAIRS = (
+    ("{a-z}", "{A-Z}"),
+    ("{A-Z}", "{a-z}"),
+    ("{a-zA-Z}", "{A-Za-z}"),
+    ("{[:lower:]}", "{[:upper:]}"),
+    ("{[:upper:]}", "{[:lower:]}"),
+    ("{[:lower:][:upper:]}", "{[:upper:][:lower:]}"),
+    (r"{a-z\-}", r"{A-Z\_}"),          # verbatim from the live fixture
+    ("{-_}", "{_-}"),
+    ("{_-}", "{-_}"),
+    ("{a-z-}", "{A-Z_}"),
+)
+
+# Patterns legal inside a matcher: literals (backslash-quotable), `?`, bracket
+# expressions and brace expressions — "Other shell patterns are not allowed"
+# (compwid.yo:951-968).
+MATCH_WORD_PATS = ("_", "-", ".", "?", "[._-]", "[[:alpha:]]", "[^[:alpha:]]",
+                   "[[:upper:]]", "[[:lower:]]", "[A-Z0-9]", "[^A-Z0-9]",
+                   "[.,_-]", "no-", "--", "0", "[-+]")
+MATCH_ANCHORS = ("[._-]", ".", "-", "--", "_", "/", "[[:upper:]]",
+                 "[[:alpha:]]", "[A-Z0-9]", "?")
+MATCH_PLAIN_TARGETS = ("", "_", "-", "+", ".", "?", "by")
+
+
+def gen_matcher(rng):
+    """ONE matcher, in one of the documented shapes.
+
+    Legality is enforced HERE rather than discovered by the reference shell: a
+    spec zsh refuses (`unknown match specification character`, `unterminated
+    character class`, `need anchor for '*'`) is a generator bug that wastes a
+    cell and produces a diagnostic on both sides, so `*` is only emitted for
+    l/L/r/R, `**` only when the matcher is anchored, every bracket and brace
+    expression is emitted balanced, and the word-pat and match-pat are never
+    both empty (complete.c:373-378).
+    """
+    shape = rng.choices(
+        ("brace", "plain", "edge", "anchor", "coanchor", "x"),
+        weights=(28, 15, 20, 22, 12, 3))[0]
+
+    if shape == "brace":
+        lp, rp = rng.choice(MATCH_BRACE_PAIRS)
+        return "%s:%s=%s" % (rng.choice("mM"), lp, rp)
+
+    if shape == "plain":
+        # compwid.yo:1023-1062 — m/M anywhere, b/B at the beginning, e/E at the
+        # end. No `*` here: it needs an l/L/r/R matcher.
+        return "%s:%s=%s" % (rng.choice(("m", "M", "b", "B", "e", "E")),
+                             rng.choice(MATCH_WORD_PATS),
+                             rng.choice(MATCH_PLAIN_TARGETS))
+
+    if shape == "edge":
+        # compwid.yo:1064-1067 — `l:|word-pat=match-pat`, `r:word-pat|=match-pat`.
+        # `*` is legal as the match-pat here; `**` is not (it needs an anchor).
+        letter = rng.choice("lLrR")
+        target = rng.choice(MATCH_PLAIN_TARGETS + ("*", "*", "*"))
+        wp = rng.choice(("",) + MATCH_WORD_PATS)
+        if not wp and not target:
+            target = "*"                 # never both empty: complete.c:373-378
+        return ("%s:|%s=%s" % (letter, wp, target) if letter in "lL"
+                else "%s:%s|=%s" % (letter, wp, target))
+
+    if shape == "anchor":
+        # compwid.yo:1089-1092 — `l:anchor|word-pat=`, `r:word-pat|anchor=`.
+        # With an anchor present `**` becomes legal too (compwid.yo:1105-1111):
+        # `*` cannot cross an anchor match, `**` can.
+        letter = rng.choice("lLrR")
+        target = rng.choice(MATCH_PLAIN_TARGETS + ("*", "*", "**"))
+        anchor = rng.choice(MATCH_ANCHORS)
+        wp = rng.choice(("",) + MATCH_WORD_PATS)
+        if not wp and not target:
+            target = "*"
+        return ("%s:%s|%s=%s" % (letter, anchor, wp, target) if letter in "lL"
+                else "%s:%s|%s=%s" % (letter, wp, anchor, target))
+
+    if shape == "coanchor":
+        # compwid.yo:1124-1131 — `l:anchor||coanchor=`, `r:coanchor||anchor=`.
+        letter = rng.choice("lLrR")
+        target = rng.choice(MATCH_PLAIN_TARGETS[1:] + ("*", "**"))
+        a, co = rng.sample(MATCH_ANCHORS, 2)
+        return ("%s:%s||%s=%s" % (letter, a, co, target) if letter in "lL"
+                else "%s:%s||%s=%s" % (letter, co, a, target))
+
+    return "x:"                          # compwid.yo:1150-1159
+
+
+def gen_matcher_element(rng):
+    """One ELEMENT of matcher-list.
+
+    Within an element the matchers are whitespace-separated and applied one at
+    a time, left to right, each broadening the pattern further
+    (compwid.yo:915-918). A trailing `x:` makes everything to its right
+    inert, which is how one specification overrides another.
+    """
+    n = rng.choices((1, 2, 3), weights=(52, 32, 16))[0]
+    parts = [gen_matcher(rng) for _ in range(n)]
+    if rng.random() < 0.05:
+        parts.append("x:")
+    return " ".join(parts)
+
+
+def gen_matcher_list(rng):
+    """A matcher-list VALUE: each element is a separate, complete completion
+    PASS, tried in order (compsys.yo:2131-2133), so the ORDER and the COUNT are
+    both semantic.
+
+    The leading `''` is the standard "try plain matching first" idiom and opens
+    the user's own fixture, so it is weighted rather than left to chance. A `+`
+    prefix on a later element ADDS to the previous element's spec instead of
+    replacing it (compsys.yo:2092-2098) — a form nothing in the fixture uses.
+    """
+    out = []
+    if rng.random() < 0.5:
+        out.append("")
+    for i in range(rng.choices((1, 2, 3), weights=(48, 36, 16))[0]):
+        el = gen_matcher_element(rng)
+        if i and out and out[-1] and rng.random() < 0.2:
+            el = "+" + el
+        out.append(el)
+    return out
+
+
+# ── the rest of the style grammar ────────────────────────────────────────────
+
+GEN_COMPLETERS = ("_complete", "_approximate", "_expand", "_expand_alias",
+                  "_match", "_prefix", "_ignored", "_correct", "_list",
+                  "_menu", "_oldlist", "_history")
+
+# Orderings that are known to interact. `completer` is a CHAIN and its order is
+# semantic: a completer that returns 0 ends the chain, which is exactly the
+# `_first` regression (a no-op `-first-` hook returned 0 and silently reduced
+# every multi-completer config to `_complete` alone). A repeated entry is legal
+# and must not double-list.
+GEN_COMPLETER_CHAINS = (
+    ("_complete",),
+    ("_complete", "_approximate"),
+    ("_expand", "_complete", "_ignored", "_approximate"),
+    ("_oldlist", "_complete"),
+    ("_complete", "_match"),
+    ("_prefix", "_complete"),
+    ("_complete", "_ignored", "_correct", "_approximate"),
+    ("_expand_alias", "_complete"),
+    ("_menu", "_complete"),
+    ("_list", "_complete"),
+    ("_history", "_complete"),
+    ("_complete", "_complete"),
+    ("_ignored", "_complete"),
+    ("_approximate", "_complete"),
+    ("_match", "_complete", "_approximate"),
+    ("_expand", "_complete"),
+)
+
+
+def gen_completer(rng):
+    """An ORDERED completer chain.
+
+    compsys.yo:1297-1326 — an element may also be `_name:label`, and a label
+    starting with `-` is appended to the derived name, which is how the same
+    completer is run twice under two different style contexts.
+    """
+    if rng.random() < 0.5:
+        out = list(rng.choice(GEN_COMPLETER_CHAINS))
+    else:
+        out = [rng.choice(GEN_COMPLETERS) for _ in range(rng.randint(1, 4))]
+    if rng.random() < 0.15:
+        i = rng.randrange(len(out))
+        out[i] += rng.choice((":-alt", ":second", ":-two"))
+    return out
+
+
+def gen_tag_order(rng):
+    """compsys.yo:2655-2698 / _tags:47-51 — three arms parse this: `-` alone,
+    a string starting with `!` (those tags are excluded), and anything else,
+    which is pattern-matched."""
+    def one():
+        r = rng.random()
+        if r < 0.05:
+            return "-"
+        if r < 0.15:
+            return rng.choice(("!", "! ")) + rng.choice(GEN_TAGS)
+        if r < 0.25:
+            return "%s:-%s" % (rng.choice(GEN_TAGS),
+                               rng.choice(("alt", "second", "non-comp")))
+        if r < 0.33:
+            return "%s:%s:%s" % (rng.choice(GEN_TAGS),
+                                 rng.choice(("alt", "grp")),
+                                 rng.choice(("long\\ options",
+                                             "other\\ matches", "%d")))
+        if r < 0.40:
+            return "{%s,%s}" % (rng.choice(GEN_TAGS), rng.choice(GEN_TAGS))
+        return " ".join(rng.sample(GEN_TAGS, rng.randint(1, 3)))
+    return [one() for _ in range(rng.randint(1, 3))]
+
+
+GEN_GROUPS = ("options", "commands", "files", "directories", "aliases",
+              "builtins", "functions", "parameters", "corrections",
+              "globbed-files", "all-files", "original", "expansions",
+              "argument-rest", "-default-")
+
+# compwid.yo:593-601 — the escapes `compadd -X` accepts. `%G` is NOT one of
+# them, so it is not generated.
+GEN_FORMATS = (
+    "%d",
+    "-- %d --",
+    "%B%d%b",
+    "%U%d%u",
+    "%F{yellow}%d%f",
+    "%K{blue}%F{white}%d%f%k",
+    "Completing %d",
+    "%SNo matches for: %d%s",
+    "$'\\C-[[1;31m-<<\\C-[[0;34m%d\\C-[[1;31m>>-\\C-[[0m'",
+)
+
+# mod_complist.yo:30-133 — `name=value` for a file type, `*suffix=value`,
+# `=pattern=value` (with `(#b)` back-references feeding extra `=`-separated
+# codes), any of them optionally prefixed with a `(group-pattern)`.
+GEN_LIST_COLORS = (
+    "ma=37;1;4;44", "di=1;34", "ln=35", "ex=31;1", "no=0", "fi=0;37",
+    "so=32", "or=31;1", "sp=33", "ec=",
+    "=(#b)(*)=1;30=1;32;43", "=(#b)(*)=1;30=1;36;44", "=(#b)(*)/(*)==1;35=1;33",
+    "*.rs=32", "*.md=33", "=*=1;35", "(files)*.o=90",
+)
+
+# compsys.yo:1800-1810 — EXTENDED_GLOB is in force here, so `#`, `~` and `^`
+# are special.
+GEN_IGNORED_PATTERNS = ("_*", "*.o", "*~", "[-+]?", "(*/)#CVS", "*.(o|a)",
+                        ".*", "*?.zwc", "[0-9]*", "???*", "--*",
+                        "[-+](|-|[^-]*)")
+
+# _path_files:156-166 — the value is substring-matched into a glob qualifier.
+GEN_FILE_SORT = ("name", "size", "links", "modification", "time", "date",
+                 "access", "inode", "change")
+
+
+def _bool(rng, *extra):
+    """compsys.yo:1097-1103 — the true set is true/on/yes/1, the false set is
+    false/off/no/0. `zstyle -t` is true only for a ONE-element value, so a
+    boolean style is always emitted as a single word."""
+    return rng.choice(("true", "false", "yes", "no", "on", "off", "1", "0")
+                      + tuple(extra))
+
+
+def gen_menu(rng):
+    """compsys.yo:2189-2245 — the yes=/no= part, the select part and the mode
+    part are independent list elements that combine ("either alongside or
+    instead of")."""
+    base = rng.choice((None, "yes", "no", "true", "false", "auto", "1", "0",
+                       "yes=2", "yes=long", "yes=long-list", "no=10"))
+    sel = rng.choice((None, "select", "select=0", "select=2", "select=5",
+                      "select=long", "select=long-list", "no-select"))
+    mode = rng.choice((None, None, "interactive", "search", "search-backward"))
+    out = [p for p in (base, sel, mode) if p]
+    return out or ["yes"]
+
+
+def gen_max_errors(rng):
+    """compsys.yo:2146-2173 — `N`, or N together with `numeric` /
+    `not-numeric`. `0 numeric` disables correction unless a numeric argument
+    is given."""
+    n = str(rng.choice((0, 1, 2, 3, 5)))
+    tail = rng.choice((None, "numeric", "not-numeric"))
+    return [n] if tail is None else [n, tail]
+
+
+def gen_file_sort(rng):
+    """compsys.yo:1560-1574 — a base ordering, plus `reverse` and `follow` as
+    independent substrings of the same value."""
+    words = [rng.choice(GEN_FILE_SORT)]
+    if rng.random() < 0.35:
+        words.append("reverse")
+    if rng.random() < 0.2:
+        words.append("follow")
+    return words
+
+
+# style -> (value generator, tags whose CONTEXT the style is read under).
+#
+# The tag matters. `format` is read for descriptions / messages / warnings /
+# corrections, so generating it at `':completion:*:options'` would set a style
+# nothing ever reads and the cell would compare two identical no-ops — a
+# guaranteed pass that measures nothing.
+GEN_STYLES = {
+    "matcher-list":       (gen_matcher_list, None),
+    "matcher":            (lambda r: [gen_matcher_element(r)], None),
+    "completer":          (gen_completer, None),
+    "tag-order":          (gen_tag_order, None),
+    "group-order":        (lambda r: r.sample(GEN_GROUPS, r.randint(2, 6)), None),
+    "group-name":         (lambda r: [r.choice(("", "", "%t", "matches"))], None),
+    "format":             (lambda r: [r.choice(GEN_FORMATS)],
+                           ("descriptions", "messages", "warnings", "corrections")),
+    "auto-description":   (lambda r: [r.choice(("Specify: %d", "%d", "arg: %d"))],
+                           None),
+    "list-colors":        (lambda r: [r.choice(GEN_LIST_COLORS)
+                                      for _ in range(r.randint(1, 3))], None),
+    "ignored-patterns":   (lambda r: [r.choice(GEN_IGNORED_PATTERNS)
+                                      for _ in range(r.randint(1, 2))], None),
+    "squeeze-slashes":    (lambda r: [_bool(r)], ("paths",)),
+    "list-dirs-first":    (lambda r: [_bool(r)], None),
+    "menu":               (gen_menu, ("default",)),
+    "max-errors":         (gen_max_errors, None),
+    "insert-unambiguous": (lambda r: [_bool(r, "pattern")], None),
+    "accept-exact":       (lambda r: [_bool(r, "continue")], ("default", "paths")),
+    "special-dirs":       (lambda r: [_bool(r, "..")], None),
+    "verbose":            (lambda r: [_bool(r)], None),
+    "extra-verbose":      (lambda r: [_bool(r)], None),
+    "file-sort":          (gen_file_sort, None),
+    "use-cache":          (lambda r: [_bool(r)], None),
+    "single-ignored":     (lambda r: [r.choice(("show", "menu"))], None),
+    "hidden":             (lambda r: [_bool(r, "all")], None),
+    "prefix-needed":      (lambda r: [_bool(r)],
+                           ("options", "signals", "jobs", "functions",
+                            "parameters")),
+    "ambiguous":          (lambda r: [_bool(r)], ("paths",)),
+    "sort":               (lambda r: [_bool(r, "match", "nosort", "numeric",
+                                            "reverse")], None),
+    "list-packed":        (lambda r: [_bool(r)], None),
+    "list-rows-first":    (lambda r: [_bool(r)], None),
+    "list-grouped":       (lambda r: [_bool(r)], None),
+    "list-separator":     (lambda r: [r.choice(("--", "#", "/////", "->"))], None),
+    "original":           (lambda r: [_bool(r)], ("corrections", "original")),
+    "keep-prefix":        (lambda r: [_bool(r, "changed")], None),
+    "add-space":          (lambda r: [_bool(r, "file", "subst")], None),
+    "substitute":         (lambda r: [_bool(r)], None),
+    "expand":             (lambda r: r.sample(("prefix", "suffix"),
+                                              r.randint(1, 2)), ("paths",)),
+    "complete-options":   (lambda r: [_bool(r)], None),
+    "last-prompt":        (lambda r: [_bool(r)], None),
+    "list-suffixes":      (lambda r: [_bool(r)], ("paths",)),
+    "accept-exact-dirs":  (lambda r: [_bool(r)], None),
+    "list-prompt":        (lambda r: [r.choice((
+                              "%SAt %p: Hit TAB for more, or the character to insert%s",
+                              "%p", "%SScrolling: %M%p%s", "%l %m %P", ""))], None),
+    "select-prompt":      (lambda r: [r.choice((
+                              "%SScrolling active: current selection at %p%s",
+                              "%p", "%m %p", ""))], None),
+    "cache-policy":       (None, None),   # emitted specially — see gen_statement
+}
+
+# `cache-policy` names a FUNCTION (compsys.yo:1224-1227). A generated name that
+# does not exist is a config zsh refuses, so the definition is emitted on the
+# SAME LINE as the statement: the shrinker treats a line as an atom, so the
+# pair can never be split into a dangling reference.
+_CACHE_POLICY_LINE = ("_ctp_policy_%(n)d() { return %(n)d }; "
+                      "zstyle %(ctx)s cache-policy _ctp_policy_%(n)d")
+
+
+def gen_statement(rng, style=None):
+    """One complete, syntactically valid `zstyle` line."""
+    style = style or rng.choice(sorted(GEN_STYLES))
+    gen, pref = GEN_STYLES[style]
+    if style == "cache-policy":
+        return _CACHE_POLICY_LINE % {"n": rng.choice((0, 1)),
+                                     "ctx": shlex.quote(gen_context(rng))}
+    tag = rng.choice(pref) if pref else None
+    ctx = gen_context(rng, tag=tag)
+    values = gen(rng)
+    return "zstyle %s %s %s" % (shlex.quote(ctx), style,
+                                " ".join(shlex.quote(v) for v in values))
+
+
+def gen_config(rng, n_styles, only=None):
+    """A whole generated configuration.
+
+    No two statements set the same style at the same context (the later one
+    would simply overwrite the earlier, wasting a slot), but the same style AT
+    A DIFFERENT context is deliberately allowed — that overlap is where the
+    most-specific-first resolution rule is actually tested.
+    """
+    pool = sorted(only) if only else sorted(GEN_STYLES)
+    out, seen = [], set()
+    for _ in range(n_styles * 8):
+        if len(out) >= n_styles:
+            break
+        stmt = gen_statement(rng, rng.choice(pool))
+        key = " ".join(stmt.split()[:3])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(stmt)
+    return out
+
+
+# ── validating a generated config against the reference shell ────────────────
+#
+# A statement REAL zsh refuses is a generator bug, not a finding. Scoring one
+# as a divergence would be inventing a zshrs bug out of this script's own
+# mistake, and scoring it as a pass would be worse. So every generated config
+# is put to `zsh` itself before a single pty is booted, and anything it rejects
+# is counted under its own category and printed with the offending line.
+#
+# `zstyle` validates the CONTEXT PATTERN at definition time and nothing else
+# (measured: `zstyle ':completion:*(' menu yes` -> `zsh: zstyle: invalid
+# pattern`, while `zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z'` is
+# accepted and only fails later, inside compadd). Both layers are therefore
+# checked: `zsh -c` for what the builtin rejects outright, and — after the cell
+# has run — the REFERENCE shell's own diagnostics for what it rejects at
+# completion time.
+
+# What the reference zsh prints when it refuses a generated style VALUE at
+# completion time. Measured on this host by feeding zsh deliberately bad
+# fixtures (2026-08-30):
+#   matcher-list 'm:{a-z}={A-Z'  -> _describe:compadd:114: unterminated character class
+#   matcher-list 'q:foo=bar'     -> ...: unknown match specification character `q'
+#   a bad pattern in a spec      -> _path_files:compadd:717: invalid pattern character `='
+#   completer _nosuchcompleter   -> _main_complete:218: command not found: _nosuchcompleter
+# zsh silently TOLERATES a bad list-colors, ignored-patterns, menu, max-errors,
+# file-sort or tag-order value, so those cannot be validated this way and are
+# generated conservatively instead.
+REF_REJECT_RE = tuple(re.compile(p, re.I) for p in (
+    r"unknown match specification character",
+    r"unterminated character class",
+    r"invalid pattern character",
+    r"need anchor for",
+    r"need non-empty word or line pattern",
+    r"missing ':'",
+    r"command not found: _",
+    r"bad match specification",
+))
+
+
+def ref_rejects(cap):
+    """The reference shell's own complaints about the generated config."""
+    if cap is None:
+        return []
+    return sorted(m for m in cap.diags
+                  if any(r.search(m) for r in REF_REJECT_RE))
+
+
+def validate_config(statements, zsh, outdir, generated=None):
+    """Ask REAL zsh whether it accepts these statements.
+
+    Returns [(statement, complaint)] — empty when the config is clean. The
+    whole file is checked in ONE `zsh -c` first (the common case is clean, and
+    that costs a single process); only when that complains is each statement
+    re-checked individually, so the report can name the exact offending line
+    instead of the file.
+
+    The round-trip check is the second half: after sourcing, `zstyle -L` must
+    list at least as many definitions as there are DISTINCT (context, style)
+    pairs. A statement zsh parsed but silently failed to store would otherwise
+    look valid and produce a cell that measures nothing.
+
+    `generated` is the subset THIS SCRIPT produced, and the round-trip count is
+    applied to it alone, in its own `zsh -c`. A `--style-fuzz-mix` config also
+    carries hand-written fixture lines, and those are not one-statement-per-line
+    (scripts/parity_zstyle.zsh defines caching-policy FUNCTIONS spanning several
+    lines); counting them textually against `zstyle -L` output compares two
+    different things and reported 2 of 2 valid configs as invalid. The syntax
+    half still covers every line either way.
+    """
+    import subprocess
+
+    def ask(lines):
+        path = os.path.join(outdir, "validate.zsh")
+        with open(path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        try:
+            p = subprocess.run([zsh, "-f", "-c", "source %s; zstyle -L"
+                                % shlex.quote(path)],
+                               capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "could not run %s: %s" % (zsh, exc), 0
+        err = (p.stderr or "").strip()
+        if p.returncode != 0 and not err:
+            err = "zsh exited %d" % p.returncode
+        return err, len([l for l in (p.stdout or "").splitlines() if l.strip()])
+
+    err, _kept = ask(statements)
+    if err:
+        bad = []
+        for s in statements:
+            e, _ = ask([s])
+            if e:
+                bad.append((s, e.splitlines()[0]))
+        if bad:
+            return bad
+        return [("<whole config>", err.splitlines()[0])]
+
+    gen = statements if generated is None else generated
+    if not gen:
+        return []
+    _err, kept = ask(gen)
+    want = len({" ".join(g.split()[:3]) for g in gen})
+    if kept < want:
+        return [("<generated statements>",
+                 "zsh stored only %d of the %d distinct (context, style) "
+                 "definition(s) it was given" % (kept, want))]
+    return []
+def _style_fuzz_cases(args):
+    """The case pool a generated config is judged on."""
+    cases = [c for c in cases_by_tag(args.tag)
+             if not (args.skip_optional and "optional" in c.tags)]
+    if args.combo_cases:
+        want = {c.strip() for c in args.combo_cases.split(",")}
+        cases = [c for c in cases if c.name in want or c.buffer in want]
+    if not cases:
+        sys.exit("--style-fuzz has no cases to run (check --tag / --combo-cases)")
+    return cases
+
+
+def run_style_fuzz(args, env, dump, fpath_dirs):
+    """Fuzz GENERATED zstyle statements, not subsets of a fixed fixture.
+
+    Everything downstream of the config is the machinery that already exists:
+    the same Cell / cell_stream / run_case path, the same fingerprint, the same
+    three-dimension `shrink_input`, the same corpus promotion. What is new is
+    only where the statements come from.
+
+    Categories, and why each one is separate:
+
+        PASS            valid config, both screens byte-identical.
+        FAIL / FLAKY    a divergence. Unchanged meaning.
+        TIMEOUT / SKIP  unchanged meaning.
+        INVALID-CONFIG  the reference zsh REFUSED the generated statement at
+                        definition time. A generator bug. The cell is not run,
+                        because comparing two shells on a config neither can
+                        hold says nothing.
+        REF-REFUSED     the config parsed, but the reference zsh complained
+                        about the VALUE at completion time (a bad match spec, a
+                        completer that does not exist). The cell IS still run
+                        and still compared — zshrs is required to refuse it
+                        identically — but it is tallied separately so a green
+                        sweep can never be assembled out of configs zsh itself
+                        rejects.
+
+    A cell is never scored a pass on the strength of an invalid config, and no
+    category is silently dropped: every one is counted, printed, and keeps the
+    exit status non-zero.
+    """
+    outdir = os.path.join(REPO, "target", "parity-style-fuzz-%d" % args.seed)
+    os.makedirs(outdir, exist_ok=True)
+
+    only = None
+    if args.style_fuzz_only:
+        only = [s.strip() for s in args.style_fuzz_only.split(",") if s.strip()]
+        unknown = [s for s in only if s not in GEN_STYLES]
+        if unknown:
+            sys.exit("--style-fuzz-only names unknown style(s): %s\nknown: %s"
+                     % (", ".join(unknown), ", ".join(sorted(GEN_STYLES))))
+
+    # Only self-contained `zstyle` lines are mixable. scripts/parity_zstyle.zsh
+    # is a sourced shell file, not a list of statements: it also defines the
+    # caching-policy FUNCTIONS the styles name, across several lines each.
+    # Drawing a random subset of its lines therefore splits a function body and
+    # hands both shells a dangling `}` — measured, `zsh` answered
+    # `parse error near '}'` and the config was thrown out as invalid. Keeping
+    # the pool to `zstyle` lines composes the two sources without inventing
+    # broken shell; nothing about the comparison changes.
+    pool = [s for s in (read_statements(args.zstyle) if args.zstyle else [])
+            if s.lstrip().startswith("zstyle ")]
+    if args.style_fuzz_mix > 0 and not pool:
+        sys.exit("--style-fuzz-mix needs --zstyle FIXTURE to draw `zstyle` "
+                 "statements from")
+
+    cases = _style_fuzz_cases(args)
+    keys = KEY_SEQUENCES[args.combo_sequence]
+
+    print("# style-value fuzz (GENERATED zstyle statements)")
+    print("# configs : %d   styles/config=%d   seed=%d" %
+          (args.style_fuzz, args.style_fuzz_styles, args.seed))
+    print("# styles  : %s" % (", ".join(only) if only
+                              else "%d generated style(s)" % len(GEN_STYLES)))
+    print("# mix     : %.2f from %s" % (args.style_fuzz_mix,
+                                        args.zstyle or "<none>"))
+    print("# cases   : %d   sequence=%s (%s)"
+          % (len(cases), args.combo_sequence, "+".join(keys)))
+    print("# mode    : %s (%s)" % (args.mode, " ".join(args.test_argv)))
+    print("# jobs    : %d   shrink=%s probes<=%d" %
+          (max(1, args.jobs), args.shrink, args.shrink_probes))
+    print("# outdir  : %s" % outdir)
+    print()
+
+    # ── generate, then let REAL zsh vet every statement before any pty boots ──
+    configs, invalid = [], []
+    for n in range(args.style_fuzz):
+        rng = random.Random((args.seed << 20) ^ 0x57F0 ^ n)
+        gen_stmts = gen_config(rng, args.style_fuzz_styles, only)
+        stmts = gen_stmts
+        if pool and args.style_fuzz_mix > 0:
+            # The fixture subset goes FIRST: equally specific statements resolve
+            # in definition order, so a generated statement placed after one of
+            # the user's real ones is the case that actually tests the override.
+            stmts = random_subset(pool, args.style_fuzz_mix, rng) + gen_stmts
+        bad = validate_config(stmts, args.zsh, outdir, generated=gen_stmts)
+        if bad:
+            invalid.append((n, stmts, bad))
+            continue
+        configs.append((n, stmts, rng.choice(cases)))
+
+    if invalid:
+        print("# %d generated config(s) REJECTED BY zsh ITSELF — generator bugs, "
+              "not findings. Not run, not passed:" % len(invalid))
+        for n, _stmts, bad in invalid:
+            for stmt, err in bad[:4]:
+                print("#   cfg %-4d %s" % (n, err))
+                print("#            %s" % stmt)
+        print()
+
+    cells = []
+    for n, stmts, case in configs:
+        zfile = write_statements(stmts, outdir, "cfg%04d" % n)
+        cells.append(Cell(case, "cfg%04d" % n, keys,
+                          build_init(dump, fpath_dirs, zfile),
+                          stmts, zfile, "style-fuzz/%d" % n))
+
+    counts = {"PASS": 0, "FAIL": 0, "FLAKY": 0, "TIMEOUT": 0, "SKIP": 0}
+    failures, results, refused = [], [], []
+    for cell, v in zip(cells, cell_stream(args, env, cells)):
+        results.append(v)
+        counts[v.status] = counts.get(v.status, 0) + 1
+        rejects = ref_rejects(v.ref)
+        label = v.status
+        if rejects:
+            refused.append((v, rejects))
+            label = "%s(ref-refused)" % v.status
+        line = "%-20s %-9s %r" % (label, v.seq, v.case.buffer)
+        if v.status in ("FAIL", "FLAKY"):
+            line += "  [%s]" % v.fingerprint
+        print(line + (("  (%s)" % v.detail) if v.detail else ""))
+        print("        keys=%s  styles=%d  fixture=%s"
+              % (",".join(v.keys), len(v.statements or ()), cell.zstyle_file))
+        for s in (v.statements or [])[:args.style_fuzz_styles + 2]:
+            print("          %s" % s)
+        for m in rejects:
+            print("        ! zsh itself refused this config: %s" % m)
+        sys.stdout.flush()
+        if v.status in ("FAIL", "FLAKY"):
+            failures.append(v)
+            print_failure(v, args)
+        elif v.status == "TIMEOUT":
+            print_timeout(v, args)
+        sys.stdout.flush()
+
+    print()
+    groups = print_fingerprint_groups(failures, args) if failures else {}
+    if not failures:
+        print("# 0 failing cell(s), 0 distinct fingerprint(s)")
+
+    # Promotion + three-dimension shrink, exactly as --mutate does it: a
+    # fingerprint the corpus has never seen becomes a corpus entry, minimised
+    # first, so the next run starts from the generated config that found it.
+    known_fps = {i.fingerprint for i in corpus_load(args.corpus_dir)
+                 if i.fingerprint}
+    promoted = 0
+    for fp, vs in groups.items():
+        rep = min(vs, key=lambda v: v.size())
+        if fp in known_fps:
+            print("# fingerprint %s already in the corpus — not re-promoted" % fp)
+            continue
+        inp = FuzzInput(rep.case.buffer, rep.keys, rep.statements or [],
+                        origin="style-fuzz/%s" % rep.seq, fingerprint=fp,
+                        note=fp_label(rep))
+        buf, kys, stmts, probes = (rep.case.buffer, list(rep.keys),
+                                   list(rep.statements or []), 0)
+        if args.shrink:
+            buf, kys, stmts, probes = shrink_input(
+                args, env, dump, fpath_dirs, inp, fp, outdir, args.shrink_probes)
+        minimal = FuzzInput(buf, kys, stmts, origin="style-fuzz/%s" % rep.seq,
+                            fingerprint=fp, note=fp_label(rep))
+        zfile = write_statements(stmts, args.corpus_dir,
+                                 minimal.stem("fp") + "_styles")
+        path = corpus_write(args.corpus_dir, minimal, "fp")
+        promoted += 1
+        print("# NEW fingerprint %s promoted into the corpus" % fp)
+        print("#   before: buffer=%r keys=%s statements=%d"
+              % (rep.case.buffer, ",".join(rep.keys), len(rep.statements or ())))
+        print("#   after : buffer=%r keys=%s statements=%d  (%d shrink probe(s))"
+              % (buf, ",".join(kys), len(stmts), probes))
+        for s in stmts:
+            print("#     %s" % s)
+        print("#   file  : %s" % path)
+        print("#   styles: %s" % (zfile or "<none>"))
+        print("#   replay: %s" % repro_cmd(args, buf, kys, zstyle=zfile))
+        known_fps.add(fp)
+
+    total = args.style_fuzz
+    print("\n# %d passed, %d failed, %d config(s)"
+          % (counts["PASS"], counts["FAIL"] + counts["FLAKY"], total))
+    print("# categories: PASS=%d FAIL=%d FLAKY=%d TIMEOUT=%d SKIP=%d "
+          "INVALID-CONFIG=%d REF-REFUSED=%d"
+          % (counts["PASS"], counts["FAIL"], counts["FLAKY"], counts["TIMEOUT"],
+             counts["SKIP"], len(invalid), len(refused)))
+    if invalid:
+        print("# %d config(s) INVALID: zsh's own `zstyle` refused the statement, "
+              "so the cell was never run. This is a bug in the GENERATOR, not "
+              "in zshrs — fix the grammar above." % len(invalid))
+    if refused:
+        print("# %d cell(s) ran under a config the reference zsh complained "
+              "about at completion time. They were still compared (zshrs has to "
+              "refuse identically), but they are NOT clean passes:" % len(refused))
+        for v, ms in refused[:10]:
+            print("#   cfg %s: %s" % (v.seq, ms[0]))
+    if counts["TIMEOUT"]:
+        print("# %d cell(s) ran out of MEASUREMENT budget — not divergences, not "
+              "passes; re-run them at --jobs 1" % counts["TIMEOUT"])
+    if counts["SKIP"]:
+        print("# %d cell(s) skipped: command not installed here" % counts["SKIP"])
+    print("# %d new fingerprint(s) promoted into %s" % (promoted, args.corpus_dir))
+
+    if args.json:
+        write_json(args, {
+            "schema": "comptab-parity-style-fuzz/1",
+            "mode": args.mode,
+            "argv": sys.argv[1:],
+            "seed": args.seed,
+            "outdir": outdir,
+            "summary": {
+                "configs": total,
+                "passed": counts["PASS"],
+                "failed": counts["FAIL"] + counts["FLAKY"],
+                "timeout": counts["TIMEOUT"],
+                "skipped": counts["SKIP"],
+                "invalid_config": len(invalid),
+                "ref_refused": len(refused),
+                "fingerprints": len(groups),
+                "promoted": promoted,
+            },
+            "invalid_configs": [{"config": n, "statements": s,
+                                 "rejected": [{"statement": a, "error": b}
+                                              for a, b in bad]}
+                                for n, s, bad in invalid],
+            "ref_refused": [{"id": v.id, "statements": list(v.statements or []),
+                             "messages": ms} for v, ms in refused],
+            "fingerprints": fingerprint_doc(groups),
+            "results": [to_json(v) for v in results],
+        })
+    return 1 if (failures or counts["TIMEOUT"] or counts["SKIP"]
+                 or invalid or refused) else 0
+
+
+def run_style_fuzz_list(args):
+    """Print generated statements and what zsh makes of them, without booting a
+    single shell pair. This is how the GENERATOR is checked — a grammar bug
+    should be caught here, in a second, not after an hour of pty boots."""
+    outdir = os.path.join(REPO, "target", "parity-style-fuzz-%d" % args.seed)
+    os.makedirs(outdir, exist_ok=True)
+    only = None
+    if args.style_fuzz_only:
+        only = [s.strip() for s in args.style_fuzz_only.split(",") if s.strip()]
+        unknown = [s for s in only if s not in GEN_STYLES]
+        if unknown:
+            sys.exit("--style-fuzz-only names unknown style(s): %s"
+                     % ", ".join(unknown))
+    rng = random.Random(args.seed)
+    stmts = [gen_statement(rng, rng.choice(sorted(only or GEN_STYLES)))
+             for _ in range(args.style_fuzz_list)]
+    bad = dict(validate_config(stmts, args.zsh, outdir))
+    print("# %d generated statement(s), seed=%d, validated against %s"
+          % (len(stmts), args.seed, args.zsh))
+    print()
+    for s in stmts:
+        print("%s" % s)
+        if s in bad:
+            print("    !! REJECTED BY zsh: %s" % bad[s])
+    print()
+    print("# %d accepted, %d rejected by zsh (a rejection is a GENERATOR bug)"
+          % (len(stmts) - len(bad), len(bad)))
+    return 1 if bad else 0
+
+
 def fingerprint_doc(groups):
     out = {}
     for fp, vs in groups.items():
@@ -2071,6 +2950,32 @@ def main():
                          "the buffer, swap a key for its neighbour, add a filter "
                          "letter, retype the trailing word, add/remove a `-`, "
                          "drop/add a zstyle) instead of sampling from scratch")
+    # ── generated zstyle VALUES ──
+    ap.add_argument("--style-fuzz", type=int, default=0, metavar="N",
+                    help="fuzz N GENERATED zstyle configurations instead of "
+                         "subsets of --zstyle. The values themselves are "
+                         "generated from the documented grammar (matcher-list "
+                         "match specs, ordered completer chains, tag-order, "
+                         "group-order, format, list-colors, menu, max-errors, "
+                         "file-sort, ...), each at a randomly chosen context "
+                         "specificity. Every statement is put to real zsh "
+                         "first; one zsh refuses is counted as a GENERATOR bug "
+                         "(INVALID-CONFIG), never as a finding and never as a "
+                         "pass.")
+    ap.add_argument("--style-fuzz-styles", type=int, default=4, metavar="N",
+                    help="statements per generated configuration")
+    ap.add_argument("--style-fuzz-mix", type=float, default=0.0, metavar="P",
+                    help="also draw each --zstyle fixture statement with "
+                         "probability P, so a generated config is COMPOSED "
+                         "with a subset of the real one instead of replacing it")
+    ap.add_argument("--style-fuzz-only", default=None, metavar="STYLES",
+                    help="restrict generation to these comma-separated style "
+                         "names (e.g. matcher-list,completer) — how a single "
+                         "surface gets hammered")
+    ap.add_argument("--style-fuzz-list", type=int, default=0, metavar="N",
+                    help="print N generated statements with zsh's verdict on "
+                         "each and exit, without booting any shell pair. The "
+                         "generator's own self-check.")
     ap.add_argument("--timeout-recheck", action="store_true", default=True,
                     help="re-run a budget-exhausted cell ONCE serially, with every "
                          "other cell drained, before labelling it TIMEOUT. A clean "
@@ -2156,6 +3061,14 @@ def main():
               % (written, len(corpus_load(args.corpus_dir))))
         if args.mutate <= 0:
             return 0
+
+    if args.style_fuzz_list > 0:
+        return run_style_fuzz_list(args)
+
+    if args.style_fuzz > 0:
+        if args.combo_sequence not in KEY_SEQUENCES:
+            sys.exit("unknown --combo-sequence: %s" % args.combo_sequence)
+        return run_style_fuzz(args, env, dump, fpath_dirs)
 
     if args.mutate > 0:
         return run_mutate(args, env, dump, fpath_dirs)
