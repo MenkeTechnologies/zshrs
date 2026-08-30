@@ -1,0 +1,10 @@
+{
+  "buffer": "() { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { () { : } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }; print -r -- ok",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards b4ad35079c item 2 \u2014 compile_funcdef handed each nested body to BUILTIN_REGISTER_COMPILED_FN as base64(bincode(chunk)), so a body nested N deep grew by (4/3)^N and D04parameter#135 hung, taking 118 assertions after it with it. Measured 2026-08-30, LC_ALL=C, depth 40 (297 characters): zsh 0.01 s, zshrs 0.06 s, both `ok`. Before the fix the same shape cost 13.2 s at depth 36 and grew ~3x per level, so a regression shows up here as a TIMEOUT rather than as a wrong answer \u2014 which is the only way this harness can express a superlinear-compile bug at all.",
+  "origin": "regression/2026-08-30/b4ad35079c",
+  "statements": []
+}

@@ -1,0 +1,10 @@
+{
+  "buffer": "setopt TYPESET_TO_UNSET; fn() { typeset -h +g -m '*' }; fn; print -r -- \"PATH_EMPTY=$(( ${#PATH} == 0 ))\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "DIVERGES TODAY. tests/ztst_compsys ranks this the highest-SEVERITY shape in the core corpus \u2014 E03posix's FIRST chunk runs it, PATH is destroyed, and all 10 of that file's assertions then fail with `command not found`. It was named there but nothing in THIS corpus typed it, which is why this harness never saw it. Measured 2026-08-30 non-pty, LC_ALL=C, zshrs 0.12.49 @10:38: `zsh -f -c` keeps the full PATH, `target/debug/zshrs -f -c` prints PATH=<>. `-m` (pattern) form only; the named form is fine, and without TYPESET_TO_UNSET both shells agree.",
+  "origin": "regression/2026-08-30/ztst-core-cause",
+  "statements": []
+}
