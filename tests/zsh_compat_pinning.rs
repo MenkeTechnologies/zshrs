@@ -293,3 +293,188 @@ mod zsh_compat_cli_alias {
         assert_eq!(a.exit, b.exit);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Regression pins for the 2026-08-30 parity fixes. Each script below
+// was verified by hand against `zsh -fc` before being pinned here; the
+// absolute assertions keep the pin meaningful on a CI box with no zsh
+// installed (where `assert_parity` skips).
+// ════════════════════════════════════════════════════════════════════
+
+/// A subscripted assignment must report the exit status of a command
+/// substitution on its RHS, exactly like a scalar assignment does.
+///
+/// Fix: src/extensions/compile_zsh.rs — `compile_assign`'s
+/// BUILTIN_SET_SUBSCRIPT_RANGE and BUILTIN_SET_ASSOC arms returned
+/// without recording `last_assign_had_cmd_subst`, so
+/// BUILTIN_ASSIGN_ONLY_STATUS took its `else { 0 }` branch.
+/// c:Src/exec.c:3396 `lastval = cmdoutval`.
+#[test]
+fn assign_subscript_reports_cmdsubst_exit_status() {
+    let script = r#"typeset -gA h; typeset -ga a
+h[k]="$(false)"; print "assoc_false=$?"
+h[k]="$(true)";  print "assoc_true=$?"
+a[2]="$(false)"; print "array_false=$?"
+s="$(false)";    print "scalar_false=$?""#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout, "assoc_false=1\nassoc_true=0\narray_false=1\nscalar_false=1\n",
+        "subscripted assignment must propagate cmdoutval like a scalar one"
+    );
+    assert_parity(script);
+}
+
+/// The shape that made this user-visible: VCS_INFO_detect_git uses the
+/// assignment AS the condition of an `&&` chain. Outside a repository
+/// `rev-parse` fails, so zsh takes the false branch and never runs the
+/// git backend. Reporting success left `gitdir` empty and
+/// VCS_INFO_git_getbranch read `$gitdir/HEAD` as `/HEAD`.
+#[test]
+fn assign_subscript_as_condition_fails_when_cmdsubst_fails() {
+    let script = r#"typeset -gA vcs_comm
+if vcs_comm[gitdir]="$(false)"; then
+  print "SUCCESS gitdir=[${vcs_comm[gitdir]}]"
+else
+  print "FAIL gitdir=[${vcs_comm[gitdir]}]"
+fi"#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout, "FAIL gitdir=[]\n",
+        "a failed $() in a subscripted assignment must fail the && chain"
+    );
+    assert_parity(script);
+}
+
+/// `${~...}` inside a `:=` / `::=` word must not leave GLOB_SUBST on
+/// for the enclosing expansion. C keeps `globsubst` paramsubst-LOCAL
+/// (c:Src/subst.c:1669) and clears it after the word unless the OUTER
+/// spec forced it (c:3231-3232 `if (globsubst != 2) globsubst = 0;`).
+///
+/// Fix: src/ported/subst.rs — the assign arms now snapshot/restore
+/// GLOB_SUBST + TILDE_GLOBSUBST_CARRIER around the word expansion.
+/// Leaking it filename-globbed the result, so an unterminated bracket
+/// became a fatal `bad pattern`. fast-syntax-highlighting runs
+/// `: ${expanded_path::=${~_mybuf}}` on every keystroke.
+#[test]
+fn tilde_glob_inside_assign_word_does_not_leak() {
+    for pat in ["[[", "foo[", "[a", "a(b", "*.txt", "["] {
+        for op in ["::=", ":="] {
+            let script = format!(
+                "b={}\n: ${{e{}${{~b}}}}\nprint -r -- \"[$e]\"",
+                shell_quote(pat),
+                op
+            );
+            let r = run_zshrs(&script);
+            assert_eq!(
+                r.stdout,
+                format!("[{}]\n", pat),
+                "`{}` with b={:?} must assign the literal, not glob it",
+                op,
+                pat
+            );
+            assert!(
+                !r.stderr.contains("bad pattern"),
+                "no `bad pattern` for b={:?} op={} (stderr {:?})",
+                pat,
+                op,
+                r.stderr
+            );
+            assert_parity(&script);
+        }
+    }
+}
+
+/// The other half of c:3231-3232: a `~` on the OUTER spec is "forced"
+/// (globsubst == 2) and MUST still glob. Guards against fixing the
+/// leak by disabling the flag outright.
+#[test]
+fn tilde_glob_on_outer_assign_spec_still_globs() {
+    let script = r#"d=$(mktemp -d) || exit 1
+cd "$d" || exit 1
+: > f1.txt; : > f2.txt
+b='*.txt'
+print -r -- ${~e::=$b}
+cd /; command rm -rf "$d""#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout, "f1.txt f2.txt\n",
+        "an outer `~` on the assign spec stays forced and still globs"
+    );
+    assert_parity(script);
+}
+
+/// `(V)` (render non-printing chars visible, c:Src/subst.c:2232) must
+/// apply to a SUBSCRIPTED element, not just to a whole array or scalar.
+///
+/// Fix: src/extensions/compile_zsh.rs folded `(V)` into the same
+/// "redundant flag" predicate as `(v)` and compiled `${(V)a[1]}` to a
+/// bare BUILTIN_ARRAY_INDEX, dropping the flag; and src/ported/subst.rs
+/// gates both `(V)` arms on `subscript.is_none()` so the arm that
+/// re-fetches the array by name cannot discard the element selection.
+#[test]
+fn v_flag_applies_to_subscripted_element() {
+    let script = r#"a=($'x\ny' $'p\tq')
+typeset -A h; h[k]=$'x\ny'
+s=$'x\ny'
+print -r -- "elem1=${(V)a[1]}"
+print -r -- "elem2=${(V)a[2]}"
+print -r -- "neg=${(V)a[-1]}"
+print -r -- "range=${(V)a[1,2]}"
+print -r -- "assoc=${(V)h[k]}"
+print -r -- "whole=${(V)a}"
+print -r -- "scalar=${(V)s}""#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout,
+        "elem1=x\\ny\nelem2=p\\tq\nneg=p\\tq\nrange=x\\ny p\\tq\nassoc=x\\ny\nwhole=x\\ny p\\tq\nscalar=x\\ny\n",
+        "(V) must escape non-printing chars through a subscript too"
+    );
+    assert_parity(script);
+}
+
+/// The folds that must KEEP working: `(v)` really is redundant with a
+/// simple subscript (it asks for an assoc element's value), and `(k)`
+/// yields the key. Pins that the `(V)` fix did not disable them.
+#[test]
+fn lowercase_v_and_k_subscript_folds_still_apply() {
+    let script = r#"typeset -A h; h[k]=$'x\ny'; h[j]=plain
+print -r -- "v=${(v)h[k]}"
+print -r -- "k=${(k)h[j]}""#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout, "v=x\ny\nk=j\n",
+        "(v) stays a value fetch (raw newline) and (k) stays a key fetch"
+    );
+    assert_parity(script);
+}
+
+/// execcmd_exec's c:3315-3318 sweep isolates the head word, globs it,
+/// then re-merges ahead of the tail. The merge moved from a per-element
+/// `Vec::insert` (O(K*n) memmove) to a single `splice(0..0, ..)`; this
+/// pins the ordering contract that made the swap safe — the globbed
+/// head lands first, in match order, and the tail args keep their order.
+///
+/// Fix: src/ported/exec.rs.
+#[test]
+fn globbed_command_word_keeps_head_then_tail_order() {
+    let script = r#"d=$(mktemp -d) || exit 1
+cd "$d" || exit 1
+cat > runme <<'SH'
+#!/bin/sh
+for a in "$@"; do printf '%s|' "$a"; done; echo
+SH
+chmod 755 runme
+./run*e alpha beta gamma
+cd /; command rm -rf "$d""#;
+    let r = run_zshrs(script);
+    assert_eq!(
+        r.stdout, "alpha|beta|gamma|\n",
+        "head glob resolves to the command and tail args keep order"
+    );
+    assert_parity(script);
+}
+
+/// Single-quote a string for embedding in a shell script.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}

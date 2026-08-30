@@ -7281,6 +7281,65 @@ mod tests {
         let _: bool = has_token("anything");
     }
 
+    /// c:2282 — `has_token` scans CHARS, not bytes.
+    ///
+    /// C scans bytes, which is safe there only because zsh metafies: a
+    /// raw byte >= 0x80 is stored escaped, so a bare 0x84..=0xA1 in a
+    /// metafied string is always a real token. zshrs keeps UTF-8 `str`
+    /// and stores tokens as CHARS in U+0084..=U+00A1 (see `untokenize`),
+    /// so a byte-scan mistakes a UTF-8 continuation byte for a token:
+    /// `\u{2192}` encodes as E2 86 92 and both 0x86 and 0x92 answer
+    /// `itok`. The false positive is unrecoverable downstream, because
+    /// the char-based `untokenize`/`haswilds` correctly leave the word
+    /// alone -- execcmd_exec's `while has_token(&args[0])` glob sweep
+    /// (c:Src/exec.c:3315-3318) then never clears its condition.
+    #[test]
+    fn has_token_ignores_utf8_continuation_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        for s in ["\u{2192}", "\u{2026}", "\u{2570}\u{2500}", "caf\u{e9}", "\u{21e3}0 B/s"] {
+            assert!(
+                !has_token(s),
+                "{:?} holds no token CHAR (bytes {:02x?})",
+                s,
+                s.as_bytes()
+            );
+        }
+    }
+
+    /// c:2282 — the flip side: every char whose UTF-8 encoding carries a
+    /// byte inside the ITOK range 0x84..=0xA1, but whose scalar value is
+    /// outside it, must NOT register. Sweeps the BMP rather than trusting
+    /// a hand-picked list.
+    #[test]
+    fn has_token_only_fires_on_chars_in_the_itok_range() {
+        let _g = crate::test_util::global_state_lock();
+        for cp in [0x2192u32, 0x2026, 0x2570, 0x00e9, 0x21e3, 0x1f600, 0x0086, 0x0092] {
+            let c = char::from_u32(cp).expect("valid scalar");
+            let s = c.to_string();
+            let in_range = (0x84..=0xa1).contains(&cp);
+            assert_eq!(
+                has_token(&s),
+                in_range && crate::ported::ztype_h::itok(cp as u8),
+                "U+{:04X} (bytes {:02x?}) token-ness must follow the CHAR, not its bytes",
+                cp,
+                s.as_bytes()
+            );
+        }
+    }
+
+    /// c:2282 — real token chars still register, so the char-scan did not
+    /// simply disable detection.
+    #[test]
+    fn has_token_still_detects_real_token_chars() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(has_token("x\u{84}y"), "U+0084 is a token char");
+        assert!(has_token("\u{9c}"), "U+009C is a token char");
+        assert!(
+            has_token("plain\u{84}"),
+            "a token char anywhere in the word counts"
+        );
+    }
+
     /// c:4317 — `has_token` is pure (deterministic across calls).
     #[test]
     fn has_token_is_pure() {

@@ -10189,6 +10189,49 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// c:874 — `compdescribe -I` reads the per-set compadd options with
+    /// `getaparam(args[4])` and errors when that returns NULL.
+    ///
+    /// The port previously probed paramtab directly for `pm.u_arr`,
+    /// which diverges twice: it misses values produced by the gsu
+    /// getter (tied arrays like path/PATH, specials, namerefs), and
+    /// when the NAME exists but carries no `u_arr` it fell through with
+    /// an EMPTY opts vector instead of erroring -- silently dropping
+    /// that group's compadd options. A SCALAR parameter pins the second
+    /// case: getaparam returns NULL for it, so C errors and so must we.
+    #[test]
+    fn bin_compdescribe_I_rejects_scalar_opts_parameter() {
+        let _g = crate::test_util::global_state_lock();
+        let _z = zle_test_setup();
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        crate::ported::params::setsparam("cd_opts_pin", "not-an-array");
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // c:867 needs n >= 6 before the getaparam at c:874 is reached.
+        // A REAL array for the match operand, so cd_init would otherwise
+        // succeed -- without it the old probe fell through to cd_init,
+        // which failed for its own reasons and returned 1 anyway, and the
+        // pin could not tell the two implementations apart (old: 0).
+        crate::ported::params::setaparam("cd_match_pin", vec!["alpha".into(), "beta".into()]);
+        let args: Vec<String> = ["-I", "0", "0", "", "cd_opts_pin", "cd_match_pin"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let r = bin_compdescribe("compdescribe", &args, &ops, 0);
+        crate::ported::params::unsetparam("cd_opts_pin");
+        crate::ported::params::unsetparam("cd_match_pin");
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+        assert_eq!(
+            r, 1,
+            "a scalar `opts` parameter must be rejected exactly like C's getaparam NULL"
+        );
+    }
+
     /// c:4903-4923 — cf_remove_other with pre="dir/foo" returns
     /// only names starting with "dir/" and clears `amb`.
     #[test]
