@@ -145,6 +145,57 @@ Interruption fuzz (`--interrupt-fuzz`)
     The liveness check runs on every step of every mode, not only under this
     flag.
 
+Session fuzz (`--session-fuzz N`)
+    Every other mode here boots two shells, types once, completes once and
+    kills them, so state that ACCUMULATES over a process's lifetime is
+    invisible by construction. Real sessions run thousands of completions in
+    one process, and several confirmed bugs in this project are exactly that
+    shape: completion-time state leaking into the parameter table, a
+    `$compstate[old_list]` that says `yes` where zsh says `shown` and only on
+    the SECOND invocation, `_tags_level` desyncing from `$#funcstack` across a
+    dispatch chain, a list that is valid versus currently-shown.
+
+    A session is N EPISODES in ONE pair of shells: clear the screen, type a
+    buffer, complete it key by key, end the line, repeat with a different
+    buffer. Parity is asserted after EVERY step of EVERY episode, not once at
+    the end. The fuzzed buffer is NEVER executed — an episode ends with ^G+^U
+    (abort) or, for the accept path, ^G+^U and then a fixed literal `true`.
+
+    Between episodes both shells write their own state to a file and the files
+    are diffed here (a file, not the screen: the point is to NAME the
+    parameters that drifted, and a grid read caps every answer at the window
+    width). Probed: the name sets of `$parameters`, `$functions`, `$aliases`,
+    `$galiases` and `$commands`; the full `name=on|off` option set and `setopt`;
+    and `$#funcstack` at a known point plus whether `compstate`, `WIDGET`,
+    `LASTWIDGET`, `_tags_level`, `_comp_tags`, `PREFIX`/`SUFFIX` and
+    `curcontext` are bound outside completion at all.
+
+    Each shell is compared against ITS OWN baseline, and the two DELTAS are
+    what is compared across shells — the two shells do not start from the same
+    table (zshrs carries parameters zsh does not), and reporting that
+    pre-existing difference once per episode would bury the finding. The
+    baseline difference is still reported, by name, in its own category. A
+    probe that moved identically on both shells is zsh's own accumulation
+    faithfully reproduced and is counted separately, never as a verdict; a
+    probe that could not be taken is NAMED, never read as agreement.
+
+    Deliberately excluded, and printed in the run header so the exclusion can
+    be audited: parameter VALUES (only the name set is compared, so HISTCMD /
+    SECONDS / RANDOM / `$?` churn cannot manufacture a finding, while a
+    parameter that appears or disappears still does), the history size, and the
+    pid.
+
+    `--session-repeat M` runs each episode M times back to back and requires
+    every repetition to render identically to the first — on EACH shell
+    independently, BEFORE the two are compared with each other. A shell that
+    disagrees with itself is a different bug from a zsh-vs-zshrs difference and
+    is named as its own finding, on whichever shell did it.
+
+    A drift is reduced with the same ddmin the other three axes use, over the
+    EPISODE SEQUENCE, to the shortest run of episodes that still drifts at the
+    same named key-set difference; the reduced sequence replays through
+    `--session-replay`.
+
 Latency (`--latency`)
     Every assertion in this file is about WHAT the two shells drew, never how
     long they took — and a completion that takes 25 seconds where zsh takes
@@ -889,7 +940,8 @@ EDIT_MODES: dict[str, str] = {
 }
 
 
-def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None, cwd=None):
+def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None, cwd=None,
+                    probe=False):
     """Write the init script both shells source after launching with `-f`.
     Matches the spec: same fpath, same zstyles, same compinit + dump, so the
     only variable left is the shell under test.
@@ -901,7 +953,14 @@ def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None, cwd=None):
     one directory — the hermetic tree `--fstree-fuzz` builds. It is emitted as
     a hard `cd ... || return 1` so a shell that cannot get there fails at init
     and is reported as never having reached a prompt, rather than silently
-    completing against $HOME and comparing two wrong screens."""
+    completing against $HOME and comparing two wrong screens.
+
+    `probe` (False by default, which emits nothing and leaves every
+    pre-existing caller byte-identical) appends the `_cp_probe` state-probe
+    function `--session-fuzz` calls between episodes. It is defined HERE, in the
+    init, so it already exists when the session's BASELINE probe runs and is
+    therefore in `$functions` on both shells from the start — a probe that
+    defined itself later would show up as its own first drift."""
     d = tempfile.mkdtemp(prefix="compsys_parity_")
     fpath_line = ""
     if fpath_dirs:
@@ -969,6 +1028,7 @@ def build_init_file(dump, fpath_dirs, zstyle_file, editing_mode=None, cwd=None):
         raise ValueError(f"unknown editing mode: {editing_mode}")
     mode_line = EDIT_MODES.get(editing_mode, "")
     cwd_line = f"cd {shlex.quote(cwd)} || return 1\n" if cwd else ""
+    probe_line = PROBE_FUNCTION if probe else ""
     init = f"""\
 # generated by compsys_parity.py — sourced into `zsh -f` and `zshrs --zsh -f`
 PROMPT='{PROMPT_SENTINEL} '
@@ -977,7 +1037,7 @@ PS2=''
 setopt no_beep
 {ostype_line}\
 
-{fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}{cwd_line}
+{fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}{cwd_line}{probe_line}
 # Readiness barrier: block the prompt until the completion map is populated so
 # a keystroke fired right after the prompt isn't racing an unfinished compinit
 # (real zsh fills `_comps` synchronously; zshrs may register asynchronously).
@@ -3005,6 +3065,18 @@ class ConvCell(Cell):
 
 
 @dataclass
+class SessionCell(Cell):
+    """A SESSION: N completion episodes run inside ONE pair of shells.
+
+    `buffer`/`keys` stay empty — a session has no single buffer and no single
+    key path, and populating them with the first episode's would make every
+    report line quietly claim the cell was about that one completion. Everything
+    a session is lives in `episodes`."""
+    episodes: list = field(default_factory=list)
+    repeat: int = 1
+
+
+@dataclass
 class CellResult:
     cell: object
     # PASS | FAIL | FLAKY | SKIP | DIED. DIED is its OWN verdict: a shell that
@@ -3043,6 +3115,24 @@ class CellResult:
     latency: list = None
     # [(side, "signal"|"exit", value), ...] when status == "DIED".
     deaths: list = field(default_factory=list)
+    # ── session-fuzz only (all empty for every other mode) ────────────────────
+    # The raw SessionRun, kept so the reporter can print per-episode detail.
+    session: object = None
+    # Probes that moved DIFFERENTLY on the two shells: the actionable finding.
+    drifts: list = field(default_factory=list)
+    # Probes that moved IDENTICALLY on both shells — zsh's own accumulation,
+    # faithfully reproduced. Counted and printed, never a verdict.
+    shared_drift: object = None
+    # The cross-shell table difference that existed BEFORE any completion ran.
+    baseline_diffs: list = field(default_factory=list)
+    # NAMED reasons a state probe could not be read. A probe that did not run is
+    # never reported as a probe that agreed.
+    probe_failures: list = field(default_factory=list)
+    # {"zsh": [...], "zshrs": [...]} — where a shell did not render the SAME
+    # episode the same way twice, judged per shell before the two are compared.
+    idempotence: object = None
+    # The reduced episode sequence for a drift finding.
+    min_episodes: list = None
 
 
 def replay_command(args, buffer, keys, geom, zstyle_path,
@@ -3142,6 +3232,8 @@ def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     """One fuzz cell: lockstep run, flake labelling, then delta debugging."""
     if isinstance(cell, ConvCell):
         return run_conv_cell(cell, args, env, dump, fpath_dirs, outdir)
+    if isinstance(cell, SessionCell):
+        return run_session_cell(cell, args, env, dump, fpath_dirs, outdir)
     res = CellResult(cell=cell)
 
     def run(buffer, keys, init_file, geom, edits=None, deaths_out=None):
@@ -3514,8 +3606,747 @@ def run_conv_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
     return res
 
 
+# ── session fuzz (`--session-fuzz`) ──────────────────────────────────────────
+#
+# Every other mode in this file boots two shells, types once, completes once and
+# kills them. A real session runs thousands of completions in ONE process, and
+# the bugs that only a long-lived process can show are invisible to a one-shot
+# cell by construction. This project has confirmed several of exactly that
+# shape: completion-time state leaking into the parameter table, a
+# `$compstate[old_list]` that reports `yes` where zsh reports `shown` and only on
+# the SECOND invocation, `_tags_level` desyncing from `$#funcstack` across a
+# dispatch chain, and a completion list that is valid versus currently-shown.
+#
+# A SESSION is one pair of shells running N EPISODES in sequence. An episode is
+# "clear the screen, type a buffer, complete it key by key, end the line", and
+# parity is asserted after EVERY step of EVERY episode — not once at the end.
+#
+# THE FUZZED BUFFER IS NEVER EXECUTED. An episode ends one of two ways, chosen
+# by the seed and delivered identically to both shells:
+#
+#   abort    ^G (send-break, leaves any menu) then ^U (kill-whole-line).
+#   accept   the same, and THEN a fixed literal `true` plus Return. accept-line,
+#            the post-command hook chain and the history append are on the path
+#            that leaks state between completions, so a session that never
+#            accepts anything does not exercise them — but running a FUZZED line
+#            would execute arbitrary text, so what is accepted is always the
+#            same harmless builtin.
+#
+# `^D` is deliberately not used to end anything: on an empty line it is EOF and
+# would kill the shell mid-session, which is a harness artefact, not a finding.
+EPISODE_ENDS = ("abort", "accept")
+
+# Delivered through `send_edit_token`, so an episode terminator takes exactly the
+# same code path as an edit-fuzz token — there is no second key writer.
+END_TOKENS: dict[str, list] = {
+    "abort": ["k:ctrl-g", "k:ctrl-u"],
+    "accept": ["k:ctrl-g", "k:ctrl-u", "t:true", "k:cr"],
+}
+
+
+# ── state probes ─────────────────────────────────────────────────────────────
+#
+# Between episodes both shells are asked to write their own state to a FILE and
+# the files are diffed here. Reading it off the pyte grid instead would cap every
+# answer at the window width and lose it to wrapping, and the whole point is to
+# name the parameters that drifted rather than to count them.
+#
+# SET probes are compared as SETS OF NAMES; a finding names the names.
+# LINE probes are compared as sets of `key=value` LINES, so a changed value
+# shows up as one removed line and one added line, both printed.
+PROBE_SET_FILES = ("parameters", "functions", "aliases", "galiases", "commands")
+PROBE_LINE_FILES = ("options", "setopt", "misc")
+PROBE_FILES = PROBE_SET_FILES + PROBE_LINE_FILES
+
+# What the state axis deliberately does NOT compare, and why. Printed in the
+# run header: an exclusion that is not named is an exclusion nobody can audit.
+PROBE_EXCLUDED = (
+    "parameter VALUES — only the NAME SET of $parameters is compared, so a "
+    "parameter whose value legitimately changes every command (HISTCMD, "
+    "SECONDS, EPOCHSECONDS, RANDOM, LINENO, _, ?) cannot manufacture a finding; "
+    "a parameter that APPEARS or DISAPPEARS still does",
+    "$? — the probe command itself sets it",
+    "history size / HISTCMD — every episode appends to history by design; a "
+    "history that did not grow would be the bug",
+    "$$ / $PPID — two live processes cannot share a pid",
+)
+
+# The probe itself. Defined in the init file, so it exists before the FIRST
+# probe and is therefore in `$functions` on both shells at the baseline: it can
+# never appear as a drift. It writes with `>|` so a leaked `noclobber` cannot
+# silence it, and it takes no `emulate -L` (that would reset the very options
+# the `setopt` probe exists to read).
+#
+# It takes only a TAG (`e3r1`) and resolves the directory through
+# `$_CP_PROBE_ROOT`, an environment variable whose VALUE differs per shell and
+# whose NAME is identical on both. That is not decoration. The probe command is
+# accepted at the prompt, so it lands in the shell's history — and the moment a
+# fuzzed key path contains `up` / `ctrl-p` / `pgup`, history recall puts that
+# command line back on the screen. With the directory spelled out in the
+# command, the two shells necessarily recalled two different paths (`.../zsh/
+# e1r1` vs `.../zshrs/e1r1`) and the harness reported its own bookkeeping as a
+# completion divergence — the same class of self-inflicted mismatch
+# `_mask_pid` exists for. With the tag form both shells recall a byte-identical
+# line, and the differing value lives in a variable whose name (not value) is
+# what the parameter probe compares.
+PROBE_FUNCTION = r"""_cp_probe() {
+  local d=$_CP_PROBE_ROOT/$1 k
+  print -rl -- ${(ok)parameters} >| $d/parameters
+  print -rl -- ${(ok)functions}  >| $d/functions
+  print -rl -- ${(ok)aliases}    >| $d/aliases
+  print -rl -- ${(ok)galiases}   >| $d/galiases
+  print -rl -- ${(ok)commands}   >| $d/commands
+  for k in ${(ok)options}; do print -r -- "$k=$options[$k]"; done >| $d/options
+  setopt >| $d/setopt
+  {
+    print -r -- "funcstack_depth=$#funcstack"
+    print -r -- "compstate_set=${+compstate}"
+    print -r -- "widget_set=${+WIDGET} widget=${WIDGET-}"
+    print -r -- "lastwidget_set=${+LASTWIDGET} lastwidget=${LASTWIDGET-}"
+    print -r -- "tags_level_set=${+_tags_level} tags_level=${_tags_level-}"
+    print -r -- "comp_tags_set=${+_comp_tags} comp_tags=${_comp_tags-}"
+    print -r -- "curcontext=${curcontext-}"
+    print -r -- "compprefix_set=${+PREFIX} compsuffix_set=${+SUFFIX}"
+  } >| $d/misc
+  print -r -- OK >| $d/ok
+}
+"""
+
+
+@dataclass
+class Episode:
+    """One completion episode inside a session."""
+    surface: str
+    buffer: str
+    keys: list
+    end: str            # "abort" | "accept"
+
+    def label(self) -> str:
+        return (f"{self.surface}:{self.buffer!r}"
+                f"+{'+'.join(self.keys)}/{self.end}")
+
+
+def gen_episode(rng, surfaces, presses) -> Episode:
+    surface, buf, pre = gen_buffer(rng, surfaces)
+    keys = pre + gen_keyseq(rng, presses)
+    return Episode(surface, buf, keys, rng.choice(EPISODE_ENDS))
+
+
+def episodes_encode(eps) -> list:
+    return [{"surface": e.surface, "buffer": e.buffer, "keys": list(e.keys),
+             "end": e.end} for e in eps]
+
+
+def episodes_decode(raw) -> list:
+    out = []
+    for e in raw:
+        end = e.get("end", "abort")
+        if end not in EPISODE_ENDS:
+            raise ValueError(f"unknown episode end: {end!r}")
+        out.append(Episode(e.get("surface", "replay"), e["buffer"],
+                           list(e["keys"]), end))
+    return out
+
+
+def read_probe(d) -> tuple:
+    """(probe_dict, reason). `reason` is a NAMED failure when the shell did not
+    produce a complete probe; the dict is None then.
+
+    `ok` is written last, so its absence means the probe function did not run to
+    completion — which is a state axis that was NOT asserted, and it is counted
+    and printed as such rather than being read as agreement."""
+    if not os.path.exists(os.path.join(d, "ok")):
+        return None, "probe did not complete (no sentinel file)"
+    out = {}
+    for name in PROBE_FILES:
+        p = os.path.join(d, name)
+        if not os.path.exists(p):
+            return None, f"probe file missing: {name}"
+        with open(p, "r", errors="replace") as f:
+            out[name] = [ln.rstrip("\n") for ln in f if ln.strip()]
+    return out, None
+
+
+def probe_delta(base, cur) -> dict:
+    """{probe: (added, removed)} for ONE shell against ITS OWN baseline.
+
+    Per shell, deliberately. The two shells do not start from the same table —
+    zshrs carries parameters zsh does not — so comparing the raw sets across
+    shells would report that pre-existing difference once per episode and bury
+    the thing this mode exists to find. The baseline difference IS reported, in
+    its own named category, exactly once (see `baseline_diffs`); what is
+    compared per episode is how each shell moved from where IT started."""
+    out = {}
+    for name in PROBE_FILES:
+        b, c = set(base.get(name, ())), set(cur.get(name, ()))
+        out[name] = (tuple(sorted(c - b)), tuple(sorted(b - c)))
+    return out
+
+
+def baseline_diffs(base_ref, base_test) -> list:
+    """[(probe, only_in_zsh, only_in_zshrs)] at the session baseline.
+
+    Not a drift and not suppressed: a pre-existing table difference is a real
+    finding, it is simply a DIFFERENT finding from "this completion added a
+    name", and reporting it once by name is what makes the per-episode deltas
+    readable."""
+    out = []
+    for name in PROBE_FILES:
+        r, t = set(base_ref.get(name, ())), set(base_test.get(name, ()))
+        if r != t:
+            out.append((name, tuple(sorted(r - t)), tuple(sorted(t - r))))
+    return out
+
+
+@dataclass
+class Drift:
+    """One probe that moved differently on the two shells at one episode."""
+    episode: int
+    rep: int
+    probe: str
+    ref_added: tuple
+    ref_removed: tuple
+    test_added: tuple
+    test_removed: tuple
+    after: str            # the episode that ran immediately before this probe
+    prev_matched: bool    # the same probe agreed at the PREVIOUS episode
+
+    def sig(self):
+        """The identity of this drift, with the EPISODE INDEX deliberately left
+        out: shrinking removes episodes, which renumbers every later one, so an
+        index in the signature would reject every real reduction — the same
+        reasoning as `signature()` for the key path."""
+        return (self.probe,
+                tuple(sorted(set(self.test_added) ^ set(self.ref_added))),
+                tuple(sorted(set(self.test_removed) ^ set(self.ref_removed))))
+
+    def named(self) -> list:
+        """The actionable form: which NAMES, on which side. A count-only report
+        ('527 vs 528') is not something anyone can act on."""
+        lines = []
+        for what, r, t in (("added", self.ref_added, self.test_added),
+                           ("removed", self.ref_removed, self.test_removed)):
+            only_t = sorted(set(t) - set(r))
+            only_r = sorted(set(r) - set(t))
+            if only_t:
+                lines.append(f"{what} by zshrs only: {', '.join(only_t)}")
+            if only_r:
+                lines.append(f"{what} by zsh only:   {', '.join(only_r)}")
+        return lines
+
+
+@dataclass
+class SessionRun:
+    """Everything one session produced. Nothing here decides a verdict; the
+    verdict is computed from it in `run_session_cell`."""
+    fail_step: int = 0
+    records: list = field(default_factory=list)
+    # (side, episode, rep) -> probe dict
+    probes: dict = field(default_factory=dict)
+    # (episode, rep) -> [(short_label, ref_grid, test_grid), ...]
+    frames: dict = field(default_factory=dict)
+    # episode index -> Episode, for attribution
+    ran: dict = field(default_factory=dict)
+    # NAMED reasons a probe could not be read. A state axis that was not
+    # asserted is never reported as an axis that agreed.
+    probe_failures: list = field(default_factory=list)
+    episodes_done: int = 0
+
+
+def _probe_dir(root, side, ei, rep) -> str:
+    d = os.path.join(root, side, f"e{ei}r{rep}")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def run_session(init_file, episodes, args, env, geom, repeat, probe_root,
+                deaths_out=None) -> SessionRun:
+    """Drive ONE pair of shells through `episodes`, `repeat` times each.
+
+    Parity is asserted after the buffer, after every completion key and after
+    the terminator of EVERY repetition of EVERY episode — the run stops at the
+    first divergence, because past it the two shells are in different states and
+    every later assertion would be reporting the same bug again.
+
+    Between episodes both shells write their own state (see PROBE_FUNCTION) and
+    the files are kept for `run_session_cell` to diff. The screens are cleared
+    with the shell's own Ctrl-L before each episode and before each probe, so
+    the probe's command line can be read back from row 0 and a leftover buffer
+    is NAMED rather than silently prepended to the probe command."""
+    source_cmd = f"source {shlex.quote(init_file)}\n".encode()
+    env = dict(env, COLUMNS=str(geom.cols), LINES=str(geom.rows))
+    # Same NAME on both shells, different VALUE — see PROBE_FUNCTION. The name
+    # set is what the parameter probe compares, so this adds one name to both
+    # sides and can never itself read as a drift.
+    ref_env = dict(env, _CP_PROBE_ROOT=os.path.join(probe_root, "zsh"))
+    test_env = dict(env, _CP_PROBE_ROOT=os.path.join(probe_root, "zshrs"))
+    ref = ShellSession([args.zsh, "-f", "-i"], ref_env, geom.rows, geom.cols,
+                       "zsh", args.settle)
+    test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], test_env, geom.rows,
+                        geom.cols, "zshrs", args.settle)
+    run = SessionRun()
+    step = [0]
+
+    def drain_both(max_wait, first_wait):
+        for s in (ref, test):
+            s.drain_settled(max_wait=max_wait, first_wait=first_wait)
+
+    def compare(label, bucket=None):
+        step[0] += 1
+        rg = normalize_rows(ref.grid())
+        tg = normalize_rows(test.grid())
+        d = diff_grids(rg, tg)
+        run.records.append((step[0], label, rg, tg, d))
+        if bucket is not None:
+            bucket.append((label, rg, tg))
+        return d
+
+    def died():
+        d = death_report((ref, test))
+        if not d:
+            return False
+        if deaths_out is not None:
+            deaths_out.extend(d)
+        return True
+
+    def probe(ei, rep):
+        """Both shells write their state; both files are read back here."""
+        for side, s in (("zsh", ref), ("zshrs", test)):
+            s.fresh_prompt()
+            line = line_after_prompt(normalize_rows(s.grid()), geom.cols)
+            if line:
+                # The episode terminator did not leave an empty line on this
+                # shell, so the probe command would be appended to whatever is
+                # there. NAMED, never silently attempted.
+                run.probe_failures.append(
+                    f"e{ei}r{rep} {side}: line not empty before probe "
+                    f"({line!r}) — state not asserted here")
+                continue
+            d = _probe_dir(probe_root, side, ei, rep)
+            # The TAG, never the path: the command line is accepted into
+            # history and a later `up` recalls it onto the compared screen.
+            s.send(f"_cp_probe e{ei}r{rep}\r".encode())
+            s.drain_settled(max_wait=15.0, first_wait=8.0)
+            got, why = read_probe(d)
+            if got is None:
+                run.probe_failures.append(f"e{ei}r{rep} {side}: {why}")
+            else:
+                run.probes[(side, ei, rep)] = got
+
+    try:
+        for s in (ref, test):
+            s.drain_settled(max_wait=3.0, first_wait=2.0)
+            s.send(source_cmd)
+            if not s.wait_for_prompt(timeout=25.0):
+                died()
+                run.fail_step = 1
+                run.records.append((1, "(init)", None, None, None))
+                return run
+        # Episode 0: the baseline. Taken by RUNNING the probe, not by reading
+        # the tables directly, so whatever the probe command itself perturbs is
+        # already perturbed in the baseline and cannot read as drift later.
+        probe(0, 1)
+        if died():
+            return run
+        for ei, ep in enumerate(episodes, 1):
+            run.ran[ei] = ep
+            for rep in range(1, max(1, repeat) + 1):
+                bucket = []
+                run.frames[(ei, rep)] = bucket
+                for s in (ref, test):
+                    s.fresh_prompt()
+                if ep.buffer:
+                    for chunk in ref.buffer_lines(ep.buffer):
+                        for s in (ref, test):
+                            s.send(chunk)
+                        drain_both(max_wait=2.0, first_wait=1.0)
+                if compare(f"e{ei}r{rep} (buffer)", bucket):
+                    run.fail_step = step[0]
+                    return run
+                if died():
+                    run.fail_step = step[0]
+                    return run
+                for kn, key in enumerate(ep.keys, 1):
+                    for s in (ref, test):
+                        s.send_key(key)
+                    # The first key of the FIRST episode is cold (the autoload
+                    # chain has never run in this process); every later one is
+                    # warm, including the first key of episode 2 — which is
+                    # exactly the difference this mode exists to exercise.
+                    fw = 8.0 if (kn == 1 and ei == 1 and rep == 1) else 4.0
+                    drain_both(max_wait=12.0, first_wait=fw)
+                    if compare(f"e{ei}r{rep} {key}", bucket):
+                        run.fail_step = step[0]
+                        return run
+                    if died():
+                        run.fail_step = step[0]
+                        return run
+                for tok in END_TOKENS[ep.end]:
+                    for s in (ref, test):
+                        s.send_edit_token(tok)
+                    drain_both(max_wait=8.0, first_wait=1.5)
+                if compare(f"e{ei}r{rep} end:{ep.end}", bucket):
+                    run.fail_step = step[0]
+                    return run
+                if died():
+                    run.fail_step = step[0]
+                    return run
+                probe(ei, rep)
+                if died():
+                    run.fail_step = step[0]
+                    return run
+                run.episodes_done += 1
+        return run
+    finally:
+        ref.close()
+        test.close()
+
+
+def probe_order(run) -> list:
+    """The (episode, rep) keys in the order they were taken, baseline first."""
+    seen = sorted({(ei, rep) for (_, ei, rep) in run.probes})
+    return seen
+
+
+def analyse_drift(run) -> tuple:
+    """(drifts, shared, baseline, unpaired).
+
+    `drifts`   the actionable findings: a probe that moved DIFFERENTLY on the
+               two shells, with the names on each side.
+    `shared`   Counter of probes that moved IDENTICALLY on both shells. That is
+               zsh's own behaviour reproduced faithfully, so it is not a zshrs
+               bug — but it is state accumulating inside a live session and it
+               is counted and printed rather than dropped.
+    `baseline` the cross-shell table difference that was already there before a
+               single completion ran, named once.
+    `unpaired` (episode, rep) points where only one side produced a probe, so
+               no comparison could be made there. Named, never treated as
+               agreement."""
+    base_r = run.probes.get(("zsh", 0, 1))
+    base_t = run.probes.get(("zshrs", 0, 1))
+    if base_r is None or base_t is None:
+        return [], Counter(), [], ["baseline probe missing on "
+                                   + ("zsh" if base_r is None else "zshrs")]
+    base = baseline_diffs(base_r, base_t)
+    drifts, shared, unpaired = [], Counter(), []
+    prev_ok = {name: True for name in PROBE_FILES}
+    for ei, rep in probe_order(run):
+        if ei == 0:
+            continue
+        cur_r = run.probes.get(("zsh", ei, rep))
+        cur_t = run.probes.get(("zshrs", ei, rep))
+        if cur_r is None or cur_t is None:
+            unpaired.append(f"e{ei}r{rep}: only "
+                            + ("zshrs" if cur_r is None else "zsh")
+                            + " produced a probe")
+            continue
+        dr = probe_delta(base_r, cur_r)
+        dt = probe_delta(base_t, cur_t)
+        ep = run.ran.get(ei)
+        for name in PROBE_FILES:
+            ra, rr = dr[name]
+            ta, tr = dt[name]
+            if (ra, rr) == (ta, tr):
+                if ra or rr:
+                    shared[name] += 1
+                prev_ok[name] = True
+                continue
+            drifts.append(Drift(
+                episode=ei, rep=rep, probe=name,
+                ref_added=ra, ref_removed=rr, test_added=ta, test_removed=tr,
+                after=(ep.label() if ep else "?"),
+                prev_matched=prev_ok[name]))
+            prev_ok[name] = False
+    return drifts, shared, base, unpaired
+
+
+@dataclass
+class IdemPoint:
+    """One place a shell did not render the same episode the same way twice."""
+    episode: int
+    rep: int
+    step: int
+    label: str
+    first_diff: tuple
+
+    def where(self):
+        """The identity of the point, so the two shells' points can be compared
+        as sets. Deliberately NOT the first-diff cell: two shells that both
+        redraw the same step differently are both non-idempotent AT THAT STEP,
+        which is the thing being compared."""
+        return (self.episode, self.rep, self.step)
+
+    def __str__(self):
+        return (f"e{self.episode}: rep{self.rep} renders {self.label!r} "
+                f"differently from rep1 (step {self.step}), first diff "
+                f"row {self.first_diff[0]} col {self.first_diff[1]}")
+
+
+def analyse_idempotence(run) -> dict:
+    """{side: [IdemPoint, ...]} — where a shell did NOT render one episode the
+    same way twice IN ITS OWN OUTPUT.
+
+    Judged per shell BEFORE the two are compared with each other, because it is
+    a different bug: a shell that is not self-consistent across repetitions is
+    broken on its own terms, and folding that into a zsh-vs-zshrs difference
+    would name the wrong thing.
+
+    Non-idempotence is NOT automatically a defect. A second `echo $<TAB>` in the
+    same process legitimately lists more parameters than the first, because the
+    first completion loaded some — zsh does exactly that, and a zshrs that did
+    it too has reproduced the reference faithfully. So the caller compares the
+    two shells' point SETS: a point where only zshrs is non-idempotent is the
+    finding; a point where both are is zsh behaviour and belongs in the counted
+    observations, not in a verdict."""
+    out = {"zsh": [], "zshrs": []}
+    reps = sorted({rep for (_, rep) in run.frames})
+    if len(reps) < 2:
+        return out
+    for ei in sorted({e for (e, _) in run.frames}):
+        first = run.frames.get((ei, reps[0]))
+        if not first:
+            continue
+        for rep in reps[1:]:
+            other = run.frames.get((ei, rep))
+            if not other or len(other) != len(first):
+                continue
+            for idx, ((la, ra, ta), (lb, rb, tb)) in enumerate(
+                    zip(first, other), 1):
+                if ra != rb:
+                    out["zsh"].append(IdemPoint(
+                        ei, rep, idx, lb, first_diff_cell(diff_grids(ra, rb))))
+                if ta != tb:
+                    out["zshrs"].append(IdemPoint(
+                        ei, rep, idx, lb, first_diff_cell(diff_grids(ta, tb))))
+                if ra != rb or ta != tb:
+                    break
+    return out
+
+
+def idem_split(idem) -> tuple:
+    """(zshrs_only, shared, zsh_only) — the three groups a caller must keep
+    apart. Only `zshrs_only` is a defect in this project; `shared` is zsh's own
+    non-idempotence reproduced, and `zsh_only` is a finding about the REFERENCE
+    shell, which is worth printing and is not a zshrs verdict."""
+    r = {p.where(): p for p in idem.get("zsh", [])}
+    t = {p.where(): p for p in idem.get("zshrs", [])}
+    zshrs_only = [t[k] for k in sorted(set(t) - set(r))]
+    shared = [t[k] for k in sorted(set(t) & set(r))]
+    zsh_only = [r[k] for k in sorted(set(r) - set(t))]
+    return zshrs_only, shared, zsh_only
+
+
+def shrink_episodes(cell, args, env, target_sig, budget, run_once):
+    """Reduce the EPISODE SEQUENCE to a subsequence that still drifts at
+    `target_sig`.
+
+    "the parameter table diverges after 8 episodes" is not a bug report; "the
+    parameter table diverges after these two episodes, and these are the names"
+    is. Same ddmin, same probe budget accounting and the same 'reduced, not
+    minimal' honesty as the other three axes — a probe here is more expensive
+    than any of them (it boots two shells and runs the whole subsequence), which
+    is why it has its own smaller default budget."""
+    if budget <= 0 or len(cell.episodes) <= 1:
+        return list(cell.episodes), 0
+    probes = [0]
+
+    def still_drifts(candidate):
+        probes[0] += 1
+        r = run_once(list(candidate))
+        if r is None or r.fail_step:
+            return False
+        d, _, _, _ = analyse_drift(r)
+        return bool(d) and d[0].sig() == target_sig
+
+    return (ddmin(list(cell.episodes), still_drifts, max_probes=budget),
+            probes[0])
+
+
+def session_replay_command(args, cell, episodes) -> str:
+    """A copy-pasteable command that re-runs one session. The whole episode
+    sequence travels as one JSON argument: a session finding is a claim about an
+    ORDER of completions, and no single `--case` line can carry that."""
+    spec = {
+        "geom": [cell.geom.rows, cell.geom.cols],
+        "zstyle": cell.zstyle_path,
+        "repeat": cell.repeat,
+        "episodes": episodes_encode(episodes),
+    }
+    return ("scripts/compsys_parity.py --session-replay "
+            + shlex.quote(json.dumps(spec, separators=(",", ":"))) + " -v")
+
+
+def run_session_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
+    """One session cell: N episodes in ONE pair of shells, parity after every
+    step, state probes between episodes, an idempotence check across
+    repetitions, and ddmin over the episode sequence for a drift.
+
+    Verdict order, most-specific first:
+      DIED   a shell exited mid-session (its own verdict, as everywhere else);
+      FAIL   a per-step screen divergence — the ordinary comparison, reported
+             exactly as the single-shot modes report it;
+      FAIL   a STATE DRIFT: a probe that moved differently on the two shells;
+      FAIL   zshrs did not render an episode the same way twice;
+      PASS   every step agreed, every probe moved the same way on both shells.
+    A probe that could not be read is NEVER agreement: it is named, counted, and
+    the cell says so in its detail.
+
+    `--latency` does not time a session and does not pretend to: a session's
+    keystrokes are deliberately not independent (the whole point is that the
+    process is warm and carrying state), so a best-of-K per key would be
+    measuring a different thing from every other cell in the book. Session cells
+    therefore reach `LatencyBook.not_measured` and are listed there as carrying
+    no timing, rather than contributing a number that is not comparable."""
+    res = CellResult(cell=cell)
+    root = tempfile.mkdtemp(prefix="cp_probe_", dir=cell.workdir)
+
+    def run_once(episodes, deaths_out=None, tag="run"):
+        r = tempfile.mkdtemp(prefix=f"cp_{tag}_", dir=cell.workdir)
+        return run_session(cell.init_file, episodes, args, env, cell.geom,
+                           cell.repeat, r, deaths_out=deaths_out)
+
+    deaths: list = []
+    run = run_session(cell.init_file, cell.episodes, args, env, cell.geom,
+                      cell.repeat, root, deaths_out=deaths)
+    res.session = run
+    res.replay = session_replay_command(args, cell, cell.episodes)
+    if deaths:
+        res.status = "DIED"
+        res.deaths = deaths
+        again = 0
+        for _ in range(max(0, args.confirm)):
+            d2: list = []
+            run_once(cell.episodes, deaths_out=d2, tag="confirm")
+            if d2:
+                again += 1
+        res.detail = (death_str(deaths)
+                      + (f"; reproduced in {again}/{args.confirm} re-runs"
+                         if args.confirm else ""))
+        if run.records:
+            step, key, rg, tg, diffs = run.records[-1]
+            res.fail_step, res.fail_key = step, key
+            res.ref_grid, res.test_grid = rg or [], tg or []
+            res.diffs = diffs or []
+        return res
+
+    # 1. The ordinary per-step screen comparison, first: past a divergence the
+    #    two shells are in different states and no probe taken after it means
+    #    anything.
+    if run.fail_step:
+        step, key, rg, tg, diffs = run.records[-1]
+        res.fail_step, res.fail_key = step, key
+        res.ref_grid, res.test_grid = rg or [], tg or []
+        if diffs is None:
+            res.status = "FAIL"
+            res.detail = "a shell never reached prompt"
+            return res
+        res.diffs = diffs
+        res.sig = signature(run.records)
+        reproduced = True
+        for _ in range(max(0, args.confirm)):
+            r2 = run_once(cell.episodes, tag="confirm")
+            if not r2.fail_step or signature(r2.records) != res.sig:
+                reproduced = False
+                break
+        res.status = "FAIL" if reproduced else "FLAKY"
+        res.detail = (f"{len(diffs)} rows differ at {key!r} "
+                      f"(episode {run.episodes_done + 1} of "
+                      f"{len(cell.episodes)})")
+        if args.shrink_probes > 0 and res.status == "FAIL":
+            res.shrink_notes.append(
+                "episode sequence not reduced: this is a per-step SCREEN "
+                "divergence, which the single-shot modes already minimise on "
+                "the key path — the sequence is only reduced for a STATE DRIFT")
+        return res
+
+    drifts, shared, base, unpaired = analyse_drift(run)
+    idem = analyse_idempotence(run)
+    res.drifts = drifts
+    res.shared_drift = shared
+    res.baseline_diffs = base
+    res.probe_failures = list(run.probe_failures) + list(unpaired)
+    res.idempotence = idem
+
+    notes = []
+    if res.probe_failures:
+        notes.append(f"{len(res.probe_failures)} probe(s) unreadable — the "
+                     f"state axis was NOT asserted there")
+    if any(r.startswith("baseline probe missing") for r in unpaired):
+        # Without a baseline there is nothing to measure drift AGAINST, so the
+        # state axis — the entire reason this mode exists — was never asserted.
+        # The per-step screen comparison did run and did agree, and that is said
+        # here; but a session whose state was never probed is not a session that
+        # passed, and calling it one would be the exact weakening this file
+        # refuses. SKIP is counted, named and printed, like every other
+        # comparison that could not be made.
+        res.status = "SKIP"
+        res.detail = ("state axis NOT established: " + "; ".join(unpaired)
+                      + f" — the per-step screen comparison DID run and agreed "
+                        f"across {len(run.records)} assertions, but drift "
+                        f"cannot be measured without a baseline")
+        return res
+    if drifts:
+        res.status = "FAIL"
+        d0 = drifts[0]
+        res.sig = d0.sig()
+        res.fail_step = d0.episode
+        res.fail_key = f"probe:{d0.probe}"
+        res.detail = (f"state drift in ${d0.probe} at episode {d0.episode}"
+                      + (" (agreed at the previous episode)"
+                         if d0.prev_matched else " (already drifting before)")
+                      + (f"; {len(drifts)} drift point(s) total"
+                         if len(drifts) > 1 else ""))
+        reproduced = True
+        for _ in range(max(0, args.confirm)):
+            r2 = run_once(cell.episodes, tag="confirm")
+            if r2.fail_step:
+                reproduced = False
+                break
+            d2, _, _, _ = analyse_drift(r2)
+            if not d2 or d2[0].sig() != res.sig:
+                reproduced = False
+                break
+        res.status = "FAIL" if reproduced else "FLAKY"
+        if args.session_shrink_probes > 0 and res.status == "FAIL":
+            full = len(cell.episodes)
+            min_eps, p = shrink_episodes(cell, args, env, res.sig,
+                                         args.session_shrink_probes,
+                                         lambda eps: run_once(eps, tag="shrink"))
+            res.probes += p
+            res.shrink_exhausted = p >= args.session_shrink_probes
+            res.min_episodes = min_eps
+            res.shrink_notes.append(
+                f"episode sequence reduced {len(min_eps)}/{full} "
+                f"[{p} probes, each one a whole session]")
+            res.replay = session_replay_command(args, cell, min_eps)
+    elif idem_split(idem)[0]:
+        # ONLY the points where zshrs is non-idempotent and zsh is NOT. A point
+        # where both shells redraw the same step differently is zsh's own
+        # behaviour (a second completion in one process legitimately sees more
+        # loaded state than the first) reproduced faithfully, and calling that a
+        # zshrs failure would be a false positive in an audit instrument.
+        only = idem_split(idem)[0]
+        res.status = "FAIL"
+        res.fail_step = only[0].episode
+        res.fail_key = "idempotence"
+        res.detail = (f"zshrs is NOT self-consistent across repetitions of the "
+                      f"same episode at {len(only)} point(s) where zsh IS — a "
+                      f"different bug from a zsh-vs-zshrs difference, found "
+                      f"without comparing the two shells to each other")
+    else:
+        res.status = "PASS"
+        res.detail = (f"{len(cell.episodes)} episodes x{cell.repeat} = "
+                      f"{run.episodes_done} episode runs, "
+                      f"{len(run.records)} parity assertions, "
+                      f"{len(run.probes)} state probes")
+    if notes:
+        res.detail = (res.detail + "; " if res.detail else "") + "; ".join(notes)
+    return res
+
+
 def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
-                edit_pairs=None, tree=None, fs_surfaces=None):
+                edit_pairs=None, tree=None, fs_surfaces=None,
+                session_surfaces=None):
     """Materialise every fuzz cell up front (zstyle subset, buffer, key path,
     geometry, init file) so the work list is fixed and reproducible from the
     seed alone before any shell is booted."""
@@ -3542,11 +4373,11 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
         # every pre-existing cell used.
         mode_inits = {}
 
-        def init_for(mode=None, cwd=None):
-            key = (mode, cwd)
+        def init_for(mode=None, cwd=None, probe=False):
+            key = (mode, cwd, probe)
             if key not in mode_inits:
                 mode_inits[key] = build_init_file(dump, fpath_dirs, combo_path,
-                                                  mode, cwd)
+                                                  mode, cwd, probe)
             return mode_inits[key]
 
         init_file = init_for()
@@ -3654,6 +4485,46 @@ def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips,
                     cwd=(tree.root if in_tree and tree else None),
                     fstree_seed=(tree.seed if in_tree and tree else None),
                     interrupt=iv))
+        # ── session cells (`--session-fuzz N`) ───────────────────────────────
+        #
+        # Their own cells, and the only ones whose init carries `_cp_probe`: a
+        # session is N episodes inside ONE pair of shells, so it cannot be
+        # folded into a per-cell surface without changing what every other cell
+        # measures. The episodes are drawn from whatever surface pool this run
+        # has, so a session composes with --buffer-fuzz / --multiline-fuzz /
+        # --geometry-fuzz exactly like every other mode.
+        if args.session_fuzz > 0 and session_surfaces:
+            sess_init = init_for(None, None, True)
+            for si in range(args.session_cases):
+                srng = random.Random(f"{args.seed}:{n}:s{si}")
+                geom = pick_geom(srng, args)
+                eps = []
+                for k in range(args.session_fuzz):
+                    ep = gen_episode(srng, session_surfaces, args.presses)
+                    if len(PROMPT_SENTINEL) + 1 + len(ep.buffer) \
+                            >= geom.rows * geom.cols:
+                        skips[f"session-buffer-exceeds-screen:"
+                              f"{geom_str(geom)}"] += 1
+                        continue
+                    if "\n" in ep.buffer:
+                        need = sum(
+                            1 + (len(PROMPT_SENTINEL) + 1 + len(ln)) // geom.cols
+                            for ln in ep.buffer.split("\n"))
+                        if need + 1 > geom.rows:
+                            skips[f"session-multiline-exceeds-rows:"
+                                  f"{geom_str(geom)}"] += 1
+                            continue
+                    eps.append(ep)
+                if not eps:
+                    skips["session-no-usable-episodes"] += 1
+                    continue
+                cells.append(SessionCell(
+                    idx=n, uid=f"{n}_s{si}",
+                    surface=f"session/{len(eps)}ep_x{args.session_repeat}",
+                    buffer="", keys=[], geom=geom, statements=subset,
+                    zstyle_path=saved_path(outdir, args.seed, n),
+                    init_file=sess_init, workdir=workdir,
+                    episodes=eps, repeat=args.session_repeat))
         if not args.edit_fuzz:
             continue
         # ── edit-fuzz cells ─────────────────────────────────────────────────
@@ -3745,8 +4616,19 @@ def run_random_combos(args, dump, fpath_dirs, env):
                      "categories — the filesystem accepted none of the planned "
                      "entries (see the plan in fstree_plan)")
 
+    # `--session-fuzz` needs buffers to complete, and it is a complete request on
+    # its own: with no --buffer-fuzz/--multiline-fuzz the shared pool is empty,
+    # so it falls back to the documented single-line surface set rather than
+    # silently generating nothing.
+    session_surfaces = []
+    if args.session_fuzz > 0:
+        session_surfaces = surfaces or available_surfaces(skips)
+        if not session_surfaces:
+            sys.exit("compsys_parity: --session-fuzz has no usable buffer "
+                     "surfaces on this host")
+
     cells = build_cells(args, dump, fpath_dirs, statements, surfaces, outdir,
-                        skips, edit_pairs, tree, fs_surfaces)
+                        skips, edit_pairs, tree, fs_surfaces, session_surfaces)
 
     print(f"# random-combo fuzz: {args.random_combos} combos, {len(cells)} cells, "
           f"{args.presses}-key paths (parity asserted after EACH key)")
@@ -3790,6 +4672,25 @@ def run_random_combos(args, dump, fpath_dirs, env):
               f"  delay={args.interrupt_delay_ms}ms  {n_int} interrupted cells "
               f"(delivered identically to both shells; a shell that DIES is its "
               f"own verdict, never a pass and never a plain FAIL)")
+    if args.session_fuzz > 0:
+        n_sess = sum(1 for c in cells if isinstance(c, SessionCell))
+        print(f"# session-fuzz={args.session_fuzz} episodes x"
+              f"{args.session_repeat} repetitions, {n_sess} sessions "
+              f"({len(session_surfaces)} surfaces) — ONE pair of shells per "
+              f"session, parity asserted after EVERY step of EVERY episode, "
+              f"state probed between episodes")
+        print(f"#   probes: {', '.join(PROBE_FILES)}  "
+              f"(set-compared: {', '.join(PROBE_SET_FILES)}; "
+              f"line-compared: {', '.join(PROBE_LINE_FILES)})")
+        print("#   the fuzzed buffer is NEVER executed: an episode ends with "
+              "^G+^U (abort) or ^G+^U then a fixed literal `true` (accept)")
+        print("#   the harness injects exactly one parameter, $_CP_PROBE_ROOT, "
+              "with the SAME NAME on both shells and a per-shell value, and the "
+              "probe command is `_cp_probe <tag>` on both — so a history recall "
+              "(`up`) puts a byte-identical line back on the compared screen")
+        print("#   deliberately NOT compared:")
+        for why in PROBE_EXCLUDED:
+            print(f"#     - {why}")
     print(f"# failing combos saved to: {outdir}")
     print()
 
@@ -3810,6 +4711,12 @@ def run_random_combos(args, dump, fpath_dirs, env):
     by_category: Counter = Counter()
     deaths_by_side: Counter = Counter()
     expect_bad: Counter = Counter()
+    # Session-fuzz observations that are NOT parity verdicts and must not be
+    # read as any: state both shells accumulate identically (that is zsh's own
+    # behaviour), a shell that is not self-consistent across repetitions, and
+    # probes that could not be taken at all. Counted and printed in their own
+    # section so none of them is silently absorbed into a PASS.
+    session_notes: Counter = Counter()
     results = []
     book = (LatencyBook(args.latency_min_ms, args.latency_threshold,
                         args.latency_runs, concurrent_drain=True)
@@ -3828,6 +4735,109 @@ def run_random_combos(args, dump, fpath_dirs, env):
             if res.expect_ok is False:
                 expect_bad[f"{c.edit_gen}: claimed {c.expect!r}, "
                            f"zsh showed {res.expect_saw!r}"] += 1
+            if isinstance(c, SessionCell):
+                # A session has no single buffer and no single key path, so it
+                # gets its own reporting rather than being squeezed into a line
+                # that would claim it was about one completion.
+                for name, cnt in (res.shared_drift or Counter()).items():
+                    session_notes[f"both-shells-drift:${name}"] += cnt
+                session_notes["probe-not-asserted"] += len(res.probe_failures)
+                idem = res.idempotence or {"zsh": [], "zshrs": []}
+                only_t, shared_i, only_r = idem_split(idem)
+                session_notes["not-idempotent:BOTH shells (zsh behaviour "
+                              "reproduced)"] += len(shared_i)
+                session_notes["not-idempotent:zsh only (reference shell "
+                              "finding)"] += len(only_r)
+                session_notes["not-idempotent:zshrs only"] += len(only_t)
+                shead = (f"{res.status:5s} combo {c.idx:3d} [{c.surface:18s}] "
+                         f"{geom_str(c.geom):>7s} {len(c.episodes)} episodes"
+                         f" x{c.repeat}")
+                print(f"{shead}  ({res.detail})")
+                for i, ep in enumerate(c.episodes, 1):
+                    print(f"      ep {i:2d}    : {ep.label()}")
+                # `b_`-prefixed deliberately: `only_r`/`only_t` above are the
+                # IDEMPOTENCE lists and are printed further down. Reusing those
+                # names here silently replaced them with a baseline probe's name
+                # lists whenever a baseline difference existed.
+                for name, b_only_r, b_only_t in res.baseline_diffs:
+                    print(f"      baseline  : ${name} already differs BEFORE "
+                          f"any completion (own category, not a drift)")
+                    if b_only_r:
+                        print(f"                  only zsh  : "
+                              f"{', '.join(b_only_r[:12])}")
+                    if b_only_t:
+                        print(f"                  only zshrs: "
+                              f"{', '.join(b_only_t[:12])}")
+                for name, cnt in sorted((res.shared_drift or Counter()).items()):
+                    print(f"      state     : ${name} moved IDENTICALLY on both "
+                          f"shells at {cnt} probe(s) — zsh's own accumulation, "
+                          f"reproduced; not a finding")
+                for reason in res.probe_failures:
+                    print(f"      probe     : {reason}")
+                for pt in only_t:
+                    print(f"      IDEMPOTENCE: zshrs ONLY (zsh renders this "
+                          f"step identically both times) — {pt}")
+                for pt in shared_i:
+                    print(f"      idempotence: BOTH shells — {pt}  (zsh's own "
+                          f"non-idempotence, reproduced; not a finding)")
+                for pt in only_r:
+                    print(f"      idempotence: zsh (reference) ONLY — {pt}")
+                if not idem["zsh"] and not idem["zshrs"] and c.repeat > 1:
+                    print(f"      idempotence: both shells render every episode "
+                          f"identically across all {c.repeat} repetitions")
+                for d in res.drifts:
+                    print(f"      DRIFT     : ${d.probe} at episode "
+                          f"{d.episode} (rep {d.rep}) — "
+                          + ("agreed at the previous episode"
+                             if d.prev_matched else "already drifting before"))
+                    print(f"                  after: {d.after}")
+                    for ln in d.named():
+                        print(f"                  {ln}")
+                if res.status in ("FAIL", "FLAKY") and res.diffs:
+                    print(f"      path      : diverges at step #{res.fail_step} "
+                          f"(step {res.fail_key!r})")
+                    for i, a, b in res.diffs[: (12 if args.verbose else 3)]:
+                        print(f"        row {i:2d}: zsh  = {a!r}")
+                        print(f"                 zshrs= {b!r}")
+                    if args.verbose and res.ref_grid:
+                        print("      --- zsh (ref) ---")
+                        print(render_grid(res.ref_grid))
+                        print("      --- zshrs (test) ---")
+                        print(render_grid(res.test_grid))
+                for note in res.shrink_notes:
+                    print(f"      note      : {note}")
+                if res.min_episodes is not None:
+                    label = ("reduced (budget exhausted, not minimal)"
+                             if res.shrink_exhausted
+                             else "reduced (ddmin converged)")
+                    print(f"      {label}")
+                    for i, ep in enumerate(res.min_episodes, 1):
+                        print(f"        ep {i:2d}: {ep.label()}")
+                if res.replay:
+                    print(f"      replay    : {res.replay}")
+                if res.status == "PASS":
+                    passed += 1
+                elif res.status == "SKIP":
+                    # The state axis could not be established. Neither a pass
+                    # nor a failure — a counted, named, printed skip, exactly as
+                    # a non-convergent pair is.
+                    skips["session-state-axis-not-established"] += 1
+                elif res.status == "DIED":
+                    died += 1
+                    for side, kind, value in res.deaths:
+                        name = value
+                        if kind == "signal":
+                            try:
+                                name = signal.Signals(value).name
+                            except ValueError:      # pragma: no cover
+                                name = f"signal {value}"
+                        deaths_by_side[f"{side} {kind} {name}"] += 1
+                elif res.status == "FLAKY":
+                    flaky += 1
+                else:
+                    failed += 1
+                results.append(_cell_json(res))
+                continue
             head = (f"{res.status:5s} combo {c.idx:3d} [{c.surface:18s}] "
                     f"{geom_str(c.geom):>7s} {c.buffer!r}")
             if c.edit_tokens:
@@ -3971,7 +4981,7 @@ def run_random_combos(args, dump, fpath_dirs, env):
         for reason, count in sorted(deaths_by_side.items()):
             print(f"#   {reason}: {count}")
     if by_category and (args.edit_fuzz or args.fstree_fuzz
-                        or args.interrupt_fuzz):
+                        or args.interrupt_fuzz or args.session_fuzz):
         print("# per-category (generator[mode]):")
         cats = sorted({c for c, _ in by_category})
         for cat in cats:
@@ -3981,6 +4991,17 @@ def run_random_combos(args, dump, fpath_dirs, env):
             total = sum(counts.values())
             detail = "  ".join(f"{k}={v}" for k, v in counts.items())
             print(f"#   {cat:34s} {total:3d}  {detail}")
+    if session_notes:
+        # NOT verdicts. State both shells accumulate identically is zsh's own
+        # behaviour faithfully reproduced; a shell that is not self-consistent
+        # across repetitions is a finding about THAT shell, not about the pair;
+        # a probe that could not be taken is an assertion that was not made.
+        # All three are printed and counted here precisely so that none of them
+        # can be mistaken for the pair agreeing.
+        print("# session-fuzz observations (counted, NOT parity verdicts):")
+        for reason, count in sorted(session_notes.items()):
+            if count:
+                print(f"#   {reason}: {count}")
     if expect_bad:
         # Generator sanity, NOT a parity result. A mismatch here says the
         # harness's own claim about what an edit program produces is wrong
@@ -4021,6 +5042,13 @@ def run_random_combos(args, dump, fpath_dirs, env):
                                     for r, w in tree.skipped],
                         "categories": sorted(tree.prefixes)}
                        if tree is not None else None),
+            "session_fuzz": args.session_fuzz,
+            "session_repeat": args.session_repeat,
+            "session_probes": list(PROBE_FILES),
+            "session_excluded": list(PROBE_EXCLUDED),
+            # Its own key, never inside `summary`: an observation is not a
+            # verdict and no consumer should be able to read it as one.
+            "session_notes": dict(session_notes),
             "interrupt_fuzz": args.interrupt_fuzz,
             "interrupt_kinds": list(args.interrupt_kinds_list),
             "interrupt_delay_ms": args.interrupt_delay_ms,
@@ -4121,6 +5149,38 @@ def _cell_json(res) -> dict:
             expect=c.expect,
             expect_ok=res.expect_ok,
             expect_saw=res.expect_saw,
+        )
+    if isinstance(c, SessionCell):
+        idem = res.idempotence or {"zsh": [], "zshrs": []}
+        doc.update(
+            session=True,
+            episodes=episodes_encode(c.episodes),
+            repeat=c.repeat,
+            min_episodes=(episodes_encode(res.min_episodes)
+                          if res.min_episodes is not None else None),
+            episodes_done=(res.session.episodes_done if res.session else 0),
+            parity_assertions=(len(res.session.records) if res.session else 0),
+            state_probes=(len(res.session.probes) if res.session else 0),
+            drifts=[{"episode": d.episode, "rep": d.rep, "probe": d.probe,
+                     "after": d.after, "agreed_at_previous": d.prev_matched,
+                     "ref_added": list(d.ref_added),
+                     "ref_removed": list(d.ref_removed),
+                     "test_added": list(d.test_added),
+                     "test_removed": list(d.test_removed)}
+                    for d in res.drifts],
+            # Explicitly NOT a verdict — see `session_notes` in the run doc.
+            shared_drift=dict(res.shared_drift or {}),
+            baseline_diffs=[{"probe": n, "only_zsh": list(r),
+                             "only_zshrs": list(t)}
+                            for n, r, t in res.baseline_diffs],
+            probe_failures=list(res.probe_failures),
+            not_idempotent={
+                # Three groups, never one number: only `zshrs_only` is a defect
+                # here, and a consumer that summed them would be counting zsh's
+                # own behaviour against zshrs.
+                "zshrs_only": [str(p) for p in idem_split(idem)[0]],
+                "both_shells": [str(p) for p in idem_split(idem)[1]],
+                "zsh_only": [str(p) for p in idem_split(idem)[2]]},
         )
     if isinstance(c, ConvCell):
         doc.update(
@@ -4301,6 +5361,98 @@ def run_conv_replay(args, dump, fpath_dirs, env):
     return 1
 
 
+def run_session_replay(args, dump, fpath_dirs, env):
+    """`--session-replay '<json>'`: re-run one SESSION exactly as the fuzzer ran
+    it, and print the per-episode parity, the state probes and the idempotence
+    check again.
+
+    A session finding is a claim about an ORDER of completions inside one
+    process, so a single-completion `--lockstep` line cannot reproduce it — the
+    whole episode sequence travels as one JSON argument, the way a convergent
+    pair does."""
+    spec = json.loads(args.session_replay)
+    geom = Geom(*spec["geom"])
+    repeat = int(spec.get("repeat", 1))
+    episodes = episodes_decode(spec["episodes"])
+    zstyle = spec.get("zstyle") or None
+    if zstyle and not os.path.exists(zstyle):
+        sys.exit(f"compsys_parity: zstyle fixture from the replay is gone: "
+                 f"{zstyle}")
+    init = build_init_file(dump, fpath_dirs, zstyle, None, None, True)
+    root = tempfile.mkdtemp(prefix="cp_replay_")
+    print(f"# session replay : {len(episodes)} episodes x{repeat}  "
+          f"{geom_str(geom)}")
+    for i, ep in enumerate(episodes, 1):
+        print(f"#   ep {i:2d} : {ep.label()}")
+    deaths: list = []
+    run = run_session(init, episodes, args, env, geom, repeat, root,
+                      deaths_out=deaths)
+    if deaths:
+        step, key = (run.records[-1][0], run.records[-1][1]) if run.records \
+            else (0, "(init)")
+        print(f"DIED at step #{step} ({key!r}): {death_str(deaths)}")
+        return 1
+    if run.fail_step:
+        step, key, rg, tg, diffs = run.records[-1]
+        print(f"FAIL session diverges at step #{step} ({key!r})"
+              + (f", {len(diffs)} rows differ" if diffs
+                 else " (a shell never reached prompt)"))
+        for i, a, b in (diffs or []):
+            print(f"  row {i:2d}: zsh  = {a!r}")
+            print(f"          zshrs= {b!r}")
+        if args.verbose and rg is not None:
+            print("  --- zsh (ref) ---")
+            print(render_grid(rg))
+            print("  --- zshrs (test) ---")
+            print(render_grid(tg))
+        return 1
+    drifts, shared, base, unpaired = analyse_drift(run)
+    idem = analyse_idempotence(run)
+    for name, only_r, only_t in base:
+        print(f"# baseline  : ${name} already differs before any completion")
+        if only_r:
+            print(f"#   only zsh  : {', '.join(only_r[:12])}")
+        if only_t:
+            print(f"#   only zshrs: {', '.join(only_t[:12])}")
+    for name, cnt in sorted(shared.items()):
+        print(f"# state     : ${name} moved identically on BOTH shells at "
+              f"{cnt} probe(s) — not a finding")
+    for reason in list(run.probe_failures) + list(unpaired):
+        print(f"# probe     : {reason}  (state NOT asserted here)")
+    only_t, shared_i, only_r = idem_split(idem)
+    for pt in only_t:
+        print(f"# IDEMPOTENCE: zshrs ONLY — {pt}")
+    for pt in shared_i:
+        print(f"# idempotence: BOTH shells — {pt}  (zsh's own, reproduced)")
+    for pt in only_r:
+        print(f"# idempotence: zsh (reference) ONLY — {pt}")
+    if not drifts:
+        tail = (f"{run.episodes_done} episode runs, {len(run.records)} parity "
+                f"assertions, {len(run.probes)} state probes, no drift")
+        # zshrs disagreeing with ITSELF where zsh does not is a failure even
+        # when every cross-shell assertion agreed. Points where BOTH shells are
+        # non-idempotent are not: a second completion in one process
+        # legitimately sees state the first one loaded, zsh does exactly that,
+        # and scoring a faithful reproduction as a defect would be a false
+        # positive in an instrument whose whole value is that it has none.
+        if only_t:
+            print(f"FAIL zshrs is not self-consistent across repetitions at "
+                  f"{len(only_t)} point(s) where zsh IS; {tail}")
+            return 1
+        print(f"PASS {tail}")
+        return 0
+    d0 = drifts[0]
+    print(f"FAIL state drift in ${d0.probe} at episode {d0.episode} "
+          + ("(agreed at the previous episode)" if d0.prev_matched
+             else "(already drifting before)"))
+    for d in drifts:
+        print(f"  ${d.probe} @ episode {d.episode} rep {d.rep}  after "
+              f"{d.after}")
+        for ln in d.named():
+            print(f"    {ln}")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="compsys parity harness")
     ap.add_argument("--zshrs", default=default_zshrs())
@@ -4441,6 +5593,41 @@ def main():
                     help="interrupt for --lockstep, in the form the fuzzer's "
                          "replay lines carry: winch@menu:8x100, int@midkey1, "
                          "type@midkey1:<percent-encoded>")
+    ap.add_argument("--session-fuzz", type=int, default=0, metavar="N",
+                    help="run N completion EPISODES inside ONE pair of shells "
+                         "instead of booting a fresh pair per completion. "
+                         "Parity is asserted after every step of every episode, "
+                         "and between episodes both shells write their own "
+                         "state (parameter/function/alias/command name sets, "
+                         "the full option set, setopt, funcstack depth, "
+                         "compstate/WIDGET/LASTWIDGET/_tags_level/_comp_tags "
+                         "binding) to a file which is diffed here. A probe that "
+                         "moves DIFFERENTLY on the two shells is a drift "
+                         "finding and names the parameters; one that moves "
+                         "identically on both is zsh's own behaviour and is "
+                         "counted separately. The fuzzed buffer is NEVER "
+                         "executed. Implies --random-combos 1 if that is 0.")
+    ap.add_argument("--session-cases", type=int, default=1, metavar="N",
+                    help="sessions per combo (default 1). Each one is a whole "
+                         "pair of shells kept alive for N episodes.")
+    ap.add_argument("--session-repeat", type=int, default=2, metavar="M",
+                    help="run each episode M times back-to-back and require "
+                         "every repetition to render identically to the first "
+                         "— on EACH shell independently, before the two are "
+                         "compared with each other (default 2). A shell that is "
+                         "not self-consistent across repetitions is a finding "
+                         "of its own and is named as such; 1 disables the "
+                         "check.")
+    ap.add_argument("--session-shrink-probes", type=int, default=8, metavar="N",
+                    help="delta-debugging budget for reducing the EPISODE "
+                         "SEQUENCE of a drift finding (default 8). Its own "
+                         "budget because one probe here re-runs a whole session "
+                         "— far more expensive than a key-path probe. 0 "
+                         "disables sequence reduction.")
+    ap.add_argument("--session-replay", default=None, metavar="SPEC",
+                    help="re-run one session from the JSON spec a session "
+                         "finding prints, and show the per-episode parity and "
+                         "the state probes again")
     ap.add_argument("--latency", action="store_true",
                     help="also MEASURE how long each keystroke takes on both "
                          "shells (time to first byte and to settle) and report "
@@ -4553,6 +5740,14 @@ def main():
         sys.exit(f"compsys_parity: {exc}")
     if (args.fstree_fuzz or args.interrupt_fuzz) and args.random_combos == 0:
         args.random_combos = 1
+    if args.session_fuzz < 0:
+        sys.exit("compsys_parity: --session-fuzz must not be negative")
+    if args.session_repeat < 1:
+        sys.exit("compsys_parity: --session-repeat must be at least 1")
+    if args.session_cases < 1:
+        sys.exit("compsys_parity: --session-cases must be at least 1")
+    if args.session_fuzz > 0 and args.random_combos == 0:
+        args.random_combos = 1
     # Latency is REFUSED under --jobs > 1 rather than reported with a caveat.
     # Concurrent cells contend for the same cores, so every number would be a
     # measurement of the harness's own scheduling, and a wrong number in an
@@ -4636,6 +5831,10 @@ def main():
     if args.conv_replay:
         return run_conv_replay(args, dump, fpath_dirs,
                                child_env(args.rows, args.cols))
+
+    if args.session_replay:
+        return run_session_replay(args, dump, fpath_dirs,
+                                  child_env(args.rows, args.cols))
 
     if args.random_combos > 0:
         return run_random_combos(args, dump, fpath_dirs,
