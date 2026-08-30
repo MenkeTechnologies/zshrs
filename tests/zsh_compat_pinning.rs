@@ -478,3 +478,36 @@ cd /; command rm -rf "$d""#;
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
+
+/// With `FPATH` absent from the environment, zsh falls back to paths
+/// fixed at compile time (c:Src/init.c:1132-1143) and `fpath` is
+/// non-empty. zshrs had no such fallback: `env::var("FPATH")` +
+/// `unwrap_or_default()` produced an EMPTY fpath, so a shell started
+/// without FPATH could not autoload anything --
+///   zsh: is-at-least: function definition file not found
+/// That is reachable in practice because zsh does not export FPATH, so
+/// `exec zshrs` from any shell handed the new one an empty fpath.
+///
+/// Asserts only that the fallback is non-empty and looks like a zsh
+/// function tree, so it holds on a CI box with a different layout.
+#[test]
+fn fpath_falls_back_to_defaults_when_env_is_absent() {
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "print -l $fpath"])
+        .env_remove("FPATH")
+        .env_remove("fpath")
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let entries: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        !entries.is_empty(),
+        "fpath must not be empty with FPATH unset; zsh has a compiled-in default"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("share/zsh")),
+        "fallback should name a zsh function tree, got {:?}",
+        entries
+    );
+}
