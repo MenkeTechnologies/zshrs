@@ -1,0 +1,56 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "cc_match_set",
+ "title": "`CC <TAB>` resolves to a different match set: zsh inserts a unique match, zshrs lists directories",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "CC ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "diverges",
+ "fingerprint": "cddb97b6e5",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "4 row(s) differ",
+  "fingerprint_label": "cell/row0/col0 | ref/$ CC files | test/$ CC",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ CC files",
+    "zshrs": "@CT@ CC"
+   },
+   {
+    "row": 1,
+    "zsh": "<absent>",
+    "zshrs": "bench/        daemon/       editors/      man/          src/          test_corpus/  typeset.tmp/"
+   },
+   {
+    "row": 2,
+    "zsh": "<absent>",
+    "zshrs": "bins/         data/         examples/     runtime/      target/       test_data/    vendor/"
+   }
+  ],
+  "notes": "zsh finds exactly one match ('files', the repo file of that name) and inserts it; zshrs finds the directories too and lists them. Run from the repo root \u2014 the match set is the working directory."
+ },
+ "variants": [],
+ "origin": [
+  "scripts/comptab_divergent_cases.txt",
+  "scripts/parity_corpus_fuzz/fp_6082b6f4e8.json"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}
