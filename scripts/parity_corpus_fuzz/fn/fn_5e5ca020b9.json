@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "files"
+  ],
+  "call": "_setup 'files'",
+  "call_label": "one-arg",
+  "fingerprint": "5e5ca020b9",
+  "function": "_setup",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/-- rc: # | test/-- rc: #",
+  "ref_rows": [
+    "-- rc: 1"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _setup --fn-call one-arg --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_setup:3-6 ([[ $# -eq 1 ]] && 2=\"$1\"; TAG [GROUP])",
+  "test_rows": [
+    "-- rc: 0"
+  ]
+}

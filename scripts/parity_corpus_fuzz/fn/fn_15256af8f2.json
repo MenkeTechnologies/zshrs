@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "zpftag",
+    "zpf_no_such_command_xyz"
+  ],
+  "call": "_call_program 'zpftag' 'zpf_no_such_command_xyz'",
+  "call_label": "nonexistent",
+  "fingerprint": "15256af8f2",
+  "function": "_call_program",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/(eval):#: command not found: zpf_no_such_command_xyz | test/sh: zpf_no_such_command_xyz: command not found",
+  "ref_rows": [
+    "(eval):1: command not found: zpf_no_such_command_xyz",
+    "-- rc: 127"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _call_program --fn-call nonexistent --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Utility/_call_program:4-26 ([-p|-l] TAG COMMAND...)",
+  "test_rows": [
+    "sh: zpf_no_such_command_xyz: command not found",
+    "-- rc: 1"
+  ]
+}

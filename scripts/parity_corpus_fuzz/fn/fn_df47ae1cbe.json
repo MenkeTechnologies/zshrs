@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "desc",
+    "one",
+    "two",
+    "three"
+  ],
+  "call": "_values 'desc' 'one' 'two' 'three'",
+  "call_label": "plain",
+  "fingerprint": "df47ae1cbe",
+  "function": "_values",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/expl[#] = | test/expl = <unset>",
+  "ref_rows": [
+    "  expl[0] ="
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _values --fn-call plain --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Utility/_values:3-20 ([-O name] [-s sep] [-S sep] [-w] DESCR SPEC...)",
+  "test_rows": [
+    "  expl = <unset>"
+  ]
+}
