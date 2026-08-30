@@ -1,0 +1,4686 @@
+=== A01grammar #15 [fail] exclamation marks without following commands
+    reason: bad status 1, expected 0 from:
+
+=== A01grammar #17 [fail] `-' precommand modifier
+    reason: bad status 1, expected 0 from:
+
+=== A01grammar #23 [fail] rationalisation of arguments to exec -a
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -foo*
+    +foo
+
+=== A01grammar #55 [fail] Always block with error reset
+    reason: bad status 1, expected 0 from:
+
+=== A01grammar #92 [fail]  case word handling in sh emulation (SH_GLOB parentheses)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,8 @@
+     fn () {
+     	case $1 in
+    -		(one | two | three) print Matched $1 ;;
+    -		(fo* | fi* | si*) print Pattern matched $1 ;;
+    -		([]x | a[b]*) print Character class matched $1 ;;
+    +		(one|two|three) print Matched $1 ;;
+    +		(fo*|fi*|si*) print Pattern matched $1 ;;
+    +		([]x|a[b]*) print Character class matched $1 ;;
+     	esac
+     }
+     Matched one
+
+=== A01grammar #104 [fail] Status on bad substitution in if without else
+    reason: bad status 0, expected 1 from:
+
+=== A02alias #7 [fail] We can now alias special tokens.  Woo hoo.
+    reason: bad status 1, expected 0 from:
+
+=== A02alias #15 [fail] ALIAS_FUNC_DEF off by default.
+    reason: bad status 0, expected 1 from:
+
+=== A02alias #16 [fail] ALIAS_FUNC_DEF reports original alias if multiple
+    reason: bad status 0, expected 1 from:
+
+=== A03quoting #5 [fail] $'-style quote with metafied backslash
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,4 +4,4 @@
+     16#4D
+     16#42
+     16#53
+    -16#DC
+    +16#FFFD
+
+=== A03quoting #9 [fail] Embedded null characters in $'...' strings.
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -7,4 +7,6 @@
+     :
+     16#61
+     16#62
+    +16#0
+    +16#63
+     16#64
+
+=== A04redirect #24 [fail] '>&-' with attempt to use closed fd
+    reason: error output differs from expected as shown above for:
+    Pattern match failed, line 1:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -\(eval\):2: write error:*
+    +
+
+=== A04redirect #37 [fail] read multio input with pipe
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -This is bout1
+     This is bout2
+
+=== A04redirect #73 [fail] Two here-documents in a line are shown correctly.
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -5,9 +5,7 @@
+     bar
+     y
+     }
+    -foo
+     bar
+    -foo
+     bar
+     	cat <<x <<y
+     foo
+
+=== A04redirect #74 [fail] Combination of HERE-document and |&
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,4 @@
+     FOO
+     fn-here-pipe () {
+    -	cat <<HERE 2>&1 | cat
+    -FOO
+    -HERE
+    +	cat 2>&1 | cat
+     }
+
+=== A05execution #31 [fail] Background job exit does not affect reaping foreground job
+    reason: output differs from expected as shown above for:
+    This test takes 3 seconds and hangs the shell when it fails...
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -CHLD
+     OK
+
+=== A05execution #33 [fail] 'wait' exit status and warning for unknown ID
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+     127
+    +0
+    +0
+     127
+    +0
+     127
+    -127
+    -127
+    -127
+
+=== A05execution #34 [fail] 'wait' exit status for unknown ID (POSIX mode)
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +(anon):wait:1: pid 1 is not a child of this shell
+
+=== A05execution #39 [fail] shebang-less scripts are to be run by sh even when their file paths start with - or + (workers/52515)
+    reason: bad status 2, expected 0 from:
+
+=== A06assign #42 [fail] add scalar to association
+    reason: bad status 1, expected 0 from:
+
+=== A06assign #64 [fail] attempt to add to indexed integer variable
+    reason: bad status 0, expected 1 from:
+
+=== A06assign #65 [fail] attempt to add to slice of float variable
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(eval):2: attempt to add to slice of a numeric variable
+    +(eval):2: f: attempt to assign array value to non-array
+
+=== A06assign #70 [fail] attempt to insert array into string
+    reason: bad status 0, expected 1 from:
+
+=== A06assign #77 [fail] GLOB_ASSIGN with numeric types
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     typeset -i i=0
+     typeset -a n=( tmpfile1 tmpfile2 )
+    -typeset x=tmpfile2
+    +typeset -i x=0
+     typeset -E f=4.000000000e+00
+
+=== A06assign #80 [fail] command execution with assignments shadowing array parameter
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+     first second
+    -first
+    -second
+    +first second
+
+=== A06assign #81 [fail] command execution with assignments shadowing array parameter with ksharrays
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     first second
+    -first
+    +first second
+     second
+
+=== A06assign #101 [fail] overwrite [6,3] characters in short string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -abcdexyzfgh
+    +abcdexyzdefgh
+
+=== A09zwc #2 [fail] workers/54571: Malformed .zwc with implausible npats does not crash the shell
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -(eval):8: zwc.tmp/victim.zwc: invalid description: victim
+
+=== B01cd #5 [fail] Implicit cd with unset HOME.
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1,2 @@
+    -zsh:cd:1: HOME not set
+    +/Users/wizard/.zshenv:.:2: no such file or directory: /.cargo/env
+    +sh:cd:1: HOME not set
+
+=== B01cd #7 [fail] cd . with moved PWD
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     /private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test/cdtst.tmp/foo
+     /private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test/cdtst.tmp/foo
+    -/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test/cdtst.tmp/bar
+    -/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test/cdtst.tmp/bar
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/B01cd/Test
+
+=== B02typeset #17 [fail] Tied parameters and uniquified arrays with meta-character as separator
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -l o c a l
+    +l�o�c�a�l
+     0x6C
+     0x83
+     0x6F
+    @@ -6,4 +6,18 @@
+     0x63
+     0x83
+     0x61
+    -l o c a
+    +0x83
+    +0x6C
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +0x0
+    +l�o�c�a�l
+
+=== B02typeset #18 [fail] Tied parameters and uniquified arrays with NUL-character as separator
+    reason: bad status 1, expected 0 from:
+
+=== B02typeset #21 [fail] Tied arrays with separator specified
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,10 +1,11 @@
+     here
+     we
+     go
+    +go
+     again
+    -typeset -UT MORESTUFF morestuff=( here we go again ) -
+    -typeset -aUT MORESTUFF morestuff=( here we go again ) -
+    -MORESTUFF=here-we-go-again
+    -morestuff=( here we go again )
+    +typeset -UT MORESTUFF morestuff=( here we go go again ) -
+    +typeset -aUT MORESTUFF morestuff=( here we go go again ) -
+    +MORESTUFF=here-we-go-go-again
+    +morestuff=( here we go go again )
+     local unique tied morestuff MORESTUFF
+     array local unique tied MORESTUFF morestuff
+
+=== B02typeset #38 [fail] Parameter hiding and tagging, printing types and values
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,19 @@
+     array local array
+     float local f
+     integer local i=9
+    +undefined keymaps
+     local tagged scalar=''
+    +undefined termcap
+    +undefined terminfo
+    +undefined widgets
+    +undefined zsh_scheduled_events
+     array local array
+     float local f
+     integer local i
+    +undefined keymaps
+     local tagged scalar
+    +undefined termcap
+    +undefined terminfo
+    +undefined widgets
+    +undefined zsh_scheduled_events
+     preserved
+
+=== B02typeset #41 [fail] Upper case conversion, does not apply to values used internally
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     UPPER
+    -VALUE OF $UPPER
+    +
+     typeset -u case1=upper
+     case1=upper
+     local uppercase case1
+
+=== B02typeset #42 [fail] Lower case conversion, does not apply to values used internally
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     lower
+    -value of $lower
+    +
+     typeset -l case2=LOWER
+     case2=LOWER
+     local lowercase case2
+
+=== B02typeset #46 [fail] readonly with POSIX_BUILTINS
+    reason: bad status 0, expected 1 from:
+
+=== B02typeset #51 [fail] reserved word and builtin interfaces
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,8 +2,8 @@
+     one word=two
+     builtin
+    -one
+    -two
+    -reserved
+     one word=two
+    +reserved
+    +
+    +
+
+=== B02typeset #52 [fail] typeset preserves existing variable types
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -12,8 +12,8 @@
+     than
+     one
+     word
+    -k3 v3
+    -k4 v4
+    +k1 v1
+    +k2 v2
+     odd
+     number
+     here
+
+=== B02typeset #55 [fail] can update array slices in typeset
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -4 one umm er five
+    -2 one five
+    +5 one two three four five
+    +5 one two three four five
+     4 nothing to see here
+
+=== B02typeset #58 [fail] when cannot change UID, the command isn't run
+    reason: bad status 1, expected 0 from:
+
+=== B02typeset #60 [fail] [key]=val for normal arrays
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,6 @@
+    -one
+    -
+    -three
+    -one
+    +[1]=one
+    +[3]=three
+    +[1]=one
+     two
+    -three
+    -one
+    -
+    -three
+    +[1]=one
+    +[3]=three
+
+=== B02typeset #61 [fail] Substitution in [key]=val syntax
+    reason: bad status 1, expected 0 from:
+
+=== B02typeset #62 [fail] mixed syntax [key]=val with normal arrays
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,7 @@
+     first
+    -second
+    +[2]=second
+     third
+    -
+    -fifth
+    -new_sixth
+    +[6]=sixth
+     seventh
+    +[5]=fifth
+    +new_sixth
+
+=== B02typeset #66 [fail] parameter hiding preserved by "typeset -p"
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -typeset -h status=''
+    +typeset status=''
+
+=== B02typeset #69 [fail] redeclare a tied variable with different attributes
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -A+B
+    +A+B+A+B
+
+=== B02typeset #70 [fail] colonarray re-split when changing the join character
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -a b
+    +a+b
+
+=== B02typeset #71 [fail] cannot change the join character on a readonly tied variable
+    reason: bad status 0, expected 1 from:
+
+=== B02typeset #76 [fail] OK to run typeset -T on tied specials as long as peer and joinchar are unchanged
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -/
+    +/ /
+
+=== B02typeset #78 [fail]  readonly/export output for exported+readonly+special when started as sh
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -export -r PATH=/bin
+    -readonly PATH=/bin
+    +export -rT PATH path=( /bin )
+    +readonly path PATH=/bin
+
+=== B02typeset #79 [fail]  readonly/export output for exported+readonly+tied+special after switching to sh emulation
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+     export -rT MANPATH manpath=( /bin )
+    -readonly MANPATH=/bin
+    +readonly manpath MANPATH=/bin
+
+=== B02typeset #82 [fail] Global non -h variable doesn't hide special variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -v=integer
+    -v=integer
+    +v=
+    +v=
+
+=== B02typeset #83 [fail] Global non -h variable doesn't hide autoload variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -z=SRANDOM (zsh/random)
+    -z=SRANDOM (zsh/random)
+    -v=integer
+    +z=
+    +z=
+    +v=
+
+=== B02typeset #84 [fail] Global -h variable doesn't hide autoload variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -z=SRANDOM (zsh/random)
+    -z=SRANDOM (zsh/random)
+    -v=integer
+    +z=
+    +z=
+    +v=
+
+=== B02typeset #85 [fail] Local non -h variable doesn't hide special variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -v=integer
+    -v=integer
+    +v=
+    +v=
+
+=== B02typeset #86 [fail] Local non -h variable hides autoload variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -z=SRANDOM (zsh/random)
+     z=
+    +z=
+     v=
+
+=== B02typeset #87 [fail] Local -h variable hides autoload variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -z=SRANDOM (zsh/random)
+     z=
+    +z=
+     v=
+
+=== B03print #22 [fail] numeric value of high numbered character
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -f0
+    +fffd
+
+=== B04read #16 [fail] return status on failing to set parameter
+    reason: bad status 0, expected 1 from:
+
+=== B07emulate #20 [fail] emulate sh uses subshell for last pipe entry
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     boo
+     baz
+    -foo
+    -
+    -def
+    +baz
+    +abc
+    +ghi
+
+=== B08shift #3 [fail] shifting more elements than exist in array
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -(anon):shift: shift count must be <= ${#arr}
+    -(anon):shift: shift count must be <= ${#.tmp.arr}
+    -(anon):shift: shift count must be <= ${#argv}
+     (anon):shift: shift count must be <= $#
+    +(anon):shift: shift count must be <= $#
+    +(anon):shift: shift count must be <= $#
+    +(anon):shift: shift count must be <= $#
+
+=== B10getopts #21 [fail] POSIX_BUILTINS disables '+' variant handling
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+     no_posix_builtins: a b +b c
+    -posix_builtins: a b
+    +posix_builtins: a b +b c
+
+=== B10getopts #22 [fail] -p works like POSIX_BUILTINS
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,7 +2,7 @@
+     +a
+     ?
+     ?
+    -a
+    -?
+    +
+    +
+
+=== B10getopts #23 [fail] option parsing
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,3 @@
+     (anon):getopts: not enough arguments
+     (anon):getopts: not enough arguments
+     (anon):getopts: not enough arguments
+    -(anon):getopts: not enough arguments
+    -(anon):getopts: not enough arguments
+    -(anon):getopts: not enough arguments
+    -(anon):getopts: bad option: -x
+    -(anon):getopts: bad option: -x
+    -(anon):getopts: bad option: -x
+
+=== B11kill #3 [fail] kill with multiple wrong inputs should increment status
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -(eval):kill:2: invalid pid: a
+    -(eval):kill:2: invalid pid: b
+    -(eval):kill:2: invalid pid: c
+    +(eval):kill:2: illegal pid: a
+    +(eval):kill:2: illegal pid: b
+    +(eval):kill:2: illegal pid: c
+
+=== B11kill #4 [fail] kill with sigspec and wrong inputs should increment status
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -(eval):kill:2: invalid pid: a
+    -(eval):kill:2: invalid pid: b
+    -(eval):kill:2: invalid pid: c
+    +(eval):kill:2: illegal pid: a
+    +(eval):kill:2: illegal pid: b
+    +(eval):kill:2: illegal pid: c
+
+=== B11kill #7 [fail] kill with empty pid and sigspec should not send signal to current process group
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(eval):kill:3: invalid pid: 
+    +(eval):kill:3: illegal pid: 
+
+=== B11kill #8 [fail] Plain kill with empty pid should not send signal to current process group
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(eval):kill:3: invalid pid: 
+    +(eval):kill:3: illegal pid: 
+
+=== B12limit #7 [fail] bad multibyte option letter
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(eval):ulimit:5: bad option: -の
+    +(eval):ulimit:5: bad option: -ã
+
+=== B13whence #3 [fail] (workers/53524) whence -s doesn't print arrows for symlink-free paths
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +(eval):1: sh(:P) not found
+
+=== C01arith #73 [fail] Arithmetic, NO_UNSET part 3
+    reason: bad status 1, expected 2 from:
+
+=== C02cond #36 [fail] string comparisons with `[' builtin
+    reason: bad status 2, expected 0 from:
+
+=== C02cond #37 [fail] string comparison with strings that look like operators
+    reason: bad status 2, expected 0 from:
+
+=== C02cond #61 [fail] -o invalidoption
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,5 +2,5 @@
+     unset: 3
+     in disjunction, true: 0
+     in disjunction, false: 1
+    -negated: 3
+    -in conjunction: 3
+    +negated: 0
+    +in conjunction: 1
+
+=== C03traps #7 [fail]  Outputting traps correctly
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1 @@
+    -trap -- int INT
+    -trap -- quit QUIT
+     trap -- sigterm TERM
+
+=== C03traps #11 [fail]  Nested `trap ... TERM', triggered on inner loop
+    reason: output differs from expected as shown above for:
+    This test takes at least three seconds...
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -TERM2
+
+=== C03traps #12 [fail]  Nested `trap ... TERM', triggered on outer loop
+    reason: output differs from expected as shown above for:
+    This test, too, takes at least three seconds...
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -TERM1
+
+=== C03traps #18 [fail]  autoloaded TRAPEXIT (exit status > 128 indicates an old bug is back)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,9 @@
+     Exiting, attempt 1
+     Running exit trap
+    +Running exit trap
+    +Running exit trap
+     Some function
+     Exiting, attempt 2
+     Running exit trap
+    +Running exit trap
+    +Running exit trap
+
+=== C03traps #19 [fail] waiting for trapped signal
+    reason: output differs from expected as shown above for:
+    Another test that takes three seconds
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+     parent waiting
+     child sending signal
+     parent received signal
+    -wait #1 finished, gotsig=1, status=143
+    +wait #1 finished, gotsig=1, status=1
+     child exiting
+     wait #2 finished, gotsig=0, status=33
+
+=== C03traps #25 [fail] DDD
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -19,9 +19,7 @@
+     ko-trap-KO
+     ok 1
+     KO: KO: parameter not set
+    -ok 3
+    -ok 4
+    -$?=0
+    +$?=1
+     KO-TRAP-ok
+     KO: KO: parameter not set
+     ok 1
+
+=== C03traps #26 [fail]  EXIT trap set in current shell at left of pipeline
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -This subshell is exiting
+
+=== C03traps #32 [fail] POSIX EXIT trap can have nested native mode EXIT trap
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     entering program
+    +POSIX exit trap triggered
+     entering native zsh function
+     native zsh function-local exit trap triggered
+     exiting program
+    -POSIX exit trap triggered
+
+=== C03traps #66 [fail] ERR_EXIT not triggered by status 1 at end of always
+    reason: bad status 1, expected 0 from:
+
+=== C03traps #81 [fail] ERR_EXIT is triggered by last command in an AND-OR list
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,5 +3,6 @@
+     Trapped!
+     Trapped!
+     Trapped!
+    +Trapped!
+     one
+     one
+
+=== C04funcdef #12 [fail] User-defined math functions, string arguments
+    reason: bad status 1, expected 0 from:
+
+=== C04funcdef #19 [fail] Process substitution with anonymous functions
+    reason: bad status 1, expected 0 from:
+
+=== C04funcdef #22 [fail] Anonymous function arguments and command arguments
+    reason: bad status 1, expected 0 from:
+
+=== C04funcdef #24 [fail] sticky emulation applies to autoloads and autoloaded function execution
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -emufunctest:3: parse error near `\n'
+    -OK
+    -ignorebraces is off
+    +(eval):8: par_subsh: missing closing token
+    +(eval):5: parse error: expected `}'
+    +(eval):6: emufunctest: function not defined by file
+     ignorebraces is still on here
+
+=== C04funcdef #25 [fail] Anonymous function with arguments in a form nobody sane would ever use but unfortunately we have to support anyway
+    reason: bad status 1, expected 0 from:
+
+=== C04funcdef #47 [fail] autoload containing dash
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -this should run automatically
+
+=== C04funcdef #51 [fail] functions -c preserves file information
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -line_info:2 is where we are.
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/C04funcdef/Test/funcdef.tmp/preserve_file:2 is where we are.
+
+=== D01prompt #17 [fail] Attribute optimisation - preserve initial disabling of attribute but drop useless later one
+    reason: bad status 1, expected 0 from:
+
+=== D02glob #2 [fail] ksh compatibility
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -47,7 +47,8 @@
+     0:  [[ foobar = !(foo) ]]
+     0:  [[ foobar = !(foo)* ]]
+     0:  [[ moo.cow = !(*.*).!(*.*) ]]
+    -1:  [[ mad.moo.cow = !(*.*).!(*.*) ]]
+    +0:  [[ mad.moo.cow = !(*.*).!(*.*) ]]
+    +Test failed:  [[ mad.moo.cow = !(*.*).!(*.*) ]]
+     1:  [[ mucca.pazza = mu!(*(c))?.pa!(*(z))? ]]
+     1:  [[ _foo~ = _?(*[^~]) ]]
+     0:  [[ fff = !(f) ]]
+    @@ -79,4 +80,4 @@
+     1:  [[ BAR = @(bar|(#i)foo) ]]
+     0:  [[ FOO = @(bar|(#i)foo) ]]
+     0:  [[ Modules = (#i)*m* ]]
+    -0 tests failed.
+    +1 tests failed.
+
+=== D02glob #4 [fail] exclusions regression test
+    reason: bad status 1, expected 0 from:
+
+=== D02glob #24 [fail] disable -p
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,20 +1,20 @@
+     forthcoming, f*g: 0
+    -forthcoming, f*g: 1
+    +forthcoming, f*g: 0
+     f*g, f*g: 0
+     [frog], [frog]: 1
+     [frog], \[[f]rog\]: 0
+    -[frog], [frog]: 0
+    -[frog], \[[f]rog\]: 1
+    +[frog], [frog]: 1
+    +[frog], \[[f]rog\]: 0
+     foo, ^bar: 0
+    -foo, ^bar: 1
+    +foo, ^bar: 0
+     ^bar, ^bar: 0
+     rumble, (rumble|bluster): 0
+     (thunder), (thunder): 1
+    -rumble, (rumble|bluster): 1
+    -(thunder), (thunder): 0
+    +rumble, (rumble|bluster): 0
+    +(thunder), (thunder): 1
+     scramble, @(panic|frenzy|scramble): 0
+     @(scrimf), @(scrimf): 1
+    -scramble, @(panic|frenzy|scramble): 1
+    -@(scrimf), @(scrimf): 0
+    +scramble, @(panic|frenzy|scramble): 0
+    +@(scrimf), @(scrimf): 1
+     '(' '*' '[' '^' '@('
+     Nothing should be disabled.
+
+=== D02glob #28 [fail] redirect to a non-matching pattern is an error even with flag (N)
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(eval):1: redirection failed (no match): glob.tmp/nonexistent(N)
+    +(eval):1: no such file or directory: 
+
+=== D02glob #44 [fail] quoted - works in pattern in parameter
+    reason: bad status 1, expected 0 from:
+
+=== D02glob #50 [fail] character set specified as active variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1,3 @@
+    +Fail 1
+    +Fail 3
+    +Fail 5
+
+=== D02glob #53 [fail] modifier ':A' resolves '..' components before symlinks
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/D02glob/Test/glob.tmp/hello
+
+=== D02glob #74 [fail] e glob qualifier delimiters, quoting, and expansion
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,15 @@
+    -* * *
+    -* * *
+    -* * *
+    -* * *
+    -* * *
+    -* (eval):1: unknown file attribute: ) (eval):1: unknown file attribute: )
+    -* (eval):1: unknown file attribute:   *
+    -* * *
+    +* * (eval):1: command not found: REPLY=*
+    +(eval):1: no matches found: [a](#qe:REPLY=*:)
+    +* * (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe:reply=( \* ):)
+    +* * (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe|reply=( \* )|)
+    +* * (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe?reply=( \* )?)
+    +* * (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe[reply=( \* )])
+    +* * (eval):1: unknown file attribute: )
+    +* (eval):1: unknown file attribute:   (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe*reply=( \* )*)
+    +* * (eval):1: command not found: reply=(
+    +(eval):1: no matches found: [a](#qe*reply=( $s  )*)
+
+=== D02glob #75 [fail] the '*' qualfier enables extended_glob for pattern matching
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    --a A -b B
+    +A B
+
+=== D03procsubst #1 [unknown] <(...) substitution
+
+=== D03procsubst #2 [unknown] >(...) substitution
+
+=== D03procsubst #3 [unknown] =(...) substitution
+
+=== D03procsubst #4 [unknown] FDs remain open for external commands called from functions
+
+=== D03procsubst #5 [unknown] <(...) when embedded within an argument
+
+=== D03procsubst #6 [unknown] >(...) when embedded within an argument
+
+=== D03procsubst #7 [unknown] =(...) followed by something else without a break
+
+=== D03procsubst #8 [unknown] =(...) preceded by other stuff has no special effect
+
+=== D03procsubst #9 [unknown] Graceful handling of bad substitution in enclosed context
+
+=== D03procsubst #10 [unknown] Process environment of anonymous functions
+
+=== D03procsubst #11 [unknown] Process substitution as anonymous function argument
+
+=== D03procsubst #12 [unknown] backtacking within command string parsing with alias still pending
+
+=== D03procsubst #13 [unknown] full alias expanded when substitution starts in alias
+
+=== D03procsubst #14 [unknown] proc subst fd in forked subshell closed in parent
+
+=== D03procsubst #15 [unknown] proc subst fd in forked subshell closed in parent (external command)
+
+=== D03procsubst #16 [unknown] With /proc/self file descriptors must not be tidied up too early
+
+=== D03procsubst #17 [unknown] EQUALS expansion followed by =(...) (sh ordering) should work
+
+=== D03procsubst #18 [unknown] external command with =(...) on LHS of pipeline cleans up its tempfiles
+
+=== D03procsubst #19 [unknown] regression test: exit in shell function cleans up tempfiles
+
+=== D03procsubst #20 [unknown] regression test: race condition with pipe and procsubst
+
+=== D04parameter #9 [fail] ::= respects expansion flags
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -015
+    -5.00e+00
+    -1 2 3
+    +15
+    +five
+    +1 2 1 1 2 3
+
+=== D04parameter #10 [fail] ${#${(A)=array=word}} counts array elements
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -1
+    +4
+
+=== D04parameter #12 [fail] interactive shell returns to top level on ${...?...} error
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (2/3):
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+    -*foo:1: 1: no arguments given
+    +foo:1: 1: no arguments given
+    +not reached
+     reached
+
+=== D04parameter #25 [fail] "|" array exclusion and "*" array intersection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -5,6 +5,6 @@
+     two words
+    -two words
+    +
+
+=== D04parameter #33 [fail] globsubst together with nested quoted expansion
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     boringfile
+    -boring*
+     boringfile
+    +boringfile
+
+=== D04parameter #34 [fail] splitting of $(...) inside ${...}
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+     one word
+    -two
+    -words
+    +two words
+
+=== D04parameter #35 [fail] SH_WORD_SPLIT inside $(...) inside ${...}
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,6 @@
+    -_'one' 'two' 'three'_
+     _'one'
+     'two'
+     'three'_
+    +_'one'
+    +'two'
+    +'three'_
+
+=== D04parameter #41 [fail] ${(g)...}
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     eS
+     eS^X\C-x
+    -0
+    +1
+
+=== D04parameter #53 [fail] ${(z)...} and ${(Q)...} for some hard to parse cases
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,13 +1,7 @@
+    -<
+    -five
+    ->
+    +<five>
+     {six}
+    -(
+    -seven
+    -)
+    ->
+    -eight
+    -<
+    +(seven)
+    +>eight<
+     }nine{
+     |
+     forty-two
+
+=== D04parameter #54 [fail] Some syntactical expressions that are hard to split into words with (z).
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -5,21 +5,9 @@
+     5:):
+     1:(( 3 + 1 == 8 / 2 )):
+     1:for:
+    -2:((:
+    -3:i = 1 ;:
+    -4:i < 10 ;:
+    -5:i++ :
+    -6:)):
+    -1:(:
+    -2:(:
+    -3:0.25542:
+    -4:*:
+    -5:60:
+    -6:):
+    -7:-:
+    -8:15:
+    -9:):
+    -10:*60:
+    +2:(( i = 1 ; i < 10 ; i++ )):
+    +1:((0.25542 * 60) - 15):
+    +2:*60:
+     1:repeat:
+     2:3:
+     3:(:
+    @@ -40,12 +28,15 @@
+     4:x:
+     5:):
+     1:repeat:
+    -2:$( : foo bar; echo 4):
+    -3:(:
+    -4:x:
+    -5:):
+    +2:$( : foo bar:
+    +3:;:
+    +4:echo:
+    +5:4:
+    +6:):
+    +7:(x):
+     1:repeat:
+    -2:"1"'2'$(( 3 + 0 ))$((echo 4);)\ 5:
+    -3:(:
+    -4:x:
+    -5:):
+    +2:"1"'2'$(( 3 + 0 ))$((echo 4):
+    +3:;:
+    +4:):
+    +5:\ 5:
+    +6:(x):
+
+=== D04parameter #55 [fail] Comments with (z)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -22,9 +22,7 @@
+     A
+     line
+     with
+    -;
+     another
+     line
+    -;
+     another
+     one
+
+=== D04parameter #59 [fail] $($(z)} with parse error in command substitution.
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+     echo
+    -$(|||) bar
+    +$(|||)
+    +bar
+
+=== D04parameter #60 [fail] ${(z)} regression test: multiple array assignments
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,7 @@
+    -a=(
+    -)
+    -b=(
+    -)
+    +a=
+    +()
+    +b=
+    +()
+     a=(
+     foo
+    @@ -13,28 +13,28 @@
+     a=(
+     foo
+     )
+    -b=(
+    -)
+    -c=(
+    -)
+    +b=
+    +()
+    +c=
+    +()
+     d=(
+     bar
+     )
+     e=(
+     baz
+     )
+    -f=(
+    -)
+    -g=(
+    -)
+    +f=
+    +()
+    +g=
+    +()
+     a=(
+     foo
+     )
+    -b=(
+    -)
+    -c=(
+    -)
+    +b=
+    +()
+    +c=
+    +()
+     d=(
+     bar
+     )
+    @@ -42,16 +42,16 @@
+     e=(
+     baz
+     )
+    -f=(
+    -)
+    -g=(
+    -)
+    +f=
+    +()
+    +g=
+    +()
+     a=(
+     foo
+     )
+    -b=(
+    -)
+    +b=
+    +()
+     d=(
+     bar
+     )
+
+=== D04parameter #63 [fail] ${(QX)...}
+    reason: bad status 0, expected 1 from:
+
+=== D04parameter #71 [fail] regression test for <-> in flags
+    reason: bad status 1, expected 0 from:
+
+=== D04parameter #84 [fail] Rule 2: Parameter subscripting
+    reason: bad status 1, expected 0 from:
+
+=== D04parameter #90 [fail] Rule 9: Shell Word Splitting
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,4 @@
+    -an
+    -ther
+    -p
+    -xy
+    -b
+    -ring
+    +an ther
+    +p xy
+    +b ring
+     string
+
+=== D04parameter #96 [fail] Regression test of ${=1+"$@"} bug and some related expansions
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,18 +1,27 @@
+     Make
+    -sure that
+    -this test keeps
+    +sure
+    +that
+    +this
+    +test
+    +keeps
+     on
+    -preserving all
+    -varieties of
+    +preserving
+    +all
+    +varieties
+    +of
+     quoted
+     whitespace
+     Make
+     sure
+     that
+    -this test keeps
+    +this
+    +test
+    +keeps
+     on
+    -preserving all
+    -varieties of
+    +preserving
+    +all
+    +varieties
+    +of
+     quoted
+     whitespace
+     array
+
+=== D04parameter #97 [fail] More bourne-shell-compatible nested word-splitting with wildcards and ~
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,11 +1,15 @@
+     /differs from/bash
+    +has space
+     *[
+     ]*
+    -has space
+     boringfile
+     evenmoreboringfile
+     has space
+    -1 2
+    +1
+    +2
+     3
+     4
+    -1 2 3 4
+    +1
+    +2
+    +3
+    +4
+
+=== D04parameter #98 [fail] Test of nested word splitting with and without quotes
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -5,13 +5,13 @@
+     2
+     3
+     4
+    +1-2.3-4
+    +With quotes on default argument only
+     1
+     2
+     3
+     4
+    -With quotes on default argument only
+     1-2.3-4
+    -1-2.3-4
+     Called with argument '5.6-7.8'
+     No quotes
+     5
+    @@ -34,6 +34,9 @@
+     Using shwordsplit
+     Called with argument ''
+     No quotes
+    +1-2.3-4
+    +1-2.3-4
+    +With quotes on default argument only
+     1
+     2
+     3
+    @@ -42,19 +45,10 @@
+     2
+     3
+     4
+    -With quotes on default argument only
+    -1-2.3-4
+    -1-2.3-4
+     Called with argument '5.6-7.8'
+     No quotes
+    -5
+    -6
+    -7
+    -8
+    -5
+    -6
+    -7
+    -8
+    +5.6-7.8
+    +5.6-7.8
+     With quotes on default argument only
+     5
+     6
+
+=== D04parameter #101 [fail] Unsetting and recreation of tied special parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     0
+     /here:/there
+    -0
+    +1
+     /elsewhere /somewhere
+
+=== D04parameter #102 [fail] Unsetting and recreation of tied normal parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,8 @@
+    -a:b a b
+    +
+     x y z
+    -a:b a b
+    +
+     x y z
+    -a:b a b
+    +
+     x:y:z
+    -a:b a b
+    +
+     x:y:z
+
+=== D04parameter #107 [fail] (#m) flag with tokenized input
+    reason: bad status 1, expected 0 from:
+
+=== D04parameter #130 [fail] ZSH_SUBSHELL
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,4 +4,4 @@
+     2
+     1
+     1
+    -1
+    +0
+
+=== D04parameter #132 [fail] GLOBSUBST only on parameter substitution arguments
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,9 @@
+     no
+     yes
+    -yes
+     no
+     no
+     no
+    +no
+     yes
+     no
+     no
+
+=== D04parameter #133 [fail] Lookup failures on elements of arrays with RC_EXPAND_PARAM
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -6,4 +6,4 @@
+     FOUND key=X val=x
+     LOST
+     Subscript flags returning single values
+    -STRING key= val=
+    +STRING
+
+=== D04parameter #134 [fail] $ZSH_EVAL_CONTEXT and $zsh_eval_context
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,21 +1,21 @@
+     toplevel
+     shfunc
+     shfunc shfunc
+    -trap shfunc
+    +shfunc shfunc
+     eval shfunc
+     cmdsubst shfunc
+     cmdsubst shfunc
+    -cmdsubst shfunc
+    -math shfunc
+    -math shfunc
+    -math shfunc
+    +shfunc
+    +shfunc
+    +shfunc
+    +shfunc
+     globqual shfunc
+    -globsort shfunc
+    +shfunc
+     outsubst shfunc
+     outsubst shfunc
+    -equalsubst shfunc
+    +shfunc
+     insubst shfunc
+     insubst shfunc
+     file shfunc
+     cmdarg
+    -shfunc shfunc cmdsubst math shfunc
+    +shfunc shfunc cmdsubst shfunc
+
+=== D04parameter #135 [notrun] zsh_eval_context resizing
+
+=== D04parameter #136 [unknown] more math context
+
+=== D04parameter #137 [unknown] Bash-style offsets, scalar
+
+=== D04parameter #138 [unknown] Bash-style offsets, array
+
+=== D04parameter #139 [unknown] Bash-style offsets, Bourne-style indexing
+
+=== D04parameter #140 [unknown] Bash-style offsets, quoted array
+
+=== D04parameter #141 [unknown] Regression test for identifier test
+
+=== D04parameter #142 [unknown] Regression test for missing length after offset
+
+=== D04parameter #143 [unknown] Regression test for total length < 0 in string
+
+=== D04parameter #144 [unknown] Regression test for total length < 0 in array
+
+=== D04parameter #145 [unknown] Nularg removed from split empty string
+
+=== D04parameter #146 [unknown] Regression test for shwordsplit with null or unset IFS and quoted array
+
+=== D04parameter #147 [unknown] Empty parameter should not cause modifiers to crash the shell
+
+=== D04parameter #148 [unknown] repeated upper/lowercase modifiers
+
+=== D04parameter #149 [unknown] Intersection and disjunction with empty parameters
+
+=== D04parameter #150 [unknown] Zipping arrays, correct output
+
+=== D04parameter #151 [unknown] Zipping arrays, one or both inputs empty
+
+=== D04parameter #152 [unknown] Zipping arrays, scalar input
+
+=== D04parameter #153 [unknown] Zipping arrays, parsing
+
+=== D04parameter #154 [unknown] Zipping arrays, NO_UNSET part 1
+
+=== D04parameter #155 [unknown] Zipping arrays, NO_UNSET part 2
+
+=== D04parameter #156 [unknown] Use of variable to get separator when splitting parameter
+
+=== D04parameter #157 [unknown] SHLVL appears sensible when about to exit shell
+
+=== D04parameter #158 [unknown] SHLVL decremented upon implicit exec optimisation
+
+=== D04parameter #159 [unknown] SHLVL not decremented upon exec in subshells
+
+=== D04parameter #160 [unknown] Alias expansion in command substitution in parameter evaluation
+
+=== D04parameter #161 [unknown] $_ with anonymous function
+
+=== D04parameter #162 [unknown] $_ with anonymous function without arguments
+
+=== D04parameter #163 [unknown] ${(b)...} quoting protects from GLOB_SUBST
+
+=== D04parameter #164 [unknown] Avoid confusion after overloaded characters in braceless substitution in sh
+
+=== D04parameter #165 [unknown] History modifier works the same for scalar and array substitution
+
+=== D04parameter #166 [unknown] Complicated backtracking with match counts
+
+=== D04parameter #167 [unknown] We Love SH_WORD_SPLIT Day celebrated with space at start of internal subst
+
+=== D04parameter #168 [unknown] We Love NO_SH_WORD_SPLIT Even More Day celebrated as sanity check
+
+=== D04parameter #169 [unknown] ${(P)...} with normal subscripting
+
+=== D04parameter #170 [unknown] ${(P)...} with array as name
+
+=== D04parameter #171 [unknown] ${(P)...} with internal subscripting
+
+=== D04parameter #172 [unknown] nested parameter name references
+
+=== D04parameter #173 [unknown] Local special variables with loose typing
+
+=== D04parameter #174 [unknown] ${(q+)...}
+
+=== D04parameter #175 [unknown] "-" works after "[" in same expression (Dash problem)
+
+=== D04parameter #176 [unknown] Splitting of $@ on IFS: single element
+
+=== D04parameter #177 [unknown] Splitting of $@ on IFS: multiple elements
+
+=== D04parameter #178 [unknown] Splitting of $@ on (s): multiple elements
+
+=== D04parameter #179 [unknown] Splitting of $@ on (@s): multiple elements
+
+=== D04parameter #180 [unknown] Joining of $@ does not happen when IFS is empty, but splitting $* does
+
+=== D04parameter #181 [unknown] Use of @ does not prevent forced join with j
+
+=== D04parameter #182 [unknown] (q) and (b) quoting deal with the EQUALS option
+
+=== D04parameter #183 [unknown] Out-of-range multiple array subscripts with quoting, with and without (@)
+
+=== D04parameter #184 [unknown] Regression: "-" became Dash in workers/37689, breaking ~- expansion
+
+=== D04parameter #185 [unknown] Assigning $@, $*, "$@", "$*" to var with various shwordsplit/IFS settings
+
+=== D04parameter #186 [unknown] reset IFS to default if it contains invalid character
+
+=== D04parameter #187 [unknown] eight bit chars in IFS should work if multibute option is off
+
+=== D04parameter #188 [unknown] $- expansion correctly handles Dash token
+
+=== D04parameter #189 [unknown] Zero-length string match in parameter substitution
+
+=== D04parameter #190 [unknown] Zero-length string match at end
+
+=== D04parameter #191 [unknown] Fully anchored string must be fully searched
+
+=== D04parameter #192 [unknown] Respect anchors
+
+=== D04parameter #193 [unknown] Test substitution that uses P,Q,A,s,r,m flags
+
+=== D04parameter #194 [unknown] (z) splitting with remaining tokens
+
+=== D04parameter #195 [unknown] [key]=val for hashes
+
+=== D04parameter #196 [unknown] [key]=val for normal arrays
+
+=== D04parameter #197 [unknown] [key]=val for normal arrays with KSH_ARRAYS
+
+=== D04parameter #198 [unknown] Substitution in [key]=val syntax
+
+=== D04parameter #199 [unknown] append to normal array using [key]=val
+
+=== D04parameter #200 [unknown] append to normal array using [key]=val with KSH_ARRAYS
+
+=== D04parameter #201 [unknown] quoting in [key]=value syntax
+
+=== D04parameter #202 [unknown] mixed syntax [key]=val with normal arrays
+
+=== D04parameter #203 [unknown] mixed syntax [key]=val with normal arrays with KSH_ARRAYS
+
+=== D04parameter #204 [unknown] Mixed syntax with [key]=val not allowed for hash.
+
+=== D04parameter #205 [unknown] Globbing in non-[key]=val parts of mixed syntax.
+
+=== D04parameter #206 [unknown] Globbing in non-[key]=val parts of mixed syntax with KSH_ARRAYS
+
+=== D04parameter #207 [unknown] Append to element(s) of array
+
+=== D04parameter #208 [unknown] Append to element(s) of array with KSH_ARRAYS
+
+=== D04parameter #209 [unknown] Append to element(s) of associative array
+
+=== D04parameter #210 [unknown] Append to element of array on creation
+
+=== D04parameter #211 [unknown] Append to element of array on creation with KSH_ARRAYS
+
+=== D04parameter #212 [unknown] Append to element of associative array on creation
+
+=== D04parameter #213 [unknown] (Z) flag splitting with $( closed after embedded newline
+
+=== D04parameter #214 [unknown] (z) flag with CSH_JUNKIE_QUOTES
+
+=== D04parameter #215 [unknown] Use of parameter subst + to test element of hash with KSH_ARRAYS.
+
+=== D04parameter #216 [unknown] double-quoted nested evaluation of empty string
+
+=== D04parameter #217 [unknown] Separation / join logic regression test
+
+=== D04parameter #218 [unknown] t with trailing digits
+
+=== D04parameter #219 [unknown] h with trailing digits
+
+=== D04parameter #220 [unknown] Combinations of :h and :t with and without trailing digits
+
+=== D04parameter #221 [unknown] Multiple slashes are treated as one in :h and :t but are not removed
+
+=== D04parameter #222 [unknown] Modifiers :h and :t remove trailing slashes before examining path
+
+=== D04parameter #223 [unknown] Global variables are not trashed by "foo=bar builtin" (regression test)
+
+=== D04parameter #224 [unknown] Smallest match at end can match zero-length string
+
+=== D04parameter #225 [unknown] Smallest match at end with a character always matches one
+
+=== D04parameter #226 [unknown] Smallest / largest match with non-trivial closure
+
+=== D04parameter #227 [unknown] Largest match at end matches entire string
+
+=== D04parameter #228 [unknown] (S) with zero-length matches at start
+
+=== D04parameter #229 [unknown] (S) with zero-length matches at end, part 1 (workers/45164)
+
+=== D04parameter #230 [unknown] (S) with zero-length matches at end, part 2
+
+=== D04parameter #231 [unknown] broken length in ${name:offset:length} (workers/45843#1)
+
+=== D04parameter #232 [unknown] regression test for workers/45843#2: escaped newline in command substitution start token
+
+=== D04parameter #233 [unknown] Normal command substitution with escaped newline
+
+=== D04parameter #234 [unknown] Normal math eval with escaped newline after $
+
+=== D04parameter #235 [unknown] Normal math eval with escaped newline after $(
+
+=== D04parameter #236 [unknown] Backslash character other than newline is normal after $(
+
+=== D04parameter #237 [unknown] parameter expansion flags parsing error gives a clue
+
+=== D04parameter #238 [unknown] (users/28784) substituting a single-quoted backslash, part #1: slash
+
+=== D04parameter #239 [unknown] (users/28784) substituting a single-quoted backslash, part #2: single quote
+
+=== D04parameter #240 [unknown] (users/28784 inspired this) substituting a single-quoted backslash, part #3: control
+
+=== D04parameter #241 [unknown] Different behaviour of :s and :S modifiers
+
+=== D04parameter #242 [unknown] ${(#X)...}: bad math expression
+
+=== D04parameter #243 [unknown] ${(#)...}: bad math expression
+
+=== D04parameter #244 [unknown] ${(#)...}: bad math expression, printf
+
+=== D04parameter #245 [unknown] ${(#X)...}: array of bad math expressions
+
+=== D04parameter #246 [unknown] ${(#)...}: array of bad math expressions, printf
+
+=== D04parameter #247 [unknown] ${(#X)...}: out-of-range character
+
+=== D04parameter #248 [unknown] ${(#)...}: out-of-range character
+
+=== D04parameter #249 [unknown] ${(#)...}: array of out-of-range characters
+
+=== D04parameter #250 [unknown] ${(#X)...}: array of out-of-range characters
+
+=== D04parameter #251 [unknown] regression for workers/53179 unicode ZDOTDIR
+
+=== D04parameter #252 [unknown] ZSH_EXEPATH
+
+=== D04parameter #253 [unknown] COLUMNS and LINES preserved from environment when non-interactive
+
+=== D06subscript #2 [fail] Scalar pattern subscripts with wildcards
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -1 26 1 26 26
+    +1 26 1 26 61
+     Twinkle, twinkle, little *, [how] I [wonder] what? ?  You are!
+     *, [how] I [wonder] what?  You are!
+     ] I [
+
+=== D06subscript #4 [fail] Scalar subscripting using a pattern subscript to get the index
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -[ 1 33
+    + 1 33
+
+=== D06subscript #11 [fail] Associative array assignment
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -* xstar
+    +* \\] qxstar \\\? \? xstar \\\4 \2 ]
+     \* qxstar
+     * star
+     \* backstar
+
+=== D06subscript #13 [fail] Associative array lookup using a pattern subscript to get the key
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -obrack obrack
+    +obrack \\] backstar \\\? backcbrack obrack cbrack star \\\4 \2 ] backobrack
+     ] ]
+    -backcbrack
+    +cbrack
+
+=== D06subscript #17 [fail] Associative array keys with double quotes
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+    -QQQ
+    +
+    +
+    +
+     qqq
+    -QqQq
+     qqq
+    -QQQ
+
+=== D06subscript #18 [fail] More keys with double quotes, used in assignment-expansion
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     qqq
+     qqq
+    -QQQ
+    -QQQ
+    +qqq
+    +qqq
+
+=== D06subscript #19 [fail] Keys with double quotes and the (P) expansion flag
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    +
+     lower
+    -upper
+
+=== D06subscript #33 [fail]  Parsing subscript with non-trivial tokenisation
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+     topcat
+    -topcat
+    -tc
+    +
+    +
+     of the gang
+     of the gang
+    -of the gang
+    +topcat
+
+=== D06subscript #38 [fail] Can check off end of zero length string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+     2
+    -1
+    +0
+
+=== D07multibyte #5 [fail] Subscript searching with initial offset
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,4 +2,4 @@
+     énébreux
+     ébreux
+     ébreux
+    -
+    +ténébreux
+
+=== D07multibyte #6 [fail] Subscript searching with count
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     énébreux
+     ébreux
+    -
+    +ténébreux
+
+=== D07multibyte #12 [fail] POSIX_IDENTIFIERS option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -3
+    +ähä
+
+=== D07multibyte #32 [fail] evaluated character number with multibyte characters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -2,22 +2,22 @@
+     1 129
+     1 130
+     1 131
+    -1 132
+    -1 133
+    -1 134
+    -1 135
+    -1 136
+    -1 137
+    -1 138
+    -1 139
+    -1 140
+    -1 141
+    -1 142
+    -1 143
+    -1 144
+    -1 145
+    -1 146
+    -1 147
+    -1 148
+    -1 149
+    -1 150
+    +1 35
+    +1 36
+    +1 94
+    +1 42
+    +1 40
+    +1 40
+    +1 41
+    +1 41
+    +1 36
+    +1 61
+    +1 124
+    +1 123
+    +1 125
+    +1 91
+    +1 93
+    +1 96
+    +1 60
+    +1 62
+    +1 62
+
+=== D07multibyte #35 [fail] error handling in Unicode quoting
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -OK
+    -OK
+    -OK
+    -OK
+    +Failed: no error message and no question mark
+    +Failed: no error message and no question mark
+    +Failed: no error message and no question mark
+    +Failed: no error message and no question mark
+
+=== D07multibyte #39 [fail] read passes through invalid multibyte characters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -0xC5
+    +0xFFFD
+
+=== D07multibyte #41 [fail] Invalid parameter name with following tokenized input
+    reason: bad status 126, expected 127 from:
+
+=== D07multibyte #44 [fail] Invalid characters in pattern matching
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1,2 @@
+    +Test [[ \xcc != [\ucc] ]] failed
+    +Test [[ \xcc = [\xcc] ]] failed
+
+=== D07multibyte #47 [notrun] Raw bytes don't match multibyte characters part 2
+
+=== D07multibyte #48 [unknown] ${(q+)...} with printable multibyte characters
+
+=== D07multibyte #49 [unknown] Multibyte handling of functions parameter
+
+=== D07multibyte #50 [unknown] Sorting of metafied characters
+
+=== D07multibyte #51 [unknown] printf %q and quotestring and general metafy / token madness
+
+=== D07multibyte #52 [unknown] print and printf into a variable with multibyte text
+
+=== D07multibyte #53 [unknown] Ensure no confusion on metafied input to regex module
+
+=== D07multibyte #54 [unknown] locale gets restored when locale parameters go out of scope (regression test for 45772)
+
+=== D07multibyte #55 [unknown] (workers/50150) zsh/stat with Unicode and metafication
+
+=== D07multibyte #56 [unknown] workers/54583: select with multi-byte word
+
+=== D08cmdsubst #26 [fail] Aliases with braces in command substitution can cause havoc
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +(eval):1: parse error near `blah'
+
+=== D10nofork #11 [fail] globsubst on result
+    reason: bad status 0, expected 1 from:
+
+=== D10nofork #13 [fail] newline removal in ${ ... }, zsh mode
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,2 @@
+     one trailing newline
+     removed
+    -
+    -
+    -
+
+=== D10nofork #15 [fail] newline removal should not occur, part 2
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,2 @@
+     no trailing newlines
+     removed
+    -
+    -
+    -
+    -
+
+=== D10nofork #18 [fail] unclosed braces are sometimes a bad substitution
+    reason: bad status 0, expected 1 from:
+
+=== D10nofork #30 [fail] capture stdout
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+     STDOUT
+    -
+
+=== D10nofork #35 [notrun] return statement inside, part 1
+
+=== D10nofork #36 [unknown] return status propages in assignment like $(...)
+
+=== D10nofork #37 [unknown] return statement inside, part 2
+
+=== D10nofork #38 [unknown] errreturn works inside and remains outside
+
+=== D10nofork #39 [unknown] exit statement inside
+
+=== D10nofork #40 [unknown] errexit inside
+
+=== D10nofork #41 [unknown] local declaration inside
+
+=== D10nofork #42 [unknown] local declaration, global assignment, part 1
+
+=== D10nofork #43 [unknown] local declaration, global assignment, part 2 (evaluation order)
+
+=== D10nofork #44 [unknown] function definition, brace nesting, quote nesting
+
+=== D10nofork #45 [unknown] here-document behavior
+
+=== D10nofork #46 [unknown] here-string behavior
+
+=== D10nofork #47 [unknown] another capture stdout
+
+=== D10nofork #48 [unknown] assignment context
+
+=== D10nofork #49 [unknown] return statement inside, part 1+
+
+=== D10nofork #50 [unknown] return status propages in stdout capture
+
+=== D10nofork #51 [unknown] return statement inside, part 2+
+
+=== D10nofork #52 [unknown] errreturn works inside stdout capture
+
+=== D10nofork #53 [unknown] exit statement inside stdout capture
+
+=== D10nofork #54 [unknown] errexit inside stdout capture
+
+=== D10nofork #55 [unknown] dummy test to set option soon enough
+
+=== D10nofork #56 [unknown] ignored braces, part 1
+
+=== D10nofork #57 [unknown] ignored braces, part 2
+
+=== D10nofork #58 [unknown] ignored braces, part 3
+
+=== D10nofork #59 [unknown] ignored braces, part 4
+
+=== D10nofork #60 [unknown] break N propagates
+
+=== D10nofork #61 [unknown] break after assignment completes the assignment
+
+=== D10nofork #62 [unknown] error handling (without crashing)
+
+=== D10nofork #63 [unknown] reserved parameter name (without crashing)
+
+=== E01options #1 [fail] zsh --version output
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line 1:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -zsh * \(*\)
+    +zshrs 0.12.49
+
+=== E01options #12 [fail] CDABLE_VARS option
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -(eval):cd:4: no such file or directory: cdablevar1
+     (eval):cd:10: no such file or directory: cdablevar2
+
+=== E01options #19 [fail] ERR_EXIT option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,5 @@
+     on before
+     ZERR trapped
+    -ZERR trapped
+     off before
+     ZERR trapped
+     off after
+
+=== E01options #28 [fail] NO_EXEC does recognize bad substitution syntax
+    reason: bad status 0, expected 1 from:
+
+=== E01options #37 [fail] HIST_SUBST_PATTERN option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     TINGcd TINGfile1 TINGfile2 homedir
+     THUMPcd THUMPfile1 THUMPfile2
+    -one.c Two.X Three.X
+    -homedir scrunchyfile1 scrunchyfile2 tmpcd
+    -leftover
+    +one.c two.c three.c
+    +homedir tmpcd tmpfile1 tmpfile2
+    +left[({})]over
+
+=== E01options #42 [fail] KSH_TYPESET option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     1 1 0
+     arg1 arg2
+    -noktarg1
+    -0 1
+    +noktarg1 noktarg2
+    +0 0
+
+=== E01options #43 [fail] LOCAL_OPTIONS option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,10 +1,7 @@
+     ksharrays             off
+     localoptions          off
+    -ksharrays             on
+    -localoptions          on
+    +
+     ksharrays             off
+     localoptions          off
+    -ksharrays             on
+    -localoptions          off
+    -ksharrays             on
+    -localoptions          off
+    +
+    +
+
+=== E01options #44 [fail] MAGIC_EQUAL_SUBST option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,7 +4,8 @@
+     not
+     var=/any/old/name
+     anything goes/here=/any/old/name
+    -split=maybe not
+    +split=maybe
+    +not
+     var=~
+     anything goes/here=~
+     split=maybe
+
+=== E01options #48 [fail] Fix for race with input multios
+    reason: bad status 1, expected 0 from:
+    This test hangs the shell when it fails...
+
+=== E01options #49 [fail] regression test: multios with nullexec
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -some words
+
+=== E01options #54 [fail] PATH_DIRS option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+     File in upper dir
+    -File in lower dir
+     unsetting option...
+
+=== E01options #59 [fail] POSIX_BUILTINS and exec
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     Without
+     Function with argument cat_arg
+     With
+    -Contents of file
+    +Function with argument cat_arg
+
+=== E01options #70 [fail] SH_FILE_EXPANSION option
+    reason: bad status 1, expected 0 from:
+
+=== E01options #71 [fail] SH_FILE_EXPANSION option with GLOB_SUBST et al.
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -~/one
+    -~/two
+    -~/one
+    -~/two
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/E01options/Test/options.tmp/homedir/one
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/E01options/Test/options.tmp/homedir/two
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/E01options/Test/options.tmp/homedir/one
+    +/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/E01options/Test/options.tmp/homedir/two
+
+=== E01options #73 [fail] SH_GLOB option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+     option on
+    -a(b|c) a(b|c) yes
+    +a(b|c) a(b|c) no
+     ab a(b|c) no
+     a<1-10> a<1-10> yes
+     a9 a<1-10> no
+
+=== E01options #79 [fail] WARN_CREATE_GLOBAL option
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     fn:3: scalar parameter foo1 created globally in function fn
+     fn:5: scalar parameter foo1 created globally in function fn
+    -fn:15: numeric parameter foo5 created globally in function fn
+    +fn:14: scalar parameter foo4 created globally in function fn
+
+=== E01options #81 [fail] WARN_NESTED_VAR option
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,9 +3,8 @@
+     fn_wnv:2: scalar parameter foo1 set in enclosing scope in function fn_wnv
+     fn_wnv:11: scalar parameter foo3 set in enclosing scope in function fn_wnv
+     fn2:2: scalar parameter foo3 set in enclosing scope in function fn2
+    +fn_wnv:18: scalar parameter foo4 set in enclosing scope in function fn_wnv
+    +fn_wnv:18: scalar parameter foo4 set in enclosing scope in function fn_wnv
+     fn_wnv:20: numeric parameter foo5 set in enclosing scope in function fn_wnv
+     function attribute on
+    -fn_wnv:2: scalar parameter foo1 set in enclosing scope in function fn_wnv
+    -fn_wnv:11: scalar parameter foo3 set in enclosing scope in function fn_wnv
+    -fn_wnv:20: numeric parameter foo5 set in enclosing scope in function fn_wnv
+     all off again
+
+=== E01options #87 [fail] PIPE_FAIL option
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     0
+     1
+     1
+    -2
+    +1
+
+=== E01options #98 [fail] RM_STAR_SILENT
+    reason: bad status 1, expected 0 from:
+
+=== E01options #103 [fail] workers/54309: AUTO_NAME_DIRS: local parameter not considered
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1,2 @@
+    -c=/bin
+    +b=/bin
+    +c=/sbin
+
+=== E02xtrace #1 [fail] xtrace with and without redirection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -20,12 +20,18 @@
+     Tracing: (){ { builtin } 2>file }
+     Tracing: source
+     Tracing: source 2>file
+    ++(eval):4> print 'Tracing: builtin 2>file'
+    ++(eval):6> cat
+     +(eval):8> print 'Tracing: ( builtin ) 2>file'
+     +(eval):10> cat
+     +(eval):12> print 'Tracing: { builtin } 2>file'
+     +(eval):14> cat
+     +(eval):16> print 'Tracing: do builtin done 2>file'
+     +(eval):18> cat
+    ++(eval):20> xtf 'Tracing: function 2>file'
+     +xtf:1> local regression_test_dummy_variable
+     +xtf:2> print 'Tracing: function 2>file'
+    ++xtfx:2> print 'Tracing: (){ builtin 2>file }'
+     +xtfx:3> print 'Tracing: (){ { builtin } 2>file }'
+    ++(eval):23> . ./xt.in 'Tracing: source 2>file'
+    ++./xt.in:1> print 'Tracing: source 2>file'
+
+=== E02xtrace #6 [fail] a function that redefines itself preserves tracing
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -6,11 +6,13 @@
+     	# traced
+     	echo inner
+     }
+    -$'\M-c\M-\C-C\M-\C-L' () {
+    +ヌ () {
+     	# traced
+     	echo inner
+     }
+     $'ba\C-@z' () {
+     	# traced
+    -	echo inner
+    +	$'ba\0z' () {
+    +		echo inner
+    +	}
+     }
+
+=== E03posix #1 [fail] Parameter hiding and tagging, printing types and values
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #2 [fail] readonly -p output (no readonly specials)
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #3 [fail] typeset -p1 output for array
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #4 [fail] typeset -p1 output for associative array
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #5 [fail] ${(t)...}
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #6 [fail] (i) and (I) return nothing for empty array
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #7 [fail] KSH_TYPESET option
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #8 [fail] (t) returns correct type
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #9 [fail] readonly with typeset -p
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== E03posix #16 [fail] All identifiers are variable references in POSIX arithmetic
+    reason: output differs from expected as shown above for:
+    ZTST_do_diff:8: command not found: diff
+
+=== K01nameref #20 [fail] assign/typeset existing array via nameref
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #21 [fail] assign/typeset existing array via nameref
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #24 [fail] unset via nameref
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,4 @@
+    -typeset var=vaue
+    -typeset var=ve
+    +typeset var=value
+    +typeset var=value
+     typeset -a var=( val1 val2 '' val4 val5 )
+     typeset -a var=( val1 '' val5 )
+    -typeset -A var=( [key1]=val1 )
+
+=== K01nameref #46 [fail] invalid nameref
+    reason: error output differs from expected as shown above for:
+    Pattern match failed, line 1:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -*invalid variable name: not\[2\]good
+    +(eval):2: invalid name reference: not[2]good
+
+=== K01nameref #53 [fail] up-reference part 3, hidden global
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -outside
+    -typeset -h var
+    +
+    +typeset var
+
+=== K01nameref #57 [fail] up-reference part 7, upscope namerefs, end not in scope
+    reason: error output differs from expected as shown above for:
+    Pattern match failed, line mismatch (2/3):
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+    -*typeset*: no such variable: var
+    -*typeset*: no such variable: var
+    +assignment expected to fail
+    +(anon):typeset:10: no such variable: var
+    +(eval):typeset:13: no such variable: var
+
+=== K01nameref #59 [fail] up-reference part 9, autoloading with hidden special
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -nameref-local-association-readonly-hide-hideval-special
+    -typeset -h parameters
+    +
+
+=== K01nameref #77 [fail] unset various types via nameref, including a readonly special
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #79 [fail] for-loop variable is a reference, part 5, errors
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1,3 @@
+     typeset -n ref=valid1
+    +typeset -n ref=inv@lid
+    +typeset -n ref=valid2
+
+=== K01nameref #88 [fail] assignment at different scope than declaration, '' 0
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #91 [fail] assignment at different scope than declaration, '' 6
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #92 [fail] Transitive references with scoping changes
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,12 +1,12 @@
+    -f4: ref1=f4 ref2=XX ref3=f4
+    -f3: ref1=f3 ref2=XX ref3=f3
+    -g5: ref1=f3 ref2=XX ref3=f3
+    -g4: ref1=f3 ref2=XX ref3=f3
+    -f3: ref1=f3 ref2=XX ref3=f3
+    -f2: ref1=f1 ref2=XX ref3=f1
+    -f1: ref1=f1 ref2=f1 ref3=f1
+    -h5: ref1=f1 ref2=f1 ref3=f1
+    -h4: ref1=f1 ref2=f1 ref3=f1
+    -h3: ref1=f1 ref2=f1 ref3=f1
+    -h2: ref1=f1 ref2=f1 ref3=f1
+    -f1: ref1=f1 ref2=f1 ref3=f1
+    +f4: ref1=f4 ref2=var ref3=
+    +f3: ref1=f1 ref2=var ref3=
+    +g5: ref1=f1 ref2=var ref3=
+    +g4: ref1=f1 ref2=var ref3=
+    +f3: ref1=f1 ref2=var ref3=
+    +f2: ref1=f1 ref2=var ref3=
+    +f1: ref1=f1 ref2= ref3=
+    +h5: ref1=f1 ref2= ref3=
+    +h4: ref1=f1 ref2= ref3=
+    +h3: ref1=f1 ref2= ref3=
+    +h2: ref1=f1 ref2= ref3=
+    +f1: ref1=f1 ref2= ref3=
+
+=== K01nameref #94 [fail] references to invalid variable names
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1,133 @@
+    +Unexpected valid referent name: foo@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: foo.@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: foo.bar@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: foo.456@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: foo.4ar@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: .foo@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .foo.bar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .foo.456@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: !@
+    +Unexpected valid referent name: !
+    +Unexpected valid referent name: ?@
+    +Unexpected valid referent name: ?
+    +Unexpected valid referent name: $@
+    +Unexpected valid referent name: $
+    +Unexpected valid referent name: -@
+    +Unexpected valid referent name: -
+    +Unexpected expansion result: ref=_, $ref=ref=_ != -n
+    +Unexpected valid referent name: _@
+    +Unexpected valid referent name: _
+    +Unexpected valid referent name: .foo.
+    +Unexpected valid referent name: .foo.@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .foo.4ar
+    +Unexpected valid referent name: .foo.4ar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: foo..
+    +Unexpected valid referent name: foo..@
+    +Unexpected valid referent name: f
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: ..
+    +Unexpected valid referent name: ..@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .foo..
+    +Unexpected valid referent name: .foo..@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .123
+    +Unexpected valid referent name: .123@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .123.
+    +Unexpected valid referent name: .123.@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .123.bar
+    +Unexpected valid referent name: .123.bar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .123.456
+    +Unexpected valid referent name: .123.456@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .123.4ar
+    +Unexpected valid referent name: .123.4ar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: 1
+    +Unexpected valid referent name: .1oo
+    +Unexpected valid referent name: .1oo@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .1oo.
+    +Unexpected valid referent name: .1oo.@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .1oo.bar
+    +Unexpected valid referent name: .1oo.bar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .1oo.456
+    +Unexpected valid referent name: .1oo.456@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: .1oo.4ar
+    +Unexpected valid referent name: .1oo.4ar@
+    +Unexpected valid referent name: .
+    +Unexpected valid referent name: foo.bar.
+    +Unexpected valid referent name: foo.bar.baz
+    +Unexpected valid referent name: foo.bar.789
+    +Unexpected valid referent name: foo.bar.7az
+    +Unexpected valid referent name: foo.456.
+    +Unexpected valid referent name: foo.456.baz
+    +Unexpected valid referent name: foo.456.789
+    +Unexpected valid referent name: foo.456.7az
+    +Unexpected valid referent name: foo.4ar.
+    +Unexpected valid referent name: foo.4ar.baz
+    +Unexpected valid referent name: foo.4ar.789
+    +Unexpected valid referent name: foo.4ar.7az
+    +Unexpected valid referent name: .foo.bar.
+    +Unexpected valid referent name: .foo.bar.baz
+    +Unexpected valid referent name: .foo.bar.789
+    +Unexpected valid referent name: .foo.bar.7az
+    +Unexpected valid referent name: .foo.456.
+    +Unexpected valid referent name: .foo.456.baz
+    +Unexpected valid referent name: .foo.456.789
+    +Unexpected valid referent name: .foo.456.7az
+    +Unexpected valid referent name: .foo.4ar.
+    +Unexpected valid referent name: .foo.4ar.baz
+    +Unexpected valid referent name: .foo.4ar.789
+    +Unexpected valid referent name: .foo.4ar.7az
+    +Unexpected valid referent name: .123.bar.
+    +Unexpected valid referent name: .123.bar.baz
+    +Unexpected valid referent name: .123.bar.789
+    +Unexpected valid referent name: .123.bar.7az
+    +Unexpected valid referent name: .123.456.
+    +Unexpected valid referent name: .123.456.baz
+    +Unexpected valid referent name: .123.456.789
+    +Unexpected valid referent name: .123.456.7az
+    +Unexpected valid referent name: .123.4ar.
+    +Unexpected valid referent name: .123.4ar.baz
+    +Unexpected valid referent name: .123.4ar.789
+    +Unexpected valid referent name: .123.4ar.7az
+    +Unexpected valid referent name: .1oo.bar.
+    +Unexpected valid referent name: .1oo.bar.baz
+    +Unexpected valid referent name: .1oo.bar.789
+    +Unexpected valid referent name: .1oo.bar.7az
+    +Unexpected valid referent name: .1oo.456.
+    +Unexpected valid referent name: .1oo.456.baz
+    +Unexpected valid referent name: .1oo.456.789
+    +Unexpected valid referent name: .1oo.456.7az
+    +Unexpected valid referent name: .1oo.4ar.
+    +Unexpected valid referent name: .1oo.4ar.baz
+    +Unexpected valid referent name: .1oo.4ar.789
+    +Unexpected valid referent name: .1oo.4ar.7az
+
+=== K01nameref #95 [fail] references to builtin specials
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,15 +1,15 @@
+     typeset -n x=argv
+    -argv foo
+    +
+     typeset -n x=ARGC
+     2
+     typeset -n x=0
+     edgelocal
+     typeset -n x=00
+    -edgelocal
+    +
+     typeset -n x=2
+    -foo
+    +
+     typeset -n x=02
+    -foo
+    +
+     typeset -n x=!
+     0
+     typeset -un x=!
+
+=== K01nameref #96 [fail] references to positional parameters
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #101 [fail] Referring and dereferring an autoload variable loads it
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+    -z=SRANDOM (zsh/random)
+     z=
+    -v=integer
+    -z=SRANDOM (zsh/random)
+    -v=integer
+    +z=
+    +v=
+    +z=
+    +v=
+
+=== K01nameref #102 [fail] Dereferring an autoload variable fails to load it if its hidden
+    reason: bad status 0, expected 1 from:
+
+=== K01nameref #105 [fail] incidental reference loop triggers error
+    reason: bad status 0, expected 1 from:
+
+=== K01nameref #107 [fail] can't change type of hidden variables via assignments to references
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,12 +1,12 @@
+    -1
+    -1
+    -1
+    -1
+    -1
+    -1
+    -typeset -g -A ass0=( [aa]=AA )
+    -typeset -A ass1=( [aa]=AA )
+    -typeset -g -a arr0=( aa AA )
+    -typeset -a arr1=( aa AA )
+    -typeset -g str0=foo
+    -typeset str1=foo
+    +0
+    +0
+    +0
+    +0
+    +0
+    +0
+    +typeset -g ass0=foo
+    +typeset ass1=foo
+    +typeset -g arr0=foo
+    +typeset arr1=foo
+    +typeset -g -a str0=( x )
+    +typeset -a str1=( x )
+
+=== K01nameref #109 [fail] type changes via typed typeset to references
+    reason: bad status 1, expected 0 from:
+
+=== K01nameref #118 [fail] unsetting references with -n unsets the references
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -6,7 +6,9 @@
+     typeset -n ref1=var0
+     # unset -n -m ref1
+     typeset var0=foo
+    +typeset -n ref1=var0
+     typeset -n ref2=ref1
+     # unset -n -m ref2
+     typeset var0=foo
+     typeset -n ref1=var0
+    +typeset -n ref2=ref1
+
+=== K01nameref #119 [fail] unsetting references without -n unsets the referred parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -5,8 +5,10 @@
+     typeset -n ref1=var0
+     typeset -n ref2=ref1
+     # unset -m ref1
+    +typeset var0=foo
+     typeset -n ref1=var0
+     typeset -n ref2=ref1
+     # unset -m ref2
+    +typeset var0=foo
+     typeset -n ref1=var0
+     typeset -n ref2=ref1
+
+=== K01nameref #120 [fail] unsetting subscripted references unsets the referred elements
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,8 @@
+     # unset ref1[3]
+    -typeset var0=1245
+    +typeset var0=12345
+     # unset ref2[3]
+    -typeset var0=1245
+    +typeset var0=12345
+     # unset -n ref1[3]
+    -typeset var0=1245
+    +typeset var0=12345
+     # unset -n ref2[3]
+    -typeset var0=1245
+    +typeset var0=12345
+
+=== K01nameref #121 [fail] unsetting read-only parameter triggers an error
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -8,14 +8,10 @@
+     test-unset:3: read-only variable: var
+     typeset -r var=foo
+     # unset -m ref
+    -test-unset:3: read-only variable: var
+     typeset -r var=foo
+     # unset var[2]
+    -test-unset:3: read-only variable: var
+     typeset -r var=foo
+     # unset ref[2]
+    -test-unset:3: read-only variable: var
+     typeset -r var=foo
+     # unset -n ref[2]
+    -test-unset:3: read-only variable: var
+     typeset -r var=foo
+
+=== K01nameref #122 [fail] unsetting placeholder references or their referents has no effect
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,6 @@
+     # unset ref1
+    -typeset -n ref1
+     typeset -n ref2=ref1
+     # unset ref2
+    -typeset -n ref1
+     typeset -n ref2=ref1
+     # unset -m ref1
+     typeset -n ref1
+
+=== K01nameref #124 [fail] unsetting references referring to parameters in enclosing scopes unsets the parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,10 @@
+     # unset refg1 refg2 refl1 refl2
+    -(anon):typeset:7: no such variable: g1
+    -(anon):typeset:7: no such variable: g2
+    +typeset -g g1
+    +typeset -g g2
+    +typeset l1
+    +typeset l2
+     # unset -m refg1 refg2 refl1 refl2
+    -(anon):typeset:7: no such variable: g1
+    -(anon):typeset:7: no such variable: g2
+    +typeset -g g1=glb1
+    +typeset -g g2=glb2
+    +typeset l1=lcl1
+    +typeset l2=lcl2
+
+=== K01nameref #125 [fail] unsetting references referring to hidden parameters unsets the hidden parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,12 +1,14 @@
+     # unset refg refl
+     # inner scope
+    -typeset g=hide-g
+    -typeset l=hide-l
+    +typeset g
+    +typeset l
+     # outer scope
+    -test-unset:typeset:12: no such variable: g
+    +typeset -g g=glb
+    +typeset l=lcl
+     # unset -m refg refl
+     # inner scope
+     typeset g=hide-g
+     typeset l=hide-l
+     # outer scope
+    -test-unset:typeset:12: no such variable: g
+    +typeset -g g=glb
+    +typeset l=lcl
+
+=== K01nameref #126 [fail] hidden reference refers to a nested variable
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,7 @@
+    -A:ref1=ccc ref2=123 ref3=ccc
+    -B:ref1=bbb ref2=123 ref3=bbb
+    -C:ref1=bbb ref2=123 ref3=bbb
+    -D:ref1=bbb ref2=123 ref3=bbb
+    -E:ref1=aaa ref2=aaa ref3=aaa
+    -F:ref1=aaa ref2=aaa ref3=aaa
+    -G:ref1=aaa ref2=aaa ref3=aaa
+    +A:ref1=ccc ref2=123 ref3=
+    +B:ref1=aaa ref2=123 ref3=
+    +C:ref1=aaa ref2=123 ref3=
+    +D:ref1=aaa ref2=123 ref3=
+    +E:ref1=aaa ref2= ref3=
+    +F:ref1=aaa ref2= ref3=
+    +G:ref1=aaa ref2= ref3=
+
+=== K01nameref #127 [fail] reference refers successively to multiple variables in multiple nested scopes
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -3,7 +3,7 @@
+     C:var1@scope3
+     D:var1@scope4
+     E:var2@scope4
+    -F:var2@scope2
+    -G:var2@scope2
+    +F:var2@scope1
+    +G:var2@scope1
+     H:
+     I:
+
+=== K02parameter #9 [fail] ${(z)...} and ${(Q)...} for some hard to parse cases
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,13 +1,7 @@
+    -<
+    -five
+    ->
+    +<five>
+     {six}
+    -(
+    -seven
+    -)
+    ->
+    -eight
+    -<
+    +(seven)
+    +>eight<
+     }nine{
+     |
+     forty-two
+
+=== K02parameter #11 [fail] namerefs with namespaces
+    reason: bad status 1, expected 0 from:
+
+=== K02parameter #25 [fail] Nested namespace is not usable
+    reason: bad status 1, expected 127 from:
+
+=== P01privileged #1 [unknown] PRIVILEGED automatically enabled when RUID != EUID
+
+=== P01privileged #2 [unknown] PRIVILEGED automatically enabled when RGID != EGID
+
+=== P01privileged #3 [unknown] EUID set to RUID after disabling PRIVILEGED
+
+=== P01privileged #4 [unknown] RUID/EUID set to 0/0 when privileged after disabling PRIVILEGED
+
+=== P01privileged #5 [unknown] not possible to regain EUID when unprivileged after disabling PRIVILEGED
+
+=== P01privileged #6 [unknown] EGID set to RGID after disabling PRIVILEGED
+
+=== P01privileged #7 [unknown] not possible to regain EGID when unprivileged after disabling PRIVILEGED
+
+=== P01privileged #8 [unknown] getpwuid() fails with non-existent RUID and 0 EUID
+
+=== V01zmodload #3 [fail] Test loading of all compiled modules
+    reason: bad status 1, expected 0 from:
+
+=== V01zmodload #4 [fail] Check that zsh believes the modules did load
+    reason: bad status 1, expected 0 from:
+
+=== V01zmodload #17 [fail] Failed builtin autoload
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+     (eval):3: module `zsh/parameter' has no such feature: `b:fail': autoload cancelled
+    +(eval):3: module `zsh/parameter' has no such feature: `b:fail'
+     (eval):3: autoloading module zsh/parameter failed to define builtin: fail
+
+=== V01zmodload #18 [fail] Failed parameter autoload
+    reason: bad status 0, expected 1 from:
+
+=== V01zmodload #19 [fail] Failed condition autoload
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,4 @@
+     (eval):3: module `zsh/parameter' has no such feature: `c:fail': autoload cancelled
+    +(eval):3: module `zsh/parameter' has no such feature: `p:fail': autoload cancelled
+    +(eval):3: module `zsh/parameter' has no such feature: `c:fail'
+     (eval):3: unknown condition: -fail
+
+=== V01zmodload #20 [fail] Failed math function autoload
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -(eval):3: module `zsh/parameter' has no such feature: `f:fail': autoload cancelled
+    -(eval):3: autoloading module zsh/parameter failed to define math function: fail
+    +(eval):3: unknown function: fail
+
+=== V01zmodload #22 [fail] Autoloads checked on loading but don't necessarily effect current command
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +0,0 @@
+    -(eval):3: module `zsh/parameter' has no such feature: `p:fail': autoload cancelled
+
+=== V01zmodload #23 [fail] List default autoloads
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,4 @@
+    +f:fail
+     p:aliases
+     p:builtins
+     p:commands
+    @@ -10,6 +11,7 @@
+     p:dis_patchars
+     p:dis_reswords
+     p:dis_saliases
+    +p:fail
+     p:funcfiletrace
+     p:funcsourcetrace
+     p:funcstack
+
+=== V01zmodload #24 [fail] Autoload a module via a condition
+    reason: bad status 2, expected 0 from:
+
+=== V01zmodload #25 [fail] Autoload a module via a parameter
+    reason: bad status 1, expected 0 from:
+
+=== V01zmodload #26 [fail] Autoload a module via a math function
+    reason: bad status 1, expected 0 from:
+
+=== V01zmodload #27 [fail] Autoload tied parameters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -typeset -g -T WATCH watch=( foo bar )
+    -typeset -g -aT WATCH watch=( foo bar )
+    +typeset -g WATCH=foo:bar
+    +typeset -g -a watch=(  )
+
+=== V01zmodload #29 [fail] Unload/autoload the module via its alias
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +(eval):4: module `zsh/example' has no such feature: `C:ex': autoload cancelled
+
+=== V01zmodload #31 [fail] Listing with zmodload should give all our modules.
+    reason: bad status 1, expected 0 from:
+
+=== V01zmodload #32 [fail] Unload the modules loaded by this test suite
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -0,0 +1 @@
+    +zmodunload:zmodload:7: no such module zsh/hlgroup
+
+=== V01zmodload #34 [fail] Regression tests for index bug with math functions.
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -7,7 +7,7 @@
+     +f:systell
+     +p:errnos
+     +p:sysparams
+    -0
+    +1
+     +b:syserror
+     +b:sysread
+     +b:syswrite
+    @@ -15,7 +15,7 @@
+     +b:sysseek
+     +b:zsystem
+     +f:systell
+    --p:errnos
+    ++p:errnos
+     +p:sysparams
+     1
+     +b:syserror
+
+=== V01zmodload #35 [fail] Module Features for math functions
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -4,7 +4,7 @@
+     +b:sysopen
+     +b:sysseek
+     +b:zsystem
+    --f:systell
+    ++f:systell
+     +p:errnos
+     +p:sysparams
+     +b:syserror
+
+=== V01zmodload #36 [xpass] can unset a non-readonly autoloadable parameter before loading the module
+    reason: expected to fail, but passed
+
+=== V04features #19 [fail] Successfully unloaded a module despite a parameter being hidden
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -scrooble
+    +
+     0
+
+=== V06parameter #5 [fail] workers/54617: $commands look-up with no_hash_list_all
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line 1:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -0 */ls:*/ls
+    -1 */ls:
+    +1 :/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/V06parameter/Test/ls
+    +0 :
+
+=== V07pcre #2 [fail] Raw IMETA characters in input string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+     OK
+     OK
+    -OK
+
+=== V07pcre #12 [fail] switch between C/UTF-8 locales
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     0
+    +1
+     0
+    -0
+
+=== V07pcre #14 [fail] named captures
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +0,0 @@
+    -typeset -g -A .pcre.match=(
+    -  [category]=category
+    -  [name]=name
+    -  [package]=name-12345
+    -  [version]=12345
+    -)
+
+=== V07pcre #15 [fail] pcre_match -d
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -caterpillar cater cat
+    +caterpillar erpillar pillar
+
+=== V10private #2 [fail] basic scope hiding
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     toplevel
+    -local hide scalar_test
+    +local scalar_test
+     0
+     toplevel
+
+=== V10private #4 [fail] variable defined only in scope
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     0
+    -local hide unset_test
+    +local unset_test
+     setme
+     0
+
+=== V10private #5 [fail] nested scope with different type, correctly restored
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -local hide array_test
+    +local array_test
+     in function
+     top level
+
+=== V10private #11 [fail] private hides value from surrounding scope in nested scope
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,4 @@
+     typeset -a hash_test=( top level )
+     hash_test=( [in]=function )
+    -typeset -g -a hash_test=( top level )
+    -array-local top level
+    -top level
+    +association-local-readonly-hide-special in function
+    +in function
+
+=== V10private #17 [fail] privates are not visible in anonymous functions, part 1
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -X top level
+    +X in function
+     Y in function
+     top level
+
+=== V10private #18 [fail] privates are not visible in anonymous functions, part 2
+    reason: bad status 1, expected 0 from:
+
+=== V10private #19 [fail] privates are not visible in anonymous functions, part 3
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -X top level
+    -array_test not set
+    +X in function
+
+=== V10private #20 [fail] privates are not visible in anonymous functions, part 4
+    reason: bad status 1, expected 0 from:
+
+=== V10private #21 [fail] privates are not visible in anonymous functions, part 5
+    reason: bad status 1, expected 0 from:
+
+=== V10private #24 [fail] typeset still works with zsh/param/private module loaded
+    reason: bad status 1, expected 0 from:
+
+=== V10private #26 [fail] assignment to private nameref in wrong scope, part 1
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -typeset -a ary
+    -typeset -hn ref=ary
+    +typeset -a ary=(  )
+    +typeset -n ref=ary
+
+=== V10private #27 [fail] assignment to private nameref in wrong scope, part 2
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,3 @@
+    -typeset -g -a ary
+    +typeset -g -a ary=(  )
+     typeset ref=XX
+    -typeset -a ary
+    -typeset -hn ref=ary
+    +typeset -a ary=(  )
+
+=== V10private #28 [fail] up-reference for private namerefs, end unset and not in scope
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+     typeset -n ptr1=ptr2
+    -typeset -hn ptr2
+    +typeset -n ptr2
+
+=== V10private #29 [fail] up-reference for private namerefs, end not in scope
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,7 @@
+     typeset -n ptr1=ptr2
+    -typeset -hn ptr2=''
+    +typeset -n ptr2=''
+    +ptr1=ptr2
+    +ptr1=val
+    +ptr2=val
+    +typeset -n ptr1=ptr2
+    +typeset ptr2=val
+
+=== V10private #30 [fail] up-reference for private namerefs, end is in scope
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,9 +1,9 @@
+     typeset -n ptr1=ptr2
+    -typeset -hn ptr2
+    +typeset -n ptr2
+     ptr1=ptr2
+    -ptr2=val
+    +ptr2
+     ptr1=val
+    -ptr2=val
+    +ptr2=
+     typeset -n ptr1=ptr2
+    -typeset -hn ptr2
+    +typeset -n ptr2
+     typeset ptr2=val
+
+=== V10private #36 [fail] redirection cannot assign private in wrong scope
+    reason: bad status 0, expected 1 from:
+
+=== V10private #40 [fail] nofork may not change private in surrounding nofork
+    reason: bad status 0, expected 1 from:
+
+=== V10private #41 [fail] function may not access private from inside nofork
+    reason: bad status 0, expected 1 from:
+
+=== V10private #42 [fail] function may not access private declared in nofork
+    reason: error output differs from expected as shown above for:
+    Pattern match failed, line 1:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -*: q: can't modify read-only parameter
+    +(anon): read-only variable: q
+
+=== V11db_gdbm #2 [fail] create the database
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #3 [fail] open the database read-only
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #4 [fail] store key in database
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #5 [fail] remove key from database (different variables)
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #6 [fail] store & remove key from database (the same variables)
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #7 [fail] store 2 keys fetching 1st
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #8 [fail] unset key that was fetched
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #9 [fail] scan read-only tied hash, directly assign local -a
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #10 [fail] Use scan directly, read-write mode
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #11 [fail] replace hash / database, scan
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #12 [fail] scan with no (kv)
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #13 [fail] scan with keys only (k)
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #14 [fail] scan with keys only explicit (v)
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #16 [fail] Append with +=( ), also with existing data, also (kv) scan
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #17 [fail] Type of tied parameter
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #18 [fail] Type of tied parameter, with preceding unset
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #19 [fail] Type of tied parameter, with local parameter already existing
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #20 [fail] Test of automatic untie (use of local scope) and of scoping
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #21 [fail] Test of tie to hidden local via named reference
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #22 [fail] zgdbm_tied parameter
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,7 @@
+     0
+    -dbase 1
+    -dbase dbase2 2
+    -dbase dbase2 dbase3 3
+    -dbase2 dbase3 2
+    -dbase3 1
+     0
+    +0
+    +0
+    +0
+    +0
+    +0
+
+=== V11db_gdbm #23 [fail] unset of read-only zgdbm_tied parameter
+    reason: bad status 0, expected 1 from:
+
+=== V11db_gdbm #24 [fail] Unicode test
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #25 [fail] Metafication of $'\0'
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #26 [fail] Unicode & metafication test, different hash access
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #27 [fail] Hash scanning and metafication
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #28 [fail] Sorted hash scanning and metafication
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #29 [fail] zgdbmpath builtin
+    reason: bad status 1, expected 0 from:
+
+=== V11db_gdbm #30 [fail] Test store in forked Zsh
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -value1
+    +
+
+=== V12zparseopts #1 [fail] zparseopts with empty option spec (no options recognised)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+    -foo
+    +- foo
+     -x
+    -foo
+    +- foo
+     -x
+    -foo
+    +- foo
+     -x
+
+=== V12zparseopts #2 [fail] zparseopts without option specs, without array
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+    +(anon):zparseopts: bad option: -x
+     (anon):zparseopts: missing option descriptions
+    -(anon):zparseopts: missing option descriptions
+     (anon):zparseopts: no default array defined: a
+     (anon):zparseopts: no default array defined: a
+     (anon):zparseopts: no default array defined: a
+
+=== V12zparseopts #8 [fail] zparseopts -F
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+    -(anon): bad option: -x
+    -(anon): bad option: -x
+    -(anon): bad option: --x
+    -(anon): bad option: -x
+    -(anon): bad option: --
+    +(anon):zparseopts:2: bad option: -x
+    +(anon):zparseopts:2: bad option: -x
+    +(anon):zparseopts:2: bad option: --x
+    +(anon):zparseopts:2: bad option: -x
+    +(anon):zparseopts:2: bad option: --
+
+=== V12zparseopts #11 [fail] zparseopts -M
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     ret: 0, optv: -a foo, opts: --aaa foo, argv: 1 2 3
+     ret: 0, optv: --aaa foo, opts: --aaa foo, argv: 1 2 3
+    -ret: 0, optv: -a bar, opts: --aaa bar, argv: 1 2 3
+     ret: 0, optv: --aaa bar, opts: --aaa bar, argv: 1 2 3
+    +ret: 0, optv: -a bar, opts: --aaa bar, argv: 1 2 3
+
+=== V12zparseopts #20 [fail] missing optarg
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(anon): missing argument for option: -c
+    +(anon):zparseopts:2: missing argument for option: -c
+
+=== V12zparseopts #23 [fail] zparseopts -G, single parameter, without =
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -(anon): bad option: --foobar
+    -(anon): bad option: --foobar
+    -(anon): bad option: --foobar
+    +(anon):zparseopts:2: bad option: --foobar
+    +(anon):zparseopts:2: bad option: --foobar
+    +(anon):zparseopts:2: bad option: --foobar
+
+=== V12zparseopts #27 [fail] Sun-style long options, with and without -G
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -(anon): bad option: -f
+    -(anon): bad option: -f
+    -(anon): bad option: -f
+    +(anon):zparseopts:2: bad option: -f
+    +(anon):zparseopts:2: bad option: -f
+    +(anon):zparseopts:2: bad option: -f
+
+=== V12zparseopts #28 [fail] only -- acts as explicit parsing terminator with -G
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -(anon): bad option: --baz
+    +(anon):zparseopts:2: bad option: --baz
+
+=== V12zparseopts #29 [fail] zparseopts -n, internal vs external usage errors
+    reason: bad status 0, expected 1 from:
+
+=== V12zparseopts #30 [fail] zparseopts option stacking
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -typeset -a optv=( -a )
+    +typeset -a optv=(  )
+
+=== V12zparseopts #31 [fail] zparseopts long-option spec guarding
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -typeset -a optv=( --D )
+    -typeset -a optv=( --DFa )
+    +typeset -a optv=(  )
+    +typeset -a optv=(  )
+
+=== V12zparseopts #32 [fail] zparseopts missing/empty optargs
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,8 @@
+    -(anon):zparseopts: argument expected: -a
+    -(anon):zparseopts: argument expected: -A
+    -(anon):zparseopts: argument expected: -n
+    -(anon):zparseopts: argument expected: -v
+    -(anon):zparseopts: missing array name for -a
+    -(anon):zparseopts: missing array name for -A
+    -(anon):zparseopts: missing program name for -n
+    -(anon):zparseopts: missing array name for -v
+    +(anon):zparseopts: missing array name
+    +(anon):zparseopts: missing array name
+    +(anon):zparseopts: no default array defined: -n
+    +(anon):zparseopts: missing array name
+    +(anon):zparseopts: missing option descriptions
+    +(anon):zparseopts: missing option descriptions
+    +(anon):zparseopts: no default array defined: -n
+    +(anon):zparseopts: missing option descriptions
+
+=== V13zformat #7 [fail] one of -f -F -a required
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -(eval):zformat:1: one of -afF expected
+    -(eval):zformat:2: one of -afF expected
+    +(eval):zformat:1: not enough arguments
+    +(eval):zformat:2: invalid argument: REPLY
+
+=== V13zformat #8 [fail] duplicate -f -F -a ignored
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #9 [fail] more than one of -f -F -a not allowed
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -(eval):zformat:1: only one of -afF allowed
+    -(eval):zformat:2: only one of -afF allowed
+    +(eval):zformat:1: invalid argument: -af
+    +(eval):zformat:2: invalid argument: -fF
+
+=== V13zformat #13 [xpass] width specifier is multi-byte-aware
+    reason: expected to fail, but passed
+
+=== V13zformat #15 [fail] impossible spec in format string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+    -%- %1- %1%-
+    -%. %1. %1%.
+    -%0 %10 %1%0
+    -%9 %19 %1%9
+    +%1- %-
+    +%.
+    +%0
+    +%9
+
+=== V13zformat #16 [fail] %% and %) in format string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -% %3% ) %3) x
+    +% %   ) )   x
+
+=== V13zformat #17 [fail] more literal % in format string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+    +
+     %
+     %
+     %%
+     %%
+     %%%
+    -%%%
+
+=== V13zformat #18 [fail] spec with invalid char
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,5 @@
+    -(eval):zformat:2: invalid spec: %:
+    -(eval):zformat:2: invalid spec: ):
+    -(eval):zformat:2: invalid spec: -:
+    -(eval):zformat:2: invalid spec: .:
+    -(eval):zformat:2: invalid spec: 0:
+    -(eval):zformat:2: invalid spec: 9:
+    -(eval):zformat:2: invalid spec: :
+    +(eval):zformat:2: invalid argument: -:
+    +(eval):zformat:2: invalid argument: .:
+    +(eval):zformat:2: invalid argument: 0:
+    +(eval):zformat:2: invalid argument: 9:
+    +(eval):zformat:2: invalid argument: :
+
+=== V13zformat #19 [fail] spec char longer than 1 byte
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -(eval):zformat:1: invalid spec: ab:
+    -(eval):zformat:2: invalid spec: \M-C\M-):
+    +(eval):zformat:1: invalid argument: ab:
+    +(eval):zformat:2: invalid argument: é:
+
+=== V13zformat #20 [fail] weird spec char
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #21 [fail] %( at end of format string
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    -%(
+    +
+
+=== V13zformat #22 [fail] incomplete ternary expression
+    reason: bad status 0, expected 1 from:
+
+=== V13zformat #23 [fail] ternary expression with impossible spec char
+    reason: bad status 0, expected 1 from:
+
+=== V13zformat #27 [fail] ternary expression returning impossible spec
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     %..
+     %--
+    -%2%-
+    +% -
+
+=== V13zformat #29 [fail] -a + -q not allowed
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -(eval):zformat:1: -q not allowed with -a
+    -(eval):zformat:2: -q not allowed with -a
+    +(eval):zformat:1: invalid argument: -qa
+    +(eval):zformat:2: invalid argument: -aq
+
+=== V13zformat #30 [fail] optional argument to -q
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +0,0 @@
+    -F
+    -F
+    -F
+    -F
+
+=== V13zformat #31 [fail] -q with and without optarg
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #32 [fail] -q with ternary expression
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #33 [fail] -q: min-width specifier ignores extra %s
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #34 [fail] -q: max-width specifier ignores extra %s
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #35 [fail] -q: ternary width test ignores extra %s
+    reason: bad status 1, expected 0 from:
+
+=== V13zformat #36 [fail] -Q, -Q0, -Q1
+    reason: bad status 1, expected 0 from:
+
+=== V15nearcolor #1 [unknown] automatically loaded without truecolor extension
+
+=== V15nearcolor #2 [unknown] not automatically loaded with truecolor extension
+
+=== V15nearcolor #3 [unknown] 88-colour conversion
+
+=== V15nearcolor #4 [unknown] 256-colour conversion
+
+=== W01history #7 [fail] Lines ending in backslash saved and restored to history
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,7 +1,12 @@
+    -    1  one\
+    -    2  two\\
+    -    3  three\\\
+    -    4  four\\\\
+    -    5  five\\\\\
+    -    6  while false\ndo\ntrue\\n && break\ndone
+    -    7  echo one\\ntwo
+    +    1  one\ 
+    +    2  two\\ 
+    +    3  three\\\ 
+    +    4  four\\\\ 
+    +    5  five\\\\\ 
+    +    6  while false
+    +do
+    +true\
+    + && break
+    +done
+    +    7  echo one\
+    +two
+
+=== W02jobs #1 [fail] job notification with no_long_list_jobs
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (2/1):
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -\[1] [0-9]##
+    -\[1]  + done[[:space:]]##:
+    +[1] 47337
+
+=== W02jobs #2 [fail] job notification with long_list_jobs
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (2/1):
+    --- expected
+    +++ actual
+    @@ -1,2 +1 @@
+    -\[1] [0-9]##
+    -\[1]  + [0-9]## done[[:space:]]##:
+    +[1] 47384
+
+=== W02jobs #6 [fail] running job with check_jobs + check_running_jobs
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (3/2):
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -\[1] [0-9]##
+    -zsh:*running jobs*
+    -zsh:*SIGHUPed*
+    +[1] 47620
+    +zsh: warning: 1 jobs SIGHUPed
+
+=== W02jobs #9 [fail] `jobs -d` with running job
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (4/3):
+    --- expected
+    +++ actual
+    @@ -1,4 +1,3 @@
+    -\[1] [0-9]##
+    -\[1]  + running*sleep*
+    -\(pwd : ?*\)
+    -zsh:*SIGHUPed*
+    +[1] 47788
+    +[1]  + running    sleep 3
+    +zsh: warning: 1 jobs SIGHUPed
+
+=== W02jobs #10 [fail] `jobs -r` and `jobs -s` with running job
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line mismatch (5/4):
+    --- expected
+    +++ actual
+    @@ -1,5 +1,4 @@
+    -\[1] [0-9]##
+    -\[1]  + running*sleep*
+    -\[1]  + running*sleep*
+    +[1] 47834
+    +[1]  + running    sleep 3
+     -
+    -zsh:*SIGHUPed*
+    +zsh: warning: 1 jobs SIGHUPed
+
+=== W02jobs #11 [notrun] various `kill` signals with multiple running jobs
+
+=== W02jobs #12 [unknown] jobs with no jobs
+
+=== W02jobs #13 [unknown] jobs in sub-shell with job in parent shell
+
+=== W02jobs #14 [unknown] jobs in sub-shell with job in same shell
+
+=== W02jobs #15 [unknown] jobs in sub-shell with job in parent + same shell
+
+=== W02jobs #16 [unknown] jobs in sub-shell with two jobs in same shell
+
+=== W02jobs #17 [unknown] disown current job
+
+=== W02jobs #18 [unknown] disown with no jobs
+
+=== W02jobs #19 [unknown] disown in sub-shell with job in parent shell
+
+=== W02jobs #20 [unknown] disown in sub-shell with job in same shell
+
+=== W02jobs #21 [unknown] disown in sub-shell with job in parent + same shell
+
+=== W02jobs #22 [unknown] disown -a
+
+=== W02jobs #23 [unknown] disown -a in sub-shell
+
+=== W02jobs #24 [unknown] background and disown with &| and &!
+
+=== W02jobs #25 [unknown] fg + bg in sub-shell
+
+=== W02jobs #26 [unknown] fg %- with function superjob does not pick internal job as previous
+
+=== W03jobparameters #2 [fail] $jobstate shows one job started in main shell or one started in subshell
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line 5:
+    --- expected
+    +++ actual
+    @@ -1,6 +1,6 @@
+    -\[1] [0-9]##
+    +[1] 96828
+     main
+    -running:+:*=running
+    +running:+:96828=running
+     sub
+    -running:+:*=running
+    -zsh:*SIGHUPed*
+    +running::96831=running
+    +zsh: warning: 1 jobs SIGHUPed
+
+=== W03jobparameters #3 [fail] $jobstate shows no job started in main shell but one started in subshell
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line 3:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     main
+     sub
+    -running:+:*=running
+    +running::96848=running
+
+=== X02zlevi #1 [fail] change last character in buffer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: good
+    -CURSOR: 4
+    +BUFFER: goox
+    +CURSOR: 3
+
+=== X02zlevi #2 [fail] change forward to matching bracket
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: chg
+    +BUFFER: chg}
+     CURSOR: 3
+
+=== X02zlevi #3 [fail] delete backwards to matching bracket
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: s
+    -CURSOR: 0
+    +BUFFER: s)
+    +CURSOR: 1
+
+=== X02zlevi #5 [fail] yank and paste blank line
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,3 @@
+     BUFFER: 1
+    -2
+    -3
+    -CURSOR: 5
+    +23
+    +CURSOR: 4
+
+=== X02zlevi #9 [fail] join lines with line count
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: one two three
+    - four
+    -CURSOR: 7
+    +BUFFER: one two three four
+    +CURSOR: 13
+
+=== X02zlevi #11 [fail] don't indent blank lines
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     BUFFER: 	if
+     	fi
+    -CURSOR: 1
+    +CURSOR: 4
+
+=== X02zlevi #12 [fail] additional indentation
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: 		i
+    -CURSOR: 2
+    +BUFFER: 			i
+    +CURSOR: 1
+
+=== X02zlevi #13 [fail] indent with one character on final line
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -BUFFER: 	one
+    +BUFFER: one
+     	x
+    -CURSOR: 1
+    +CURSOR: 0
+
+=== X02zlevi #18 [fail] yank up clears lastcol
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,4 @@
+     BUFFER: long
+       s
+     long
+    -CURSOR: 2
+    +CURSOR: 3
+
+=== X02zlevi #20 [fail] delete up clears lastcol
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,4 @@
+     BUFFER: long
+     long
+    -CURSOR: 0
+    +  sg
+    +CURSOR: 8
+
+=== X02zlevi #23 [fail] numeric args to both action and movement are multiplied (and saved for any repeat)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: eight
+    -seven eight
+    -CURSOR: 0
+    +BUFFER: bindkey -r "\e
+    +CURSOR: 13
+
+=== X02zlevi #24 [fail] paste register 1 to get last deletion
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+    -BUFFER:  doodleyankee
+    -CURSOR: 6
+    +BUFFER: yankee
+    +yankee
+    +CURSOR: 0
+
+=== X02zlevi #25 [fail] paste register 0 to get last yank
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     BUFFER: yankee
+    -yankee
+    +doodle
+     CURSOR: 7
+
+=== X02zlevi #27 [fail] appending to named register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,2 @@
+    -BUFFER: firs
+    -second
+    -
+    -CURSOR: 0
+    +BUFFER: firsty0ddaseconddd"aP
+    +CURSOR: 21
+
+=== X02zlevi #28 [fail] set one and then a different register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: word
+    -word
+    -CURSOR: 5
+    +BUFFER: word"byy"bp
+    +CURSOR: 11
+
+=== X02zlevi #29 [fail] set register then set black hole register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: win
+    -CURSOR: 1
+    +BUFFER: a"_cewinr
+    +CURSOR: 6
+
+=== X02zlevi #31 [fail] retrieve unnamed register after appending
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -BUFFER: second
+    +BUFFER: firstddasecond
+     CURSOR: 0
+
+=== X02zlevi #32 [fail] repeat advances to next killring register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: 9987654321
+    +BUFFER: 1111111111
+     CURSOR: 0
+
+=== X02zlevi #33 [fail] yank and delete to black hole register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: Zyankee e
+    -CURSOR: 0
+    +BUFFER: yankeyankee doodle
+    +CURSOR: 4
+
+=== X02zlevi #34 [fail] paste from black hole register and repeat
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,5 @@
+     BUFFER: bar
+    -CURSOR: 2
+    +foo
+    +foo
+    +foo
+    +CURSOR: 12
+
+=== X02zlevi #35 [fail] repeat paste from named register
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: stnwararart
+    -CURSOR: 9
+    +BUFFER: stac2lnwp..rt
+    +CURSOR: 11
+
+=== X02zlevi #37 [fail] character based put before followed by line based yank-pop
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: line
+    -SE
+    -CURSOR: 0
+    +BUFFER: SlineE
+    +CURSOR: 4
+
+=== X02zlevi #40 [fail] character based after before followed by line based yank-pop
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: SE
+    -line
+    -CURSOR: 3
+    +BUFFER: SlineE
+    +CURSOR: 4
+
+=== X02zlevi #41 [fail] undo initial change
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: end
+    -CURSOR: 3
+    +BUFFER: worend
+    +CURSOR: 6
+
+=== X02zlevi #42 [fail] repeat initial edit
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: text
+    -text
+    -CURSOR: 8
+    +BUFFER: textword
+    +CURSOR: 7
+
+=== X02zlevi #43 [fail] repeat initial edit with non-blank starting line
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: beforeafterafter
+    -CURSOR: 15
+    +BUFFER: afterword
+    +CURSOR: 8
+
+=== X02zlevi #44 [fail] repeat initial edit with overstrike set
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: binging
+    -CURSOR: 3
+    +BUFFER: inwordg
+    +CURSOR: 5
+
+=== X02zlevi #47 [fail] vi mode undo of initial and subsequent change
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: threewo
+    +BUFFER: threentwo
+     CURSOR: 5
+
+=== X02zlevi #48 [fail] undo invoked twice
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: z
+    -CURSOR: 1
+    +BUFFER: xyyxz
+    +CURSOR: 5
+
+=== X02zlevi #49 [fail] undo in insert mode, redo in command
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: 123
+    -CURSOR: 2
+    +BUFFER: 12
+    +CURSOR: 1
+
+=== X02zlevi #50 [fail] undo and redo in insert mode, undo in command
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: pre
+    -CURSOR: 2
+    +BUFFER: pre123
+    +CURSOR: 5
+
+=== X02zlevi #52 [fail] split the undo sequence
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: one
+    -CURSOR: 2
+    +BUFFER: onetw
+    +CURSOR: 4
+
+=== X02zlevi #53 [fail] setting mark and returning to original position
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: one wo
+    -CURSOR: 2
+    +BUFFER: one two
+    +CURSOR: 0
+
+=== X02zlevi #54 [fail] force character-wise change to join lines
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+    -BUFFER: keep wanted
+    -CURSOR: 5
+    +BUFFER: keepnot
+    +  unwanted
+    +CURSOR: 13
+
+=== X02zlevi #55 [fail] character-wise delete to beginning of line leaves the newline'
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -BUFFER: keep
+    +BUFFER: del
+     }
+    -CURSOR: 3
+    +CURSOR: 4
+
+=== X02zlevi #56 [fail] force line-wise delete of line
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,3 @@
+    -BUFFER: keep
+    +BUFFER: 
+    +keep
+     CURSOR: 0
+
+=== X02zlevi #57 [fail] line-wise force of a text object
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: X
+    -CURSOR: 1
+    +BUFFER: 
+    +CURSOR: 0
+
+=== X02zlevi #58 [fail] change selection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: one x
+    -CURSOR: 5
+    +BUFFER: xwo
+    +CURSOR: 1
+
+=== X02zlevi #59 [fail] change character wise selection with C acts linewise
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,5 @@
+    -BUFFER: new
+    +BUFFER: one
+    +two
+    +tnew
+     four
+    -CURSOR: 3
+    +CURSOR: 12
+
+=== X02zlevi #60 [fail] x kills selections
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: x g
+    +BUFFER: x esting
+     CURSOR: 2
+
+=== X02zlevi #63 [fail] put over selection at end of buffer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: bhello
+    -CURSOR: 5
+    +BUFFER: byhelloe
+    +CURSOR: 6
+
+=== X02zlevi #68 [fail] yank linewise and put over linewise selection at end of buffer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     BUFFER: one
+     one
+    -CURSOR: 4
+    +CURSOR: 0
+
+=== X02zlevi #71 [fail] yank linewise and put over character-wise selection in middle of buffer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,2 @@
+    -BUFFER: o
+    -one
+    -e
+    +BUFFER: onene
+     CURSOR: 2
+
+=== X02zlevi #72 [fail] yank linewise and put over character-wise selection at end of buffer
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,3 @@
+    -BUFFER: one
+    -t
+    -one
+    -CURSOR: 6
+    +BUFFER: onene
+    +two
+    +CURSOR: 2
+
+=== X02zlevi #73 [fail] paste last (9th) register over a selection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: ba9c
+    -CURSOR: 0
+    +BUFFER: abc123456789abc123456789abc123456789abc123456789abc123456789abc123456789abc123456789abc123456789abc123456789abc123456789
+    +CURSOR: 11
+
+=== X02zlevi #74 [fail] delete blank line using selection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,2 @@
+    -BUFFER: one
+    -two
+    -CURSOR: 4
+    +BUFFER: two
+    +CURSOR: 0
+
+=== X02zlevi #75 [fail] toggle case of selection
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: One tWO three
+    -CURSOR: 4
+    +BUFFER: One Two tHREE
+    +CURSOR: 8
+
+=== X02zlevi #76 [fail] backward word
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,4 @@
+    -BUFFER: k j--iww  hwwg--
+    -f
+    +BUFFER: kj i--hww  gwwf--
+     eww
+     d
+     c--
+
+=== X02zlevi #84 [fail] word motion with multibyte characters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: /い/え/き
+    +BUFFER: /ぃ�/ぃ�/ぃ�
+     CURSOR: 2
+
+=== X02zlevi #85 [fail] delete all word on blanks
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: word
+    +BUFFER: ----    ----
+     CURSOR: 0
+
+=== X02zlevi #86 [fail] delete all word on alphanumerics
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER:     --------
+    +BUFFER: ----word    
+     CURSOR: 4
+
+=== X02zlevi #87 [fail] delete all word on other characters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER:     wordword
+    +BUFFER: word----    
+     CURSOR: 4
+
+=== X02zlevi #89 [fail] all word with existing selection and cursor before mark
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,5 @@
+    -BUFFER: g---f   worde   ----dord
+    -c  $
+    -b---
+    -aone
+    -CURSOR: 0
+    +BUFFER: awmdawmeawmfawmgv`ara`brb`crc$r$`drd`ere`frf`grgword    ----word
+    +    
+    +----
+    +done
+    +CURSOR: 48
+
+=== X02zlevi #90 [fail] all word with existing selection and mark before cursor
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: ----   aword   bworc---d
+    -CURSOR: 19
+    +BUFFER: awvrd`ara`brb`crcword    word----
+    +CURSOR: 17
+
+=== X02zlevi #91 [fail] in word with existing selection and cursor before mark
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,4 +1,2 @@
+    -BUFFER: E.-.w. .w.--
+    -
+    -ww
+    -CURSOR: 1
+    +BUFFER:  --ww  iwmdiwmeiwvrE`ar.`br.`cr.`dr.`er.
+    +CURSOR: 40
+
+=== X02zlevi #92 [fail] in word with existing selection and mark before cursor
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -BUFFER:  .
+    - .-.w. .wE--
+    -CURSOR: 10
+    +BUFFER: iwmdiwmeiwvrE`ar.`br.`cr.`dr.`er.
+    +  --ww  ww--
+    +CURSOR: 33
+
+=== X02zlevi #93 [fail] all argument for different arguments
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: X `one`X $(echo two)X" three "X$'four'XfiveX${six:-6}
+    -CURSOR: 0
+    +BUFFER:  aombvvaaomcvvaaomdvvaaomevvaaomfv`arX`brX`crX`drX`erX`frX `one`  $(echo two) " three " $'four'	five ${six:-6}
+    +CURSOR: 58
+
+=== X02zlevi #94 [fail] in argument for different arguments
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: 1ls `2`  $(3) "4" $'5' ${6}
+    +BUFFER: 1s `echo x`  $((3+4)) "a b" $'\t\n' ${d%/}
+     CURSOR: 0
+
+=== X03zlebindkey #4 [fail] binding to CSI introduction is not used if a full sequence arrives
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: $
+    -CURSOR: 0
+    +BUFFER: altbracket17~$
+    +CURSOR: 13
+
+=== X03zlebindkey #10 [fail] bindkey -s multibyte characters
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,8 +1,8 @@
+     BUFFER: bar
+     CURSOR: 3
+    -BUFFER: ホ
+    +BUFFER: �
+     CURSOR: 1
+    -BUFFER: ホ
+    +BUFFER: 
+    +CURSOR: 0
+    +BUFFER: �
+     CURSOR: 1
+    -BUFFER: ホ
+    -CURSOR: 1
+
+=== X04zlehighlight #1 [fail] region highlight - standout overlapping on other region_highlight entry
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #2 [fail] basic region_highlight with 8 colors
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #3 [fail] later highlight attribute takes precedence over earlier one that contradicts
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #4 [fail] unrecognised highlight attribute and any subsequent ones ignored
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #5 [fail] disable highlight attribute with "no" prefix
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #6 [fail] use layers to override precedence of ordering
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #7 [fail] region_highlight memo information round trips
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #8 [fail] region_highlight memo information forward compatibility, #1
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #9 [fail] region_highlight memo information forward compatibility, #2
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #10 [fail] region_highlight memo information forward compatibility, #3: NULs
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #11 [fail] basic region_highlight with true-color (hex-triplets)
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #12 [fail] basic region_highlight with near-color (hex-triplets at input)
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #13 [fail] basic region_highlight with near-color using extremes - all black and all white
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #14 [fail] overlapping region_highlight with 8 colors
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #15 [fail] overlapping region_highlight with true-color
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #16 [fail] overlapping region_highlight with near-color (hex-triplets at input)
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #17 [fail] zle $widgetname -f nolast
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #18 [fail] overlapping backgrounds with opacity and nearcolor
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #19 [fail] opacity with an unknown base colour
+    reason: bad status 1, expected 0 from:
+
+=== X04zlehighlight #20 [fail] foreground and background opacity
+    reason: bad status 1, expected 0 from:
+
+=== X05zleincarg #22 [fail] incarg works when the result has more number of digits than the original
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: 1001
+    -CURSOR: 3
+    +BUFFER: 002
+    +CURSOR: 2
+
+=== X05zleincarg #23 [fail] decargs works on integers with leading zeros when the result has more digits than the original
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: -1999
+    -CURSOR: 4
+    +BUFFER: 000
+    +CURSOR: 2
+
+=== X05zleincarg #91 [fail] Repeats of vim-incarg takes the numeric argument into account
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: echo 20
+    -CURSOR: 6
+    +BUFFER: echo 2
+    +CURSOR: 5
+
+=== X05zleincarg #92 [fail] Repeats of vim-backward-incarg takes the numeric argument into account
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +1,2 @@
+    -BUFFER: echo 20 foo
+    -CURSOR: 6
+    +BUFFER: echo 1 foo
+    +CURSOR: 5
+
+=== X06termquery #1 [notrun] foot response to terminal queries
+
+=== X06termquery #2 [unknown] wayst response to terminal queries (shorter colour sequences)
+
+=== X06termquery #3 [unknown] WezTerm response to terminal queries (space separates version and longer RGB response)
+
+=== X06termquery #4 [unknown] urxvt response to terminal queries (bug in end of colour sequences)
+
+=== X06termquery #5 [unknown] kitty response to terminal queries (responds with error to RGB request)
+
+=== X06termquery #6 [unknown] xterm response to terminal queries
+
+=== X06termquery #7 [unknown] type-ahead
+
+=== X06termquery #8 [unknown] no response - timeout
+
+=== X06termquery #9 [unknown] paste after from clipboard
+
+=== X06termquery #10 [unknown] paste before from clipboard
+
+=== X06termquery #11 [unknown] paste over from clipboard
+
+=== Z04zgetopt #1 [fail] -o or -l required (usage error)
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,2 +0,0 @@
+    --- a b c
+    --- a b c
+
+=== Z04zgetopt #2 [fail] weird short-option specs
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #3 [fail] weird long-option specs
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #4 [fail] short options
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #5 [fail] long options
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #6 [fail] zero args to parse
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #7 [fail] parsing terminator
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #8 [fail] POSIXLY_CORRECT
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #9 [fail] function-mode quoting style
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #10 [fail] bad options
+    reason: bad status 2, expected 1 from:
+
+=== Z04zgetopt #11 [fail] missing optargs
+    reason: bad status 2, expected 1 from:
+
+=== Z04zgetopt #12 [fail] return status
+    reason: output differs from expected as shown above for:
+    Pattern match failed, line 3:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+     2
+     2
+    -1
+    +2
+
+=== Z04zgetopt #13 [fail] array output
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,3 +1,3 @@
+    -typeset -g -a argv=( -a -- b c )
+     typeset -g -a argv=( -a b c )
+    -typeset -a v=( -a -- b c )
+    +typeset -g -a argv=( -a b c )
+    +typeset -a v=(  )
+
+=== Z04zgetopt #14 [fail] automatic name
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,10 @@
+    -(eval): bad option: -x
+    -(eval): missing argument for option: -a
+    -(anon): bad option: -x
+    -func: bad option: -x
+    -f1: bad option: -x
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+
+=== Z04zgetopt #15 [fail] manual name with -n
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1,5 +1,10 @@
+    -aaa: bad option: -x
+    -aaa: missing argument for option: -a
+    -bbb: bad option: -x
+    -ccc: bad option: -x
+    -ddd: bad option: -x
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+
+=== Z04zgetopt #16 [fail] example from util-linux's getopt-example.bash
+    reason: bad status 2, expected 0 from:
+
+=== Z04zgetopt #17 [fail] result immediately after auto-load
+    reason: output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1 @@
+    --a -b --
+    +''
+
+=== Z04zgetopt #18 [fail] error name with no_function_argzero
+    reason: error output differs from expected as shown above for:
+    --- expected
+    +++ actual
+    @@ -1 +1,2 @@
+    -(eval):zgetopt: missing option spec
+    +zgetopt:zparseopts:22: no default array defined: -n
+    +usage: zgetopt [-A <array>] [-l <spec>] [-n <name>] [-o <spec>] -- <arg> ...
+

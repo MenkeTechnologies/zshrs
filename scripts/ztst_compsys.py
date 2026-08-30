@@ -1078,12 +1078,23 @@ class Minimizer:
             a, b = fa.result(), fb.result()
         timed_a = bool(a) and a[0].startswith("<<TIMED-OUT")
         timed_b = bool(b) and b[0].startswith("<<TIMED-OUT")
-        if timed_a and not timed_b:
-            # Only the reference hung, which means the probe measured the host
-            # rather than the shells (a candidate that breaks the driver hangs
-            # both sides, and that is a legitimate "no divergence" answer worth
-            # no retry at all).  Retry once with room to spare rather than let a
-            # loaded machine silently steer the reduction.
+        # Retry a one-sided timeout rather than let a loaded machine steer the
+        # reduction.  Two cases, both measured on this host:
+        #
+        # * only the REFERENCE hung -- the probe measured the host, not the
+        #   shells (a candidate that breaks the driver hangs both sides, and
+        #   that is a legitimate "no divergence" answer worth no retry).
+        # * only the SHELL UNDER TEST hung *on the first probe* -- that probe
+        #   fixes the divergence signature for the whole reduction, so a false
+        #   hang there anchors every later probe on "<<TIMED-OUT>>" and the
+        #   reduction chases a hang that does not exist.  Measured:
+        #   Y02compmatch#2 anchored on a 12 s timeout under load; the same
+        #   script finishes in both shells given 90 s, and the real divergence
+        #   is a compadd diagnostic.  Later probes are not retried, because by
+        #   then the anchor already says whether a hang is the bug.
+        if (timed_a and not timed_b) or (
+            timed_b and not timed_a and self.signature is None
+        ):
             self.invalid_probes += 1
             saved, self.timeout = self.timeout, self.timeout * 3
             try:
@@ -1470,6 +1481,794 @@ def do_minimize(args, zsh_build: Path, harness: Path, sut: Path, sut_env: dict[s
 
 
 # ---------------------------------------------------------------------------
+# Core-suite reduction.  The Y files are driven through a pty by comptest; the
+# other 70 are plain shell, so their assertions reduce far more cheaply -- no
+# pty, no zpty, ~20 ms a probe -- and reduce to a construct rather than to a
+# keystroke sequence.
+#
+# The chunk is replayed the way Test/ztst.zsh runs it (ztst.zsh:298-311): the
+# code is eval'd inside an anonymous function, so `local` scopes and `(eval):N:`
+# error prefixes come out the same as they do in the suite.  Upstream files stay
+# read-only inputs; nothing here rewrites one.
+# ---------------------------------------------------------------------------
+
+CORE_DRIVER_TEMPLATE = r"""
+# {banner}
+#
+# Reduced from upstream {origin}
+#   assertion #{index}: {message}
+#
+# Run it against each shell and diff the two outputs:
+#
+{cmds}
+#
+# Derived from upstream's own {origin_base}; that file is not modified.  The
+# preamble reproduces the parts of Test/ztst.zsh a chunk can observe -- the
+# module path (ztst.zsh:48-50), $fpath (ztst.zsh:112-114), zsh/parameter
+# (ztst.zsh:54), the un-exported WORDCHARS (ztst.zsh:46) and the option state
+# captured at ztst.zsh:59 -- and each chunk is replayed through the same
+# anonymous-function wrapper ZTST_execchunk uses (ztst.zsh:301-305), so `local`
+# scopes and "(eval):N:" error prefixes come out as they do in the suite.
+
+emulate -R zsh
+setopt extendedglob nonomatch
+unset -m LC_\*
+export LANG=C
+
+build={build}
+work=$(mktemp -d "${{TMPDIR:-/tmp}}/ztst_core_repro.XXXXXX")
+# $2 is a ready-made module farm, passed by the reducer so that a hundred
+# probes do not each re-glob the build tree and re-link 38 modules.  Standalone
+# (no $2) the script builds its own, so the emitted repro stays self-contained.
+if [[ -n $2 ]]; then
+  module_path=( $2 )
+else
+  mkdir -p $work/Modules/zsh
+  for so in $build/Src/**/*.so(N); do ln -sf $so $work/Modules/zsh; done
+  module_path=( $work/Modules )
+fi
+ZTST_srcdir=$build/Test
+# Several tests run "$ZTST_exe -fc ..." or "$ZTST_testdir/../Src/zsh"; in the
+# suite both are the shell under test (Test/Makefile.in:56, and the Src/zsh
+# symlink this runner stages next to the test directory), so the same layout
+# has to exist here -- otherwise those tests fail on a missing path and the
+# reduction anchors on the driver instead of on the bug.
+ZTST_exe=${{1:-$build/Src/zsh}}
+mkdir -p $work/Src $work/Test
+ln -sf $ZTST_exe $work/Src/zsh
+ZTST_testdir=$work/Test
+cd $ZTST_testdir
+fpath=( $ZTST_srcdir/../Functions/*~*/CVS(/)
+        $ZTST_srcdir/../Completion
+        $ZTST_srcdir/../Completion/*/*~*/CVS(/) )
+zmodload zsh/parameter 2>/dev/null
+typeset +x WORDCHARS
+emulate -R zsh
+
+{prep}
+{context}
+{marker}
+{target}
+cd /
+rm -rf $work
+"""
+
+# Opens/closes a compound command.  Line-granular and deliberately crude: a
+# candidate that splits one is rejected by the probe (both shells then fail the
+# same way, so the divergence disappears), it is never silently accepted.
+_SH_OPEN = {"if", "for", "while", "until", "case", "repeat", "select", "foreach", "function"}
+_SH_CLOSE = {"fi", "done", "esac", "end"}
+
+
+def group_shell_statements(lines: list[str]) -> list[list[str]]:
+    """Group lines into compound-command-balanced statements."""
+    out: list[list[str]] = []
+    cur: list[str] = []
+    depth = 0
+    for ln in lines:
+        cur.append(ln)
+        body = ln.split("#", 1)[0] if ln.lstrip().startswith("#") else ln
+        words = re.findall(r"[A-Za-z_]+|[{}()]", body)
+        opens = sum(1 for w in words if w in _SH_OPEN or w == "{")
+        closes = sum(1 for w in words if w in _SH_CLOSE or w == "}")
+        depth += opens - closes
+        if ln.rstrip().endswith(("\\", "|", "&&", "||", "{")) and depth <= 0:
+            continue
+        if depth <= 0:
+            out.append(cur)
+            cur = []
+            depth = 0
+    if cur:
+        out.append(cur)
+    return out
+
+
+def core_prep_statements(pre: list[str]) -> list[list[str]]:
+    """The %prep body, as reducible statements."""
+    body: list[str] = []
+    in_prep = False
+    for ln in pre:
+        if ln.startswith("%"):
+            in_prep = ln.split()[0] == "%prep"
+            continue
+        if not in_prep or not ln.strip():
+            continue
+        body.append(ln)
+    return group_shell_statements(body)
+
+
+def sq(code: list[str]) -> str:
+    """One chunk as a single-quoted shell word, ready for ``eval``."""
+    text = "\n".join(ln.rstrip() for ln in code)
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def core_chunk(code: list[str]) -> str:
+    """Replay one chunk exactly as ZTST_execchunk does (ztst.zsh:301-305)."""
+    if not [ln for ln in code if ln.strip()]:
+        return ""
+    return "() { eval " + sq(code) + " } </dev/null\nprint -ru2 -- \"<<STATUS:$?>>\""
+
+
+CORE_MARKER = "<<<ZTST_MIN_TARGET>>>"
+
+_RE_NUM = re.compile(r"\d+")
+
+
+def core_normalise(line: str, work: str) -> str:
+    """Drop the things that move between probes but are not the bug."""
+    line = line.replace(work, "<W>")
+    # "probe-00042.zsh:7: ..." -- both the probe id and the line number shift as
+    # code is deleted, and neither is what the assertion is about.
+    line = re.sub(r"(?:^|(?<=[: ]))[^ :]*probe-\d+\.zsh:\d+:", "<SCRIPT>:N:", line)
+    line = re.sub(r"\(eval\):\d+:", "(eval):N:", line)
+    return line
+
+
+@dataclass
+class CoreWitness:
+    """What "still the same bug" means for a core reduction.
+
+    A reducer with no anchor drifts: it happily deletes the code that produces
+    the interesting divergence and then reports whatever unrelated divergence is
+    left behind.  The witness is one normalised line, fixed by the first probe,
+    that must keep appearing on the same side and only on that side.
+    """
+
+    side: str = ""  # "sut" or "ref"
+    line: str = ""
+
+    def holds(self, a: list[str], b: list[str], work: str) -> bool:
+        if not self.line:
+            return a != b
+        na = {core_normalise(x, work) for x in a}
+        nb = {core_normalise(x, work) for x in b}
+        if self.side == "sut":
+            return self.line in nb and self.line not in na
+        return self.line in na and self.line not in nb
+
+    @classmethod
+    def pick(cls, a: list[str], b: list[str], work: str) -> "CoreWitness":
+        na = [core_normalise(x, work) for x in a]
+        nb = [core_normalise(x, work) for x in b]
+        sa, sb = set(na), set(nb)
+        only_b = [x for x in nb if x not in sa]
+        only_a = [x for x in na if x not in sb]
+        # An error line carries far more signal than a data line, and a status
+        # difference more than either; prefer them in that order.
+        def best(cands: list[str]) -> str:
+            for pat in (r"^S:", r"^E:.*:\d*:? ", r"^E:"):
+                hit = [c for c in cands if re.search(pat, c)]
+                if hit:
+                    return hit[0]
+            return cands[0]
+        if only_b:
+            return cls("sut", best(only_b))
+        if only_a:
+            return cls("ref", best(only_a))
+        return cls()
+
+
+@dataclass
+class CoreRepro:
+    origin: str
+    index: int
+    message: str
+    prep: list[list[str]]
+    context: list[list[str]]
+    target: list[str]
+    probes: int = 0
+    converged: bool = False
+    baseline_diverged: bool = False
+    note: str = ""
+    witness: str = ""
+    out_a: list[str] = field(default_factory=list)
+    out_b: list[str] = field(default_factory=list)
+    path: str = ""
+
+
+class CoreMinimizer:
+    """Reduce one non-Y assertion to the smallest still-diverging script."""
+
+    def __init__(
+        self,
+        *,
+        zsh_build: Path,
+        shell_a: Path,
+        shell_b: Path,
+        sut_env: dict[str, str],
+        budget: int,
+        timeout: int,
+        workdir: Path,
+        verbose: bool = False,
+    ) -> None:
+        self.zsh_build = zsh_build
+        self.shell_a = shell_a
+        self.shell_b = shell_b
+        self.sut_env = sut_env
+        self.budget = budget
+        self.spent = 0
+        self.timeout = timeout
+        self.workdir = workdir
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        self.verbose = verbose
+        # One module farm for the whole reduction.  Rebuilding it inside every
+        # probe cost more than the shells did: 38 symlinks and a recursive glob
+        # of the build tree, twice per probe pair.
+        self.moddir = self.workdir / "Modules"
+        collect_modules(zsh_build, self.moddir)
+        self.cache: dict[tuple[str, str], list[str]] = {}
+        self.witness = CoreWitness()
+        self.probe_seq = itertools.count(1)
+
+    # -- probing ----------------------------------------------------------
+    def _run(self, shell: Path, script: str, env_extra: dict[str, str]) -> list[str]:
+        key = (str(shell), script)
+        if key in self.cache:
+            return self.cache[key]
+        seq = next(self.probe_seq)
+        d = self.workdir / f"p{seq:06d}"
+        d.mkdir(exist_ok=True)
+        # Same argv[0] rule as the Y path: zsh takes its emulation from the
+        # first character of argv[0] (Src/options.c:533-548), and the shell's
+        # own name appears in its error messages, so both sides must be "zsh".
+        link = d / "zsh"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(shell)
+        path = d / f"probe-{seq:05d}.zsh"
+        path.write_text(script)
+        env = {
+            "HOME": os.environ.get("HOME", "/"),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "TERM": "dumb",
+            "LANG": "C",
+            "TMPDIR": str(d),
+            "TMPPREFIX": str(d / "zsh"),
+        }
+        env.update(env_extra)
+        proc = subprocess.Popen(
+            [str(link), "-f", str(path), str(link), str(self.moddir)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            cwd=str(d),
+            start_new_session=True,
+        )
+        try:
+            so, se = proc.communicate(timeout=self.timeout)
+            out = ["O:" + x for x in so.decode("utf-8", "replace").splitlines()]
+            err = ["E:" + x for x in se.decode("utf-8", "replace").splitlines()]
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            subprocess.run(["pkill", "-9", "-f", str(d)], capture_output=True)
+            try:
+                proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            out, err = ["O:<<TIMED-OUT after %ds>>" % self.timeout], []
+        # Only what the target chunk produced: without this the earlier chunks'
+        # output is part of the comparison and no context chunk can be dropped.
+        out = _after_marker(out)
+        err = _after_marker(err)
+        res = out + err
+        shutil.rmtree(d, ignore_errors=True)
+        self.cache[key] = res
+        return res
+
+    def script_for(self, rep: CoreRepro, *, marker: bool, cmds: list[str], banner: str) -> str:
+        return CORE_DRIVER_TEMPLATE.format(
+            banner=banner,
+            origin=rep.origin,
+            origin_base=rep.origin.split("#")[0] + ".ztst",
+            index=rep.index,
+            message=rep.message or "(no message)",
+            cmds="\n".join(f"#   {c}" for c in cmds) or "#   (see the report)",
+            build=self.zsh_build,
+            prep="\n".join(core_chunk(s) for s in rep.prep),
+            context="\n".join(core_chunk(c) for c in rep.context),
+            marker=(
+                f"print -r -- '{CORE_MARKER}'\nprint -ru2 -- '{CORE_MARKER}'"
+                if marker
+                else ""
+            ),
+            target=core_chunk(rep.target),
+        )
+
+    def diverges(self, rep: CoreRepro) -> tuple[bool, list[str], list[str]]:
+        script = self.script_for(rep, marker=True, cmds=[], banner="probe")
+        self.spent += 1
+        with cf.ThreadPoolExecutor(max_workers=2) as pool:
+            fa = pool.submit(self._run, self.shell_a, script, {})
+            fb = pool.submit(self._run, self.shell_b, script, self.sut_env)
+            a, b = fa.result(), fb.result()
+        keep = a != b and self.witness.holds(a, b, str(self.workdir))
+        if self.verbose:
+            print(
+                f"    probe {self.spent:3d}/{self.budget} {'keep' if keep else 'drop'} "
+                f"(prep={len(rep.prep)} ctx={len(rep.context)} tgt={len(rep.target)}L)",
+                file=sys.stderr,
+            )
+        return keep, a, b
+
+    def exhausted(self) -> bool:
+        return self.spent >= self.budget
+
+    # -- reduction --------------------------------------------------------
+    def _drop_list(self, rep: CoreRepro, attr: str) -> bool:
+        items = list(getattr(rep, attr))
+        if not items:
+            return True
+        setattr(rep, attr, [])
+        if self.exhausted():
+            setattr(rep, attr, items)
+            return False
+        if self.diverges(rep)[0]:
+            return True
+        setattr(rep, attr, items)
+        i = 0
+        while i < len(items):
+            if self.exhausted():
+                setattr(rep, attr, items)
+                return False
+            trial = items[:i] + items[i + 1 :]
+            setattr(rep, attr, trial)
+            if self.diverges(rep)[0]:
+                items = trial
+            else:
+                i += 1
+        setattr(rep, attr, items)
+        return True
+
+    def _reduce_target(self, rep: CoreRepro) -> bool:
+        stmts = group_shell_statements(rep.target)
+        i = 0
+        while i < len(stmts):
+            if self.exhausted():
+                rep.target = [ln for s in stmts for ln in s]
+                return False
+            if len(stmts) == 1:
+                break
+            trial = stmts[:i] + stmts[i + 1 :]
+            rep.target = [ln for s in trial for ln in s]
+            if self.diverges(rep)[0]:
+                stmts = trial
+            else:
+                i += 1
+        rep.target = [ln for s in stmts for ln in s]
+        return True
+
+    def minimize(self, doc_pre: list[str], chunks: list[Chunk], origin: str, index: int) -> CoreRepro:
+        target = chunks[index - 1]
+        rep = CoreRepro(
+            origin=f"{origin}#{index}",
+            index=index,
+            message=target.message,
+            prep=core_prep_statements(doc_pre),
+            context=[list(c.code) for c in chunks[: index - 1]],
+            target=list(target.code),
+        )
+        start = self.spent
+        self.witness = CoreWitness()
+        diverged, a, b = self.diverges(rep)
+        rep.baseline_diverged = diverged
+        if not diverged:
+            rep.note = (
+                "the two shells agree once the assertion is replayed outside ztst.zsh; "
+                "the in-suite failure is in the harness path or in state this driver "
+                "does not reproduce"
+            )
+            rep.probes = self.spent - start
+            rep.out_a, rep.out_b = a, b
+            return rep
+        self.witness = CoreWitness.pick(a, b, str(self.workdir))
+        rep.witness = f"{self.witness.side}: {self.witness.line}" if self.witness.line else ""
+
+        converged = True
+        converged &= self._drop_list(rep, "context")
+        converged &= self._reduce_target(rep)
+        converged &= self._drop_list(rep, "prep")
+        if converged and not self.exhausted():
+            converged &= self._reduce_target(rep)
+
+        ok, a, b = self.diverges(rep)
+        rep.out_a, rep.out_b = a, b
+        rep.converged = bool(converged) and ok
+        if not ok:
+            rep.note = "final re-check no longer diverges (non-deterministic assertion)"
+        elif not converged:
+            rep.note = f"probe budget of {self.budget} exhausted; result is not 1-minimal"
+        rep.probes = self.spent - start
+        return rep
+
+
+def _after_marker(lines: list[str]) -> list[str]:
+    for i in range(len(lines) - 1, -1, -1):
+        if CORE_MARKER in lines[i]:
+            return lines[i + 1 :]
+    return lines
+
+
+def do_core_minimize(args, zsh_build: Path, sut: Path, sut_env: dict[str, str]) -> int:
+    """``--core-minimize FILE#N`` / ``--core-minimize-from <json|gate>``."""
+    targets: list[tuple[str, int]] = []
+    for spec in args.core_minimize:
+        name, _, idx = spec.partition("#")
+        if not idx.isdigit():
+            die(f"--core-minimize wants FILE#N, got {spec!r}")
+        targets.append((name, int(idx)))
+    if args.core_minimize_from:
+        doc = json.loads(Path(args.core_minimize_from).read_text())
+        if "suite" in doc:  # a gate pin
+            for fname, per in sorted(doc["suite"].items()):
+                for k, v in sorted(per.items(), key=lambda kv: int(kv[0])):
+                    if v in ("fail", "xpass"):
+                        targets.append((fname, int(k)))
+        else:  # a --json run
+            for r in doc["results"]:
+                for a in r["assertions"]:
+                    if a["status"] in ("fail", "xpass"):
+                        targets.append((r["name"], a["index"]))
+    if args.core_minimize_only:
+        keep = set(args.core_minimize_only.split(","))
+        targets = [t for t in targets if t[0] in keep]
+    if args.core_minimize_skip:
+        drop = set(args.core_minimize_skip.split(","))
+        targets = [t for t in targets if t[0] not in drop]
+    if args.minimize_limit:
+        targets = targets[: args.minimize_limit]
+    if not targets:
+        die("nothing to minimize")
+
+    repro_dir = (
+        Path(args.repro_dir) if args.repro_dir
+        else REPO / "tests" / "ztst_compsys" / "repros_core"
+    )
+    repro_dir.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="ztst_coremin."))
+    snap = work / "sut0" / "zsh"
+    snap.parent.mkdir(parents=True)
+    shutil.copy2(sut, snap)
+    snap.chmod(0o755)
+
+    zsh_ref = zsh_build / "Src" / "zsh"
+    mini = CoreMinimizer(
+        zsh_build=zsh_build,
+        shell_a=zsh_ref,
+        shell_b=snap,
+        sut_env=sut_env,
+        budget=args.minimize_budget,
+        timeout=args.minimize_timeout,
+        workdir=work,
+        verbose=args.verbose_probes,
+    )
+
+    struct: dict[str, tuple[list[str], list[Chunk]]] = {}
+    records: list[dict] = []
+    out_report = [
+        "# core assertion -> minimal standalone repro",
+        "",
+        f"reference shell : {zsh_ref}",
+        f"shell under test: {sut}",
+        f"budget per assertion: {args.minimize_budget} probe pairs",
+        f"probe timeout   : {args.minimize_timeout}s",
+        f"assertions      : {len(targets)}",
+        "",
+    ]
+    t0 = time.time()
+    for n, (name, index) in enumerate(targets, 1):
+        ztst = zsh_build / "Test" / f"{name}.ztst"
+        if not ztst.is_file():
+            continue
+        if name not in struct:
+            struct[name] = parse_ztst_struct(ztst)
+        pre, chunks = struct[name]
+        if index > len(chunks):
+            out_report.append(f"## {name}#{index}: only {len(chunks)} assertions in {name}")
+            continue
+        mini.spent = 0
+        mini.cache.clear()
+        before = list(chunks[index - 1].code)
+        print(
+            f"[core-minimize {n}/{len(targets)}] {name}#{index} "
+            f"{chunks[index-1].message[:60]}",
+            file=sys.stderr,
+        )
+        rep = mini.minimize(pre, chunks, name, index)
+        path = repro_dir / f"{name.lower()}_{index:03d}.zsh"
+        cmds = [
+            f"{zsh_ref} -f {path} {zsh_ref} > /tmp/a.txt 2>&1",
+            (" ".join(f"{k}={v}" for k, v in sorted(sut_env.items())) + " " if sut_env else "")
+            + f"{sut} -f {path} {sut} > /tmp/b.txt 2>&1",
+            "diff -u /tmp/a.txt /tmp/b.txt",
+        ]
+        rep.path = str(path)
+        if rep.baseline_diverged:
+            path.write_text(
+                mini.script_for(
+                    rep, marker=False, cmds=cmds,
+                    banner="GENERATED by scripts/ztst_compsys.py --core-minimize; do not edit",
+                )
+            )
+        verdict = (
+            "converged" if rep.converged
+            else ("budget exhausted" if rep.baseline_diverged else "not reproducible standalone")
+        )
+        out_report.append(f"## {name}#{index}  {rep.message}")
+        out_report.append(f"    reduction: {verdict}, {rep.probes} probe pairs spent")
+        if rep.witness:
+            out_report.append(f"    witness: {rep.witness}")
+        if rep.note:
+            out_report.append(f"    note: {rep.note}")
+        out_report.append("")
+        out_report.append("    before (upstream assertion code):")
+        out_report += [f"      {ln.rstrip()}" for ln in before]
+        out_report.append("")
+        out_report.append("    after (reduced):")
+        kept = (
+            [f"      {ln.strip()}" for s in rep.prep for ln in s]
+            + [f"      {ln.strip()}" for c in rep.context for ln in c]
+            + [f"      {ln.strip()}" for ln in rep.target]
+        )
+        out_report += kept or ["      (empty)"]
+        out_report.append("")
+        if rep.baseline_diverged:
+            out_report.append(f"    repro: {path}")
+            out_report.append("    zsh:")
+            out_report += [f"      {ln}" for ln in rep.out_a] or ["      (no output)"]
+            out_report.append("    sut:")
+            out_report += [f"      {ln}" for ln in rep.out_b] or ["      (no output)"]
+        out_report.append("")
+        records.append(
+            {
+                "origin": rep.origin,
+                "file": name,
+                "index": index,
+                "message": rep.message,
+                "probes": rep.probes,
+                "converged": rep.converged,
+                "witness": rep.witness,
+                "reproducible_standalone": rep.baseline_diverged,
+                "note": rep.note,
+                "repro": str(path) if rep.baseline_diverged else "",
+                "kept_lines": [ln.strip() for ln in kept],
+                "zsh": rep.out_a,
+                "sut": rep.out_b,
+            }
+        )
+        if args.json:
+            Path(args.json).write_text(json.dumps(records, indent=1) + "\n")
+        if args.out:
+            Path(args.out).write_text("\n".join(out_report) + "\n")
+    out_report.append(f"# wall clock: {time.time() - t0:.0f}s")
+    text = "\n".join(out_report)
+    if args.out:
+        Path(args.out).write_text(text + "\n")
+    else:
+        print(text)
+    if args.json:
+        Path(args.json).write_text(json.dumps(records, indent=1) + "\n")
+    subprocess.run(["pkill", "-9", "-f", str(work)], capture_output=True)
+    shutil.rmtree(work, ignore_errors=True)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Clustering.  A score is not actionable and neither is a list of 469 failing
+# assertions; what is actionable is "these N assertions are one bug".  The
+# grouping key is computed from the data, never assigned by hand:
+#
+#   * a reduced assertion (a --core-minimize json) is keyed on its *witness* --
+#     the one normalised line, chosen by the reducer, that the two shells
+#     disagree about.  Two assertions that reduce to the same witness are the
+#     same bug by construction.
+#   * an un-reduced assertion (a --json run) is keyed on the *shape* of its
+#     expected-vs-actual diff: which kinds of line went missing and which
+#     appeared.  That is coarser, and is reported as such.
+#
+# Anything the key cannot separate stays in its own cluster; nothing is folded
+# together by a hand-written "these look similar" rule.
+# ---------------------------------------------------------------------------
+
+_RE_DIGITS = re.compile(r"\d+")
+
+
+def line_kind(line: str) -> str:
+    """The kind of one output line: ``DESCRIPTION:{x}`` -> ``DESCRIPTION``."""
+    line = line.strip()
+    if ":{" in line:
+        return line.split(":{", 1)[0].strip()
+    if line.startswith(("O:", "E:", "S:")):
+        rest = line[2:].lstrip()
+        head = rest.split(":", 1)[0] if ":" in rest else rest
+        return line[:2] + head[:40]
+    return line.split(":", 1)[0].strip()[:40]
+
+
+def cluster_key_diff(expected: list[str], actual: list[str]) -> str:
+    """Key an un-reduced assertion on the shape of its diff."""
+    ke = {line_kind(x) for x in expected}
+    ka = {line_kind(x) for x in actual}
+    gone = sorted(ke - ka)
+    new = sorted(ka - ke)
+    marks = []
+    # A value that appears in the actual output carrying a "h:" prefix the
+    # expected one does not is the single most common shape in this corpus; it
+    # is recorded as part of the key, not folded in by a special case.
+    if any(re.search(r":\{h:", x) for x in actual) and not any(
+        re.search(r":\{h:", x) for x in expected
+    ):
+        marks.append("h-prefix")
+    if not gone and not new:
+        marks.append("same-kinds-different-values")
+    return "missing=[" + ",".join(gone) + "] extra=[" + ",".join(new) + "]" + (
+        " " + " ".join(marks) if marks else ""
+    )
+
+
+_RE_LOC = re.compile(r"^(?:\(eval\)|\(anon\)|[^ :]*):(?:\d+:)?\s*")
+_RE_STATUS = re.compile(r"<<STATUS:(-?\d+)>>")
+
+
+def _status_of(lines: list[str]) -> str:
+    for ln in reversed(lines):
+        m = _RE_STATUS.search(ln)
+        if m:
+            return m.group(1)
+    return "?"
+
+
+def cluster_key_witness(rec: dict) -> str:
+    """Key a reduced assertion on what its witness *says*, not on its payload.
+
+    Three shapes, in order of how much they pin down:
+
+    * the two shells differ only in exit status -> keyed on the status pair, so
+      "0 vs 1" assertions do not all collapse into one bucket with "0 vs 2";
+    * the witness is a diagnostic -> keyed on the first few words of the message
+      with the "(eval):N:" location prefix and the offending value stripped, so
+      `illegal pid: a` and `illegal pid: b` are one bug rather than two;
+    * the witness is ordinary output -> the text is data, not a cause, so it is
+      keyed on which side lost or gained lines instead.
+    """
+    w = rec.get("witness") or ""
+    if not w:
+        return "(no witness: " + (
+            "not reproducible standalone" if not rec.get("reproducible_standalone")
+            else "identical outputs"
+        ) + ")"
+    side, _, line = w.partition(": ")
+    if "<<STATUS:" in line:
+        return f"exit status {_status_of(rec.get('zsh', []))} -> " \
+               f"{_status_of(rec.get('sut', []))}, output identical"
+    if line.startswith("E:"):
+        msg = _RE_LOC.sub("", line[2:].strip())
+        msg = _RE_LOC.sub("", msg)  # "(eval):cmd:N: ..." carries two prefixes
+        words = _RE_DIGITS.sub("N", msg).split()
+        return f"{side} diagnostic: " + " ".join(words[:4])
+    na = len([x for x in rec.get("zsh", []) if not _RE_STATUS.search(x)])
+    nb = len([x for x in rec.get("sut", []) if not _RE_STATUS.search(x)])
+    if nb < na:
+        return f"output: {na - nb} line(s) missing from the shell under test"
+    if nb > na:
+        return f"output: {nb - na} extra line(s) from the shell under test"
+    return "output: same number of lines, different values"
+
+
+def do_cluster(paths: list[str], out: str | None, min_size: int) -> int:
+    groups: dict[str, list[dict]] = {}
+    total = 0
+    for path in paths:
+        doc = json.loads(Path(path).read_text())
+        if isinstance(doc, list):  # a minimization report
+            for rec in doc:
+                total += 1
+                groups.setdefault(cluster_key_witness(rec), []).append(
+                    {
+                        "origin": rec["origin"],
+                        "file": rec["origin"].split("#")[0],
+                        "message": rec.get("message", ""),
+                        "repro": rec.get("repro", ""),
+                        "kept": rec.get("kept_lines", []),
+                        "zsh": rec.get("zsh", []),
+                        "sut": rec.get("sut", []),
+                        "converged": rec.get("converged", False),
+                    }
+                )
+        else:  # a --json run
+            for r in doc["results"]:
+                for a in r["assertions"]:
+                    if a["status"] not in ("fail", "xpass"):
+                        continue
+                    total += 1
+                    groups.setdefault(
+                        cluster_key_diff(a.get("expected", []), a.get("actual", []))
+                    , []).append(
+                        {
+                            "origin": f"{r['name']}#{a['index']}",
+                            "file": r["name"],
+                            "message": a.get("message", ""),
+                            "repro": "",
+                            "kept": [],
+                            "zsh": a.get("expected", []),
+                            "sut": a.get("actual", []),
+                            "converged": False,
+                        }
+                    )
+
+    ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    lines: list[str] = []
+    lines.append("# failing assertions, clustered by root-cause key")
+    lines.append("")
+    lines.append(f"inputs    : {', '.join(paths)}")
+    lines.append(f"assertions: {total}")
+    lines.append(f"clusters  : {len(ordered)}")
+    singles = sum(1 for _, v in ordered if len(v) == 1)
+    lines.append(f"            {len(ordered) - singles} with 2+ members, {singles} singletons")
+    lines.append("")
+    lines.append("| n | files | key |")
+    lines.append("|---|---|---|")
+    for key, members in ordered:
+        if len(members) < min_size:
+            continue
+        files = sorted({mm["file"] for mm in members})
+        lines.append(
+            f"| {len(members)} | {','.join(files)} | {key} |"
+        )
+    lines.append("")
+    lines.append("## clusters in detail")
+    for key, members in ordered:
+        if len(members) < min_size:
+            continue
+        lines.append("")
+        lines.append(f"### [{len(members)}] {key}")
+        lines.append(
+            "members: " + " ".join(mm["origin"] for mm in members)
+        )
+        rep = next((mm for mm in members if mm["converged"]), members[0])
+        if rep["kept"]:
+            lines.append(f"representative: {rep['origin']}  ({rep['repro']})")
+            lines.append("  repro:")
+            lines += [f"    {ln}" for ln in rep["kept"]]
+        else:
+            lines.append(f"representative: {rep['origin']}")
+        lines.append("  zsh:")
+        lines += [f"    {ln}" for ln in rep["zsh"][:12]] or ["    (none)"]
+        lines.append("  zshrs:")
+        lines += [f"    {ln}" for ln in rep["sut"][:12]] or ["    (none)"]
+    text = "\n".join(lines)
+    if out:
+        Path(out).write_text(text + "\n")
+    else:
+        print(text)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Gate: pin the per-assertion state, then report movement in both directions.
 # ---------------------------------------------------------------------------
 
@@ -1677,6 +2476,24 @@ def main() -> int:
     g.add_argument("--minimize-timeout", type=int, default=10,
                    help="per-probe timeout; a probe that hangs costs this in full")
     g.add_argument("--repro-dir", help="where to write the generated .zsh repros")
+    g.add_argument("--verbose-probes", action="store_true",
+                   help="print one line per reduction probe")
+
+    g = ap.add_argument_group("core assertion -> minimal repro")
+    g.add_argument("--core-minimize", action="append", default=[], metavar="FILE#N",
+                   help="reduce a non-Y assertion to a standalone repro (repeatable)")
+    g.add_argument("--core-minimize-from", metavar="JSON",
+                   help="reduce every failing assertion in a --json run or a gate pin")
+    g.add_argument("--core-minimize-only", metavar="F1,F2",
+                   help="restrict --core-minimize-from to these files")
+    g.add_argument("--core-minimize-skip", metavar="F1,F2",
+                   help="exclude these files from --core-minimize-from")
+
+    g = ap.add_argument_group("clustering")
+    g.add_argument("--cluster", action="append", default=[], metavar="JSON",
+                   help="group failing assertions by root-cause key (repeatable)")
+    g.add_argument("--cluster-min", type=int, default=1,
+                   help="only report clusters with at least this many members")
     args = ap.parse_args()
 
     zsh_build = find_zsh_build(args.zsh_build)
@@ -1713,6 +2530,12 @@ def main() -> int:
     for kv in args.sut_env:
         k, _, v = kv.partition("=")
         sut_env[k] = v
+
+    if args.cluster:
+        return do_cluster(args.cluster, args.out, args.cluster_min)
+
+    if args.core_minimize or args.core_minimize_from:
+        return do_core_minimize(args, zsh_build, sut, sut_env)
 
     if args.minimize or args.minimize_from:
         return do_minimize(args, zsh_build, harness, sut, sut_env)
