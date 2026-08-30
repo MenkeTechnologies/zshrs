@@ -198,6 +198,48 @@ mod scan_backing {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// The ORDINARY assoc path, which shares the same reader
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `gethparam`/`gethkparam` decide per name whether the backing is the
+/// stored map or a module scan, and they resolve namerefs and
+/// `zsh/param/private` visibility on the way in. These pin the ordinary
+/// half of that reader so a change to the magic-hash routing cannot
+/// quietly alter how a normal association reads.
+mod ordinary_assoc_backing {
+    use super::*;
+
+    /// c:3123-3124 — "declared, no entries" is `Some(empty)`, not
+    /// "missing": `$+h` is 1 while `${#h}` is 0.
+    #[test]
+    fn an_empty_assoc_is_set_but_zero_length() {
+        assert_parity(r#"typeset -A e=(); print $+e ${#e} "[${(k)e}]""#);
+    }
+
+    /// After `unset`, the same reader has to report MISSING, not empty.
+    #[test]
+    fn an_unset_assoc_is_missing() {
+        assert_parity(r#"typeset -A h=(a 1); unset h; print $+h "[${(k)h}]""#);
+    }
+
+    /// A function-local ordinary assoc is visible inside and gone after
+    /// the frame pops.
+    #[test]
+    fn a_function_local_assoc_is_scoped() {
+        assert_parity(r#"f(){ typeset -A l=(x 1); print ${(k)l} }; f; print "[${(k)l}]" $+l"#);
+    }
+
+    /// A local declaration shadows a global of the same name and the
+    /// global comes back on return.
+    #[test]
+    fn a_local_assoc_shadows_a_global_and_restores_it() {
+        assert_parity(
+            "typeset -gA g1=(a 1); f(){ typeset -A g1=(b 2); print ${(k)g1} }; f; print ${(k)g1}",
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Function-local shadowing of a magic name
 // ═══════════════════════════════════════════════════════════════════════
 
