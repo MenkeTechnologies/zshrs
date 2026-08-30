@@ -1,0 +1,10 @@
+{
+  "buffer": "kill -",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "17 new feature(s): eng/f/comp=_kill, eng/f/ctx=:completion::complete:kill::, eng/f/ctx=:completion::complete:kill:argument-#:",
+  "origin": "cov/mutate(add_statement+drop_key)<-CASES/builtin_kill/tab1",
+  "statements": []
+}

@@ -1,0 +1,12 @@
+{
+  "buffer": "fg %",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "down"
+  ],
+  "note": "80 new feature(s): diff/rows/0, eng/compsys_args/_complete ENTER, eng/compsys_args/_dispatch ran completer",
+  "origin": "cov/mutate(dup_key+drop_statement)<-CASES/ns_jobs/tab_down",
+  "statements": []
+}

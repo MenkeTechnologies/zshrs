@@ -1,0 +1,13 @@
+{
+  "buffer": "ls $HOM",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "10 new feature(s): eng/compsys_args/describe group compadd, eng/f/comp=_ls, eng/f/context=parameter",
+  "origin": "cov/mutate(dup_key+dup_key)<-cov/mutate(dup_key+truncate)<-CASES/var_in_path/tab1",
+  "statements": []
+}

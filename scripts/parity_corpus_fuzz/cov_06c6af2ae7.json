@@ -1,0 +1,12 @@
+{
+  "buffer": "chown ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "10 new feature(s): eng/f/comp=_chown, eng/f/ctx=:completion::complete:chown::, eng/f/ctx=:completion::complete:chown:argument-#:",
+  "origin": "cov/mutate(dup_key)<-CASES/ns_chown_user/tab2",
+  "statements": []
+}

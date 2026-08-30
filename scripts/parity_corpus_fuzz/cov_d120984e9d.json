@@ -1,0 +1,11 @@
+{
+  "buffer": "irb -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "20 new feature(s): eng/compsys_args/_arguments option branch, eng/compsys_args/_describe -O option (multi), eng/f/comp=_ruby",
+  "origin": "cov/mutate(drop_key+dup_key)<-divergent-cases/tab1",
+  "statements": []
+}

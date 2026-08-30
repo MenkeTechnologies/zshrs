@@ -1,0 +1,12 @@
+{
+  "buffer": "case $x in ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "ctrl-d",
+    "down"
+  ],
+  "note": "22 new feature(s): diff/rows/0, status/PASS, zsh/attrs/1",
+  "origin": "cov/mutate(swap_key+add_nav_key)<-CASES/kw_case/tab2",
+  "statements": []
+}

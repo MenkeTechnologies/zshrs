@@ -1,0 +1,10 @@
+{
+  "buffer": "CC lb",
+  "fingerprint": "2f1674045d",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/row0/col0 | ref/$ CC lb_main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC bench/",
+  "origin": "guided/gui0002",
+  "statements": []
+}

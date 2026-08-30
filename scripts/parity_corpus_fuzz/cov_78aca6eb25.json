@@ -1,0 +1,11 @@
+{
+  "buffer": "CC ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "18 new feature(s): diff/cursor, diff/first/row0/col0, diff/rows/5",
+  "origin": "cov/mutate(dup_key)<-promoted/mut001",
+  "statements": []
+}

@@ -1,0 +1,12 @@
+{
+  "buffer": "mkdir -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "down"
+  ],
+  "note": "16 new feature(s): eng/f/comp=_mkdir, eng/f/ctx=:completion::complete:mkdir::, eng/f/ctx=:completion::complete:mkdir:argument-rest:",
+  "origin": "cov/mutate(dup_key)<-CASES/opt_mkdir/tab_down",
+  "statements": []
+}

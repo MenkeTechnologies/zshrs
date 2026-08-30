@@ -1,0 +1,11 @@
+{
+  "buffer": "ls /Applications/Google",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "2 new feature(s): zsh/lineclass/ls <path>, zshrs/lineclass/ls <path>",
+  "origin": "cov/mutate(dup_key+truncate)<-CASES/quote_bs_escaped_space/tab1",
+  "statements": []
+}

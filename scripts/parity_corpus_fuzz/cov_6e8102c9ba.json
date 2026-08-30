@@ -1,0 +1,12 @@
+{
+  "buffer": "echo !",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "down",
+    "down"
+  ],
+  "note": "2 new feature(s): zsh/lineclass/echo !, zshrs/lineclass/echo !",
+  "origin": "cov/mutate(dup_key+drop_statement)<-CASES/hist_bang/tab_down",
+  "statements": []
+}
