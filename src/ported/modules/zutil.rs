@@ -20,7 +20,7 @@ use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
     eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param,
-    Patprog, ERRFLAG_INT, EXTENDEDGLOB, MAX_OPS, OPT_ISSET, PAT_STATIC, PM_ARRAY,
+    Patprog, ERRFLAG_INT, EXTENDEDGLOB, MAX_OPS, OPT_ARG, OPT_ISSET, PAT_STATIC, PM_ARRAY,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -2944,9 +2944,11 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
 
 /// Direct port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
-/// Port of `bin_zparseopts(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:1738`. C
+/// Port of `bin_zparseopts(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zutil.c:1821`. C
 /// signature: `static int bin_zparseopts(char *nam, char **args,
-/// UNUSED(Options ops), UNUSED(int func))`.
+/// Options ops, UNUSED(int func))` — `ops` is NOT unused: the builtin's
+/// own flags arrive there from the generic parser (bintab optstring
+/// `"a:A:DEFGKMn:v:"`, c:2150).
 ///
 /// Implements the full GNU/zsh option parser:
 ///   - Flags: -D (delete consumed from argv), -E (extract),
@@ -2955,11 +2957,14 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
 ///     -A NAME (assoc array), -v NAME (source argv from NAME).
 ///   - Option descs: `name`, `name+` (multi), `name:` (mandatory arg),
 ///     `name::` (optional arg), `name:-` (same-arg), `=ARR` suffix.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+/// WARNING: param names don't match C — Rust=(nam, args, ops_arg, _func) vs
+/// C=(nam, args, ops, func). `ops_arg` is renamed only so the body can bind
+/// `ops` to either it or the RUST-ONLY inline-flag shim below and then read
+/// `OPT_ISSET(ops, …)` with C's exact spelling.
 pub fn bin_zparseopts(
     nam: &str,
-    args: &[String], // c:1738
-    _ops: &options,
+    args: &[String], // c:1821
+    ops_arg: &options,
     _func: i32,
 ) -> i32 {
     #[derive(Clone)]
@@ -3034,9 +3039,17 @@ pub fn bin_zparseopts(
                 None // c:1677-1681
             };
         if (dflags & ZOF_MULT) == 0 {
-            // c:1652-1653 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
+            // c:1736-1737 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
             if let Some(v) = descs[idx].vals.first_mut() {
-                v.arg = arg; // c:1660 overwrite
+                // c:1742 — `v->name = n;` with the comment "insert the last
+                // given name into arrays". C assigns this UNCONDITIONALLY,
+                // on the reuse path too, so under `-M` the surviving element
+                // carries the name of the LAST spelling the user typed:
+                // `-M -a optv - a:=-aaa -aaa:` given `--aaa foo -a bar`
+                // yields optv=(-a bar), not (--aaa bar). The previous port
+                // updated only arg/str and left the first-seen name.
+                v.name = n; // c:1742
+                v.arg = arg; // c:1743
                 v.str_ = str_;
                 return;
             }
@@ -3051,142 +3064,205 @@ pub fn bin_zparseopts(
         });
     }
 
-    let mut del = false; // c:1742
-    let mut flags_map = 0i32; // c:1742
-    let mut extract = false;
-    let mut fail = false;
-    let mut gnu = false;
-    let mut keep = false;
-    let mut assoc: Option<String> = None;
-    let mut paramsname: Option<String> = None;
-    let mut defarr: Option<String> = None;
+    // !!! WARNING: RUST-ONLY COMPAT SHIM — NO C COUNTERPART !!!
+    // In C every caller reaches bin_zparseopts through execbuiltin, which
+    // has already eaten the flag words listed in the bintab optstring
+    // (`"a:A:DEFGKMn:v:"`, c:2150) into `ops`. zshrs additionally has
+    // in-process Rust callers (the compsys `_deb_files` bridge) that
+    // invoke bin_zparseopts directly with a zeroed `options` and the flag
+    // words still sitting in `args`. Re-run Src/builtin.c's parser for
+    // them. The guard is exact rather than heuristic: execbuiltin
+    // consumes EVERY leading `-` word, so after it either some `ops.ind[]`
+    // byte is non-zero or `args[0]` cannot begin with `-`. Both being true
+    // at once is unreachable from the shell.
+    //
+    // The body below replays `Src/builtin.c:341-390`'s generic parser over
+    // `args` for zparseopts's own optstring, and is INLINE (not a helper
+    // fn) because src/ported/ admits only real ports as functions.
+    let inline_ops: Option<(options, usize)> = if ops_arg.ind.iter().all(|&b| b == 0)
+        && args.first().is_some_and(|a| a.starts_with('-'))
+    {
+        // c:Src/Modules/zutil.c:2150 — the bintab optstring.
+        const OPTSTR: &[u8] = b"a:A:DEFGKMn:v:";
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let mut i = 0usize;
+        while i < args.len() {
+            let word = args[i].as_bytes();
+            // c:Src/builtin.c:302-304 — `while (arg && ((sense = (*arg == '-')) …`
+            if word.first() != Some(&b'-') {
+                break;
+            }
+            // c:Src/builtin.c:334-335 — `if (arg[1] == '-') arg++;`
+            let mut j = if word.len() > 1 && word[1] == b'-' { 1 } else { 0 };
+            // c:Src/builtin.c:336-340 — `if (!arg[1]) ops.ind['-'] = 1;`
+            if word.len() == j + 1 {
+                ops.ind[b'-' as usize] = 1;
+            }
+            // c:Src/builtin.c:341 — `while (*++arg)`
+            j += 1;
+            let mut bad: Option<u8> = None;
+            while j < word.len() {
+                let c = word[j];
+                // c:Src/builtin.c:344 — `strchr(optstr, execop = (int)*arg)`.
+                let Some(k) = OPTSTR.iter().position(|&x| x == c && c != b':') else {
+                    bad = Some(c);
+                    break;
+                };
+                // c:Src/builtin.c:346 — `ops.ind[*arg] = sense ? 1 : 2;`
+                // (sense is always 1 here: zparseopts is not BINF_PLUSOPTS).
+                ops.ind[c as usize] = 1;
+                if OPTSTR.get(k + 1) != Some(&b':') {
+                    j += 1;
+                    continue;
+                }
+                // c:Src/builtin.c:363-372 — mandatory argument (this
+                // optstring has no `::` or `%` forms).
+                let argptr = if j + 1 < word.len() {
+                    // c:364-365 — rest of the same word (`-nprog`).
+                    String::from_utf8_lossy(&word[j + 1..]).into_owned()
+                } else if i + 1 < args.len() {
+                    i += 1; // c:366 — `else if ((arg = *++argv))`
+                    args[i].clone()
+                } else {
+                    // c:368-370 — `zwarnnam(name, "argument expected: -%c", execop)`
+                    zwarnnam(nam, &format!("argument expected: -{}", c as char));
+                    return 1; // c:371
+                };
+                ops.argscount += 1; // c:373-377 — new_optarg
+                ops.args.push(argptr); // c:379
+                ops.ind[c as usize] |= (ops.argscount as u8) << 2; // c:378
+                // c:380-381 — `while (arg[1]) arg++;` then the outer
+                // `*++arg` hits the NUL, so this word's scan is over.
+                j = word.len();
+            }
+            // c:Src/builtin.c:385-390 — `if (*arg) { zwarnnam(name,
+            // "bad option: %c%c", "+-"[sense], warg); return 1; }`
+            if let Some(c) = bad {
+                zwarnnam(nam, &format!("bad option: -{}", c as char));
+                return 1;
+            }
+            i += 1; // c:Src/builtin.c:391 — `arg = *++argv;`
+            // c:Src/builtin.c:403-404 — `if (ops.ind['-']) break;`
+            if ops.ind[b'-' as usize] != 0 {
+                break;
+            }
+        }
+        Some((ops, i))
+    } else {
+        None
+    };
+    let (ops, spec_start): (&options, usize) = match &inline_ops {
+        Some((o, n)) => (o, *n),
+        None => (ops_arg, 0),
+    };
+
+    // c:1826 — `int flags = 0, del, extract, fail, gnu, keep;`
+    let del = OPT_ISSET(ops, b'D'); // c:1835
+    let extract = OPT_ISSET(ops, b'E'); // c:1836
+    let fail = OPT_ISSET(ops, b'F'); // c:1837
+    let gnu = OPT_ISSET(ops, b'G'); // c:1838
+    let keep = OPT_ISSET(ops, b'K'); // c:1839
+    let flags_map = if OPT_ISSET(ops, b'M') { ZOF_MAP } else { 0 }; // c:1840
+    let mut assoc: Option<String> = None; // c:1823
+    let mut paramsname: Option<String> = None; // c:1824
+    let mut defarr: Option<String> = None; // c:1828 `Zoptarr a, defarr = NULL;`
     let mut named_arrays: Vec<String> = Vec::new();
 
-    // Phase 1: parse zparseopts flags (c:1751-1873).
-    let mut i = 0usize;
-    let mut dashdash_seen = false; // c:1865-1867 `if (!o) { o = ""; break; }`
-    while i < args.len() {
-        let o = &args[i];
-        if !o.starts_with('-') {
-            break;
+    // c:1825 — `char *progname = scriptname ? scriptname :
+    //            (argzero ? argzero : nam);`
+    // progname prefixes the two diagnostics C prints with fprintf(stderr)
+    // rather than zwarnnam (c:1993/1998 "bad option:" and c:2018/2048
+    // "missing argument for option:"), so they carry NO `:zparseopts:LINE:`
+    // segment. `-n` (c:1866) overrides it.
+    let mut progname = crate::ported::utils::scriptname_get()
+        .or_else(crate::ported::utils::argzero)
+        .unwrap_or_else(|| nam.to_string());
+
+    // c:1842-1853 — `-a NAME` names the default array.
+    if OPT_ISSET(ops, b'a') {
+        let v = OPT_ARG(ops, b'a').unwrap_or(""); // c:1843
+        if v.is_empty() {
+            zwarnnam(nam, "missing array name for -a"); // c:1844
+            return 1; // c:1845
         }
-        if o.len() == 1 {
-            // c:Src/builtin.c:336-342 — a lone `-` is END-OF-OPTIONS for
-            // EVERY builtin with an optstr, and `zparseopts`'s table entry
-            // has one (c:Src/Modules/zutil.c:2149
-            // `BUILTIN("zparseopts", …, "a:A:DEFGKMn:v:", NULL)`): the
-            // generic parser sets `ops.ind['-']` and steps past it, so
-            // `bin_zparseopts` never sees the `-`. zshrs parses the flags
-            // here instead and merely BROKE on the `-`, leaving it in the
-            // spec list — so `zparseopts -a optv - a b:` built a phantom
-            // option description named `-`. That phantom then swallowed
-            // the leading dash of every `--xxx` word in the short-option
-            // scan (`--x` reported `bad option: -x` instead of `--x`).
-            i += 1;
-            break;
-        } // "-"
-        let bytes = o.as_bytes();
-        match bytes[1] {
-            b'-' if bytes.len() == 2 => {
-                // c:1757-1762/1865 — bare `--` exits the flag-parse
-                // loop AND clears the missing-descriptions check
-                // (C sets `o = ""` so the post-loop `if (!o)` is
-                // false). zsh accepts `zparseopts -a foo --` with
-                // zero descriptions silently.
-                dashdash_seen = true;
-                i += 1;
-                break;
-            } // "--"
-            b'-' => {
-                break;
-            } // "-something"
-            b'D' if bytes.len() == 2 => {
-                del = true;
-                i += 1;
-            }
-            b'E' if bytes.len() == 2 => {
-                extract = true;
-                i += 1;
-            }
-            b'F' if bytes.len() == 2 => {
-                fail = true;
-                i += 1;
-            }
-            b'G' if bytes.len() == 2 => {
-                gnu = true;
-                i += 1;
-            }
-            b'K' if bytes.len() == 2 => {
-                keep = true;
-                i += 1;
-            }
-            b'M' if bytes.len() == 2 => {
-                flags_map |= ZOF_MAP;
-                i += 1;
-            }
-            b'a' => {
-                if defarr.is_some() {
-                    zwarnnam(nam, "default array given more than once");
-                    return 1;
-                }
-                let n = if o.len() > 2 {
-                    o[2..].to_string()
-                } else if i + 1 < args.len() {
-                    i += 1;
-                    args[i].clone()
-                } else {
-                    zwarnnam(nam, "missing array name");
-                    return 1;
-                };
-                defarr = Some(n);
-                i += 1;
-            }
-            b'A' => {
-                if assoc.is_some() {
-                    zwarnnam(nam, "associative array given more than once");
-                    return 1;
-                }
-                let n = if o.len() > 2 {
-                    o[2..].to_string()
-                } else if i + 1 < args.len() {
-                    i += 1;
-                    args[i].clone()
-                } else {
-                    zwarnnam(nam, "missing array name");
-                    return 1;
-                };
-                assoc = Some(n);
-                i += 1;
-            }
-            b'v' => {
-                if paramsname.is_some() {
-                    zwarnnam(nam, "argv array given more than once");
-                    return 1;
-                }
-                let n = if o.len() > 2 {
-                    o[2..].to_string()
-                } else if i + 1 < args.len() {
-                    i += 1;
-                    args[i].clone()
-                } else {
-                    zwarnnam(nam, "missing array name");
-                    return 1;
-                };
-                paramsname = Some(n);
-                i += 1;
-            }
-            _ => break, // option-desc
-        }
+        defarr = Some(v.to_string()); // c:1848
     }
-    if i >= args.len() && !dashdash_seen {
-        // c:1874 — fires only when we ran out of args WITHOUT
-        // ever seeing the `--` terminator. With `--`, C sets
-        // `o = ""` so the post-loop check passes; mirror that.
-        zwarnnam(nam, "missing option descriptions");
-        return 1;
+    // c:1854-1860 — `-A NAME` names the associative array.
+    if OPT_ISSET(ops, b'A') {
+        let v = OPT_ARG(ops, b'A').unwrap_or(""); // c:1855
+        if v.is_empty() {
+            zwarnnam(nam, "missing array name for -A"); // c:1856
+            return 1; // c:1857
+        }
+        assoc = Some(v.to_string()); // c:1859
+    }
+    // c:1861-1867 — `-n NAME` overrides the program name in the
+    // parse-time diagnostics.
+    if OPT_ISSET(ops, b'n') {
+        let v = OPT_ARG(ops, b'n').unwrap_or(""); // c:1862
+        if v.is_empty() {
+            zwarnnam(nam, "missing program name for -n"); // c:1863
+            return 1; // c:1864
+        }
+        progname = v.to_string(); // c:1866
+    }
+    // c:1868-1874 — `-v NAME` parses that array instead of $argv.
+    if OPT_ISSET(ops, b'v') {
+        let v = OPT_ARG(ops, b'v').unwrap_or(""); // c:1869
+        if v.is_empty() {
+            zwarnnam(nam, "missing array name for -v"); // c:1870
+            return 1; // c:1871
+        }
+        paramsname = Some(v.to_string()); // c:1873
     }
 
-    // Phase 2: parse option descriptions (c:1878-1954).
+    // c:1876-1880 — `params = getaparam((paramsname = paramsname ?
+    // paramsname : "argv")); if (!params) { zwarnnam(nam, "no such
+    // array: %s", paramsname); return 1; }`. A `-v NAME` whose NAME is
+    // unset (or is a scalar, not an array) has no source to parse —
+    // getaparam returns NULL and zparseopts aborts. The default source is
+    // `argv` (positional params), which always exists. A DECLARED-empty
+    // array (`src=()`) is a valid non-NULL empty source and must NOT
+    // error; exec::array returns Some(empty) for it and None only when
+    // the name isn't an array param. C does this lookup BEFORE parsing
+    // the option descriptions, so `zparseopts -v nope - a` reports the
+    // missing array, not the missing default array.
+    let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string()); // c:1876
+    let mut params: Vec<String> = if params_src == "argv" {
+        crate::ported::exec::pparams()
+    } else {
+        match crate::ported::exec::array(&params_src) {
+            Some(a) => a, // c:1876 non-NULL source
+            None => {
+                zwarnnam(nam, &format!("no such array: {}", params_src)); // c:1878
+                return 1; // c:1879
+            }
+        }
+    };
+
+    // c:1882-1888 — "allow a single '' or - spec to signify no options
+    // recognised":
+    //
+    //     if (*args && !args[1] && (!**args || !strcmp(*args, "-")))
+    //         args++;
+    //     else if (!*args) {
+    //         zwarnnam(nam, "missing option descriptions");
+    //         return 1;
+    //     }
+    let mut i = spec_start;
+    if i < args.len() && args.len() - i == 1 && (args[i].is_empty() || args[i] == "-") {
+        i += 1; // c:1884
+    } else if i >= args.len() {
+        zwarnnam(nam, "missing option descriptions"); // c:1886
+        return 1; // c:1887
+    }
+
+    // Phase 2: parse option descriptions (c:1890-1966).
     let mut descs: Vec<Desc> = Vec::new();
     while i < args.len() {
         let raw = &args[i];
@@ -3265,30 +3341,7 @@ pub fn bin_zparseopts(
         });
     }
 
-    // Phase 3: source params (c:1955-1959).
-    // c:1955 — `params = getaparam(paramsname ? paramsname : "argv")`.
-    // c:1956-1958 — `if (!params) { zwarnnam(nam, "no such array: %s",
-    // paramsname); return 1; }`. A `-v NAME` whose NAME is unset (or is a
-    // scalar, not an array) has no source to parse — getaparam returns NULL
-    // and zparseopts aborts. The default source is `argv` (positional
-    // params), which always exists. A DECLARED-empty array (`src=()`) is a
-    // valid non-NULL empty source and must NOT error; exec::array returns
-    // Some(empty) for it and None only when the name isn't an array param.
-    let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
-    let mut params: Vec<String> = if params_src == "argv" {
-        crate::ported::exec::pparams()
-    } else {
-        match crate::ported::exec::array(&params_src) {
-            Some(a) => a, // c:1955 non-NULL source
-            None => {
-                // c:1956-1957
-                zwarnnam(nam, &format!("no such array: {}", params_src));
-                return 1;
-            }
-        }
-    };
-
-    // Phase 4: walk params (c:1961-2060).
+    // Phase 4: walk params (c:1968-2072).
     let mut new_params: Vec<String> = Vec::new(); // -E -D rebuild
     let mut pi = 0usize;
     let mut stopped = false;
@@ -3424,8 +3477,13 @@ pub fn bin_zparseopts(
                 {
                     // c:2044-2052 — `add_opt_val(d, *++pp);`
                     if pi + 1 >= params.len() {
-                        zwarnnam(nam, &format!("missing argument for option: -{}", dname));
-                        return 1;
+                        // c:2046-2049 — `fprintf(stderr, "%s: missing
+                        // argument for option: -%s\n", progname, d->name);`
+                        // fprintf, NOT zwarnnam: no `:zparseopts:LINE:`
+                        // segment, and the prefix is progname (`-n`, else
+                        // scriptname/argzero/nam).
+                        eprint!("{}: missing argument for option: -{}\n", progname, dname);
+                        return 1; // c:2050
                     }
                     pi += 1;
                     let arg = params[pi].clone();
@@ -3451,15 +3509,33 @@ pub fn bin_zparseopts(
             let didx = descs.iter().position(|d| d.name == name1);
             let Some(idx) = didx else {
                 if fail {
+                    // c:1990-2001:
+                    //   if (*o != '-' || o > *pp + 1) {
+                    //       convchar_t wc = unmeta_one(o, NULL);
+                    //       fprintf(stderr, "%s: bad option: -", progname);
+                    //       MB_CHARINIT();
+                    //       zputs(MB_NICECHAR(wc), stderr);
+                    //       fputc('\n', stderr);
+                    //   } else {
+                    //       fprintf(stderr, "%s: bad option: -%s\n", progname, o);
+                    //   }
+                    // Both arms are fprintf(stderr), NOT zwarnnam — the line
+                    // carries progname alone, with no `:zparseopts:LINE:`.
+                    // `o > *pp + 1` is "not the first character after the
+                    // leading dash", i.e. `ci > 0`; the else arm therefore
+                    // only fires at ci == 0, where `o` and the whole body
+                    // are the same string (so `-a --x -z` reports `--x`
+                    // while `-a-xy` reports `--`).
                     if ch != '-' || ci > 0 {
-                        zwarnnam(nam, &format!("bad option: -{}", ch));
+                        eprint!("{}: bad option: -{}\n", progname, ch); // c:1993-1996
                     } else {
-                        zwarnnam(
-                            nam,
-                            &format!("bad option: -{}", chars.iter().collect::<String>()),
-                        );
+                        eprint!(
+                            "{}: bad option: -{}\n",
+                            progname,
+                            chars.iter().collect::<String>()
+                        ); // c:1998
                     }
-                    return 1;
+                    return 1; // c:2000
                 }
                 consumed_param = false;
                 break;
@@ -3478,8 +3554,10 @@ pub fn bin_zparseopts(
                         && !params[pi + 1].starts_with('-'))
                 {
                     if pi + 1 >= params.len() {
-                        zwarnnam(nam, &format!("missing argument for option: -{}", dname));
-                        return 1;
+                        // c:2017-2021 — `fprintf(stderr, "%s: missing
+                        // argument for option: -%s\n", progname, d->name);`
+                        eprint!("{}: missing argument for option: -{}\n", progname, dname);
+                        return 1; // c:2020
                     }
                     pi += 1;
                     let arg = params[pi].clone();
@@ -4373,7 +4451,7 @@ mod tests {
         assert_eq!(t.get(":other:thing", "s").unwrap()[0], "broad");
     }
 
-    /// Port of `bin_zparseopts(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:1738`.
+    /// Port of `bin_zparseopts(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zutil.c:1821`.
     #[test]
     fn zof_flags_are_distinct_powers_of_two() {
         let _g = crate::test_util::global_state_lock();

@@ -359,6 +359,15 @@ print "a:[${H[-a]}] b:[${H[-b]}]""###,
     }
 
     /// zparseopts -K keep, GNU long, no =.
+    ///
+    /// The two long-option specs are introduced with `--`. Upstream zsh
+    /// moved zparseopts's own flags onto the generic builtin option parser
+    /// (`Src/Modules/zutil.c:2150`, optstring `"a:A:DEFGKMn:v:"`), so a bare
+    /// `zparseopts -file:=ff` is now rejected by `Src/builtin.c:385-390` as
+    /// `bad option: -f` before the builtin runs — exactly what upstream's
+    /// Test/V12zparseopts.ztst "zparseopts long-option spec guarding" pins.
+    /// `--` (or `-`) is the spelling that reaches the spec parser on both
+    /// that revision and the zsh 5.9.2 this harness diffs against.
     #[test]
     fn zparseopts_K_long() {
         assert_parity(
@@ -368,10 +377,10 @@ set -- foo
 zparseopts -K -a arr x
 print -l $arr
 set -- --file data.txt
-zparseopts -file:=ff
+zparseopts -- -file:=ff
 printf "[%s]\n" "${ff[@]}"
 set -- --foo=bar
-zparseopts -foo:=gg
+zparseopts -- -foo:=gg
 printf "[%s]\n" "${gg[@]}""###,
         );
     }
