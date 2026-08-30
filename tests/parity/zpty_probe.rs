@@ -69,6 +69,36 @@ sleep 3
 zpty -w w 'PS1="RDY> "'
 "#;
 
+/// Opening boilerplate for a driver that PUMPS between writes instead
+/// of sleeping blindly. Defines `$all` and a `pump` function, drains
+/// whatever the shell says on startup, then sets a plain prompt.
+///
+/// This is what raised the harness's ceiling. The inner shell BLOCKS
+/// once its output buffer fills, so a driver that writes, sleeps,
+/// writes eventually stalls it mid-sequence and the measurement is
+/// simply lost — the `reference zsh dumped no editor state` failure
+/// that made every probe past about six round-trips unusable. Draining
+/// after each write keeps the buffer empty, and the wait becomes
+/// adaptive: `pump` returns once the shell has been quiet for a moment
+/// rather than after a fixed two seconds. More reliable AND faster.
+///
+/// A driver using this appends `; pump` to every `zpty -w` line and
+/// finishes with `zpty -d w`; it needs no separate `DRAIN`.
+pub const OPEN_PUMPED: &str = r#"
+zmodload zsh/zpty || { print "NOZPTY"; return 0 }
+zpty -b w $UNDER_TEST -f -i || { print "NOZPTY"; return 0 }
+local all= o
+pump() {
+  integer j=0
+  while (( j++ < 12 )); do
+    if zpty -r -t w o 2>/dev/null; then all+="$o"; j=0; else sleep 0.15; fi
+  done
+}
+pump
+zpty -w w 'PS1="RDY> "'; pump
+zpty -w w 'unsetopt beep'; pump
+"#;
+
 /// Drain whatever the pty has produced into `$all`, close the pty, and
 /// STRIP THE ESCAPE SEQUENCES.
 ///
