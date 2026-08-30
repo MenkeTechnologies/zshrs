@@ -1942,15 +1942,53 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
 
     // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
     // Walk `:`-separated path components, reapply filesubstr on each
-    // suffix that starts with `~` or `=`. Accept both ASCII (`~`/`=`)
-    // and the lexer's TOKEN forms (Tilde \u{98} / Equals \u{8d}) —
-    // the bridge passthru path delivers TOKEN form for unquoted
-    // tildes in assignment RHS like `X=/usr/bin:~/bin`.
+    // suffix that starts with `~` or `=`.
+    //
+    // TOKEN forms only (Tilde \u{98} / Equals \u{8d}), exactly as
+    // C tests at subst.c:694 — `str[0] == Tilde || str[0] == Equals`.
+    // The lexer emits those tokens for a tilde/equals that is SYNTAX;
+    // an ASCII `~`/`=` that survives to here is DATA, either quoted by
+    // the user or produced by an expansion.
+    //
+    // This previously also accepted ASCII, which conflated the two and
+    // made the `:` inside a parameter expansion look like a path
+    // separator: `--height=${V:=x}` under MAGIC_EQUAL_SUBST split at
+    // that colon, saw the suffix `=x}` begin with `=`, and ran it
+    // through equalsubstr as an `=cmd` lookup — `zsh: x} not found`,
+    // for a word real zsh leaves untouched. fzf-tab's
+    // `--height='${FZF_TMUX_HEIGHT:=75%}'` hit it on every startup.
     let mut ptr_off = 0_usize; // c:689
     loop {
         // c:690
         let slice = &namptr[ptr_off..]; // c:690
-        let colon_rel = match slice.find(':') {
+        // c:690 — `strchr(ptr, ':')`, but skipping any colon INSIDE a
+        // `${...}`. C never needs the guard: its lexer leaves `=`
+        // literal inside a substitution (Src/lex.c:1212 wraps the whole
+        // LX2_EQUALS case in `if (!sub)`), so the component after the
+        // colon of `${V:=x}` starts with a plain `=`, and the
+        // `str[0] == Equals` test below cannot fire. zshrs arrives here
+        // with that `=` carrying the Equals TOKEN, which made the colon
+        // of a parameter expansion look exactly like the separator in a
+        // real path list (`PATH=/bin:=cmd`) — so `=x}` went through
+        // equalsubstr as an `=cmd` lookup. fzf-tab's
+        // `--height='${FZF_TMUX_HEIGHT:=75%}'` printed
+        // `zsh: 75%} not found` on every startup for that reason.
+        let mut depth = 0_i32;
+        let mut prev_dollar = false;
+        let mut found: Option<usize> = None;
+        for (i, c) in slice.char_indices() {
+            match c {
+                '{' | '\u{8f}' /* Inbrace */ if prev_dollar => depth += 1,
+                '}' | '\u{90}' /* Outbrace */ if depth > 0 => depth -= 1,
+                ':' if depth == 0 => {
+                    found = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+            prev_dollar = c == '$' || c == '\u{85}' /* String */;
+        }
+        let colon_rel = match found {
             // c:690
             Some(p) => p,  // c:690
             None => break, // c:690
@@ -1967,7 +2005,7 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
         let starts_with_tilde_or_equals = if str_start < namptr.len() {
             let suffix = &namptr[str_start..];
             let first = suffix.chars().next();
-            matches!(first, Some('~') | Some('=') | Some('\u{98}') | Some(Equals))
+            matches!(first, Some('\u{98}') /* Tilde */ | Some(Equals))
         } else {
             false
         };
