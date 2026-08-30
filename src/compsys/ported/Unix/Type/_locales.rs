@@ -17,7 +17,7 @@
 //! via `_call_program` and fall back to the `/usr/lib/locale` listing when it
 //! produces nothing (locale absent / spawn failure).
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -25,7 +25,7 @@ use crate::ported::params::{getsparam, setaparam};
 pub fn _locales(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_locales");
     // sh:5-6  $(_call_program locales locale -a) — REPLY carries stdout.
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "locales".to_string(),
         "locale".to_string(),
         "-a".to_string(),

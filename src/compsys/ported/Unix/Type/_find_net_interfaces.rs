@@ -19,11 +19,11 @@
 //! (and, when verbose, `$net_intf_disp`) for the caller. Command
 //! output is captured via the ported `_call_program` (`$REPLY`).
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::ported::params::{getsparam, setaparam};
 
 fn call(tag: &str, cmd: &str) -> Vec<String> {
-    if _call_program(&[tag.to_string(), cmd.to_string()]) == 0 {
+    if call_program_capture(&[tag.to_string(), cmd.to_string()]).1 == 0 {
         getsparam("REPLY")
             .unwrap_or_default()
             .split_whitespace()

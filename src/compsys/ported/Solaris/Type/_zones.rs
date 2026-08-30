@@ -11,7 +11,7 @@
 //! sh:11  compadd "$@" "$expl[@]" - ${="$(_call_program zones /usr/sbin/zoneadm list $typearg)"}
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -84,7 +84,7 @@ pub fn _zones(args: &[String]) -> i32 {
     if let Some(t) = typearg {
         call_args.push(t.to_string());
     }
-    let _ = _call_program(&call_args);
+    let _ = call_program_capture(&call_args);
     let out = getsparam("REPLY").unwrap_or_default();
 
     // sh:11  ${="$(...)"} — re-split the captured output on IFS whitespace.

@@ -28,7 +28,7 @@
 //! done with straight line/field ops (`// sh:14 approx`).
 
 use crate::compsys::ported::_alternative::_alternative;
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -64,7 +64,7 @@ pub fn _services(args: &[String]) -> i32 {
     // sh:6-11 — FreeBSD `service -l`.
     if ostype.starts_with("freebsd") {
         if std::path::Path::new("/usr/sbin/service").exists() {
-            let _ = _call_program(&[
+            let _ = call_program_capture(&[
                 "services".to_string(),
                 "service".to_string(),
                 "-l".to_string(),
@@ -89,7 +89,7 @@ pub fn _services(args: &[String]) -> i32 {
     }
 
     // sh:12-18 — chkconfig (SysV + xinetd) split.
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "services".to_string(),
         "chkconfig".to_string(),
         "--list".to_string(),

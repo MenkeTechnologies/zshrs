@@ -9,7 +9,7 @@
 //! sh:7  compadd "$@" "$expl[@]" -a seroles
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -51,7 +51,7 @@ pub fn _selinux_roles(args: &[String]) -> i32 {
 pub fn _selinux_roles_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_roles");
     // sh:5  seroles=( ${(f)"$(_call_program selinux-roles seinfo --flat -r)"} )
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "selinux-roles".to_string(),
         "seinfo".to_string(),
         "--flat".to_string(),

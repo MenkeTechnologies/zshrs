@@ -24,7 +24,7 @@
 //! (match an `inet`/`inet6` line, then keep the leading `[0-9A-Fa-f:.]`
 //! run) rather than the zsh `${(@M)…##…}` engine.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -79,7 +79,7 @@ pub fn _bind_addresses(args: &[String]) -> i32 {
     // sh:24-27 — run it, split lines, extract addresses.
     let mut cp: Vec<String> = vec!["bind-addresses".to_string()];
     cp.extend(cmd);
-    let _ = _call_program(&cp);
+    let _ = call_program_capture(&cp);
     let out = getsparam("REPLY").unwrap_or_default();
     let mut tmp: Vec<String> = out.lines().filter_map(extract_inet).collect();
 

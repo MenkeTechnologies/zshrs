@@ -451,6 +451,29 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // below, after the list is assigned — see `mark_readonly`.
         hide_comp_priv_prefix();
         declare_locals(&["precommands", "builtin_precommands"], PM_ARRAY);
+        // sh:46 `local -a precommands` — an array of length ZERO:
+        //
+        //     % zsh -f -c 'f(){ local -a p; print ${#p} ${(t)p} }; f'
+        //     0 array-local
+        //
+        // `declare_locals` reaches `createparam(name, PM_ARRAY|PM_LOCAL)`,
+        // which stamps the type on the node but leaves the value slot empty
+        // (`params.rs` `u_arr: None`); a read through `"${(@P)precommands}"`
+        // then falls back to the scalar view and produces ONE EMPTY WORD.
+        // The stock-utility sweep read `precommands[1] = ''` after `_normal`
+        // where zsh reads `precommands[0] =`, and the count is load-bearing:
+        // `_command_names` sh:28 branches on
+        // `(( ${#precommands:|builtin_precommands} ))` to decide whether to
+        // offer only hashed commands.
+        //
+        // Materialised HERE rather than inside `declare_locals`, because
+        // doing it for every PM_ARRAY declaration changed the return value
+        // of `_options` and `_path_commands` (0 where they answer 1 today) —
+        // an effect this fix has not accounted for, and not one to take
+        // blind. sh:46 is the one declaration with a measured divergence.
+        // `builtin_precommands` needs no seed: `seed_builtin_precommands`
+        // assigns its sh:52 value on the next line.
+        setaparam("precommands", Vec::new());
         seed_builtin_precommands();
         // sh:31 — `curcontext="$curcontext"`: local, but seeded from
         // the enclosing scope (a widget may have set it).
@@ -1149,8 +1172,20 @@ pub fn _main_complete(args: &[String]) -> i32 {
         if live_pending == 0 && !lastdescr.is_empty() && !warn_format.is_empty() {
             set_compstate_str("list", "list force");
             set_compstate_str("insert", "");
-            let quoted: Vec<String> = lastdescr.iter().map(|d| format!("`{}'", d)).collect();
+            // sh:360 — `tmp=( "\`${(@)^_lastdescr:#}'" )`. The `:#` with an
+            // EMPTY pattern drops every element that matches it, i.e. every
+            // empty element. That matters because `_description` sh:14
+            // (`_lastdescr=( "$_lastdescr[@]" "$3" )`) runs while
+            // `_lastdescr` is still the SCALAR sh:54's `typeset -U` declared,
+            // so the array it converts to always leads with one empty word.
+            // sh:354's `$#_lastdescr -ne 0` above counts that word; these two
+            // consumers must not, or the warning reads
+            // "`' or `file'" instead of "`file'".
+            let nonempty: Vec<&String> = lastdescr.iter().filter(|d| !d.is_empty()).collect();
+            let quoted: Vec<String> = nonempty.iter().map(|d| format!("`{}'", d)).collect();
+            // sh:362-366 — `case $#tmp in 1) … 2) … *) …`.
             let str_msg = match quoted.len() {
+                0 => String::new(),
                 1 => quoted[0].clone(),
                 2 => format!("{} or {}", quoted[0], quoted[1]),
                 _ => {
@@ -1164,7 +1199,16 @@ pub fn _main_complete(args: &[String]) -> i32 {
                 "mesg".to_string(),
                 warn_format.clone(),
                 format!("d:{}", str_msg),
-                format!("D:{}", lastdescr.join("\n")),
+                // sh:369 — `"D:${(F)${(@)_lastdescr:#}}"`: same empty-element
+                // strip as sh:360, then joined with newlines by `(F)`.
+                format!(
+                    "D:{}",
+                    nonempty
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
             ];
             let _ = setsparam("mesg", "");
             let _ = bin_zformat("zformat", &zf_argv, &make_ops(), 0);

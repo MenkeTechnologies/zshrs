@@ -37,7 +37,7 @@
 //! sh:70  fi
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_describe::_describe;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam, unsetparam};
@@ -110,7 +110,7 @@ pub fn _jails(args: &[String]) -> i32 {
         .unwrap_or_else(|| "name".to_string());
 
     // sh:16
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "jails".to_string(),
         "jls".to_string(),
         param.clone(),

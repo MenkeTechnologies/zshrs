@@ -156,27 +156,49 @@ pub fn _setup_impl(args: &[String]) -> i32 {
         let _ = setsparam("_last_nmatches", "-1");
     }
 
-    // sh:74-79  force-list
+    // sh:74-79  force-list — and, being the LAST statement of the upstream
+    // body, the statement whose status IS `_setup`'s return value:
+    //
+    //   [[ "$_comp_force_list" != always ]] &&
+    //     zstyle -s ":completion:${curcontext}:$1" force-list val &&
+    //       [[ "$val" = always ||
+    //          ( "$val" = [0-9]## &&
+    //            ( -z "$_comp_force_list" || _comp_force_list -gt val ) ) ]] &&
+    //       _comp_force_list="$val"
+    //
+    // Every link that fails short-circuits the `&&` chain to status 1, and
+    // only the trailing assignment produces 0. No `force-list` style is set
+    // in the overwhelmingly common case, so upstream `_setup` RETURNS 1.
+    // The port returned 0 unconditionally.
     let force_existing = getsparam("_comp_force_list").unwrap_or_default();
-    if force_existing != "always" {
-        let val = lookupstyle(&ctx, "force-list")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        if !val.is_empty() {
-            let valid = val == "always"
-                || (val.chars().all(|c| c.is_ascii_digit())
-                    && (force_existing.is_empty()
-                        || force_existing
-                            .parse::<i64>()
-                            .map(|cur| val.parse::<i64>().map(|v| cur > v).unwrap_or(false))
-                            .unwrap_or(false)));
-            if valid {
-                let _ = setsparam("_comp_force_list", &val);
-            }
-        }
+    if force_existing == "always" {
+        return 1; // sh:74 — `[[ "$_comp_force_list" != always ]]` false
     }
-
+    // sh:75 — `zstyle -s … force-list val`. `-s` succeeds whenever the style
+    // pattern matches, even for an empty value; `lookupstyle` mirrors that
+    // with an empty Vec for "unset" (same convention as `_description.rs`),
+    // and collapses the value array to a scalar by joining with a space.
+    let fl_vals = lookupstyle(&ctx, "force-list");
+    if fl_vals.is_empty() {
+        return 1; // sh:75 — style unset
+    }
+    let val = crate::ported::utils::zjoin(&fl_vals, ' ');
+    // sh:76-78 — `always`, or an all-digit value that beats the one already
+    // recorded (`_comp_force_list -gt val` is an arithmetic compare inside
+    // `[[ ]]`, so it reads the CURRENT value against the new one).
+    let accept = val == "always"
+        || (!val.is_empty()
+            && val.chars().all(|c| c.is_ascii_digit())
+            && (force_existing.is_empty()
+                || match (force_existing.parse::<i64>(), val.parse::<i64>()) {
+                    (Ok(cur), Ok(new)) => cur > new,
+                    _ => false,
+                }));
+    if !accept {
+        return 1; // sh:76-78 — test false
+    }
+    // sh:79
+    let _ = setsparam("_comp_force_list", &val);
     0
 }
 
@@ -207,10 +229,64 @@ fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
 mod tests {
     use super::*;
 
+    /// The last statement of `Completion/Base/Core/_setup` is the sh:74-79
+    /// `&&` chain, so `_setup`'s exit status is that chain's. With no
+    /// `force-list` style registered the `zstyle -s` at sh:75 fails and the
+    /// chain short-circuits to 1 — which is what `_setup` returns for
+    /// essentially every real call.
+    ///
+    /// This test previously asserted 0 (and was named `returns_zero`),
+    /// pinning the port's unconditional `0` return. The zsh reference
+    /// disagrees: `_setup files` reports `-- rc: 1` in the stock-utility
+    /// sweep. Both the code and the assertion are corrected here.
     #[test]
-    fn returns_zero() {
+    fn returns_one_when_no_force_list_style_is_set() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_setup_impl(&["default".to_string()]), 0);
+        // sh:74 reads `$_comp_force_list`; clear it so the first link of the
+        // chain is the `!= always` it is in a fresh completion.
+        let _ = setsparam("_comp_force_list", "");
+        assert_eq!(_setup_impl(&["default".to_string()]), 1);
+    }
+
+    /// sh:79 — the one path that reaches the trailing assignment and so
+    /// returns 0: a `force-list` style whose value is accepted by sh:76-78.
+    #[test]
+    fn returns_zero_when_force_list_style_is_accepted() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("_comp_force_list", "");
+        let _ = setsparam("curcontext", "zpf:zpf:zpf");
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[
+                ":completion:zpf:zpf:zpf:setuptag".to_string(),
+                "force-list".to_string(),
+                "always".to_string(),
+            ],
+            &ops,
+            0,
+        );
+        let rc = _setup_impl(&["setuptag".to_string()]);
+        let landed = getsparam("_comp_force_list");
+        // Put the shared globals back BEFORE asserting: `_comp_force_list`
+        // and `curcontext` are process-wide, and a panic between the call and
+        // a trailing cleanup would leave `_comp_force_list=always` for every
+        // later test in the binary (sh:74 then short-circuits `_setup` for
+        // all of them). The zstyle itself is keyed on a context no other test
+        // uses.
+        let _ = setsparam("_comp_force_list", "");
+        crate::ported::params::unsetparam("curcontext");
+        assert_eq!(rc, 0);
+        assert_eq!(
+            landed.as_deref(),
+            Some("always"),
+            "sh:79 assignment must land"
+        );
     }
 
     #[test]

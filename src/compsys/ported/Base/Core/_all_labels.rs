@@ -176,24 +176,76 @@ fn has_unescaped_colon(s: &str) -> bool {
 ///   prev_arr_vals = `${(P@)2}` — the current value of the
 ///   per-`_description` array named by the caller's $2.
 ///   extras = `${(@)argv[5,-1]}` or `${(@)argv[__suf,-1]}`.
-fn dispatch_action(action_argv: &[String], prev_arr_vals: &[String], extras: &[String]) -> i32 {
-    if action_argv.is_empty() {
-        return 1;
-    }
-    let cmd = &action_argv[0];
-    let mut full: Vec<String> = action_argv[1..].to_vec();
+///   `line` = the upstream line the command sits on (35 or 39), published
+///   for the `scriptname:lineno:` prefix any diagnostic it raises carries.
+fn dispatch_action(
+    action_argv: &[String],
+    prev_arr_vals: &[String],
+    extras: &[String],
+    line: u64,
+) -> i32 {
+    // sh:35 / sh:39 — the command line is the CONCATENATION of the action
+    // words, `${(P@)2}` and the trailing arguments, and the COMMAND WORD is
+    // whatever that concatenation starts with. It is not necessarily an
+    // action word: called with no action at all (`_all_labels values expl
+    // value`) sh:13-23 settles on `__pre=4`/`__suf=5`, `${(@)argv[4,4]}` is
+    // empty on a 3-element `argv`, and the command word becomes `$expl[1]`.
+    // zsh then reports `_all_labels:39: command not found: -J`.
+    //
+    // The port read `action_argv[0]` as the command and returned 1 outright
+    // for an empty action, so the whole diagnostic was swallowed — silently,
+    // which is the failure mode the sweep caught on both `_all_labels
+    // no-action` and `_wanted no-action`.
+    let mut full: Vec<String> = action_argv.to_vec();
     full.extend(prev_arr_vals.iter().cloned());
     full.extend(extras.iter().cloned());
 
-    // The shell evaluates `"$4" args...` as a command — could be a
-    // builtin (compadd / compgen / etc.) or a shell function. We
+    if full.is_empty() {
+        // A command line that expands to no words at all runs nothing and
+        // leaves status 0 (`zsh -fc 'x=(); "$x[@]"; echo $?'` → `0`).
+        return 0;
+    }
+    let cmd = full.remove(0);
+
+    // `lineno` is what `zerrmsg` prints after the function name
+    // (`Src/utils.c:301-305`), and `FnScope` zeroed it on entry to this
+    // body, so publish the upstream line before anything can diagnose.
+    crate::compsys::ported::shared::set_sh_lineno(line);
+
+    // The shell evaluates the resulting word list as a command — it could
+    // be a builtin (compadd / compgen / etc.) or a shell function. We
     // route compadd to the real builtin in `src/ported/zle/complete`;
     // everything else goes through the exec-hook dispatch.
     if cmd == "compadd" {
-        bin_compadd("compadd", &full, &make_ops(), 0)
-    } else {
-        dispatch_function_call(cmd, &full).unwrap_or(1)
+        return bin_compadd("compadd", &full, &make_ops(), 0);
     }
+    if let Some(rc) = dispatch_function_call(&cmd, &full) {
+        return rc;
+    }
+
+    // Neither a shell function nor a registered port. zsh looks for a
+    // builtin and then for an executable on `$PATH`; only when both miss
+    // does it report the command as not found.
+    if crate::ported::builtin::createbuiltintable().contains_key(cmd.as_str())
+        || crate::ported::exec::findcmd(&cmd, 0, 0).is_some()
+    {
+        // The word names something real that this dispatch has no path to.
+        // Keep the pre-existing "action did not succeed" answer rather than
+        // inventing an execution route here.
+        return 1;
+    }
+
+    // c:Src/exec.c:903 — `zerr("command not found: %s", arg0);`
+    //
+    // `zwarn`, NOT `zerr`: c:903 runs in the FORKED child of `execcmd`,
+    // which `_exit(127)`s two lines later at c:908, so the parent shell's
+    // `errflag` is never raised. `zerr` in this port runs in the live shell
+    // and would set ERRFLAG_ERROR (`src/ported/utils.rs:236`), abandoning
+    // the rest of the completion. The rendered text is identical — both
+    // reach `zwarning` (`Src/utils.c:147-155`), which prints
+    // `scriptname:lineno: msg`.
+    crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
+    127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
 }
 
 /// Reach `_all_labels` as a BARE COMMAND WORD, the way every upstream caller
@@ -281,6 +333,13 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
             "curtag".to_string(),
             "__spec".to_string(),
         ];
+        // sh:26 — the line `comptags` is called FROM. `FnScope` zeroes
+        // `lineno` on entry to a port body, so without this the builtin's
+        // own diagnostics lost their line: zsh reports
+        // `_all_labels:comptags:26: no tags registered`, the port reported
+        // `_all_labels:comptags: no tags registered`. `zerrmsg` prints the
+        // field only when `lineno` is non-zero (`Src/utils.c:301-305`).
+        crate::compsys::ported::shared::set_sh_lineno(26);
         if bin_comptags("comptags", &comptags_argv, &make_ops(), 0) != 0 {
             break;
         }
@@ -369,7 +428,7 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
                 Vec::new()
             };
             let prev_arr = getaparam(&name).unwrap_or_default();
-            dispatch_action(&action, &prev_arr, &extras)
+            dispatch_action(&action, &prev_arr, &extras, 35)
         } else {
             // sh:37  _description "$__gopt[@]" "$curtag" "$2" "$3"
             let mut desc_argv = gopt.clone();
@@ -407,7 +466,7 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
                 Vec::new()
             };
             let prev_arr = getaparam(&name).unwrap_or_default();
-            dispatch_action(&action_chunk, &prev_arr, &extras)
+            dispatch_action(&action_chunk, &prev_arr, &extras, 39)
         };
 
         if action_invoked == 0 {
@@ -477,26 +536,47 @@ mod tests {
             &["compadd".to_string()],
             &["-J".to_string(), "-default-".to_string()],
             &["alpha".to_string(), "beta".to_string()],
+            35,
         );
         let _ = r;
         INCOMPFUNC.store(0, Ordering::Relaxed);
     }
 
     #[test]
-    fn dispatch_action_empty_command_returns_one() {
-        // Guard rail: empty action argv returns 1 (no command to
-        //   invoke).
-        assert_eq!(dispatch_action(&[], &[], &[]), 1);
+    fn dispatch_action_no_words_at_all_returns_zero() {
+        // sh:39 — when the action words, `${(P@)2}` and the trailing
+        // arguments ALL expand to nothing, zsh runs no command and the
+        // status is 0:
+        //     % zsh -fc 'x=(); "$x[@]"; echo $?'
+        //     0
+        // (unreachable in practice: `_description` has already filled the
+        // array named by `$2` with at least `-J -default-`).
+        assert_eq!(dispatch_action(&[], &[], &[], 39), 0);
     }
 
     #[test]
-    fn dispatch_action_unknown_shell_fn_returns_one() {
-        // sh:35/39 — when the action names an unregistered shell fn,
-        //   dispatch_function_call returns None → we return 1
-        //   (matching shell behavior when the function call fails).
+    fn dispatch_action_reports_command_not_found_for_an_expl_flag() {
+        // sh:39 — `_all_labels values expl value` has no action, so
+        // `${(@)argv[4,__pre]}` is empty and the command word is
+        // `$expl[1]`. zsh answers
+        //     _all_labels:39: command not found: -J
+        // with status 127 (c:Src/exec.c:903 + :908). The port used to
+        // return 1 and print nothing.
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            dispatch_action(&["nonexistent_fn".to_string()], &[], &[]),
-            1
+            dispatch_action(&[], &["-J".to_string(), "-default-".to_string()], &[], 39),
+            127
+        );
+    }
+
+    #[test]
+    fn dispatch_action_unknown_shell_fn_reports_command_not_found() {
+        // sh:35/39 — an action naming nothing that exists is a
+        // command-not-found in zsh too, exit 127 (c:Src/exec.c:908).
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            dispatch_action(&["nonexistent_fn_zpf".to_string()], &[], &[], 35),
+            127
         );
     }
 

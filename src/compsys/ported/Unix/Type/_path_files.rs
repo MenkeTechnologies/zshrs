@@ -542,6 +542,18 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                                                 // and `listopts` in the `parameters` group, two matches zsh never lists.
     _locals.also(&["listfiles", "listopts"], PM_ARRAY);
     _locals.also(&["exppaths"], PM_ARRAY | PM_UNIQUE); // sh:53 `typeset -U … exppaths`
+                                                       // sh:116 `local expl` — declared inside the `if (( ! $mopts[(I)-[JVX]] ))`
+                                                       // block, handed to `_description` at sh:119/121 and folded into `mopts`
+                                                       // at sh:131. Upstream's `local` SAVES and RESTORES it, so a caller's own
+                                                       // `expl` is untouched by the call; the port wrote it straight into the
+                                                       // global table and handed the callee's value back. The stock-utility
+                                                       // sweep read `expl[2] = '-J' '-default-'` after `_path_files` where zsh
+                                                       // reads `expl[0] =`, on all four `_path_files` cells.
+                                                       //
+                                                       // Declared for the whole body rather than for the sh:115-132 block: the
+                                                       // window is invisible from outside, and `LocalScope` unwinds on return
+                                                       // either way.
+    _locals.also(&["expl"], PM_ARRAY); // sh:116
 
     // sh:59-62 — option parse.
     let parsed = zparse_pathfiles(argv);

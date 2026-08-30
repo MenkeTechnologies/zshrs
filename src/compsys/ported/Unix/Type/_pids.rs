@@ -56,7 +56,7 @@
 //! `insert-ids` style value (sh:49); the port keeps the two apart as
 //! `out` / `insert_ids` because Rust has no untyped parameter.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
@@ -271,7 +271,7 @@ pub fn _pids(args: &[String]) -> i32 {
                 //   `$(…)` strips trailing newlines, then `(@f)` splits on
                 //   the remaining ones.
                 let curtag = getsparam("curtag").unwrap_or_else(|| "processes".to_string());
-                let _ = _call_program(&[curtag.clone(), "ps".to_string()]);
+                let _ = call_program_capture(&[curtag.clone(), "ps".to_string()]);
                 let raw = getsparam("REPLY").unwrap_or_default();
                 let out: Vec<&str> = raw.trim_end_matches('\n').split('\n').collect();
                 // sh:27  desc="$out[1]"  (the header row)

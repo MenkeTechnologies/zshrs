@@ -8,7 +8,7 @@
 //! sh: 6  compadd "$@" "$expl[@]" -  ${(s: :)${${(M)${(f)"$(_call_program routing-tables netstat -R)"}:#  Routing tables#: *}#*: }}
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -47,7 +47,7 @@ pub fn _routing_tables(args: &[String]) -> i32 {
     ]);
 
     // sh:6  $(_call_program routing-tables netstat -R)
-    let _ = _call_program(&["routing-tables".to_string(), "netstat -R".to_string()]);
+    let _ = call_program_capture(&["routing-tables".to_string(), "netstat -R".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();
 
     // sh:6  ${(f)"$(...)"} split into lines, ${(M)...:#  Routing tables#: *}

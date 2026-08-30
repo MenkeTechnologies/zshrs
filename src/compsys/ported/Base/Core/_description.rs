@@ -277,9 +277,39 @@ pub fn _description_impl(args: &[String]) -> i32 {
         argv[2] = argv[2].trim().to_string();
     }
 
-    // sh:14
+    // sh:14  [[ -n "$3" ]] && _lastdescr=( "$_lastdescr[@]" "$3" )
+    //
+    // `_main_complete` sh:54 is `typeset -U _lastdescr _comp_ignore
+    // _comp_colors` — `-U` with NO `-a`, so `_lastdescr` is a SCALAR
+    // (`${(t)_lastdescr}` reads `scalar-local-unique`) right up until this
+    // line converts it. `"$_lastdescr[@]"` on a scalar expands to exactly
+    // ONE word — its value, empty on the first call — so zsh's
+    // `_lastdescr` carries a LEADING EMPTY ELEMENT for the rest of the
+    // completion. Measured on zsh 5.9:
+    //
+    //     % zsh -f -c 'f(){ typeset -U v; print ${(t)v}
+    //                       v=( "$v[@]" one ); print ${#v} ${(t)v} }; f'
+    //     scalar-local-unique
+    //     2 array-local-unique
+    //
+    // `getaparam` is the port of C's `getaparam` (`Src/params.c:3101`),
+    // which returns NULL for anything that is not PM_ARRAY, so reading
+    // only through it dropped that word: the port reported
+    // `_lastdescr[1] = 'file'` where zsh reports `_lastdescr[2] = ''
+    // 'file'`. Fall back to the SCALAR read when the array read misses —
+    // that is what the `[@]` subscript does on a scalar. `setaparam`
+    // honours the PM_UNIQUE bit `_main_complete` stamps, so the dedup
+    // half of `-U` still applies (two empty words collapse to one).
+    //
+    // The two consumers strip the empty back out: sh:360
+    // `${(@)^_lastdescr:#}` and sh:369 `${(@)_lastdescr:#}` both drop
+    // elements matching the empty pattern. sh:354's `$#_lastdescr -ne 0`
+    // does not, which is exactly why the count has to match.
     if argv.len() >= 3 && !argv[2].is_empty() {
-        let mut lastdescr = getaparam("_lastdescr").unwrap_or_default();
+        let mut lastdescr = match getaparam("_lastdescr") {
+            Some(v) => v,
+            None => vec![getsparam("_lastdescr").unwrap_or_default()],
+        };
         lastdescr.push(argv[2].clone());
         setaparam("_lastdescr", lastdescr);
     }

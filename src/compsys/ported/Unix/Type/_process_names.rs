@@ -22,7 +22,7 @@
 //! *}%:}#-}:t}` for normal entries, `${${(M)…#\[}%]}` for `[kthread]`
 //! entries) is reproduced with string ops.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -132,7 +132,7 @@ pub fn _process_names(args: &[String]) -> i32 {
 fn run_ps(tagname: &str, opts: &[String]) -> String {
     let mut a = vec![tagname.to_string(), "ps".to_string()];
     a.extend(opts.iter().cloned());
-    let _ = _call_program(&a);
+    let _ = call_program_capture(&a);
     getsparam("REPLY").unwrap_or_default()
 }
 

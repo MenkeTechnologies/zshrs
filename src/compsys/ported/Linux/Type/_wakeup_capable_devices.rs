@@ -16,7 +16,7 @@
 //! sh:15  return ret
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_describe::_describe;
 use crate::ported::modules::zutil::zformat_substring;
 use crate::ported::params::{getsparam, setaparam};
@@ -74,10 +74,11 @@ pub fn _wakeup_capable_devices(args: &[String]) -> i32 {
 
     // sh:6  _call_program wakeup-capable-devices acpitool -w 2> /dev/null
     let mut desc: Vec<String> = Vec::new();
-    if _call_program(&[
+    if call_program_capture(&[
         "wakeup-capable-devices".to_string(),
         "acpitool -w".to_string(),
-    ]) == 0
+    ])
+    .1 == 0
     {
         let output = getsparam("REPLY").unwrap_or_default();
         // sh:7  while read devline; do ... done

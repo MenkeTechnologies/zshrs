@@ -20,7 +20,7 @@
 //! sh:25  compadd "$@" "$expl[@]" "$pre[@]" -M 'r:|/=* r:|=*' -a ttys
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -70,7 +70,7 @@ pub fn _ttys(args: &[String]) -> i32 {
     let ttys: Vec<String> = if open {
         // sh:15 — ps -Ao tty=, drop `?*` (no-tty) lines, strip trailing
         //   fields, unique.
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "open-ttys".to_string(),
             "ps".to_string(),
             "-Ao".to_string(),

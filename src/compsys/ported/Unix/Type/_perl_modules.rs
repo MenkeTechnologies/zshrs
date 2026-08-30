@@ -22,7 +22,7 @@
 //! ```
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
 use crate::compsys::ported::_store_cache::_store_cache;
@@ -115,7 +115,7 @@ fn scan_libdir(libdir: &str, pod: bool) -> Vec<String> {
 
 /// sh:86 `perl -e 'print "@INC"'` — the module search path for `$perl`.
 fn perl_inc(perl: &str) -> Vec<String> {
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "perl-inc".to_string(),
         perl.to_string(),
         "-e".to_string(),
@@ -287,7 +287,7 @@ pub fn _perl_modules(args: &[String]) -> i32 {
         );
         let mods: Vec<String> = if try_pminst && findcmd("pminst", 0, 0).is_some() {
             // sh:81  set -A $perl_modules $(pminst)
-            let _ = _call_program(&["modules".to_string(), "pminst".to_string()]);
+            let _ = call_program_capture(&["modules".to_string(), "pminst".to_string()]);
             getsparam("REPLY")
                 .unwrap_or_default()
                 .split_whitespace()

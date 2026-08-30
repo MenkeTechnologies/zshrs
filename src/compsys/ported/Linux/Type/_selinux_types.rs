@@ -18,7 +18,7 @@
 //! sh:19  compadd "$@" "$expl[@]" -a setypes
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -100,7 +100,7 @@ pub fn _selinux_types_impl(args: &[String]) -> i32 {
         cmd_args.extend(extra.iter().cloned());
         cmd_args.push("--flat".to_string());
         cmd_args.push("-x".to_string());
-        let _ = _call_program(&cmd_args);
+        let _ = call_program_capture(&cmd_args);
         let out = getsparam("REPLY").unwrap_or_default();
         // ${${(f)"..."}#[[:blank:]]}:1} — split into lines, strip one
         // leading blank per line, then drop the first (header) line.
@@ -110,7 +110,7 @@ pub fn _selinux_types_impl(args: &[String]) -> i32 {
             .collect()
     } else {
         // sh:15  _call_program selinux-types seinfo --flat -t
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "selinux-types".to_string(),
             "seinfo".to_string(),
             "--flat".to_string(),

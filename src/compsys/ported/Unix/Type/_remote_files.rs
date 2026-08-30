@@ -39,7 +39,7 @@
 //! the `-g` glob filter (sh:83-88) and `-Q` escape (sh:90-92) run the real
 //! ported glob matcher.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::ported::glob::{matchpat, tokenize};
@@ -220,7 +220,7 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
     call.push(host);
     call.extend(["command", "ls", "-d1FL", "--"].map(String::from));
     call.push(rempat);
-    let _ = _call_program(&call);
+    let _ = call_program_capture(&call);
     let listing = getsparam("REPLY").unwrap_or_default();
 
     // sh:80-81 — split into files vs directories. Directory names keep their

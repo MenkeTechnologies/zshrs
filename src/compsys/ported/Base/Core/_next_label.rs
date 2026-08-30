@@ -133,6 +133,12 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
         "curtag".to_string(),
         "__spec".to_string(),
     ];
+    // sh:8 — the line `comptags` is called FROM. `FnScope` zeroes `lineno`
+    // on entry to a port body, and `zerrmsg` prints the field only when it
+    // is non-zero (`Src/utils.c:301-305`), so without this the builtin's
+    // diagnostics read `_next_label:comptags:` where zsh reads
+    // `_next_label:comptags:8:`. Same fix as `_all_labels` sh:26.
+    crate::compsys::ported::shared::set_sh_lineno(8);
     if bin_comptags("comptags", &comptags_argv, &make_ops(), 0) != 0 {
         return 1; // sh:25
     }

@@ -40,7 +40,7 @@ use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::{dispatch_function_call, execute_script};
-use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_compvalues;
@@ -126,19 +126,40 @@ fn prefix_is_arg(prefix: &str, argsep: &str, restricted: bool, sep_char: &str) -
 /// names (for a list) or the argument of one named value.
 pub fn _values(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_values");
-    let r = values_impl(args);
-    // sh: the locals `noargs args opts descr action expl sep argsep subc
-    // test ws val_args` are function-scoped in zsh and vanish on return.
-    // The port has no local-param scope, so unset the by-name scratch
-    // params here (state / state_descr / context / curcontext / PREFIX /
-    // SUFFIX / IPREFIX / compstate persist for the caller).
-    for p in [
-        "noargs", "args", "opts", "descr", "action", "expl", "sep", "argsep", "subc", "val_args",
-        "ws",
-    ] {
-        unsetparam(p);
-    }
-    r
+    // sh:13  local noargs args opts descr action expl sep argsep subc test='*'
+    // sh:112 local ws
+    // sh:100 typeset -A val_args
+    //
+    // These are the scratch names `compvalues` and `_description` write BY
+    // NAME, so they have to exist in the param table — but they are `local`
+    // upstream, which SAVES the caller's binding and RESTORES it on return.
+    //
+    // The port emulated `local` with `unsetparam` after the body, which
+    // DESTROYS the caller's binding instead of restoring it: after
+    // `_values desc one two three` the caller's `expl` came back
+    // `<unset>` where zsh hands back the caller's own array
+    // (`expl[0] =` in the stock-utility sweep). Every caller that reads
+    // `$expl` after a `_values` — `_arguments`' own `expl` among them —
+    // saw a deleted parameter rather than its own value.
+    //
+    // `LocalScope` is the save/restore half of `declare_locals`, the same
+    // helper `_files`/`_command_names` use for `expl`. Declared with kind 0
+    // (a bare `local`, i.e. a scalar) because that is exactly what sh:13
+    // writes — no `-a` — and the first array assignment converts the name,
+    // as it does in zsh.
+    let mut _locals = crate::compsys::ported::shared::LocalScope::declare(
+        &[
+            "noargs", "args", "opts", "descr", "action", "expl", "sep", "argsep", "subc", "ws",
+        ],
+        0,
+    );
+    // sh:100 `typeset -A val_args` — an ASSOCIATIVE array, so it must not be
+    // declared as a scalar that a later `sethparam` has to retype.
+    _locals.also(&["val_args"], crate::ported::zsh_h::PM_HASHED);
+    // `state` / `state_descr` / `context` / `curcontext` / `PREFIX` /
+    // `SUFFIX` / `IPREFIX` / `compstate` are deliberately absent: upstream
+    // does NOT declare them local, they are the caller-visible results.
+    values_impl(args)
 }
 
 fn values_impl(args: &[String]) -> i32 {
