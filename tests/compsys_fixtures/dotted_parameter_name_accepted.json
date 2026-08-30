@@ -1,0 +1,94 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "dotted_parameter_name_accepted",
+ "title": "`typeset -gHi .shadow.depth=0` — zsh 5.9.2 REJECTS a dotted parameter name, zshrs creates it; this is what puts `.shadow.depth`/`.shadow.stack` in zshrs's parameter table after a completion that calls `_shadow`",
+ "harness": "shell_probe",
+ "run": {
+  "script": [
+   "zmodload zsh/parameter",
+   "builtin typeset -gHi .shadow.depth=0",
+   "print -r -- \"rc=$? present=${+parameters[.shadow.depth]}\"",
+   "builtin typeset -gHa .shadow.stack",
+   "print -r -- \"rc=$? present=${+parameters[.shadow.stack]}\""
+  ],
+  "compare_stderr": false
+ },
+ "expect": "diverges",
+ "group": "shell-core-parameters",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "3 line(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "field": "stdout",
+    "zsh": "<absent>",
+    "zshrs": "rc=0 present=1"
+   },
+   {
+    "row": 1,
+    "field": "stdout",
+    "zsh": "<absent>",
+    "zshrs": "rc=0 present=1"
+   },
+   {
+    "row": -1,
+    "field": "exit",
+    "zsh": "1",
+    "zshrs": "0"
+   }
+  ],
+  "rows_total": 3,
+  "one_sided": "zsh prints NOTHING on stdout and exits 1: the failed `typeset` is fatal in a non-interactive script, so it never reaches the two `print` lines — which is why the rows read `<absent>` rather than `rc=1 present=0`. Its stderr carries `@DIR@/probe.zsh:typeset:2: not valid in this context: .shadow.depth` (one line — it stops there). stderr is not compared in this cell because the two shells prefix diagnostics differently; the exit status and the `present=` counts carry the finding.",
+  "notes": "Where this was found: `--session-fuzz` on compsys_parity reports, after `git commit --amen<TAB>`, `added by zshrs only: .shadow.depth, .shadow.stack` and `added by zsh only: mbegin, mend` (plus `___git_resolved_builtins` and `__gitcomp_builtin_commit` from the second repetition on). Replay of that observation, which is NOT what this cell runs — it takes ~4 minutes and two live shells kept alive across episodes:\n  scripts/compsys_parity.py --session-replay '{\"geom\":[24,80],\"zstyle\":\"<repo>/scripts/parity_zstyle.zsh\",\"repeat\":2,\"episodes\":[{\"surface\":\"opt\",\"buffer\":\"git commit --amen\",\"keys\":[\"tab\"],\"end\":\"abort\"},{\"surface\":\"opt\",\"buffer\":\"git commit --amen\",\"keys\":[\"tab\"],\"end\":\"abort\"}]}' -v\nThis cell pins the ROOT CAUSE instead, in 0.2s and with no terminal in the picture: the dotted name itself. Round 5 recorded the finding as both shells taking different paths through the same shipped `Completion/Base/Utility/_shadow:36-37`. Measured here, that is not what happens: the `_shadow` first in this host's $fpath is a STUB from a plugin (`_arguments -s -S '*:file:_files'`, nothing to do with upstream's shadow utility) and BOTH shells autoload that same body — verified with `autoload +X -Uz _shadow; functions _shadow`. zsh could not create those names even if it did reach upstream's file: the restriction is live in upstream's own source at Src/builtin.c:2546 (`not valid in this context`) as of 599af4604f, the tree tests/ztst_compsys/ uses as its oracle. What is NOT explained here is the other half of the session-fuzz observation — the `mbegin`/`mend` that zsh leaves behind and zshrs does not; that is pinned as observed, not root-caused."
+ },
+ "controls": [
+  {
+   "script": [
+    "zmodload zsh/parameter",
+    "builtin typeset -gHi shadowdepth=0",
+    "print -r -- \"rc=$? present=${+parameters[shadowdepth]}\""
+   ],
+   "note": "the same declaration with the dots removed. PASS — `typeset -gHi` is not the variable, the NAME is"
+  }
+ ],
+ "variants": [
+  {
+   "script": [
+    "zmodload zsh/parameter",
+    "autoload -Uz _shadow",
+    "_shadow 2>/dev/null",
+    "print -r -- \"depth=${+parameters[.shadow.depth]} stack=${+parameters[.shadow.stack]}\""
+   ],
+   "note": "reached the way a completion reaches it, through _shadow rather than through a bare typeset: zsh `depth=0 stack=0`, zshrs `depth=1 stack=1`"
+  }
+ ],
+ "origin": [
+  "round 5 reported a `.shadow.depth`/`.shadow.stack` against `mbegin`/`mend` parameter-table divergence after `git commit --amen<TAB>`",
+  "re-run first-hand in round 6 through compsys_parity --session-replay, then minimised to the dotted typeset that causes it"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "79c953de7a",
+  "harness_sha256_16": {
+   "tests/compsys_fixtures/shell_probe.py": "29869257ce4cba02"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101592632,
+   "mtime": "2026-08-30 04:06:47",
+   "version": "zshrs 0.12.48",
+   "sha256_16": "33260fa3dcc29246",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
+  "note": "round 6. Reproduced FIRST-HAND through tests/compsys_fixtures/shell_probe.py before pinning; the `observed` rows below are that replayer's output verbatim."
+ }
+}

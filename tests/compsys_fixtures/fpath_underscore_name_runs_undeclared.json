@@ -1,0 +1,105 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "fpath_underscore_name_runs_undeclared",
+ "title": "an UNDECLARED `_name` sitting in $fpath is executable on zshrs — zsh reports command not found, zshrs autoloads the file, runs it and leaves the function defined",
+ "harness": "shell_probe",
+ "run": {
+  "files": [
+   {
+    "path": "fp/_zzimpl",
+    "content": "print ZZIMPL-RAN\n",
+    "mode": "0644"
+   }
+  ],
+  "script": [
+   "fpath=( ${0:h}/fp )",
+   "_zzimpl",
+   "print -r -- \"rc=$? defined=${+functions[_zzimpl]}\""
+  ],
+  "compare_stderr": false
+ },
+ "expect": "diverges",
+ "group": "shell-core-parameters",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "2 line(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "field": "stdout",
+    "zsh": "rc=127 defined=0",
+    "zshrs": "ZZIMPL-RAN"
+   },
+   {
+    "row": 1,
+    "field": "stdout",
+    "zsh": "<absent>",
+    "zshrs": "rc=0 defined=1"
+   }
+  ],
+  "rows_total": 2,
+  "one_sided": "zsh also writes `zsh:2: command not found: _zzimpl` to stderr; stderr is not compared here (the two shells prefix diagnostics differently, `probe.zsh:2:` against `zsh:2:`) so the evidence is taken from stdout: the rc=127/rc=0 split and the `defined=` count say the same thing without dragging an unrelated divergence into the cell.",
+  "notes": "It is not an exec: the file is mode 0644 and has no #! line, and afterwards `${+functions[_zzimpl]}` is 1 on zshrs — the shell autoloaded it as a function on command-not-found because its name is in $fpath. `whence -w _zzimpl` says `none` on BOTH shells before the call, so the divergence is at execution, not in the lookup table. The two controls place the variable: the same file under a name with no leading underscore is not run (both shells: command not found), and with `fpath=( )` the underscore name is not run either. Measured separately in round 6: `__zz` (two underscores) is also run, so the trigger is a leading `_`, not the exact name. What it costs in practice: every completer in the user's fpath becomes a command, so a typo'd or shadowing `_name` on the command line executes completion code instead of failing."
+ },
+ "controls": [
+  {
+   "files": [
+    {
+     "path": "fp/zzplain",
+     "content": "print ZZPLAIN-RAN\n",
+     "mode": "0644"
+    }
+   ],
+   "script": [
+    "fpath=( ${0:h}/fp )",
+    "zzplain",
+    "print -r -- \"rc=$? defined=${+functions[zzplain]}\""
+   ],
+   "note": "same file, same directory, name WITHOUT the leading underscore. Agrees (PASS): both shells report rc=127 defined=0, so it is the `_` prefix that is load-bearing"
+  },
+  {
+   "files": [
+    {
+     "path": "fp/_zzimpl",
+     "content": "print ZZIMPL-RAN\n",
+     "mode": "0644"
+    }
+   ],
+   "script": [
+    "fpath=( )",
+    "_zzimpl",
+    "print -r -- \"rc=$? defined=${+functions[_zzimpl]}\""
+   ],
+   "note": "the same underscore name with an EMPTY fpath. Agrees (PASS), so the file is reached through $fpath and nothing else"
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "reported in round 5 as `fpath=(DIR)` with `DIR/_zzimpl` and no autoload being executable on zshrs",
+  "re-run first-hand in round 6 through tests/compsys_fixtures/shell_probe.py against zshrs 0.12.48, with the mode-0644 and `${+functions}` observations added here"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "79c953de7a",
+  "harness_sha256_16": {
+   "tests/compsys_fixtures/shell_probe.py": "29869257ce4cba02"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101592632,
+   "mtime": "2026-08-30 04:06:47",
+   "version": "zshrs 0.12.48",
+   "sha256_16": "33260fa3dcc29246",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
+  "note": "round 6. Reproduced FIRST-HAND through tests/compsys_fixtures/shell_probe.py before pinning; the `observed` rows below are that replayer's output verbatim."
+ }
+}

@@ -1,0 +1,109 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "argv_append_discards_positionals",
+ "title": "`argv+=( ... )` throws the positional parameters away and keeps the appended array ACROSS calls — zsh n=4 <1,2,3,X> three times, zshrs n=1 <X>, n=2 <X,X>, n=3 <X,X,X>",
+ "harness": "shell_probe",
+ "run": {
+  "script": [
+   "f() { argv+=( X ); print -r -- \"n=$# argv=<${(j:,:)argv}>\" }",
+   "f 1 2 3",
+   "f 1 2 3",
+   "f 1 2 3"
+  ],
+  "compare_stderr": false
+ },
+ "expect": "diverges",
+ "group": "shell-core-parameters",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "3 line(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "field": "stdout",
+    "zsh": "n=4 argv=<1,2,3,X>",
+    "zshrs": "n=1 argv=<X>"
+   },
+   {
+    "row": 1,
+    "field": "stdout",
+    "zsh": "n=4 argv=<1,2,3,X>",
+    "zshrs": "n=2 argv=<X,X>"
+   },
+   {
+    "row": 2,
+    "field": "stdout",
+    "zsh": "n=4 argv=<1,2,3,X>",
+    "zshrs": "n=3 argv=<X,X,X>"
+   }
+  ],
+  "rows_total": 3,
+  "notes": "Two defects in one line of shell. (a) the append REPLACES the positional parameters instead of extending them, so `$@` is only what was appended; (b) whatever it appends to is not per-frame — the third call sees the two X's the first two left behind, which is why $# climbs 1,2,3 instead of staying 4. `argv=( $argv X )`, `set -- \"$@\" X` and the same append on a `local -a` array are all pinned as controls and all agree, so the variable is the `+=` form on `argv` specifically, not appends and not argv. Why this is in a COMPLETION evidence base: `Completion/Base/Core/_description` builds its zformat spec list with exactly this append (line 83), so every description compsys renders picks up the leftovers — the upstream Y0*.ztst run in tests/ztst_compsys/ shows it as `DESCRIPTION:{h:file}` where zsh emits `DESCRIPTION:{file}`, and that single misparse accounts for a large share of the failing assertions there."
+ },
+ "controls": [
+  {
+   "script": [
+    "f() { argv=( $argv X ); print -r -- \"n=$# argv=<${(j:,:)argv}>\" }",
+    "f 1 2 3",
+    "f 1 2 3",
+    "f 1 2 3"
+   ],
+   "note": "the ASSIGN form of the same append. Agrees (PASS, byte-identical stdout and exit status), which is what makes `+=` the variable"
+  },
+  {
+   "script": [
+    "f() { set -- \"$@\" X; print -r -- \"n=$# argv=<${(j:,:)argv}>\" }",
+    "f 1 2 3",
+    "f 1 2 3",
+    "f 1 2 3"
+   ],
+   "note": "`set --` reaching the same end state. Agrees, so the positional-parameter machinery itself is not broken"
+  },
+  {
+   "script": [
+    "f() { local -a t; t=( \"$@\" ); t+=( X ); print -r -- \"n=$#t t=<${(j:,:)t}>\" }",
+    "f 1 2 3",
+    "f 1 2 3",
+    "f 1 2 3"
+   ],
+   "note": "`+=` on an ordinary local array. Agrees, so array append is not broken either — only append onto `argv`"
+  }
+ ],
+ "variants": [
+  {
+   "script": [
+    "f() { argv+=( X ); print -l \"$@\" }",
+    "f a b"
+   ],
+   "note": "the shortest witness, and the one the finding was reported as: zsh prints a/b/X, zshrs prints X alone. Observed: 3 line(s) differ — row0 zsh 'a' vs zshrs 'X', row1 zsh 'b' vs '<absent>', row2 zsh 'X' vs '<absent>'"
+  }
+ ],
+ "origin": [
+  "found in round 5 while attributing the upstream Y0*.ztst failures; also written up in tests/ztst_compsys/NOTES.md as divergence 1",
+  "re-run first-hand in round 6 through tests/compsys_fixtures/shell_probe.py against zshrs 0.12.48 before pinning"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "79c953de7a",
+  "harness_sha256_16": {
+   "tests/compsys_fixtures/shell_probe.py": "29869257ce4cba02"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101592632,
+   "mtime": "2026-08-30 04:06:47",
+   "version": "zshrs 0.12.48",
+   "sha256_16": "33260fa3dcc29246",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
+  "note": "round 6. Reproduced FIRST-HAND through tests/compsys_fixtures/shell_probe.py before pinning; the `observed` rows below are that replayer's output verbatim."
+ }
+}

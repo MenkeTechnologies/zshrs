@@ -68,6 +68,17 @@ names the harness that owns it:
     zsh_reference_probe   tests/compsys_fixtures/zsh_reference_probe.py, which
                           asks only about the REFERENCE shell and never boots
                           zshrs at all
+    winch_probe           tests/compsys_fixtures/winch_probe.py — completes,
+                          then CHANGES THE WINDOW SIZE mid-session. The three
+                          sibling harnesses set the geometry once before the
+                          shell boots and never touch it again, so none of them
+                          can reach a defect that needs a resize
+    shell_probe           tests/compsys_fixtures/shell_probe.py — one script,
+                          two shells, NO pty. For a finding whose reproducer is
+                          a script rather than a keystroke: a parameter bug that
+                          reprices what compsys renders is isolated better by
+                          two lines of `print -l` than by a screen that also
+                          carries a prompt, a geometry and a listing layout
 
 `--harness-dir DIR` points the first three at another copy of the scripts (e.g.
 `git show HEAD:scripts/comptab_parity.py > $DIR/comptab_parity.py`) for when the
@@ -98,6 +109,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE_DIR = os.path.join(REPO, "tests", "compsys_fixtures")
 SELF = os.path.relpath(os.path.abspath(__file__), REPO)
 SCHEMAS = ("compsys-fixture/1", "compsys-fixture/2")
+GROUPS_FILE = "groups.json"
 
 # spec-fuzz fixtures are replayed through a file in the shape `write_fixture()`
 # emits; `read_fixture()` needs only the `@` headers and this heredoc marker.
@@ -119,6 +131,16 @@ RUNNER_FAILED = (TIMEOUT, ERROR)
 
 SIBLING_HARNESSES = ("compsys_spec_fuzz", "comptab_parity", "compsys_parity")
 PROBE_HARNESS = "zsh_reference_probe"
+# Replayers that live in the fixture directory, not in scripts/: they are part
+# of the evidence base and are versioned with it, so --harness-dir does not
+# point at them.
+SHELL_HARNESS = "shell_probe"
+WINCH_HARNESS = "winch_probe"
+LOCAL_HARNESSES = (PROBE_HARNESS, SHELL_HARNESS, WINCH_HARNESS)
+# Both of these take the fixture's whole `run` block as a JSON file rather than
+# a flag per field, so a control or a variant that overrides one field needs no
+# plumbing here at all.
+RUN_BLOCK_HARNESSES = (SHELL_HARNESS, WINCH_HARNESS)
 
 # The --quick subset. Chosen for COVERAGE (one cell per harness, plus the two
 # cheapest high-signal fixtures) and for run time, not by any measurement — it
@@ -244,6 +266,11 @@ class Result:
 def load_fixtures(only):
     out = []
     for path in sorted(glob.glob(os.path.join(FIXTURE_DIR, "*.json"))):
+        # The one document in this directory that is NOT a fixture: the group
+        # table the consolidated report renders from. Skipped by NAME, so an
+        # unknown schema in an actual fixture still stops the run.
+        if os.path.basename(path) == GROUPS_FILE:
+            continue
         with open(path) as f:
             try:
                 doc = json.load(f)
@@ -265,7 +292,10 @@ def load_fixtures(only):
 
 def merged(base, override, keys=("buffer", "keys", "flags", "zstyle",
                                  "zstyle_file", "rows", "cols", "word",
-                                 "control_word", "trials")):
+                                 "control_word", "trials", "script", "files",
+                                 "dirs", "argv", "env", "compare_stderr",
+                                 "zsh_flags", "zshrs_flags", "new_rows",
+                                 "new_cols")):
     """A variant/control restates only what it changes; `spec` merges per field.
 
     Merging `spec` rather than replacing it is what lets a control say
@@ -366,6 +396,13 @@ def build_command(cell, directory, json_path, harness_script):
         argv += ["--word", run["word"], "--trials", str(run.get("trials", 3))]
         if run.get("control_word"):
             argv += ["--control", run["control_word"]]
+    elif harness in RUN_BLOCK_HARNESSES:
+        # The whole `run` block IS the reproducer for these cells, so it is
+        # handed over verbatim rather than flattened into flags.
+        path = os.path.join(directory, "run.json")
+        with open(path, "w") as f:
+            json.dump(run, f)
+        argv += ["--run", path]
     else:
         argv += ["--case", run["buffer"], "--keys", ",".join(run["keys"])]
         if harness == "compsys_parity":
@@ -565,7 +602,10 @@ def print_listing(fixtures):
                  len(doc.get("variants") or []),
                  len(doc.get("controls") or []), opt))
         print("    %s" % doc["title"])
-        if "word" in run:
+        if "script" in run:
+            print("    script=%d line(s): %s"
+                  % (len(run["script"]), " ; ".join(run["script"])[:96]))
+        elif "word" in run:
             print("    word=%r control=%r trials=%s"
                   % (run["word"], run.get("control_word"), run.get("trials")))
         else:
@@ -655,8 +695,8 @@ def main():
 
     harness_script = {name: os.path.join(args.harness_dir, "%s.py" % name)
                       for name in SIBLING_HARNESSES}
-    harness_script[PROBE_HARNESS] = os.path.join(FIXTURE_DIR,
-                                                 "zsh_reference_probe.py")
+    for name in LOCAL_HARNESSES:
+        harness_script[name] = os.path.join(FIXTURE_DIR, "%s.py" % name)
 
     cells = []
     for doc in fixtures:
