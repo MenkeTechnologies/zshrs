@@ -32,7 +32,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, DRAIN, OPEN};
+use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN};
 use std::path::{Path, PathBuf};
 
 /// A directory holding one unique name and two that share a prefix.
@@ -194,6 +194,117 @@ if [[ $all == *fxa1* && $all == *fxa2* ]]; then print \"K=yes\"; else print \"K=
         &driver,
         "K",
         "compsys listed both candidates for an ambiguous prefix",
+    );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Described completions — `_describe`, `compadd -d`, and the
+// `descriptions` format style
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A compsys session with a custom completer installed for `mytest`,
+/// which is then TAB-completed. `^U` clears the line afterwards so the
+/// session ends on an empty command rather than running whatever the
+/// completion inserted.
+///
+/// `compinit` runs over `/usr/share/zsh/*/functions` only — see the
+/// note on the ambiguous-prefix case above for why the inherited
+/// `$FPATH` is unusable here.
+fn compsys_driver(setup: &str, needle: &str) -> String {
+    let setup_q = sq(setup);
+    let needle_q = sq(needle);
+    format!(
+        "{OPEN}
+zpty -w w 'unsetopt beep'
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'
+zpty -w w 'autoload -Uz compinit; compinit -u -D'
+sleep 20
+zpty -w w {setup_q}
+sleep 2
+zpty -w -n w 'mytest '
+sleep 2
+zpty -w -n w $'\\t'
+sleep 3
+zpty -w -n w $'\\C-u'
+sleep 1
+zpty -w -n w $'\\r'
+sleep 3
+{DRAIN}
+local needle={needle_q}
+if [[ $all == *${{~needle}}* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+"
+    )
+}
+
+const DESCRIBE: &str =
+    r#"_mytest(){ _describe 'thing' '(alpha:first beta:second)' }; compdef _mytest mytest"#;
+
+/// `_describe` is how most completers present a set of choices. Both
+/// candidates have to reach the listing, in order.
+#[test]
+fn describe_lists_every_candidate() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_verdict(
+        &compsys_driver(DESCRIBE, "alpha*beta"),
+        "K",
+        "_describe listed both candidates",
+    );
+}
+
+/// …and the DESCRIPTION half of each `name:description` pair has to be
+/// displayed next to it. A shell that lists the names but drops the
+/// descriptions passes the case above and fails this one.
+#[test]
+fn describe_shows_the_description_text() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    assert_same_verdict(
+        &compsys_driver(DESCRIBE, "first"),
+        "K",
+        "_describe displayed the description text",
+    );
+}
+
+/// The `descriptions` format style puts a header above each group —
+/// the `-<<external command>>-` style banner a configured setup shows.
+/// `%d` is substituted with the group's description.
+#[test]
+fn the_descriptions_format_style_draws_a_group_header() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let setup = format!(
+        "{DESCRIBE}; zstyle ':completion:*:descriptions' format 'HDRZZ %d'"
+    );
+    assert_same_verdict(
+        &compsys_driver(&setup, "HDRZZ"),
+        "K",
+        "the descriptions format style drew a group header",
+    );
+}
+
+/// `compadd -d` supplies a display array PARALLEL to the match array:
+/// the shell lists the display strings while completing the matches.
+/// `_describe` is built on it, but plenty of completers call it directly,
+/// and the two arrays going out of step is a whole bug class.
+#[test]
+fn compadd_d_lists_the_parallel_display_strings() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let setup = r#"_mytest(){ local -a m d; m=(k1 k2); d=('k1 -- DSCA' 'k2 -- DSCB'); compadd -d d -a m }; compdef _mytest mytest"#;
+    assert_same_verdict(
+        &compsys_driver(setup, "DSCA*DSCB"),
+        "K",
+        "compadd -d listed the parallel display strings",
     );
 }
 
