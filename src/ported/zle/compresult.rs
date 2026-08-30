@@ -3203,11 +3203,31 @@ pub fn calclist(showall: i32) -> i32 {
             }
         }
 
-        // c:1889-1897 — final per-column width balance for groups
-        // without packed widths.
+        // c:1889-1897 — final width balance: spread the slack between this
+        // group's total and the widest group over its columns.
+        //
+        //     if (g->widths) {
+        //         int *p, a = (max - g->totl + CM_SPACE) / g->cols;
+        //         for (i = g->cols, p = g->widths; i; i--, p++) *p += a;
+        //     } else if (g->width && g->cols > 1)
+        //         g->width += (max - (g->width * g->cols - CM_SPACE)) / g->cols;
+        //
+        // The port had only the `else if` half, so a PACKED group's
+        // per-column widths were left at the raw per-column maxima and
+        // never padded out to `max` — every packed listing rendered its
+        // columns narrower than zsh's and, with several groups on screen,
+        // out of alignment with each other.
         for g in groups.iter_mut() {
-            if g.widths.is_empty() && g.width != 0 && g.cols > 1 {
-                g.width += (max - (g.width * g.cols - CM_SPACE)) / g.cols;
+            if !g.widths.is_empty() {
+                // c:1890-1893 — `g->cols` is `tcols` from the packed pass,
+                // which the loop guarantees is >= 1, so the division is safe.
+                let a = (max - g.totl + CM_SPACE) / g.cols; // c:1891
+                let ncols = (g.cols as usize).min(g.widths.len());
+                for w in &mut g.widths[..ncols] {
+                    *w += a; // c:1893
+                }
+            } else if g.width != 0 && g.cols > 1 {
+                g.width += (max - (g.width * g.cols - CM_SPACE)) / g.cols; // c:1895
             }
         }
     } else {
