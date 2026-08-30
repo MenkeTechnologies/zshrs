@@ -2,8 +2,44 @@
 
 One JSON file per confirmed finding: a zsh-vs-zshrs completion divergence, or —
 clearly marked as such — a defect in the REFERENCE shell that the harnesses run
-into. `scripts/compsys_regressions.py` replays the whole set and is the single
-gate that says whether the pinned evidence still holds.
+into, or a divergence that has since been FIXED and is kept here as a guard
+against its return. `scripts/compsys_regressions.py` replays the whole set and
+is the single gate that says whether the pinned evidence still holds.
+
+Which of the three a file is, is `expect`: `diverges`, `reference-crash`, or
+`agrees`. A fixed finding is never deleted — flipped to `agrees`, the same cell
+that once demonstrated the bug becomes the regression test for the fix, and the
+gate fails if the two shells stop matching again.
+
+## Where the set stands
+
+Every number below is read off `last_gate.json` — the full gate run checked in
+beside these fixtures — and none of it is typed from memory. It describes THAT
+run and nothing else; re-derive it any time with
+`scripts/compsys_regressions.py --json out.json`, or read the document.
+
+The run it records: 2026-08-30, source at `44a3b4841c`, zshrs 0.12.49
+(`723088f811cdd366`) against zsh 5.9.2, `--jobs 1`, load average 5.8, 379.0s,
+exit 0.
+
+| | |
+| --- | --- |
+| fixtures pinned | 29 |
+| cells attempted | 47 — 29 fixture cells and 18 controls |
+| still diverging | 22 |
+| retired as guards, now asserting the two shells AGREE | 6 |
+| controls holding | 18 |
+| moved, or could not be scored | 0, and 0 |
+| opt-in and skipped | 1 — the upstream zsh crash |
+| cells that needed a re-run | 0 |
+
+The six guards, and the commit each one now protects: `d555917f07` for
+`argv_append_discards_positionals`; `44a3b4841c` for
+`explanation_percent_escapes`, `format_style_percent_escapes`,
+`listing_row_erase_to_eol`, `listing_lost_on_window_shrink` and
+`transpose_words_panic`. Each was re-verified three times before its `expect`
+was flipped, and each was then run against a zshrs that still carries its bug
+to check that it fails there — see `guard_verified` in the fixture.
 
 ## Running it
 
@@ -98,7 +134,7 @@ stamp.
 | field | meaning |
 | ----- | ------- |
 | `id` | stable name; also the filename |
-| `title` | one line, what the two shells do differently |
+| `title` | one line, what the two shells do differently. A retired fixture keeps the description of the bug and prefixes it `GUARD (fixed in COMMIT) — was:` |
 | `harness` | `compsys_spec_fuzz`, `comptab_parity`, `compsys_parity`, `zsh_reference_probe`, `shell_probe` or `winch_probe` — which one owns the replay |
 | `run.buffer` / `run.keys` | typed, then each key sent in order. Only `compsys_parity` buffers may contain a newline (the continuation cells) |
 | `run.flags` | extra harness flags the finding needs (`--strict-stream`, `--compare-attrs`, `--strict-cursor`) |
@@ -109,9 +145,12 @@ stamp.
 | `run.word` / `run.control_word` / `run.trials` | `zsh_reference_probe` only |
 | `run.script` / `run.files` / `run.dirs` / `run.argv` / `run.env` / `run.compare_stderr` | `shell_probe` only: the script both shells run under `-f`, plus any files or directories (with modes) it needs materialised beside it. `compare_stderr` is off by default — see below |
 | `run.new_rows` / `run.new_cols` | `winch_probe` only: the geometry the window is changed TO, mid-cell, after the completion has been drawn |
-| `expect` | `diverges`, or `reference-crash` for an upstream defect |
-| `fingerprint` | `comptab_parity`'s stable id for the failure shape, or `null` when the owning harness does not compute one |
+| `expect` | `diverges`, `agrees` for a fixed finding kept as a guard, or `reference-crash` for an upstream defect |
+| `retired` | present only on an `agrees` fixture: the date, the `fix_commit` and its subject, `why` that commit fixed this cell, and the `evidence` — the verdict sequence the flip was made on |
+| `guard_verified` | the run that proves the guard guards: an older zshrs that still carries the bug, the `CONTROL-MOVED` it produced there, and the harness detail — which must be the same one `observed_when_diverging` records, or the guard is failing on something else |
+| `fingerprint` | `comptab_parity`'s stable id for the failure shape, or `null` when the owning harness does not compute one. A retired fixture's shape id moves to `fingerprint_when_diverging`: a passing cell has no failure shape, and leaving one there would ask the runner to match a shape that can no longer occur |
 | `observed` | the recorded verdict, the differing rows verbatim, one-sided diagnostics, raw-stream fragments, and prose notes |
+| `observed_when_diverging` | on a retired fixture, the `observed` block exactly as it was measured before the fix, plus `recorded_under` naming the commit and binary it was measured against. It is history; `observed` always describes what the shells do NOW |
 | `controls` | cells the fixture pins as **agreeing**, replayed by default. A control is what makes the fixture's variable the variable: each continuation fixture carries the same completion on one physical line, each widget fixture carries the same completer through the default TAB binding. A control that starts diverging (`CONTROL-MOVED`) fails the run |
 | `variants` | further confirmed witnesses of the same finding; replayed under `--variants`. Each may override any `run` field, and carries its OWN `fingerprint` — the shape id takes the surrounding context in, so the same defect reached through a different command legitimately produces a different one |
 | `default_run` | `false` on a fixture the gate does not attempt by default; `default_run_reason` says why |
@@ -144,6 +183,47 @@ stamp and says which of two very different things happened:
 
 Both exit 1. The diagnosis is what differs, and it is free to compute.
 
+### Retiring a fixed fixture as a guard
+
+When the diagnosis is "binary rebuilt", the fixture is retired — **flipped, not
+deleted**. `expect` goes `diverges` -> `agrees`, and from then on the gate
+asserts the two shells MATCH on that cell: a `PASS` scores `CONTROL-HOLDS`, and
+a `FAIL` scores `CONTROL-MOVED` and fails the run. The cell that demonstrated
+the bug becomes the regression test for the fix, at no extra runtime and with
+the reproducer already written.
+
+What a retirement must carry, and why each part:
+
+* **A first-hand re-verification**, not a report of one. The flip is a claim
+  that a bug is gone; it is worth exactly as much as the run behind it.
+* **The divergent `observed` block preserved** as `observed_when_diverging`,
+  with `recorded_under` naming the commit and binary it was measured against.
+  Deleting it would throw away the only description of the bug; leaving it in
+  `observed` would present a measurement from a previous binary as current
+  fact.
+* **The fix commit named** in `retired.fix_commit`, with `why` saying what in
+  that commit reaches this cell. "It passes now" is not an attribution.
+* **The previous stamp pushed into `history`**, and a new `confirmed` for the
+  run that showed it passing.
+* **Every variant and control checked too.** A variant can still diverge when
+  the parent passes — that is a PARTIAL fix and is the most interesting thing
+  a retirement run can find. Variants inherit the fixture's `expect`, so
+  flipping a fixture whose variants still fail turns a live finding into an
+  intermittent gate failure. Measure them before flipping, and say what they
+  did.
+
+To check that a guard actually guards, point the runner at an older build:
+
+```sh
+scripts/compsys_regressions.py --zshrs /opt/homebrew/bin/zshrs \
+    --only argv_append_discards_positionals
+```
+
+The binary is passed through to every harness, so this really does run the old
+one; a guard whose bug is present there reports `CONTROL-MOVED` and exits 1. A
+guard that stays green against a binary known to carry the bug is not a guard,
+and the flip that produced it was wrong.
+
 ## The two fixtures that are not pty cells
 
 Most findings here are a screen: a buffer, some keys, and the rows the two
@@ -151,7 +231,8 @@ shells drew. Two are not, and forcing them into a pty cell would have made them
 worse evidence.
 
 `shell_probe.py` — one script, two shells, **no pty**. `argv+=( ... )` losing
-the positional parameters is a parameter bug in the shell core; it earns its
+the positional parameters was a parameter bug in the shell core (fixed in
+`d555917f07`; the cell is now a guard); it earned its
 place in a *completion* evidence base only because
 `Completion/Base/Core/_description:83` builds its `zformat` spec list with
 exactly that append, so it reprices every description compsys renders. Pinned

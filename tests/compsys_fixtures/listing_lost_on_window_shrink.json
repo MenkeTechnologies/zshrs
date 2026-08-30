@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/2",
  "id": "listing_lost_on_window_shrink",
- "title": "shrinking the window while a completion listing is displayed blanks zshrs's screen — zsh keeps all 3 non-blank rows at 24x80 -> 14x80, zshrs keeps 0",
+ "title": "GUARD (fixed in 44a3b4841c) — was: shrinking the window while a completion listing is displayed blanks zshrs's screen — zsh keeps all 3 non-blank rows at 24x80 -> 14x80, zshrs keeps 0",
  "harness": "winch_probe",
  "run": {
   "buffer": "ls /usr/",
@@ -13,10 +13,45 @@
   "cols": 80,
   "new_rows": 14
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-08-30",
+  "previous_expect": "diverges",
+  "fix_commit": "44a3b4841c",
+  "fix_commit_subject": "zle: port the SIGWINCH redraw, printfmt's % escapes + erase-to-EOL, M-t's NUL-terminator read, and insert_positions' second cline_str walk",
+  "why": "zle: … item 1 — `raw_getbyte` never reopened the winch window C opens around its blocking waits (zle_main.c:588-590, 850-852), so with SIGWINCH blocked for the prompt cycle by preprompt (utils.c:1538-1543) the handler never ran; and `adjustwinsize` computed no `resetzle` (utils.c:1903-1904) and had none of the c:1954-1961 `zle_resetprompt` + `zrefresh` dispatch.",
+  "evidence": "re-verified first-hand by scripts/compsys_regressions.py under --variants: the fixture cell scored NOW-PASSES -> NOW-PASSES -> NOW-PASSES, and every variant and control of it came back CONTROL-HOLDS/NOW-PASSES/STILL-DIVERGES. The runner reported the binary MOVED since the stamp (6420c23cecc13c35 -> 723088f811cdd366), which is the 'somebody fixed the bug' branch of the two the README names, not the 'the fixture was wrong' one. The one cell that did not come back clean is variant0, replayed only under --variants: see its note — 10 of 11 attempts agreed and the one that did not was the OPPOSITE direction from the pinned claim, so it is harness noise, not a partial fix. Nothing here rests on that cell.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file: the cell stays in the evidence base and the gate now FAILS if the divergence comes back."
+ },
+ "guard_verified": {
+  "date": "2026-08-30",
+  "against": "/opt/homebrew/bin/zshrs -> Cellar/zshrs-all/0.12.49/bin/zshrs, the Homebrew-installed RELEASE build of the same version, 18273880 bytes, sha256 fb94500d8e1c32e7, built 2026-08-30 06:20:45 — before d555917f07 (08:04) and 44a3b4841c (08:32), so it still carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "zsh kept 3 non-blank row(s), zshrs kept 0",
+  "controls_on_the_old_binary": {
+   "listing_lost_on_window_shrink/control0": "CONTROL-HOLDS",
+   "listing_lost_on_window_shrink/control1": "CONTROL-HOLDS"
+  },
+  "note": "the flip is only worth something if the gate would CATCH the bug coming back, so it was pointed at a build that still has it: `compsys_regressions.py --zshrs /opt/homebrew/bin/zshrs --only listing_lost_on_window_shrink`. It reported CONTROL-MOVED and exited 1. The harness detail it produced there is the same one observed_when_diverging records, so the guard fails on THIS bug and not merely on some difference."
+ },
  "group": "listing-render",
  "fingerprint": null,
  "observed": {
+  "verdict": "PASS",
+  "detail": "zsh kept 3 non-blank row(s), zshrs kept 3",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-08-30, commit 44a3b4841c, a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "both shells now keep the SAME number of non-blank rows across the 24x80 -> 14x80 shrink: 3 and 3. Before the fix zsh kept 3 and zshrs kept 0, which is what observed_when_diverging records. The two controls (grow to 30, resize to the size it already is) still agree, so the fixture still isolates the direction of the resize; variant0 (24 -> 23) is marginal on this machine and its own note carries the measurement."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "detail": "zsh kept 3 non-blank row(s), zshrs kept 0",
   "geometry": "24x80 -> 14x80",
@@ -47,7 +82,8 @@
    }
   ],
   "rows_total": 4,
-  "notes": "Both shells reach the resize with the SAME 3 non-blank rows on screen (the replayer records `n_before` for each side), so this is not a completion difference showing up late — the listing is there, and the resize is what removes it. Direction matters and is pinned as controls: GROWING the window 24->30 keeps 3 rows on both shells, and setting the window to the size it already has keeps 3 on both. Shrinking is the only move that loses anything, and it is not a threshold effect: one row smaller (24->23) already costs zshrs a row (zsh 3, zshrs 2 — variant0), and shrinking the width too (24x80 -> 14x60) leaves zsh with 4 rows and zshrs with 0 (variant1). Cells at `zsh -f` defaults: no compsys, no zstyle, TAB is expand-or-complete."
+  "notes": "Both shells reach the resize with the SAME 3 non-blank rows on screen (the replayer records `n_before` for each side), so this is not a completion difference showing up late — the listing is there, and the resize is what removes it. Direction matters and is pinned as controls: GROWING the window 24->30 keeps 3 rows on both shells, and setting the window to the size it already has keeps 3 on both. Shrinking is the only move that loses anything, and it is not a threshold effect: one row smaller (24->23) already costs zshrs a row (zsh 3, zshrs 2 — variant0), and shrinking the width too (24x80 -> 14x60) leaves zsh with 4 rows and zshrs with 0 (variant1). Cells at `zsh -f` defaults: no compsys, no zstyle, TAB is expand-or-complete.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47), zsh 5.9.2 (aarch64-apple-darwin25.4.0) — this is the divergence AS MEASURED BEFORE 44a3b4841c. It is history, not current behaviour; the fixture now asserts the two shells AGREE."
  },
  "controls": [
   {
@@ -62,12 +98,12 @@
  "variants": [
   {
    "new_rows": 23,
-   "note": "one row smaller. zsh 3, zshrs 2 — the loss is proportional, not a cliff at some minimum height"
+   "note": "WHEN THIS FIXTURE DIVERGED: one row smaller. zsh 3, zshrs 2 — the loss is proportional, not a cliff at some minimum height  NOW: did NOT come back clean (NOW-PASSES -> NOW-PASSES -> STILL-DIVERGES; harness detail 'zsh kept 3 non-blank row(s), zshrs kept 4'). This is the one MARGINAL cell in this fixture, and the measurement says so: the re-verification scored it NOW-PASSES, NOW-PASSES, then a FAIL whose shape was the OPPOSITE of the pinned one — zsh 3, zshrs 4, i.e. zshrs keeping a row too MANY, not losing one — and 8 further trials run directly against the same pinned binary were 8/8 PASS (zsh 3, zshrs 3). 10 of 11 attempts agreed, and the one that did not did not reproduce the recorded direction. winch_probe computes no fingerprint, so the runner cannot tell those two shapes apart and scores ANY count mismatch as a divergence; under `--variants` this cell can therefore report CONTROL-MOVED on a loaded machine. It is kept, and this is the note that says why that would not be news."
   },
   {
    "new_rows": 14,
    "new_cols": 60,
-   "note": "narrower as well as shorter. zsh 4 (it re-lays the listing out), zshrs 0"
+   "note": "WHEN THIS FIXTURE DIVERGED: narrower as well as shorter. zsh 4 (it re-lays the listing out), zshrs 0  NOW: agrees (NOW-PASSES -> NOW-PASSES -> NOW-PASSES; harness detail 'zsh kept 4 non-blank row(s), zshrs kept 4')."
   }
  ],
  "origin": [
@@ -76,17 +112,18 @@
  ],
  "confirmed": {
   "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "commit": "44a3b4841c",
   "harness_sha256_16": {
    "tests/compsys_fixtures/winch_probe.py": "455f78653f1d87fb"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
+   "size": 101620888,
+   "mtime": "2026-08-30 08:46",
    "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "sha256_16": "723088f811cdd366",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical copy of this file, passed with --zshrs, because a peer instance rebuilt target/debug/zshrs MID-SWEEP during the first re-verification (6420c23cecc13c35 -> 2aa614f561de25ec -> 723088f811cdd366 in one morning). The sha256 prefix identifies the bytes that actually ran; copying was the only way to make a multi-minute sweep name one binary."
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -94,8 +131,8 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was 'zsh kept 3 non-blank row(s), zshrs kept 0'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "a byte-identical copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.49, 101620888 bytes, sha256 723088f811cdd366)",
+  "note": "RETIRED AS A GUARD. `expect` was flipped diverges -> agrees on this run: the fixture cell and all of its variants and controls came back agreeing, three attempts each, against a binary that moved since the previous stamp. The cell is no longer evidence of a bug; it is now the regression guard for 44a3b4841c."
  },
  "history": [
   {
@@ -120,6 +157,29 @@
    "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
    "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
    "note": "round 6. Reproduced FIRST-HAND, then pinned through tests/compsys_fixtures/winch_probe.py, which was written for this finding: no sibling harness changes the window size mid-cell."
+  },
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "tests/compsys_fixtures/winch_probe.py": "455f78653f1d87fb"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was 'zsh kept 3 non-blank row(s), zshrs kept 0'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
   }
  ]
 }
