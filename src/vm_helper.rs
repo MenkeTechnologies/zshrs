@@ -1509,12 +1509,15 @@ impl ShellExecutor {
     /// resolves on the worker thread; param writes flow to the shared globals.
     pub fn new_worker(pool: std::sync::Arc<crate::worker::WorkerPool>) -> Self {
         // fpath from the inherited env, same as new() — pure read, no global write.
-        let fpath = env::var("FPATH")
+        let mut fpath: Vec<PathBuf> = env::var("FPATH")
             .unwrap_or_default()
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .collect();
+        if fpath.is_empty() {
+            fpath = default_fpath(); // c:Src/init.c:1132-1143
+        }
         Self {
             scriptname: Some("zsh".to_string()),
             scriptfilename: Some("zsh".to_string()),
@@ -1621,13 +1624,17 @@ impl ShellExecutor {
             env::set_var("OLDPWD", &pwd_val); // c:1257
         }
 
-        // Initialize fpath from FPATH env var or use defaults
-        let fpath = env::var("FPATH")
+        // Initialize fpath from FPATH env var, or from the compiled-in
+        // defaults when it is absent (c:Src/init.c:1132-1143).
+        let mut fpath: Vec<PathBuf> = env::var("FPATH")
             .unwrap_or_default()
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .collect();
+        if fpath.is_empty() {
+            fpath = default_fpath();
+        }
 
         let history = HistoryEngine::new().ok();
 
@@ -7997,3 +8004,62 @@ pub use crate::ported::utils::zsh_errno_msg;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 pub use crate::ported::params::*;
+
+/// Default `fpath` when `FPATH` is absent from the environment.
+///
+/// c:Src/init.c:1132-1143 — zsh's `setupvals` builds `fpath` from paths
+/// fixed at compile time by `configure`: `FIXED_FPATH_DIR`, then
+/// `SITEFPATH_DIR`, then `FPATH_DIR`'s subdirs
+/// (`<prefix>/share/zsh/<version>/functions`).
+///
+/// zshrs is a drop-in binary that is NOT installed under a zsh
+/// `--prefix`, so its own generated constants
+/// (`/usr/local/share/zsh/5.9.0.3-test/functions`) name a tree that does
+/// not exist on the host. Probe the standard prefixes instead and keep
+/// the directories that are actually present, preserving C's order:
+/// site-functions before the versioned functions dir.
+///
+/// Without this, a zshrs started with no `FPATH` in the environment came
+/// up with an EMPTY fpath where zsh has three entries, so every autoload
+/// failed -- `exec zshrs` from a shell that does not export FPATH (zsh
+/// does not export it) produced:
+///     zsh: is-at-least: function definition file not found
+///     zsh: colors: function definition file not found
+///     zsh: add-zsh-hook: function definition file not found
+fn default_fpath() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |p: PathBuf| {
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    // c:1143 — SITEFPATH_DIR is a fixed constant, listed by zsh even when
+    // it does not exist on disk.
+    push(PathBuf::from("/usr/local/share/zsh/site-functions"));
+    const PREFIXES: [&str; 3] = ["/usr/local", "/opt/homebrew", "/usr"];
+    for pfx in PREFIXES {
+        let site = PathBuf::from(format!("{pfx}/share/zsh/site-functions"));
+        if site.is_dir() {
+            push(site);
+        }
+    }
+    // c:1123 — `<prefix>/share/zsh/<version>/functions`. The version is
+    // whatever zsh is installed on this host, so take the highest one
+    // that actually carries a `functions` directory.
+    for pfx in PREFIXES {
+        let root = PathBuf::from(format!("{pfx}/share/zsh"));
+        let mut versions: Vec<PathBuf> = match std::fs::read_dir(&root) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.join("functions").is_dir())
+                .collect(),
+            Err(_) => continue,
+        };
+        versions.sort();
+        if let Some(v) = versions.pop() {
+            push(v.join("functions"));
+        }
+    }
+    out
+}
