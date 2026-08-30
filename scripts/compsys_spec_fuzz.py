@@ -10,17 +10,19 @@ here* the same way zsh does". Neither can reach a corner of the compsys
 ENGINE that no installed completer happens to use, and neither reproduces on
 a different machine.
 
-This harness inverts that. It SYNTHESISES a random completer definition —
-an `_arguments` / `_values` / `_describe` / `_alternative` spec drawn from a
-seeded grammar — drops it into a throwaway `$fpath`, and drives the identical
-init through a pty on real `zsh -f -i` and on `zshrs --zsh -f -i`, comparing
-the rendered screen byte for byte. Nothing but the zsh installation's own
-function directory is on `$fpath`; `$HOME`, `$PWD` and the whole environment
-are synthesised per case. The same `--seed` regenerates the same specs
-anywhere.
+This harness inverts that. It SYNTHESISES a random completer definition,
+drops it into a throwaway `$fpath`, and drives the identical init through a
+pty on real `zsh -f -i` and on `zshrs --zsh -f -i`, comparing the rendered
+screen byte for byte. Nothing but the zsh installation's own function
+directory is on `$fpath`; `$HOME`, `$PWD` and the whole environment are
+synthesised per case. The same `--seed` regenerates the same specs anywhere.
 
-That aims the instrument straight at the surface where this codebase's real
-completion bugs have lived:
+Generation covers two layers, and `--kind` selects between them.
+
+The SPEC layer — `arguments`, `values`, `describe`, `alternative` — draws
+`_arguments` / `_values` / `_describe` / `_alternative` specs from a seeded
+grammar, aimed at the surface where this codebase's real completion bugs
+have lived:
 
     quote-blind splitting of `(...)` action bodies    (compsys_action_word_split_quoting)
     `{-h,--help}` shared-description rows             (compsys_parity_harness_and_rust_completers)
@@ -28,8 +30,35 @@ completion bugs have lived:
     `_describe -O` adding zero matches                (same)
     `_values -s ,` continuation                       (compsys_gsu_param_global_gap)
 
-each of which is one atom of the grammar below rather than an accident of
-which package was installed.
+The BUILTIN layer — `compadd`, `compset`, `tags`, `nested` — drives what
+those four shell functions sit ON: the C-ported builtins. This matters
+because a builtin bug reaches a spec-level case only if some generated spec
+happens to route through the broken flag, and several flags are not
+reachable from a spec at all:
+
+    `compadd`   the full flag surface, weighted towards the combinations
+                already shipped wrong here — `-U` clearing CAF_MATCH (was
+                CMF_HIDE), `-r`/`-R` and CMF_REMOVE, `-e` and CMF_ISPAR
+                (was CAF_NOSORT), `-d` arrays of the wrong length, `-W`
+                with `-f`, `-o` orderings, `-X` prompt escapes, and the
+                `-O`/`-A`/`-D` out-parameter forms, whose returned arrays
+                are echoed back through the listing so a divergence in the
+                VALUE is visible and not only in the final match set.
+    `compset`   every `-p -P -s -S -n -N -q` form, with `$PREFIX`,
+                `$SUFFIX`, `$IPREFIX`, `$ISUFFIX`, `$QIPREFIX`, `$QISUFFIX`,
+                `$CURRENT`, `$words` and the builtin's return status all
+                added as matches, so the two shells are compared on the
+                PARAMETERS as well as on the completion they produce.
+    `tags`      `_tags` / `_requested` / `_wanted` / `_next_label` /
+                `_setup` / `_message` / `_describe -x` as nested loops.
+    `nested`    a completer whose `*::args:->rest` dispatch re-enters
+                completion two levels deep, so state leaking across a
+                rewritten `words`/`CURRENT` boundary is exercised.
+
+Each case is judged over a key PATH, not one press: `--keys auto` (the
+default) draws a sequence per case — menu start, cycling, reverse cycling,
+a filter letter typed into an open menu, and the two abort routes — because
+a listing that is right on the first TAB can still be wrong on the second.
 
 Verdicts — none of which is ever softened to make a run look greener:
 
@@ -53,6 +82,8 @@ Typical use:
 
     scripts/compsys_spec_fuzz.py --seed 1 --cases 8
     scripts/compsys_spec_fuzz.py --seed 1 --cases 200 --jobs 4 --json out.json
+    scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --kind compadd,compset
+    scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --keys tab,tab,down
     scripts/compsys_spec_fuzz.py --replay target/spec-fuzz-1/case0003.min.zsh
     scripts/compsys_spec_fuzz.py --spec '1:c:((a\\:"add files" b\\:"bench"))'
 """
@@ -120,10 +151,55 @@ KEYS = {
     "ctrl-p": b"\x10",
     "ctrl-d": b"\x04",
     "ctrl-c": b"\x03",
+    "ctrl-g": b"\x07",
+    "ctrl-u": b"\x15",
+    "ctrl-a": b"\x01",
+    "ctrl-e": b"\x05",
+    "ctrl-w": b"\x17",
+    "bs": b"\x7f",
     "esc": b"\x1b",
     "space": b" ",
     "enter": b"\r",
 }
+
+# Keys that only mean anything once a completion LIST is on screen. A case
+# whose path contains one gets menu selection switched on in its init (see
+# `menu_setup`), otherwise the key would just be `down-line-or-history` and
+# the case would prove nothing about the menu engine.
+NAV_KEYS = frozenset(("down", "up", "left", "right", "btab", "ctrl-n", "ctrl-p"))
+
+# The key PATHS a generated case is judged over. One `tab` is the shallowest
+# thing a completion harness can ask; everything below it exercises a state the
+# engine only reaches after a first listing — a second `tab` (menu start /
+# re-list), cycling, reverse cycling, typing a filter letter into an open menu,
+# and the two abort routes (`ctrl-g` send-break, `ctrl-u` kill-whole-line),
+# which have to leave the screen in the same state on both shells.
+KEY_PATHS = [
+    ["tab"],
+    ["tab"],
+    ["tab"],
+    ["tab", "tab"],
+    ["tab", "tab", "tab"],
+    ["tab", "down"],
+    ["tab", "tab", "down", "down"],
+    ["tab", "ctrl-n", "ctrl-n"],
+    ["tab", "tab", "btab"],
+    ["tab", "tab", "a"],
+    ["tab", "tab", "ctrl-g"],
+    ["tab", "ctrl-u"],
+    ["tab", "space", "tab"],
+    ["tab", "bs", "tab"],
+]
+
+# Init lines added to a case whose key path navigates. `zsh/complist` is what
+# supplies menu selection at all — without the module loaded, `menu select`
+# silently degrades to a plain listing on real zsh too (memory:
+# compsys_list_colors), so loading it is what makes the two shells comparable
+# rather than what makes them agree.
+MENU_SETUP = [
+    "zmodload -i zsh/complist",
+    "zstyle ':completion:*' menu 'select=1'",
+]
 
 
 class UnknownKey(Exception):
@@ -358,6 +434,74 @@ def esc_colon(s):
     return s.replace("\\", "\\\\").replace(":", "\\:")
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# the builtin layer
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# `_arguments`, `_values`, `_describe` and `_alternative` are SHELL functions
+# standing on top of the C-ported builtins `compadd`, `compset` and `comptags`.
+# A builtin bug therefore only reaches a spec-level case if some generated spec
+# happens to route through the broken flag — `-U` is reachable from an
+# `_arguments` spec only via a completer that passes it through, and `-D` is
+# not reachable at all. The kinds below drive the builtins directly so the flag
+# surface is sampled on purpose rather than by accident.
+#
+# The sampling is deliberately NOT uniform: every combination this codebase has
+# actually shipped wrong is weighted up, with the reason recorded at the site.
+
+# `-M` match specs. Each is a distinct compmatch code path.
+COMPADD_MATCH_SPECS = [
+    "m:{a-z}={A-Z}",
+    "m:{a-zA-Z}={A-Za-z}",
+    "r:|-=* r:|=*",
+    "l:|=* r:|=*",
+    "L:|no=",
+    "b:-=+",
+    "m:{[:lower:]}={[:upper:]}",
+]
+
+# `-X` / `-x` explanations. Prompt escapes are legal here (compwid.yo:589-611)
+# and `%{...%}` is the zero-width form the listing's column math has to honour
+# without counting its bytes, so an explanation carrying one is a width test as
+# much as a text test.
+COMPADD_EXPLS = [
+    "plain expl",
+    "%Bbold%b expl",
+    "%Uunder%u expl",
+    "%F{red}red%f expl",
+    "%K{blue}bg%k expl",
+    "100%% done",
+    "%{\\e[32m%}zero-width%{\\e[0m%} expl",
+    "%Sstandout%s expl",
+    "expl with  two spaces",
+]
+
+# Literal strings for the six prefix/suffix flags. `-P`/`-S` are visible on the
+# line, `-p`/`-s` are hidden, `-i`/`-I` are ignored — four different places the
+# same text can end up, and they have been confused before.
+COMPADD_AFFIXES = ["pre-", "=", ",", "/", "a:", "x y", "%", "-"]
+
+COMPADD_ORDERS = ["", "match", "nosort", "numeric", "reverse", "match,reverse"]
+
+# Words handed to a raw `compadd`. Hostile on purpose: a leading dash needs the
+# `-`/`--` terminator to survive, a space needs the quoting layer, a colon and a
+# glob char need the display/insert path to keep them literal.
+COMPADD_WORDS = [
+    "alpha", "beta", "gamma", "delta",
+    "-dashfirst", "--doubledash",
+    "with space", "co:lon", "star*", "back\\slash",
+    "eq=sign", "tilde~x", "up", "u",
+]
+
+FS = "\x1f"      # field separator inside a structured (multi-field) atom
+
+
+def split_atom(a, n):
+    """Structured atom -> exactly `n` fields (missing ones become '')."""
+    parts = a.split(FS)
+    return (parts + [""] * n)[:n]
+
+
 class Gen:
     """Seeded generator state for ONE case.
 
@@ -468,6 +612,231 @@ class Gen:
             return self.rng.choice(["->%s" % s, "->%s" % s])
         return ""
 
+    # ── raw compadd ──────────────────────────────────────────────────────────
+
+    def compadd_flags(self, pre, probes):
+        """Flag tokens for one raw `compadd`.
+
+        `pre` collects the shell lines the chosen flags REFERENCE (arrays,
+        a removal function). They are emitted unconditionally, so the shrinker
+        can delete any flag token without leaving a dangling reference.
+        `probes` collects the names of arrays a `-O`/`-A`/`-D` flag writes to;
+        those are echoed back as an extra always-visible group, because the
+        whole point of those three flags is a value the completion listing
+        would otherwise never show.
+
+        Returns (flags, mode) where mode is "" (literal words), "array" (`-a`:
+        the words name arrays) or "assoc" (`-k`: the words name assoc arrays).
+        """
+        r = self.rng
+        f = []
+
+        # -U clears CAF_MATCH — no matching at all is done. It was mis-ported
+        # as CMF_HIDE (memory: compadd_flag_misports, ead9387dc6), which broke
+        # every -U completer in the tree, so it is the single most valuable
+        # flag here. -M is documented as ignored under -U (compwid.yo:683-689),
+        # so a match spec is only generated on the other branch — that keeps
+        # the two paths separable in a shrunk repro.
+        if r.random() < 0.35:
+            f.append("-U")
+        elif r.random() < 0.35:
+            f.append("-M " + zq(r.choice(COMPADD_MATCH_SPECS)))
+
+        if r.random() < 0.30:
+            f.append("-Q")
+        if r.random() < 0.30:
+            f.append("-P " + zq(r.choice(COMPADD_AFFIXES)))
+        if r.random() < 0.30:
+            f.append("-S " + zq(r.choice(COMPADD_AFFIXES)))
+            if r.random() < 0.40:
+                f.append("-q")          # only meaningful together with -S
+        if r.random() < 0.15:
+            f.append("-p " + zq(r.choice(COMPADD_AFFIXES)))
+        if r.random() < 0.15:
+            f.append("-s " + zq(r.choice(COMPADD_AFFIXES)))
+        if r.random() < 0.15:
+            f.append("-i " + zq(r.choice(COMPADD_AFFIXES)))
+        if r.random() < 0.15:
+            f.append("-I " + zq(r.choice(COMPADD_AFFIXES)))
+
+        # Grouping. -o forms part of the group name space and is documented as
+        # ignored on the default group (compwid.yo:540-551), so it is only ever
+        # generated alongside an explicit -J/-V.
+        grouped = False
+        g = r.random()
+        if g < 0.25:
+            f.append("-J g1")
+            grouped = True
+        elif g < 0.45:
+            f.append("-V g1")
+            grouped = True
+        if r.random() < 0.20:
+            if not grouped:
+                f.append("-J gord")
+                grouped = True
+            o = r.choice(COMPADD_ORDERS)
+            f.append("-o" if not o else "-o " + zq(o))
+        if grouped and r.random() < 0.30:
+            f.append(r.choice(("-1", "-2")))
+        if r.random() < 0.35:
+            f.append("-X " + zq(r.choice(COMPADD_EXPLS)))
+        elif r.random() < 0.20:
+            f.append("-x " + zq(r.choice(COMPADD_EXPLS)))
+
+        # -r/-R are the auto-removable-suffix path; -r was ported without
+        # CMF_REMOVE at one point (memory: compadd_flag_misports, cd8503246b).
+        if r.random() < 0.20:
+            f.append("-r " + zq(r.choice([" \t\n;", "-,", "/", "="])))
+        if r.random() < 0.10:
+            pre.append("_sfz_rm() { compstate[list]=list }")
+            f.append("-R _sfz_rm")
+
+        # -W only does anything with -f (compwid.yo:663-668); generating the
+        # pair is the only way the file-type tests actually run.
+        if r.random() < 0.25:
+            f.append("-f")
+            if r.random() < 0.50:
+                f.append("-W " + zq(r.choice(["./", "adir", "."])))
+
+        # -e sets CMF_ISPAR (AUTO_PARAM_SLASH / AUTO_PARAM_KEYS); it was
+        # mis-ported as CAF_NOSORT (memory: compadd_flag_misports).
+        if r.random() < 0.12:
+            f.append("-e")
+        if r.random() < 0.12:
+            f.append("-n")
+        if r.random() < 0.08:
+            f.append("-C")
+        if r.random() < 0.10:
+            f.append("-E " + str(r.randint(1, 3)))
+        if r.random() < 0.12:
+            if r.random() < 0.5:
+                f.append("-F " + zq("(*.log *?x)"))
+            else:
+                pre.append("_sfz_ign=( '*a*' 'be*' )")
+                f.append("-F _sfz_ign")
+
+        # -d display strings. The interesting case is the WRONG length: the
+        # documented behaviour is that surplus completions display unchanged
+        # and surplus display strings are silently ignored (compwid.yo:519-534),
+        # both of which are easy to get wrong by one element.
+        if r.random() < 0.30:
+            n = r.choice((1, 2, 3, 5))
+            pre.append("_sfz_disp=( %s )" % " ".join(
+                zq("disp%d %s" % (i, self.desc())) for i in range(n)))
+            f.append("-d _sfz_disp")
+            if r.random() < 0.40:
+                f.append("-l")          # only has an effect together with -d
+
+        mode = ""
+        if r.random() < 0.10:
+            pre.append("_sfz_arr=( ay be ce de )")
+            f.append("-a")
+            mode = "array"
+        elif r.random() < 0.08:
+            pre.append("typeset -A _sfz_assoc")
+            pre.append("_sfz_assoc=( ka va kb vb kc vc )")
+            f.append("-k")
+            mode = "assoc"
+
+        # -O / -A / -D never add a match; they hand a value back through an
+        # array. Nothing in the listing shows it, so the caller echoes the
+        # arrays afterwards (see Case._compadd_body) — otherwise these three
+        # flags would be compared only by their side effect of adding nothing.
+        for flag, arr in (("-O", "_sfz_o"), ("-A", "_sfz_a"), ("-D", "_sfz_d")):
+            if r.random() < 0.10:
+                if flag == "-D":
+                    # -D deletes the non-matching elements of an array that
+                    # must already be populated, in parallel with the words.
+                    pre.append("%s=( d1 d2 d3 d4 d5 d6 )" % arr)
+                else:
+                    pre.append("%s=()" % arr)
+                f.append("%s %s" % (flag, arr))
+                probes.append(arr)
+
+        return f, mode
+
+    def compadd_words(self, mode):
+        r = self.rng
+        if mode == "array":
+            return r.choice([["_sfz_arr"], ["_sfz_arr", "_sfz_arr[2,-1]"]])
+        if mode == "assoc":
+            return r.choice([["_sfz_assoc"], ["_sfz_assoc[(R)v*]"]])
+        n = r.randint(2, 5)
+        pool = list(COMPADD_WORDS)
+        r.shuffle(pool)
+        return pool[:n]
+
+    # ── compset ──────────────────────────────────────────────────────────────
+
+    def compset_op(self):
+        """One `compset` invocation, as the shell line that runs it.
+
+        Every form in compwid.yo:772-834 is represented. The `&& hit+=(...)`
+        tail records the RETURN STATUS in the probe group, so a case where both
+        shells end up with the same PREFIX/SUFFIX but disagreed about whether
+        the test succeeded is still caught.
+        """
+        r = self.rng
+        form = r.choice([
+            "P", "P", "Pn", "S", "Sn", "p", "s", "n", "N", "q",
+        ])
+        if form == "P":
+            pat = r.choice(["*\\=", "*:", "-*", "*,", "[^a-z]#", "?"])
+            code, tag = "compset -P %s" % zq(pat), "P:%s" % pat
+        elif form == "Pn":
+            k = r.choice(["1", "2", "-1"])
+            pat = r.choice(["*\\=", "*:", "*,"])
+            code, tag = "compset -P %s %s" % (k, zq(pat)), "P%s:%s" % (k, pat)
+        elif form == "S":
+            pat = r.choice(["\\=*", ":*", ",*", "?"])
+            code, tag = "compset -S %s" % zq(pat), "S:%s" % pat
+        elif form == "Sn":
+            k = r.choice(["1", "-1"])
+            pat = r.choice(["\\=*", ":*"])
+            code, tag = "compset -S %s %s" % (k, zq(pat)), "S%s:%s" % (k, pat)
+        elif form == "p":
+            k = r.randint(1, 3)
+            code, tag = "compset -p %d" % k, "p:%d" % k
+        elif form == "s":
+            k = r.randint(1, 2)
+            code, tag = "compset -s %d" % k, "s:%d" % k
+        elif form == "n":
+            beg = r.choice(["1", "2", "-2"])
+            end = r.choice(["", "", "-1", "3"])
+            code = "compset -n %s%s" % (beg, (" " + end) if end else "")
+            tag = "n:%s%s" % (beg, end)
+        elif form == "N":
+            beg = r.choice(["'--'", "'-*'", "':'", "'*=*'"])
+            end = r.choice(["", "", " '-*'"])
+            code, tag = "compset -N %s%s" % (beg, end), "N:%s%s" % (beg, end)
+        else:
+            code, tag = "compset -q", "q"
+        return code + FS + tag
+
+    def compset_buffer(self, cmd):
+        """A line whose current word actually contains what compset splits on."""
+        return "%s %s" % (cmd, self.rng.choice([
+            "a=b=c", "-x=val", "foo:bar:", "one,two,", "--opt=", "'a b' c",
+            "x y z", "a=b c=d", "pre-", "a:b:c d", "\"q w\" e",
+        ]))
+
+    # ── tag machinery ────────────────────────────────────────────────────────
+
+    def tag_branch(self, i):
+        """One branch of a generated `_tags` loop, as a structured atom.
+
+        Fields: form, tag, description, action. The four `_requested` /
+        `_wanted` / `_next_label` / `_all_labels` entry points differ in when
+        they consult `comptags` and in whether they hand `$expl` to the action,
+        which is exactly where a group/description gets dropped.
+        """
+        r = self.rng
+        form = r.choice(["requested", "requested", "wanted", "next_label",
+                         "message", "message_r", "describe_x", "setup"])
+        tag = "t%d%s" % (i, self.letter())
+        return FS.join((form, tag, self.desc(),
+                        r.choice(["compadd", "compadd", "_files", "_files -/"])))
+
 
 # ── one generated case ───────────────────────────────────────────────────────
 
@@ -507,15 +876,194 @@ class Case:
             out.append("%s() { compadd -- %s }" % (h, " ".join(PLAIN_WORDS[:3])))
         if self.extra.get("helpers"):
             out.append("")
-        if self.kind == "arguments":
-            out += self._arguments_body()
-        elif self.kind == "values":
-            out += self._values_body()
-        elif self.kind == "describe":
-            out += self._describe_body()
-        else:
-            out += self._alternative_body()
+        pre = self.extra.get("pre", [])
+        if pre:
+            out += list(pre) + [""]
+        builders = {
+            "arguments": self._arguments_body,
+            "values": self._values_body,
+            "describe": self._describe_body,
+            "alternative": self._alternative_body,
+            "compadd": self._compadd_body,
+            "compset": self._compset_body,
+            "tags": self._tags_body,
+            "nested": self._nested_body,
+        }
+        out += builders[self.kind]()
         return "\n".join(out) + "\n"
+
+    # ── the builtin layer ────────────────────────────────────────────────────
+
+    def _probe_group(self, entries, label="probe"):
+        """A `compadd` whose matches ARE the values under test.
+
+        A completion listing only ever shows what got added as a match, so a
+        parameter (`$PREFIX` after a `compset`) or an out-parameter (the array
+        a `compadd -O` filled) is invisible to a screen diff. Adding them as
+        `-U -Q` matches puts them through the ordinary listing path and makes a
+        divergence in the VALUE visible, not only a divergence in the final
+        list. `-U` is required: the values do not match the word on the line
+        and would otherwise be filtered out before they were ever displayed.
+        """
+        return ["compadd -U -Q -J _sfzprobe -X %s -- %s"
+                % (zq(label), " ".join(entries))]
+
+    def _compadd_body(self):
+        term = self.extra.get("term", "--")
+        flags = " ".join(self.flags)
+        words = " ".join(self.atoms)
+        out = []
+        if words:
+            out.append("compadd %s %s %s" % (flags, term, words))
+        else:
+            # Every word was reduced away: still exercise the flag parse.
+            out.append("compadd %s %s" % (flags, term))
+        probes = self.extra.get("probes", [])
+        if probes:
+            out.append("")
+            out += self._probe_group(
+                ['"%s=${(j:,:)%s}"' % (p, p) for p in probes], "out-arrays")
+        return out
+
+    def _compset_body(self):
+        out = ["local -a _sfz_hit"]
+        for a in self.atoms:
+            code, tag = split_atom(a, 2)
+            out.append("%s && _sfz_hit+=( %s )" % (code, zq("hit:" + tag)))
+        out.append("")
+        # Every parameter compset is documented to move (compwid.yo:772-834),
+        # plus the word array it can rewrite, echoed back through the listing.
+        out += self._probe_group([
+            '"PRE=$PREFIX"', '"SUF=$SUFFIX"',
+            '"IPRE=$IPREFIX"', '"ISUF=$ISUFFIX"',
+            '"QIPRE=$QIPREFIX"', '"QISUF=$QISUFFIX"',
+            '"CUR=$CURRENT"', '"WORDS=${(j:|:)words}"',
+            '"HIT=${(j:,:)_sfz_hit}"',
+        ], "compset state")
+        out.append("")
+        out.append("compadd -- %s" % " ".join(self.extra.get("tail", PLAIN_WORDS[:3])))
+        return out
+
+    def _tags_body(self):
+        """A generated `_tags` offer/loop, plus the standalone tag callers.
+
+        `_requested` / `_next_label` / `_message` / `_setup` belong INSIDE the
+        `while _tags` loop — they consult the offer `_tags` already made.
+        `_wanted` and `_describe` make their own offer (`_wanted` calls `_tags
+        "$1"` itself), so they are emitted outside it; nesting one inside the
+        loop would re-offer mid-iteration and is not a shape any real completer
+        has, which would make a divergence unattributable.
+        """
+        branches = [split_atom(a, 4) for a in self.atoms]
+        _solo_forms = ("wanted", "describe_x", "message", "message_r")
+        loop = [b for b in branches if b[0] not in _solo_forms]
+        solo = [b for b in branches if b[0] in _solo_forms]
+        out = ["local expl ret=1", ""]
+
+        for form, tag, descr, act in solo:
+            if form == "wanted":
+                # _wanted takes the command INLINE and runs the whole
+                # _tags/_all_labels loop itself, so the command must not repeat
+                # `$expl` — _all_labels is what passes it.
+                cmd = ("compadd " + " ".join(PLAIN_WORDS[:3])
+                       if act == "compadd" else act)
+                out.append("_wanted %s expl %s %s && ret=0"
+                           % (tag, zq(descr), cmd))
+            elif form in ("message", "message_r"):
+                # `_message` opens its own `_tags messages` offer, so it is a
+                # standalone caller too; running it inside another `_tags` loop
+                # re-offers mid-iteration and the loop stops terminating.
+                out.append("_message %s%s && ret=0"
+                           % ("-r " if form == "message_r" else "", zq(descr)))
+            else:
+                # `-x` makes the description show even with no matches, via
+                # `compadd -x` rather than `-X` (_describe -> _description).
+                out.append("_describe -x -t %s %s _sfz_dx && ret=0"
+                           % (tag, zq(descr)))
+        if solo:
+            out.append("")
+
+        if loop:
+            out.append("_tags %s" % " ".join(b[1] for b in loop))
+            out.append("while _tags; do")
+            for form, tag, descr, act in loop:
+                add = ("compadd \"$expl[@]\" %s" % " ".join(PLAIN_WORDS[:3])
+                       if act == "compadd" else "%s \"$expl[@]\"" % act)
+                if form == "requested":
+                    out.append("  _requested %s expl %s && { %s && ret=0 }"
+                               % (tag, zq(descr), add))
+                elif form == "next_label":
+                    out.append("  _requested %s && while _next_label %s expl %s; do"
+                               % (tag, tag, zq(descr)))
+                    out.append("    %s && ret=0" % add)
+                    out.append("  done")
+                else:  # setup
+                    out.append("  _setup %s" % tag)
+                    out.append("  _requested %s expl %s && { %s && ret=0 }"
+                               % (tag, zq(descr), add))
+            out.append("  (( ret )) || break")
+            out.append("done")
+            out.append("")
+
+        out.append("return ret")
+        return out
+
+    def _nested_body(self):
+        """Outer completer -> sub-command completer -> a third level.
+
+        `_arguments '*::args:->rest'` followed by `shift words; (( CURRENT-- ))`
+        is the standard sub-command dispatch, and it is the point where the
+        completion context is re-entered with rewritten `words`/`CURRENT` while
+        `curcontext`, `$state`, `$line` and `opt_args` from the OUTER call are
+        still live. State leaking across that boundary is invisible to any
+        single-level case.
+        """
+        inner = self.extra.get("inner", [])
+        deep = self.extra.get("deep", [])
+        sub = self.extra.get("sub", "sub")
+        out = []
+        out.append("_%s_deep() {" % self.cmd)
+        out.append("  local curcontext=\"$curcontext\" state line ret=1")
+        out.append("  typeset -A opt_args")
+        if deep:
+            out.append("  _arguments -C \\")
+            for i, a in enumerate(deep):
+                out.append("    %s%s" % (emit_atom(a),
+                                         " \\" if i < len(deep) - 1 else " && ret=0"))
+        else:
+            out.append("  _describe -t deep 'deep' _sfz_deep && ret=0")
+        out.append("  return ret")
+        out.append("}")
+        out.append("")
+        out.append("_%s_sub() {" % self.cmd)
+        out.append("  local curcontext=\"$curcontext\" state line ret=1")
+        out.append("  typeset -A opt_args")
+        out.append("  _arguments -C \\")
+        for a in inner:
+            out.append("    %s \\" % emit_atom(a))
+        out.append("    '*::deeper:->deeper' && ret=0")
+        out.append("  case $state in")
+        out.append("    (deeper) shift words; (( CURRENT-- )); _%s_deep && ret=0 ;;"
+                   % self.cmd)
+        out.append("  esac")
+        out.append("  return ret")
+        out.append("}")
+        out.append("")
+        out.append("local curcontext=\"$curcontext\" state line ret=1")
+        out.append("typeset -A opt_args")
+        out.append("_arguments -C \\")
+        for a in self.atoms:
+            out.append("  %s \\" % emit_atom(a))
+        out.append("  '1:command:((%s\\:\"the sub-command\" other\\:\"another one\"))' \\"
+                   % sub)
+        out.append("  '*::args:->rest' && ret=0")
+        out.append("")
+        out.append("case $state in")
+        out.append("  (rest) shift words; (( CURRENT-- )); _%s_sub && ret=0 ;;" % self.cmd)
+        out.append("esac")
+        out.append("")
+        out.append("return ret")
+        return out
 
     def _arguments_body(self):
         out = ["local curcontext=\"$curcontext\" state state_descr line ret=1",
@@ -662,17 +1210,70 @@ def generate(seed, idx, args):
             d = shared if g.rng.random() < 0.45 else g.desc()
             atoms.append("%s:%s" % (esc_colon(name), d))
 
-    else:  # alternative
+    elif kind == "alternative":
         for _ in range(g.rng.randint(2, 4)):
             act = g.action([], helpers, cmd, allow_state=False) or "_files"
             atoms.append("%s:%s:%s" % (g.word(), esc_colon(g.desc()), act))
 
+    elif kind == "compadd":
+        pre = []
+        probes = []
+        flags, mode = g.compadd_flags(pre, probes)
+        atoms = g.compadd_words(mode)
+        extra["pre"] = pre
+        extra["probes"] = probes
+        extra["term"] = g.rng.choice(["--", "--", "-"])
+
+    elif kind == "compset":
+        for _ in range(g.rng.randint(1, 3)):
+            atoms.append(g.compset_op())
+        extra["tail"] = PLAIN_WORDS[:3]
+
+    elif kind == "tags":
+        extra["pre"] = ["_sfz_dx=( %s )" % " ".join(
+            zq("%s:%s" % (w, g.desc())) for w in PLAIN_WORDS[:3])]
+        for i in range(g.rng.randint(1, 3)):
+            atoms.append(g.tag_branch(i))
+
+    elif kind == "nested":
+        extra["pre"] = ["_sfz_deep=( %s )" % " ".join(
+            zq("%s:%s" % (w, g.desc())) for w in PLAIN_WORDS[:3])]
+        extra["sub"] = g.word()
+        extra["inner"] = ["-%s[%s]" % (g.letter(), esc_bracket(g.desc())),
+                          "-%s+[%s]:%s:%s" % (g.letter(), esc_bracket(g.desc()),
+                                              esc_colon(g.msg()),
+                                              g.action([], helpers, cmd,
+                                                       allow_state=False) or "_files")]
+        extra["deep"] = ["--%s=-[%s]:%s:%s" % (g.word(), esc_bracket(g.desc()),
+                                               esc_colon(g.msg()), g.described_list()),
+                         "*:%s:%s" % (esc_colon(g.msg()), g.wordlist())]
+        for _ in range(g.rng.randint(0, 2)):
+            atoms.append("-%s[%s]" % (g.letter(), esc_bracket(g.desc())))
+
+    else:
+        raise AssertionError("no generator for kind %r" % kind)
+
     extra["helpers"] = helpers
 
-    prefix = g.rng.choice(["", "", "-", "--", "-" + g.letters[0],
-                           PLAIN_WORDS[0][0], "a", "x"])
-    buf = "%s %s" % (cmd, prefix)
-    return Case(idx, seed, cmd, kind, atoms, flags, extra, buf, args.keys)
+    if kind == "compset":
+        buf = g.compset_buffer(cmd)
+    elif kind == "nested":
+        # Deep enough that the sub-command dispatch has actually happened:
+        # `<cmd> <sub> [-]` is inside `_<cmd>_sub`, one more word is inside
+        # `_<cmd>_deep`.
+        buf = "%s %s %s" % (cmd, extra["sub"],
+                            g.rng.choice(["", "-", "--", "x ", "-a ", "x -"]))
+    else:
+        prefix = g.rng.choice(["", "", "-", "--", "-" + g.letters[0],
+                               PLAIN_WORDS[0][0], "a", "x"])
+        buf = "%s %s" % (cmd, prefix)
+
+    keys = list(args.keys) if args.keys else list(g.rng.choice(KEY_PATHS))
+    if set(keys) & NAV_KEYS:
+        # Without menu selection the nav keys are just movement commands and
+        # the case would prove nothing about the menu engine.
+        extra["setup"] = list(MENU_SETUP)
+    return Case(idx, seed, cmd, kind, atoms, flags, extra, buf, keys)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -731,10 +1332,12 @@ def build_case_dir(root, case, fpath_dirs):
             "builtin cd %s\n"
             "autoload -Uz compinit\n"
             "compinit -u -D\n"
+            "%s"
             "print -u2 ''\n"
             % (SELF, case.seed, case.name,
                " ".join(shlex.quote(p) for p in [fp] + fpath_dirs),
-               SENTINEL, shlex.quote(work)))
+               SENTINEL, shlex.quote(work),
+               "".join(ln + "\n" for ln in case.extra.get("setup", []))))
     return d, init
 
 
@@ -1264,6 +1867,10 @@ def write_fixture(path, args, case, note):
             % (case.name, note, SELF, rel, rel, case.buffer, ",".join(case.keys),
                case.seed, case.idx, case.cmd, case.kind, case.buffer,
                ",".join(case.keys), " ".join(args.test_argv)))
+        # One header line per init line, so `--replay` reconstructs the exact
+        # shell state the divergence needed (menu selection, styles, modules).
+        for ln in case.extra.get("setup", []):
+            f.write("# @setup %s\n" % ln)
         f.write("\nemulate -L zsh\ntypeset _d=${TMPDIR:-/tmp}/spec-fuzz-repro.$$\n"
                 "mkdir -p $_d/fpath\n")
         f.write("cat >$_d/fpath/_%s <<'%s'\n%s%s\n" % (case.cmd, HEREDOC, body, HEREDOC))
@@ -1273,8 +1880,10 @@ def write_fixture(path, args, case, note):
             "PROMPT='%s '\n"
             "autoload -Uz compinit\n"
             "compinit -u -D\n"
+            "%s"
             "RC\n"
-            % (" ".join(shlex.quote(p) for p in args.fpath_dirs), SENTINEL))
+            % (" ".join(shlex.quote(p) for p in args.fpath_dirs), SENTINEL,
+               "".join(ln + "\n" for ln in case.extra.get("setup", []))))
         f.write("print -r -- \"# fpath dir: $_d/fpath   buffer: %s\"\n"
                 % case.buffer.replace('"', '\\"'))
         f.write("ZDOTDIR=$_d exec ${SPEC_FUZZ_SHELL:-zsh} -i\n")
@@ -1284,11 +1893,13 @@ def write_fixture(path, args, case, note):
 
 def read_fixture(path):
     meta = {}
+    multi = {}
     lines = open(path).read().splitlines()
     for ln in lines:
         m = re.match(r"^#\s*@(\w+)\s+(.*)$", ln)
         if m:
             meta.setdefault(m.group(1), m.group(2))
+            multi.setdefault(m.group(1), []).append(m.group(2))
     try:
         start = lines.index("cat >$_d/fpath/_%s <<'%s'" % (meta["cmd"], HEREDOC)) + 1
     except (KeyError, ValueError):
@@ -1297,7 +1908,8 @@ def read_fixture(path):
     end = lines.index(HEREDOC, start)
     body = "\n".join(lines[start:end]) + "\n"
     case = Case(int(meta.get("case", -1)), int(meta.get("seed", 0)), meta["cmd"],
-                meta.get("kind", "replay"), [], [], {},
+                meta.get("kind", "replay"), [], [],
+                {"setup": multi.get("setup", [])},
                 meta["buffer"], meta["keys"].split(","))
     case.body_override = body
     return case
@@ -1321,6 +1933,12 @@ def print_failure(v, args):
     print("%s %s — %s" % (v.status, c.name, v.detail))
     print("=" * 78)
     print_case_spec(c)
+    m = getattr(v, "minimal", None)
+    if m is not None and m.completer() != c.completer():
+        print("  --- reduced to (%d spec(s), %d flag(s), %d probes) ---"
+              % v.shrunk)
+        for ln in m.completer().rstrip("\n").split("\n"):
+            print("  > %s" % ln)
     ref, test = v.ref, v.test
     for label, cap in (("zsh", ref), ("zshrs", test)):
         for w in cap.warnings():
@@ -1414,15 +2032,22 @@ def main():
                          "as-is.")
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--cols", type=int, default=80)
-    ap.add_argument("--keys", default="tab",
-                    help="comma-separated keys sent after the buffer")
+    ap.add_argument("--keys", default="auto",
+                    help="comma-separated key PATH sent after the buffer, or "
+                         "`auto` (default) to let each case draw its own path "
+                         "from KEY_PATHS — menu start, cycling, a filter "
+                         "letter, an abort. Names: " + ",".join(sorted(KEYS)))
     ap.add_argument("--kind", default="all",
-                    help="comma-separated: arguments,values,describe,alternative")
+                    help="comma-separated: arguments,values,describe,"
+                         "alternative,compadd,compset,tags,nested")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--json", default=None)
     ap.add_argument("--verbose", action="store_true",
                     help="print every generated completer, not just failures")
-    ap.add_argument("--replay", default=None, help="re-run a saved fixture")
+    ap.add_argument("--replay", default=None,
+                    help="re-run a saved fixture. An explicit --keys re-judges "
+                         "it over a different key path, which is how a "
+                         "multi-key divergence gets localised to one press.")
     ap.add_argument("--spec", action="append", default=None,
                     help="inject a literal _arguments spec atom (repeatable) "
                          "instead of generating; runs as one ad-hoc case")
@@ -1465,10 +2090,22 @@ def main():
                  % args.zshrs)
     args.test_argv = ([args.zshrs, "-f", "-i"] if args.mode == "native"
                       else [args.zshrs, "--zsh", "-f", "-i"])
-    args.keys = [k for k in args.keys.split(",") if k]
-    for k in args.keys:
-        key_bytes(k)                     # fail loudly on a typo, not silently
-    all_kinds = ["arguments", "values", "describe", "alternative"]
+    # `auto` leaves args.keys empty and lets each case draw its own key PATH
+    # from KEY_PATHS, so a generated spec is judged over a sequence (menu
+    # start, cycling, a filter letter, an abort) instead of one press.
+    if args.keys.strip() == "auto":
+        args.keys = []
+    else:
+        args.keys = [k for k in args.keys.split(",") if k]
+        for k in args.keys:
+            try:
+                key_bytes(k)             # fail loudly on a typo, not silently
+            except UnknownKey:
+                sys.exit("compsys_spec_fuzz: unknown key %r in --keys (have "
+                         "`auto`, any single character, or: %s)"
+                         % (k, ",".join(sorted(KEYS))))
+    all_kinds = ["arguments", "values", "describe", "alternative",
+                 "compadd", "compset", "tags", "nested"]
     args.kinds = all_kinds if args.kind == "all" else [
         k.strip() for k in args.kind.split(",") if k.strip()]
     for k in args.kinds:
@@ -1482,10 +2119,16 @@ def main():
     if args.replay:
         cases = [read_fixture(args.replay)]
         args.seed = cases[0].seed
+        if args.keys:
+            # An explicit --keys re-judges the saved completer over a DIFFERENT
+            # key path. That is how a multi-key divergence gets localised: run
+            # the same fixture at tab, then tab,bs, then tab,bs,tab and see
+            # which press first splits the two shells.
+            cases[0].keys = list(args.keys)
     elif args.spec:
         c = Case(-1, args.seed, "fzc9999", "arguments", args.spec, ["-s"],
                  {"helpers": [], "states": []},
-                 args.spec_buffer or "fzc9999 ", args.keys)
+                 args.spec_buffer or "fzc9999 ", args.keys or ["tab"])
         cases = [c]
     else:
         cases = [generate(args.seed, args.start + i, args)
@@ -1498,9 +2141,12 @@ def main():
     print("# zsh    : %s" % args.zsh)
     print("# zshrs  : %s" % " ".join(args.test_argv))
     print("# fpath  : %s" % " ".join(args.fpath_dirs))
-    print("# seed   : %d   cases %d..%d   keys=%s   %dx%d   jobs=%d"
-          % (args.seed, args.start, args.start + len(cases) - 1,
-             ",".join(args.keys), args.rows, args.cols, args.jobs))
+    print("# seed   : %d   cases %s   keys=%s   %dx%d   jobs=%d"
+          % (args.seed,
+             "%d..%d" % (args.start, args.start + len(cases) - 1)
+             if cases else "<none>",
+             ",".join(args.keys) if args.keys else "auto (per case)",
+             args.rows, args.cols, args.jobs))
     print("# kinds  : %s%s" % (",".join(args.kinds),
                                "   non-ascii" if args.non_ascii else ""))
     print("# outdir : %s" % os.path.relpath(root, REPO))
@@ -1519,6 +2165,7 @@ def main():
                 minimal, probes = shrink_case(args, root, args.fpath_dirs,
                                               case, v.category)
                 v.shrunk = (len(minimal.atoms), len(minimal.flags), probes)
+                v.minimal = minimal
                 v.fixture = write_fixture(
                     os.path.join(root, "%s.min.zsh" % case.name), args, minimal,
                     "%s: %s (shrunk to %d spec(s), %d flag(s) in %d probes)"
@@ -1538,9 +2185,9 @@ def main():
                 extra = "  [raw escape streams differ]"
             if v.status == FAIL and getattr(v, "shrunk", None):
                 extra = "  [shrunk to %d spec(s)/%d flag(s) in %d probes]" % v.shrunk
-            print("%-9s %-9s %-11s %-28s %s%s"
-                  % (mark, v.case.name, v.case.kind, repr(v.case.buffer),
-                     v.detail[:60], extra))
+            print("%-9s %-9s %-10s %-22s %-16s %s%s"
+                  % (mark, v.case.name, v.case.kind, repr(v.case.buffer)[:22],
+                     ",".join(v.case.keys)[:16], v.detail[:48], extra))
             sys.stdout.flush()
             if args.verbose and v.status in (PASS, PASS_ERR):
                 print_case_spec(v.case)
@@ -1568,6 +2215,29 @@ def main():
     print("=" * 78)
     print("# %d case(s): %d PASS, %d PASS(err), %d FAIL, %d SKIP"
           % (len(results), npass, nerr, nfail, nskip))
+
+    # Per-KIND, because the four spec-level kinds and the four builtin-level
+    # kinds test different layers: a run that is green only because it drew
+    # nothing but `describe` cases has not tested `compadd`, and the totals
+    # above cannot say so.
+    per = {}
+    for v in results:
+        row = per.setdefault(v.case.kind, dict.fromkeys((PASS, PASS_ERR, FAIL, SKIP), 0))
+        row[v.status] += 1
+    print("#   by kind:      cases   PASS  PASS(err)   FAIL   SKIP")
+    for kind in sorted(per):
+        row = per[kind]
+        print("#     %-12s %5d  %5d  %9d  %5d  %5d"
+              % (kind, sum(row.values()), row[PASS], row[PASS_ERR],
+                 row[FAIL], row[SKIP]))
+    kpaths = {}
+    for v in results:
+        kpaths.setdefault(",".join(v.case.keys), []).append(v.status)
+    if len(kpaths) > 1:
+        print("#   by key path:  cases   FAIL")
+        for k in sorted(kpaths):
+            st = kpaths[k]
+            print("#     %-24s %3d  %5d" % (k, len(st), st.count(FAIL)))
     if nerr:
         print("#   PASS(err) = the generated spec was malformed and BOTH shells")
         print("#   printed the identical compsys error. Counted apart from a")
