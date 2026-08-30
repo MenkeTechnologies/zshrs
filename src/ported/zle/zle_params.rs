@@ -416,9 +416,27 @@ pub fn makezleparams(ro: i32) {
         let Ok(mut tab) = crate::ported::params::paramtab().write() else {
             return;
         };
-        for (name, _) in ZLEPARAM_TABLE {
+        for (name, decl) in ZLEPARAM_TABLE {
             if let Some(pm) = tab.get_mut(*name) {
-                if pm.level > 0 && pm.node.flags as u32 & stamp == stamp {
+                // A param this table itself declares PM_READONLY (KEYS,
+                // KEYS_QUEUED_COUNT, PENDING, …) is read-only TO THE USER; the
+                // shell still has to publish its value on every widget call. C
+                // does that through the gsu setter, which never consults
+                // PM_READONLY. The port publishes with setiparam/setsparam,
+                // which do — so the stamp has to come off first, at whatever
+                // level the node currently sits.
+                //
+                // The `level > 0` test below exists to spare a user's
+                // `readonly BUFFER` at level 0, and that is right for a param
+                // the user may legitimately own. It is wrong for these: a
+                // level-0 node (one that leaked from an older build, or was
+                // published while locallevel was 0) stayed locked forever, and
+                // the next publish failed with "read-only variable:
+                // KEYS_QUEUED_COUNT" — which aborted the widget mid-call and
+                // took zsh-autosuggestions and syntax-highlighting down with
+                // it ("widgets can only be called when ZLE is active").
+                let self_readonly = (*decl & PM_READONLY) != 0;
+                if (self_readonly || pm.level > 0) && pm.node.flags as u32 & stamp == stamp {
                     pm.node.flags &= !((PM_READONLY | PM_UNSET) as i32);
                 }
             }
