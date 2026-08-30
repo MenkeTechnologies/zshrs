@@ -163,6 +163,87 @@ pub fn probe(shell: &Path, zshrs: bool, driver: &str, key: &str) -> (Option<bool
     }
 }
 
+/// Setup line installing `dumpbuf`, a widget that writes the LINE
+/// EDITOR'S OWN STATE to `$OUTFILE` instead of leaving it to be read
+/// off the screen.
+///
+/// This is a strictly stronger verdict than matching the transcript: a
+/// redraw interleaves escapes with text and overwrites earlier output,
+/// so screen matching can only ever answer "did this string appear".
+/// `$BUFFER` and `$CURSOR` read from inside a widget are exact, which
+/// makes off-by-one cursor bugs visible — the class that screen
+/// matching structurally cannot see.
+///
+/// Bound in `main` AND `vicmd`, because a vi-mode probe dumps from
+/// command mode and an unbound key there silently produces nothing.
+pub const DUMP_WIDGET: &str = concat!(
+    r#"zpty -w w 'dumpbuf(){ print -r -- "BUF=[$BUFFER] CUR=[$CURSOR]" >! $OUTFILE }; "#,
+    r#"zle -N dumpbuf; bindkey "^X^G" dumpbuf'"#,
+    "\n",
+    r#"zpty -w w 'bindkey -M vicmd "^X^G" dumpbuf'"#,
+);
+
+/// Keystrokes that fire `dumpbuf`.
+pub const DUMP_KEY: &str = "zpty -w -n w $'\\C-x\\C-g'\nsleep 2";
+
+/// Read back what `dumpbuf` wrote, having run `driver` under `shell`.
+///
+/// The driver MUST drain the pty before reading the file: an inner
+/// shell whose output buffer fills blocks on write, and the widget then
+/// never runs at all. That failure looks identical to "the key was not
+/// bound" — empty output from both shells, which reads as agreement.
+fn dump(shell: &Path, zshrs: bool, driver: &str, tag: &str) -> String {
+    // The path has to be unique per CALL, not per shell: cargo runs the
+    // test binary multi-threaded, and two cases sharing one file race —
+    // a `$` motion case once read back the `dw` case's buffer and
+    // reported a divergence that did not exist.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out_path = std::env::temp_dir().join(format!(
+        "zshrs-parity-dump-{}-{}-{tag}.txt",
+        std::process::id(),
+        n
+    ));
+    let _ = std::fs::remove_file(&out_path);
+    let mut cmd = Command::new(shell);
+    if zshrs {
+        cmd.arg("--zsh");
+        cmd.env("ZSHRS_NATIVE_ZLE_FX", "0");
+    }
+    let out = cmd
+        .args(["-f", "-c", driver])
+        .env("UNDER_TEST", shell)
+        .env("OUTFILE", &out_path)
+        .env("TERM", "xterm-256color")
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke shell");
+    let _ = out;
+    std::fs::read_to_string(&out_path).unwrap_or_default().trim().to_string()
+}
+
+/// Compare the editor state both shells dumped, refusing to pass when
+/// the REFERENCE dumped nothing — an unbound key, a wedged inner shell
+/// or an undrained pty all produce empty on both sides, and that is
+/// false agreement rather than parity.
+pub fn assert_same_dump(driver: &str, what: &str) {
+    if !zsh_available() {
+        eprintln!("skip: zsh not found");
+        return;
+    }
+    let reference = dump(Path::new(zsh_path()), false, driver, "zsh");
+    assert!(
+        !reference.is_empty(),
+        "reference zsh dumped no editor state for `{what}` — the probe is broken, \
+         not the shell under test.\n--- driver ---\n{driver}"
+    );
+    let under_test = dump(&zshrs_bin(), true, driver, "zshrs");
+    assert_eq!(
+        reference, under_test,
+        "{what}\n--- zsh ---\n{reference}\n--- zshrs ---\n{under_test}"
+    );
+}
+
 /// Compare one boolean probe across the two shells, refusing to pass
 /// when the reference shell did not exhibit the behaviour at all.
 pub fn assert_same_verdict(driver: &str, key: &str, what: &str) {
