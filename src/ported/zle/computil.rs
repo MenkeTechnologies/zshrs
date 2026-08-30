@@ -1734,21 +1734,21 @@ pub fn bin_compdescribe(
                 zwarnnam(nam, "not enough arguments");
                 return 1;
             }
-            // c:874 — getaparam(args[4]).
-            let opts_arr: Vec<String> = paramtab()
-                .read()
-                .ok()
-                .and_then(|tab| tab.get(&args[4]).and_then(|pm| pm.u_arr.clone()))
-                .unwrap_or_default();
-            if opts_arr.is_empty()
-                && paramtab()
-                    .read()
-                    .ok()
-                    .map_or(true, |tab| tab.get(&args[4]).is_none())
-            {
-                zwarnnam(nam, &format!("unknown parameter: {}", args[4]));
-                return 1;
-            }
+            // c:874 — `if (!(opts = getaparam(args[4])))`.
+            //
+            // Must go through `getaparam`, not a raw paramtab lookup on
+            // `u_arr`. C resolves the value through the parameter's gsu
+            // getter (`v->pm->gsu.a->getfn`), which is how tied arrays
+            // (path/PATH), specials and namerefs produce their contents;
+            // those keep `u_arr` empty and are invisible to a direct hash
+            // probe. The old probe also diverged on the error branch: when
+            // the name existed but carried no `u_arr` it fell through with
+            // an EMPTY opts vector instead of C's real array, silently
+            // dropping the per-set compadd options.
+            let Some(opts_arr) = crate::ported::params::getaparam(&args[4]) else {
+                zwarnnam(nam, &format!("unknown parameter: {}", args[4])); // c:875
+                return 1; // c:876
+            };
             cd_init(
                 nam,
                 &args[1],
