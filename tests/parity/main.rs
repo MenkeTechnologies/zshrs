@@ -123,6 +123,7 @@ mod subshell_parity;
 mod subshell_signal_limit_parity;
 mod subst_flags_more_parity;
 mod subst_split_join_parity;
+mod tilde_globsubst_scope_parity;
 mod tilde_parity;
 mod time_keyword_parity;
 mod trap_parity;
