@@ -742,8 +742,13 @@ CASES: list[Case] = [
          "a glob whose matches are directories — MARK_DIRS appends a slash to "
          "each",
          ("glob", "path", "optsens", "markdirs")),
-    Case("optsens_numericsort", "ls /dev/tty*",
-         "numeric filenames — NUMERIC_GLOB_SORT reorders the listing",
+    Case("optsens_numericsort", "ls /usr/share/zoneinfo/Etc/GMT*",
+         "numeric filenames (GMT-1, GMT-10, GMT-2 sort differently numerically "
+         "than lexicographically) — NUMERIC_GLOB_SORT reorders the listing. "
+         "NOT /dev/tty*: that set changes between the two shells' pty sessions "
+         "as terminals come and go, which made the cell permanently FLAKY "
+         "(16, 13, 12 rows differing, never reproducibly) — a case whose match "
+         "set is not stable measures the host, not the shell",
          ("glob", "path", "optsens", "numericglobsort", "optional")),
     Case("optsens_equals", "cat =ls",
          "`=cmd` filename expansion — EQUALS decides whether it resolves to a "
