@@ -81,7 +81,9 @@ Y03arguments does not fail, it **hangs**: at assertion 4 the shell under test
 exits and the driver blocks forever waiting for its finish widget, so the file
 hit the 900 s per-file timeout with 96 assertions never run. See divergence 3.
 
-zshrs is also 10-20x slower through this suite than zsh (Y01: 25.6 s vs 1.4 s).
+Wall-clock for Y01 was 25.6 s for zshrs against 1.4 s for zsh, but the host was
+running other work concurrently (a later zshrs Y01 took 8.7 s), so treat that
+only as "noticeably slower", not as a measured ratio.
 
 ## Adaptations (declared)
 
