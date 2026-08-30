@@ -109,7 +109,12 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE_DIR = os.path.join(REPO, "tests", "compsys_fixtures")
 SELF = os.path.relpath(os.path.abspath(__file__), REPO)
 SCHEMAS = ("compsys-fixture/1", "compsys-fixture/2")
-GROUPS_FILE = "groups.json"
+# The two documents in the fixture directory that are NOT fixtures: the group
+# table the consolidated report renders from, and the last full gate run, kept
+# beside the evidence so every number in that report is re-derivable from a
+# file. Skipped by NAME — an unknown schema in an actual fixture still stops
+# the run, which is the point of validating at all.
+NON_FIXTURE_FILES = ("groups.json", "last_gate.json")
 
 # spec-fuzz fixtures are replayed through a file in the shape `write_fixture()`
 # emits; `read_fixture()` needs only the `@` headers and this heredoc marker.
@@ -266,10 +271,7 @@ class Result:
 def load_fixtures(only):
     out = []
     for path in sorted(glob.glob(os.path.join(FIXTURE_DIR, "*.json"))):
-        # The one document in this directory that is NOT a fixture: the group
-        # table the consolidated report renders from. Skipped by NAME, so an
-        # unknown schema in an actual fixture still stops the run.
-        if os.path.basename(path) == GROUPS_FILE:
+        if os.path.basename(path) in NON_FIXTURE_FILES:
             continue
         with open(path) as f:
             try:
