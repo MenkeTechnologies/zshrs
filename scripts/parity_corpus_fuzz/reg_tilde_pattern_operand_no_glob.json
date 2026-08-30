@@ -1,0 +1,10 @@
+{
+  "buffer": "cm=X; v='a|b'; print -r -- ${v%%${~cm}*}",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d30f91f8ed \u2014 ${~var} inside a pattern operand must not turn the ENCLOSING expansion into a glob. 28 sites under Completion/ and Functions/ use the construct; it is what broke all 20 X04zlehighlight assertions.",
+  "origin": "regression/2026-08-30/d30f91f8ed",
+  "statements": []
+}

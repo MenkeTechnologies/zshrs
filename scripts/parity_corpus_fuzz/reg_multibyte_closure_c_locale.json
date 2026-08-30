@@ -1,0 +1,10 @@
+{
+  "buffer": "setopt extendedglob; g=\u00e9; [[ \u00e9\u00e9 = ${g}# ]]; print -r -- \"rc=$?\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "DIVERGES TODAY \u2014 NEW, found 2026-08-30 while building this guard. b4ad35079c fixed the HANG in patcomppiece's literal-run backtrack (`[[ \u00e9\u00e9 = \u00e9# ]]` spun at 100% CPU); the RESULT is still wrong in the C locale, which is the locale this harness pins in child_env. zsh 5.9.2 rc=1, zshrs rc=0. It is source-representation specific, not a pattern-matcher bug: with the same bytes written as $'\\\\xc3\\\\xa9' BOTH shells answer 1, and ${#s} is 4 on both, so byte semantics agree \u2014 only a literal multibyte character in the source text takes the wrong branch. Pure-ASCII multi-character runs agree (`[[ abab = ab# ]]` is 1 on both). Under en_US.UTF-8 both answer 0. Smallest repro: LC_ALL=C <shell> -f -c 'setopt extendedglob; g=\u00e9; [[ \u00e9\u00e9 = ${g}# ]]; print $?'",
+  "origin": "regression/2026-08-30/b4ad35079c",
+  "statements": []
+}

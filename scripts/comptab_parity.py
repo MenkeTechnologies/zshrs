@@ -323,6 +323,74 @@ def resolve_dump(explicit):
     return None
 
 
+def dump_health(zsh, dump, fpath_dirs, timeout=180):
+    """How many completions `compinit -C -d DUMP` actually registers, in REAL zsh.
+
+    A precondition, not a diagnostic. `--dump` defaults to whatever
+    `resolve_dump` globs out of the user's home, which on a shared machine is a
+    file other processes rewrite while a sweep is in flight. Measured
+    2026-08-30 11:1x: `~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies` was
+    **one byte** — a peer instance had truncated it at 10:44 — and
+    `compinit -C -d` on it yields `comps=0 patcomps=0` in BOTH shells. Every
+    cell run against that dump completes nothing, on both sides, and the
+    harness scored the agreement:
+
+        --case 'ls /usr/sha' --keys tab      PASS, buffer still `ls /usr/sha`
+
+    That is exactly the fake-pass class `--skip-missing` exists to kill, one
+    layer down: not "the command is missing" but "the completion SYSTEM is
+    missing". It also silently poisons every other verdict in the same run,
+    because a shell that completes nothing produces no bytes, and a side that
+    produces no bytes while the other does becomes a TIMEOUT.
+
+    So the check runs ONCE, before any pty boots, and a run over a dump that
+    registers nothing is refused rather than reported. Refusing can only ever
+    remove fake evidence; it cannot turn a FAIL into a pass.
+    """
+    import subprocess
+    script = ("fpath=( %s )\nautoload -Uz compinit\ncompinit -C -d %s\n"
+              "print -r -- \"comps=$#_comps patcomps=$#_patcomps\"\n"
+              % (" ".join(shlex.quote(d) for d in fpath_dirs),
+                 shlex.quote(dump)))
+    try:
+        out = subprocess.run([zsh, "-f", "-c", script], capture_output=True,
+                             text=True, timeout=timeout)
+    except Exception as exc:
+        return None, "could not be measured: %r" % (exc,)
+    m = re.search(r"comps=(\d+) patcomps=(\d+)", out.stdout)
+    if not m:
+        return None, ("reference zsh printed no count: %r"
+                      % ((out.stdout + out.stderr)[-200:],))
+    return (int(m.group(1)), int(m.group(2))), None
+
+
+def _sibling_dump_hint(dump):
+    """Other dump-shaped files next to a rejected one, largest first.
+
+    Purely advisory. The resolver deliberately does NOT switch to one of these
+    on its own: silently changing which dump a run was measured over is exactly
+    the kind of invisible input change that makes two runs incomparable. It is
+    printed so the reader can choose, not applied.
+    """
+    try:
+        d = os.path.dirname(dump) or "."
+        base = os.path.basename(dump)
+        sibs = [(os.path.getsize(os.path.join(d, f)), f)
+                for f in os.listdir(d)
+                if f.startswith(base) and f != base
+                and not f.endswith(".zwc")
+                and os.path.isfile(os.path.join(d, f))]
+    except OSError:
+        return ""
+    sibs.sort(reverse=True)
+    if not sibs:
+        return ""
+    return ("\n  siblings next to it, largest first (advisory only — the "
+            "resolver will NOT pick one for you, because silently changing the "
+            "dump changes what the run measured):\n" +
+            "\n".join("    %10d  %s" % (n, f) for n, f in sibs[:5]))
+
+
 def user_fpath():
     """The fpath `zsh -f` sees on this host — the set the dump was built from."""
     import subprocess
@@ -336,13 +404,36 @@ def user_fpath():
         return []
 
 
+# `--init-extra FILE`'s contents, appended to EVERY init this run writes.
+#
+# It is a module global rather than a parameter because `build_init` has nine
+# call sites across five modes and the flag has to reach all of them; threading
+# an argument through each would leave the ones it was not threaded through
+# silently ignoring the flag, which is a worse failure than a documented
+# global. Empty by default, so a run that does not pass the flag writes exactly
+# the init file it always wrote.
+#
+# What it is FOR: every mode in this file completes against completers that
+# ALREADY EXIST on the host. A divergence that only appears under a completer
+# written for the occasion — a generated `_alternative` spec, a `zle -C`
+# widget, a `compdef -K` binding, an `_arguments` spec with a particular
+# action — was structurally unreachable here, which is the largest measured
+# blind spot of this harness against `tests/compsys_fixtures` (8 of the 29
+# pinned fixtures are that shape). The file is sourced by BOTH shells, from the
+# same init, after `compinit`, so it is subject to the same rules as
+# everything else: it cannot make one shell see something the other does not.
+INIT_EXTRA = ""
+
+
 def build_init(dump, fpath_dirs, zstyle_file, extra="", dirhook=None):
     """The init file BOTH shells source.
 
     `extra` is appended AFTER `compinit` and before the final `print -u2 ''`,
     which is the only place a `compdef` can go (compinit is what defines it).
     Default `""` leaves the file byte-identical to what it has always been, so
-    no existing mode changes. `dirhook`, when given, is called with the scratch
+    no existing mode changes. `INIT_EXTRA` (from `--init-extra`) is appended
+    after it, for the same reason and in the same place. `dirhook`, when given,
+    is called with the scratch
     directory so a caller that needs to place files beside the init (the
     utility-function sweep writes its probe report there) can format them into
     `extra` without a second mkdtemp.
@@ -350,6 +441,8 @@ def build_init(dump, fpath_dirs, zstyle_file, extra="", dirhook=None):
     d = tempfile.mkdtemp(prefix="comptab_parity_")
     if dirhook is not None:
         extra = dirhook(d)
+    if INIT_EXTRA:
+        extra = (extra + "\n" if extra else "") + INIT_EXTRA
     fpath_line = ""
     if fpath_dirs:
         fpath_line = "fpath=( %s )\n" % " ".join(shlex.quote(p) for p in fpath_dirs)
@@ -833,7 +926,32 @@ def capture(argv, env, args, init_file, buf, keys):
                 sess.settle_out(max_wait=3.0, first_wait=1.0, phase="buffer")
             for k in keys:
                 sess.send(key_bytes(k))
-                sess.settle_out(max_wait=15.0, first_wait=10.0, phase="key %r" % k)
+                # Per-key budget. The default pair (10 s to see the FIRST byte,
+                # 15 s in total) is what every run before `--key-budget` used
+                # and is still the default, so no existing verdict moves.
+                #
+                # Why the flag exists, measured: replaying pinned
+                # `tests/compsys_fixtures` cells through this harness on
+                # 2026-08-30, several came back TIMEOUT with the identical
+                # reason — `zsh: nothing at all after key 'tab' within 10.0s`
+                # — twice each, including the serial re-run. Most of those
+                # turned out to be the empty-dump artefact `--check-dump` now
+                # refuses; TWO survived a healthy dump
+                # (`multiline_squote_corrections`,
+                # `multiline_dquote_parameter_list`), where the reference is
+                # silent while zshrs draws a screen. Raising the budget is the
+                # only way to tell a reference shell that is SLOW from one
+                # that is genuinely SILENT, and the two get opposite verdicts:
+                # slow is a TIMEOUT, silent-on-both-sides is a comparable
+                # state.
+                #
+                # This can only ever make the harness wait LONGER before
+                # giving up. The one-sidedness rule in `timeout_reasons` is
+                # untouched: a side that stays silent while the other renders
+                # is still a TIMEOUT, at any budget.
+                sess.settle_out(max_wait=args.key_max_wait,
+                                first_wait=args.key_first_wait,
+                                phase="key %r" % k)
             sess.settle_out(max_wait=3.0, first_wait=0.6, phase="final")
             rows = sess.grid()
             result = Capture(
@@ -919,6 +1037,11 @@ class Verdict:
         # shell that crashed produced no comparison to judge.
         self.crashes = []
         self.recheck = None       # verdict of the serial TIMEOUT re-run
+        # Set by `silence_recheck` when a one-sided NO_OUTPUT survived a much
+        # larger per-key budget: the quiet side is SILENT, not slow. The status
+        # stays TIMEOUT (see the note there) so every counter and exit
+        # expression keeps treating it as the non-pass it is.
+        self.silence = False
         # The zstyle statements this cell ran under, when it came from the fuzz
         # corpus rather than the fixture as a whole. Needed to write a
         # reproducer that actually reproduces.
@@ -1068,10 +1191,20 @@ def repro_cmd(args, buf, keys, zstyle=None):
     fixture = zstyle if zstyle is not None else args.zstyle
     if fixture:
         cmd += ["--zstyle", shlex.quote(fixture)]
+    # Same rule as the zstyle fixture: a cell that ran under `--init-extra`
+    # completed against a completer that does not otherwise exist, so a repro
+    # without it replays a DIFFERENT cell — usually one where nothing is
+    # bound and both shells trivially agree.
+    if getattr(args, "init_extra", None):
+        cmd += ["--init-extra", shlex.quote(args.init_extra)]
     cmd += ["--case", shlex.quote(buf), "--keys", ",".join(keys)]
     cmd += ["--rows", str(args.rows), "--cols", str(args.cols)]
     if args.settle != 300:
         cmd += ["--settle", str(args.settle)]
+    if args.key_budget is not None:
+        cmd += ["--key-budget", "%g" % args.key_budget]
+    if args.silence_recheck:
+        cmd += ["--silence-recheck", "%g" % args.silence_recheck]
     return " ".join(cmd)
 
 
@@ -1165,6 +1298,11 @@ def to_json(v):
         "fingerprint": v.fingerprint,
         "fingerprint_label": fp_label(v) if v.fingerprint else None,
         "timeouts": list(v.timeouts),
+        # True when a one-sided NO_OUTPUT survived a much larger per-key budget
+        # (`--silence-recheck`): the quiet side is SILENT, not slow. The status
+        # stays TIMEOUT, so this is the only place the distinction is machine
+        # readable.
+        "one_sided_silence": bool(getattr(v, "silence", False)),
         "crashes": [{"side": side, "note": note} for side, note in v.crashes],
         "timeout_recheck": v.recheck,
         "skip_reason": v.skip_reason,
@@ -1402,6 +1540,94 @@ def run_cell(args, env, cell, gate):
         v.recheck = v2.status
         v.detail += ("; serial re-run: %s — still NOT scored as a pass, the "
                      "first measurement was never valid" % v2.status)
+        v = silence_recheck(args, env, cell, gate, v)
+    return v
+
+
+# The reasons `timeout_reasons` emits for a ONE-SIDED silence. Matched on text
+# because that is where the shape is stated; the two must stay in step.
+_ONE_SIDED_SILENCE = re.compile(r"^(zsh|zshrs): nothing at all after key ")
+
+
+def silence_recheck(args, env, cell, gate, v):
+    """Separate a reference shell that is SLOW from one that is SILENT.
+
+    `timeout_reasons` calls a one-sided NO_OUTPUT a TIMEOUT on the hypothesis
+    that the quiet side might just have needed more than the per-key budget.
+    That hypothesis is testable, and on 2026-08-30 it was tested and came back
+    FALSE for two cells that survive a healthy dump:
+    `tests/compsys_fixtures/multiline_squote_corrections` and
+    `multiline_dquote_parameter_list` are both still `zsh: nothing at all after
+    key 'tab'` at three times the default budget, while zshrs draws a screen.
+    (Several other cells that looked the same were the empty-dump artefact
+    `--check-dump` now refuses outright — which is why that check has to run
+    FIRST, or this one reports the wrong thing.)
+
+    So this re-measures such a cell ONCE at `--silence-recheck` x the budget.
+    If the side is still silent, the cell is relabelled `ONE-SIDED-SILENCE`:
+    one shell drew a screen, the other drew nothing, and that is a comparable
+    fact rather than a failed measurement.
+
+    Strictness is unchanged in every direction that matters:
+
+      * `ONE-SIDED-SILENCE` is NOT a pass. It is counted apart, printed with
+        its two screens, and keeps the exit status non-zero, exactly like
+        TIMEOUT.
+      * a cell whose bigger budget DOES produce bytes stays a TIMEOUT — the
+        slow-shell hypothesis held, and the first measurement really was
+        invalid.
+      * a cell that diverges cleanly on the bigger budget is promoted to that
+        verdict, the same as the serial re-run already does.
+      * OFF by default (`--silence-recheck 0`), so no existing run changes.
+      * it hangs off the existing TIMEOUT re-check, so `--no-timeout-recheck`
+        turns it off as well. That is the right coupling: the serial re-run is
+        what establishes the load was not the cause, and re-measuring at a
+        bigger budget without it would just be measuring the load for longer.
+    """
+    if not args.silence_recheck or args.silence_recheck <= 1:
+        return v
+    if not any(_ONE_SIDED_SILENCE.match(r) for r in v.timeouts):
+        return v
+    first, mx = args.key_first_wait, args.key_max_wait
+    # The budget lives on `args`, which every worker thread reads, so it is
+    # raised INSIDE the exclusive gate — `exclusive()` blocks new cells and
+    # waits for the ones in flight, so no other capture can observe the
+    # temporarily larger value — and restored before the gate is released.
+    with gate.exclusive():
+        try:
+            args.key_first_wait = first * args.silence_recheck
+            args.key_max_wait = mx * args.silence_recheck
+            v3 = run_case(args, env, cell.init_file, cell.case, cell.seq,
+                          cell.keys)
+        finally:
+            args.key_first_wait, args.key_max_wait = first, mx
+    v3.statements = cell.statements
+    v3.zstyle_file = cell.zstyle_file
+    if v3.status in ("FAIL", "FLAKY"):
+        v3.detail += (" (budget-exhausted twice at %.1fs; this is the re-run at "
+                      "%.1fs, which diverged cleanly)"
+                      % (first, first * args.silence_recheck))
+        v3.recheck = "promoted-to-fail-on-bigger-budget"
+        return v3
+    if any(_ONE_SIDED_SILENCE.match(r) for r in v3.timeouts):
+        # The STATUS stays TIMEOUT on purpose. Six run modes each keep their
+        # own `counts` dict and their own exit expression over a fixed set of
+        # labels; a new label would have to be threaded through all six, and a
+        # place it was missed would silently drop the cell out of the exit
+        # status — the one direction this file must never move. The finding is
+        # information, so it rides as information: `silence` on the Verdict and
+        # a rewritten detail line. Non-pass and non-zero exit are inherited
+        # from TIMEOUT unchanged.
+        v.silence = True
+        v.recheck = "still-silent-at-%.1fs" % (first * args.silence_recheck)
+        v.detail = ("ONE-SIDED SILENCE, not budget: one side produced NOTHING "
+                    "and the other produced a screen, at %.1fs and again at "
+                    "%.1fs. Still NOT a pass. %s"
+                    % (first, first * args.silence_recheck,
+                       "; ".join(v.timeouts[:2])))
+    else:
+        v.detail += ("; re-measured at %.1fs: %s — the slow-shell hypothesis "
+                     "held" % (first * args.silence_recheck, v3.status))
     return v
 
 
@@ -2473,6 +2699,20 @@ GEN_LIST_COLORS = (
     "so=32", "or=31;1", "sp=33", "ec=",
     "=(#b)(*)=1;30=1;32;43", "=(#b)(*)=1;30=1;36;44", "=(#b)(*)/(*)==1;35=1;33",
     "*.rs=32", "*.md=33", "=*=1;35", "(files)*.o=90",
+    # `lc=` / `rc=` — the LEFT and RIGHT code, i.e. what is emitted AROUND a
+    # colour rather than the colour itself (Doc/Zsh/mod_complist.yo, and
+    # complist.c:206 for the defaults `\e[` and `m`). They were absent from
+    # this table until 2026-08-30, which is the measured reason this fuzzer
+    # could never have found the bug 6fa67cb221 fixed: zlrputs hardcoded those
+    # two strings instead of reading mcolors.files[COL_LC]/[COL_RC], so the
+    # hardcoded form was byte-correct for every value this generator COULD
+    # produce, and only a config that SET them diverged. zsh's own suite sets
+    # them (Test/comptest:44) and that single gap accounted for 73 of the 88
+    # failing Y-series assertions. The marker forms come first because they are
+    # what makes a divergence legible on a grid — an SGR run that is wrong is
+    # invisible as text, `<LC>` is not.
+    "lc=<LC>", "rc=<RC>", "ec=<EC>", "no=<NO>",
+    "lc=\\e[", "rc=m", "lc=", "rc=",
 )
 
 # compsys.yo:1800-1810 — EXTENDED_GLOB is in force here, so `#`, `~` and `^`
@@ -5371,6 +5611,112 @@ FN_PROBES = [
 
 FN_BY_NAME = {p.name: p for p in FN_PROBES}
 
+# ── the rest of the router table (`--fn-derive`) ─────────────────────────────
+#
+# The 24 probes above are hand-written because their interface is an argument
+# GRAMMAR (`_description TAG NAME DESCR`, `_wanted [opts] TAG NAME DESCR
+# ACTION...`) that has to be read out of the function's own `zparseopts` line
+# before a call can be generated. That leaves the rest of the router table
+# unswept: measured on this host, 247 `_NAME` arms, 24 of them probed, so 223
+# were never called by this harness at all — reachable only by accident, if
+# something typed happened to route through them, which is the exact gap
+# `--fn-sweep` exists to close.
+#
+# Most of the remainder do not HAVE an argument grammar. They are value
+# generators: `_users`, `_file_modes`, `_locales`, `_terminals` — a body that
+# ends in `_wanted`/`_description`/`compadd` and forwards `"$@"` as compadd
+# options. For those a BARE call is the documented use: it is exactly what
+# `_alternative 'users:user:_users'` and `_wanted users expl user _users` do.
+#
+# So the call is not invented, it is DERIVED, and the derivation is a scan of
+# the function's own stock source rather than a claim about it:
+#
+#   * find the file `$fpath` really resolves the name to (the same first-hit
+#     walk `fn_backend_map` does, so the citation names the file that will
+#     actually run);
+#   * strip comment lines and look for a POSITIONAL reference — `$1`..`$9`,
+#     `${1`..`${9`, `$argv[`, or `shift`. Any of those means the function
+#     requires arguments this file cannot invent, and no probe is derived: the
+#     name is reported as "not derivable" with the construct that disqualified
+#     it, never quietly dropped.
+#   * `$@` / `$*` do NOT disqualify. Forwarding an empty `"$@"` to compadd is
+#     the passthrough shape, and it is well defined with no arguments.
+#
+# Measured on this host: 149 of the 223 unswept names derive a probe, 70 use a
+# positional, 4 have no file on `$fpath` at all.
+#
+# `--fn-derive` is OPT-IN and `--fn-sweep` alone still runs exactly the 24
+# hand-written probes, unchanged. That is deliberate: a full derived sweep is
+# ~300 cells, each booting two shells, i.e. hours. The flag takes a count so a
+# sample can be taken; `--fn-derive-only NAMES` runs named ones.
+_FN_POSITIONAL_RE = re.compile(r'\$\{?[1-9]|\$\{?argv\[|\bshift\b')
+
+# Derived probes whose body drives ZLE (`zle`, `vared`, `read -k`). They are
+# widgets, not completion utilities: called from inside a completion widget
+# they wait for input that never arrives, so every such cell would be a
+# TIMEOUT that measures the harness rather than the shell. Excluded from the
+# derived selection by default and NAMED here rather than silently filtered.
+# `--fn-derive-zle` includes them anyway.
+_FN_ZLE_RE = re.compile(r'(?m)^\s*(zle|vared|read\s+-k)\b')
+
+# What a derived probe dumps: the caller-state surface the 2026-08-30 sweep
+# found six stock utilities corrupting (`8d3e39201e`). `expl` is the one three
+# separate ports got wrong in both directions, so it leads.
+FN_DERIVE_DUMP = ("expl", "_lastdescr", "_comp_tags", "_comp_colors")
+
+
+def fn_derived_probes(fpath_dirs, include_zle=False):
+    """(probes, rejected) for every router name with no hand-written probe.
+
+    `rejected` is [(name, why)] — a name that could NOT be derived, with the
+    reason. It is returned rather than dropped because "223 unswept" only
+    becomes "149 swept + 74 named exclusions" if the 74 are named.
+    """
+    probes, rejected = [], []
+    for name in sorted(router_registry()):
+        if name in FN_BY_NAME:
+            continue
+        path = None
+        for d in fpath_dirs:
+            cand = os.path.join(d, name)
+            if os.path.isfile(cand):
+                path = cand
+                break
+        if path is None:
+            rejected.append((name, "no file for it on this $fpath"))
+            continue
+        try:
+            with open(path, errors="replace") as f:
+                src = f.read()
+        except OSError as exc:
+            rejected.append((name, "unreadable: %s" % exc))
+            continue
+        body = "\n".join(l for l in src.splitlines()
+                         if not l.lstrip().startswith("#"))
+        hit = _FN_POSITIONAL_RE.search(body)
+        if hit:
+            rejected.append((name, "body uses a positional (%r at offset %d in "
+                             "%s) — a bare call would be a guess"
+                             % (hit.group(0), hit.start(), path)))
+            continue
+        zle = _FN_ZLE_RE.search(body)
+        if zle and not include_zle:
+            rejected.append((name, "drives ZLE (%r) — a widget, not a "
+                             "completion utility; would wait for input that "
+                             "never comes" % zle.group(0).strip()))
+            continue
+        probes.append(FnProbe(
+            name,
+            "%s:1-%d (derived: no positional parameter in the body)"
+            % (path, len(src.splitlines())),
+            [("bare", []), ("group-J", ["-J", "zpfgrp"])],
+            dump=FN_DERIVE_DUMP,
+            note="derived probe — the call is a bare invocation plus one "
+                 "compadd group option, not a read of an argument grammar",
+        ))
+    return probes, rejected
+
+
 # Complaints the REFERENCE zsh makes about a generated CALL at completion time,
 # on top of the shared REF_REJECT_RE (which is about generated zstyle values).
 # A call zsh parses but then chokes on is not the same thing as a divergence in
@@ -5467,7 +5813,7 @@ def fn_backend_map(fpath_dirs, names=None):
     return out
 
 
-def fn_probe_block(scratch, probe, label, argv):
+def fn_probe_block(scratch, probe, label, argv, repeat=1, propagate=False):
     """The zsh the init file gains so ONE utility call can be observed.
 
     Mechanism, and why each piece is the way it is:
@@ -5495,11 +5841,43 @@ def fn_probe_block(scratch, probe, label, argv):
     With the default keys the listing is scrolled off by `^O`'s accept-line,
     so what is compared is the report. `--fn-keys ctrl-d` is the complementary
     axis: no report, and the two grids ARE the listings.
+
+    ── the RETURN-STATUS axis (`--fn-repeat`, `--fn-propagate`) ──
+
+    `-- rc:` has always been in the report, and it is what caught `_setup`
+    returning 0 where zsh returns 1 (`fn/fn_5e5ca020b9.json`). What the report
+    could NOT say is anything about status BEYOND the first call:
+
+      * `repeat=N` calls the utility N times and records `-- rc[i]:` for each.
+        Several of these functions are documented to be called in a LOOP and
+        to change status across iterations — `_next_label` (`Base/Core/
+        _next_label`), `_all_labels`, `_requested` are all written for
+        `while _next_label ...; do ... done`. A port that gets the first
+        answer right and then never changes it looks identical on a
+        single-call probe. N=1 emits exactly the line it always emitted, so
+        the default report is byte-identical to before.
+
+      * `propagate=True` makes `_zpf_probe` return the utility's status
+        instead of a hard 0. The hard 0 is load-bearing by default (see the
+        comment on `compadd -U -Q -S '' -- zpfEND` below — it stops the
+        completer chain so a second completer cannot re-run the probe), but
+        it also means the utility's status is only ever OBSERVED, never
+        ACTED ON. With it propagated, `_main_complete` does what it really
+        does with a non-zero completer: moves on down the `completer` style.
+        A status divergence then becomes a divergence in the SCREEN, on the
+        `ctrl-d` listing axis where no report exists at all.
     """
     cs_keys = " ".join(FN_CS_KEYS)
     dump_names = " ".join(_zq(n) for n in probe.dump) or "''"
     call = probe.call_line(argv)
     shown = " ".join(_zq(a) for a in argv)
+    # N=1 emits nothing here, so the report keeps the exact `-- rc: $_zpf_rc`
+    # line it has always had and no existing fingerprint moves.
+    repeat_block = ""
+    if repeat > 1:
+        repeat_block = "".join(
+            "    %s >>$ZPF_OUT 2>>$ZPF_OUT; print -r -- \"-- rc[%d]: $?\"\n"
+            % (call, i) for i in range(2, repeat + 1))
     return r"""
 ZPF_DIR=%(dir)s
 ZPF_OUT=$ZPF_DIR/report.txt
@@ -5560,7 +5938,7 @@ _zpf_probe() {
   _zpf_rc=$?
   {
     print -r -- "-- rc: $_zpf_rc"
-    _zpf_delta
+%(repeat)s    _zpf_delta
     _zpf_dump %(dump)s
   } >>$ZPF_OUT 2>>$ZPF_OUT
   # One sentinel match, added AFTER every observation is recorded, so it
@@ -5572,7 +5950,7 @@ _zpf_probe() {
   # would run the probe again.
   compadd -U -Q -S '' -- zpfEND
   (( _zpf_depth-- ))
-  return 0
+  return %(ret)s
 }
 
 compdef _zpf_probe %(host)s
@@ -5591,6 +5969,8 @@ bindkey '^O' _zpf_show
         "call": call,
         "dump": dump_names,
         "host": FN_HOST_CMD,
+        "repeat": repeat_block,
+        "ret": "$_zpf_rc" if propagate else "0",
     }
 
 
@@ -5685,19 +6065,52 @@ def fn_corpus_write(d, rec):
     return path
 
 
-def fn_selection(args):
+def fn_probe_table(args, fpath_dirs):
+    """{name: FnProbe} for this run — the hand-written 24, plus any derived.
+
+    Returns `(table, rejected)`. The derived half is present only when
+    `--fn-derive` / `--fn-derive-only` asked for it, so a plain `--fn-sweep`
+    drives exactly the probes it always drove.
+    """
+    table = dict(FN_BY_NAME)
+    rejected = []
+    if not (args.fn_derive or args.fn_derive_only):
+        return table, rejected
+    derived, rejected = fn_derived_probes(fpath_dirs,
+                                          include_zle=args.fn_derive_zle)
+    if args.fn_derive_only:
+        want = {n.strip() for n in args.fn_derive_only.split(",") if n.strip()}
+        have = {p.name for p in derived}
+        unknown = sorted(want - have)
+        if unknown:
+            why = dict(rejected)
+            sys.exit("--fn-derive-only names no derived probe for: %s\n%s"
+                     % (", ".join(unknown),
+                        "\n".join("  %s: %s" % (n, why.get(n, "not in the "
+                                                "router table"))
+                                  for n in unknown)))
+        derived = [p for p in derived if p.name in want]
+    elif args.fn_derive > 0:
+        derived = derived[:args.fn_derive]
+    for p in derived:
+        table[p.name] = p
+    return table, rejected
+
+
+def fn_selection(args, table=None):
     """The (probe, label, argv) triples this run drives."""
-    names = list(FN_BY_NAME)
+    table = FN_BY_NAME if table is None else table
+    names = list(table)
     if args.fn_only:
         want = [n.strip() for n in args.fn_only.split(",") if n.strip()]
-        unknown = [n for n in want if n not in FN_BY_NAME]
+        unknown = [n for n in want if n not in table]
         if unknown:
             sys.exit("--fn-only names no probe for: %s\nknown: %s"
-                     % (", ".join(unknown), ", ".join(sorted(FN_BY_NAME))))
+                     % (", ".join(unknown), ", ".join(sorted(table))))
         names = want
     out = []
     for n in names:
-        p = FN_BY_NAME[n]
+        p = table[n]
         calls = p.calls
         if args.fn_call:
             want = {c.strip() for c in args.fn_call.split(",") if c.strip()}
@@ -5758,22 +6171,39 @@ def print_fn_split(backends, swept=None, prefix="# ", fpath_dirs=()):
 
 def run_fn_list(args, fpath_dirs):
     """Print the split map and the probe table; boot no shell."""
-    swept = sorted(FN_BY_NAME)
-    backends = fn_backend_map(fpath_dirs, names=sorted(router_registry()))
+    table, rejected = fn_probe_table(args, fpath_dirs)
+    swept = sorted(table)
+    backends = fn_backend_map(fpath_dirs, names=sorted(
+        set(router_registry()) | set(table)))
     print_fn_split(backends, swept=swept, fpath_dirs=fpath_dirs)
     print()
-    print("%-18s %-6s %-5s %s" % ("function", "serves", "calls", "interface source"))
+    print("%-24s %-6s %-5s %-9s %s"
+          % ("function", "serves", "calls", "probe", "interface source"))
     for n in swept:
-        p = FN_BY_NAME[n]
+        p = table[n]
         b = backends.get(n, ("shell", "not in router table"))
-        print("%-18s %-6s %-5d %s" % (n, b[0], len(p.calls), p.source))
+        kind = "derived" if n not in FN_BY_NAME else "hand"
+        print("%-24s %-6s %-5d %-9s %s" % (n, b[0], len(p.calls), kind, p.source))
         if b[0] == "shell":
-            print("%-18s %-6s %-5s -> %s" % ("", "", "", b[1]))
+            print("%-24s %-6s %-5s %-9s -> %s" % ("", "", "", "", b[1]))
         if p.note:
-            print("%-18s %-6s %-5s .. %s" % ("", "", "", p.note))
+            print("%-24s %-6s %-5s %-9s .. %s" % ("", "", "", "", p.note))
     print()
-    print("# %d function(s), %d generated call(s)"
-          % (len(swept), sum(len(FN_BY_NAME[n].calls) for n in swept)))
+    print("# %d function(s), %d generated call(s) — %d hand-written, %d derived"
+          % (len(swept), sum(len(table[n].calls) for n in swept),
+             len([n for n in swept if n in FN_BY_NAME]),
+             len([n for n in swept if n not in FN_BY_NAME])))
+    if rejected:
+        # Named, never dropped: "223 unswept" is only an honest number if the
+        # ones that stay unswept say why.
+        print("# %d router name(s) yield NO derived probe:" % len(rejected))
+        for n, why in rejected:
+            print("#   %-24s %s" % (n, why))
+    elif not (args.fn_derive or args.fn_derive_only):
+        reg = router_registry()
+        print("# %d router arm(s) have no probe at all in this run; "
+              "--fn-derive derives what it can from their own sources"
+              % len(set(reg) - set(table)))
     return 0
 
 
@@ -5795,7 +6225,8 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
     """
     outdir = os.path.join(REPO, "target", "parity-fn-sweep-%d" % args.seed)
     os.makedirs(outdir, exist_ok=True)
-    sel = fn_selection(args)
+    table, derive_rejected = fn_probe_table(args, fpath_dirs)
+    sel = fn_selection(args, table)
     keys = [k.strip() for k in getattr(args, "fn_keys", "").split(",") if k.strip()] \
         or list(FN_KEYS)
     for k in keys:
@@ -5806,7 +6237,7 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
                      "(add it to parity_corpus.KEYS)" % k)
     swept = sorted({p.name for p, _l, _a in sel})
     backends = fn_backend_map(fpath_dirs, names=sorted(
-        set(router_registry()) | set(FN_BY_NAME)))
+        set(router_registry()) | set(table)))
 
     print("# stock-utility sweep (each function called DIRECTLY, in context)")
     print("# host cmd: %r — its completer is replaced by the probe" % FN_HOST_CMD)
@@ -5816,7 +6247,18 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
     print("# jobs    : %d   geom=%dx%d settle=%dms"
           % (max(1, args.jobs), args.rows, args.cols, args.settle))
     print("# outdir  : %s" % outdir)
+    print("# status  : repeat=%d (rc of each of %d successive call(s)), "
+          "propagate=%s (probe returns %s to the completer chain)"
+          % (args.fn_repeat, args.fn_repeat,
+             "on" if args.fn_propagate else "off",
+             "the utility's status" if args.fn_propagate else "0"))
     print_fn_split(backends, swept=swept, fpath_dirs=fpath_dirs)
+    hand = len([n for n in swept if n in FN_BY_NAME])
+    print("#   of those, %d hand-written probe(s) and %d DERIVED from the "
+          "function's own source" % (hand, len(swept) - hand))
+    if derive_rejected:
+        print("#   %d router name(s) yield no derived probe (--fn-list names "
+              "each one and why)" % len(derive_rejected))
     print("# calls   : %d across %d function(s)" % (len(sel), len(swept)))
     print()
 
@@ -5832,7 +6274,9 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
         case = adhoc_case(FN_HOST_CMD + " ", prefix="fn")
         init = build_init(dump, fpath_dirs, args.zstyle,
                           dirhook=lambda d, p=probe, l=label, a=argv:
-                          fn_probe_block(d, p, l, a))
+                          fn_probe_block(d, p, l, a,
+                                         repeat=args.fn_repeat,
+                                         propagate=args.fn_propagate))
         cells.append((probe, label, argv,
                       Cell(case, "%s/%s" % (probe.name, label), list(keys),
                            init, origin="fn-sweep/%s/%s" % (probe.name, label))))
@@ -5992,10 +6436,15 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
             },
             "per_function": {
                 n: {"serves": backends.get(n, ("shell", ""))[0],
-                    "source": FN_BY_NAME[n].source,
+                    "source": table[n].source,
+                    "probe": "hand" if n in FN_BY_NAME else "derived",
                     "verdicts": per_fn.get(n, {}),
                     "invalid": inv_by_fn.get(n, 0)}
                 for n in swept},
+            "derive_rejected": [{"function": n, "why": w}
+                                for n, w in derive_rejected],
+            "status_axis": {"repeat": args.fn_repeat,
+                            "propagate": bool(args.fn_propagate)},
             "invalid_calls": [{"function": p.name, "label": l, "argv": a,
                                "error": e} for p, l, a, e in invalid],
             "ref_refused": [{"function": p.name, "label": l, "id": v.id,
@@ -6008,8 +6457,24 @@ def run_fn_sweep(args, env, dump, fpath_dirs):
 
 
 def fn_repro_cmd(args, probe, label):
-    """A command line that replays exactly one utility call."""
+    """A command line that replays exactly one utility call.
+
+    A DERIVED probe does not exist without `--fn-derive-only`, so the replay
+    has to carry it — otherwise the command printed beside a finding names a
+    probe the next run has no table entry for and exits with `--fn-only names
+    no probe for:`.
+    """
     cmd = [SELF, "--fn-only", probe.name, "--fn-call", label]
+    if getattr(args, "init_extra", None):
+        cmd += ["--init-extra", shlex.quote(args.init_extra)]
+    if probe.name not in FN_BY_NAME:
+        cmd += ["--fn-derive-only", probe.name]
+        if args.fn_derive_zle:
+            cmd += ["--fn-derive-zle"]
+    if args.fn_repeat != 1:
+        cmd += ["--fn-repeat", str(args.fn_repeat)]
+    if args.fn_propagate:
+        cmd += ["--fn-propagate"]
     if args.mode != "native":
         cmd += ["--mode", args.mode]
     if args.zshrs != os.path.join(REPO, "target", "debug", "zshrs"):
@@ -6156,6 +6621,15 @@ def main():
     ap.add_argument("--layout-keep", action="store_true",
                     help="keep the scratch fpath tree instead of removing it, "
                          "so a failing layout can be inspected by hand")
+    ap.add_argument("--init-extra", default=None, metavar="FILE",
+                    help="zsh appended to the init BOTH shells source, after "
+                         "compinit. The place to put a completer written for "
+                         "the occasion (a function plus `compdef`), a `zle -C` "
+                         "or `compdef -K` widget, or a `bindkey`. Without it "
+                         "every mode here can only complete against completers "
+                         "that already exist on the host, which is this "
+                         "harness's largest measured blind spot against "
+                         "tests/compsys_fixtures. Applies to every mode.")
     ap.add_argument("--dump-xshell", action="store_true",
                     help="answer the cross-shell .zcompdump question directly: "
                          "each shell writes a dump for one controlled layout, "
@@ -6182,6 +6656,46 @@ def main():
     ap.add_argument("--fn-call", default=None, metavar="LABELS",
                     help="restrict --fn-sweep to these comma-separated call "
                          "labels (the second column of a sweep's cell id)")
+    ap.add_argument("--fn-derive", type=int, default=0, nargs="?", const=-1,
+                    metavar="N",
+                    help="also sweep router-registered `_NAME`s that have NO "
+                         "hand-written probe, by DERIVING the call from the "
+                         "function's own stock source: a body that references "
+                         "no positional parameter ($1..$9, ${1..${9, $argv[, "
+                         "shift) is called bare, which is exactly what "
+                         "`_alternative 'users:user:_users'` does. N caps how "
+                         "many derived functions are taken (omit the value "
+                         "for all of them). OFF by default because a full "
+                         "derived sweep is hundreds of cells, each booting "
+                         "two shells. --fn-list prints what derives and, for "
+                         "every name that does not, the construct that "
+                         "disqualified it.")
+    ap.add_argument("--fn-derive-only", default=None, metavar="NAMES",
+                    help="derive probes for exactly these comma-separated "
+                         "names (implies --fn-derive)")
+    ap.add_argument("--fn-derive-zle", action="store_true",
+                    help="include derived probes whose body drives ZLE (zle / "
+                         "vared / read -k). They are widgets, not completion "
+                         "utilities: called from inside a completion widget "
+                         "they wait for input that never arrives, so every "
+                         "such cell is a TIMEOUT that measures the harness. "
+                         "Excluded by default and NAMED in --fn-list.")
+    ap.add_argument("--fn-repeat", type=int, default=1, metavar="N",
+                    help="call each utility N times in one probe and record "
+                         "`-- rc[i]:` for every call. The RETURN-STATUS axis "
+                         "beyond the first answer: _next_label, _all_labels "
+                         "and _requested are written to be called in a loop "
+                         "and to change status across iterations, which a "
+                         "single-call probe cannot see. N=1 (the default) "
+                         "emits the report byte-identically to before.")
+    ap.add_argument("--fn-propagate", action="store_true",
+                    help="make the probe RETURN the utility's status to "
+                         "_main_complete instead of a hard 0. By default the "
+                         "status is observed but never acted on, so a status "
+                         "divergence can only ever show up as report text; "
+                         "propagated, the completer chain reacts to it and "
+                         "the divergence reaches the SCREEN — including on "
+                         "`--fn-keys ctrl-d`, where there is no report at all.")
     ap.add_argument("--fn-keys", default=",".join(FN_KEYS), metavar="KEYS",
                     help="comma-separated keys the utility sweep replays. "
                          "The default %(default)s compares the OBSERVATION "
@@ -6249,6 +6763,43 @@ def main():
     ap.add_argument("--no-skip-missing", dest="skip_missing", action="store_false",
                     help="run those cells anyway, scoring 'both completed nothing' "
                          "as a PASS. Only for reproducing a pre-flip number.")
+    ap.add_argument("--check-dump", action="store_true", default=True,
+                    help="before any pty boots, ask REAL zsh how many "
+                         "completions `compinit -C -d <dump>` registers, and "
+                         "refuse the run if the answer is zero. The default "
+                         "dump is globbed out of the user's home, which on a "
+                         "shared machine other processes rewrite mid-run: "
+                         "measured 2026-08-30, that file was one byte and both "
+                         "shells completed nothing, which this harness scored "
+                         "as a PASS. ON by default; it can only ever remove "
+                         "fake evidence.")
+    ap.add_argument("--allow-empty-dump", dest="check_dump",
+                    action="store_false",
+                    help="run even over a dump that registers no completions")
+    ap.add_argument("--silence-recheck", type=float, default=0.0, metavar="X",
+                    help="when a cell TIMES OUT because ONE side produced "
+                         "nothing, re-measure it once at X times the per-key "
+                         "budget. If that side is still silent, the cell is "
+                         "relabelled ONE-SIDED-SILENCE — one shell drew a "
+                         "screen and the other drew nothing, which is a fact "
+                         "and not a failed measurement. Still NOT a pass, "
+                         "still non-zero exit. OFF by default (0); a value of "
+                         "1 or less is treated as off. Measured motivation: "
+                         "two multiline fixtures stayed silent on the "
+                         "reference at three times the budget over a healthy "
+                         "dump, so the slow-shell hypothesis the TIMEOUT "
+                         "label rests on is false for them.")
+    ap.add_argument("--key-budget", type=float, default=None, metavar="SECONDS",
+                    help="how long to wait for the FIRST byte after each key "
+                         "before declaring the side silent (default 10.0; the "
+                         "total settle window becomes 1.5x this). Raising it "
+                         "is the only way to distinguish a reference shell "
+                         "that is SLOW from one that is genuinely producing "
+                         "nothing — pinned fixture cells replayed here on "
+                         "2026-08-30 came back TIMEOUT on exactly that "
+                         "ambiguity. It can only make the harness wait longer; "
+                         "the one-sidedness rule that produces the TIMEOUT is "
+                         "unchanged.")
     ap.add_argument("--rows", type=int, default=40)
     ap.add_argument("--cols", type=int, default=110)
     ap.add_argument("--settle", type=int, default=300)
@@ -6287,6 +6838,20 @@ def main():
 
     if not os.path.exists(args.zshrs):
         sys.exit("zshrs binary not found: %s (cargo build --bin zshrs)" % args.zshrs)
+
+    if args.fn_repeat < 1:
+        sys.exit("--fn-repeat must be at least 1 (got %d)" % args.fn_repeat)
+    # Kept as two derived attributes rather than read inline, so `capture`
+    # reads one name and the default is stated in exactly one place.
+    args.key_first_wait = 10.0 if args.key_budget is None else args.key_budget
+    if args.key_first_wait <= 0:
+        sys.exit("--key-budget must be positive (got %r)" % args.key_budget)
+    args.key_max_wait = args.key_first_wait * 1.5
+    if args.init_extra:
+        if not os.path.isfile(args.init_extra):
+            sys.exit("--init-extra: no such file: %s" % args.init_extra)
+        with open(args.init_extra) as f:
+            globals()["INIT_EXTRA"] = f.read()
     args.test_argv = ([args.zshrs, "-f", "-i"] if args.mode == "native"
                       else [args.zshrs, "--zsh", "-f", "-i"])
 
@@ -6305,6 +6870,40 @@ def main():
     dump = None if args.no_dump else resolve_dump(args.dump)
     fpath_dirs = user_fpath()
     env = child_env()
+
+    # The dump both shells will be handed has to REGISTER something, or every
+    # cell in the run compares two shells that complete nothing and the
+    # agreement is scored as parity. See `dump_health` for the measurement that
+    # motivated this. Checked once, before any pty boots; `--allow-empty-dump`
+    # is the escape hatch for someone who genuinely means to run over one.
+    #
+    # The list-only modes are exempt because they boot no shell and touch no
+    # dump — refusing them would break a documented "no shells are started"
+    # promise for a reason that cannot apply to them.
+    no_shell_mode = (args.fn_list or args.layout_list or args.layout_random < 0
+                     or args.style_fuzz_list > 0 or args.discover_only)
+    if dump and args.check_dump and not no_shell_mode:
+        counts, why = dump_health(args.zsh, dump, fpath_dirs)
+        if why:
+            print("# dump health: %s (%s) — continuing, the check itself "
+                  "failed rather than the dump" % (why, dump))
+        elif counts[0] == 0:
+            sys.exit(
+                "dump registers NO completions: %s\n"
+                "  reference zsh: compinit -C -d that file gives "
+                "comps=%d patcomps=%d, size %d byte(s)\n"
+                "  Every cell would compare two shells that complete nothing, "
+                "and the agreement would be scored as parity.\n"
+                "  Rebuild one:  zsh -fc 'autoload -Uz compinit; "
+                "compinit -u -d $TMPDIR/dump'\n"
+                "  then pass --dump $TMPDIR/dump. Override with "
+                "--allow-empty-dump.%s"
+                % (dump, counts[0], counts[1],
+                   os.path.getsize(dump) if os.path.exists(dump) else -1,
+                   _sibling_dump_hint(dump)))
+        elif args.verbose:
+            print("# dump health: comps=%d patcomps=%d (%s)"
+                  % (counts[0], counts[1], dump))
 
     if args.corpus_seed:
         pool = read_statements(args.zstyle) if args.zstyle else []

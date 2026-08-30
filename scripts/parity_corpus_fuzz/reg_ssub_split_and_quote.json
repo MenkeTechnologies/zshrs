@@ -1,0 +1,10 @@
+{
+  "buffer": "v=abcdef; a=(x y z); r=${(s.c.)v[2,-1]}; q=${(qq)a}; print -r -- \"<$r> <$q>\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d7058390e7 #4 \u2014 PREFORK_SINGLE must reach paramsubst for a ${(flags)NAME[SUB]} assignment RHS: force_split off, and the array joined before the quote block.",
+  "origin": "regression/2026-08-30/d7058390e7",
+  "statements": []
+}

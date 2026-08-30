@@ -1,0 +1,11 @@
+{
+  "buffer": "ls /usr/share zsh",
+  "fingerprint": null,
+  "keys": [
+    "esc",
+    "t"
+  ],
+  "note": "guards 44a3b4841c item 4 \u2014 M-t (transpose-words) at end of line panicked zshrs at zle_word.rs:1422 indexing ZLELINE at zlell. C reads that slot legitimately (zleline is over-allocated by two cells, zle_main.c:1287 / zle_utils.c:88-89, and every mutator NUL-terminates it, zle_utils.c:820). Also guards the WRONG transposition the same gap produced: `ls /usr/share zsh` must become `ls zsh /usr/share`. Measured PASS on 0.12.49 @10:38 (24.2 s, this harness, --case/--keys esc,t).",
+  "origin": "regression/2026-08-30/44a3b4841c",
+  "statements": []
+}

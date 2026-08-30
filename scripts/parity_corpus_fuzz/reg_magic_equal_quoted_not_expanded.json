@@ -1,0 +1,10 @@
+{
+  "buffer": "setopt magic_equal_subst; print -r -- --a='b:=c'; print -r -- --a=\"b:=c\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards c7cd9ee0f1 \u2014 magic_equal_subst must decide on the LEXER TOKENS: a quoted `=`/`~` is not a token, so it never reaches the =cmd lookup. fzf-tab.plugin.zsh:117-128 builds --height='${FZF_TMUX_HEIGHT:=75%}'.",
+  "origin": "regression/2026-08-30/c7cd9ee0f1",
+  "statements": []
+}

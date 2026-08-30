@@ -1,0 +1,10 @@
+{
+  "buffer": "f() { local -a options; options=(x y); print -r -- \"n=${#options} v=<${options[*]}>\" }; f",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards 40982fc067 (control) \u2014 the OTHER half of the same rule: a NON-hash shadow must hide the magic row. git-completion.bash's __git_resolve_builtins writes `local options`.",
+  "origin": "regression/2026-08-30/40982fc067",
+  "statements": []
+}

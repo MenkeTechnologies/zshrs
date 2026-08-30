@@ -1,0 +1,10 @@
+{
+  "buffer": "setopt magic_equal_subst; P=/bin:=ls; print -r -- $P",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards c7cd9ee0f1 (control) \u2014 the unquoted half must still expand, or the fix is a regression in the other direction.",
+  "origin": "regression/2026-08-30/c7cd9ee0f1",
+  "statements": []
+}

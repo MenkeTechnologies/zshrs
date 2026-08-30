@@ -1,0 +1,10 @@
+{
+  "buffer": "a=(A B C d); print -r -- \"r=<${a[1,(r)d][(I)C]}> n=<${a[1,4][(I)C]}>\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d7058390e7 #1+#2 \u2014 a search bound in a chained subscript raises SCANPM_WANTVALS, so the chained (I) returns the ELEMENT not the index. Completion/Base/Completer/_approximate:66-67 picks its -J/-V group option on exactly this shape.",
+  "origin": "regression/2026-08-30/d7058390e7",
+  "statements": []
+}

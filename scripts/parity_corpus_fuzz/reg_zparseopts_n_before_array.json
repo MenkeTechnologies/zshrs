@@ -1,0 +1,10 @@
+{
+  "buffer": "f(){ local -a o; zparseopts -n nm - o:=o && print -r -- \"o=<$o[*]>\" }; f -o ab",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards 693889cb68 \u2014 -n NAME before -a/-A. Without it zgetopt cannot run at all \u2014 18 Z04zgetopt assertions. DIVERGES TODAY against the zsh 5.9.2 binary this harness uses as its reference: 5.9.2's hand-rolled flag scan rejects the stacked form with `no default array defined: -DF`, while zshrs accepts it \u2014 693889cb68 deliberately kept upstream 88d51a2400's stacking while 93de3309af reverted the long-spec half to 5.9.2. Measured non-pty: `zsh -f -c` rc=1 no output, `target/debug/zshrs -f -c` rc=0 `o=<-o ab>`. It AGREES against the 5.9.999.3-test tree tests/ztst_compsys builds, which is why the ztst oracle cannot see it. Kept as an expected-diverging entry, not a guard.",
+  "origin": "regression/2026-08-30/693889cb68",
+  "statements": []
+}

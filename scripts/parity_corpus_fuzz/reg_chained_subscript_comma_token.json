@@ -1,0 +1,10 @@
+{
+  "buffer": "a=(one twothree); r=${${a[2][3,4]}}; print -r -- \"<$r>\"",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards d7058390e7 #3 \u2014 `,` lexes to the Comma token inside an unquoted nested expansion; the chained arm has to normalize it or it reads character 1.",
+  "origin": "regression/2026-08-30/d7058390e7",
+  "statements": []
+}

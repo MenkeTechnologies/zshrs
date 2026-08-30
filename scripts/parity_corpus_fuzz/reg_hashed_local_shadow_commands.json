@@ -1,0 +1,10 @@
+{
+  "buffer": "f() { local -A commands; commands=(a b); print -r -- \"n=${#commands} kv=(${(kv)commands})\" }; f",
+  "fingerprint": null,
+  "keys": [
+    "cr"
+  ],
+  "note": "guards 40982fc067 + d555917f07 \u2014 a PM_HASHED shadow of a magic hash is served from ITS OWN table. Stock caller: Completion/Zsh/Type/_command_names:70 (local -A +h commands).",
+  "origin": "regression/2026-08-30/40982fc067",
+  "statements": []
+}
