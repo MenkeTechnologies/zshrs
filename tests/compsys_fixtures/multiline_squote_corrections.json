@@ -1,0 +1,166 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "multiline_squote_corrections",
+ "title": "`ls 'one`<newline>`two/etc/pa`: zsh offers nothing, zshrs runs the whole completer chain down to corrections",
+ "harness": "compsys_parity",
+ "run": {
+  "buffer": "ls 'one\ntwo/etc/pa",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "rows": 24,
+  "cols": 80,
+  "zstyle_file": "scripts/parity_zstyle.zsh"
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "diverges at step #1 ('tab'); first diff row 2 col 0; 19 row(s) differ",
+  "first_diff": {
+   "row": 2,
+   "col": 0
+  },
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 3,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 4,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 5,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 6,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 7,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 8,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 9,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 10,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 11,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 12,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 13,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 14,
+    "zsh": "<absent>",
+    "zshrs": "two/etc/pa"
+   },
+   {
+    "row": 15,
+    "zsh": "<absent>",
+    "zshrs": "interactive: two/etc/pa[]"
+   },
+   {
+    "row": 16,
+    "zsh": "<absent>",
+    "zshrs": "-<<corrections (errors: 2)>>-"
+   },
+   {
+    "row": 17,
+    "zsh": "<absent>",
+    "zshrs": "compsys_fixtures/  recorder_corpus/   zshrc/"
+   },
+   {
+    "row": 18,
+    "zsh": "<absent>",
+    "zshrs": "fake_fpath/        zinit/"
+   },
+   {
+    "row": 19,
+    "zsh": "<absent>",
+    "zshrs": "-<<original>>-"
+   },
+   {
+    "row": 20,
+    "zsh": "<absent>",
+    "zshrs": "two/etc/pa"
+   }
+  ],
+  "rows_total": 19,
+  "notes": "Both shells answer the Enter with PS2 \u2014 the buffer is deliberately incomplete at the newline, so nothing executes and the completion fires inside the continuation. The single-line control below completes the same word with the newline removed and PASSES, which is what makes the CONTINUATION the variable rather than the word. Under the checked-in zstyle fixture (whose `completer` style is `_expand _ignored _megacomplete _approximate _correct ...`) zshrs walks the chain and paints `-<<corrections (errors: 2)>>-`, `-<<original>>-` and a directory listing over ten rows of repeated `_describe:compdescribe` errors; zsh draws nothing at all. Row 16 onward carry the corrections block, so the whole listing is one-sided."
+ },
+ "controls": [
+  {
+   "note": "`ls 'one two/etc/pa` on one line under the same zstyle fixture: PASSES.",
+   "buffer": "ls 'one two/etc/pa",
+   "keys": [
+    "tab"
+   ],
+   "rows": 24,
+   "cols": 80,
+   "zstyle_file": "scripts/parity_zstyle.zsh"
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "round-3 compsys_parity --multiline-fuzz"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}
