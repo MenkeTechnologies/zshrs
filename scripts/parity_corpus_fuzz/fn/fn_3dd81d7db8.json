@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "_normal ",
+  "call_label": "bare",
+  "fingerprint": "3dd81d7db8",
+  "function": "_normal",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/precommands[#] = | test/precommands[#] = ''",
+  "ref_rows": [
+    "  precommands[0] ="
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _normal --fn-call bare --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_normal:6 (zparseopts -A opts -D - P p+:-=precommand s)",
+  "test_rows": [
+    "  precommands[1] = ''"
+  ]
+}

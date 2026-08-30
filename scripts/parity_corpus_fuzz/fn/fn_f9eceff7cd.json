@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "zpf-no-such-tag",
+    "expl",
+    "nothing"
+  ],
+  "call": "_description 'zpf-no-such-tag' 'expl' 'nothing'",
+  "call_label": "unknown-tag",
+  "fingerprint": "f9eceff7cd",
+  "function": "_description",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'nothing' | test/_lastdescr[#] = 'nothing'",
+  "ref_rows": [
+    "  _lastdescr[2] = '' 'nothing'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _description --fn-call unknown-tag --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_description:3-20 (zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt; then TAG NAME DESCR)",
+  "test_rows": [
+    "  _lastdescr[1] = 'nothing'"
+  ]
+}
