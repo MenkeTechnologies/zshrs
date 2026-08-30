@@ -7247,7 +7247,6 @@ impl ZshCompiler {
                 // requested shape (verified vs /bin/zsh).
                 let only_k_flag = flags == "k";
                 let only_v_flag = flags == "v";
-                let only_v_or_V_flag = flags == "v" || flags == "V";
                 let only_kv_flag = flags == "kv" || flags == "vk";
                 // c:Src/subst.c — `(v)NAME[key]` / `(V)NAME[key]` /
                 // `(kv)NAME[key]` on a simple-key subscript: the
@@ -7275,7 +7274,16 @@ impl ZshCompiler {
                     && !key.contains(',');
                 let redundant = (only_k_flag && key_starts_with_idx_flag)
                     || (only_v_flag && key_starts_with_value_flag)
-                    || (only_v_or_V_flag && key_is_simple)
+                    // `(v)` asks for the VALUE of an assoc element, which a
+                    // simple subscript already yields -- genuinely redundant.
+                    // `(V)` is a different flag entirely (make non-printing
+                    // chars visible, c:Src/subst.c:2232) and merely shares the
+                    // letter; folding it in here dropped it, so `${(V)a[1]}`
+                    // compiled to a bare ARRAY_INDEX and never reached
+                    // paramsubst's `mods & 2` arm. Whole-array `${(V)a}` and
+                    // scalar `${(V)s}` took the flag path and were correct,
+                    // which is why only the subscripted form misbehaved.
+                    || (only_v_flag && key_is_simple)
                     || (only_kv_flag && key_is_simple);
                 // `(k)NAME[simple_key]` — KEY-EXISTENCE query per
                 // zsh: present → return key, absent → return empty

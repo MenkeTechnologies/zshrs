@@ -19939,10 +19939,22 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| visible_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if subscript.is_none() {
+                // Whole-array `${(V)arr}` — per-element render. MUST be gated
+                // on no-subscript for the same reason as the `(Q)` arm above:
+                // `${(V)a[1]}` already resolved the element into `value`, and
+                // the arrays_get re-fetch by NAME here discarded that
+                // selection, so the element came back unrendered --
+                // `a=($'x\ny'); ${(V)a[1]}` emitted a literal newline where
+                // zsh prints `x\ny`. Whole-array and scalar `(V)` were
+                // already correct; only the subscripted path was not.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| visible_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = visible_one(&value);
+                }
             } else {
                 value = visible_one(&value);
             }
@@ -20342,10 +20354,22 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| pipeline(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| pipeline(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if subscript.is_none() {
+                // Whole-array `${(V)arr}` — per-element render. MUST be gated
+                // on no-subscript for the same reason as the `(Q)` arm above:
+                // `${(V)a[1]}` already resolved the element into `value`, and
+                // the arrays_get re-fetch by NAME here discarded that
+                // selection, so the element came back unrendered --
+                // `a=($'x\ny'); ${(V)a[1]}` emitted a literal newline where
+                // zsh prints `x\ny`. Whole-array and scalar `(V)` were
+                // already correct; only the subscripted path was not.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| pipeline(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = pipeline(&value);
+                }
             } else {
                 value = pipeline(&value);
             }
