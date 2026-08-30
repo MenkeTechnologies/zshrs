@@ -10,6 +10,7 @@
   "flags": []
  },
  "expect": "reference-crash",
+ "group": "upstream-defect",
  "fingerprint": null,
  "observed": {
   "verdict": "REFERENCE-CRASH",
@@ -57,7 +58,7 @@
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
   "dump": "/Users/wizard/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies",
   "corroboration": "scripts/comptab_parity.py --case 'BATCH ' --keys tab independently reports status REF-CRASHED, detail 'zsh died on signal 11 (SIGSEGV)', in 15.7s (its crash labelling landed in 369885a906).",
-  "notes": "This fixture asserts something about the REFERENCE shell, so it is NOT a parity claim and must never be counted as a zshrs divergence. A round-2 sweep scored seven such cells TIMEOUT \u2014 'nothing was proven' \u2014 when what actually happened is that zsh died: `BATCH `, `BATCH -`, `BootCacheControl `, `BootCacheControl -`, `CC -`, `FileInfo `, `FileInfo -`. Measured here first-hand: `BATCH ` 3/3 SIGSEGV at ~2.8s, `BootCacheControl -` 3/3 (2 SIGSEGV, 1 SIGBUS) in a separate run, and the lowercase control `batch ` 0/3 with the completion finishing in ~13s. The reported fault is EXC_BAD_ACCESS in stripkshdef <- loadautofn while autoloading the completer, and the trigger round 3 isolated is the 35MB `more_src.zwc` digest in the zsh-more-completions plugin. `CC -` is a DIFFERENT cell: no crash, no output for 180s, process still alive \u2014 that one is a genuine hang and is not pinned here. Note the measurement trap this probe had to fix before it could report honestly: EOF on the pty means the child is gone but not necessarily reaped, and a bare waitpid(WNOHANG) mislabelled 2 of 4 crashing trials `alive` \u2014 the same direction of error as the original TIMEOUT verdict. Crash rate is high but not 100%: three runs of this probe on 2026-08-30 gave 3/3, 3/3 and 2/3 (the 2/3 run is the one recorded under `observed.trials_second_run`), so the gate scores REF-CRASHES on ANY signalled trial with a clean control rather than on a rate.",
+  "notes": "This fixture asserts something about the REFERENCE shell, so it is NOT a parity claim and must never be counted as a zshrs divergence. A round-2 sweep scored seven such cells TIMEOUT — 'nothing was proven' — when what actually happened is that zsh died: `BATCH `, `BATCH -`, `BootCacheControl `, `BootCacheControl -`, `CC -`, `FileInfo `, `FileInfo -`. Measured here first-hand: `BATCH ` 3/3 SIGSEGV at ~2.8s, `BootCacheControl -` 3/3 (2 SIGSEGV, 1 SIGBUS) in a separate run, and the lowercase control `batch ` 0/3 with the completion finishing in ~13s. The reported fault is EXC_BAD_ACCESS in stripkshdef <- loadautofn while autoloading the completer, and the trigger round 3 isolated is the 35MB `more_src.zwc` digest in the zsh-more-completions plugin. `CC -` is a DIFFERENT cell: no crash, no output for 180s, process still alive — that one is a genuine hang and is not pinned here. Note the measurement trap this probe had to fix before it could report honestly: EOF on the pty means the child is gone but not necessarily reaped, and a bare waitpid(WNOHANG) mislabelled 2 of 4 crashing trials `alive` — the same direction of error as the original TIMEOUT verdict. Crash rate is high but not 100%: three runs of this probe on 2026-08-30 gave 3/3, 3/3 and 2/3 (the 2/3 run is the one recorded under `observed.trials_second_run`), so the gate scores REF-CRASHES on ANY signalled trial with a clean control rather than on a rate.",
   "trials_second_run": {
    "verdict": "REF-CRASHES",
    "detail": "2/3 trial(s) killed by a signal (SIG11)"
@@ -66,7 +67,7 @@
  "controls": [],
  "variants": [],
  "default_run": false,
- "default_run_reason": "Running it CRASHES a shell on purpose and asks macOS to write a crash report (~/Library/Logs/DiagnosticReports) every trial, and it can prove nothing about zshrs \u2014 so it is not part of the default gate. It is not scored as a pass either: the runner reports it SKIPPED(opt-in) and leaves it out of both the changed and the unchanged counts. Run it deliberately with --reference-defects, e.g. after a zsh upgrade, to find out whether the upstream defect is still there and whether those seven cells can re-enter the sweep.",
+ "default_run_reason": "Running it CRASHES a shell on purpose and asks macOS to write a crash report (~/Library/Logs/DiagnosticReports) every trial, and it can prove nothing about zshrs — so it is not part of the default gate. It is not scored as a pass either: the runner reports it SKIPPED(opt-in) and leaves it out of both the changed and the unchanged counts. Run it deliberately with --reference-defects, e.g. after a zsh upgrade, to find out whether the upstream defect is still there and whether those seven cells can re-enter the sweep.",
  "origin": [
   "round-2 TIMEOUT cells; root-caused in round 3; measured first-hand in round 4 with tests/compsys_fixtures/zsh_reference_probe.py"
  ],
