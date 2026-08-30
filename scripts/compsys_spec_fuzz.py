@@ -230,6 +230,67 @@ malformed sequence to one U+FFFD, so two different wrong byte strings can
 render as the same cell, and a comparison that stopped at the grid would
 call that a pass.
 
+One reference is not enough — `--split-scan`.
+
+Everything above compares zshrs against ONE zsh: `/opt/homebrew/bin/zsh`,
+release 5.9.2. That is not the tree the ports are written from. Those are read
+from `~/forkedRepos/zsh`, which is 5.9.999.3-test and carries four years of
+post-5.9 development, and it is also the tree that supplies the ztst oracle.
+Where the two disagree, a port written faithfully from the C FAILS against the
+binary, and a port that passes the binary is unfaithful to the C — and no
+harness in this tree can tell those two apart, so the disagreements get found
+by accident, one at a time, after the fact:
+
+    zparseopts long specs   88d51a2400. Ported to the dev semantics, which
+                            BROKE zinit; reverted behind LONG_SPEC_NEEDS_GUARD.
+    chained (R)/(I)         8a3ee5a802. Resolved towards 5.9.2 at wantvals_c1523.
+    dotted parameter names  a9ba166216. Reported as a zshrs bug; the reference
+                            was simply older than the feature.
+    ZLE attribute reset     cc672f1c3b. Ported from the dev tree; turned a
+                            checked-in guard red on a stream difference that
+                            has nothing to do with what the guard guards.
+
+Two of those were resolved towards 5.9.2 and two towards the dev tree, none by
+policy. `--split-scan` turns that into an inventory: it runs each probe on BOTH
+references and on zshrs and classifies the result three ways —
+
+    the two references AGREE, zshrs differs   ZSHRS-BUG. What every other
+                                              harness here measures. A split
+                                              classification can never excuse
+                                              one, because the two references
+                                              agreeing is MEASURED, not assumed.
+    the two references DISAGREE               VERSION SPLIT. zshrs cannot match
+                                              both; which side it takes is a
+                                              policy decision, and the finding
+                                              is that a decision is REQUIRED.
+                                              The side it takes is reported.
+    all three agree                           AGREEMENT.
+
+A probe neither reference can run is a generator bug in its own category, and
+one both reject identically is counted apart as agreement-on-rejection, so a
+scan cannot look busy on malformed probes. Generation is aimed at the four
+surfaces the confirmed splits sit on, because a split is not spread evenly over
+the language — it lives where upstream has been working: `paramname`,
+`builtinopt`, `subscript`, `pattern`, plus `zle`, which is judged on the SGR
+escape signature through the same pty driver because the fourth split is
+invisible in the rendered grid.
+
+Every split is also scanned against the corpus on this host — `~/.zinit`,
+`~/.zpwr`, the 8k-file completion collection, the stock compsys functions, and
+this repo's own checked-in guards — because a split no code exercises is an
+inventory entry and one zinit relies on is urgent. A seeded probe's corpus
+patterns were written for that split; a generated probe's are derived
+mechanically and are printed with a `~`, and only curated hits can put a split
+on the urgent list. The annotation never changes a classification.
+
+The dev reference has to be BUILT: `~/forkedRepos/zsh` is a read-only source
+tree with no `Src/zsh`. `--build-dev-zsh` copies it into
+`target/spec-fuzz-devzsh` and configures it at a prefix INSIDE that copy, so
+the built shell's compiled-in `module_path` points at its own modules and all
+three shells can run the byte-identical probe with no per-shell preamble. A
+candidate reporting the same `$ZSH_VERSION` as `--zsh` is refused: a second
+reference of the same version is not a second reference.
+
 Typical use:
 
     scripts/compsys_spec_fuzz.py --seed 1 --cases 8
@@ -247,6 +308,10 @@ Typical use:
     scripts/compsys_spec_fuzz.py --seed 9 --cases 12 --locale zh_CN.GB2312
     scripts/compsys_spec_fuzz.py --replay target/spec-fuzz-1/case0003.min.zsh
     scripts/compsys_spec_fuzz.py --spec '1:c:((a\\:"add files" b\\:"bench"))'
+    scripts/compsys_spec_fuzz.py --split-scan --build-dev-zsh
+    scripts/compsys_spec_fuzz.py --split-scan --zsh-dev /path/to/zsh/Src/zsh
+    scripts/compsys_spec_fuzz.py --split-scan --split-cases 200 \\
+                                 --split-families subscript,paramname
 """
 
 import argparse
@@ -3189,6 +3254,18 @@ class Verdict:
         self.fixture = None
         # [(construct, "core-language"|"completion"|"rejected", ref, test, err)]
         self.attribution = []
+        # Set only when a SECOND reference zsh was available and this case
+        # failed. Purely additive: the status above is decided against
+        # `--zsh` alone and is never rewritten by what the dev reference did.
+        self.dev = None
+        self.split_class = ""
+        self.split_side = ""
+        self.split_note = ""
+        # True only when the dev reference never reached a prompt, which is the
+        # one shape in which this failure has NO classification. Kept apart
+        # from `split_note`, which carries a secondary observation about a
+        # failure that IS classified.
+        self.split_unrun = False
         if ref and test and ref.grid is not None and test.grid is not None:
             text_diff = {i for i, _a, _b in self.diffs}
             self.attr_rows = [r for r in attr_diff_rows(ref.attrs, test.attrs)
@@ -3309,6 +3386,69 @@ def run_case(args, root, fpath_dirs, case):
             v.detail = ("real zsh disagreed with itself on a re-run "
                         "(%s) — nothing to compare against" % why)
             v.ref2 = ref2
+
+    # A THREE-way label on a surviving failure, when a second reference zsh is
+    # available. This is ADDITIVE and nothing above it moves: the PASS/FAIL
+    # verdict stays measured against `--zsh`, and a `version-split` label never
+    # turns a FAIL into a pass. What it adds is the one thing the single-
+    # reference comparison cannot say — whether the two references AGREE, which
+    # is the difference between "zshrs is wrong" and "there are two right
+    # answers and zshrs picked one".
+    if (v.status == FAIL and getattr(args, "zsh_dev", None)
+            and v.category in SHRINKABLE):
+        dev = capture([args.zsh_dev, "-f", "-i"], env, args, init, work,
+                      case.buffer, case.keys, case.cols, utf8)
+        v.dev = dev
+        if dev.reason:
+            v.split_unrun = True
+            v.split_note = ("dev reference did not run this case (%s), so the "
+                            "failure could not be classified" % dev.reason)
+        else:
+            # The comparison has to be made on the SAME CRITERION that produced
+            # this case's verdict, and on nothing else.
+            #
+            # `judge` combines several criteria, and using its combined answer
+            # here is WRONG in the one direction that matters: with
+            # --strict-stream on, the two references differ in the raw escape
+            # stream on essentially every case (that is the confirmed
+            # cc672f1c3b split), so a combined comparison would report
+            # "references disagree" for a case that actually failed on a
+            # missing word in row 0 — and would file a real zshrs bug as a
+            # version question. Measured on the case that caught it: both
+            # references rendered `@SFZ@ fzc0001 delta exact=`, zshrs rendered
+            # `@SFZ@ fzc0001 delta`, and the combined comparison still said
+            # "split".
+            #
+            # So: a screen failure is classified by comparing SCREENS, a
+            # painted-bytes failure by comparing painted bytes, and a
+            # --strict-* failure by the full judge. The other observation is
+            # not discarded — it is printed as a note.
+            def screen_differs(a, b):
+                return (bool(diff_grids(a.grid, b.grid))
+                        or printable_bytes(a.raw) != printable_bytes(b.raw)
+                        or bool(a.diags) != bool(b.diags))
+
+            def strictly_differs(a, b):
+                return judge(args, case, a, b)[0] not in (PASS, PASS_ERR)
+
+            differs = (strictly_differs if v.category == "strict"
+                       else screen_differs)
+            if differs(ref, dev):
+                v.split_class = SPLIT
+                # `test` already differs from `ref` — that is why this is a
+                # FAIL — so the only open question is whether it matches dev.
+                v.split_side = (SIDE_DEV if not differs(dev, test)
+                                else SIDE_NEITHER)
+            else:
+                v.split_class = ZSHRS_BUG
+            # The secondary observation, always reported: two references that
+            # painted the same screen can still have written different bytes to
+            # get there, and that difference is a version split of its own even
+            # though it is not what failed this case.
+            if v.category != "strict" and ref.raw != dev.raw:
+                v.split_note = ("the two references painted the SAME screen "
+                                "but wrote different escape streams — a split "
+                                "that is not what failed this case")
     v.duration = time.monotonic() - t0
     return v
 
@@ -4013,6 +4153,976 @@ def substrate_attribute(args, root, case):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# version splits — a THREE-way comparison against two reference zshs
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Every comparison above this line has ONE reference. That reference is
+# `/opt/homebrew/bin/zsh`, release 5.9.2, and it is not the tree the ports are
+# written from: those are read from `~/forkedRepos/zsh`, which is 5.9.999.3-test
+# and carries four years of post-5.9 development. When the two disagree, a
+# port written faithfully from the C is a FAIL against the binary, and a port
+# that passes the binary is unfaithful to the C. Neither harness can tell which
+# it is looking at, so the disagreement is discovered by accident, one at a
+# time, after the fact:
+#
+#   `zparseopts` long specs   upstream 88d51a2400. Ported to the dev tree's
+#                             semantics, which BROKE zinit, and was reverted
+#                             behind a named switch (LONG_SPEC_NEEDS_GUARD,
+#                             src/ported/modules/zutil.rs:2988).
+#   chained subscript (R)/(I) upstream 8a3ee5a802. Deliberately resolved
+#                             towards 5.9.2 at a named switch
+#                             (wantvals_c1523, src/ported/subst.rs:10775).
+#   dotted parameter names    upstream a9ba166216. Reported as a zshrs bug
+#                             ("zshrs accepts `ns.var`"); the reference was
+#                             simply older than the feature.
+#   ZLE attribute-reset       upstream cc672f1c3b. Ported from the dev tree,
+#                             which turned a CHECKED-IN regression guard red
+#                             on a stream difference that has nothing to do
+#                             with what the guard guards.
+#
+# Two of those were resolved towards 5.9.2 and two towards the dev tree, none
+# of them by policy. This layer turns that into an inventory: run the SAME
+# generated probe on both references and on zshrs, and classify.
+#
+#     the two references AGREE, zshrs differs   -> ZSHRS-BUG. This is what
+#                                                  every other harness in this
+#                                                  tree measures, and a split
+#                                                  classification must never
+#                                                  be allowed to excuse one —
+#                                                  which is why the references
+#                                                  agreeing is MEASURED here
+#                                                  and not assumed.
+#     the two references DISAGREE               -> VERSION SPLIT. zshrs cannot
+#                                                  match both. Which side it
+#                                                  takes is a policy decision,
+#                                                  and the finding is that a
+#                                                  decision is REQUIRED. The
+#                                                  side it currently takes is
+#                                                  reported, not judged.
+#     all three agree                           -> AGREEMENT.
+#
+# A probe NEITHER reference can run (no probe line and no message on both) is a
+# GENERATOR bug in its own category, exactly as in the substrate check — never
+# a finding, and never quietly dropped. A probe both references REJECT with the
+# same message is an agreement about the rejection and is counted as one: it is
+# weak evidence and is named separately so a run cannot look busy on nothing
+# but malformed probes.
+#
+# The dev reference has to be BUILT — `~/forkedRepos/zsh` is a source tree and
+# is read only. `--build-dev-zsh` copies it to a scratch prefix and runs
+# configure/make/install there, which gives a shell whose compiled-in
+# `module_path` points inside the scratch tree, so all three shells run the
+# byte-identical probe script with no per-shell preamble.
+
+SPLIT_FAMILIES = ["paramname", "builtinopt", "subscript", "pattern", "zle"]
+
+# Classifications.
+AGREE, ZSHRS_BUG, SPLIT, BOTH_REJECT, UNUSABLE, UNSTABLE = (
+    "agreement", "zshrs-bug", "version-split", "both-reject", "unusable",
+    "unstable-reference")
+
+# Which reference zshrs currently sides with, on a split.
+SIDE_REL, SIDE_DEV, SIDE_NEITHER = "release", "dev", "neither"
+# A side cannot be attributed from an output that does not repeat.
+SIDE_UNSTABLE = "unattributable"
+
+
+class Split(Construct):
+    """One probe aimed at a surface where upstream zsh is known to have churned.
+
+    `mode` is "cmd" (a `zsh -f <script>` one-liner, judged on the printed value
+    AND on stderr, because "this version refuses it" is exactly what half the
+    known splits look like) or "zle" (a pty session judged on the RAW escape
+    stream, because the fourth known split exists only there).
+
+    `impact` is a list of regexes for the corpus scan. A split no real code
+    exercises is an inventory entry; one zinit relies on is urgent. That
+    annotation NEVER changes a classification.
+    """
+
+    __slots__ = ("family", "mode", "impact", "seeded", "init", "buffer",
+                 "keys", "bad_impact")
+
+    def __init__(self, cid, family, cite, code, impact=(), mode="cmd",
+                 seeded=False, init=(), buffer="", keys=()):
+        Construct.__init__(self, cid, family, cite, code or "_sfz_r=")
+        self.family = family
+        self.mode = mode
+        # A pattern that is not a valid regex would make the corpus scan report
+        # "incomplete" for every root and silently lose the annotation, so it
+        # is rejected HERE and named, not passed to rg to fail on.
+        self.impact, self.bad_impact = [], []
+        for pat in impact:
+            try:
+                re.compile(pat)
+            except re.error as exc:
+                self.bad_impact.append("%s (%s)" % (pat, exc))
+            else:
+                self.impact.append(pat)
+        self.seeded = seeded          # a KNOWN split, carried as a seed case
+        self.init = list(init)        # mode="zle": extra rc lines
+        self.buffer = buffer          # mode="zle": what to type
+        self.keys = list(keys) or ["tab"]
+
+
+# ── the four confirmed splits, carried as seeds ──────────────────────────────
+#
+# Each is a probe that was verified by hand to separate the two references
+# before it was written down. They are in the catalogue for two reasons: they
+# are the shape the generator is aimed at, and they are the validation target —
+# a scan that does not classify these four as splits is not working.
+SPLIT_SEEDS = [
+    Split("zparseopts-long-unguarded", "builtinopt",
+          "upstream 88d51a2400 (54376); switch LONG_SPEC_NEEDS_GUARD at "
+          "src/ported/modules/zutil.rs:2988", r"""
+zmodload zsh/zutil
+%Vf() { local -a o; zparseopts -D -E -a o -foo:; _sfz_r="st=$? o=${(j:|:)o} rest=$*" }
+%Vf --foo=bar x
+""",
+          impact=[r"zparseopts[^\n]*[ \t]-[a-z][a-z]"], seeded=True),
+
+    Split("zparseopts-stacking", "builtinopt",
+          "upstream 88d51a2400 (54376) — the other half: -DFa now stacks",
+          r"""
+zmodload zsh/zutil
+%Vf() { local -a o; zparseopts -DFa o - a; _sfz_r="st=$? o=${(j:|:)o} rest=$*" }
+%Vf -a b
+""",
+          impact=[r"zparseopts[ \t]+-[A-Za-z]{2,}"], seeded=True),
+
+    Split("subscript-search-slice-then-I", "subscript",
+          "upstream 8a3ee5a802 (54093); switch wantvals_c1523 at "
+          "src/ported/subst.rs:10775", r"""
+%Va=(A b C d)
+_sfz_r=${%Va[1,(r)d][(I)C]}
+""",
+          impact=[r"\]\[\((?:[iIrR])\)", r"wantvals_c1523",
+                  r"chained_subscript"], seeded=True),
+
+    Split("paramname-dotted", "paramname",
+          "upstream a9ba166216 (51483) — ksh namespace prefixes, post-5.9",
+          r"""
+typeset %Vns.var=1
+_sfz_r="got=${%Vns.var}"
+""",
+          impact=[r"typeset[ \t]+[A-Za-z_][A-Za-z_0-9]*\.[A-Za-z_]",
+                  r"dotted_parameter_name"], seeded=True),
+
+    # The fourth split lives on the escape stream, not in any printed value, so
+    # it is a pty probe. `TCALLATTRSOFF` at the reset frame: 5.9.2 emits three
+    # attribute-off caps, the dev tree emits one (Src/Zle/zle_refresh.c:1136-1138).
+    Split("zle-attr-reset", "zle",
+          "upstream cc672f1c3b (51289) — ~/forkedRepos/zsh/Src/Zle/"
+          "zle_refresh.c:1136-1138 vs 5.9.2's three attribute-off caps",
+          "", mode="zle",
+          init=["PROMPT=$'%%B%s%%b '" % SENTINEL],
+          buffer="ls a", keys=["tab", "tab", "x"],
+          impact=[r"TCSTANDOUTEND", r"TCUNDERLINEEND",
+                  r"listing_row_erase_to_eol"], seeded=True),
+]
+
+
+# ── the generator ────────────────────────────────────────────────────────────
+#
+# Aimed at the four surfaces the confirmed splits sit on, because a version
+# split is not distributed evenly over the language: it lives where upstream
+# has been WORKING. Reading the dev tree's ChangeLog for the post-5.9 range
+# names those surfaces, and the four seeds above are one sample from each of
+# the first four.
+
+# Parameter-name shapes. The `.` forms are the ksh-namespace feature (a9ba166216);
+# the rest are the neighbouring rules that feature had to not break.
+_PN_NAMES = ["ns.var", "a.b.c", "_x.y", "ns.", ".lead", "ns..v", "ns.v1",
+             "N.V", "x.y_z", "9ns.v", "ns.v-w", "a.b[1]"]
+_PN_USES = [
+    ("typeset",     "typeset %s=1",              "${%s}"),
+    ("bare-assign", "%s=1",                      "${%s}"),
+    ("typeset-a",   "typeset -a %s=(p q)",       "${(j:,:)%s}"),
+    ("typeset-A",   "typeset -A %s=(k v)",       "${(kv)%s}"),
+    ("local",       "local %s=1",                "${%s}"),
+    ("export",      "typeset -x %s=1",           "${%s}"),
+    ("integer",     "integer %s=3",              "$(( %s + 1 ))"),
+    ("indirect",    "typeset %s=1; _n=%s",       "${(P)_n}"),
+    ("typeset-p",   "typeset %s=1",              "${$(typeset -p %s)//$'\\n'/;}"),
+    ("unset",       "typeset %s=1; unset %s",    "${+%s}"),
+    ("subst-plus",  "typeset %s=1",              "${+%s}"),
+]
+
+# `zparseopts` is the builtin the confirmed split is in, and 88d51a2400 changed
+# how it reads its OWN options, so the axis is the flag word and the guarding.
+_BO_ZP_FLAGS = ["-D -E", "-DE", "-D -F", "-DF", "-DEK", "-D -E -K", "-DFG",
+                "-D -F -G", "-M -D", "-DM", "-K -a", "-E"]
+_BO_ZP_SPECS = ["-foo:", "- -foo:", "-- -foo:", "f -foo:", "-foo", "- -foo",
+                "x", "- x", "''", "- ''", "-DEK", "- -DEK"]
+_BO_ZP_ARGS = ["--foo=bar x", "--foo bar", "-x y", "-DEK", "--DEK", "-f -o -o",
+               "-a b", "--"]
+
+# Builtins whose own option parsing has been touched post-5.9, each with a
+# small set of argument words that sit on the edges the changes were about.
+_BO_OTHER = [
+    ("print",    ["-r -- -x", "-rn -- a", "-l -- a b", "-v v -- a",
+                  "-f '%s\\n' -- a", "-P -- '%%B'", "-s -- a", "-x 4 -- a"]),
+    ("printf",   ["'%s\\n' a b", "-v v '%s' a", "'%d\\n' 0x10", "'%q\\n' 'a b'",
+                  "'%(%Y)T\\n' 0"]),
+    ("typeset",  ["-g -x v=1", "-U -a v", "-p v", "-T A B", "-hg v",
+                  "+g v", "-m 'v*'", "-1 v=1"]),
+    ("read",     ["-r -k 0 v", "-d '' v", "-A v", "-E -r v", "-t 0 v"]),
+    ("fc",       ["-p -a", "-l -n -1", "-A"]),
+    ("functions",["-M f", "-T", "-c a b", "-x 2"]),
+    ("whence",   ["-w print", "-p print", "-S print", "-a -w print"]),
+    ("unset",    ["-m 'v*'", "-v v", "-f f"]),
+    ("hash",     ["-d -m 'x*'", "-L -d", "-r"]),
+    ("getopts",  ["ab: o"]),
+    ("zparseopts", None),   # handled by the dedicated axis above
+]
+
+# Subscript / expansion flags: the surface 8a3ee5a802 rewrote (`isarr` and
+# SCANPM_WANTVALS), so the axis is a bound that raises WANTVALS chained to a
+# second subscript that reads it.
+_SS_BOUNDS = ["1", "2", "-1", "(r)d", "(R)d", "(i)C", "(I)C", "(n:1:)b",
+              "(r)[bd]", "(R)*", "(e)C", "(ne)C"]
+_SS_SECOND = ["(I)C", "(i)C", "(r)C", "(R)C", "1", "-1", "2,-1", "(I)*",
+              "(r)*", "(k)C", "(K)C"]
+_SS_ASSOC = ["(k)k1", "(K)k*", "(R)v1", "(r)v1", "(i)k1", "(I)k*", "(e)k1"]
+_SS_PARAMFLAGS = ["", "(@)", "(o)", "(u)", "(P)", "(Q)", "(t)", "(M)", "(b)"]
+
+# Pattern semantics. `(#b)`/`(#m)`/`(#a)`/`(#s)`/`(#e)` and the bracket classes
+# are where the pattern engine has moved.
+_PAT_SUBJECTS = ["abc", "aBc", "a.c", "abcabc", "", "a/b/c", "a-c", "]a["]
+_PAT_PATTERNS = ["a*c", "(#i)ABC", "(#I)ABC", "a#c", "(a|b)*", "[[:alpha:]]##",
+                 "(#s)a*", "*c(#e)", "(#a1)abd", "(#b)(a)*(c)", "(#m)a*c",
+                 "^a*", "a~ab*", "[a-c]#", "(#c3)a", "?(#c2)c", "**/c",
+                 "[[:IDENT:]]##", "(#q.)"]
+
+
+def gen_split(seed, idx, families):
+    """Draw one generated probe. Deterministic in (seed, idx)."""
+    rng = random.Random("compsys_spec_fuzz:split:%d:%d" % (seed, idx))
+    fam = rng.choice([f for f in families if f != "zle"] or families)
+    v = "_sp%d_" % idx
+    if fam == "paramname":
+        name = rng.choice(_PN_NAMES)
+        uid, setup, read = rng.choice(_PN_USES)
+        full = v + name if name[0] not in "._9" else v + name
+        code = ("%s\n_sfz_r=%s"
+                % (setup.replace("%s", full), read.replace("%s", full)))
+        return Split("gen%04d-paramname-%s-%s" % (idx, uid,
+                                                  re.sub(r"\W", "", name)),
+                     "paramname",
+                     "generated: parameter-name rules (upstream a9ba166216 "
+                     "changed this surface)", code,
+                     impact=[re.escape(name)])
+    if fam == "builtinopt":
+        if rng.random() < 0.6:
+            flags = rng.choice(_BO_ZP_FLAGS)
+            spec = rng.choice(_BO_ZP_SPECS)
+            argw = rng.choice(_BO_ZP_ARGS)
+            code = ("zmodload zsh/zutil\n"
+                    "%sf() { local -a o; zparseopts %s a o %s\n"
+                    "  _sfz_r=\"st=$? o=${(j:|:)o} rest=$*\" }\n"
+                    "%sf %s" % (v, flags, spec, v, argw))
+            return Split("gen%04d-zparseopts" % idx, "builtinopt",
+                         "generated: zparseopts own-option parsing "
+                         "(upstream 88d51a2400)", code,
+                         impact=[r"zparseopts[ \t]+%s" % re.escape(flags.split()[0])])
+        cand = [(b, a) for b, a in _BO_OTHER if a]
+        bi, argl = rng.choice(cand)
+        argw = rng.choice(argl)
+        code = ("%sf() { local -a v; %s %s\n"
+                "  _sfz_r=\"st=$? v=${(j:|:)v}\" }\n"
+                "%sf" % (v, bi, argw, v))
+        return Split("gen%04d-%s" % (idx, bi), "builtinopt",
+                     "generated: %s option parsing" % bi, code,
+                     impact=[r"\b%s\b[^\n]*%s" % (bi,
+                                                  re.escape(argw.split()[0]))])
+    if fam == "subscript":
+        if rng.random() < 0.25:
+            sub = rng.choice(_SS_ASSOC)
+            code = ("typeset -A %sh=(k1 v1 k2 v2)\n"
+                    "_sfz_r=${%sh[%s]}" % (v, v, sub))
+            return Split("gen%04d-assoc-sub" % idx, "subscript",
+                         "generated: associative subscript flags "
+                         "(upstream 8a3ee5a802 rewrote the isarr fields)",
+                         code, impact=[re.escape(sub)])
+        lo, hi = rng.choice(_SS_BOUNDS), rng.choice(_SS_BOUNDS)
+        second = rng.choice(_SS_SECOND)
+        pf = rng.choice(_SS_PARAMFLAGS)
+        inner = "%sa[%s,%s][%s]" % (v, lo, hi, second)
+        code = ("%sa=(A b C d)\n_sfz_r=\"${%s%s}\"" % (v, pf, inner))
+        return Split("gen%04d-chained-sub" % idx, "subscript",
+                     "generated: chained subscript after a search bound "
+                     "(upstream 8a3ee5a802)", code,
+                     impact=[re.escape("][" + second)])
+    # pattern
+    subj, pat = rng.choice(_PAT_SUBJECTS), rng.choice(_PAT_PATTERNS)
+    form = rng.choice(("cond", "case", "subst", "glob-qual"))
+    if form == "cond":
+        code = ('%ss=%s\n[[ $%ss == %s ]] && _sfz_r=y || _sfz_r=n\n'
+                '_sfz_r="$_sfz_r ${match[*]:-} ${MATCH:-}"'
+                % (v, zq(subj), v, zq(pat)))
+    elif form == "case":
+        code = ('%ss=%s\ncase $%ss in (%s) _sfz_r=y ;; (*) _sfz_r=n ;; esac'
+                % (v, zq(subj), v, pat))
+    elif form == "subst":
+        code = '%ss=%s\n_sfz_r="${%ss//%s/X}"' % (v, zq(subj), v, pat)
+    else:
+        code = ('%ss=%s\n_sfz_r="${%ss:#%s}"' % (v, zq(subj), v, pat))
+    return Split("gen%04d-pattern" % idx, "pattern",
+                 "generated: pattern semantics", code,
+                 impact=[re.escape(pat)])
+
+
+# ── the dev reference: found, or built in scratch ────────────────────────────
+
+DEV_TREE_DEFAULT = os.path.expanduser("~/forkedRepos/zsh")
+
+
+def _zsh_version(binary):
+    """-> the $ZSH_VERSION a binary reports, or None if it will not run."""
+    try:
+        p = subprocess.run([binary, "-f", "-c", "print -r -- $ZSH_VERSION"],
+                           capture_output=True, text=True, timeout=20, env={})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    v = p.stdout.strip()
+    return v or None
+
+
+def _modules_load(binary):
+    """Positive evidence that the binary can dlopen its own modules."""
+    try:
+        p = subprocess.run([binary, "-f", "-c", "zmodload zsh/zutil && "
+                            "print -r -- @@MOD ok"],
+                           capture_output=True, text=True, timeout=20, env={})
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, repr(exc)
+    if "@@MOD ok" in p.stdout:
+        return True, ""
+    return False, re.sub(r"\s+", " ", (p.stderr or "").strip())[:200]
+
+
+def build_dev_zsh(tree, dest):
+    """Build `tree` at prefix `dest` and return the built binary's path.
+
+    `~/forkedRepos/zsh` is READ ONLY, so the tree is copied first. The prefix
+    is inside the scratch build, which is the whole point: the resulting shell
+    has a compiled-in `module_path` pointing at its OWN modules, so all three
+    shells can run the byte-identical probe script with no per-shell preamble.
+    A preamble would mean the dev reference ran a different program from the
+    other two, which is not a comparison.
+    """
+    src = os.path.join(dest, "src")
+    prefix = os.path.join(dest, "inst")
+    log = os.path.join(dest, "build.log")
+    os.makedirs(dest, exist_ok=True)
+    if not os.path.isdir(tree):
+        return None, "no such tree: %s" % tree
+    if not os.path.isdir(src):
+        r = subprocess.run(["cp", "-a", tree, src], capture_output=True)
+        if r.returncode:
+            return None, "cp -a failed: %s" % r.stderr.decode()[:200]
+        shutil.rmtree(os.path.join(src, ".git"), ignore_errors=True)
+    steps = []
+    if not os.path.exists(os.path.join(src, "configure")):
+        steps.append(["./Util/preconfig"])
+    # `install.modules` and NOT `install`: a full install also builds and
+    # installs the man pages, which needs yodl, and a host without yodl fails
+    # the whole install at `install.man` after the modules are already in
+    # place. The binary is used in the build tree; only the modules have to be
+    # at the prefix the shell was compiled to look in.
+    steps += [["./configure", "--prefix=" + prefix],
+              ["make", "-j%d" % (os.cpu_count() or 4)],
+              ["make", "install.modules"]]
+    with open(log, "w") as fh:
+        for cmd in steps:
+            fh.write("\n\n### %s\n" % " ".join(cmd))
+            fh.flush()
+            r = subprocess.run(cmd, cwd=src, stdout=fh, stderr=subprocess.STDOUT)
+            if r.returncode:
+                return None, ("%s failed (rc %d) — see %s"
+                              % (" ".join(cmd), r.returncode, log))
+    binary = os.path.join(src, "Src", "zsh")
+    if not os.path.isfile(binary):
+        return None, "build produced no %s (see %s)" % (binary, log)
+    return binary, ""
+
+
+def dev_tree_version(tree):
+    """The version the SOURCE tree claims, read from Config/version.mk.
+
+    The dev reference is only a reference for the tree the ports are read
+    from. This host also has an older dev snapshot at `src/zsh` (5.9.0.3-test),
+    which is neither the release nor the tree, and a scan that silently used it
+    would attribute its findings to the wrong source.
+    """
+    try:
+        with open(os.path.join(tree, "Config", "version.mk"),
+                  encoding="utf-8", errors="replace") as fh:
+            m = re.search(r"^VERSION=(\S+)", fh.read(), re.M)
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def resolve_dev_zsh(args):
+    """-> (path, version, note). Never guesses: every candidate is RUN.
+
+    A candidate that reports the SAME $ZSH_VERSION as the release reference is
+    refused. A second reference that is the same version is not a second
+    reference, and a three-way classification built on one would report
+    "agreement" for every split there is.
+    """
+    cands = []
+    if args.zsh_dev:
+        cands.append(os.path.expanduser(args.zsh_dev))
+    if os.environ.get("SPEC_FUZZ_ZSH_DEV"):
+        cands.append(os.path.expanduser(os.environ["SPEC_FUZZ_ZSH_DEV"]))
+    cands.append(os.path.join(REPO, "target", "spec-fuzz-devzsh", "src",
+                              "Src", "zsh"))
+    cands.append(os.path.join(REPO, "src", "zsh", "Src", "zsh"))
+    tried = []
+    for c in cands:
+        if not (c and os.path.isfile(c) and os.access(c, os.X_OK)):
+            tried.append("%s: not an executable file" % c)
+            continue
+        v = _zsh_version(c)
+        if not v:
+            tried.append("%s: would not run" % c)
+            continue
+        if v == args.zsh_version:
+            tried.append("%s: reports %s, the SAME version as the release "
+                         "reference — not a second reference" % (c, v))
+            continue
+        ok, why = _modules_load(c)
+        if not ok:
+            tried.append("%s (%s): cannot load its own modules (%s)"
+                         % (c, v, why))
+            continue
+        want = dev_tree_version(args.dev_tree)
+        note = "found"
+        if want and v != want:
+            # Reported, not refused: a second reference of a DIFFERENT version
+            # still measures a version split. But it is not the tree the ports
+            # are read from, so every finding it produces is about a version
+            # nobody is porting against, and saying so is the difference
+            # between an inventory and a misattribution.
+            note = ("found, but reports %s while %s claims %s — this is NOT "
+                    "the tree the ports are read from"
+                    % (v, args.dev_tree, want))
+        return c, v, note
+    if args.build_dev_zsh:
+        dest = os.path.join(REPO, "target", "spec-fuzz-devzsh")
+        print("# building the dev reference from %s into %s "
+              "(this takes a few minutes)" % (args.dev_tree, dest))
+        sys.stdout.flush()
+        binary, why = build_dev_zsh(args.dev_tree, dest)
+        if not binary:
+            tried.append("build: %s" % why)
+        else:
+            v = _zsh_version(binary)
+            ok, mwhy = _modules_load(binary)
+            if v == args.zsh_version:
+                tried.append("built %s but it reports %s, the same version as "
+                             "the release reference" % (binary, v))
+            elif not ok:
+                tried.append("built %s (%s) but it cannot load its own "
+                             "modules (%s)" % (binary, v, mwhy))
+            else:
+                return binary, v, "built from %s" % args.dev_tree
+    return None, None, "\n#   ".join(tried)
+
+
+# ── running and classifying one probe ────────────────────────────────────────
+
+_SPLIT_LOC_RE = re.compile(r"^(?:zsh|zshrs)(?:\(\w+\))?:(?:[^:]*:)?(?:\d+:)?\s*")
+
+
+def _errkey(err):
+    """The COMPARABLE part of a diagnostic.
+
+    Strips only the emitter's own location prefix — the shell name, the
+    function name and the line number — because those differ between two
+    shells for reasons that are not the behaviour under test and would
+    otherwise report every rejection as a divergence. The MESSAGE is compared
+    in full and both raw texts are printed with every finding, so nothing is
+    hidden by this.
+    """
+    if not err:
+        return ""
+    return _SPLIT_LOC_RE.sub("", err.strip())
+
+
+def _outcome(val, err):
+    return (val, _errkey(err))
+
+
+_SGR_RE = re.compile(rb"\x1b\[[0-9;]*m")
+
+
+def _attr_signature(raw):
+    """The ordered SGR sequences in a stream.
+
+    This is the quantity a `zle` probe is judged on, and it is a NEW
+    measurement, not a relaxed one: the confirmed attribute-reset split
+    (cc672f1c3b) is invisible in the rendered grid and shows up in the stream
+    as `\\e[0m\\e[27m\\e[24m` against `\\e[0m`. Full raw-stream equality is
+    recorded alongside it and printed, so a probe that matches on the signature
+    and differs elsewhere is still reported as differing.
+    """
+    return tuple(_SGR_RE.findall(raw or b""))
+
+
+def run_split_cmd(args, root, probe, shells):
+    """`shells` is [(id, argv)]. -> {id: {"val","err","outcome"}}."""
+    os.makedirs(root, exist_ok=True)
+    work = os.path.join(root, "work")
+    os.makedirs(work, exist_ok=True)
+    path = os.path.join(root, "probe-%s.zsh" % re.sub(r"\W", "_", probe.id))
+    with _wopen(path) as f:
+        f.write(probe.script())
+    env = child_env(work, args.locale_pool[0])
+    out = {}
+    for sid, argv in shells:
+        val, err = _run_substrate(argv, env, path, work, args.substrate_timeout)
+        out[sid] = {"val": val, "err": err, "outcome": _outcome(val, err)}
+    out["_script"] = path
+    return out
+
+
+def run_split_zle(args, root, probe, shells):
+    """A pty probe, judged on the SGR signature. Reuses capture() — the one
+    pty driver in this file; there is deliberately no second one."""
+    d = os.path.join(root, "zle-%s" % re.sub(r"\W", "_", probe.id))
+    work = os.path.join(d, "work")
+    os.makedirs(work, exist_ok=True)
+    for f in WORK_FILES:
+        p = os.path.join(work, f)
+        if not os.path.exists(p):
+            open(p, "w").close()
+    init = os.path.join(d, "init.zsh")
+    with _wopen(init) as f:
+        f.write("fpath=( %s )\n"
+                "PROMPT='%s '\nRPROMPT=''\nsetopt no_beep\n"
+                "builtin cd %s\n"
+                "autoload -Uz compinit\ncompinit -u -D\n"
+                "%s"
+                "print -u2 ''\n"
+                % (" ".join(shlex.quote(p) for p in args.fpath_dirs),
+                   SENTINEL, shlex.quote(work),
+                   "".join(ln + "\n" for ln in probe.init)))
+    env = child_env(d, args.locale_pool[0])
+    out = {}
+    for sid, argv in shells:
+        cap = capture(list(argv) + ["-f", "-i"], env, args, init, work,
+                      probe.buffer, probe.keys, args.cols, True)
+        sig = _attr_signature(cap.raw)
+        # A shell that never reached a prompt produced no signature, and an
+        # EMPTY signature would compare equal to another dead shell's — two
+        # corpses agreeing is not agreement. `None` routes it to the unusable /
+        # rejection arms of classify_split() the same way a missing probe line
+        # does for a `cmd` probe.
+        val = None if cap.reason else b"|".join(sig)
+        out[sid] = {"val": val, "err": cap.reason or "",
+                    "outcome": (val, _errkey(cap.reason or "")),
+                    "raw": cap.raw, "sig": sig}
+    # A pty probe has to prove its reference is STABLE before its answer means
+    # anything. This was not theory: under load the `zle` probe's SGR signature
+    # moved, and the split's SIDE attribution moved with it (dev on a quiet
+    # host, neither on a busy one) while the split itself stayed. Re-run the
+    # release reference and require the signature to repeat; a reference that
+    # disagrees with itself gets the probe reported as unstable rather than
+    # given a side it cannot support. This mirrors run_case()'s --self-check.
+    def restable(sid, argv):
+        """-> "" if this shell repeats its own signature, else why not."""
+        two = capture(list(argv) + ["-f", "-i"], env, args, init, work,
+                      probe.buffer, probe.keys, args.cols, True)
+        if two.reason:
+            return "%s did not run a second time (%s)" % (sid, two.reason)
+        if _attr_signature(two.raw) != out[sid]["sig"]:
+            return ("%s produced a DIFFERENT escape signature on a re-run "
+                    "(%s vs %s)"
+                    % (sid,
+                       disp(bdec(b"|".join(_attr_signature(two.raw))))[:80],
+                       disp(bdec(b"|".join(out[sid]["sig"])))[:80]))
+        return ""
+
+    why = restable(*shells[0])
+    if why:
+        out["_unstable"] = why
+    # And the shell UNDER TEST, separately. These mean different things: an
+    # unstable reference means the probe cannot be judged at all, while an
+    # unstable zshrs still leaves the split between the two references
+    # standing — what it removes is the right to say which side zshrs is on.
+    # Not hypothetical: on the `zle-attr-reset` probe zshrs emitted
+    # `\e[1m \e[0m \e[0m` on one run and `\e[1m \e[0m \e[0m \e[27m
+    # \e[24m` on another, which without this check is reported as "takes dev"
+    # and "takes neither" by two runs of the same tool.
+    twhy = restable("zshrs", args.test_base)
+    if twhy:
+        out["_test_unstable"] = twhy
+    out["_script"] = init
+    return out
+
+
+def classify_split(res):
+    """-> (classification, side). The ONLY place a probe is judged.
+
+    `zshrs-bug` requires the two references to have been MEASURED to agree.
+    A `version-split` never absorbs one: the two classes are decided by the
+    same comparison and cannot both apply.
+    """
+    rel, dev, rs = res["release"], res["dev"], res["zshrs"]
+    # A reference that disagrees with ITSELF is not a reference. Proven, not
+    # assumed — see run_split_zle(). Never a pass and never a split: the probe
+    # simply could not be judged, and it is counted under its own name.
+    if res.get("_unstable"):
+        return UNSTABLE, ""
+    # A probe NEITHER reference could even start is a generator bug.
+    if rel["val"] is None and dev["val"] is None and not rel["err"] and not dev["err"]:
+        return UNUSABLE, ""
+    if rel["outcome"] == dev["outcome"]:
+        if rs["outcome"] == rel["outcome"]:
+            # Both references refused it with the same message. That IS an
+            # agreement, but it is agreement about a rejection and is counted
+            # apart so a scan cannot look busy on malformed probes.
+            return (BOTH_REJECT if rel["val"] is None else AGREE), ""
+        return ZSHRS_BUG, ""
+    if res.get("_test_unstable"):
+        # The split stands — it is a property of the two references — but the
+        # side does not, because the output it would be read from does not
+        # repeat.
+        return SPLIT, SIDE_UNSTABLE
+    side = (SIDE_REL if rs["outcome"] == rel["outcome"] else
+            SIDE_DEV if rs["outcome"] == dev["outcome"] else SIDE_NEITHER)
+    return SPLIT, side
+
+
+# ── does any real code depend on it? ─────────────────────────────────────────
+#
+# A split no installed code exercises is an inventory entry. One zinit relies
+# on is urgent — and today's zinit breakage was found only because somebody
+# thought to grep. This annotation NEVER changes a classification; it is
+# printed beside one.
+
+CORPUS_ROOTS = [
+    ("zinit", "~/.zinit"),
+    ("zpwr", "~/.zpwr"),
+    ("more-completions",
+     "~/.zinit/plugins/MenkeTechnologies---zsh-more-completions/src"),
+    ("stock-compsys", "/opt/homebrew/share/zsh"),
+    # This repo's own checked-in guards. The fourth confirmed split cost a red
+    # guard (tests/compsys_fixtures/listing_row_erase_to_eol) and no user code
+    # at all, so a corpus that stops at the user's dotfiles would have scored
+    # it "not urgent" — exactly backwards.
+    ("zshrs-guards", os.path.join(REPO, "tests")),
+]
+
+
+def corpus_roots():
+    """-> [(label, path, present)]. A missing root is REPORTED, never a
+    silent zero: 'nothing depends on this' and 'the corpus was not there' are
+    different findings."""
+    out = []
+    for label, p in CORPUS_ROOTS:
+        rp = os.path.expanduser(p)
+        out.append((label, rp, os.path.isdir(rp)))
+    return out
+
+
+def corpus_scan(patterns, roots, limit=3, timeout=120):
+    """-> {label: {"n": int, "hits": [str], "why": str}}"""
+    tool = shutil.which("rg")
+    res = {}
+    for label, path, present in roots:
+        if not present:
+            res[label] = {"n": 0, "hits": [], "why": "root not present: %s" % path}
+            continue
+        hits, err = [], ""
+        for pat in patterns:
+            if tool:
+                cmd = [tool, "--no-heading", "-n", "-e", pat, "--", path]
+            else:
+                cmd = ["grep", "-rnE", "-e", pat, path]
+            try:
+                p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+            except (OSError, subprocess.SubprocessError) as exc:
+                err = repr(exc)
+                continue
+            if p.returncode not in (0, 1):
+                err = (p.stderr or b"").decode("utf-8", "replace")[:120]
+            for ln in (p.stdout or b"").decode("utf-8", "replace").splitlines():
+                if ln:
+                    hits.append(ln)
+        res[label] = {"n": len(hits),
+                      "hits": [h[:160] for h in hits[:limit]],
+                      "why": err}
+    return res
+
+
+# ── the scan ─────────────────────────────────────────────────────────────────
+
+def split_scan(args):
+    """Run the whole split layer and print the inventory. -> exit status."""
+    shells = [("release", [args.zsh]),
+              ("dev", [args.zsh_dev]),
+              ("zshrs", list(args.test_base))]
+    root = os.path.join(REPO, "target", "spec-fuzz-%d" % args.seed, "splits")
+    os.makedirs(root, exist_ok=True)
+
+    probes = []
+    if args.split_seeds:
+        probes += [p for p in SPLIT_SEEDS if p.family in args.split_families]
+    # `zle` is a pty family with no grammar behind it — its one probe is the
+    # confirmed split, carried as a seed. Say so rather than generate nothing
+    # and let the count look like a choice.
+    genfams = [f for f in args.split_families if f != "zle"]
+    ngen = args.split_cases if genfams else 0
+    for i in range(ngen):
+        probes.append(gen_split(args.seed, args.split_start + i, genfams))
+    if args.split_cases and not genfams:
+        print("# --split-cases %d generated NOTHING: `zle` is the only family "
+              "in scope and it has no grammar — its probe is the seeded one"
+              % args.split_cases)
+
+    print("# compsys_spec_fuzz — VERSION-SPLIT scan (three-way)")
+    print("# reference A (release): %s   $ZSH_VERSION %s"
+          % (args.zsh, args.zsh_version))
+    print("# reference B (dev)    : %s   $ZSH_VERSION %s   [%s]"
+          % (args.zsh_dev, args.zsh_dev_version, args.zsh_dev_note))
+    print("# under test           : %s" % " ".join(args.test_base))
+    print("# dev C source read by the ports: %s" % args.dev_tree)
+    print("# seed %d   %d probe(s): %d seeded + %d generated %d..%d   "
+          "families=%s   locale=%s"
+          % (args.seed, len(probes),
+             sum(1 for p in probes if p.seeded),
+             sum(1 for p in probes if not p.seeded),
+             args.split_start, args.split_start + max(ngen, 1) - 1,
+             ",".join(args.split_families), args.locale_pool[0]))
+    off = [f for f in SPLIT_FAMILIES if f not in args.split_families]
+    if off:
+        print("# famil(ies) this scan EXCLUDED, so NOT tested: %s" % " ".join(off))
+    print()
+    sys.stdout.flush()
+
+    roots = corpus_roots()
+    missing = [l for l, _p, ok in roots if not ok]
+    if missing:
+        print("# corpus root(s) NOT on this host, so no dependency claim can "
+              "be made about them: %s" % " ".join(missing))
+        print()
+
+    rows = []
+    for p in probes:
+        try:
+            res = (run_split_zle(args, root, p, shells) if p.mode == "zle"
+                   else run_split_cmd(args, root, p, shells))
+        except Exception as exc:
+            print("%-14s %-12s %-34s could not run: %r"
+                  % ("ERROR", p.family, p.id[:34], exc))
+            continue
+        cls, side = classify_split(res)
+        impact = corpus_scan(p.impact, roots) if cls == SPLIT else {}
+        rows.append((p, res, cls, side, impact))
+        tag = {AGREE: "agree", ZSHRS_BUG: "ZSHRS-BUG", SPLIT: "VERSION-SPLIT",
+               BOTH_REJECT: "agree(rej)", UNUSABLE: "unusable",
+               UNSTABLE: "UNSTABLE"}[cls]
+        note = ""
+        if cls == SPLIT:
+            n = sum(v["n"] for v in impact.values())
+            note = "zshrs takes %-8s  corpus hits %s%d%s" % (
+                side, "" if p.seeded else "~", n,
+                "  (" + " ".join("%s=%d" % (l, impact[l]["n"])
+                                 for l, _p, ok in roots
+                                 if ok and impact[l]["n"]) + ")" if n else "")
+        print("%-14s %-12s %-34s %s" % (tag, p.family, p.id[:34], note))
+        if cls in (SPLIT, ZSHRS_BUG):
+            print_split(p, res, cls, side, impact, roots)
+        sys.stdout.flush()
+
+    return summarise_splits(args, rows, roots)
+
+
+def _show(res, sid):
+    d = res[sid]
+    v = "<no value>" if d["val"] is None else disp(bdec(d["val"]))
+    e = (" | stderr: %s" % disp(d["err"])) if d["err"] else ""
+    return (v + e)[:220]
+
+
+def print_split(p, res, cls, side, impact, roots):
+    print("    cite   : %s" % p.cite)
+    print("    probe  : %s" % res["_script"])
+    for sid, label in (("release", "zsh 5.9.2 "), ("dev", "zsh dev  "),
+                       ("zshrs", "zshrs    ")):
+        print("      %s: %s" % (label, _show(res, sid)))
+    if cls == SPLIT:
+        print("    -> the two REFERENCES disagree. zshrs cannot match both; "
+              "it currently matches: %s" % side)
+        if side == SIDE_UNSTABLE:
+            print("       (zshrs did not repeat its own output between two "
+                  "runs of this probe — %s)" % res.get("_test_unstable", ""))
+        if p.mode == "cmd":
+            print("    repro  : zsh -f %s   (and the dev build, and "
+                  "`zshrs --zsh -f`)" % res["_script"])
+        total = sum(v["n"] for v in impact.values())
+        if total:
+            print("    installed code / checked-in guards that TEXTUALLY "
+                  "match this surface (%s):"
+                  % ("patterns written for this split — a lead to audit, not "
+                     "a proof of dependency" if p.seeded else
+                     "patterns derived MECHANICALLY from the generated "
+                     "construct — a coincidence until read"))
+            for label, _path, ok in roots:
+                if not ok or not impact[label]["n"]:
+                    continue
+                print("      %-18s %d hit(s)" % (label, impact[label]["n"]))
+                for h in impact[label]["hits"]:
+                    print("        %s" % disp(h))
+        else:
+            print("    no hit in %s — an inventory entry, not an urgent one"
+                  % " ".join(l for l, _p, ok in roots if ok))
+        for label, _p, ok in roots:
+            if ok and impact.get(label, {}).get("why"):
+                print("      ! corpus scan of %s was incomplete: %s"
+                      % (label, impact[label]["why"]))
+        # A pattern that would not compile is dropped at construction. Say so:
+        # a corpus count taken with fewer patterns than the probe declared is
+        # a smaller number than the probe asked for, and silence would make it
+        # look like a clean zero.
+        for bad in p.bad_impact:
+            print("      ! corpus pattern DROPPED (not a valid regex), so the "
+                  "count above is short by whatever it would have matched: %s"
+                  % bad)
+    else:
+        print("    -> the two REFERENCES AGREE and zshrs differs. This is a "
+              "zshrs bug, not a version question.")
+
+
+def summarise_splits(args, rows, roots):
+    counts = {k: 0 for k in (AGREE, BOTH_REJECT, ZSHRS_BUG, SPLIT, UNUSABLE,
+                             UNSTABLE)}
+    for _p, _r, cls, _s, _i in rows:
+        counts[cls] += 1
+    print()
+    print("=" * 78)
+    print("# %d probe(s): %d agreement, %d agreement-on-rejection, "
+          "%d VERSION-SPLIT, %d ZSHRS-BUG, %d unusable, %d unstable-reference"
+          % (len(rows), counts[AGREE], counts[BOTH_REJECT], counts[SPLIT],
+             counts[ZSHRS_BUG], counts[UNUSABLE], counts[UNSTABLE]))
+    perf = {}
+    for p, _r, cls, _s, _i in rows:
+        row = perf.setdefault(p.family, dict.fromkeys(counts, 0))
+        row[cls] += 1
+    print("#   by family:   probes  agree  agree(rej)  SPLIT  ZSHRS-BUG  "
+          "unusable  unstable")
+    for fam in SPLIT_FAMILIES:
+        if fam in perf:
+            r = perf[fam]
+            print("#     %-12s %5d  %5d  %10d  %5d  %9d  %8d  %8d"
+                  % (fam, sum(r.values()), r[AGREE], r[BOTH_REJECT], r[SPLIT],
+                     r[ZSHRS_BUG], r[UNUSABLE], r[UNSTABLE]))
+    splits = [(p, s, i) for p, _r, cls, s, i in rows if cls == SPLIT]
+    if splits:
+        print("#")
+        print("#   VERSION-SPLIT INVENTORY — a decision is required for each")
+        print("#   %-34s %-9s %-8s %s"
+              % ("probe", "zshrs", "corpus", "family"))
+        print("#   (a `~` corpus count comes from a pattern derived from the "
+              "generated construct, not written for the split)")
+        for p, side, impact in splits:
+            n = sum(v["n"] for v in impact.values())
+            print("#   %-34s %-9s %-8s %s"
+                  % (p.id[:34], side,
+                     ("%d" % n if p.seeded else "~%d" % n) if n else "-",
+                     p.family))
+        by_side = {}
+        for _p, side, _i in splits:
+            by_side[side] = by_side.get(side, 0) + 1
+        if by_side.get(SIDE_UNSTABLE):
+            print("#   %d split(s) where zshrs's OWN output did not repeat "
+                  "between two runs, so NO side could be attributed — the "
+                  "split still stands, the side does not"
+                  % by_side[SIDE_UNSTABLE])
+        print("#   sides taken: %s"
+              % ("  ".join("%s=%d" % kv for kv in sorted(by_side.items()))))
+        if len(by_side) > 1:
+            print("#   zshrs currently resolves splits BOTH ways. That is the "
+                  "finding: there is no policy, only accidents.")
+        # Only a CURATED pattern can put a split on the urgent list. A
+        # mechanically derived one that happens to match is not evidence that
+        # anything depends on the split, and a list padded with coincidences
+        # is worth less than no list.
+        urgent = [p.id for p, _s, i in splits
+                  if p.seeded and sum(v["n"] for v in i.values())]
+        if urgent:
+            print("#   split(s) with a CURATED corpus pattern that hits real "
+                  "installed code or a checked-in guard — urgent: %s"
+                  % " ".join(urgent))
+        loose = [p.id for p, _s, i in splits
+                 if not p.seeded and sum(v["n"] for v in i.values())]
+        if loose:
+            print("#   generated split(s) whose mechanical pattern hit "
+                  "something — a lead only, NOT counted urgent: %s"
+                  % " ".join(loose))
+    bugs = [p.id for p, _r, cls, _s, _i in rows if cls == ZSHRS_BUG]
+    if bugs:
+        print("#   ZSHRS-BUG(s) — BOTH references agree and zshrs does not: %s"
+              % " ".join(bugs))
+    unst = [(p.id, r.get("_unstable", "")) for p, r, cls, _s, _i in rows
+            if cls == UNSTABLE]
+    if unst:
+        print("#   probe(s) whose REFERENCE disagreed with itself, so they "
+              "could not be judged at all — never counted as agreement:")
+        for pid, why in unst:
+            print("#     %-34s %s" % (pid, why))
+    unus = [p.id for p, _r, cls, _s, _i in rows if cls == UNUSABLE]
+    if unus:
+        print("#   generator-rejected probe(s) — NEITHER reference could run "
+              "them, so they say nothing about zshrs: %s" % " ".join(unus))
+    seeds_seen = {p.id: cls for p, _r, cls, _s, _i in rows if p.seeded}
+    if seeds_seen:
+        print("#   seeded (already-confirmed) splits, as classified by this "
+              "run — these are the validation target:")
+        for sid in sorted(seeds_seen):
+            print("#     %-34s %s" % (sid, seeds_seen[sid]))
+        wrong = [s for s, c in seeds_seen.items()
+                 if c not in (SPLIT, UNSTABLE)]
+        if wrong:
+            print("#   !! a confirmed split did NOT classify as one: %s"
+                  % " ".join(wrong))
+    if args.split_json:
+        with open(args.split_json, "w") as fh:
+            json.dump({
+                "seed": args.seed,
+                "release": {"path": args.zsh, "version": args.zsh_version},
+                "dev": {"path": args.zsh_dev, "version": args.zsh_dev_version,
+                        "note": args.zsh_dev_note, "tree": args.dev_tree},
+                "zshrs": args.test_base,
+                "corpus_roots": [{"label": l, "path": p, "present": ok}
+                                 for l, p, ok in roots],
+                "counts": counts,
+                "probes": [{
+                    "id": p.id, "family": p.family, "cite": p.cite,
+                    "mode": p.mode, "seeded": p.seeded,
+                    "class": cls, "zshrs_side": s,
+                    "release": bdec(r["release"]["val"] or b"") ,
+                    "release_err": r["release"]["err"],
+                    "dev": bdec(r["dev"]["val"] or b""),
+                    "dev_err": r["dev"]["err"],
+                    "zshrs": bdec(r["zshrs"]["val"] or b""),
+                    "zshrs_err": r["zshrs"]["err"],
+                    "corpus": {k: {"n": v["n"], "hits": v["hits"]}
+                               for k, v in i.items()},
+                } for p, r, cls, s, i in rows],
+            }, fh, indent=1)
+        print("# json: %s" % args.split_json)
+    # A split is not a failure of zshrs, so it does not fail the scan; a
+    # measured zshrs bug and a probe neither reference can run both do.
+    return 1 if (counts[ZSHRS_BUG] or counts[UNUSABLE]
+                 or counts[UNSTABLE]) else 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # widget self-check
 # ═════════════════════════════════════════════════════════════════════════════
 #
@@ -4273,6 +5383,22 @@ def print_failure(v, args):
             print("  cursor: zsh %s   zshrs %s" % (ref.cursor, test.cursor))
         if v.attr_rows:
             print("  rows differing in SGR attributes only: %s" % v.attr_rows)
+    # When a second reference ran this case, print ITS grid too. A
+    # "version-split" claim is only worth as much as the third screen behind
+    # it, so the screen is shown rather than summarised.
+    if v.dev is not None and v.dev.grid is not None:
+        print("  --- zsh DEV grid (%s) ---" % args.zsh_dev_version)
+        print(render(v.dev.grid))
+        if v.split_class == SPLIT:
+            print("  -> the two REFERENCES disagree on this case. zshrs cannot "
+                  "match both; it currently matches: %s" % v.split_side)
+            print("     The FAIL above is still measured against %s."
+                  % args.zsh)
+        elif v.split_class == ZSHRS_BUG:
+            print("  -> both references rendered the SAME screen. This is a "
+                  "zshrs bug, not a version question.")
+    if v.split_note:
+        print("  -> %s" % v.split_note)
     if v.ref_only_diags:
         print("  only zsh reported : %s" % "; ".join(sorted(v.ref_only_diags)))
     if v.test_only_diags:
@@ -4353,6 +5479,10 @@ def to_json(v):
                          "repro": substrate_repro_cmd(c),
                          "error": e}
                         for c, k, r, t, e in v.attribution],
+        "split_class": v.split_class,
+        "split_side": v.split_side,
+        "split_note": v.split_note,
+        "dev": side(v.dev) if v.dev else None,
         "buffer": disp(v.case.buffer),
         "keys": v.case.keys,
         "init": [disp(x) for x in v.case.init_lines()],
@@ -4518,6 +5648,51 @@ def main():
     ap.add_argument("--compare-attrs", action="store_true",
                     help="fail on SGR-attribute-only differences too")
     ap.add_argument("--raw-diff-lines", type=int, default=30)
+
+    # ── the version-split layer: a SECOND reference ──────────────────────────
+    ap.add_argument("--split-scan", action="store_true",
+                    help="run the three-way VERSION-SPLIT scan and exit. Every "
+                         "probe runs on BOTH reference zshs and on zshrs, and "
+                         "is classified: the two references agree and zshrs "
+                         "differs (a zshrs bug), the two references disagree "
+                         "(a version split — zshrs cannot match both and which "
+                         "side it takes is a policy decision), or all three "
+                         "agree. Needs --zsh-dev or --build-dev-zsh.")
+    ap.add_argument("--zsh-dev", default=None,
+                    help="the SECOND reference: a built zsh from the "
+                         "development tree the ports are written from. Must "
+                         "report a different $ZSH_VERSION from --zsh, or it is "
+                         "refused — a second reference of the same version is "
+                         "not a second reference.")
+    ap.add_argument("--build-dev-zsh", action="store_true",
+                    help="if no usable --zsh-dev is found, BUILD one: copy "
+                         "--dev-tree into target/spec-fuzz-devzsh (the tree "
+                         "itself is read only), configure it at a prefix "
+                         "inside that copy, make, make install.modules "
+                         "(a full `make install` also builds the man pages "
+                         "and fails on a host without yodl). The prefix "
+                         "matters: it makes the built shell's compiled-in "
+                         "module_path point at its own modules, so all three "
+                         "shells run the byte-identical probe with no "
+                         "per-shell preamble.")
+    ap.add_argument("--dev-tree", default=DEV_TREE_DEFAULT,
+                    help="the zsh source tree the ports are read from "
+                         "(default %(default)s). Read only; only ever copied.")
+    ap.add_argument("--split-cases", type=int, default=24,
+                    help="how many probes to GENERATE, on top of the seeded "
+                         "already-confirmed splits")
+    ap.add_argument("--split-start", type=int, default=0)
+    ap.add_argument("--split-families", default="all",
+                    help="comma-separated: " + ",".join(SPLIT_FAMILIES)
+                         + ". Excluded families are named in the summary as "
+                           "untested.")
+    ap.add_argument("--no-split-seeds", dest="split_seeds",
+                    action="store_false", default=True,
+                    help="drop the four already-confirmed splits from the "
+                         "scan. They are the VALIDATION target — a scan that "
+                         "does not classify them as splits is not working — so "
+                         "this is for iterating, not for reporting.")
+    ap.add_argument("--split-json", default=None)
     args = ap.parse_args()
 
     # Resolve both shells to absolute paths BEFORE anything execs them: the
@@ -4535,6 +5710,47 @@ def main():
     args.test_base = ([args.zshrs] if args.mode == "native"
                       else [args.zshrs, "--zsh"])
     args.test_argv = args.test_base + ["-f", "-i"]
+
+    # The release reference's own identity, read from it rather than assumed:
+    # it is what the dev candidate has to differ from, and it is printed with
+    # every finding so a reader knows which zsh a number was measured against.
+    args.zsh_version = _zsh_version(args.zsh)
+    args.dev_tree = os.path.expanduser(args.dev_tree)
+    args.zsh_dev_version = args.zsh_dev_note = None
+    if args.split_families.strip() in ("all", ""):
+        args.split_families = list(SPLIT_FAMILIES)
+    else:
+        args.split_families = [f.strip()
+                               for f in args.split_families.split(",")
+                               if f.strip()]
+        for f in args.split_families:
+            if f not in SPLIT_FAMILIES:
+                sys.exit("compsys_spec_fuzz: unknown --split-families %r (have "
+                         "all, or: %s)" % (f, ",".join(SPLIT_FAMILIES)))
+    if args.split_scan or args.zsh_dev or args.build_dev_zsh:
+        dev, dver, note = resolve_dev_zsh(args)
+        if not dev:
+            msg = ("compsys_spec_fuzz: no usable SECOND reference zsh.\n#   %s"
+                   % note)
+            if args.split_scan:
+                sys.exit(msg + "\n"
+                         "\nThe split scan compares TWO reference zshs, and "
+                         "cannot run on one.\nBuild the second one with:\n"
+                         "  %s --split-scan --build-dev-zsh\n"
+                         "or point --zsh-dev at an existing built "
+                         "<tree>/Src/zsh." % SELF)
+            print(msg)
+            print("#   continuing WITHOUT the three-way classification: every "
+                  "verdict below is measured against %s alone" % args.zsh)
+            args.zsh_dev = None
+        else:
+            # ABSOLUTE, always: every probe runs with cwd set to the case's
+            # own work directory, so a relative binary path would not resolve
+            # there — and the failure would look like "the dev reference
+            # crashed" rather than "the path was relative".
+            args.zsh_dev = os.path.abspath(dev)
+            args.zsh_dev_version, args.zsh_dev_note = dver, note
+
     # `auto` leaves args.keys empty and lets each case draw its own key PATH
     # from KEY_PATHS, so a generated spec is judged over a sequence (menu
     # start, cycling, a filter letter, an abort) instead of one press.
@@ -4656,6 +5872,13 @@ def main():
                  "on this host — nothing to generate")
     print()
 
+    # ── the three-way version-split scan ─────────────────────────────────────
+    # Placed after the locale probe because a probe run in a locale the
+    # reference does not honour is not a probe, and before everything else
+    # because the scan has nothing to do with the widget or hostile-text axes.
+    if args.split_scan:
+        return split_scan(args)
+
     # ── generated-text self-check ────────────────────────────────────────────
     if args.hostile_categories.strip() in ("all", ""):
         want_cats = list(HOSTILE_CATEGORIES)
@@ -4766,7 +5989,16 @@ def main():
     os.makedirs(root, exist_ok=True)
 
     print("# compsys_spec_fuzz — generative hermetic completion parity")
-    print("# zsh    : %s" % args.zsh)
+    print("# zsh    : %s   $ZSH_VERSION %s" % (args.zsh, args.zsh_version))
+    if getattr(args, "zsh_dev", None):
+        print("# zsh dev: %s   $ZSH_VERSION %s   — every FAIL is ALSO run on "
+              "this, and labelled: the two references agreeing means a zshrs "
+              "bug, disagreeing means a version split"
+              % (args.zsh_dev, args.zsh_dev_version))
+    else:
+        print("# zsh dev: none — every verdict below is measured against ONE "
+              "reference, and a failure caused by a 5.9.2-vs-dev split cannot "
+              "be told from a zshrs bug (pass --zsh-dev or --build-dev-zsh)")
     print("# zshrs  : %s" % " ".join(args.test_argv))
     print("# fpath  : %s" % " ".join(args.fpath_dirs))
     print("# seed   : %d   cases %s   keys=%s   rows=%d cols=%s   jobs=%d"
@@ -4837,6 +6069,13 @@ def main():
                 extra = "  [raw escape streams differ]"
             if v.status == FAIL and getattr(v, "shrunk", None):
                 extra = "  [shrunk to %d spec(s)/%d flag(s) in %d probes]" % v.shrunk
+            if v.split_class == SPLIT:
+                extra += "  [VERSION-SPLIT: the two references disagree; " \
+                         "zshrs matches %s]" % v.split_side
+            elif v.split_class == ZSHRS_BUG:
+                extra += "  [both references agree — a zshrs bug]"
+            if v.split_note:
+                extra += "  [%s]" % v.split_note
             print("%-9s %-9s %-10s %-22s %-15s %-4s %-14s %s%s"
                   % (mark, v.case.name, v.case.kind,
                      v.case.extra.get("widget", "default")[:22],
@@ -4864,6 +6103,8 @@ def main():
     nfail = sum(1 for v in results if v.status == FAIL)
     nskip = sum(1 for v in results if v.status == SKIP)
     nstream = sum(1 for v in results if v.stream_only)
+    nsplit = sum(1 for v in results if v.split_class == SPLIT)
+    ntwobug = sum(1 for v in results if v.split_class == ZSHRS_BUG)
 
     print()
     print("=" * 78)
@@ -5066,6 +6307,31 @@ def main():
                 reasons.setdefault(v.category, []).append(v.case.name)
         for r, names in sorted(reasons.items()):
             print("#     %-22s %d  (%s)" % (r, len(names), " ".join(names)))
+    if getattr(args, "zsh_dev", None):
+        print("#   second reference: %s ($ZSH_VERSION %s) — every FAIL above "
+              "was ALSO run on it" % (args.zsh_dev, args.zsh_dev_version))
+        print("#     %d failure(s) where the two references AGREE — zshrs "
+              "bugs" % ntwobug)
+        print("#     %d failure(s) where the two references DISAGREE — "
+              "version splits, zshrs cannot match both:" % nsplit)
+        for v in results:
+            if v.split_class == SPLIT:
+                print("#       %-10s %-10s zshrs matches %s"
+                      % (v.case.name, v.case.kind, v.split_side))
+        unclass = [v.case.name for v in results if v.split_unrun]
+        if unclass:
+            print("#     %d failure(s) the dev reference could not run, so "
+                  "they are UNCLASSIFIED: %s"
+                  % (len(unclass), " ".join(unclass)))
+        also = [v.case.name for v in results
+                if v.split_note and not v.split_unrun]
+        if also:
+            print("#     %d failure(s) where the two references painted the "
+                  "SAME screen but wrote DIFFERENT escape streams — a split "
+                  "that is not what failed the case: %s"
+                  % (len(also), " ".join(also)))
+        print("#   (the PASS/FAIL verdicts above are measured against %s "
+              "alone and are unchanged by this)" % args.zsh)
     if nfail:
         print("#   failures, by class:")
         classes = {}
@@ -5103,6 +6369,13 @@ def main():
                 "widget_decl_divergence": widget_bad_test,
                 "compstate_probed": ncs,
                 "zsh": args.zsh,
+                "zsh_version": args.zsh_version,
+                "zsh_dev": getattr(args, "zsh_dev", None),
+                "zsh_dev_version": args.zsh_dev_version,
+                "version_splits": [v.case.name for v in results
+                                   if v.split_class == SPLIT],
+                "two_reference_bugs": [v.case.name for v in results
+                                       if v.split_class == ZSHRS_BUG],
                 "zshrs": args.test_argv,
                 "results": [to_json(v) for v in results],
             }, f, indent=1)
