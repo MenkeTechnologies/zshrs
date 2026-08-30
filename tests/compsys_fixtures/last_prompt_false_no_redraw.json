@@ -1,0 +1,47 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "last_prompt_false_no_redraw",
+ "title": "`last-prompt false` \u2014 zsh redraws the command line under the list, zshrs draws nothing",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "git ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": [
+   "zstyle ':completion:*:*:*:*:*' last-prompt false"
+  ]
+ },
+ "expect": "diverges",
+ "fingerprint": "fc1984d85b",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ",
+  "fingerprint_label": "cell/rowlist/col0 | ref/$ git | test/<absent>",
+  "rows": [
+   {
+    "row": 24,
+    "zsh": "@CT@ git",
+    "zshrs": "<absent>"
+   }
+  ],
+  "notes": "With last-prompt off, zsh still repaints the command line on the row below the listing; zshrs leaves that row empty."
+ },
+ "variants": [],
+ "origin": [
+  "scripts/parity_corpus_fuzz/fp_9cac931a13.json"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

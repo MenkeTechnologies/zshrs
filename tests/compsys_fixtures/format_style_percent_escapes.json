@@ -1,0 +1,47 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "format_style_percent_escapes",
+ "title": "the `format` style's %F{...}/%f are printed literally by zshrs",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "true && gr",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": [
+   "zstyle ':completion:*' format '%F{yellow}%d%f'"
+  ]
+ },
+ "expect": "diverges",
+ "fingerprint": "6422e7a46d",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "2 row(s) differ",
+  "fingerprint_label": "cell/rowtop/col0 | ref/`external command', `global alias', ... | test/{yellow}`external command', ...",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "`external command', `global alias', `alias', `shell function', `builtin command', `suffix alias', `reserved wo",
+    "zshrs": "{yellow}`external command', `global alias', `alias', `shell function', `builtin command', `suffix alias', `res"
+   }
+  ],
+  "notes": "Same defect as fixture explanation_percent_escapes but reached through the `format` zstyle instead of `compadd -X`: zshrs emits the literal text '{yellow}', which also shifts the wrap point of the explanation onto the next row."
+ },
+ "variants": [],
+ "origin": [
+  "scripts/parity_corpus_fuzz/fp_351410594e.json"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

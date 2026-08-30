@@ -1,0 +1,77 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "listing_row_erase_to_eol",
+ "title": "zsh emits \\e[K after every completion-listing row; zshrs emits none",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc9999 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [
+   "--strict-stream"
+  ],
+  "spec": {
+   "cmd": "fzc9999",
+   "kind": "arguments",
+   "seed": 1,
+   "case": -1,
+   "setup": [],
+   "completer": "#compdef fzc9999\n\nlocal curcontext=\"$curcontext\" state state_descr line ret=1\ntypeset -A opt_args\n\n_arguments  \\\n  '1:c:((a\\:\"add files to archive\" b\\:\"benchmark\"))' && ret=0\n\nreturn ret\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "strict",
+  "detail": "raw escape streams differ",
+  "screens_identical": true,
+  "rows": [],
+  "raw_stream": [
+   "after \\e[Ja  -- add files to archive",
+   "  zsh   - \\e[K",
+   "after \\nb  -- benchmark",
+   "  zsh   - \\e[K"
+  ],
+  "notes": "Both grids render identically, so only --strict-stream sees it. zsh terminates each listing row with an erase-to-end-of-line; zshrs writes the row and stops. Visible on a terminal only when the row overwrites longer stale text."
+ },
+ "variants": [
+  {
+   "origin": "target/spec-fuzz-probe/cursor_probe.zsh",
+   "note": "second witness, confirmed 2026-08-30: a zero-match listing (a _message plus an empty compadd group). Same shape: zsh emits \\e[K after 'no matches here, only a message' and after 'a message for an empty group'; zshrs emits neither.",
+   "buffer": "fzcc ",
+   "keys": [
+    "tab",
+    "tab"
+   ],
+   "flags": [
+    "--strict-stream"
+   ],
+   "spec": {
+    "cmd": "fzcc",
+    "kind": "compadd",
+    "seed": 0,
+    "case": -1,
+    "setup": [],
+    "completer": "#compdef fzcc\n\nlocal expl\n_message -r 'no matches here, only a message'\ncompadd -J g -x 'a message for an empty group' -U -Q -E 2 --\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "target/spec-fuzz-1/adhoc.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

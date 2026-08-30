@@ -1,0 +1,104 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "match_count_ask_prompt",
+ "title": "the 'do you wish to see all N possibilities (M lines)?' prompt reports a different N/M",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "fc-list ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "diverges",
+ "fingerprint": "b29792c9a7",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ",
+  "fingerprint_label": "cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "zsh: do you wish to see all 802 possibilities (825 lines)?",
+    "zshrs": "zsh: do you wish to see all 803 possibilities (814 lines)?"
+   }
+  ],
+  "notes": "One extra match and eleven fewer lines. The counts depend on this host's installed fonts, so the exact numbers are expected to move; what must not change is that the two shells disagree. The harness fingerprint b29792c9a7 masks the digits, which is why it groups the whole family."
+ },
+ "variants": [
+  {
+   "origin": "scripts/parity_corpus_fuzz/fp_d73d468259.json",
+   "note": "same fingerprint under a process substitution, confirmed 2026-08-30: zsh 47321 possibilities (23563 lines) vs zshrs 47325 (23564).",
+   "buffer": "tee >(",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [
+    "zstyle :completion::prefix:-command-::urls sort off"
+   ],
+   "fingerprint": "b29792c9a7"
+  },
+  {
+   "origin": "scripts/comptab_divergent_cases.txt",
+   "note": "same fingerprint from a different command, confirmed first-hand 2026-08-30: zsh 'zsh: do you wish to see all 293 possibilities (147 lines)?' vs zshrs 'zsh: do you wish to see all 294 possibilities (147 lines)?'.",
+   "buffer": "getconf ",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [],
+   "fingerprint": "b29792c9a7"
+  },
+  {
+   "origin": "scripts/comptab_divergent_cases.txt",
+   "note": "same fingerprint from a different command, confirmed first-hand 2026-08-30: zsh 'zsh: do you wish to see all 52815 possibilities (26311 lines)?' vs zshrs 'zsh: do you wish to see all 52847 possibilities (26319 lines)?'.",
+   "buffer": "gpg-agent ",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [],
+   "fingerprint": "b29792c9a7"
+  },
+  {
+   "origin": "scripts/comptab_divergent_cases.txt",
+   "note": "same fingerprint from a different command, confirmed first-hand 2026-08-30: zsh 'zsh: do you wish to see all 802 possibilities (825 lines)?' vs zshrs 'zsh: do you wish to see all 803 possibilities (814 lines)?'.",
+   "buffer": "fc-match ",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [],
+   "fingerprint": "b29792c9a7"
+  },
+  {
+   "origin": "named in the round-2 divergence list",
+   "note": "same symptom from parameter-name completion, confirmed first-hand 2026-08-30, but under its OWN fingerprint e8e0447836 rather than b29792c9a7 \u2014 the shape id takes the surrounding context in, so the same wrong count in a different position is a different shape. zsh 'zsh: do you wish to see all 396 possibilities (99 lines)?' vs zshrs '... 400 possibilities (100 lines)?'.",
+   "buffer": "echo $",
+   "keys": [
+    "tab"
+   ],
+   "flags": [],
+   "zstyle": [],
+   "fingerprint": "e8e0447836"
+  }
+ ],
+ "origin": [
+  "scripts/comptab_divergent_cases.txt",
+  "scripts/parity_corpus_fuzz/fp_d73d468259.json"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

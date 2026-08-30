@@ -1,0 +1,55 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "equals_word_line_rewrite",
+ "title": "`=ls<TAB>`: zsh keeps the word and lists commands, zshrs rewrites the line to the resolved path",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "=ls",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "diverges",
+ "fingerprint": "f55ac1e11f",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "5 row(s) differ",
+  "fingerprint_label": "cell/row0/col0 | ref/$ =ls | test/$ <path>",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ =ls",
+    "zshrs": "@CT@ /bin/ls"
+   },
+   {
+    "row": 1,
+    "zsh": "ls                  lskq                lsofng              lstmtraining",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 2,
+    "zsh": "lsappinfo           lsm                 lsofrs              lstopo",
+    "zshrs": "<absent>"
+   }
+  ],
+  "notes": "zsh completes the command NAME after `=` and lists every command beginning with ls; zshrs performs the `=` expansion and replaces the word with /bin/ls, offering no list at all."
+ },
+ "variants": [],
+ "origin": [
+  "derived in this session from the round-2 note '=ls line rewrite'"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

@@ -1,0 +1,73 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "narrow_terminal_error_redraw",
+ "title": "a completer error message at 40 columns: zsh interleaves it with the redrawn line, zshrs does not",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "ls /usr/**/z",
+  "keys": [
+   "tab",
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": [
+   "zstyle ':completion:*' auto-description 'Specify: %d'",
+   "zstyle ':completion:*' cache-policy zpwrMonthlyCachingPolicy",
+   "zstyle ':completion:*' complete-options on",
+   "zstyle ':completion:*' format $'\\C-[[1;31m-<<\\C-[[0;34m%d\\C-[[1;31m>>-\\C-[[0m'",
+   "zstyle ':completion:*' group-name ''",
+   "zstyle ':completion:*' ignore-parents parent pwd",
+   "zstyle ':completion:*' list-separator /////////",
+   "zstyle ':completion:*' matcher-list '' 'm:{a-z\\-}={A-Z\\_}' 'r:[^[:alpha:]]||[[:alpha:]]=** r:|=* m:{a-z\\-}={A-Z\\_}' 'r:|?=** m:{a-z\\-}={A-Z\\_}'",
+   "zstyle ':completion:*' use-cache on"
+  ],
+  "rows": 24,
+  "cols": 40
+ },
+ "expect": "diverges",
+ "fingerprint": "3757533644",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "4 row(s) differ",
+  "fingerprint_label": "cell/rowtop/col0 | ref/_cachls /usr/**/z | test/_cache_invalid:#: command not found: zp",
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "_cachls /usr/**/z",
+    "zshrs": "_cache_invalid:19: command not found: zp"
+   },
+   {
+    "row": 3,
+    "zsh": "wrMonls /usr/**/z",
+    "zshrs": "wrMonthlyCachingPolicy"
+   },
+   {
+    "row": 4,
+    "zsh": "-<<`files', `file', `fasd ranked files',",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 5,
+    "zsh": " or `fasd ranked directories'>>-",
+    "zshrs": "<absent>"
+   }
+  ],
+  "notes": "Both shells hit the same missing cache-policy function (zpwrMonthlyCachingPolicy is not defined under `zsh -f`). zsh's diagnostic is overwritten in place by the redrawn command line, so each 40-column row shows a fragment of the message followed by 'ls /usr/**/z'; zshrs prints the message intact and then drops the `-<<...>>-` format line zsh still shows. Geometry is load-bearing: 24x40."
+ },
+ "variants": [],
+ "origin": [
+  "$TMPDIR/compsys_parity_failing_combos_7/combo_7_2.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

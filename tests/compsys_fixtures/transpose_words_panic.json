@@ -1,0 +1,48 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "transpose_words_panic",
+ "title": "M-t (transpose-words) at end of line panics zshrs at zle_word.rs:1422",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "ls /usr/share zsh",
+  "keys": [
+   "esc",
+   "t"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzctw",
+   "kind": "compadd",
+   "seed": 0,
+   "case": -1,
+   "setup": [],
+   "completer": "#compdef fzctw\n\ncompadd -- alpha beta\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "crash",
+  "detail": "zshrs: crashed: panicked at, run with `RUST_BACKTRACE",
+  "rows": [],
+  "crash": "thread 'main' panicked at src/ported/zle/zle_word.rs:1422:48: index out of bounds: the len is 17 but the index is 17",
+  "notes": "The completer in the fixture is never reached: the buffer is a plain `ls` command line and ESC-t is transpose-words. The buffer is 17 bytes, which is the index the panic reports. Reproduced outside the harness too, on a bare `target/debug/zshrs --zsh -f -i` with ZDOTDIR unset: type the buffer, send \\x1bt, the process dies. No zstyle is involved \u2014 the combo_5_0_e0 reproducer this came from carried one, and it is not needed."
+ },
+ "variants": [],
+ "origin": [
+  "$TMPDIR/compsys_parity_failing_combos_5/combo_5_0_e0.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}

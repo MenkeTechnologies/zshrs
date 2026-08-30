@@ -1,0 +1,86 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "compset_p_iprefix_retained",
+ "title": "after compset -P, zshrs leaves the matched prefix on the command line; zsh removes it",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzcm a=b=c",
+  "keys": [
+   "tab"
+  ],
+  "flags": [
+   "--strict-cursor"
+  ],
+  "spec": {
+   "cmd": "fzcm",
+   "kind": "compset",
+   "seed": 0,
+   "case": -1,
+   "setup": [],
+   "completer": "#compdef fzcm\n\ncompset -P '*\\='\ncompadd -U -Q -- xx yy\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@SFZ@ fzcm",
+    "zshrs": "@SFZ@ fzcm a=b="
+   }
+  ],
+  "cursor": {
+   "zsh": [
+    0,
+    11
+   ],
+   "zshrs": [
+    0,
+    15
+   ]
+  },
+  "notes": "`compset -P '*\\='` moves 'a=b=' into IPREFIX, then an ambiguous `compadd -U -Q -- xx yy` is made. zsh redraws the line without the IPREFIX text; zshrs keeps it. The cursor column follows the text."
+ },
+ "variants": [
+  {
+   "origin": "target/spec-fuzz-51/case0001.min.zsh",
+   "note": "fuzz-found witness this probe was distilled from, confirmed 2026-08-30 (FAIL, 1 row): zsh '@SFZ@ fzc0001' vs zshrs '@SFZ@ fzc0001 a='.",
+   "buffer": "fzc0001 a=b=c",
+   "keys": [
+    "tab",
+    "bs",
+    "tab"
+   ],
+   "flags": [],
+   "spec": {
+    "cmd": "fzc0001",
+    "kind": "compset",
+    "seed": 51,
+    "case": 1,
+    "setup": [],
+    "completer": "#compdef fzc0001\n\nlocal -a _sfz_hit\ncompset -P '*\\=' && _sfz_hit+=( 'hit:P:*\\=' )\n\ncompadd -U -Q -J _sfzprobe -X 'compset state' -- \"PRE=$PREFIX\" \"SUF=$SUFFIX\" \"IPRE=$IPREFIX\" \"ISUF=$ISUFFIX\" \"QIPRE=$QIPREFIX\" \"QISUF=$QISUFFIX\" \"CUR=$CURRENT\" \"WORDS=${(j:|:)words}\" \"HIT=${(j:,:)_sfz_hit}\"\n\ncompadd -- alpha beta gamma\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "target/spec-fuzz-probe/compset_iprefix.zsh",
+  "target/spec-fuzz-51/case0001.min.zsh"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "132228963a",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "d39a9615f4bd78c2",
+   "scripts/comptab_parity.py": "47635660871f1c55",
+   "scripts/compsys_parity.py": "31410b8b90816683"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs built 2026-08-30 00:43",
+  "note": "all three harness files had uncommitted edits when this was confirmed (three agents were editing them concurrently); the sha256 prefixes above pin the exact bytes used."
+ }
+}
