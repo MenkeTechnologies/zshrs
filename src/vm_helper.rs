@@ -120,7 +120,34 @@ pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
     // name is no longer a hash. Answering here would strand the read on
     // the O(1) assoc fast path and never reach paramsubst's scalar
     // subscript arm (`${options[1]}` came back empty for a local).
-    if magic_special_shadowed(resolved.as_str()) {
+    //
+    // …but "no longer the magic row" is NOT the same as "no longer a
+    // hash". C decides the subscript dispatch from the TYPE of the node
+    // paramtab actually returned:
+    //   c:Src/params.c:2270 `if (PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED))`
+    //   c:Src/params.c:1597-1606 getarg —
+    //       if (ishash) {
+    //           HashTable ht = v->pm->gsu.h->getfn(v->pm);
+    //           ...
+    //           if (!(v->pm = (Param) ht->getnode(ht, s))) ...
+    // — so a shadow that IS itself PM_HASHED (`local -A commands`,
+    // `local -A +h commands` as in Completion/Zsh/Type/_command_names:70)
+    // owns a table of its own and the key read must be served FROM IT.
+    // Bailing on every shadowed magic name swallowed every write:
+    //   f() { local -A commands; commands=(fake /bin/fake)
+    //         print "[$commands[fake]]" }; f
+    // printed `[]` where zsh prints `[/bin/fake]` — the value was in
+    // `paramtab_hashed_storage` all along (`${commands[@]}` found it),
+    // only the keyed read refused to look. Restrict the bail to a
+    // NON-hash shadow, which is the case the note above describes.
+    if magic_special_shadowed(resolved.as_str())
+        && crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(resolved.as_str()).map(|pm| pm.node.flags as u32))
+            // c:2270 — PM_TYPE decides; absent node ⇒ nothing to serve.
+            .map_or(true, |f| crate::ported::zsh_h::PM_TYPE(f) != PM_HASHED)
+    {
         return None;
     }
     // c:Src/Zle/complete.c:1272/1411 — `compstate[nmatches]` is a LIVE gsu

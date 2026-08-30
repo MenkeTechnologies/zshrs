@@ -9153,7 +9153,21 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     let mut flags = flags;
     if (flags & ASSPM_KEY_VALUE) != 0 {
         let ksh = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
-        let orig: Vec<String> = if (flags & ASSPM_AUGMENT) != 0 && existed {
+        // c:3399 — `origptr = v->pm->gsu.a->getfn(v->pm)`: the prior
+        // elements come from the parameter's ARRAY GETTER, not from the
+        // node's own storage. For the IPDEF9 positional alias
+        // `argv`/`@`/`*` (c:392-393, c:430 `IPDEF9("argv", &pparams,
+        // NULL, 0)`) that getter is `arrvargetfn` (c:4231-4235,
+        // `*((char ***)pm->u.data)`), which dereferences `pparams` —
+        // the LIVE positional-parameter vector. zshrs keeps `pparams`
+        // in `builtin::PPARAMS` and leaves this node's `u_arr` empty,
+        // so a plain `u_arr` read here returns a stale global vector.
+        let orig: Vec<String> = if (flags & ASSPM_AUGMENT) == 0 {
+            Vec::new()
+        } else if matches!(name, "argv" | "@" | "*") {
+            // c:3399 via c:4231 arrvargetfn — read `pparams`.
+            PPARAMS.lock().map(|p| p.clone()).unwrap_or_default()
+        } else if existed {
             let tab = paramtab().read().unwrap();
             tab.get(name)
                 .and_then(|pm| pm.u_arr.clone())
@@ -9251,13 +9265,47 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         }
     }
 
+    // c:3511-3515 — ASSPM_AUGMENT on the IPDEF9 positional alias
+    // `argv` / `@` / `*` (c:392-393, c:430 `IPDEF9("argv", &pparams,
+    // NULL, 0)`).
+    //
+    //     if (v->start == 0 && v->end == -1) {
+    //         if (PM_TYPE(v->pm->node.flags) & PM_ARRAY) {
+    //             v->start = arrlen(v->pm->gsu.a->getfn(v->pm));
+    //             v->end = v->start + 1;
+    //         }
+    //
+    // The append offset comes from the parameter's ARRAY GETTER. For
+    // these three names the getter is `arrvargetfn` (c:4231-4235,
+    // `char **arrptr = *((char ***)pm->u.data);` over `&pparams`) and
+    // the setter is `arrvarsetfn` (c:4246-4262, `*dptr = x;`) — the
+    // node has NO storage of its own, `pparams` (c:59, `char **pparams;
+    // /* $argv */`) IS the storage, and `doshfunc` swaps that vector
+    // per call so the value is function-local.
+    //
+    // zshrs keeps `pparams` in `builtin::PPARAMS` and leaves this
+    // node's `u_arr` empty, so the generic `u_arr` read below returned
+    // an empty prior array: `f() { argv+=(X) }; f a b` stored just
+    // `(X)`, discarding the positionals, and — because `u_arr` is a
+    // process-global slot with no per-call swap — each later call
+    // appended to the PREVIOUS call's leftovers (`$#` counted
+    // 1, 2, 3 … across three identical calls where zsh counts 4 every
+    // time). Read the live vector instead; the node is PM_SPECIAL |
+    // PM_ARRAY and is never unset (c:430), so the append always fires
+    // and needs none of the `existed` / PM_UNSET gates below.
+    if (flags & ASSPM_AUGMENT) != 0 && matches!(name, "argv" | "@" | "*") {
+        // c:3514 `arrlen(v->pm->gsu.a->getfn(v->pm))` → c:4231 arrvargetfn.
+        let mut appended: Vec<String> = PPARAMS.lock().map(|p| p.clone()).unwrap_or_default();
+        appended.extend(val); // c:3528 setarrvalue writes past the tail
+        val = appended;
+    }
     // c:3570-3585 — ASSPM_AUGMENT on an existing PM_ARRAY target:
     // append rather than replace. C bumps v->start to arrlen(existing)
     // and v->end to start+1 so setarrvalue writes past the tail.
     // zshrs writes through pm.u_arr without the value struct, so do
     // the equivalent here: prepend the existing array elements to the
     // new val so the final stored vec is [old..., new...].
-    if (flags & ASSPM_AUGMENT) != 0
+    else if (flags & ASSPM_AUGMENT) != 0
         && existed
         && (prior_flags as u32 & PM_ARRAY) != 0
         && (prior_flags as u32 & PM_UNSET) == 0
