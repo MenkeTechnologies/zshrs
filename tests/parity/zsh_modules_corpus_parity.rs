@@ -360,14 +360,19 @@ print "a:[${H[-a]}] b:[${H[-b]}]""###,
 
     /// zparseopts -K keep, GNU long, no =.
     ///
-    /// The two long-option specs are introduced with `--`. Upstream zsh
-    /// moved zparseopts's own flags onto the generic builtin option parser
-    /// (`Src/Modules/zutil.c:2150`, optstring `"a:A:DEFGKMn:v:"`), so a bare
-    /// `zparseopts -file:=ff` is now rejected by `Src/builtin.c:385-390` as
-    /// `bad option: -f` before the builtin runs — exactly what upstream's
-    /// Test/V12zparseopts.ztst "zparseopts long-option spec guarding" pins.
-    /// `--` (or `-`) is the spelling that reaches the spec parser on both
-    /// that revision and the zsh 5.9.2 this harness diffs against.
+    /// The two long-option specs are deliberately UNGUARDED (`-file:=ff`,
+    /// not `-- -file:=ff`). zsh 5.9.2 — the revision this harness diffs
+    /// against, and the one zshrs reports in `$ZSH_VERSION` — falls through
+    /// to the description parser on any leading word its own flag scan does
+    /// not recognise (`src/zsh/Src/Modules/zutil.c:1859-1863`, the
+    /// `default: args--; o = NULL;` arm), so both sides read `-file:=ff` as
+    /// a spec for `--file`. zsh 5.9.999.3-test rejects it as
+    /// `bad option: -f` at `Src/builtin.c:385-390` instead, because upstream
+    /// commit 88d51a2400 gave zparseopts the bintab optstring
+    /// `"a:A:DEFGKMn:v:"` (`Src/Modules/zutil.c:2150`); its
+    /// Test/V12zparseopts.ztst "zparseopts long-option spec guarding" pins
+    /// that. zshrs takes the 5.9.2 side — see `LONG_SPEC_NEEDS_GUARD` in
+    /// `src/ported/modules/zutil.rs` — so this asserts it unguarded.
     #[test]
     fn zparseopts_K_long() {
         assert_parity(
@@ -377,11 +382,55 @@ set -- foo
 zparseopts -K -a arr x
 print -l $arr
 set -- --file data.txt
-zparseopts -- -file:=ff
+zparseopts -file:=ff
 printf "[%s]\n" "${ff[@]}"
 set -- --foo=bar
-zparseopts -- -foo:=gg
+zparseopts -foo:=gg
 printf "[%s]\n" "${gg[@]}""###,
+        );
+    }
+
+    /// Bare (unguarded) GNU-style long specs following `-D -E`.
+    ///
+    /// This is the shape zinit uses for its own long options:
+    /// `zparseopts -D -E -move=opt_move -move2=opt_move2 ...`. Under zsh
+    /// 5.9.2 the flag scan stops at `-move=opt_move` (the `default:` arm at
+    /// `src/zsh/Src/Modules/zutil.c:1859-1863`) and every remaining word is
+    /// a spec; under zsh 5.9.999.3-test the generic parser eats it first and
+    /// dies with `bad option: -m` (`Src/builtin.c:385-390`). zshrs targets
+    /// 5.9.2 — `LONG_SPEC_NEEDS_GUARD` in `src/ported/modules/zutil.rs`.
+    ///
+    /// `-norm`/`-nobkp`/`-auto` are only read as specs because the scan has
+    /// already stopped at `-move=...`: on their own, `n` and `a` ARE
+    /// zparseopts flags that take an argument, and both revisions would
+    /// consume them as such.
+    #[test]
+    fn zparseopts_bare_long_spec_zinit_shape() {
+        assert_parity(
+            r###"zmodload zsh/zutil
+set -- --auto --norm keep1 --move2 keep2
+zparseopts -D -E -move=opt_move -move2=opt_move2 -norm=opt_norm \
+        -auto=opt_auto -nobkp=opt_nobkp
+print -r "ret=$? move=($opt_move) move2=($opt_move2) norm=($opt_norm) auto=($opt_auto) nobkp=($opt_nobkp) argv=($*)""###,
+        );
+    }
+
+    /// A mid-word unknown letter rewinds the WHOLE leading word to the spec
+    /// parser instead of applying the flag letters before it.
+    ///
+    /// `-Dx` is the spec `-Dx` (matching `--Dx`), not `-D` plus a stray `x`
+    /// — zsh 5.9.2 reaches the `default:` arm only after
+    /// `case 'D': if (o[2]) { args--; o = NULL; break; }`
+    /// (`src/zsh/Src/Modules/zutil.c:1764-1768`), which un-consumes the word
+    /// without having set `del`. Both revisions agree here; it is the
+    /// rollback in zshrs's scan that has to be right.
+    #[test]
+    fn zparseopts_unknown_letter_rewinds_whole_word() {
+        assert_parity(
+            r###"zmodload zsh/zutil
+set -- --Dx keep
+zparseopts -E -a arr -Dx
+print -r "arr=($arr) argv=($*)""###,
         );
     }
 
