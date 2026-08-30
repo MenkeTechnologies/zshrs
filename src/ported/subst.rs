@@ -9300,107 +9300,28 @@ pub fn paramsubst(
                     // `n` fell through to `unwrap_or(len)`, returning
                     // the full array. Bug #298. Same shape as the
                     // scalar slice arm above (subst.rs:4826-4840).
+                    // The flag-group half of this decision (search vs math,
+                    // the r→i / R→I direction remap, the `flagerr` rewind) is
+                    // shared with the CHAINED-subscript arm below, so it lives
+                    // once in `subscript_escape::subscript_bound_classify`
+                    // rather than being written out at both call sites.
                     let eval_idx = |expr: &str, default: i64| -> i64 {
-                        // c:Src/params.c getindex — a slice bound with a
-                        // search-flag subscript (`(r)pat`/`(i)pat`) yields
-                        // the INDEX of the match (the *inv/*w path), not
-                        // the value: `${a[(r)3,(r)5]}` slices between the
-                        // matched positions. getarg returns the value for
-                        // r/R but the index for i/I. r is a FORWARD
-                        // first-match (c:1411 down=0), R a REVERSE
-                        // last-match (c:1416 down=1), so map r→i / R→I to
-                        // get the matching index in the SAME direction
-                        // (preserving forward/reverse for duplicate
-                        // matches and the no-match returns: forward
-                        // no-match → len+1, reverse → 0).
-                        let t = expr.trim();
-                        // Effective bound text after a leading `(...)` flag.
-                        let mut effective = t;
-                        if let Some(close) = t.find(')') {
-                            if t.starts_with('(') {
-                                let flags = &t[1..close];
-                                if flags
-                                    .chars()
-                                    .any(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K'))
-                                {
-                                    // Search flag → matched INDEX via getarg
-                                    // (r/R are reverse → map to I for index).
-                                    let mapped: String = flags
-                                        .chars()
-                                        .map(|c| match c {
-                                            'r' => 'i',
-                                            'R' => 'I',
-                                            // On a non-hash, k/K are r/R
-                                            // (c:1400/1405 gate only `keymatch`
-                                            // on ishash), so they need the same
-                                            // value→index remap to serve as a
-                                            // range BOUND. Bug #1050.
-                                            'k' => 'i',
-                                            'K' => 'I',
-                                            o => o,
-                                        })
-                                        .collect();
-                                    let new_sub = format!("({}){}", mapped, &t[close + 1..]);
-                                    if let Some(crate::ported::params::getarg_out::Value(v)) =
-                                        crate::ported::params::getarg(
-                                            &new_sub,
-                                            Some(&arr_clone),
-                                            None,
-                                            None,
-                                        )
-                                    {
-                                        if let Ok(n) = v.to_str().trim().parse::<i64>() {
-                                            return n;
-                                        }
-                                    }
-                                } else if flags.chars().next().is_some_and(|c| {
-                                    // c:Src/params.c:1392-1476 — the flag
-                                    // switch's cases, verbatim.
-                                    matches!(
-                                        c,
-                                        'r' | 'R'
-                                            | 'k'
-                                            | 'K'
-                                            | 'i'
-                                            | 'I'
-                                            | 'w'
-                                            | 'f'
-                                            | 'e'
-                                            | 'n'
-                                            | 'b'
-                                            | 'p'
-                                            | 's'
-                                    )
-                                }) {
-                                    // Separator/word flag (`(s.X.)` etc.) is a
-                                    // no-op for an integer slice bound (c:#83);
-                                    // strip it and parse the remainder.
-                                    effective = &t[close + 1..];
-                                }
-                                // c:Src/params.c:1477-1482 — anything else is
-                                // NOT a flag group. C's flag switch falls to
-                                //     default:
-                                //       flagerr:
-                                //         num = 1; word = rev = ind = down =
-                                //         keymatch = 0; sep = NULL;
-                                //         s = *str - 1;      /* rewind */
-                                // so an unknown flag char REWINDS to before the
-                                // `(` and the group is re-read as MATH. That is
-                                // why `${arr[(zz)1]}` reports `bad math
-                                // expression` rather than a flag error.
-                                //
-                                // Stripping unconditionally deleted a
-                                // PARENTHESISED range bound: `${arr[(x), 4]}`
-                                // left `effective` empty, so the bound fell back
-                                // to the default 1 and the slice became 1..4
-                                // (`a b c d`) where zsh gives `b c d`. Leaving
-                                // `effective = t` hands `(x)` to mathevali
-                                // below — C's behaviour. Only the RANGE form was
-                                // affected: a single `${arr[(x)]}` takes a
-                                // different arm and already evaluated as math.
-                            }
-                        }
-                        let expanded = singsub(effective);
+                        // c:Src/params.c:1729-1760 — a bound whose flag group
+                        // ran a pattern search resolves to the match INDEX.
+                        let effective = match crate::subscript_escape::subscript_bound_classify(
+                            expr, &arr_clone,
+                        ) {
+                            crate::subscript_escape::SubscriptBound::Search(n, _) => return n,
+                            crate::subscript_escape::SubscriptBound::Math(m) => m,
+                        };
+                        // c:Src/params.c:1597 `r = mathevalarg(s, &s)` — the
+                        // subscript expression is routed through singsub then
+                        // mathevali (math.c:367), so bare identifier names like
+                        // `n` and arith expressions like `n+1` resolve. Plain
+                        // `parse::<i64>` only accepts digit literals — bare `n`
+                        // fell through to `unwrap_or(len)`, returning the full
+                        // array. Bug #298.
+                        let expanded = singsub(&effective);
                         if let Ok(n) = expanded.trim().parse::<i64>() {
                             return n;
                         }
@@ -10725,10 +10646,21 @@ pub fn paramsubst(
             // decides its `->prompt` branch on exactly that expression, which is
             // why `print -<TAB>` offered prompt escapes instead of options.
             // Normalize both token forms here, same as the Dash token above.
+            // c:Src/lex.c:1129 — `,` lexes to the `Comma` token (c:Src/zsh.h:181)
+            // in every context where brace expansion could still apply, which
+            // includes the body of an UNQUOTED nested expansion: the inner
+            // `${a[2][3,4]}` of `r=${${a[2][3,4]}}` reaches here as `3\u{9a}4`
+            // while the same text inside `"…"` (or at top level) arrives with a
+            // literal `,`. `split_once(',')` therefore missed the range, the
+            // arm fell through to the single-index parse, that parse failed and
+            // defaulted to 1 — so `r=${${a[2][3,4]}}` returned the element's
+            // FIRST CHARACTER instead of characters 3..4. Normalize alongside
+            // the Dash/Inpar/Outpar tokens above.
             let s2_norm = s2
                 .replace('\u{9b}', "-")
                 .replace(crate::ported::zsh_h::Inpar, "(")
-                .replace(crate::ported::zsh_h::Outpar, ")");
+                .replace(crate::ported::zsh_h::Outpar, ")")
+                .replace(crate::ported::zsh_h::Comma, ",");
             let s2 = s2_norm.as_str();
             // c:Src/params.c getindex chain — when the FIRST subscript is an
             // array SLICE (`[lo,hi]`, comma present) on an array, it yields a
@@ -10743,8 +10675,10 @@ pub fn paramsubst(
                 crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
             });
             if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
-                // s1 (the first subscript) can carry the Dash token too.
-                let s1 = s1_raw.replace('\u{9b}', "-");
+                // s1 (the first subscript) can carry the Dash and Comma tokens too.
+                let s1 = s1_raw
+                    .replace('\u{9b}', "-")
+                    .replace(crate::ported::zsh_h::Comma, ",");
                 let parse_idx = |t: &str, dflt: i64| -> i64 {
                     t.trim()
                         .parse()
@@ -10752,9 +10686,40 @@ pub fn paramsubst(
                         .or_else(|| crate::ported::math::mathevali(t.trim()).ok())
                         .unwrap_or(dflt)
                 };
-                let (lo1_s, hi1_s) = s1.split_once(',').unwrap();
-                let lo1 = parse_idx(lo1_s, 1);
-                let hi1 = parse_idx(hi1_s, full.len() as i64);
+                // c:Src/params.c:2058/2133 — BOTH range bounds go through
+                // `getarg`, so either may be a pattern SEARCH rather than
+                // arithmetic (`${a[1,(r)pat]}`, `${a[(r)pat,4]}`). `parse_idx`
+                // cannot read `(r)pat`: it fell back to the 1 / len defaults,
+                // so the chain silently sliced the WHOLE array and the second
+                // subscript searched all of it. Route each bound through the
+                // same classifier the single-subscript slice arm uses.
+                let bound_idx = |t: &str, dflt: i64| -> (i64, bool) {
+                    match crate::subscript_escape::subscript_bound_classify(t, &full) {
+                        crate::subscript_escape::SubscriptBound::Search(n, wv) => (n, wv),
+                        crate::subscript_escape::SubscriptBound::Math(m) => (parse_idx(&m, dflt), false),
+                    }
+                };
+                let (lo1_s, hi1_s) = match s1.split_once(',') {
+                    Some(pair) => pair,
+                    // c:Src/params.c:1533-1536 decided this WAS a range on the
+                    // unexpanded text; if the comma is not in the expanded text
+                    // there is nothing to split, so treat it as `lo,lo`.
+                    None => (s1.as_str(), s1.as_str()),
+                };
+                let (lo1, lo_wantvals) = bound_idx(lo1_s, 1);
+                let (hi1, hi_wantvals) = bound_idx(hi1_s, full.len() as i64);
+                // c:Src/params.c:1523 `v->isarr |= SCANPM_WANTVALS` — raised by
+                // a `r`/`R`/`k`/`K` bound. c:Src/subst.c:2896 `v->isarr = isarr`
+                // hands the WHOLE scanflags mask (not just a 0/1 arrayness) to
+                // the temporary Value the chained subscript indexes, so the bit
+                // survives; c:Src/params.c:1515 `else if (v->isarr &
+                // SCANPM_WANTVALS) *inv = 0;` then makes a chained `(i)`/`(I)`
+                // take getindex's NON-inv arm (c:2118-2163) — start = r - 1,
+                // scanflags cleared because `com` is 0 — i.e. return the
+                // ELEMENT at the match, not the index. That is why
+                // `a=(A b C d); ${a[1,(r)d][(I)C]}` is `C` in zsh and
+                // `${a[1,4][(I)C]}` is `3`.
+                let wantvals_c1523 = lo_wantvals || hi_wantvals;
                 let subarr = crate::ported::params::getarrvalue(&full, lo1, hi1);
                 // Flag subscript on the sub-array: `${a[lo,hi][(i|I|r|R)pat]}`.
                 // (i/I) return the 1-based index of the first/last matching
@@ -10804,7 +10769,24 @@ pub fn paramsubst(
                                     .find(|&k| is_match(&subarr[k]))
                                     .map_or(n + 1, |k| k + 1)
                             };
-                            Some(idx.to_string())
+                            if wantvals_c1523 {
+                                // c:Src/params.c:1515 — WANTVALS forces `*inv`
+                                // to 0, so getindex's non-inv arm turns the
+                                // match index into `start = idx - 1` and reads
+                                // the ELEMENT (c:2151-2163 then c:Src/subst.c:2944
+                                // getstrvalue). Both miss returns fall off the
+                                // array (0 → start -1 via VALFLAG_EMPTY at
+                                // c:2141-2150, len+1 → past the end) and yield
+                                // the empty string.
+                                Some(
+                                    idx.checked_sub(1)
+                                        .and_then(|k| subarr.get(k))
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                )
+                            } else {
+                                Some(idx.to_string())
+                            }
                         } else {
                             // (r) first matching value; (R) last; empty if none.
                             let hit = if want_rr {
@@ -18269,7 +18251,23 @@ pub fn paramsubst(
         // which ignored that, so `a=(a b); print -rl -- "${(@j:-:)a}"`
         // splatted `a` and `b` where zsh prints the single word `a-b`.
         let mut sep_forced_join = false; // c:3916
-        if let Some(ref sp) = spsep {
+        // c:Src/subst.c:3913 — `int force_split = !ssub && (spbreak || spsep);`
+        // where `ssub` is c:1759 `(pf_flags & PREFORK_SINGLE)`. A scalar
+        // assignment RHS is preforked with PREFORK_SINGLE (c:Src/exec.c:2546
+        // `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN,
+        // …)`), so the (s:X:)/(f)/(0) split at c:3921 NEVER runs there and the
+        // value stays exactly as it was: `v=abcdef; r=${(s.c.)v[2,-1]}` is
+        // zsh's `bcdef`, not the split-then-rejoined `b def`. The later
+        // c:4226 `if (isarr && ssub)` collapse cannot recover that — it joins
+        // with IFS, which would give `b def` — so the split has to be skipped
+        // here, at C's gate.
+        let force_split_c3913 = (pf_flags & PREFORK_SINGLE) == 0; // c:3913
+        let spsep_split = if force_split_c3913 {
+            spsep.clone()
+        } else {
+            None
+        };
+        if let Some(ref sp) = spsep_split {
             // c:3950
             // Signal to the nested sub-expression reader (subst.rs:5041)
             // that THIS paramsubst is a split — so `${${(s.:.)v}}` drops
@@ -19712,7 +19710,23 @@ pub fn paramsubst(
         // re-fetched the ORIGINAL array by name and quoted element-by-element,
         // so `a=(a b); print -rl -- ${(j:-:q)a}` printed `a b` (two words,
         // separator lost) where zsh prints the single word `a-b`.
-        let joined_scalar_c3907 = dq_collapsed || sep_forced_join; // c:3907
+        // c:Src/subst.c:3912-3918 — `ssub` (c:1759 `pf_flags & PREFORK_SINGLE`)
+        // is the THIRD way into that same `isarr = 0`:
+        //     if (ssub || spbreak || spsep || sep || quoted_array_with_offset) {
+        //         if (isarr || quoted_array_with_offset) {
+        //             if (nojoin == 0 || sep) {
+        //                 val = sepjoin(aval, sep, 1);
+        //                 isarr = 0;
+        // A scalar-assignment RHS is preforked with PREFORK_SINGLE
+        // (c:Src/exec.c:2546), so the array is joined to one scalar BEFORE the
+        // c:4041 quote block and the quoting runs ONCE on the joined string:
+        // `a=(x "y z"); v=${(qq)a}` is zsh's `'x y z'`, not the per-element
+        // `'x' 'y z'`. `(@)` (nojoin == 2, c:2165) is the documented exception —
+        // it keeps the array, which is why `v=${(@qq)a}` DOES quote per element.
+        // A `[@]`/`[*]` subscript is NOT an exception: it sets SCANPM_ISVAR_AT
+        // (isarr = -1) but leaves nojoin at 0, so `v=${(qq)a[@]}` joins too.
+        let ssub_join_c3903 = (pf_flags & PREFORK_SINGLE) != 0 && nojoin != 2; // c:3916
+        let joined_scalar_c3907 = dq_collapsed || sep_forced_join || ssub_join_c3903; // c:3907
         if quotemod < 0 {
             // c:4030 if (quotemod) — negative arm (Q)
             if joined_scalar_c3907 {

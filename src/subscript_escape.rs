@@ -386,3 +386,117 @@ pub fn subscript_requote_for_assign(k: &str) -> std::borrow::Cow<'_, str> {
     }
     std::borrow::Cow::Owned(out)
 }
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// Classification of ONE subscript operand — a range bound (`${a[lo,hi]}`)
+/// or a chained subscript (`${a[lo,hi][SUB]}`) — whose text may open with a
+/// `(...)` flag group.
+///
+/// C has no such function: `getarg` (c:Src/params.c:1367) parses the flags,
+/// runs the search and returns the index all in one pass, writing its
+/// side-effects back through `Value *v` / `int *inv` out-parameters. zshrs's
+/// `ported::params::getarg` returns the matched ELEMENT for `r`/`R` and the
+/// INDEX for `i`/`I` (see `getarg_out`), and it has no `Value` to record
+/// `v->isarr |= SCANPM_WANTVALS` in — so the two facts every bound consumer
+/// needs (the match POSITION and whether WANTVALS was raised) are recovered
+/// here in one place instead of being re-derived at each call site.
+pub enum SubscriptBound {
+    /// c:Src/params.c:1729-1760 — the flag group ran a pattern SEARCH.
+    /// `.0` is getarg's 1-based match index `r` (c:1758 returns 0 for a
+    /// REVERSE miss, c:1751 `len + 1` for a FORWARD miss); `.1` records
+    /// c:1523 `v->isarr |= SCANPM_WANTVALS`, raised by `r`/`R`/`k`/`K`
+    /// when the `i`/`I` index flag (`ind`) is off.
+    Search(i64, bool),
+    /// c:Src/params.c:1597 `r = mathevalarg(s, &s)` — no search ran; the
+    /// payload is the text to evaluate as arithmetic. A recognised but
+    /// non-search flag group (`(s.X.)`, `(w)`, …) has been stripped; an
+    /// UNKNOWN group is left in place because c:1477-1483's `flagerr` arm
+    /// rewinds to before the `(` and re-reads the whole group as math.
+    Math(String),
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// Classify one subscript operand against `arr` — see [`SubscriptBound`].
+///
+/// c:Src/params.c getindex — a bound with a search-flag subscript
+/// (`(r)pat`/`(i)pat`) yields the INDEX of the match (the `*inv`/`*w` path),
+/// not the value: `${a[(r)3,(r)5]}` slices between the matched positions.
+/// `getarg` returns the value for `r`/`R` but the index for `i`/`I`. `r` is a
+/// FORWARD first-match (c:1411 `down = 0`), `R` a REVERSE last-match (c:1416
+/// `down = 1`), so map `r`→`i` / `R`→`I` to get the matching index in the SAME
+/// direction — preserving forward/reverse for duplicate matches and the
+/// no-match returns (forward no-match → len+1, reverse → 0).
+pub fn subscript_bound_classify(t: &str, arr: &[String]) -> SubscriptBound {
+    let t = t.trim();
+    let close = match t.find(')') {
+        Some(c) if t.starts_with('(') => c,
+        _ => return SubscriptBound::Math(t.to_string()),
+    };
+    let flags = &t[1..close];
+    if flags
+        .chars()
+        .any(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K'))
+    {
+        // Search flag → matched INDEX via getarg (r/R are value-returning →
+        // map to the i/I index form in the same direction).
+        let mapped: String = flags
+            .chars()
+            .map(|c| match c {
+                'r' => 'i',
+                'R' => 'I',
+                // On a non-hash, k/K are r/R (c:1400/1405 gate only
+                // `keymatch` on ishash), so they need the same value→index
+                // remap to serve as a range BOUND. Bug #1050.
+                'k' => 'i',
+                'K' => 'I',
+                o => o,
+            })
+            .collect();
+        // c:Src/params.c:1516-1531 — the `*inv` decision. `ind` is set only
+        // by `i`/`I` (c:1420/1424); `rev` by `r`/`R`/`k`/`K`. With `ind` off
+        // and `rev` on, c:1523 raises `v->isarr |= SCANPM_WANTVALS`, and that
+        // bit rides on the Value into any CHAINED subscript (c:Src/subst.c:2896
+        // `v->isarr = isarr`, where `isarr` is the whole scanflags mask), where
+        // c:1515 `else if (v->isarr & SCANPM_WANTVALS) *inv = 0;` makes a
+        // later `(i)`/`(I)` return the ELEMENT instead of the index.
+        let ind = flags.contains('i') || flags.contains('I');
+        let wantvals = !ind;
+        let new_sub = format!("({}){}", mapped, &t[close + 1..]);
+        if let Some(crate::ported::params::getarg_out::Value(v)) =
+            crate::ported::params::getarg(&new_sub, Some(arr), None, None)
+        {
+            if let Ok(n) = v.to_str().trim().parse::<i64>() {
+                return SubscriptBound::Search(n, wantvals);
+            }
+        }
+        return SubscriptBound::Math(t.to_string());
+    }
+    if flags.chars().next().is_some_and(|c| {
+        // c:Src/params.c:1392-1476 — the flag switch's cases, verbatim.
+        matches!(
+            c,
+            'r' | 'R' | 'k' | 'K' | 'i' | 'I' | 'w' | 'f' | 'e' | 'n' | 'b' | 'p' | 's'
+        )
+    }) {
+        // Separator/word flag (`(s.X.)` etc.) is a no-op for an integer
+        // slice bound (c:#83); strip it and parse the remainder.
+        return SubscriptBound::Math(t[close + 1..].to_string());
+    }
+    // c:Src/params.c:1477-1482 — anything else is NOT a flag group. C's flag
+    // switch falls to
+    //     default:
+    //       flagerr:
+    //         num = 1; word = rev = ind = down = keymatch = 0; sep = NULL;
+    //         s = *str - 1;      /* rewind */
+    // so an unknown flag char REWINDS to before the `(` and the group is
+    // re-read as MATH. That is why `${arr[(zz)1]}` reports `bad math
+    // expression` rather than a flag error.
+    //
+    // Stripping unconditionally deleted a PARENTHESISED range bound:
+    // `${arr[(x), 4]}` left the text empty, so the bound fell back to the
+    // default 1 and the slice became 1..4 (`a b c d`) where zsh gives
+    // `b c d`. Handing `(x)` to mathevali below is C's behaviour. Only the
+    // RANGE form was affected: a single `${arr[(x)]}` takes a different arm
+    // and already evaluated as math.
+    SubscriptBound::Math(t.to_string())
+}
