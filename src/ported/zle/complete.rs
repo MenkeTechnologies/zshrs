@@ -2432,20 +2432,50 @@ pub fn get_unambig(pm: *mut param) -> String {
 }
 
 /// Direct port of `zlong get_unambig_curs(UNUSED(Param pm))` from
-/// `Src/Zle/complete.c:1436`. C body: `unambig_data(&c, NULL,
+/// `Src/Zle/complete.c:1436`. C body: `int c; unambig_data(&c, NULL,
 /// NULL); return c;` — the cursor position within the unambiguous
-/// prefix string. With the Cline-tree cursor-tracking pipeline
-/// substrate-deferred, derive an equivalent from the LCP length
-/// (chars) which matches the simple-case where every match
-/// agrees up through that position.
+/// prefix string.
+///
+/// `unambig_data` gets it from `cline_str`'s `csp` out-param
+/// (`Src/Zle/compresult.c:535-536` — `cline_str(line, 0, &ccache, list)`,
+/// set at c:474-475 from the mid / brace / prefix-missing /
+/// suffix-missing / diff cursor computed at c:460-462), then hands back
+/// `ccache + 1` (c:563-564).
+///
+/// The port used to substitute the LENGTH of the unambiguous string,
+/// which is only right when the divergence sits at its end: for zsh's own
+/// `Test/Y02compmatch.ztst` `r:|.=**` sequence (line 752-758) zsh reports
+/// 4 and 2 where the length-derived value gave 10 and 11.
 #[allow(unused_variables)]
 pub fn get_unambig_curs(pm: *mut param) -> i64 {
     // c:1436
-    // c:1438 — `unambig_data(&c, NULL, NULL); return c`. When ainfo->line
-    // is populated, the cursor offset is the length of the cline_str
-    // output (in chars) since our cline_str doesn't currently track the
-    // divergence-position cursor — full mid/pm/sm/d tracking lives in the
-    // C ins=0 csp pass.
+    // c:1438-1441 — `unambig_data(&c, NULL, NULL); return c;`
+    // c:compresult.c:535/546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
+    let line = {
+        let a = compcore::ainfo
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|a| (a.count, a.line.clone())));
+        match a {
+            Some((count, l)) if count != 0 => l,
+            _ => compcore::fainfo
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().and_then(|f| f.line.clone())),
+        }
+    };
+    if line.is_some() {
+        // c:compresult.c:535-536 — the ins=0 render, capturing `ccache`.
+        let mut ccache = 0i32;
+        let s = compresult::cline_str(line, 0, Some(&mut ccache), None).unwrap_or_default();
+        if !s.is_empty() {
+            return ccache as i64 + 1; // c:compresult.c:564
+        }
+    }
+    // Rust-only fallback (no `ainfo->line`): the divergence point of the
+    // plain longest common prefix is its end.
     let prefix = get_unambig(std::ptr::null_mut());
     // c:compresult.c:564 — `if (cp) *cp = ccache + 1;`. The value is
     // ONE-BASED: `$compstate[unambiguous_cursor]` is "the index of the
@@ -2699,27 +2729,61 @@ const COMPKPARAMS: &[compparam] = &[
 ];
 
 /// Direct port of `char *get_unambig_pos(UNUSED(Param pm))` from
-/// `Src/Zle/complete.c:1447`. C body: `unambig_data(NULL, &p, NULL);
-/// return p` — the colon-separated divergence-position list (one
-/// number per CLF_DIFF / CLF_MISS Cline node).
+/// `Src/Zle/complete.c:1447`. C body: `char *p; unambig_data(NULL, &p,
+/// NULL); return p;` — the colon-separated divergence-position list, one
+/// entry per CLF_DIFF / CLF_MISS node of `ainfo`'s cline tree, measured
+/// relative to the unambiguous string.
 ///
-/// When `ainfo.line` is populated, returns the cline_str output
-/// length as the single-divergence position (the common-case);
-/// otherwise falls back to the LCP-length-derived position over the
-/// live `amatches` strings.
+/// `unambig_data` (`Src/Zle/compresult.c:532-541`) produces that list by
+/// running `cline_str(line, 0, &ccache, list)` with a live position list
+/// and colon-joining it through `build_pos_string`:
+/// ```c
+///     LinkList list = newlinklist();
+///     scache = cline_str((ainfo->count ? ainfo->line : fainfo->line),
+///                        0, &ccache, list);
+///     pcache = empty(list) ? ztrdup("") : build_pos_string(list);
+/// ```
+/// Both calls are made here rather than through `unambig_data` because
+/// the Rust `unambig_data` in compresult.rs is a differently-shaped
+/// longest-common-prefix helper, not this function (its `mnum`-keyed
+/// three-string cache is not modelled; the renders below are equivalent,
+/// just uncached).
 #[allow(unused_variables)]
 pub fn get_unambig_pos(pm: *mut param) -> String {
     // c:1447
-    if let Some(s) = compcore::ainfo
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
-        .map(|l| compresult::cline_str(Some(l), 0, None, None).unwrap_or_default())
-        .filter(|s| !s.is_empty())
-    {
-        return format!("{}", s.chars().count());
+    // c:compresult.c:535/546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
+    let line = {
+        let a = compcore::ainfo
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|a| (a.count, a.line.clone())));
+        match a {
+            Some((count, l)) if count != 0 => l,
+            _ => compcore::fainfo
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().and_then(|f| f.line.clone())),
+        }
+    };
+    if line.is_some() {
+        // c:compresult.c:532 — `LinkList list = newlinklist();`
+        let mut list: Vec<i32> = Vec::new();
+        // c:compresult.c:535-536 — the ins=0 render, collecting positions.
+        let s = compresult::cline_str(line, 0, None, Some(&mut list)).unwrap_or_default();
+        if !s.is_empty() {
+            // c:compresult.c:538-541 — `empty(list) ? "" : build_pos_string(list)`.
+            return if list.is_empty() {
+                String::new()
+            } else {
+                compresult::build_pos_string(&list)
+            };
+        }
     }
+    // No `ainfo->line` to render (a state C never reaches). Fall back to
+    // the single point where the plain longest common prefix over the
+    // visible matches stops, and only when some match continues past it.
     let strs: Vec<String> = compcore::amatches
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
@@ -2744,31 +2808,71 @@ pub fn get_unambig_pos(pm: *mut param) -> String {
 }
 
 /// Direct port of `char *get_insert_pos(UNUSED(Param pm))` from
-/// `Src/Zle/complete.c:1458`. C body: `unambig_data(NULL, NULL, &p);
-/// return p;` — the position-string for the unambiguous-prefix
-/// insert positions (where the cursor sits after the prefix is
-/// inserted, accounting for braces and original-string positions).
+/// `Src/Zle/complete.c:1458`. C body: `char *p; unambig_data(NULL, NULL,
+/// &p); return p;`.
 ///
-/// c:compresult.c:159-161 spells out how the `ins=2` pass differs from
-/// the `ins=0` pass `get_unambig_pos` uses: "If ins is two, csp and posl
-/// contain **real command line positions** (including braces)" — i.e.
-/// the same divergence points, but measured from the start of the LINE
-/// rather than from the start of the unambiguous string. So each
-/// position is shifted by `wb`, the line offset where the word being
-/// completed begins (`Src/Zle/compcore.c` / lex.c:120).
+/// `Src/Zle/compresult.c:159-161` states what separates this list from
+/// `get_unambig_pos`'s: "If ins is two, csp and posl contain **real
+/// command line positions** (including braces)". So `unambig_data` runs
+/// `cline_str` a SECOND time over the same cline tree, with `ins == 2`,
+/// and builds a separate position list from that walk
+/// (`Src/Zle/compresult.c:543-551`):
+/// ```c
+///     list = newlinklist();
+///     zsfree(cline_str((ainfo->count ? ainfo->line : fainfo->line),
+///                      2, NULL, list));
+///     icache = empty(list) ? ztrdup("") : build_pos_string(list);
+/// ```
+/// The returned string is discarded; only the positions matter. The
+/// `ins == 2` walk differs from `ins == 0` in `padd`
+/// (`Src/Zle/compresult.c:170` — `padd = (ins ? wb - ocs : -ocs)`) and in
+/// re-inserting the `brbeg`/`brend` braces (c:183-209, 237-250, 265-279),
+/// which shifts every recorded position (c:445-454).
 ///
-/// This port previously returned `get_unambig_pos` verbatim, i.e. left
-/// the shift out: for `ls -<TAB>` zsh reports `4` (word starts at
-/// column 3, divergence at offset 1) against this port's `1`. Only the
-/// `wb == 0` case — a word at the very start of the line, e.g.
-/// `_pr<TAB>` — agreed. The brace-reinsertion offsets the C pass also
-/// folds in still need the Cline-tree walk and are not modelled here.
+/// The previous port derived this from `get_unambig_pos` by adding `wb`
+/// to each element, and `get_unambig_pos` only ever produced a single
+/// number, so `insert_positions` collapsed to its LAST element: zsh's own
+/// `Test/Y02compmatch.ztst` expects `{4:5:6}` (line 667) and `{9:27}`
+/// (line 714) where this reported `{6}` and `{27}`.
 #[allow(unused_variables)]
 pub fn get_insert_pos(pm: *mut param) -> String {
     // c:1458
+    // c:compresult.c:546 — `(ainfo->count ? ainfo->line : fainfo->line)`.
+    let line = {
+        let a = compcore::ainfo
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|a| (a.count, a.line.clone())));
+        match a {
+            Some((count, l)) if count != 0 => l,
+            _ => compcore::fainfo
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().and_then(|f| f.line.clone())),
+        }
+    };
+    if line.is_some() {
+        // c:compresult.c:545 — `list = newlinklist();`
+        let mut list: Vec<i32> = Vec::new();
+        // c:compresult.c:546-547 — the ins=2 render; the string is dropped.
+        let s = compresult::cline_str(line, 2, None, Some(&mut list));
+        if s.is_some() {
+            // c:compresult.c:548-551 — `empty(list) ? "" : build_pos_string(list)`.
+            return if list.is_empty() {
+                String::new()
+            } else {
+                compresult::build_pos_string(&list)
+            };
+        }
+    }
+    // No `ainfo->line`: shift the `get_unambig_pos` fallback by `wb`, the
+    // line offset where the word being completed begins — the constant
+    // part of the `ins == 2` walk's `padd` (compresult.c:170).
     let wb = compcore::WB.load(Ordering::Relaxed).max(0) as i64;
     get_unambig_pos(std::ptr::null_mut())
-        .split(':') // c:build_pos_string joins with ':'
+        .split(':') // c:489 build_pos_string joins with ':'
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse::<i64>().ok())
         .map(|p| (p + wb).to_string())
