@@ -66,6 +66,7 @@ mod functions_hashtable_parity;
 mod fuzz_discovered_parity;
 mod getopts_deep_parity;
 mod glob_numeric_parity;
+mod history_expansion_parity;
 mod glob_parity;
 mod glob_qualifiers_real_parity;
 mod here_string_parity;
