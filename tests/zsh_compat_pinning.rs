@@ -511,3 +511,42 @@ fn fpath_falls_back_to_defaults_when_env_is_absent() {
         entries
     );
 }
+
+/// c:Src/lex.c:523-527 — `cmd_or_math`'s unget loop is
+/// `while (lexbuf.len > oldlen && !(errflag & ERRFLAG_ERROR))`, and
+/// C's `lexbuf.len--` decrements unconditionally.
+///
+/// The port dropped the errflag term and relied on `pop()` yielding a
+/// char, so a buffer reporting length above `oldlen` that popped
+/// nothing spun forever. `(( $+functions[a[b] ))` -- an unbalanced `[`
+/// in a math subscript, which zsh rejects with "invalid subscript" --
+/// hung the LEXER, so any file containing one could never be parsed.
+/// That is real generated code: `_uu-coreutils` in
+/// zsh-more-completions defines `_uu-coreutils__[_commands` for
+/// coreutils' `[` utility, and it stalled `--prewarm-autoloads` (and
+/// therefore `zshrs-recorder`) indefinitely.
+///
+/// Polls instead of blocking so a regression fails the suite rather
+/// than hanging it.
+#[test]
+fn math_subscript_with_nested_bracket_terminates() {
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "(( $+functions[a[b] ))"])
+        .env_remove("ZSHRS_CACHE")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn zshrs");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait().expect("try_wait") {
+            Some(_) => break,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                panic!("`(( $+functions[a[b] ))` did not terminate in 30s -- cmd_or_math spun");
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
