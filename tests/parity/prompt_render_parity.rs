@@ -120,6 +120,39 @@ fn promptsubst_runs_a_command_substitution_in_the_prompt() {
     );
 }
 
+
+/// `%(?.true-text.false-text)` — the conditional escape a status-aware
+/// prompt is built from. Pinned in both directions, because a shell
+/// that always takes one branch passes a single-direction test.
+#[test]
+fn conditional_escape_takes_the_success_branch() {
+    assert_same_verdict(
+        &driver(r#"PS1='%(?.POK.PBAD)> '"#, "true", "POK>"),
+        "K",
+        "%(?..) took the success branch",
+    );
+}
+
+#[test]
+fn conditional_escape_takes_the_failure_branch() {
+    assert_same_verdict(
+        &driver(r#"PS1='%(?.POK.PBAD)> '"#, "false", "PBAD>"),
+        "K",
+        "%(?..) took the failure branch",
+    );
+}
+
+/// `%d` is the working directory WITHOUT `$HOME` abbreviation — the
+/// sibling of `%~` above, and a different code path.
+#[test]
+fn d_escape_shows_the_unabbreviated_directory() {
+    assert_same_verdict(
+        &driver(r#"cd /tmp; PS1="F:%d> ""#, "", "F:/tmp>"),
+        "K",
+        "%d expanded to the unabbreviated directory",
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Geometry — multiline prompts, right prompts, partial lines
 // ═══════════════════════════════════════════════════════════════════════

@@ -25,11 +25,18 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, DRAIN, OPEN};
+use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN};
 
 /// Build a driver that runs `keys` (a block of `zpty -w -n w …` lines)
-/// under `keymap`, then reports whether `OUTM<n>` reached the output.
-fn driver(keymap: &str, keys: &str, marker: u32) -> String {
+/// under `keymap`, then reports whether `needle` reached the output.
+///
+/// `needle` must be text that CANNOT appear in the echo of the
+/// keystrokes — either a marker the inner shell assembles at run time
+/// (`OUTM${:-}1` → `OUTM1`), or a string that only exists once an
+/// editing operation has rearranged the line (`Xzzz` from typing `zzz`
+/// and inserting an `X` in front of it).
+fn driver(keymap: &str, keys: &str, needle: &str) -> String {
+    let needle_q = sq(needle);
     format!(
         "{OPEN}
 zpty -w w 'bindkey {keymap}'
@@ -37,7 +44,8 @@ sleep 1
 {keys}
 sleep 2
 {DRAIN}
-if [[ $all == *OUTM{marker}* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+local needle={needle_q}
+if [[ $all == *${{~needle}}* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 "
     )
 }
@@ -61,7 +69,7 @@ mod emacs {
 zpty -w -n w $'\C-a'
 zpty -w -n w 'p'
 zpty -w -n w $'\r'"#,
-                1,
+                "OUTM1",
             ),
             "K",
             "^A moved to the start of the line",
@@ -79,7 +87,7 @@ zpty -w -n w $'\r'"#,
 zpty -w -n w $'\C-u'
 zpty -w -n w 'print OUT${:-}M2'
 zpty -w -n w $'\r'"#,
-                2,
+                "OUTM2",
             ),
             "K",
             "^U killed the whole line",
@@ -99,7 +107,7 @@ zpty -w -n w $'\C-a'
 zpty -w -n w $'\C-k'
 zpty -w -n w $'\C-y'
 zpty -w -n w $'\r'"#,
-                3,
+                "OUTM3",
             ),
             "K",
             "^K then ^Y round-tripped the line",
@@ -116,10 +124,57 @@ zpty -w -n w $'\r'"#,
                 r#"zpty -w -n w 'print OUT${:-}M4 junkword'
 zpty -w -n w $'\C-w'
 zpty -w -n w $'\r'"#,
-                4,
+                "OUTM4",
             ),
             "K",
             "^W killed exactly the trailing word",
+        );
+    }
+
+    /// `^A` then `^E` returns to the end, and only then does the typed
+    /// `9` land where it makes the marker. If `^E` were a no-op the
+    /// digit would land at the START and the command becomes `9print …`,
+    /// which is not a command at all.
+    #[test]
+    fn ctrl_e_returns_to_the_end_of_the_line() {
+        assert_same_verdict(
+            &driver(
+                "-e",
+                r#"zpty -w -n w 'print OUTM${:-}E1'
+sleep 1
+zpty -w -n w $'\C-a'
+sleep 1
+zpty -w -n w $'\C-e'
+sleep 1
+zpty -w -n w '9'
+sleep 1
+zpty -w -n w $'\r'"#,
+                "OUTME19",
+            ),
+            "K",
+            "^E returned to the end of the line",
+        );
+    }
+
+    /// `ESC-b` (backward-word) then an insert. The needle only exists if
+    /// the cursor actually moved to the START of the last word —
+    /// `Xzzz` cannot appear in the echo of `print zzz`.
+    #[test]
+    fn meta_b_moves_back_one_word() {
+        assert_same_verdict(
+            &driver(
+                "-e",
+                r#"zpty -w -n w 'print zzz'
+sleep 1
+zpty -w -n w $'\eb'
+sleep 1
+zpty -w -n w 'X'
+sleep 1
+zpty -w -n w $'\r'"#,
+                "Xzzz",
+            ),
+            "K",
+            "ESC-b moved back one word",
         );
     }
 }
@@ -143,7 +198,7 @@ zpty -w -n w $'\e'
 zpty -w -n w 'I'
 zpty -w -n w 'p'
 zpty -w -n w $'\r'"#,
-                5,
+                "OUTM5",
             ),
             "K",
             "ESC then I inserted at the line start",
@@ -163,7 +218,7 @@ zpty -w -n w 'dd'
 zpty -w -n w 'i'
 zpty -w -n w 'print OUT${:-}M6'
 zpty -w -n w $'\r'"#,
-                6,
+                "OUTM6",
             ),
             "K",
             "dd killed the line and i resumed insert",
@@ -183,7 +238,7 @@ zpty -w -n w $'\e'
 zpty -w -n w 'x'
 zpty -w -n w '.'
 zpty -w -n w $'\r'"#,
-                7,
+                "OUTM7",
             ),
             "K",
             "x then . repeated the delete",
@@ -204,10 +259,87 @@ zpty -w -n w 'yy'
 zpty -w -n w 'dd'
 zpty -w -n w 'p'
 zpty -w -n w $'\r'"#,
-                8,
+                "OUTM8",
             ),
             "K",
             "yy dd p restored the line",
+        );
+    }
+
+    /// `A` appends at the END of the line from command mode — the vi
+    /// motion plus a keymap switch in one keystroke.
+    #[test]
+    fn A_appends_at_the_end_of_the_line() {
+        assert_same_verdict(
+            &driver(
+                "-v",
+                r#"zpty -w -n w 'print OUT'
+sleep 1
+zpty -w -n w $'\e'
+sleep 1
+zpty -w -n w 'A'
+sleep 1
+zpty -w -n w 'M${:-}E3'
+sleep 1
+zpty -w -n w $'\r'"#,
+                "OUTME3",
+            ),
+            "K",
+            "A appended at the end of the line",
+        );
+    }
+
+    /// `0` moves to column zero, then `i` inserts there. The line is
+    /// typed missing its first character, so only a correct `0` puts the
+    /// `p` where `print` needs it.
+    #[test]
+    fn zero_moves_to_the_start_before_inserting() {
+        assert_same_verdict(
+            &driver(
+                "-v",
+                r#"zpty -w -n w 'rint OUTM${:-}E4'
+sleep 1
+zpty -w -n w $'\e'
+sleep 1
+zpty -w -n w '0'
+sleep 1
+zpty -w -n w 'i'
+sleep 1
+zpty -w -n w 'p'
+sleep 1
+zpty -w -n w $'\r'"#,
+                "OUTME4",
+            ),
+            "K",
+            "0 moved to the start of the line",
+        );
+    }
+
+    /// `cw` — an operator plus a motion, the composite form vi users
+    /// live in. `0` then `w` parks the cursor on `junk`, which `cw`
+    /// replaces with the marker.
+    #[test]
+    fn cw_changes_the_word_under_the_cursor() {
+        assert_same_verdict(
+            &driver(
+                "-v",
+                r#"zpty -w -n w 'print junk'
+sleep 1
+zpty -w -n w $'\e'
+sleep 1
+zpty -w -n w '0'
+sleep 1
+zpty -w -n w 'w'
+sleep 1
+zpty -w -n w 'cw'
+sleep 1
+zpty -w -n w 'OUTM${:-}E5'
+sleep 1
+zpty -w -n w $'\r'"#,
+                "OUTME5",
+            ),
+            "K",
+            "cw changed the word under the cursor",
         );
     }
 }
