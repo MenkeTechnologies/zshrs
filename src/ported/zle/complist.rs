@@ -144,13 +144,25 @@ pub const NUM_COLS: usize = 25; // c:193
 /// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
 /// Port of `filecol(char *col)` from `Src/Zle/complist.c:488`.
-pub fn filecol(col: &str) -> filecol {
+///
+/// `col` is `Option<&str>` because C's `char *col` is a NULLABLE
+/// pointer and the NULL-vs-`""` distinction is load-bearing, not
+/// cosmetic: `getcols` fills every slot with `filecol("")` (a real
+/// empty string) when `$ZLS_COLORS` is unset (c:515-516), but fills
+/// unset slots with `filecol(defcols[i])` — which is NULL for
+/// `or`/`mi`/`ec`/`hi`/`du` — when it IS set (c:545). `zcputs`
+/// (c:584) tests `fc->col` for NULL: a NULL slot skips to the
+/// `zlrputs("0")` fallback (c:591) while an empty-but-non-NULL slot
+/// emits `LC + "" + RC`. Collapsing both onto `String` made the
+/// no-`ZLS_COLORS` path print a literal `0` into every listing once
+/// `zlrputs` started honouring a (then empty) `lc=`/`rc=`.
+pub fn filecol(col: Option<&str>) -> filecol {
     // c:488
     filecol {
         // c:488 zhalloc
-        prog: None,           // c:493 fc->prog = NULL
-        col: col.to_string(), // c:494 fc->col = col
-        next: None,           // c:495 fc->next = NULL
+        prog: None,                      // c:493 fc->prog = NULL
+        col: col.map(|c| c.to_string()), // c:494 fc->col = col
+        next: None,                      // c:495 fc->next = NULL
     } // c:497 return fc
 }
 
@@ -167,8 +179,11 @@ pub struct filecol {
     // c:215
     /// Group pattern (NULL → applies to all groups).
     pub prog: Option<crate::ported::pattern::Patprog>, // c:216
-    /// Color string (ANSI escape-code body).
-    pub col: String, // c:217
+    /// Color string (ANSI escape-code body). `None` is C's NULL
+    /// `char *col` — an *unset* slot, distinct from `Some("")`, an
+    /// explicitly-empty cap. See [`filecol`] for why the distinction
+    /// is load-bearing (c:584 / c:591).
+    pub col: Option<String>, // c:217
     /// Next entry chained for the same color slot.
     pub next: Option<Box<filecol>>, // c:218
 }
@@ -492,20 +507,20 @@ pub fn getcoldef(s: &str) -> Option<String> {
                             } else {
                                 gprog
                             },
-                            col,
+                            col: Some(col), // c:470 fc->col = s
                             next: None,
                         });
                         let mut mc = MCOLORS.lock().unwrap();
                         if mc.files.len() <= i {
-                            mc.files.resize_with(i + 1, || filecol(""));
+                            mc.files.resize_with(i + 1, || filecol(None));
                         }
                         // c:474-479 — `if ((fo = mcolors.files[i])) { …tail…
                         // fo->next = fc; } else mcolors.files[i] = fc;`. The
                         // Rust `files[i]` is a value (not a nullable pointer),
-                        // so during-parse an as-yet-unset slot is the empty
-                        // default (col=="" && next==None) — replace it
+                        // so during-parse an as-yet-unset slot is the NULL
+                        // default (col==None && next==None) — replace it
                         // outright; otherwise append at the chain tail.
-                        if mc.files[i].col.is_empty() && mc.files[i].next.is_none() {
+                        if mc.files[i].col.is_none() && mc.files[i].next.is_none() {
                             mc.files[i] = *fc;
                         } else {
                             let mut cur = &mut mc.files[i];
@@ -587,7 +602,7 @@ pub fn getcols(_unused: &str) -> i32 {
         mc.files.clear();
         for _i in 0..NUM_COLS {
             // c:515
-            mc.files.push(filecol("")); // c:516 filecol("")
+            mc.files.push(filecol(Some(""))); // c:516 filecol("")
         }
         mc.pats = None; // c:517
         mc.exts = None; // c:518
@@ -599,17 +614,17 @@ pub fn getcols(_unused: &str) -> i32 {
         drop(tcstr_guard);
         if !so_beg.is_empty() {
             // c:520
-            mc.files[COL_MA] = filecol(&so_beg); // c:521
-            mc.files[COL_EC] = filecol(&so_end); // c:522
+            mc.files[COL_MA] = filecol(Some(&so_beg)); // c:521
+            mc.files[COL_EC] = filecol(Some(&so_end)); // c:522
         } else {
             // c:523
             // c:524 — `mcolors.files[COL_MA] = filecol(defcols[COL_MA]);`
             // defcols[COL_MA] = "7" (reverse-video) per c:204.
-            mc.files[COL_MA] = filecol("7"); // c:524
+            mc.files[COL_MA] = filecol(Some("7")); // c:524
         }
         // c:525-528 — cap-length tracking.
-        let ma_len = mc.files[COL_MA].col.len() as i32;
-        let ec_len = mc.files[COL_EC].col.len() as i32;
+        let ma_len = mc.files[COL_MA].col.as_deref().unwrap_or("").len() as i32;
+        let ec_len = mc.files[COL_EC].col.as_deref().unwrap_or("").len() as i32;
         let max_len = if ma_len < ec_len { ec_len } else { ma_len };
         MAX_CAPLEN.store(max_len, Ordering::SeqCst); // c:526-528
         unqueue_signals(); // c:529
@@ -638,74 +653,78 @@ pub fn getcols(_unused: &str) -> i32 {
     unqueue_signals(); // c:540
 
     // c:543-549 — default-fill loop for unset color slots.
-    // c:205 — `static char *defcols[]`, ported 1:1 from the C table.
-    // C `NULL` entries (COL_OR, COL_MI, COL_EC, COL_HI, COL_DU) are
-    // represented as `""` so the default-fill leaves the slot empty, exactly
-    // as C leaves them NULL. This is load-bearing:
-    //   - COL_EC empty ⇒ `zcoff()` takes the COL_NO reset branch instead of
-    //     emitting a bogus "0" end-cap raw (which would print a literal `0`).
-    //   - COL_HI / COL_DU empty ⇒ the nolist/duplicate colour guards fall
+    // c:205 — `static char *defcols[]`, ported 1:1 from the C table,
+    // NULLs included: C's `NULL` entries (COL_OR, COL_MI, COL_EC,
+    // COL_HI, COL_DU) are `None`, so `filecol(defcols[i])` leaves those
+    // slots NULL exactly as C does. This is load-bearing:
+    //   - COL_EC NULL ⇒ `zcoff()` takes the COL_NO reset branch (c:603)
+    //     instead of emitting a bogus end-cap raw (c:600).
+    //   - COL_HI / COL_DU NULL ⇒ the nolist/duplicate colour guards fall
     //     through to `putmatchcol` (list-colors patterns) as in C.
-    // COL_OR / COL_MI empty are re-defaulted below from COL_LN / COL_FI.
-    let defcols: [&str; NUM_COLS] = [
-        "0",     // COL_NO
-        "0",     // COL_FI
-        "1;31",  // COL_DI
-        "1;36",  // COL_LN
-        "33",    // COL_PI
-        "1;35",  // COL_SO
-        "1;33",  // COL_BD
-        "1;33",  // COL_CD
-        "",      // COL_OR (C: NULL → COL_LN)
-        "",      // COL_MI (C: NULL → COL_FI)
-        "37;41", // COL_SU
-        "30;43", // COL_SG
-        "30;42", // COL_TW
-        "34;42", // COL_OW
-        "37;44", // COL_ST
-        "1;32",  // COL_EX
-        "\x1b[", // COL_LC
-        "m",     // COL_RC
-        "",      // COL_EC (C: NULL — unset unless termcap standout-end sets it)
-        "0",     // COL_TC
-        "0",     // COL_SP
-        "7",     // COL_MA (reverse video)
-        "",      // COL_HI (C: NULL)
-        "",      // COL_DU (C: NULL)
-        "0",     // COL_SA
+    // COL_OR / COL_MI NULL are re-defaulted below from COL_LN / COL_FI.
+    let defcols: [Option<&str>; NUM_COLS] = [
+        Some("0"),     // COL_NO
+        Some("0"),     // COL_FI
+        Some("1;31"),  // COL_DI
+        Some("1;36"),  // COL_LN
+        Some("33"),    // COL_PI
+        Some("1;35"),  // COL_SO
+        Some("1;33"),  // COL_BD
+        Some("1;33"),  // COL_CD
+        None,          // COL_OR (C: NULL → COL_LN)
+        None,          // COL_MI (C: NULL → COL_FI)
+        Some("37;41"), // COL_SU
+        Some("30;43"), // COL_SG
+        Some("30;42"), // COL_TW
+        Some("34;42"), // COL_OW
+        Some("37;44"), // COL_ST
+        Some("1;32"),  // COL_EX
+        Some("\x1b["), // COL_LC
+        Some("m"),     // COL_RC
+        None,          // COL_EC (C: NULL — unset unless termcap standout-end sets it)
+        Some("0"),     // COL_TC
+        Some("0"),     // COL_SP
+        Some("7"),     // COL_MA (reverse video)
+        None,          // COL_HI (C: NULL)
+        None,          // COL_DU (C: NULL)
+        Some("0"),     // COL_SA
     ];
     let mut mc = MCOLORS.lock().unwrap();
     while mc.files.len() < NUM_COLS {
-        mc.files.push(filecol(""));
+        mc.files.push(filecol(None));
     }
     let mut max_len = MAX_CAPLEN.load(Ordering::SeqCst);
     for i in 0..NUM_COLS {
         // c:543
-        if mc.files[i].col.is_empty() {
-            // c:544
+        if mc.files[i].col.is_none() {
+            // c:544 — `!mcolors.files[i] || !mcolors.files[i]->col`
             mc.files[i] = filecol(defcols[i]); // c:545
         }
-        let l = mc.files[i].col.len() as i32; // c:547
-        if l > max_len {
-            max_len = l;
-        } // c:548
+        // c:546-548 — `if (…->col && (l = strlen(…->col)) > max_caplen)`
+        if let Some(col) = mc.files[i].col.as_deref() {
+            let l = col.len() as i32; // c:547
+            if l > max_len {
+                max_len = l;
+            } // c:548
+        }
     }
     MAX_CAPLEN.store(max_len, Ordering::SeqCst);
 
     // c:550-551 — lr_caplen.
-    let lr_len = (mc.files[COL_LC].col.len() + mc.files[COL_RC].col.len()) as i32;
+    let lr_len = (mc.files[COL_LC].col.as_deref().unwrap_or("").len()
+        + mc.files[COL_RC].col.as_deref().unwrap_or("").len()) as i32;
     LR_CAPLEN.store(lr_len, Ordering::SeqCst);
 
     // c:553-558 — defaults: COL_OR fallback to COL_LN; COL_MI to COL_FI.
-    if mc.files[COL_OR].col.is_empty() {
+    if mc.files[COL_OR].col.is_none() {
         // c:554
         let ln = mc.files[COL_LN].col.clone();
-        mc.files[COL_OR] = filecol(&ln); // c:555
+        mc.files[COL_OR] = filecol(ln.as_deref()); // c:555
     }
-    if mc.files[COL_MI].col.is_empty() {
+    if mc.files[COL_MI].col.is_none() {
         // c:557
         let fi = mc.files[COL_FI].col.clone();
-        mc.files[COL_MI] = filecol(&fi); // c:558
+        mc.files[COL_MI] = filecol(fi.as_deref()); // c:558
     }
     0 // c:560
 }
@@ -735,12 +754,23 @@ pub fn getcols(_unused: &str) -> i32 {
 /// how a match with an empty colour spec gets cleared back to default.
 /// Returning without writing left the previous match's colour in force.
 ///
-/// COL_LC / COL_RC are hardcoded to their defaults (`\e[` / `m`,
-/// c:206) rather than read from `mcolors`: every caller
-/// (`putmatchcol`, `putfilecol`, `clprintm`'s `zcputs_slot`) already
-/// holds the `MCOLORS` lock when it calls in, and `std::sync::Mutex`
-/// is not reentrant. A config that overrides `lc=`/`rc=` is therefore
-/// not honoured here yet.
+/// COL_LC / COL_RC come from `mcolors` (c:569/c:571), NOT from a
+/// hardcoded `\e[` / `m`. The defaults at c:206 happen to be exactly
+/// those two strings, which is why the hardcoded form looked right —
+/// but `ZLS_COLORS` (which the completion system sets from the
+/// `list-colors` zstyle) can override both, and zsh's own Y-series
+/// completion tests do exactly that (`Test/comptest:44` sets
+/// `lc=<LC>` / `rc=<RC>` / `ec=<EC>`), so the hardcoded form emitted
+/// `\e[<NO>malpha` where zsh emits `<LC><NO><RC>alpha`.
+///
+/// LOCK CONTRACT (Rust-only concern; C's `mcolors` is plain global
+/// memory with no lock): `zlrputs` takes the `MCOLORS` mutex, so NO
+/// caller may hold it across the call — `std::sync::Mutex` is not
+/// reentrant and would deadlock, not misbehave. Every caller in this
+/// file therefore decides *what* to emit under the guard, drops it,
+/// and only then calls in: see `zcputs` (c:580), `putmatchcol`
+/// (c:881) and `putfilecol` (c:910), each of which resolves its cap
+/// to an owned `Option<String>` inside a scoped block.
 pub fn zlrputs(cap: &str) -> i32 {
     // c:564
     let mut last = match LAST_CAP.lock() {
@@ -752,62 +782,124 @@ pub fn zlrputs(cap: &str) -> i32 {
     if !last.is_empty() && last.as_str() == cap {
         return 0;
     }
-    // c:569-573 — LC + cap + RC.
-    let s = format!("\x1b[{}m", cap);
-    crate::shout::write(s.as_bytes());
+    // c:567-571 — `VARARR(char, buf, lr_caplen + max_caplen + 1);`
+    // `strcpy(buf, mcolors.files[COL_LC]->col); strcat(buf, cap);`
+    // `strcat(buf, mcolors.files[COL_RC]->col);`
+    let (lc, rc) = match MCOLORS.lock() {
+        Ok(cols) => (
+            cols.files
+                .get(COL_LC)
+                .and_then(|f| f.col.clone())
+                .unwrap_or_default(), // c:569
+            cols.files
+                .get(COL_RC)
+                .and_then(|f| f.col.clone())
+                .unwrap_or_default(), // c:571
+        ),
+        Err(_) => (String::new(), String::new()),
+    };
+    let mut buf = String::with_capacity(lc.len() + cap.len() + rc.len()); // c:567
+    buf.push_str(&lc); // c:569
+    buf.push_str(cap); // c:570
+    buf.push_str(&rc); // c:571
+    crate::shout::tputs_write(&buf); // c:573 tputs(buf, 1, putshout)
     // c:575 — `strcpy(last_cap, cap);`
     last.clear();
     last.push_str(cap);
     0
 }
 
-/// Wrap a string in a CSI SGR sequence using the supplied colour
-/// code, then reset.
-/// Port of `zcputs(char *group, int colour)` from Src/Zle/complist.c. The C source uses
-/// this for per-match colour application during list paint.
-/// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
-pub fn zcputs(s: &str, color: Option<&str>) -> String {
+/// Direct port of `void zcputs(char *group, int colour)` from
+/// `Src/Zle/complist.c:580`:
+/// ```c
+/// Filecol fc;
+/// for (fc = mcolors.files[colour]; fc; fc = fc->next)
+///     if (fc->col && (!fc->prog || !group || pattry(fc->prog, group))) {
+///         zlrputs(fc->col);
+///         return;
+///     }
+/// zlrputs("0");
+/// ```
+/// `group` is `Option<&str>` because C passes NULL from `zcoff`
+/// (c:603) and `doiscol` (c:642/c:659); NULL means "this rule's group
+/// pattern does not have to match".
+///
+/// The previous Rust `zcputs(&str, Option<&str>) -> String` was not a
+/// port at all — it built an SGR string from a caller-supplied colour
+/// code and never touched `mcolors`, so the chain walk (c:583), the
+/// group-pattern test (c:585) and the `zlrputs("0")` fallback (c:591)
+/// were all missing. Callers open-coded ad-hoc substitutes.
+pub fn zcputs(group: Option<&str>, colour: usize) {
     // c:580
-    // c:Src/Zle/complist.c:zcputs — C body emits the SGR + content via
-    // tputs/putshout when a color cap is registered, else does nothing
-    // (`if (..col..) tputs(..col..); putshout(s);`). The Rust port
-    // returns a String (sig divergence — C is void) so the no-color
-    // branch returns empty to mirror "nothing written to stdout". The
-    // previous Rust path returned the bare content string, which
-    // doesn't match either C's stdout side-effect OR the SGR-only
-    // semantic the rest of the codebase expects.
-    match color {
-        Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
-        None => String::new(),
+    // c:583-589 — walk the chain for `colour`; first entry with a
+    // non-NULL col whose group pattern matches wins. Resolved to an
+    // owned String INSIDE this block so the MCOLORS guard is dropped
+    // before `zlrputs` (which takes the same mutex) is called.
+    let cap: Option<String> = {
+        let mc = match MCOLORS.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let mut cur = mc.files.get(colour); // c:583
+        let mut found: Option<String> = None;
+        while let Some(fc) = cur {
+            // c:584 — `if (fc->col && …)`
+            if let Some(col) = fc.col.as_deref() {
+                // c:585 — `(!fc->prog || !group || pattry(fc->prog, group))`
+                let ok = match (&fc.prog, group) {
+                    (None, _) => true,
+                    (_, None) => true,
+                    (Some(p), Some(g)) => crate::ported::pattern::pattry(p, g),
+                };
+                if ok {
+                    found = Some(col.to_string());
+                    break; // c:588 return
+                }
+            }
+            cur = fc.next.as_deref(); // c:583 fc = fc->next
+        }
+        found
+    };
+    match cap {
+        Some(c) => {
+            zlrputs(&c);
+        } // c:587
+        None => {
+            zlrputs("0");
+        } // c:591
     }
 }
 
 // Turn off colouring.                                                     // c:597
-/// Port of `zcoff()` from Src/Zle/complist.c:597.
+/// Direct port of `void zcoff(void)` from `Src/Zle/complist.c:597`:
+/// ```c
+/// if (mcolors.files[COL_EC] && mcolors.files[COL_EC]->col) {
+///     tputs(mcolors.files[COL_EC]->col, 1, putshout);
+///     *last_cap = '\0';
+/// } else
+///     zcputs(NULL, COL_NO);
+/// ```
+/// The `ec=` cap is emitted RAW (c:600) — it is a complete end-cap
+/// (termcap `TCSTANDOUTEND`, or whatever `ZLS_COLORS` set), never
+/// wrapped in `lc=`/`rc=`.
 pub fn zcoff() {
     // c:597
-    let cap_of = |idx: usize| -> String {
-        MCOLORS
-            .lock()
-            .ok()
-            .and_then(|cols| cols.files.get(idx).map(|f| f.col.clone()))
-            .unwrap_or_default()
+    // c:599 — `mcolors.files[COL_EC] && mcolors.files[COL_EC]->col`.
+    // `None` is C's NULL; `Some("")` is a set-but-empty cap, which C
+    // still takes this branch for (tputs("") writes nothing, but
+    // last_cap is still cleared).
+    let ec: Option<String> = match MCOLORS.lock() {
+        Ok(cols) => cols.files.get(COL_EC).and_then(|f| f.col.clone()),
+        Err(_) => None,
     };
-    let ec = cap_of(COL_EC);
-    if !ec.is_empty() {
-        // c:599-601 — COL_EC is a complete termcap end-cap (TCSTANDOUTEND);
-        // emit it raw and clear last_cap so the next zcputs re-emits.
-        crate::shout::write(ec.as_bytes());
-        if let Ok(mut lc) = LAST_CAP.lock() {
-            lc.clear(); // c:601 — *last_cap = '\0'
+    match ec {
+        Some(ec) => {
+            crate::shout::tputs_write(&ec); // c:600 tputs(…, 1, putshout)
+            if let Ok(mut lc) = LAST_CAP.lock() {
+                lc.clear(); // c:601 — *last_cap = '\0'
+            }
         }
-    } else {
-        // c:603 — `zcputs(NULL, COL_NO)`: the no-colour default cap. With
-        // COL_NO defaulting to "0" this is `\x1b[0m`; C falls back to "0"
-        // when the slot is unset, so mirror that fallback.
-        let no = cap_of(COL_NO);
-        let cap = if no.is_empty() { "0".to_string() } else { no };
-        let _ = zlrputs(&cap);
+        None => zcputs(None, COL_NO), // c:603
     }
 }
 
@@ -1353,128 +1445,291 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
 /// `mcolors.files[COL_NO]` (the default-file color) via `zcputs`.
 /// Returns 1 if the caller should apply two-color per-char rendering
 /// (i.e. `cols[1]` is populated), 0 otherwise.
+///
+/// LOCK CONTRACT: the `MCOLORS` guard is confined to the scoped block
+/// that decides *which* cap applies; it is dropped before `zlrputs` /
+/// `zcputs` are called, because those take the same (non-reentrant)
+/// mutex to read `lc=`/`rc=`. C has no lock here — `mcolors` is plain
+/// global memory — so this scoping is Rust-only bookkeeping, not a
+/// behavioural divergence.
 pub fn putmatchcol(group: &str, n: &str) -> i32 {
     // c:881
-    let mc = MCOLORS.lock().unwrap();
+    // What the chain walk decided: emit this cap (c:896), or fall
+    // through to `zcputs(group, COL_NO)` (c:900). `Some` also covers
+    // c:891's two-colour case, which returns before emitting anything.
+    enum Decision {
+        Emit(String),   // c:896 — zlrputs(pc->cols[0])
+        TwoColour,      // c:890-893 — patcols = pc->cols; return 1
+        DefaultNo,      // c:900 — zcputs(group, COL_NO)
+    }
 
     // c:884-898 — walk the mcolors.pats chain for a (group, n) match.
-    // `getcoldef` now compiles and stores the real `pattern::Patprog`
+    // `getcoldef` compiles and stores the real `pattern::Patprog`
     // bytecode, so this fires `pattry`/`pattryrefs` exactly as the C
     // source: the group prog (if any) must match `group`, and the value
     // prog must match `n`, capturing submatch positions into begpos/endpos
     // for the per-char two-color rendering path.
-    let mut cur = mc.pats.as_deref();
-    while let Some(pc) = cur {
-        let mut nrefs = (MAX_POS - 1) as i32; // c:886 nrefs = MAX_POS - 1
-        let mut begp: Vec<i32> = vec![0; MAX_POS];
-        let mut endp: Vec<i32> = vec![0; MAX_POS];
-        // c:888 — `(!pc->prog || !group || pattry(pc->prog, group))`.
-        let group_ok = match &pc.prog {
-            None => true,
-            Some(gp) => group.is_empty() || crate::ported::pattern::pattry(gp, group),
-        };
-        // c:889 — `pattryrefs(pc->pat, n, -1, -1, NULL, 0, &nrefs, begpos, endpos)`.
-        let pat_ok = match &pc.pat {
-            None => false,
-            Some(pat) => crate::ported::pattern::pattryrefs(
-                pat,
-                n,
-                -1,
-                -1,
-                None,
-                0,
-                Some(&mut nrefs),
-                Some(&mut begp),
-                Some(&mut endp),
-            ),
-        };
-        if group_ok && pat_ok {
-            // c:890-895 — `if (pc->cols[1]) { patcols = pc->cols; return 1; }`
-            if pc.cols.len() > 1 && !pc.cols[1].is_empty() {
-                *PATCOLS.lock().unwrap() = pc.cols.clone(); // c:891 patcols = pc->cols
-                PATCOLS_IDX.store(0, Ordering::Relaxed);
-                // begp/endp are MAX_POS-length (allocated above, c:886) and
-                // pattryrefs now fills them IN PLACE without shrinking, so they
-                // keep C's fixed `int[MAX_POS]` size for the getcol reset loop.
-                *BEGPOS.lock().unwrap() = begp;
-                *ENDPOS.lock().unwrap() = endp;
-                NREFS.store(nrefs, Ordering::Relaxed);
-                return 1; // c:893
+    let decision = {
+        let mc = MCOLORS.lock().unwrap();
+        let mut cur = mc.pats.as_deref(); // c:884
+        let mut decision = Decision::DefaultNo;
+        while let Some(pc) = cur {
+            let mut nrefs = (MAX_POS - 1) as i32; // c:886 nrefs = MAX_POS - 1
+            let mut begp: Vec<i32> = vec![0; MAX_POS];
+            let mut endp: Vec<i32> = vec![0; MAX_POS];
+            // c:888 — `(!pc->prog || !group || pattry(pc->prog, group))`.
+            let group_ok = match &pc.prog {
+                None => true,
+                Some(gp) => group.is_empty() || crate::ported::pattern::pattry(gp, group),
+            };
+            // c:889 — `pattryrefs(pc->pat, n, -1, -1, NULL, 0, &nrefs, begpos, endpos)`.
+            let pat_ok = match &pc.pat {
+                None => false,
+                Some(pat) => crate::ported::pattern::pattryrefs(
+                    pat,
+                    n,
+                    -1,
+                    -1,
+                    None,
+                    0,
+                    Some(&mut nrefs),
+                    Some(&mut begp),
+                    Some(&mut endp),
+                ),
+            };
+            if group_ok && pat_ok {
+                // c:890-895 — `if (pc->cols[1]) { patcols = pc->cols; return 1; }`
+                if pc.cols.len() > 1 && !pc.cols[1].is_empty() {
+                    *PATCOLS.lock().unwrap() = pc.cols.clone(); // c:891 patcols = pc->cols
+                    PATCOLS_IDX.store(0, Ordering::Relaxed);
+                    // begp/endp are MAX_POS-length (allocated above, c:886) and
+                    // pattryrefs fills them IN PLACE without shrinking, so they
+                    // keep C's fixed `int[MAX_POS]` size for the getcol reset loop.
+                    *BEGPOS.lock().unwrap() = begp;
+                    *ENDPOS.lock().unwrap() = endp;
+                    NREFS.store(nrefs, Ordering::Relaxed);
+                    decision = Decision::TwoColour; // c:893
+                    break;
+                }
+                // c:896-897 — `zlrputs(pc->cols[0]); return 0;`
+                decision = Decision::Emit(pc.cols.first().cloned().unwrap_or_default());
+                break;
             }
-            // c:896-897 — `zlrputs(pc->cols[0]); return 0;`
-            if let Some(c0) = pc.cols.first() {
-                zlrputs(c0);
-            }
-            return 0;
+            cur = pc.next.as_deref(); // c:884 pc = pc->next
         }
-        cur = pc.next.as_deref();
-    }
+        decision
+    }; // MCOLORS guard dropped here — see LOCK CONTRACT above.
 
-    // c:900 — `zcputs(group, COL_NO);`. Emit the default file color.
-    if let Some(no_col) = mc.files.get(COL_NO) {
-        zlrputs(&no_col.col);
+    match decision {
+        Decision::TwoColour => 1, // c:893
+        Decision::Emit(c0) => {
+            zlrputs(&c0); // c:896
+            0 // c:897
+        }
+        Decision::DefaultNo => {
+            zcputs(if group.is_empty() { None } else { Some(group) }, COL_NO); // c:900
+            0 // c:902
+        }
     }
-    0 // c:902
 }
 
 /// Port of `int putfilecol(char *group, char *filename, mode_t m, int special)`
 /// from `Src/Zle/complist.c:910`.
 ///
-/// Selects the right LS_COLORS category for `filename` by examining
-/// `m` (the lstat mode bits) and emits the matching cap via
-/// `zlrputs`. Mirrors the C dispatch by mode: COL_DI for dirs,
-/// COL_LN for symlinks, COL_PI for FIFOs, COL_SO for sockets,
-/// COL_BD/CD for block/char devices, COL_EX for executable files,
-/// then suffix-extension lookups (`mcolors.exts`), then COL_FI
-/// fallback. Returns 1 if the caller should apply two-color per-char
+/// Line-by-line port of c:910-995. The dispatch ORDER is the port:
+/// `mcolors.pats` first (c:918-935), then `special` / the mode bits
+/// (c:937-963), then the `mcolors.exts` extension chain (c:970-976),
+/// then a suffix-alias lookup (c:978-991), and only then COL_FI
+/// (c:992). Returns 1 if the caller should apply two-color per-char
 /// rendering, 0 otherwise.
-pub fn putfilecol(group: &str, filename: &str, m: u32, _special: i32) -> i32 {
+///
+/// The previous port ran the extension chain FIRST, dropped the
+/// `special` argument (so an orphaned symlink never reached COL_OR),
+/// collapsed the sticky/other-writable/setuid/setgid directory cases
+/// (COL_TW / COL_OW / COL_ST / COL_SU / COL_SG) into plain COL_DI,
+/// had no suffix-alias branch at all, and fell back to COL_NO instead
+/// of COL_FI.
+///
+/// LOCK CONTRACT: as in [`putmatchcol`] — the `MCOLORS` guard is
+/// confined to the blocks that decide which cap applies and is
+/// dropped before any `zlrputs` / `zcputs` call.
+pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 {
+    // c:910
     use crate::ported::zle::complist as cl;
 
-    let mc = MCOLORS.lock().unwrap();
+    // c:912 — `int colour = -1;`
+    let mut colour: i32 = -1;
+    // C's `group` is a nullable `char *`; the Rust callers pass "" for NULL.
+    let group_opt = if group.is_empty() { None } else { Some(group) };
 
-    // c:912-918 — walk extcol chain looking for `*.<ext>` suffix match.
-    let mut cur = mc.exts.as_deref();
-    while let Some(ec) = cur {
-        if filename.ends_with(&ec.ext) {
-            // c:915 — single-color cap (extcol only has one col).
-            zlrputs(&ec.col);
-            return 0;
+    // c:918-935 — walk mcolors.pats first, exactly as putmatchcol does.
+    enum PatHit {
+        None,
+        TwoColour,    // c:922-926 — patcols = pc->cols; return 1
+        Emit(String), // c:927 — zlrputs(pc->cols[0]); return 0
+    }
+    let hit = {
+        let mc = MCOLORS.lock().unwrap();
+        let mut cur = mc.pats.as_deref(); // c:918
+        let mut hit = PatHit::None;
+        while let Some(pc) = cur {
+            let mut nrefs = (MAX_POS - 1) as i32; // c:919
+            let mut begp: Vec<i32> = vec![0; MAX_POS];
+            let mut endp: Vec<i32> = vec![0; MAX_POS];
+            // c:921 — `(!pc->prog || !group || pattry(pc->prog, group))`
+            let group_ok = match &pc.prog {
+                None => true,
+                Some(gp) => {
+                    group_opt.is_none() || crate::ported::pattern::pattry(gp, group)
+                }
+            };
+            // c:922-923 — `pattryrefs(pc->pat, filename, -1, -1, NULL, 0,
+            //                         &nrefs, begpos, endpos)`
+            let pat_ok = match &pc.pat {
+                None => false,
+                Some(pat) => crate::ported::pattern::pattryrefs(
+                    pat,
+                    filename,
+                    -1,
+                    -1,
+                    None,
+                    0,
+                    Some(&mut nrefs),
+                    Some(&mut begp),
+                    Some(&mut endp),
+                ),
+            };
+            if group_ok && pat_ok {
+                // c:924-929 — `if (pc->cols[1]) { patcols = pc->cols; return 1; }`
+                if pc.cols.len() > 1 && !pc.cols[1].is_empty() {
+                    *PATCOLS.lock().unwrap() = pc.cols.clone(); // c:925
+                    PATCOLS_IDX.store(0, Ordering::Relaxed);
+                    *BEGPOS.lock().unwrap() = begp;
+                    *ENDPOS.lock().unwrap() = endp;
+                    NREFS.store(nrefs, Ordering::Relaxed);
+                    hit = PatHit::TwoColour; // c:927
+                    break;
+                }
+                // c:930-932 — `zlrputs(pc->cols[0]); return 0;`
+                hit = PatHit::Emit(pc.cols.first().cloned().unwrap_or_default());
+                break;
+            }
+            cur = pc.next.as_deref(); // c:918 pc = pc->next
         }
-        cur = ec.next.as_deref();
+        hit
+    }; // MCOLORS guard dropped.
+    match hit {
+        PatHit::TwoColour => return 1, // c:927
+        PatHit::Emit(c0) => {
+            zlrputs(&c0); // c:930
+            return 0; // c:932
+        }
+        PatHit::None => {}
     }
 
-    // c:920-985 — mode-bit dispatch into the COL_* slots.
-    let pick = if (m & 0o170000) == 0o040000 {
-        cl::COL_DI
+    // c:937-963 — `special` override, then the mode-bit dispatch.
+    // S_IFMT 0o170000, S_IWOTH 0o002, S_ISVTX 0o1000,
+    // S_ISUID 0o4000, S_ISGID 0o2000, S_IXUGO 0o111.
+    if special != -1 {
+        colour = special; // c:938
+    } else if (m & 0o170000) == 0o040000 {
+        // c:939 S_ISDIR
+        if m & 0o002 != 0 {
+            // c:940 S_IWOTH
+            if m & 0o1000 != 0 {
+                colour = cl::COL_TW as i32; // c:942 S_ISVTX
+            } else {
+                colour = cl::COL_OW as i32; // c:944
+            }
+        } else if m & 0o1000 != 0 {
+            colour = cl::COL_ST as i32; // c:946
+        } else {
+            colour = cl::COL_DI as i32; // c:948
+        }
     } else if (m & 0o170000) == 0o120000 {
-        cl::COL_LN
+        colour = cl::COL_LN as i32; // c:950 S_ISLNK
     } else if (m & 0o170000) == 0o010000 {
-        cl::COL_PI
+        colour = cl::COL_PI as i32; // c:952 S_ISFIFO
     } else if (m & 0o170000) == 0o140000 {
-        cl::COL_SO
+        colour = cl::COL_SO as i32; // c:954 S_ISSOCK
     } else if (m & 0o170000) == 0o060000 {
-        cl::COL_BD
+        colour = cl::COL_BD as i32; // c:956 S_ISBLK
     } else if (m & 0o170000) == 0o020000 {
-        cl::COL_CD
-    } else if m & 0o111 != 0 {
-        cl::COL_EX
-    } else {
-        cl::COL_FI
-    };
+        colour = cl::COL_CD as i32; // c:958 S_ISCHR
+    } else if m & 0o4000 != 0 {
+        colour = cl::COL_SU as i32; // c:960 S_ISUID
+    } else if m & 0o2000 != 0 {
+        colour = cl::COL_SG as i32; // c:962 S_ISGID
+    } else if (m & 0o170000) == 0o100000 && (m & 0o111) != 0 {
+        colour = cl::COL_EX as i32; // c:964 S_ISREG && S_IXUGO
+    }
 
-    if let Some(col) = mc.files.get(pick) {
-        if !col.col.is_empty() {
-            zlrputs(&col.col);
-            return 0;
+    // c:966-969 — `if (colour != -1) { zcputs(group, colour); return 0; }`
+    if colour != -1 {
+        zcputs(group_opt, colour as usize); // c:967
+        return 0; // c:968
+    }
+
+    // c:971-977 — extension chain: `strsfx(ec->ext, filename)` plus the
+    // same group-pattern gate as the pats chain.
+    let ext_hit: Option<String> = {
+        let mc = MCOLORS.lock().unwrap();
+        let mut cur = mc.exts.as_deref(); // c:971
+        let mut found = None;
+        while let Some(ec) = cur {
+            // c:972-973 — `strsfx(ec->ext, filename) && (!ec->prog ||
+            //               !group || pattry(ec->prog, group))`
+            let group_ok = match &ec.prog {
+                None => true,
+                Some(gp) => {
+                    group_opt.is_none() || crate::ported::pattern::pattry(gp, group)
+                }
+            };
+            if filename.ends_with(&ec.ext) && group_ok {
+                found = Some(ec.col.clone()); // c:974
+                break; // c:976
+            }
+            cur = ec.next.as_deref(); // c:971
+        }
+        found
+    }; // MCOLORS guard dropped.
+    if let Some(col) = ext_hit {
+        zlrputs(&col); // c:974
+        return 0; // c:976
+    }
+
+    // c:979-991 — suffix alias. `len = strlen(filename); if (len > 2)`
+    // then scan back from the last byte for a `.`; the text AFTER it
+    // (C's `suf`, which points past the dot) is the sufaliastab key.
+    // "shortest valid suffix format is a.b" (c:980).
+    let bytes = filename.as_bytes();
+    let len = bytes.len(); // c:979
+    if len > 2 {
+        // c:981
+        // c:982-983 — `char *suf = filename + len - 1;
+        //               while (suf > filename+1)`
+        let mut suf = len - 1;
+        while suf > 1 {
+            if bytes[suf - 1] == b'.' {
+                // c:984
+                // c:985 — `sufaliastab->getnode(sufaliastab, suf)`
+                let found = crate::ported::hashtable::sufaliastab_lock()
+                    .read()
+                    .ok()
+                    .map(|tab| tab.get(&filename[suf..]).is_some())
+                    .unwrap_or(false);
+                if found {
+                    zcputs(group_opt, cl::COL_SA); // c:986
+                    return 0; // c:987
+                }
+                break; // c:989
+            }
+            suf -= 1; // c:990
         }
     }
-    let _ = group;
-    // Final fallback — COL_NO (the no-extension default).
-    if let Some(no_col) = mc.files.get(COL_NO) {
-        zlrputs(&no_col.col);
-    }
-    0
+    zcputs(group_opt, cl::COL_FI); // c:993
+
+    0 // c:995
 }
 
 /// Direct port of `int asklistscroll(int ml)` from
@@ -2774,34 +3029,31 @@ pub fn clprintm(
     let zterm_columns = adjustcolumns() as i32;
     let mlines_v = MLINES.load(Ordering::SeqCst); // c:1735
 
-    // Colour-slot emitters used across the empty-cell, whole-line-display, and
+    // Colour-slot readers used across the empty-cell, whole-line-display, and
     // grid paths below. Closures (not free fns) so they stay local to clprintm.
-    let mcolor_col = |idx: usize| -> String {
+    //
+    // `None` is C's NULL `mcolors.files[idx]->col` — what c:1791 / c:1793
+    // test before choosing COL_HI / COL_DU over `putmatchcol`.
+    let mcolor_col = |idx: usize| -> Option<String> {
         MCOLORS
             .lock()
             .ok()
-            .and_then(|cols| cols.files.get(idx).map(|f| f.col.clone()))
-            .unwrap_or_default()
+            .and_then(|cols| cols.files.get(idx).and_then(|f| f.col.clone()))
     };
-    // Faithful `zcputs(g->name, COL_xx)` for a fixed slot: a termcap-derived
-    // cap (already a full ESC sequence, e.g. from TCSTANDOUTBEG) is emitted
-    // raw — `zlrputs` would double-wrap it into `\e[\e[7mm` garbage; a bare
-    // LS_COLORS code (`7`, `1;35`) is SGR-wrapped via `zlrputs`; an unset slot
-    // falls back to `zlrputs("0")` (a reset), matching C zcputs's trailing
-    // `zlrputs("0")` (complist.c:591). Group-pattern matching (C's
-    // `fc->prog`/`pattry`) is not modelled — these slots use bare specs.
+    // `zcputs(g->name, COL_xx)` (c:580) for a fixed slot. This used to be an
+    // open-coded substitute that emitted a cap starting with ESC raw and
+    // SGR-wrapped everything else, because `zlrputs` hardcoded `\e[`/`m` and
+    // would otherwise have produced `\e[\e[7mm`. Now that `zlrputs` reads the
+    // real `lc=`/`rc=` (c:569/571) the heuristic is both unnecessary and
+    // wrong: with no `$ZLS_COLORS` those caps are the empty strings that
+    // `getcols` installs at c:515-516, so a raw termcap standout string is
+    // emitted verbatim on its own; with `$ZLS_COLORS` set, C wraps EVERY cap,
+    // ESC-leading or not. Delegating also restores the chain walk and the
+    // `fc->prog`/`pattry` group test the substitute skipped.
     let zcputs_slot = |idx: usize| {
-        // c:583
-        let cap = mcolor_col(idx);
-        if cap.is_empty() {
-            let _ = zlrputs("0"); // c:591
-            return;
-        }
-        if cap.starts_with('\x1b') {
-            crate::shout::write(cap.as_bytes());
-        } else {
-            let _ = zlrputs(&cap);
-        }
+        // c:580
+        let name = g.and_then(|grp| grp.name.clone()); // c:1745 g->name
+        zcputs(name.as_deref(), idx);
     };
 
     // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
@@ -2914,11 +3166,11 @@ pub fn clprintm(
         let mut subcols = 0i32;
         if m_ref.gnum == mselect {
             zcputs_slot(COL_MA); // c:1790 — selection highlight
-        } else if (m_ref.flags & CMF_NOLIST) != 0 && !mcolor_col(COL_HI).is_empty() {
+        } else if (m_ref.flags & CMF_NOLIST) != 0 && mcolor_col(COL_HI).is_some() {
             zcputs_slot(COL_HI); // c:1791-1792 — nolist highlight
         } else if mselect >= 0
             && (m_ref.flags & (CMF_MULT | CMF_FMULT)) != 0
-            && !mcolor_col(COL_DU).is_empty()
+            && mcolor_col(COL_DU).is_some()
         {
             zcputs_slot(COL_DU); // c:1793-1794 — duplicate
         } else {
@@ -7088,8 +7340,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
-        let fc = filecol("0;32");
-        assert_eq!(fc.col, "0;32");
+        let fc = filecol(Some("0;32"));
+        assert_eq!(fc.col.as_deref(), Some("0;32"));
         assert!(fc.prog.is_none());
         assert!(fc.next.is_none());
     }
@@ -7099,9 +7351,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // The "no LS_COLORS set" path at c:515-516 calls filecol("")
-        // for every slot.
-        let fc = filecol("");
-        assert_eq!(fc.col, "");
+        // for every slot — a REAL empty string, distinct from the NULL
+        // that `filecol(defcols[i])` installs for an unset slot at c:545.
+        let fc = filecol(Some(""));
+        assert_eq!(fc.col.as_deref(), Some(""));
         assert!(fc.prog.is_none());
         assert!(fc.next.is_none());
     }
@@ -7196,11 +7449,11 @@ mod tests {
     fn filecol_owns_its_col_string() {
         let _g = crate::test_util::global_state_lock();
         let original = "0;31".to_string();
-        let fc = filecol(&original);
+        let fc = filecol(Some(&original));
         // Even if the caller mutates the original, fc.col stays
         // intact (it's a copy/owned slice).
         drop(original);
-        assert_eq!(fc.col, "0;31");
+        assert_eq!(fc.col.as_deref(), Some("0;31"));
     }
 
     /// c:488 — Multiple `filecol()` calls produce INDEPENDENT nodes.
@@ -7208,10 +7461,10 @@ mod tests {
     #[test]
     fn filecol_distinct_calls_produce_independent_nodes() {
         let _g = crate::test_util::global_state_lock();
-        let a = filecol("red");
-        let b = filecol("blue");
-        assert_eq!(a.col, "red");
-        assert_eq!(b.col, "blue");
+        let a = filecol(Some("red"));
+        let b = filecol(Some("blue"));
+        assert_eq!(a.col.as_deref(), Some("red"));
+        assert_eq!(b.col.as_deref(), Some("blue"));
         assert!(a.prog.is_none());
         assert!(b.next.is_none());
     }
@@ -7350,12 +7603,27 @@ mod tests {
         cleareol();
     }
 
-    /// `zcputs(group, None)` returns empty SGR string.
+    /// c:580-592 — `zcputs(group, colour)` is `void` and walks
+    /// `mcolors.files[colour]`. This test pinned a Rust-only
+    /// `(&str, Option<&str>) -> String` shape with no C counterpart
+    /// (no chain walk, no `fc->prog` test, no `zlrputs("0")`
+    /// fallback); it now pins the real signature and the c:591
+    /// fallback, which must not panic on an empty slot chain.
     #[test]
-    fn zcputs_no_color_returns_empty() {
+    fn zcputs_unset_slot_falls_back_to_reset() {
         let _g = crate::test_util::global_state_lock();
-        let r = zcputs("group", None);
-        assert!(r.is_empty(), "None color → empty SGR");
+        let _g = zle_test_setup();
+        {
+            let mut mc = MCOLORS.lock().unwrap();
+            mc.files.clear();
+        }
+        LAST_CAP.lock().unwrap().clear();
+        zcputs(Some("group"), COL_NO); // c:591 zlrputs("0")
+        assert_eq!(
+            LAST_CAP.lock().unwrap().as_str(),
+            "0",
+            "c:591 - an unset slot emits the \"0\" reset cap"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -7516,8 +7784,8 @@ mod tests {
     #[test]
     fn filecol_constructs_with_col_set_others_none() {
         let _g = crate::test_util::global_state_lock();
-        let f = filecol("01;31");
-        assert_eq!(f.col, "01;31");
+        let f = filecol(Some("01;31"));
+        assert_eq!(f.col.as_deref(), Some("01;31"));
         assert!(f.prog.is_none());
         assert!(f.next.is_none());
     }
@@ -7645,11 +7913,13 @@ mod tests {
         let _: i32 = getcols("");
     }
 
-    /// c:523 — `zcputs` returns String (compile-time type pin).
+    /// c:580 — `zcputs(char *group, int colour)` is `void`
+    /// (compile-time type pin; C has no return value).
     #[test]
-    fn zcputs_returns_string_type() {
+    fn zcputs_returns_unit_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: String = zcputs("", None);
+        let _g = zle_test_setup();
+        let _: () = zcputs(None, COL_NO);
     }
 
     /// c:573 — `initiscol` returns i32 (compile-time type pin).
@@ -7913,20 +8183,26 @@ mod tests {
         let _: i32 = zlrputs("");
     }
 
-    /// c:523 — `zcputs("", None)` returns String (compile-time pin, alt).
+    /// c:580 — `zcputs(NULL, COL_NO)` is `void` (compile-time pin, alt).
     #[test]
-    fn zcputs_returns_string_pin_alt() {
+    fn zcputs_returns_unit_pin_alt() {
         let _g = crate::test_util::global_state_lock();
-        let _: String = zcputs("", None);
+        let _g = zle_test_setup();
+        let _: () = zcputs(None, COL_NO);
     }
 
-    /// c:523 — `zcputs("", None)` empty input deterministic.
+    /// c:566 — a repeated `zcputs` of the SAME slot writes once: the
+    /// second call hits zlrputs's `strcmp(last_cap, cap)` guard, so
+    /// last_cap is unchanged.
     #[test]
-    fn zcputs_empty_deterministic() {
+    fn zcputs_repeat_same_slot_is_idempotent() {
         let _g = crate::test_util::global_state_lock();
-        let a = zcputs("", None);
-        let b = zcputs("", None);
-        assert_eq!(a, b, "zcputs('', None) must be pure");
+        let _g = zle_test_setup();
+        zcputs(None, COL_NO);
+        let first = LAST_CAP.lock().unwrap().clone();
+        zcputs(None, COL_NO);
+        let second = LAST_CAP.lock().unwrap().clone();
+        assert_eq!(first, second, "c:566 - last_cap is unchanged by a repeat");
     }
 
     /// c:533 — `zcoff` is idempotent (alt 10-call).
