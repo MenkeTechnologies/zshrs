@@ -1,0 +1,129 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compstate_old_list_shown",
+ "title": "a re-invoked completion widget reads $compstate[old_list] as `yes` where zsh reads `shown`",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0000 ",
+  "keys": [
+   "cx-v",
+   "cx-v"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0000",
+   "kind": "values",
+   "widget": "compdef-K:list-choices",
+   "setup": [
+    "_sfz_widget() {",
+    "  _sfz_main() {",
+    "    _values  '[bracket] in' 'delta[\\[bracket\\] in say \"hi\" now]'",
+    "  }",
+    "  _sfz_main; _sfz_ret=$?",
+    "  compadd -U -Q -J _sfzcs -X 'compstate' -- \"insert=$compstate[insert]\" \"list=$compstate[list]\" \"list_max=$compstate[list_max]\" \"last_prompt=$compstate[last_prompt]\" \"to_end=$compstate[to_end]\" \"old_list=$compstate[old_list]\" \"exact=$compstate[exact]\" \"pattern_insert=$compstate[pattern_insert]\" \"ret=$_sfz_ret\"",
+    "  return $_sfz_ret",
+    "}",
+    "compdef -K _sfz_widget _sfz_kw1 complete-word '^Xw' _sfz_kw2 list-choices '^Xv'",
+    "bindkey '^I' complete-word"
+   ],
+   "completer": "#compdef fzc0000\n\n_sfz_main() {\n  _values  '[bracket] in' 'delta[\\[bracket\\] in say \"hi\" now]'\n}\n_sfz_main; _sfz_ret=$?\ncompadd -U -Q -J _sfzcs -X 'compstate' -- \"insert=$compstate[insert]\" \"list=$compstate[list]\" \"list_max=$compstate[list_max]\" \"last_prompt=$compstate[last_prompt]\" \"to_end=$compstate[to_end]\" \"old_list=$compstate[old_list]\" \"exact=$compstate[exact]\" \"pattern_insert=$compstate[pattern_insert]\" \"ret=$_sfz_ret\"\nreturn $_sfz_ret\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ",
+  "category": "grid-diff",
+  "zsh_grid": [
+   "@SFZ@ fzc0000",
+   "delta  -- [bracket] in say \"hi\" now",
+   "compstate",
+   "exact=               list=list            pattern_insert=menu",
+   "insert=              list_max=100         ret=0",
+   "last_prompt=         old_list=            to_end=match",
+   "@SFZ@ fzc0000",
+   "delta  -- [bracket] in say \"hi\" now",
+   "compstate",
+   "exact=               list=list            pattern_insert=menu",
+   "insert=              list_max=100         ret=0",
+   "last_prompt=         old_list=shown       to_end=match",
+   "@SFZ@ fzc0000"
+  ],
+  "zshrs_grid": [
+   "@SFZ@ fzc0000",
+   "delta  -- [bracket] in say \"hi\" now",
+   "compstate",
+   "exact=               list=list            pattern_insert=menu",
+   "insert=              list_max=100         ret=0",
+   "last_prompt=         old_list=            to_end=match",
+   "@SFZ@ fzc0000",
+   "delta  -- [bracket] in say \"hi\" now",
+   "compstate",
+   "exact=               list=list            pattern_insert=menu",
+   "insert=              list_max=100         ret=0",
+   "last_prompt=         old_list=yes         to_end=match",
+   "@SFZ@ fzc0000"
+  ],
+  "zsh_diagnostics": [],
+  "zshrs_diagnostics": [],
+  "notes": "Both shells draw the SAME list twice and agree on every other compstate field; the only differing cell is old_list on the SECOND invocation. Doc/Zsh/compwid.yo:320-326 separates the two values: `yes` means a valid old list exists, `shown` means it is also on the screen \u2014 and it is on the screen, both shells drew it. The list-choices leg of the `compdef -K` pair is what re-enters completion with a list already displayed. Nothing about this is visible without the compstate probe, which is why the widget axis found it and the screen-diff sweeps did not."
+ },
+ "controls": [
+  {
+   "note": "same completer, same two presses, through whatever compinit left on TAB: PASSES, so the divergence is the widget, not the completer.",
+   "buffer": "fzc0000 ",
+   "keys": [
+    "tab",
+    "tab"
+   ],
+   "spec": {
+    "widget": "default",
+    "setup": []
+   }
+  },
+  {
+   "note": "same completer through the BUILTIN list-choices widget: PASSES. The builtin re-invocation sets old_list=shown on both shells.",
+   "buffer": "fzc0000 ",
+   "keys": [
+    "tab",
+    "tab"
+   ],
+   "spec": {
+    "widget": "std:list-choices",
+    "setup": [
+     "bindkey '^I' list-choices"
+    ]
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "round-3 compsys_spec_fuzz --widget/--compstate-probe sweep (target/spec-fuzz-900/case0000.min.zsh, destroyed with target/)"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}

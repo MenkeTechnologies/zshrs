@@ -1,0 +1,98 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "complete_help_caller_frame",
+ "title": "_complete_help attributes every tag to one caller too many: zshrs adds `_normal`",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0001 -d",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0001",
+   "kind": "arguments",
+   "widget": "fn:_complete_help",
+   "setup": [
+    "bindkey '^I' _complete_help"
+   ],
+   "completer": "#compdef fzc0001\n\nlocal curcontext=\"$curcontext\" state state_descr line ret=1\ntypeset -A opt_args\n\n_arguments  \\\n  '1:file:_files -/' && ret=0\n\nreturn ret\n"
+  }
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "4 row(s) differ",
+  "category": "grid-diff",
+  "zsh_grid": [
+   "@SFZ@ fzc0001 -d",
+   "tags in context :completion::complete:fzc0001::",
+   "    argument-1  (_arguments _fzc0001)",
+   "tags in context :completion::complete:fzc0001:argument-1:",
+   "    globbed-files  (_files _arguments _fzc0001)",
+   "    directories    (_files _arguments _fzc0001)",
+   "    all-files      (_files _arguments _fzc0001)"
+  ],
+  "zshrs_grid": [
+   "@SFZ@ fzc0001 -d",
+   "tags in context :completion::complete:fzc0001::",
+   "    argument-1  (_arguments _fzc0001 _normal)",
+   "tags in context :completion::complete:fzc0001:argument-1:",
+   "    globbed-files  (_files _arguments _fzc0001 _normal)",
+   "    directories    (_files _arguments _fzc0001 _normal)",
+   "    all-files      (_files _arguments _fzc0001 _normal)"
+  ],
+  "zsh_diagnostics": [],
+  "zshrs_diagnostics": [],
+  "notes": "The parenthesised list after each tag is the caller chain _complete_help prints; zshrs appends `_normal` to all four. The cause is one frame short in $funcstack under this widget, measured directly by the variant below: zsh `_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help|_complete_help`, zshrs the same minus the trailing `_complete_help`. _complete_help slices $funcstack with ${a[3,(i)_(main_complete|complete_help)]}; that subscript evaluated on a literal array is byte-identical on both shells, so what is pinned here is the funcstack CONTENT, not the subscript."
+ },
+ "controls": [],
+ "variants": [
+  {
+   "note": "the funcstack itself, displayed by the completer with `zle -M` before it runs: zsh emits `FS:_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help|_complete_help`, zshrs `FS:_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help` \u2014 one frame short. The message is overwritten on the settled grid, so it is the RAW STREAM that carries it; the grid still fails on the same four caller-attribution rows.",
+   "buffer": "fzcfs -d",
+   "keys": [
+    "tab"
+   ],
+   "spec": {
+    "cmd": "fzcfs",
+    "kind": "arguments",
+    "widget": "fn:_complete_help",
+    "setup": [
+     "bindkey '^I' _complete_help"
+    ],
+    "completer": "#compdef fzcfs\n\nzle -M \"FS:${(j:|:)funcstack}\"\n_arguments '1:file:_files -/'\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "round-3 compsys_spec_fuzz widget sweep (target/spec-fuzz-401/case0001.min.zsh, destroyed with target/)"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}

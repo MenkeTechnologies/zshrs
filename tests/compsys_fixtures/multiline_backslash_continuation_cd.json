@@ -1,0 +1,95 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "multiline_backslash_continuation_cd",
+ "title": "`cd \\`<newline>`/usr/sh`: zsh completes /usr/share/, zshrs leaves the word and prints two _describe errors",
+ "harness": "compsys_parity",
+ "run": {
+  "buffer": "cd \\\n/usr/sh",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "rows": 24,
+  "cols": 80,
+  "zstyle": [
+   "zstyle ':completion:*' list-grouped false"
+  ]
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "diverges at step #1 ('tab'); first diff row 1 col 7; 4 row(s) differ",
+  "first_diff": {
+   "row": 1,
+   "col": 7
+  },
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "/usr/share/",
+    "zshrs": "/usr/sh"
+   },
+   {
+    "row": 2,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 3,
+    "zsh": "<absent>",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 4,
+    "zsh": "<absent>",
+    "zshrs": "/usr/share/"
+   }
+  ],
+  "rows_total": 4,
+  "notes": "Both shells answer the Enter with PS2 \u2014 the buffer is deliberately incomplete at the newline, so nothing executes and the completion fires inside the continuation. The single-line control below completes the same word with the newline removed and PASSES, which is what makes the CONTINUATION the variable rather than the word. One zstyle statement is enough: `list-grouped false`. zshrs emits `_describe:compdescribe:122: invalid argument: __galiases_ary` and `_describe:compdescribe:129: no parsed state` before drawing the same completion one row lower, so the line the user sees is still `/usr/sh` where zsh has already inserted `/usr/share/`."
+ },
+ "controls": [
+  {
+   "note": "`cd /usr/sh` on one line under the same single zstyle: PASSES.",
+   "buffer": "cd /usr/sh",
+   "keys": [
+    "tab"
+   ],
+   "rows": 24,
+   "cols": 80,
+   "zstyle": [
+    "zstyle ':completion:*' list-grouped false"
+   ]
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "round-3 compsys_parity --multiline-fuzz"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}

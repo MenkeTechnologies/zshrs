@@ -1,0 +1,191 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "multiline_heredoc_terminator",
+ "title": "`cat <<END`<newline>`a`<newline>`EN`: completing on a heredoc terminator line puts the two shells on entirely different screens",
+ "harness": "compsys_parity",
+ "run": {
+  "buffer": "cat <<END\na\nEN",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "rows": 24,
+  "cols": 80,
+  "zstyle_file": "scripts/parity_zstyle.zsh"
+ },
+ "expect": "diverges",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "diverges at step #1 ('tab'); first diff row 0 col 0; 24 row(s) differ",
+  "first_diff": {
+   "row": 0,
+   "col": 0
+  },
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "_describe:compdescribe:122: invalid argument: __galiases_ary",
+    "zshrs": "@ZP@ cat <<END"
+   },
+   {
+    "row": 1,
+    "zsh": "_describe:compdescribe:129: no parsed state",
+    "zshrs": "a"
+   },
+   {
+    "row": 2,
+    "zsh": "_describe:compdescribe:122: invalid argument: __galiases_ary",
+    "zshrs": "EN"
+   },
+   {
+    "row": 3,
+    "zsh": "_describe:compdescribe:129: no parsed state",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 4,
+    "zsh": "_describe:compdescribe:122: invalid argument: __galiases_ary",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 5,
+    "zsh": "_describe:compdescribe:129: no parsed state",
+    "zshrs": "_describe:compdescribe:122: invalid argument: __galiases_ary"
+   },
+   {
+    "row": 6,
+    "zsh": "_describe:compdescribe:122: invalid argument: __galiases_ary",
+    "zshrs": "_describe:compdescribe:129: no parsed state"
+   },
+   {
+    "row": 7,
+    "zsh": "_describe:compdescribe:129: no parsed state",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 8,
+    "zsh": "EN",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 9,
+    "zsh": "-<<shell function>>-",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 10,
+    "zsh": "_3dANALYZEtoAFNI",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 11,
+    "zsh": "_ExtractOriginalAlignmentRecordsByNameSpark",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 12,
+    "zsh": "_contig_ExN50_statistic.pl",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 13,
+    "zsh": "-<<parameter>>-",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 14,
+    "zsh": "LINENO                   ///////// 32",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 15,
+    "zsh": "MENUPROMPT               ///////// -<<%SScrolling act",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 16,
+    "zsh": "READNULLCMD              ///////// more",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 17,
+    "zsh": "USERNAME                 ///////// wizard",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 18,
+    "zsh": "VENDOR                   ///////// apple",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 19,
+    "zsh": "ZSHRS_HIDE_EXT_BUILTINS  ///////// 1",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 20,
+    "zsh": "ZSH_EVAL_CONTEXT         ///////// shfunc:loadautofunc:shfunc:shfunc:",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 21,
+    "zsh": "ZSH_VERSION              ///////// 5.9.2",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 22,
+    "zsh": "-<<files>>-",
+    "zshrs": "<absent>"
+   },
+   {
+    "row": 23,
+    "zsh": "LICENSE",
+    "zshrs": "<absent>"
+   }
+  ],
+  "rows_total": 24,
+  "notes": "Both shells answer the Enter with PS2 \u2014 the buffer is deliberately incomplete at the newline, so nothing executes and the completion fires inside the continuation. The single-line control below completes the same word with the newline removed and PASSES, which is what makes the CONTINUATION the variable rather than the word. Every one of the 24 rows differs. zsh lists shell functions, a parameter block and a files block; zshrs still shows the three typed lines and four `_describe:compdescribe` rows and no listing. The round-3 note described this cell as `ZSH_EVAL_CONTEXT differing by a loadautofunc frame`; that specific comparison did NOT survive contact here \u2014 zsh's parameter listing does show `ZSH_EVAL_CONTEXT ///////// shfunc:loadautofunc:shfunc:shfunc:` (row 20), but zshrs produced no parameter listing at all, so there was no zshrs value to compare it against. What is pinned is the screen divergence that was observed."
+ },
+ "controls": [
+  {
+   "note": "`cat EN` on one line \u2014 the same word completed outside a heredoc: PASSES.",
+   "buffer": "cat EN",
+   "keys": [
+    "tab"
+   ],
+   "rows": 24,
+   "cols": 80,
+   "zstyle_file": "scripts/parity_zstyle.zsh"
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "round-3 compsys_parity --multiline-fuzz"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "d1d16a132d",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "9246485b52f81955",
+   "scripts/comptab_parity.py": "cb15559d30603b6b",
+   "scripts/compsys_parity.py": "07aa459d97b3516d"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "size": 101596360,
+   "mtime": "2026-08-30 03:13:45",
+   "version": "zshrs 0.12.46",
+   "sha256_16": "d4a77617b8cd3c67"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
+  "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+ }
+}
