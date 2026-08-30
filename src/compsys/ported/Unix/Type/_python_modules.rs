@@ -26,7 +26,7 @@
 //! (`_cache_invalid` / `_retrieve_cache` / `_store_cache`) is preserved.
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
 use crate::compsys::ported::_store_cache::_store_cache;
 use crate::compsys::ported::_wanted::_wanted;
@@ -66,7 +66,7 @@ pub fn _python_modules(args: &[String]) -> i32 {
         && _retrieve_cache(&[cache_id.clone()]) != 0
     {
         // sh:32 — set -A $array_name $(python -c $script)
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "modules".to_string(),
             python.clone(),
             "-c".to_string(),

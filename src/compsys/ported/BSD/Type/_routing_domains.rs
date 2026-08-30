@@ -8,7 +8,7 @@
 //! sh: 6  compadd "$@" "$expl[@]" -  ${${(M)${(f)"$(_call_program routing-domains netstat -R)"}:#Rdomain *}#Rdomain }
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_description::_description;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -44,7 +44,7 @@ pub fn _routing_domains(args: &[String]) -> i32 {
     ]);
 
     // sh:6  $(_call_program routing-domains netstat -R)
-    let _ = _call_program(&["routing-domains".to_string(), "netstat -R".to_string()]);
+    let _ = call_program_capture(&["routing-domains".to_string(), "netstat -R".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();
     let domains = rdomain_lines(&out);
 

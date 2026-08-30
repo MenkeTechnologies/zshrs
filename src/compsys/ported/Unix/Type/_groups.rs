@@ -22,7 +22,7 @@
 //! sh:8 approx — the `$+_cache_groups` presence check maps to
 //! `getaparam("_cache_groups").is_none()`.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::modules::zutil::lookupstyle;
@@ -57,20 +57,22 @@ pub fn _groups(args: &[String]) -> i32 {
             let mut c: Vec<String> = Vec::new();
             if cfg!(target_os = "macos") {
                 // sh:10-13
-                if _call_program(&[
+                if call_program_capture(&[
                     "groups".to_string(),
                     "dscacheutil".to_string(),
                     "-q".to_string(),
                     "group".to_string(),
-                ]) == 0
+                ])
+                .1 == 0
                 {
                     c = parse_dscacheutil(&getsparam("REPLY").unwrap_or_default());
                 }
-            } else if _call_program(&[
+            } else if call_program_capture(&[
                 "groups".to_string(),
                 "getent".to_string(),
                 "group".to_string(),
-            ]) == 0
+            ])
+            .1 == 0
             {
                 // sh:15 — first colon-field of each line.
                 c = getsparam("REPLY")

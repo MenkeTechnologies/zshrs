@@ -8,7 +8,7 @@
 //! sh:7  _wanted global-tags expl 'tag' compadd -M 'm:{a-zA-Z}={A-Za-z}' -a "$@" - tags
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
 
@@ -17,7 +17,7 @@ pub fn _global_tags(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_global_tags");
     // sh:5 — run the helper, split its stdout into words.
     let prefix = getsparam("PREFIX").unwrap_or_default();
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "global-tags".to_string(),
         "global".to_string(),
         "--completion".to_string(),

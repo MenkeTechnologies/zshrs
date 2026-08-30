@@ -15,7 +15,7 @@
 //! sh:11  fi
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam};
 
@@ -37,7 +37,7 @@ pub fn _users_on(args: &[String]) -> i32 {
         return 1;
     }
     // sh:7  $(_call_program users users) — output lands in $REPLY.
-    let _ = _call_program(&["users".to_string(), "users".to_string()]);
+    let _ = call_program_capture(&["users".to_string(), "users".to_string()]);
     let logged_on: Vec<String> = getsparam("REPLY")
         .unwrap_or_default()
         .split_whitespace()

@@ -40,7 +40,7 @@
 //! sh:49  return 1
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};
@@ -226,8 +226,9 @@ pub fn _pick_variant(args: &[String]) -> i32 {
     // stdout) — yielded an EMPTY `$REPLY`, no pattern matched, and the DEFAULT
     // (last) variant was picked: `nc <TAB>` completed `nedit` options
     // (`-iconic`/`-line`/…) instead of netcat's `-b`/`-i`/`-l`. `_call_program`
-    // runs `sh -c <joined args>`, so append the redirects as command words to
-    // reproduce the `</dev/null 2>&1` the shell puts on the `$()`.
+    // joins its argument words into the text it hands the shell's `eval`, so
+    // appending the redirections as words is how the `</dev/null 2>&1` the
+    // shell writes on the `$()` reaches the command.
     // sh:36 — `$pre` is UNQUOTED in the shell, so an empty `$pre`
     // contributes no word at all; `command`/`builtin` become a real
     // prefix word ahead of `$opts[-c]`.
@@ -241,8 +242,15 @@ pub fn _pick_variant(args: &[String]) -> i32 {
     }
     call_args.push("</dev/null".to_string());
     call_args.push("2>&1".to_string());
-    let _ = _call_program(&call_args);
-    let output = getsparam("REPLY").unwrap_or_default();
+    // `call_program_capture` IS the `$( … )` of sh:36 — it runs the helper
+    // through the shell's own `eval` under a command substitution and hands
+    // back the captured stdout. Calling plain `_call_program` and reading
+    // `$REPLY` made this the one caller that needed `_call_program` to
+    // capture-and-maybe-re-echo, and the "maybe" was an `isatty(1)` guess:
+    // whenever fd 1 was a FILE rather than a terminal the helper's output was
+    // echoed into it, so `_pick_variant -c echo … hello` printed a stray
+    // `hello` line above its own output.
+    let (output, _rc) = call_program_capture(&call_args);
 
     // sh:38-43 — for each (name, pattern), test output match
     for (name, pat) in &var {

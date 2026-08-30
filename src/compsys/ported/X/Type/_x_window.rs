@@ -32,7 +32,7 @@
 //! `-d list` in both compadd calls supplies `list` (the untouched,
 //! whitespace-stripped-only lines) as the paired display strings.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getsparam, setaparam};
@@ -96,7 +96,7 @@ pub fn _x_window(args: &[String]) -> i32 {
     }
 
     // sh:7
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "windows".to_string(),
         "xwininfo".to_string(),
         "-root".to_string(),

@@ -47,7 +47,7 @@
 //! then run through the same `(f)`/`:#`/`%%`/`#`/`(u)`/`(s:,:)` string
 //! transforms the upstream expansions perform.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
@@ -125,7 +125,7 @@ fn parse_font_attr_text(text: &str) -> Vec<String> {
 
 /// sh:18-19 — `_call_program font-attrs fc-list $font $attr`.
 fn font_attr_values(font: &str, attr: &str) -> Vec<String> {
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "font-attrs".to_string(),
         "fc-list".to_string(),
         font.to_string(),
@@ -164,7 +164,7 @@ fn parse_elements_text(text: &str) -> Vec<String> {
 
 /// sh:27 — `_call_program elements fc-list -v $font`.
 fn compute_elements(font: &str) -> Vec<String> {
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "elements".to_string(),
         "fc-list".to_string(),
         "-v".to_string(),
@@ -187,7 +187,7 @@ fn parse_fonts_text(text: &str) -> Vec<String> {
 
 /// sh:40 — `_call_program fonts fc-list -f '%\{family\},'`.
 fn compute_fonts() -> Vec<String> {
-    let _ = _call_program(&[
+    let _ = call_program_capture(&[
         "fonts".to_string(),
         "fc-list".to_string(),
         "-f".to_string(),

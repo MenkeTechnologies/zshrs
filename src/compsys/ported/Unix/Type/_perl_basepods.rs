@@ -21,7 +21,7 @@
 //! sh:32  _wanted pods expl 'perl base pod' compadd -a "$@" - _perl_basepods
 //! ```
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -50,7 +50,7 @@ pub fn _perl_basepods(args: &[String]) -> i32 {
     // sh:11  (( ! $+_perl_basepods ))
     if getaparam("_perl_basepods").is_none() {
         // sh:19  podpath=$(perl -MConfig -e 'print "$Config{installprivlib}/pod"')
-        let _ = _call_program(&[
+        let _ = call_program_capture(&[
             "perl-basepods".to_string(),
             "perl".to_string(),
             "-MConfig".to_string(),

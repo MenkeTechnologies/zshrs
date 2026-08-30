@@ -19,7 +19,7 @@
 //! `${(@)^…}` / `${(@k)…}` cross-products are string-op stand-ins for the zsh
 //! expansion engine (marked `// sh:N approx`); the completion result matches.
 
-use crate::compsys::ported::_call_program::_call_program;
+use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_files::_files;
 use crate::compsys::ported::_multi_parts::_multi_parts;
 use crate::compsys::ported::_requested::_requested;
@@ -258,7 +258,7 @@ fn mailbox_cache() {
 
 /// sh:130 `$(mhpath)` — the current MH folder path (empty when unavailable).
 fn mhpath() -> String {
-    let _ = _call_program(&["mailboxes".to_string(), "mhpath".to_string()]);
+    let _ = call_program_capture(&["mailboxes".to_string(), "mhpath".to_string()]);
     getsparam("REPLY").unwrap_or_default().trim().to_string()
 }
 
