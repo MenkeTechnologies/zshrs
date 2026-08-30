@@ -2942,13 +2942,60 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
     aval
 }
 
+// !!! WARNING: RUST-ONLY CONSTANT — NO C COUNTERPART !!!
+/// Which zsh revision's `zparseopts` FLAG-vs-SPEC rule to apply to a leading
+/// word like `-move=opt_move`.
+///
+/// * `false` (zsh **5.9.2**, the version zshrs reports in `$ZSH_VERSION`):
+///   a leading word that is not wholly consumable as `zparseopts`'s own flags
+///   is an option DESCRIPTION, and the flag scan stops there.  This is the
+///   `default:` arm of 5.9.2's hand-rolled scan, vendored at
+///   `src/zsh/Src/Modules/zutil.c:1859-1863`:
+///   ```c
+///   default:
+///       /* Anything else is an option description */
+///       args--;
+///       o = NULL;
+///       break;
+///   ```
+///   so `zparseopts -D -E -move=opt_move -q=opt_q` parses `-move=opt_move`
+///   as a spec, which is what `/opt/homebrew/bin/zsh` (5.9.2) does and what
+///   `~/.zinit/bin/zinit-install.zsh:1528` relies on.
+///
+/// * `true` (zsh **5.9.999.3-test**): every leading `-` word is fed to the
+///   generic parser, so an unknown letter is fatal —
+///   `Src/builtin.c:385-390` `zwarnnam(name, "bad option: %c%c", …)`.
+///   Upstream commit `88d51a2400` ("54376: zparseopts: use standard option
+///   parsing", 2026-04-29) made that the rule by giving zparseopts the bintab
+///   optstring `"a:A:DEFGKMn:v:"` (`Src/Modules/zutil.c:2150`).  Its README
+///   entry: "as a consequence of the zparseopts builtin now using standard
+///   argument parsing for its own options, long-option specs must be guarded
+///   using `--` or similar."  Under that rule `-move=opt_move` is
+///   `bad option: -m`.
+///
+/// zshrs targets 5.9.2 because `$ZSH_VERSION` says 5.9.2 — the same choice
+/// `subst.rs`'s `wantvals_c1523` switch records for the same fork.  Retargeting
+/// is this one `const` plus restoring `Some("a:A:DEFGKMn:v:")` on the
+/// `zparseopts` bintab row in `src/ported/builtin.rs` (which is `None` for the
+/// 5.9.2 rule, matching `src/zsh/Src/Modules/zutil.c:2137`).
+///
+/// Independent of this switch, zshrs keeps the *unambiguous* halves of
+/// `88d51a2400`: flag STACKING (`-DF` == `-D -F`), CUDDLED optargs (`-nprog`),
+/// and the `-n NAME` flag itself.  5.9.2 read `-DF` / `-n` as descriptions;
+/// a word whose every letter is one of zparseopts's own flags cannot be a
+/// GNU-style long spec that any real script would write, and
+/// `~/forkedRepos/zsh/Functions/Misc/zgetopt:22` needs `-n`.
+const LONG_SPEC_NEEDS_GUARD: bool = false;
+
 /// Direct port of `bin_zformat(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
 /// Port of `bin_zparseopts(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zutil.c:1821`. C
 /// signature: `static int bin_zparseopts(char *nam, char **args,
-/// Options ops, UNUSED(int func))` — `ops` is NOT unused: the builtin's
-/// own flags arrive there from the generic parser (bintab optstring
-/// `"a:A:DEFGKMn:v:"`, c:2150).
+/// Options ops, UNUSED(int func))`. Under the 5.9.2 rule zshrs targets
+/// (`LONG_SPEC_NEEDS_GUARD` above) the bintab row carries a NULL optstring
+/// (`src/zsh/Src/Modules/zutil.c:2137`), so `ops` arrives empty and the flag
+/// words are still in `args`; the scan below fills a local `options` and the
+/// body then reads it with `OPT_ISSET`/`OPT_ARG` exactly as c:1835-1874 does.
 ///
 /// Implements the full GNU/zsh option parser:
 ///   - Flags: -D (delete consumed from argv), -E (extract),
@@ -3064,42 +3111,50 @@ pub fn bin_zparseopts(
         });
     }
 
-    // !!! WARNING: RUST-ONLY COMPAT SHIM — NO C COUNTERPART !!!
-    // In C every caller reaches bin_zparseopts through execbuiltin, which
-    // has already eaten the flag words listed in the bintab optstring
-    // (`"a:A:DEFGKMn:v:"`, c:2150) into `ops`. zshrs additionally has
-    // in-process Rust callers (the compsys `_deb_files` bridge) that
-    // invoke bin_zparseopts directly with a zeroed `options` and the flag
-    // words still sitting in `args`. Re-run Src/builtin.c's parser for
-    // them. The guard is exact rather than heuristic: execbuiltin
-    // consumes EVERY leading `-` word, so after it either some `ops.ind[]`
-    // byte is non-zero or `args[0]` cannot begin with `-`. Both being true
-    // at once is unreachable from the shell.
+    // !!! WARNING: RUST-ONLY SHAPE — NO SINGLE C COUNTERPART !!!
+    // zparseopts's own flag words are scanned HERE, not by execbuiltin: the
+    // bintab row carries a NULL optstring (`src/zsh/Src/Modules/zutil.c:2137`,
+    // zsh 5.9.2) so the generic parser never sees them.  That is what lets a
+    // bare long spec such as `-move=opt_move` survive — see
+    // LONG_SPEC_NEEDS_GUARD above for the full version rationale.
     //
-    // The body below replays `Src/builtin.c:341-390`'s generic parser over
-    // `args` for zparseopts's own optstring, and is INLINE (not a helper
-    // fn) because src/ported/ admits only real ports as functions.
-    let inline_ops: Option<(options, usize)> = if ops_arg.ind.iter().all(|&b| b == 0)
-        && args.first().is_some_and(|a| a.starts_with('-'))
-    {
-        // c:Src/Modules/zutil.c:2150 — the bintab optstring.
+    // The scan below is 5.9.2's `while ((o = *args++))` loop
+    // (`src/zsh/Src/Modules/zutil.c:1751-1873`) with its per-letter `switch`
+    // replaced by a replay of `Src/builtin.c:341-390` over zparseopts's
+    // optstring, so the 5.9.999 revision's stacking and cuddled optargs come
+    // for free.  The two loops agree letter for letter on every word 5.9.2
+    // accepted as flags; they differ only where 5.9.2's `switch` had
+    // `if (o[2]) { args--; o = NULL; }` on a short flag (c:1764-1768 etc.),
+    // i.e. exactly the multi-letter words, which is what
+    // LONG_SPEC_NEEDS_GUARD arbitrates.
+    //
+    // It is INLINE (not a helper fn) because src/ported/ admits only real
+    // ports as functions.  `ops_arg` is cloned in as the base so that
+    // restoring the bintab optstring (the 5.9.999 retarget) keeps working:
+    // whatever execbuiltin already ate stays set, and this loop then finds
+    // nothing left to eat.
+    let inline_ops: (options, usize) = {
+        // c:Src/Modules/zutil.c:2150 — the 5.9.999 bintab optstring, still the
+        // authority on which letters are flags and which take an argument.
         const OPTSTR: &[u8] = b"a:A:DEFGKMn:v:";
-        let mut ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
+        let mut ops = ops_arg.clone();
         let mut i = 0usize;
         while i < args.len() {
             let word = args[i].as_bytes();
             // c:Src/builtin.c:302-304 — `while (arg && ((sense = (*arg == '-')) …`
+            // == c:1752 `if (*o == '-')` / c:1869-1871 `else { args--; break; }`
             if word.first() != Some(&b'-') {
                 break;
             }
+            // c:1859-1863 — the `default:` arm rewinds `args` and leaves the
+            // flag scan without consuming the word.  Snapshot so a mid-word
+            // reject (`-Dx` in 5.9.2 is the SPEC `-Dx`, not `-D` plus junk)
+            // rolls back the letters already applied.
+            let snapshot = (ops.clone(), i);
             // c:Src/builtin.c:334-335 — `if (arg[1] == '-') arg++;`
             let mut j = if word.len() > 1 && word[1] == b'-' { 1 } else { 0 };
             // c:Src/builtin.c:336-340 — `if (!arg[1]) ops.ind['-'] = 1;`
+            // == c:1754-1756 (lone `-`) and c:1757-1762 (bare `--`).
             if word.len() == j + 1 {
                 ops.ind[b'-' as usize] = 1;
             }
@@ -3122,6 +3177,7 @@ pub fn bin_zparseopts(
                 }
                 // c:Src/builtin.c:363-372 — mandatory argument (this
                 // optstring has no `::` or `%` forms).
+                // == c:1816-1823 `if (o[2]) n = o + 2; else if (*args) n = *args++;`
                 let argptr = if j + 1 < word.len() {
                     // c:364-365 — rest of the same word (`-nprog`).
                     String::from_utf8_lossy(&word[j + 1..]).into_owned()
@@ -3140,26 +3196,31 @@ pub fn bin_zparseopts(
                 // `*++arg` hits the NUL, so this word's scan is over.
                 j = word.len();
             }
-            // c:Src/builtin.c:385-390 — `if (*arg) { zwarnnam(name,
-            // "bad option: %c%c", "+-"[sense], warg); return 1; }`
             if let Some(c) = bad {
-                zwarnnam(nam, &format!("bad option: -{}", c as char));
-                return 1;
+                if LONG_SPEC_NEEDS_GUARD {
+                    // c:Src/builtin.c:385-390 — `if (*arg) { zwarnnam(name,
+                    // "bad option: %c%c", "+-"[sense], warg); return 1; }`
+                    zwarnnam(nam, &format!("bad option: -{}", c as char));
+                    return 1;
+                }
+                // c:1859-1863 `default:` — "Anything else is an option
+                // description": rewind to the start of this word, undo the
+                // letters this word had already set, and end the flag scan.
+                let (saved_ops, saved_i) = snapshot;
+                ops = saved_ops;
+                i = saved_i;
+                break;
             }
             i += 1; // c:Src/builtin.c:391 — `arg = *++argv;`
             // c:Src/builtin.c:403-404 — `if (ops.ind['-']) break;`
+            // == c:1865-1868 `if (!o) { o = ""; break; }`
             if ops.ind[b'-' as usize] != 0 {
                 break;
             }
         }
-        Some((ops, i))
-    } else {
-        None
+        (ops, i)
     };
-    let (ops, spec_start): (&options, usize) = match &inline_ops {
-        Some((o, n)) => (o, *n),
-        None => (ops_arg, 0),
-    };
+    let (ops, spec_start): (&options, usize) = (&inline_ops.0, inline_ops.1);
 
     // c:1826 — `int flags = 0, del, extract, fail, gnu, keep;`
     let del = OPT_ISSET(ops, b'D'); // c:1835

@@ -17519,20 +17519,26 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            // c:Src/Modules/zutil.c:2150 —
-            //   BUILTIN("zparseopts", 0, bin_zparseopts, 0, -1, 0,
-            //           "a:A:DEFGKMn:v:", NULL)
-            // zparseopts's own flags go through the generic option parser
-            // (Src/builtin.c:341-390); `bin_zparseopts` reads them back
-            // with OPT_ISSET/OPT_ARG (c:1835-1874). Routing them here is
-            // what makes `-DF` stack exactly like `-D -F`, `-nprog`
-            // cuddle like `-n prog`, and a lone `-` / `--` terminate the
-            // flag list before the option specs — none of which the old
-            // hand-rolled loop inside bin_zparseopts did. minargs is 0
-            // (c:2150) because `zparseopts -a ''` must reach the builtin
-            // to emit "missing array name for -a" rather than being
-            // rejected by execbuiltin as "not enough arguments".
-            Some("a:A:DEFGKMn:v:"),
+            // c:src/zsh/Src/Modules/zutil.c:2137 —
+            //   BUILTIN("zparseopts", 0, bin_zparseopts, 1, -1, 0, NULL, NULL)
+            // NULL optstring: in zsh 5.9.2 the generic parser must NOT eat
+            // zparseopts's leading `-` words, because a word it does not
+            // recognise is an option DESCRIPTION, not an error. Handing it
+            // 5.9.999's optstring "a:A:DEFGKMn:v:" (c:2150, upstream commit
+            // 88d51a2400) turns `zparseopts -D -E -move=opt_move` into
+            // "bad option: -m" at Src/builtin.c:385-390 — the regression that
+            // broke ~/.zinit/bin/zinit-install.zsh:1528. zshrs reports
+            // $ZSH_VERSION=5.9.2, so it takes the 5.9.2 rule; the switch is
+            // `LONG_SPEC_NEEDS_GUARD` in src/ported/modules/zutil.rs, and
+            // retargeting means flipping it AND restoring the optstring here.
+            // bin_zparseopts scans the flag words itself (stacking and cuddled
+            // optargs included) and reads them back with OPT_ISSET/OPT_ARG.
+            //
+            // minargs stays 0, NOT c:2137's 1: bare `zparseopts` must reach
+            // the builtin to report "missing option descriptions"
+            // (c:1885-1888), and `zparseopts -a ''` must reach it to report
+            // "missing array name for -a" (c:1844).
+            None,
             None,
         ),
         BUILTIN(
