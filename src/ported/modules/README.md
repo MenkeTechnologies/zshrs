@@ -33,7 +33,7 @@ as exposed by `zmodload`.
 | `tcp.rs`           | `tcp.c`           | `ztcp` TCP socket                                                      |
 | `tcp_h.rs`         | `tcp.h`           | `tcp_session` types / `ZTCP_*` flags shared by `tcp.rs` and `zftp.rs` |
 | `termcap.rs`       | `termcap.c`       | `echotc`, termcap capability access                                    |
-| `terminfo.rs`      | `terminfo.c`      | `${terminfo[capname]}` via ncurses FFI                                 |
+| `terminfo.rs`      | `terminfo.c`      | `${terminfo[capname]}`, read from the compiled terminfo database by `extensions/terminfo_db.rs` (no ncurses)                                 |
 | `watch.rs`         | `watch.c`         | `$watch` login/logout monitoring                                       |
 | `zftp.rs`          | `zftp.c`          | `zftp` FTP client builtin                                              |
 | `zprof.rs`         | `zprof.c`         | function profiler                                                      |
