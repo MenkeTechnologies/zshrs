@@ -1,0 +1,13 @@
+#compdef zid
+
+# Print the current shell's federated ID — the stable `shell_id`
+# (`bash` / `zsh` / `zshrs` / …) and the per-process `bundle_id` the
+# daemon uses to scope state.
+#
+# zshrs builtin. Registered in ZSHRS_BUILTIN_NAMES
+# (daemon/builtins.rs); takes no sub-commands.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+# No sub-commands: fall through to the default completer so
+# file/parameter arguments still complete.
+_default

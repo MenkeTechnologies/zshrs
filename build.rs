@@ -31,6 +31,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/zsh/Completion");
     println!("cargo:rerun-if-changed=src/zsh/Functions");
+    println!("cargo:rerun-if-changed=completions");
     bundle_zsh_functions();
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
 
@@ -639,7 +640,10 @@ fn bundle_zsh_functions() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for root in ["src/zsh/Completion", "src/zsh/Functions"] {
+    // `completions/` carries zshrs's OWN completions -- one per builtin in
+    // ZSHRS_BUILTIN_NAMES (daemon/builtins.rs) plus the hand-written _zd --
+    // so they land in ~/.zshrs/functions alongside zsh's tree.
+    for root in ["src/zsh/Completion", "src/zsh/Functions", "completions"] {
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
             let rd = match fs::read_dir(&dir) {
@@ -657,6 +661,10 @@ fn bundle_zsh_functions() {
                     None => continue,
                 };
                 // Mirror what zsh's install skips: docs and build inputs.
+                // completions/ also holds a data file that is not a function.
+                if dir.ends_with("completions") && !name.starts_with('_') {
+                    continue;
+                }
                 if name.starts_with('.')
                     || name.starts_with("README")
                     || name == "Makefile"
