@@ -4953,7 +4953,12 @@ def main():
     # Per-CONSTRUCT, for the same reason as per-kind: a substrate run is only
     # evidence about the constructs it actually drew, and the totals cannot say
     # which those were. A construct with 0 uses was not tested.
-    subs = [v for v in results if v.case.kind == "substrate"]
+    # A replayed fixture carries its completer as a verbatim body and no atom
+    # list, so there is no per-construct coverage to report and printing an
+    # "untested" list would name the whole catalogue — true of a one-case
+    # replay and useless as a statement about it.
+    subs = [] if args.replay else [v for v in results
+                                   if v.case.kind == "substrate"]
     if subs:
         percon, percat = {}, {}
         for v in subs:
