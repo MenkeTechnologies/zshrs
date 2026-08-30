@@ -798,9 +798,9 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                        zshrs workspace                         │
-                  │             3 crates · 860 .rs files · 915k lines              │
+                  │             4 crates · 861 .rs files · 915k lines              │
                   ├──────────────────────────────────────────┬─────────────────────┤
-                  │      src/ (466 .rs — runtime crate)      │  vendor/fish/ (157) │
+                  │      src/ (476 .rs — runtime crate)      │  vendor/fish/ (157) │
                   │  ┌────────────────────────────────────┐  │  reader / line edit │
                   │  │  src/ported/  (106 — STRICT PORT)  │  │  syntax highlight   │
                   │  │  every .rs ↔ a real Src/<x>.c file │  │  autosuggest        │
