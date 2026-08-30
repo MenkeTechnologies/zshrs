@@ -1891,9 +1891,8 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
         // ONLY.
         if namptr.len() >= 2 {
             // c:678
-            // c:678 — `strchr(*namptr + 1, Equals)`. Look for Equals
-            // TOKEN first; fall back to literal `=` for untokenized
-            // arrival paths.
+            // c:678 — `strchr(*namptr + 1, Equals)`: the Equals TOKEN
+            // and nothing else, so a quoted `=` never arms this arm.
             let chars: Vec<char> = namptr.chars().collect();
             let eql_pos = chars
                 .iter()
@@ -1941,15 +1940,65 @@ pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
 
     // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
     // Walk `:`-separated path components, reapply filesubstr on each
-    // suffix that starts with the Tilde or Equals TOKEN (c:694). The
-    // colon itself is matched literally, exactly as C does, but the
-    // character after it must be the token — an ASCII `~`/`=` there
-    // came from quoted text and C leaves it alone.
+    // suffix that starts with the Tilde or Equals TOKEN.
+    //
+    // TOKEN forms only (Tilde \u{98} / Equals \u{8d}), exactly as
+    // C tests at subst.c:694 — `str[0] == Tilde || str[0] == Equals`.
+    // The lexer emits those tokens for a tilde/equals that is SYNTAX;
+    // an ASCII `~`/`=` that survives to here is DATA, either quoted by
+    // the user or produced by an expansion. The colon itself is still
+    // matched literally, exactly as C does — only the character
+    // after it has to be the token.
+    //
+    // This previously also accepted ASCII, which conflated the two.
+    // That cost two separate bugs, and both are pinned below:
+    //
+    //   * quoted text was expanded as though it were bare, so
+    //     `print -r -- --a='b:=c'` ran an `=cmd` lookup on the quoted
+    //     `=c` and printed `zsh: c not found`, dropping the word that
+    //     zsh prints as `--a=b:=c`;
+    //   * the `:` inside a parameter expansion looked like a path
+    //     separator: `--height=${V:=x}` under MAGIC_EQUAL_SUBST split
+    //     at that colon, saw the suffix `=x}` begin with `=`, and ran
+    //     it through equalsubstr — `zsh: x} not found`, for a word
+    //     real zsh leaves untouched.
+    //
+    // fzf-tab's `--height='${FZF_TMUX_HEIGHT:=75%}'` hits both shapes
+    // (sh:117-128) and errored on every startup, aborting the rest of
+    // the zinit turbo `atload` chain. The token-only tests here and at
+    // c:680 fix the first; the depth guard below fixes the second.
     let mut ptr_off = 0_usize; // c:689
     loop {
         // c:690
         let slice = &namptr[ptr_off..]; // c:690
-        let colon_rel = match slice.find(':') {
+        // c:690 — `strchr(ptr, ':')`, but skipping any colon INSIDE a
+        // `${...}`. C never needs the guard: its lexer leaves `=`
+        // literal inside a substitution (Src/lex.c:1212 wraps the whole
+        // LX2_EQUALS case in `if (!sub)`), so the component after the
+        // colon of `${V:=x}` starts with a plain `=`, and the
+        // `str[0] == Equals` test below cannot fire. zshrs arrives here
+        // with that `=` carrying the Equals TOKEN, which made the colon
+        // of a parameter expansion look exactly like the separator in a
+        // real path list (`PATH=/bin:=cmd`) — so `=x}` went through
+        // equalsubstr as an `=cmd` lookup. fzf-tab's
+        // `--height='${FZF_TMUX_HEIGHT:=75%}'` printed
+        // `zsh: 75%} not found` on every startup for that reason.
+        let mut depth = 0_i32;
+        let mut prev_dollar = false;
+        let mut found: Option<usize> = None;
+        for (i, c) in slice.char_indices() {
+            match c {
+                '{' | '\u{8f}' /* Inbrace */ if prev_dollar => depth += 1,
+                '}' | '\u{90}' /* Outbrace */ if depth > 0 => depth -= 1,
+                ':' if depth == 0 => {
+                    found = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+            prev_dollar = c == '$' || c == '\u{85}' /* String */;
+        }
+        let colon_rel = match found {
             // c:690
             Some(p) => p,  // c:690
             None => break, // c:690
