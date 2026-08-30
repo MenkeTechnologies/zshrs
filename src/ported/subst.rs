@@ -5650,6 +5650,39 @@ pub fn paramsubst(
         // Unparenthesised flags — single `for (;;)` (subst.c:2550-2632).
         // Order matters for `${#~x}` vs `${~#x}`, `${=^x}`, etc.
         let mut force_split = false;
+
+        // c:Src/subst.c:3229-3232 — after the default/assign word's
+        // `multsub`, C runs `spbreak = 0; if (globsubst != 2) globsubst = 0;`.
+        // globsubst is a paramsubst-LOCAL there (c:1669), so a `${~...}`
+        // INSIDE the word cannot reach the enclosing expansion; only a `~`
+        // on the OUTER spec (globsubst == 2, "forced") survives.
+        //
+        // zshrs carries the flag through the GLOBAL option table plus
+        // TILDE_GLOBSUBST_CARRIER (documented deviation at that
+        // declaration), and the `:-`/`-` arms already port the `spbreak`
+        // half as `force_split = false`. The assign arms (`::=`, `:=`, `=`)
+        // ported neither half, so an inner `${~x}` left GLOB_SUBST on and
+        // the OUTER result was tokenized and filename-globbed:
+        // `: ${e::=${~b}}` with b='[[' died with `bad pattern: [[` where
+        // zsh assigns the literal. F-Sy-H hit this per keystroke at
+        // -fast-highlight-process's `: ${expanded_path::=${~_mybuf}}`
+        // whenever the buffer held `[[`, `foo[` or `a(b`.
+        //
+        // Snapshotting around the word expansion reproduces C's local
+        // scoping exactly: an outer `~` was already set before the word ran
+        // and is restored (stays forced), an inner one is discarded.
+        let gs_save = || -> (bool, Option<bool>) {
+            (
+                crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST),
+                TILDE_GLOBSUBST_CARRIER.with(|c| c.get()),
+            )
+        };
+        let gs_restore = |saved: (bool, Option<bool>)| {
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) != saved.0 {
+                crate::ported::options::opt_state_set("globsubst", saved.0);
+            }
+            TILDE_GLOBSUBST_CARRIER.with(|c| c.set(saved.1));
+        };
         let mut suppress_split = false;
         let mut length_op = false;
         let mut chkset = false;
@@ -12881,7 +12914,9 @@ pub fn paramsubst(
                 // then IFS-split, which both lost quoting and wrongly
                 // split. Only the (s:…:) flag (spsep) re-splits.
                 if arrasg != 0 && spsep.is_none() && !force_split {
+                    let __gs = gs_save(); // c:Src/subst.c:3231-3232
                     let (joined, parts, isarr_rhs, _ms) = multsub(default, PREFORK_NOSHWORDSPLIT);
+                    gs_restore(__gs); // c:Src/subst.c:3231-3232
                     value = joined.clone();
                     // c:Src/subst.c:3282-3293 — a SCALAR (non-isarr) RHS
                     // becomes a ONE-element array `arr[0]=val` (even when the
@@ -12903,7 +12938,9 @@ pub fn paramsubst(
                         exec_sethparam(&var_name, parts); // c:3263 (AA)
                     }
                 } else {
+                    let __gs = gs_save(); // c:Src/subst.c:3231-3232
                     value = singsub(default);
+                    gs_restore(__gs); // c:Src/subst.c:3231-3232
                     // c:Src/subst.c:3272-3273 — array assign with `spsep ||
                     // spbreak` splits via `sepsplit(val, spsep, 0, 1)`: on the
                     // (s:X:) separator when one was given (spsep), else — for
@@ -12960,8 +12997,10 @@ pub fn paramsubst(
                     // flag); otherwise the value stays a single element
                     // (multsub PREFORK_NOSHWORDSPLIT). Same as the `::=` arm.
                     if arrasg != 0 && spsep.is_none() && !force_split {
+                        let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         let (joined, parts, isarr_rhs, _ms) =
                             multsub(default, PREFORK_NOSHWORDSPLIT);
+                        gs_restore(__gs); // c:Src/subst.c:3231-3232
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
                         // empty ⇒ 0; array-shaped RHS keeps its elements.
@@ -12978,7 +13017,9 @@ pub fn paramsubst(
                             exec_sethparam(&var_name, parts); // c:3263 (AA)
                         }
                     } else {
+                        let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         value = singsub(default);
+                        gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
                             let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
                                 v.split(|c: char| sep.contains(c))
@@ -13024,8 +13065,10 @@ pub fn paramsubst(
                     // c:Src/subst.c:3269-3307 — split the RHS only when
                     // `spsep || spbreak`, same as the `:=`/`::=` arms.
                     if arrasg != 0 && spsep.is_none() && !force_split {
+                        let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         let (joined, parts, isarr_rhs, _ms) =
                             multsub(default, PREFORK_NOSHWORDSPLIT);
+                        gs_restore(__gs); // c:Src/subst.c:3231-3232
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
                         // empty ⇒ 0; array-shaped RHS keeps its elements.
@@ -13042,7 +13085,9 @@ pub fn paramsubst(
                             exec_sethparam(&var_name, parts);
                         }
                     } else {
+                        let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         value = singsub(default);
+                        gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
                             let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
                                 v.split(|c: char| sep.contains(c))
