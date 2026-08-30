@@ -1,0 +1,10 @@
+{
+  "buffer": "true && gr",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "22 new feature(s): eng/f/ctx=:completion::complete:-command-::, fn/__zpwr_aliases, fn/__zpwr_aliases/x1",
+  "origin": "cov/mutate(drop_key)<-CASES/cmd_after_andand/tab_down",
+  "statements": []
+}

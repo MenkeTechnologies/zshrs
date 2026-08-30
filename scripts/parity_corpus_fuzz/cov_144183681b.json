@@ -1,0 +1,10 @@
+{
+  "buffer": "gtk-launch f",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "35 new feature(s): eng/compsys_args/_arguments _tags(subcs+options), eng/compsys_args/_arguments options gate, eng/compsys_args/_dispatch ran completer",
+  "origin": "cov/mutate(extend+drop_statement)<-divergent-cases/tab1",
+  "statements": []
+}

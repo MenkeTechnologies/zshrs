@@ -1,0 +1,11 @@
+{
+  "buffer": "elixirc -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "11 new feature(s): eng/f/comp=_elixir, eng/f/ctx=:completion::complete:elixirc::, eng/f/ctx=:completion::complete:elixirc:argument-rest:",
+  "origin": "cov/mutate(dup_key)<-divergent-cases/tab1",
+  "statements": []
+}

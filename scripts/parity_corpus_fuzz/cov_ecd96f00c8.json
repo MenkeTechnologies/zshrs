@@ -1,0 +1,11 @@
+{
+  "buffer": "echo \"",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "42 new feature(s): eng/compsys_args/_arguments _tags(subcs+options), eng/compsys_args/_arguments options gate, eng/compsys_args/comparguments -D",
+  "origin": "cov/mutate(dup_key)<-CASES/quote_dq_open/tab1",
+  "statements": []
+}

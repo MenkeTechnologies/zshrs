@@ -1,0 +1,10 @@
+{
+  "buffer": "hwloc-distrib",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "2 new feature(s): zsh/lineclass/hwloc-distrib, zshrs/lineclass/hwloc-distrib",
+  "origin": "cov/mutate(truncate)<-divergent-cases/tab1",
+  "statements": []
+}

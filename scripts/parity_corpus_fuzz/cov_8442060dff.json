@@ -1,0 +1,10 @@
+{
+  "buffer": "ls _s",
+  "fingerprint": null,
+  "keys": [
+    "down"
+  ],
+  "note": "2 new feature(s): zsh/lineclass/ls _s, zshrs/lineclass/ls _s",
+  "origin": "cov/mutate(retype_word+drop_key)<-CASES/glob_qual/tab_down",
+  "statements": []
+}

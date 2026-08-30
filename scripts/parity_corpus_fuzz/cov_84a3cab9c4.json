@@ -1,0 +1,12 @@
+{
+  "buffer": "df -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "17 new feature(s): eng/f/comp=_df, eng/f/ctx=:completion::complete:df::, eng/f/ctx=:completion::complete:df:argument-rest:",
+  "origin": "cov/mutate(dup_key+dup_key)<-CASES/opt_df/tab1",
+  "statements": []
+}

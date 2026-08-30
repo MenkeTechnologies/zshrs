@@ -1,0 +1,12 @@
+{
+  "buffer": "wget -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "14 new feature(s): eng/f/comp=_wget, eng/f/ctx=:completion::complete:wget::, eng/f/ctx=:completion::complete:wget:argument:",
+  "origin": "cov/mutate(dup_key)<-CASES/opt_wget/tab2",
+  "statements": []
+}

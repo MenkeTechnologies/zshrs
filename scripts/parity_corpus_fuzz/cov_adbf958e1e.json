@@ -1,0 +1,13 @@
+{
+  "buffer": "ps -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "btab",
+    "btab"
+  ],
+  "note": "10 new feature(s): eng/f/comp=_ps, eng/f/ctx=:completion::complete:ps::, eng/f/ctx=:completion::complete:ps:values:",
+  "origin": "cov/mutate(add_nav_key+dup_key)<-CASES/opt_ps/tab2",
+  "statements": []
+}

@@ -1,0 +1,12 @@
+{
+  "buffer": "git log --format=medi",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "left"
+  ],
+  "note": "6 new feature(s): eng/f/comp=_git, eng/f/ctx=:completion::complete:git::, fn/_requested/x2",
+  "origin": "cov/mutate(add_statement+add_nav_key)<-CASES/opteq_partial/tab2",
+  "statements": []
+}

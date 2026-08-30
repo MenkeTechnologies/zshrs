@@ -1,0 +1,10 @@
+{
+  "buffer": "echo dsp",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "8 new feature(s): eng/f/comp=_echo, eng/f/ctx=:completion::complete:echo::, eng/f/ctx=:completion::complete:echo:other-argument-rest:",
+  "origin": "cov/mutate(retype_word)<-cov/mutate(retype_word+drop_key)<-CASES/param_scalar/tab2",
+  "statements": []
+}

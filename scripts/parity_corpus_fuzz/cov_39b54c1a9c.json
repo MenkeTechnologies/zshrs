@@ -1,0 +1,10 @@
+{
+  "buffer": "gpg-agent",
+  "fingerprint": null,
+  "keys": [
+    "tab"
+  ],
+  "note": "97 new feature(s): diff/rows/0, eng/compsys_args/_complete ENTER, eng/compsys_args/_main_complete ENTER",
+  "origin": "cov/mutate(truncate)<-divergent-cases/tab1",
+  "statements": []
+}

@@ -1,0 +1,12 @@
+{
+  "buffer": "echo \"$PA",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "tab"
+  ],
+  "note": "2 new feature(s): zsh/lineclass/echo CREATORS.md, zshrs/lineclass/echo CREATORS.md",
+  "origin": "cov/mutate(dup_key)<-CASES/quote_dq_param/tab2",
+  "statements": []
+}

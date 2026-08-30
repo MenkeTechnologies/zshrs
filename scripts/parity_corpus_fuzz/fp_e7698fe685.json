@@ -1,0 +1,11 @@
+{
+  "buffer": "CC ",
+  "fingerprint": "5533eb7b14",
+  "keys": [
+    "tab",
+    "_"
+  ],
+  "note": "cell/row0/col0 | ref/$ CC _main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC _",
+  "origin": "guided/gui0009",
+  "statements": []
+}

@@ -1,0 +1,11 @@
+{
+  "buffer": "function o",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "6 new feature(s): eng/f/ctx=:completion::complete:-command-::, eng/f/ctx=:completion::complete:options::, zsh/line/21",
+  "origin": "cov/mutate(retype_word)<-CASES/kw_function/tab2",
+  "statements": []
+}

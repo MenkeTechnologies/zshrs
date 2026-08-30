@@ -1,0 +1,11 @@
+{
+  "buffer": "case $x in ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "down"
+  ],
+  "note": "19 new feature(s): eng/f/comp=_default, eng/f/ctx=:completion::complete:case::, fn/_description/x3",
+  "origin": "cov/mutate(add_statement)<-CASES/kw_case/tab_down",
+  "statements": []
+}

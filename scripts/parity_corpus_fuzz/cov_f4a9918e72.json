@@ -1,0 +1,11 @@
+{
+  "buffer": "cargo",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "23 new feature(s): eng/f/ctx=:completion::complete:-command-::, fn/__zpwr_aliases, fn/__zpwr_aliases/x1",
+  "origin": "cov/mutate(truncate)<-CASES/sub_cargo/tab2",
+  "statements": []
+}

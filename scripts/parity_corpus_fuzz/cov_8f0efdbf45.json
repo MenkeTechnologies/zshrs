@@ -1,0 +1,11 @@
+{
+  "buffer": "ls $HOM",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "17 new feature(s): eng/f/comp=_ls, eng/f/context=parameter, eng/f/ctx=:completion::complete:-parameter-::",
+  "origin": "cov/mutate(dup_key+truncate)<-CASES/var_in_path/tab1",
+  "statements": []
+}

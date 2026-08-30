@@ -1,0 +1,14 @@
+{
+  "buffer": "chmod ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab",
+    "down",
+    "-",
+    "e"
+  ],
+  "note": "14 new feature(s): eng/f/comp=_chmod, eng/f/ctx=:completion::complete:chmod::, eng/f/ctx=:completion::complete:chmod:argument-#:",
+  "origin": "cov/mutate(add_filter_key+add_filter_key)<-cov/mutate(dup_key)<-CASES/arg_chmod/tab_down",
+  "statements": []
+}

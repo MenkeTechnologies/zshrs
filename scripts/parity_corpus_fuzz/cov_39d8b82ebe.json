@@ -1,0 +1,11 @@
+{
+  "buffer": "7zr ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "20 new feature(s): eng/f/comp=_#zip, eng/f/ctx=:completion::complete:#zr::, eng/f/ctx=:completion::complete:#zr:argument-#:",
+  "origin": "cov/mutate(dup_key)<-divergent-cases/tab1",
+  "statements": []
+}

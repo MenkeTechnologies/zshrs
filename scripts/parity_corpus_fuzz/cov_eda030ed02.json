@@ -1,0 +1,10 @@
+{
+  "buffer": "for f in a b; do tr",
+  "fingerprint": null,
+  "keys": [
+    "ctrl-d"
+  ],
+  "note": "5 new feature(s): eng/f/ctx=:completion:daily-cache:complete:-command-::, fn/_next_label/x55, fn/_tags/x34",
+  "origin": "cov/mutate(drop_statement+swap_key)<-CASES/kw_do/tab1",
+  "statements": []
+}

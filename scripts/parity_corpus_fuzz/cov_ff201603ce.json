@@ -1,0 +1,11 @@
+{
+  "buffer": "gi-decompile-typelib -",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "tab"
+  ],
+  "note": "103 new feature(s): diff/rows/0, eng/compsys_args/_arguments _tags(subcs+options), eng/compsys_args/_arguments option branch",
+  "origin": "cov/mutate(dup_key)<-divergent-cases/tab1",
+  "statements": []
+}

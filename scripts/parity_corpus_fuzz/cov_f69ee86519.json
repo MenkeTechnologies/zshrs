@@ -1,0 +1,11 @@
+{
+  "buffer": "unfunction ",
+  "fingerprint": null,
+  "keys": [
+    "tab",
+    "cr"
+  ],
+  "note": "8 new feature(s): zsh/desc/no, zsh/lineclass/unfunction, zsh/list/0",
+  "origin": "cov/mutate(add_nav_key)<-CASES/ns_unfunction/tab1",
+  "statements": []
+}
