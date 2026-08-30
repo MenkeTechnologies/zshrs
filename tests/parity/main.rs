@@ -104,6 +104,7 @@ mod redirection_parity;
 mod regex_match_parity;
 mod repeat_select_parity;
 mod runtime_context_parity;
+mod sched_prompt_parity;
 mod session_regression_parity;
 mod shell_semantics_parity;
 mod setopt_pattern_parity;
