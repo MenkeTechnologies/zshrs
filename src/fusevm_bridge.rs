@@ -4336,7 +4336,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             _ => paramsubst_to_value(&format!("${{(k){}[{}]}}", name, key)),
         }
     });
-    vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
+    vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, argc| {
+        // argc 2 = the compiler flagged this expansion as the VALUE of a
+        // scalar assignment (`x=…` / `local x=…` / `typeset x=…`), which C
+        // preforks with PREFORK_SINGLE|PREFORK_ASSIGN (c:Src/exec.c:2546).
+        // PREFORK_SINGLE is paramsubst's `ssub` (c:Src/subst.c:1759) and gates
+        // off c:3913's `force_split` — without it `r=${(s.c.)v[2,-1]}` split
+        // and re-joined on IFS (`b def`) where zsh keeps `bcdef`. Same
+        // operand contract as BUILTIN_PARAM_FLAG's argc-3 ssub. argc 1 =
+        // ordinary word, no ssub (kept for callers that predate the operand).
+        let ssub = if argc >= 2 {
+            vm.pop().to_int() != 0
+        } else {
+            false
+        };
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
         // the caller). The compiler optionally prefixes Qstring
         // (\u{8c}) to signal "expanded in DQ context" — strip it
@@ -4351,7 +4364,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if dq {
             with_executor(|exec| exec.in_dq_context += 1);
         }
-        let v = paramsubst_to_value(&format!("${{{}}}", inner));
+        let pf_flags = if ssub {
+            crate::ported::zsh_h::PREFORK_SINGLE // c:1759
+        } else {
+            0
+        };
+        let v = paramsubst_to_value_pf(&format!("${{{}}}", inner), pf_flags);
         if dq {
             with_executor(|exec| exec.in_dq_context -= 1);
         }

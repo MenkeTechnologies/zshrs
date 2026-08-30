@@ -7016,8 +7016,16 @@ impl ZshCompiler {
                                 .builder
                                 .add_constant(Value::str(self.brace_array_body(s, inner)));
                             self.builder.emit(Op::LoadConst(body_const), 0);
+                            // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                            // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                            // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                            // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                            // c:3916 joins an array value to one scalar before the c:4041
+                            // quote block. Carried as an extra VM argument, exactly like
+                            // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                            self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                             self.builder.emit(
-                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                                 0,
                             );
                         } else {
@@ -7028,8 +7036,16 @@ impl ZshCompiler {
                         let body = format!("${{(t){}}}:$(({}-1)):1", base, key);
                         let body_const = self.builder.add_constant(Value::str(body));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                     }
@@ -7096,8 +7112,16 @@ impl ZshCompiler {
                             .builder
                             .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7122,8 +7146,16 @@ impl ZshCompiler {
                             .builder
                             .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7145,8 +7177,16 @@ impl ZshCompiler {
                             .builder
                             .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7265,8 +7305,16 @@ impl ZshCompiler {
                             .builder
                             .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7287,8 +7335,16 @@ impl ZshCompiler {
                             .builder
                             .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7307,8 +7363,16 @@ impl ZshCompiler {
                         .builder
                         .add_constant(Value::str(self.brace_array_body(s, inner)));
                     self.builder.emit(Op::LoadConst(body_const), 0);
+                    // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                    // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                    // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                    // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                    // c:3916 joins an array value to one scalar before the c:4041
+                    // quote block. Carried as an extra VM argument, exactly like
+                    // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                    self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                         0,
                     );
                     return;
@@ -7433,8 +7497,16 @@ impl ZshCompiler {
                         };
                         let body_const = self.builder.add_constant(Value::str(&body_text));
                         self.builder.emit(Op::LoadConst(body_const), 0);
+                        // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                        // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                        // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                        // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                        // c:3916 joins an array value to one scalar before the c:4041
+                        // quote block. Carried as an extra VM argument, exactly like
+                        // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
                         return;
@@ -7525,8 +7597,16 @@ impl ZshCompiler {
                     };
                     let body_const = self.builder.add_constant(Value::str(body_text));
                     self.builder.emit(Op::LoadConst(body_const), 0);
+                    // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                    // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                    // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                    // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                    // c:3916 joins an array value to one scalar before the c:4041
+                    // quote block. Carried as an extra VM argument, exactly like
+                    // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                    self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                         0,
                     );
                     return;
@@ -7634,8 +7714,16 @@ impl ZshCompiler {
                             };
                             let body_const = self.builder.add_constant(Value::str(&body_text));
                             self.builder.emit(Op::LoadConst(body_const), 0);
+                            // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
+                            // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
+                            // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
+                            // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
+                            // c:3916 joins an array value to one scalar before the c:4041
+                            // quote block. Carried as an extra VM argument, exactly like
+                            // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
+                            self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                             self.builder.emit(
-                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                                 0,
                             );
                             return;
@@ -12550,6 +12638,21 @@ impl ZshCompiler {
     ///     a=(-O 'expl:'); b=( "${(@s/:/)a[2]}" )   # $#b == 1, zsh says 2
     /// The unsubscripted `"${(@s/:/)scalar}"` was always correct because it
     /// never reaches these opcodes.
+    /// c:Src/subst.c:1759 — `int ssub = (pf_flags & PREFORK_SINGLE);`.
+    ///
+    /// C sets that bit in `Src/exec.c::addvars` (c:2546 `prefork(vl, isstr ?
+    /// (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN, NULL)`) for the RHS
+    /// of a SCALAR assignment, and `typeset NAME=…` reaches the same place
+    /// through the assign-builtin argument path. Inside paramsubst it
+    /// suppresses c:3913's `force_split` (so `(s:X:)`/`(f)`/`(0)` do not
+    /// split) and enables the c:3916 array→scalar join that runs before the
+    /// c:4041 quote block. The two depths here are the compiler's record of
+    /// the same two C call sites; `${=…}` (`parse_forced_split_brace`) already
+    /// consults them.
+    fn brace_array_ssub(&self) -> bool {
+        self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0
+    }
+
     fn brace_array_body(&self, word: &str, inner: &str) -> String {
         let in_dq = (word_is_single_dq_span(word) && self.synthetic_dq_wrap_depth == 0)
             || self.dq_context_depth > 0;
