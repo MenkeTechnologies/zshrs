@@ -1,0 +1,80 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "path_assign_menu_next_trailing_slash",
+ "title": "`PATH=/bin:/us<TAB>` then ctrl-n: zsh leaves `PATH=/bin:/usr`, zshrs leaves `PATH=/bin:/usr/` — the menu's next match arrives with a trailing slash",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "PATH=/bin:/us",
+  "keys": [
+   "tab",
+   "ctrl-n"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "diverges",
+ "group": "menu-navigation",
+ "fingerprint": "13968e5a5d",
+ "observed": {
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ",
+  "fingerprint_label": "cell/row0/col1 | ref/$ PATH=/bin:/usr | test/$ PATH=/bin:/usr/",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ PATH=/bin:/usr",
+    "zshrs": "@CT@ PATH=/bin:/usr/"
+   }
+  ],
+  "rows_total": 1,
+  "cursor": "zsh row 0 col 19, zshrs row 0 col 20",
+  "raw_stream": "after `\\e[0m\\b` zsh writes `\\e[0m \\b`, zshrs writes `/`",
+  "notes": "The TAB alone agrees — that is control0, and it is what makes ctrl-n the variable: the divergence is introduced by the menu's next-match insertion, not by the completion that populated the menu. The colon is not required either: `PATH=/us` with the same keys diverges the same way (variant0, its own fingerprint 5279658858). What IS required is that the parameter is PATH: `ZZ=/bin:/us` with the same keys agrees (control1). A third control measured in round 6 and not pinned here because it costs 44s to replay — `ls /bin:/us` with the same keys — also agrees, so it is the assignment to a colon-path parameter that carries the defect, not the word shape."
+ },
+ "controls": [
+  {
+   "keys": [
+    "tab"
+   ],
+   "note": "the same buffer with only the TAB. PASS — so the completion is fine and the ctrl-n step is the variable"
+  },
+  {
+   "buffer": "ZZ=/bin:/us",
+   "note": "an ordinary parameter instead of PATH, same keys. PASS — the defect needs the colon-path special"
+  }
+ ],
+ "variants": [
+  {
+   "buffer": "PATH=/us",
+   "fingerprint": "5279658858",
+   "note": "no colon in the value at all, same keys: still `PATH=/usr` against `PATH=/usr/`. Carries its OWN fingerprint because comptab_parity's shape id takes the surrounding context in"
+  }
+ ],
+ "origin": [
+  "reported in round 5 as `PATH=/bin:/us<TAB>` then ctrl-n",
+  "re-run first-hand in round 6 against zshrs 0.12.48; the two controls and the variant were measured here"
+ ],
+ "confirmed": {
+  "date": "2026-08-30",
+  "commit": "79c953de7a",
+  "harness_sha256_16": {
+   "scripts/comptab_parity.py": "517045bc5c73ceee"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 101592632,
+   "mtime": "2026-08-30 04:06:47",
+   "version": "zshrs 0.12.48",
+   "sha256_16": "33260fa3dcc29246",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.12.48 (101592632 bytes, 2026-08-30 04:06:47)",
+  "note": "round 6. Reproduced FIRST-HAND with scripts/comptab_parity.py before pinning; the rows below are that run's --json verbatim. The harness was run from a copy pinned at HEAD (79c953de7a) because three peer agents were editing scripts/ concurrently."
+ }
+}
