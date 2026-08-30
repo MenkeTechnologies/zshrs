@@ -305,3 +305,55 @@ mod definition_replacement {
         );
     }
 }
+
+mod quoting_suppresses_expansion {
+    use super::*;
+
+    /// A quoted word never expands as an alias: `exalias` (Src/lex.c:1973-1980)
+    /// maps the lexer's quote markers back to literal `'` / `"` / `\` through
+    /// `ztokens` (Src/lex.c:38), so the alias-table key for `'jl'` is `'jl'`,
+    /// which no alias name can match. zshrs used to build that key with the
+    /// marker-STRIPPING `untokenize`, so a single-quoted array element that
+    /// happened to share a GLOBAL alias's name was replaced by the alias body
+    /// mid-array.
+    #[test]
+    fn single_quoted_word_is_not_a_global_alias() {
+        assert_parity(r#"alias -g jl='| cat'; eval "a=(X 'jl' Y); print -r -- \"\${a[@]}\"""#);
+    }
+
+    /// Same rule for double quotes (`Dnull` → `"`).
+    #[test]
+    fn double_quoted_word_is_not_a_global_alias() {
+        assert_parity(
+            r#"alias -g jl='| cat'; eval 'a=(X "jl" Y); print -r -- "${a[@]}"'"#,
+        );
+    }
+
+    /// Quoting a command word suppresses a plain alias too — both shells fall
+    /// through to a PATH lookup and fail with 127.
+    #[test]
+    fn quoted_command_word_is_not_an_alias() {
+        assert_parity(r#"alias zr_q_alias=echo; eval "'zr_q_alias' hi""#);
+    }
+
+    /// Control: the SAME global alias still expands when the word is bare, so
+    /// the fix suppresses expansion only where quoting demands it.
+    #[test]
+    fn bare_word_still_expands_as_global_alias() {
+        assert_parity(r#"alias -g jl='| cat'; eval 'print -r -- hi jl'"#);
+    }
+
+    /// Reading `${functions[NAME]}` re-parses the stored body text (C deparses
+    /// wordcode instead), so every quoted word in that body is re-lexed with
+    /// the CALLER's alias table live. With p10k loaded and zpwr's
+    /// `alias -g jl='| less -rMN'` defined, re-parsing `_p9k_init_icons` —
+    /// which contains `JULIA_ICON 'jl'` inside `icons=( … )` — expanded the
+    /// quoted element into `| less -rMN` and the array assignment died with
+    /// "expected `)' after array assignment" on every prompt.
+    #[test]
+    fn function_body_reparse_keeps_quoted_alias_name_literal() {
+        assert_parity(
+            r#"alias -g jl='| cat'; f() { local -a a; a=(X 'jl' Y) }; : ${functions[f]}; print -r -- read-ok"#,
+        );
+    }
+}

@@ -404,3 +404,46 @@ mod tied_pair_double_local {
         );
     }
 }
+
+mod prompt_alias_group {
+    use super::*;
+
+    /// `PS1` / `PROMPT` / `prompt` are ONE parameter in zsh — `IPDEF7("PS1",
+    /// &prompt)` and `IPDEF7("PROMPT", &prompt)` (Src/params.c:417-422) share
+    /// the backing pointer. zshrs keeps separate paramtab entries and mirrors
+    /// the write, and the mirror used to copy the value handed to
+    /// `assignsparam` — which under `ASSPM_AUGMENT` (`NAME+=frag`) is only the
+    /// APPENDED FRAGMENT. powerlevel10k assembles `PROMPT` with `+=`, so `$PS1`
+    /// ended up holding just the last chunk; since `ingetc` prompts with `PS1`
+    /// (Src/input.c:379-382), only p10k's final line was ever drawn.
+    #[test]
+    fn append_to_prompt_is_visible_through_ps1() {
+        assert_parity(r#"PROMPT=abc; PROMPT+=X; print "[$PS1][$PROMPT][$prompt]""#);
+    }
+
+    /// Same in the other direction — the group has no primary member.
+    #[test]
+    fn append_to_ps1_is_visible_through_prompt() {
+        assert_parity(r#"PS1=q; PS1+=R; print "[$PS1][$PROMPT]""#);
+    }
+
+    /// Repeated appends accumulate, the way a prompt theme builds one.
+    #[test]
+    fn repeated_appends_accumulate_through_the_alias() {
+        assert_parity(
+            r#"PROMPT=; PROMPT+=one; PROMPT+=two; PROMPT+=three; print "[$PS1]""#,
+        );
+    }
+
+    /// PS2/PROMPT2 share `&prompt2` (Src/params.c:419).
+    #[test]
+    fn append_to_prompt2_is_visible_through_ps2() {
+        assert_parity(r#"PS2=a; PROMPT2+=b; print "[$PS2][$PROMPT2]""#);
+    }
+
+    /// A plain assignment must still overwrite the whole group, not append.
+    #[test]
+    fn plain_assignment_still_replaces_through_the_alias() {
+        assert_parity(r#"PROMPT=abc; PROMPT+=X; PS1=fresh; print "[$PS1][$PROMPT][$prompt]""#);
+    }
+}
