@@ -1,0 +1,2133 @@
+{
+ "label": "zsh baseline (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc)",
+ "meta": {
+  "sut": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh",
+  "sut_version": "5.9.999.3-test",
+  "harness": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh",
+  "harness_version": "5.9.999.3-test",
+  "zsh_build": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc",
+  "zsh_build_version": "5.9.999.3-test",
+  "modules_linked": 38,
+  "fx": "off",
+  "sut_env": "ZSHRS_NATIVE_ZLE_FX=0",
+  "tests": "Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values",
+  "date": "2026-08-30T04:33:39-0400"
+ },
+ "results": [
+  {
+   "name": "Y01completion",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: starting.\nRunning test: directories and files\nTest successful.\nRunning test: unambiguous prefix and autoremovable suffix\nTest successful.\nRunning test: unambiguous prefix and autoremovable suffix with _prefix completer\nTest successful.\nRunning test: compstate[insert]=1 compstate[list]=\nTest successful.\nRunning test: compstate[insert]=1 compstate[list]= with _prefix completer\nTest successful.\nRunning test: _expand shows file types\nTest successful.\nRunning test: _expand preserves array form\nTest successful.\nRunning test: tilde\nTest successful.\nRunning test: dynamic directory names after ~[\nTest successful.\nRunning test: dynamic directory names inside ~[...]\nTest successful.\nRunning test: directories and files before separator\nTest successful.\nRunning test: custom description with formatting sequences\nTest successful.\nRunning test: command\nTest successful.\nRunning test: command after separator\nTest successful.\nRunning test: redirection after \"for ...; do\"\nTest successful.\nRunning test: directory name is not a glob qualifier\nTest successful.\nRunning test: remove exact number of characters from a prefix\nTest successful.\nRunning test: remove exact number of characters from a suffix\nTest successful.\nRunning test: try to remove excess characters from prefix and suffix\nTest successful.\nRunning test: remove multibyte character from a prefix\nTest successful.\nRunning test: allow for suffixes when moving cursor to end of match (with ignored suffix)\nTest successful.\nRunning test: allow for suffixes when moving cursor to end of match (without ignored suffix)\nTest successful.\nRunning test: ignore backslashes when sorting completion matches\nTest successful.\nRunning test: reverse numeric sorting of matches\nTest successful.\nRunning test: reverse numeric sorting of matches via a style\nTest successful.\nRunning test: sort in match rather than display name order\nTest successful.\nRunning test: sorting disabled via the sort style\nTest successful.\nRunning test: -F does not break _sequence\nTest successful.\nRunning test: multiple envarrays\nTest successful.\nRunning test: extra-verbose shows parameter values\nTest successful.\nRunning test: verbose doesn't show special or hidden parameter values\nTest successful.\nRunning test: parameter values not shown without verbose\nTest successful.\nRunning test:  menu select=long-list starts menu selection for list widgets\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "directories and files",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "unambiguous prefix and autoremovable suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "unambiguous prefix and autoremovable suffix with _prefix completer",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "compstate[insert]=1 compstate[list]=",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "compstate[insert]=1 compstate[list]= with _prefix completer",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "_expand shows file types",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "_expand preserves array form",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 8,
+     "message": "tilde",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 9,
+     "message": "dynamic directory names after ~[",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "dynamic directory names inside ~[...]",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 11,
+     "message": "directories and files before separator",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 12,
+     "message": "custom description with formatting sequences",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 13,
+     "message": "command",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "command after separator",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "redirection after \"for ...; do\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "directory name is not a glob qualifier",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "remove exact number of characters from a prefix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "remove exact number of characters from a suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "try to remove excess characters from prefix and suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "remove multibyte character from a prefix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "allow for suffixes when moving cursor to end of match (with ignored suffix)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "allow for suffixes when moving cursor to end of match (without ignored suffix)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "ignore backslashes when sorting completion matches",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "reverse numeric sorting of matches",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 25,
+     "message": "reverse numeric sorting of matches via a style",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 26,
+     "message": "sort in match rather than display name order",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 27,
+     "message": "sorting disabled via the sort style",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 28,
+     "message": "-F does not break _sequence",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 29,
+     "message": "multiple envarrays",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 30,
+     "message": "extra-verbose shows parameter values",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 31,
+     "message": "verbose doesn't show special or hidden parameter values",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 32,
+     "message": "parameter values not shown without verbose",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 33,
+     "message": " menu select=long-list starts menu selection for list widgets",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y02compmatch",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: starting.\nRunning test: Match Error for \"z:\"\nTest successful.\nRunning test: Match Error for \"m:\"\nTest successful.\nRunning test: Match Error for \"M:\"\nTest successful.\nRunning test: Match Error \"r:\"\nTest successful.\nRunning test: Match Error \"R:\"\nTest successful.\nRunning test: Match Error for \"l:\"\nTest successful.\nRunning test: Match Error for \"L:\"\nTest successful.\nRunning test: Match Error for \"m:{0-9\"\nTest successful.\nRunning test: Match Error for \"m:{0-9}\"\nTest successful.\nRunning test: Match Error for \"m:{0-9}={\"\nTest successful.\nRunning test: Match Error for \"m:{0-9}={0-\"\nTest successful.\nRunning test: Match Error for \"m:{0-9}={-\"\nTest successful.\nRunning test: Match Error \"r:\"\nTest successful.\nRunning test: Documentation example for options, input \"nolistbee\"\nTest successful.\nRunning test: Documentation example for options, input \"list_bee\"\nTest successful.\nRunning test: Documentation example for options, input \"ListBee\"\nTest successful.\nRunning test: Documentation example for options, input \"NOList\"\nTest successful.\nRunning test: Documentation example for options, input \"NO_List\\t__\\tB\\t\"\nTest successful.\nRunning test: Documentation example for options, input \"__\\tN\\t__o\\t___\\tlist_\\tbeep__\\t\" \nTest successful.\nRunning test: Documentation example for options, input \"__\\tNo\\t___\\tlist_\\tbeep__\\t\" \nTest successful.\nRunning test: Documentation example for options, input \"___\\tlist_\\tbeep__\\t\" \nTest successful.\nRunning test: Documentation example for options, input \"__no_listbe\"\nTest successful.\nRunning test: Documentation example for options, input \"nonono_listbe\"\nTest successful.\nRunning test: Documentation example for lowercase insenitive M, input \"ab\\tC\\t\"\nTest successful.\nRunning test: Documentation example for lowercase insenitive m, input \"A\\t\\t\" \nTest successful.\nRunning test: Documentation example for case insenitive M, input \"aB\\t\\t\"\nTest successful.\nRunning test: Documentation example for case insenitive m, input \"aB\\t\\t\"\nTest successful.\nRunning test: r:|.=* should complete .s.u\nTest successful.\nRunning test: r:[^.]||.=* should not complete .s.u, but should complete c.s.u\nTest failed, as expected.\nRunning test: r:|.=* should complete .g.\nTest successful.\nRunning test: r:[^.]||.=* should not complete .g., but should complete c.g.\nTest failed, as expected.\nRunning test: r:|.=* should complete ...pag\nTest successful.\nRunning test: r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p\nTest failed, as expected.\nRunning test: Documentation example using input c...pa\\tg\\t\nTest successful.\nRunning test: r:|[.,_-]=* should complete .c and .h\nTest successful.\nRunning test: r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h\nTest failed, as expected.\nRunning test: Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input H\nTest successful.\nRunning test: Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input 2\nTest successful.\nRunning test: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input H\nTest successful.\nRunning test: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input 2\nTest successful.\nRunning test: r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.\nTest failed, as expected.\nRunning test: r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.\nTest failed, as expected.\nRunning test: r:[^.]||.=* and l:.||[^.]=* should work symmetrically.\nTest failed, as expected.\nRunning test: Bug from workers 7311\nTest successful.\nRunning test: Bug from workers_7311 \nTest successful.\nRunning test: Bug from workers 10886\nTest successful.\nRunning test: Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]\nTest successful.\nRunning test: Non-bug from workers 11388\nTest successful.\nRunning test: Non-bug from workers 11388\nTest successful.\nRunning test: Disappearing characters bug from workers 11586: c00\\t -> c0[], c00\\t -> c0.abc[], c00.\\t -> c0.abc[]\nTest successful.\nRunning test: First test from workers 12995\nTest successful.\nRunning test: Second test from workers 12995\nTest successful.\nRunning test: Incorrect cursor position bug from workers 13320: glibc-2.1\\t -> glibc-2[.]1.94-3.i386.rpm\nTest successful.\nRunning test: Test from workers 13320\nTest successful.\nRunning test: First test from workers 13345\nTest successful.\nRunning test: Disappearing character bug from workers 13345: a-b_2\\t -> a-b__\nTest successful.\nRunning test: Test for insert positions\nTest successful.\nRunning test: Test for wildcard left anchor with partial word right anchors\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "Match Error for \"z:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "Match Error for \"m:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "Match Error for \"M:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "Match Error \"r:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "Match Error \"R:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "Match Error for \"l:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "Match Error for \"L:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 8,
+     "message": "Match Error for \"m:{0-9\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 9,
+     "message": "Match Error for \"m:{0-9}\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "Match Error for \"m:{0-9}={\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 11,
+     "message": "Match Error for \"m:{0-9}={0-\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 12,
+     "message": "Match Error for \"m:{0-9}={-\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 13,
+     "message": "Match Error \"r:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "Documentation example for options, input \"nolistbee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "Documentation example for options, input \"list_bee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "Documentation example for options, input \"ListBee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "Documentation example for options, input \"NOList\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "Documentation example for options, input \"NO_List\\t__\\tB\\t\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "Documentation example for options, input \"__\\tN\\t__o\\t___\\tlist_\\tbeep__\\t\" ",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "Documentation example for options, input \"__\\tNo\\t___\\tlist_\\tbeep__\\t\" ",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "Documentation example for options, input \"___\\tlist_\\tbeep__\\t\" ",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "Documentation example for options, input \"__no_listbe\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "Documentation example for options, input \"nonono_listbe\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "Documentation example for lowercase insenitive M, input \"ab\\tC\\t\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 25,
+     "message": "Documentation example for lowercase insenitive m, input \"A\\t\\t\" ",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 26,
+     "message": "Documentation example for case insenitive M, input \"aB\\t\\t\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 27,
+     "message": "Documentation example for case insenitive m, input \"aB\\t\\t\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 28,
+     "message": "r:|.=* should complete .s.u",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 29,
+     "message": "r:[^.]||.=* should not complete .s.u, but should complete c.s.u",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 30,
+     "message": "r:|.=* should complete .g.",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 31,
+     "message": "r:[^.]||.=* should not complete .g., but should complete c.g.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 32,
+     "message": "r:|.=* should complete ...pag",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 33,
+     "message": "r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 34,
+     "message": "Documentation example using input c...pa\\tg\\t",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 35,
+     "message": "r:|[.,_-]=* should complete .c and .h",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 36,
+     "message": "r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 37,
+     "message": "Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input H",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 38,
+     "message": "Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input 2",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 39,
+     "message": "Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input H",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 40,
+     "message": "Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input 2",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 41,
+     "message": "r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 42,
+     "message": "r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 43,
+     "message": "r:[^.]||.=* and l:.||[^.]=* should work symmetrically.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 44,
+     "message": "Bug from workers 7311",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 45,
+     "message": "Bug from workers_7311 ",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 46,
+     "message": "Bug from workers 10886",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 47,
+     "message": "Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 48,
+     "message": "Non-bug from workers 11388",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 49,
+     "message": "Non-bug from workers 11388",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 50,
+     "message": "Disappearing characters bug from workers 11586: c00\\t -> c0[], c00\\t -> c0.abc[], c00.\\t -> c0.abc[]",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 51,
+     "message": "First test from workers 12995",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 52,
+     "message": "Second test from workers 12995",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 53,
+     "message": "Incorrect cursor position bug from workers 13320: glibc-2.1\\t -> glibc-2[.]1.94-3.i386.rpm",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 54,
+     "message": "Test from workers 13320",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 55,
+     "message": "First test from workers 13345",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 56,
+     "message": "Disappearing character bug from workers 13345: a-b_2\\t -> a-b__",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 57,
+     "message": "Test for insert positions",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 58,
+     "message": "Test for wildcard left anchor with partial word right anchors",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y03arguments",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst: starting.\nRunning test: one non-option argument\nTest successful.\nRunning test: a and b\nTest successful.\nRunning test: a and b with descriptions\nTest successful.\nRunning test: three arguments\nTest successful.\nRunning test: first argument\nTest successful.\nRunning test: second argument but no first argument\nTest successful.\nRunning test: second and rest arguments but no first argument\nTest successful.\nRunning test: -+\nTest successful.\nRunning test: option beginning with + and -.\nTest successful.\nRunning test: option beginning with + and -, specified the other way around\nTest successful.\nRunning test: mix of + and - and exclusion of stacked options\nTest successful.\nRunning test: mix of + and - and exclusion of stacked options\nTest successful.\nRunning test: two option arguments\nTest successful.\nRunning test: option argument to ignored option\nTest successful.\nRunning test: ignored option not completed\nTest successful.\nRunning test: ignored option is not taken to be the normal argument\nTest successful.\nRunning test: unrecognised option has no effect on proceedings with no normal arguments\nTest successful.\nRunning test: unrecognised option is taken to be the normal argument\nTest successful.\nRunning test: option argument follows in next argument\nTest successful.\nRunning test: option argument either direct or in following argument\nTest successful.\nRunning test: option argument follows directly\nTest successful.\nRunning test: option argument follows optional equals\nTest successful.\nRunning test: option argument follows optional equals, with -s\nTest successful.\nRunning test: option argument follows mandatory equals\nTest successful.\nRunning test: sticky option argument\nTest successful.\nRunning test: option argument with prefix that passes option prefix-needed test\nTest successful.\nRunning test: end of option sequence\nTest successful.\nRunning test: argument beginning with minus\nTest successful.\nRunning test: argument beginning with minus, guard on rest argument\nTest successful.\nRunning test: optional option argument\nTest successful.\nRunning test: variable length option arguments\nTest successful.\nRunning test: opt_args\nTest successful.\nRunning test: opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour\nTest successful.\nRunning test: opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping\nTest successful.\nRunning test: option completion with rest arguments on the line but not in the specs\nTest successful.\nRunning test: optarg completion following rest operand on line (workers/42141)\nTest successful.\nRunning test: rest arguments\nTest successful.\nRunning test: rest arguments with single colon\nTest successful.\nRunning test: rest arguments with two colons\nTest successful.\nRunning test: rest arguments with three colons\nTest successful.\nRunning test: rest arguments with three colons following optional argument\nTest successful.\nRunning test: rest arguments with three colons following optional argument to an option\nTest successful.\nRunning test: words array in rest arguments\nTest successful.\nRunning test: opt_args\nTest successful.\nRunning test: options and words (zsh-workers:12257)\nTest successful.\nRunning test: matcher applies to options but not rest arguments\nTest successful.\nRunning test: matcher in combination with sets (implies separate cadef structure)\nTest successful.\nRunning test: option after --\nTest successful.\nRunning test: -S: disallowed option after --\nTest successful.\nRunning test: -S: allowed option after -\nTest successful.\nRunning test: -S: allowed option before --\nTest successful.\nRunning test: -S: only first of duplicate -- is ignored\nTest successful.\nRunning test: -S -S: disallowed option after --\nTest successful.\nRunning test: -S -S: disallowed option after -\nTest successful.\nRunning test: option after a word\nTest successful.\nRunning test: long option after word that doesn't match -A pattern\nTest successful.\nRunning test: option after word that doesn't match -A pattern, no space before pattern\nTest successful.\nRunning test: option before a word that doesn't match -A pattern, separate -A from pattern\nTest successful.\nRunning test: continue completion after rest argument that looks like an option\nTest successful.\nRunning test: word matching -A pattern doesn't exclude options\nTest successful.\nRunning test: unrecognised word matching -A pattern not treated as a rest argument\nTest successful.\nRunning test: exclusion from option following word matching -A pattern should not apply\nTest successful.\nRunning test: repeatable options\nTest successful.\nRunning test: rest arguments from another set not completed after option from first set\nTest successful.\nRunning test: continue completion after rest argument that looks like an option (with sets)\nTest successful.\nRunning test: foreign option disables whole set (without -A)\nTest successful.\nRunning test: foreign option disables whole set (with -A)\nTest successful.\nRunning test: exclude option common to two sets and from one common option\nTest successful.\nRunning test: rest argument rule in two sets\nTest successful.\nRunning test: exclude various forms of rest argument in set specific form\nTest successful.\nRunning test: exclusion lists\nTest successful.\nRunning test: exclude option from normal argument to the right of the cursor\nTest successful.\nRunning test: exclude own set from an option\nTest successful.\nRunning test: exclude later set from an option common to both\nTest successful.\nRunning test: exclude earlier set from an option common to both\nTest successful.\nRunning test: single option sets are still mutually exclusive\nTest successful.\nRunning test: excluding a set doesn't exclude common options as part of the set\nTest successful.\nRunning test: exclude all other options\nTest successful.\nRunning test: exclude all options from a normal argument\nTest successful.\nRunning test: exclusion only applies to later words\nTest successful.\nRunning test: exclusion with clumped options, in, after and before\nTest successful.\nRunning test: don't prematurely exclude option that current word is a prefix of\nTest successful.\nRunning test: don't prematurely exclude option that current word is a prefix of (with sets)\nTest successful.\nRunning test: option clumping mixed with real option that looks like clump\nTest successful.\nRunning test: option clumping mixed with direct argument\nTest successful.\nRunning test: exclusion with option argument that looks like an option\nTest successful.\nRunning test: exclude group options\nTest successful.\nRunning test: single option groups are not mutually exclusive\nTest successful.\nRunning test: exclude rest args listed within a group\nTest successful.\nRunning test: two forms of same option in different groups\nTest successful.\nRunning test: normal argument excludes options in internally mutually exclusive group\nTest successful.\nRunning test: mix sets, groups and option stacking\nTest successful.\nRunning test: sets and groups with - in their name\nTest successful.\nRunning test: with message and bashautolist, a third tab will get menu completion\nTest successful.\nRunning test: with message and bashautolist, a third tab is needed to display the list\nTest successful.\nRunning test: with message and noautomenu second tab redisplays the list\nTest successful.\nRunning test: with message two tabs will start menu completion\nTest successful.\nRunning test: with message and _oldlist, two tabs will start menu completion\nTest successful.\nRunning test: partial completion of option with an argument\nTest successful.\nRunning test: with -W options mixed with arguments\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "one non-option argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "a and b",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "a and b with descriptions",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "three arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "first argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "second argument but no first argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "second and rest arguments but no first argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 8,
+     "message": "-+",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 9,
+     "message": "option beginning with + and -.",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "option beginning with + and -, specified the other way around",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 11,
+     "message": "mix of + and - and exclusion of stacked options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 12,
+     "message": "mix of + and - and exclusion of stacked options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 13,
+     "message": "two option arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "option argument to ignored option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "ignored option not completed",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "ignored option is not taken to be the normal argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "unrecognised option has no effect on proceedings with no normal arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "unrecognised option is taken to be the normal argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "option argument follows in next argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "option argument either direct or in following argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "option argument follows directly",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "option argument follows optional equals",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "option argument follows optional equals, with -s",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "option argument follows mandatory equals",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 25,
+     "message": "sticky option argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 26,
+     "message": "option argument with prefix that passes option prefix-needed test",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 27,
+     "message": "end of option sequence",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 28,
+     "message": "argument beginning with minus",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 29,
+     "message": "argument beginning with minus, guard on rest argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 30,
+     "message": "optional option argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 31,
+     "message": "variable length option arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 32,
+     "message": "opt_args",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 33,
+     "message": "opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 34,
+     "message": "opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 35,
+     "message": "option completion with rest arguments on the line but not in the specs",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 36,
+     "message": "optarg completion following rest operand on line (workers/42141)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 37,
+     "message": "rest arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 38,
+     "message": "rest arguments with single colon",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 39,
+     "message": "rest arguments with two colons",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 40,
+     "message": "rest arguments with three colons",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 41,
+     "message": "rest arguments with three colons following optional argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 42,
+     "message": "rest arguments with three colons following optional argument to an option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 43,
+     "message": "words array in rest arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 44,
+     "message": "opt_args",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 45,
+     "message": "options and words (zsh-workers:12257)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 46,
+     "message": "matcher applies to options but not rest arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 47,
+     "message": "matcher in combination with sets (implies separate cadef structure)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 48,
+     "message": "option after --",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 49,
+     "message": "-S: disallowed option after --",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 50,
+     "message": "-S: allowed option after -",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 51,
+     "message": "-S: allowed option before --",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 52,
+     "message": "-S: only first of duplicate -- is ignored",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 53,
+     "message": "-S -S: disallowed option after --",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 54,
+     "message": "-S -S: disallowed option after -",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 55,
+     "message": "option after a word",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 56,
+     "message": "long option after word that doesn't match -A pattern",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 57,
+     "message": "option after word that doesn't match -A pattern, no space before pattern",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 58,
+     "message": "option before a word that doesn't match -A pattern, separate -A from pattern",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 59,
+     "message": "continue completion after rest argument that looks like an option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 60,
+     "message": "word matching -A pattern doesn't exclude options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 61,
+     "message": "unrecognised word matching -A pattern not treated as a rest argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 62,
+     "message": "exclusion from option following word matching -A pattern should not apply",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 63,
+     "message": "repeatable options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 64,
+     "message": "rest arguments from another set not completed after option from first set",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 65,
+     "message": "continue completion after rest argument that looks like an option (with sets)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 66,
+     "message": "foreign option disables whole set (without -A)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 67,
+     "message": "foreign option disables whole set (with -A)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 68,
+     "message": "exclude option common to two sets and from one common option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 69,
+     "message": "rest argument rule in two sets",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 70,
+     "message": "exclude various forms of rest argument in set specific form",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 71,
+     "message": "exclusion lists",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 72,
+     "message": "exclude option from normal argument to the right of the cursor",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 73,
+     "message": "exclude own set from an option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 74,
+     "message": "exclude later set from an option common to both",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 75,
+     "message": "exclude earlier set from an option common to both",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 76,
+     "message": "single option sets are still mutually exclusive",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 77,
+     "message": "excluding a set doesn't exclude common options as part of the set",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 78,
+     "message": "exclude all other options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 79,
+     "message": "exclude all options from a normal argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 80,
+     "message": "exclusion only applies to later words",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 81,
+     "message": "exclusion with clumped options, in, after and before",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 82,
+     "message": "don't prematurely exclude option that current word is a prefix of",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 83,
+     "message": "don't prematurely exclude option that current word is a prefix of (with sets)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 84,
+     "message": "option clumping mixed with real option that looks like clump",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 85,
+     "message": "option clumping mixed with direct argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 86,
+     "message": "exclusion with option argument that looks like an option",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 87,
+     "message": "exclude group options",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 88,
+     "message": "single option groups are not mutually exclusive",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 89,
+     "message": "exclude rest args listed within a group",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 90,
+     "message": "two forms of same option in different groups",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 91,
+     "message": "normal argument excludes options in internally mutually exclusive group",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 92,
+     "message": "mix sets, groups and option stacking",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 93,
+     "message": "sets and groups with - in their name",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 94,
+     "message": "with message and bashautolist, a third tab will get menu completion",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 95,
+     "message": "with message and bashautolist, a third tab is needed to display the list",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 96,
+     "message": "with message and noautomenu second tab redisplays the list",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 97,
+     "message": "with message two tabs will start menu completion",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 98,
+     "message": "with message and _oldlist, two tabs will start menu completion",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 99,
+     "message": "partial completion of option with an argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 100,
+     "message": "with -W options mixed with arguments",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y04regexargs",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: starting.\nRunning test: standalone spec\nTest successful.\nRunning test: simple alternation, use of _message for description with no matches\nTest successful.\nRunning test: optional fields after a suffix\nTest successful.\nRunning test: simple repetition, note zero repititions allowed\nTest successful.\nRunning test: non-matching pattern to separate matches from consuming patterns\nTest successful.\nRunning test: use guard and $match to reference prior argument\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "standalone spec",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "simple alternation, use of _message for description with no matches",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "optional fields after a suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "simple repetition, note zero repititions allowed",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "non-matching pattern to separate matches from consuming patterns",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "use guard and $match to reference prior argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y05describe",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: starting.\nRunning test: name1 as (...), description, escaped colon in name\nTest successful.\nRunning test: name1 as ((...)) not supported\nTest successful.\nRunning test: name2 as (...)\nTest successful.\nRunning test: multiple groups\nTest successful.\nRunning test: arrays by name\nTest successful.\nRunning test: compadd options, basic\nTest successful.\nRunning test: compadd options, complex\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "name1 as (...), description, escaped colon in name",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "name1 as ((...)) not supported",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "name2 as (...)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "multiple groups",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "arrays by name",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "compadd options, basic",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "compadd options, complex",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y06values",
+   "exit_code": 0,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: starting.\nRunning test: basic value\nTest successful.\nRunning test: basic value, next word\nTest successful.\nRunning test: basic value with description\nTest successful.\nRunning test: display of escaped char in value name\nTest successful.\nRunning test: display of hidden value\nTest successful.\nRunning test: basic sequence\nTest successful.\nRunning test: sequence in quotes\nTest successful.\nRunning test: sequence continues after hidden value\nTest successful.\nRunning test: sequence continues after value with escaped meta char\nTest successful.\nRunning test: sequence continues after value with escaped non-meta char\nTest successful.\nRunning test: multi value offered again\nTest successful.\nRunning test: xor value not offered\nTest successful.\nRunning test: xor value with escaped char not offered\nTest successful.\nRunning test: value with argument not enumerated\nTest successful.\nRunning test: value with argument enumerated\nTest successful.\nRunning test: value with argument enumerated with description\nTest successful.\nRunning test: value with argument enumerated with description, escaped colon\nTest successful.\nRunning test: value with argument enumerated with description, escaped colon with \\\\\nTest successful.\nRunning test: value with argument enumerated with description, escaped colon in arg name\nTest successful.\nRunning test: value with argument enumerated with description, un-escaped colon in arg desc\nTest successful.\nRunning test: value with argument eval string, braces\nTest successful.\nRunning test: value with argument eval string, leading space\nTest successful.\nRunning test: -s and -S\nTest successful.\nRunning test: -w without -s\nTest successful.\nRunning test: -w with -s\nTest successful.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: all tests successful.\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "basic value",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "basic value, next word",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 3,
+     "message": "basic value with description",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 4,
+     "message": "display of escaped char in value name",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "display of hidden value",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "basic sequence",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "sequence in quotes",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 8,
+     "message": "sequence continues after hidden value",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 9,
+     "message": "sequence continues after value with escaped meta char",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "sequence continues after value with escaped non-meta char",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 11,
+     "message": "multi value offered again",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 12,
+     "message": "xor value not offered",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 13,
+     "message": "xor value with escaped char not offered",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "value with argument not enumerated",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "value with argument enumerated",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "value with argument enumerated with description",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "value with argument enumerated with description, escaped colon",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "value with argument enumerated with description, escaped colon with \\\\",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "value with argument enumerated with description, escaped colon in arg name",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "value with argument enumerated with description, un-escaped colon in arg desc",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "value with argument eval string, braces",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "value with argument eval string, leading space",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "-s and -S",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "-w without -s",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 25,
+     "message": "-w with -s",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  }
+ ]
+}

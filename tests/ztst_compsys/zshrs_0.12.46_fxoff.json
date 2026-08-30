@@ -1,0 +1,4120 @@
+{
+ "label": "zshrs target/debug (fx off)",
+ "meta": {
+  "sut": "/Users/wizard/RustroverProjects/zshrs/target/debug/zshrs",
+  "sut_version": "5.9.2 zsh-5.9.2-0-gddee3e7",
+  "harness": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh",
+  "harness_version": "5.9.999.3-test",
+  "zsh_build": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc",
+  "zsh_build_version": "5.9.999.3-test",
+  "modules_linked": 38,
+  "fx": "off",
+  "sut_env": "ZSHRS_NATIVE_ZLE_FX=0",
+  "tests": "Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values",
+  "date": "2026-08-30T04:34:03-0400"
+ },
+ "results": [
+  {
+   "name": "Y01completion",
+   "exit_code": 1,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: starting.\nRunning test: directories and files\n--- expected\n+++ actual\n@@ -1,12 +1,14 @@\n line: {: }{}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n-line: {: dir1/}{}\n-line: {: dir2/}{}\n-line: {: file1}{}\n-line: {: file2}{}\n-line: {: dir1/}{}\n-line: {: dir2/}{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\n+line: {: }{}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $': \\t\\t\\t\\t\\t\\t\\t'\nWas testing: directories and files\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: unambiguous prefix and autoremovable suffix\n--- expected\n+++ actual\n@@ -1,14 +1,11 @@\n line: {: dir}{}\n line: {: dir}{}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-line: {: dir1/}{}\n-line: {: dir2/}{}\n-line: {: dir1/}{}\n-line: {: dir1 }{}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{h:file}\n+line: {: dir}{}\n+DESCRIPTION:{h:file}\n+line: {: dir}{}\n+DESCRIPTION:{h:file}\n+line: {: dir}{}\n+DESCRIPTION:{h:file}\n+line: {: dir }{}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $': d\\t\\t\\t\\t\\t \\t'\nWas testing: unambiguous prefix and autoremovable suffix\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: unambiguous prefix and autoremovable suffix with _prefix completer\n--- expected\n+++ actual\n@@ -1,14 +1,11 @@\n line: {: dir}{suf}\n line: {: dir}{suf}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-line: {: dir1/}{suf}\n-line: {: dir2/}{suf}\n-line: {: dir1/}{suf}\n-line: {: dir1 }{suf}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{h:file}\n+line: {: dir}{suf}\n+DESCRIPTION:{h:file}\n+line: {: dir}{suf}\n+DESCRIPTION:{h:file}\n+line: {: dir}{suf}\n+DESCRIPTION:{h:file}\n+line: {: dir }{suf}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $': suf\\ebd\\t\\t\\t\\t\\t \\t'\nWas testing: unambiguous prefix and autoremovable suffix with _prefix completer\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nThe following may (or may not) help identifying the cause:\n  regression test workers/51641\nRunning test: compstate[insert]=1 compstate[list]=\nTest successful.\nRunning test: compstate[insert]=1 compstate[list]= with _prefix completer\nTest successful.\nRunning test: _expand shows file types\n--- expected\n+++ actual\n@@ -1,15 +1,9 @@\n line: {: dir1/}{}\n DESCRIPTION:{expansions}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n DESCRIPTION:{all expansions}\n-NO:{dir1 dir2 file1 file2}\n-DESCRIPTION:{original}\n-NO:{*}\n-line: {: dir2/}{}\n-line: {: file1 }{}\n-line: {: file2 }{}\n-line: {: dir1 dir2 file1 file2 }{}\n-line: {: *}{}\n+DESCRIPTION:{h:file}\n+line: {: dir1/}{}\n+line: {: dir1/}{}\n+line: {: dir1/}{}\n+line: {: dir1/}{}\n+line: {: dir1/}{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval 'comptest-postfunc() {}'\n  comptest $': *\\t\\t\\t\\t\\t\\t'\nWas testing: _expand shows file types\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: _expand preserves array form\n--- expected\n+++ actual\n@@ -1,5 +1 @@\n DESCRIPTION:{expansions}\n-NO:{dir1}\n-NO:{dir2}\n-NO:{file1}\n-NO:{file2}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval $'zstyle \\'*\\' glob no'\n  comptesteval $'typeset -g tst=(*)'\n  comptest $': $tst\\C-D'\nWas testing: _expand preserves array form\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: tilde\n--- expected\n+++ actual\n@@ -1,7 +1,5 @@\n line: {: ~zuser}{}\n line: {: ~zuser}{}\n-NO:{zuser1}\n-NO:{zuser2}\n-line: {: ~zuser1}{}\n-line: {: ~zuser2}{}\n-line: {: ~zuser1}{}\n+line: {: ~zuser}{}\n+line: {: ~zuser}{}\n+line: {: ~zuser}{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval $'zstyle -d \\'*\\' glob'\n  comptesteval '_users () { compadd zuser1 zuser2 }'\n  comptest $': ~\\t\\t\\t\\t\\t'\nWas testing: tilde\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: dynamic directory names after ~[\n--- expected\n+++ actual\n@@ -1,7 +1,7 @@\n line: {: ~[name}{}\n line: {: ~[name}{}\n-DESCRIPTION:{dynamically named directory}\n-NO:{name/1}\n-NO:{name2}\n-line: {: ~[name/1]}{}\n-line: {: ~[name2]}{}\n+DESCRIPTION:{h:file}\n+line: {: ~[name}{}\n+DESCRIPTION:{h:file}\n+line: {: ~[name}{}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval 'zsh_directory_name() { compadd \"$expl[@]\" -- name/1 name2 }'\n  comptest $': ~[\\t\\t\\t\\t'\nWas testing: dynamic directory names after ~[\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: dynamic directory names inside ~[...]\n--- expected\n+++ actual\n@@ -1,7 +1,16 @@\n-line: {: ~[name}{]}\n-line: {: ~[name}{]}\n-DESCRIPTION:{dynamically named directory}\n-NO:{name/1}\n-NO:{name2}\n-line: {: ~[name/1}{]}\n-line: {: ~[name2}{]}\n+line: {: ~[}{]}\n+DESCRIPTION:{expansions}\n+DESCRIPTION:{all expansions}\n+DESCRIPTION:{h:file}\n+line: {: ~[}{]}\n+DESCRIPTION:{expansions}\n+DESCRIPTION:{all expansions}\n+DESCRIPTION:{h:file}\n+line: {: ~[}{]}\n+DESCRIPTION:{expansions}\n+DESCRIPTION:{all expansions}\n+DESCRIPTION:{h:file}\n+line: {: ~[}{]}\n+DESCRIPTION:{expansions}\n+DESCRIPTION:{all expansions}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $': ~[]\\C-b\\t\\t\\t\\t'\nWas testing: dynamic directory names inside ~[...]\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: directories and files before separator\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {ls }{;:}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $'ls ;:\\C-b\\C-b\\t'\nWas testing: directories and files before separator\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: custom description with formatting sequences\nPattern match failed, line mismatch (6/2):\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {: }{}\n-DESCRIPTION:{*123abc*123abc*~*F123*}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{123abc \u001b[1m123abc\u001b[0m}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  # Temporarily modify format set in comptest\n  comptesteval 'zstyle -s \":completion:*:descriptions\" format oldfmt'\n  comptesteval 'zstyle \":completion:*:descriptions\" format \\\n    ${oldfmt/>*</>%5F123abc%f %B123abc%b<}'\n  comptest $': \\t'\n  comptesteval 'zstyle \":completion:*:descriptions\" format $oldfmt'\nWas testing: custom description with formatting sequences\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nThe following may (or may not) help identifying the cause:\n  regression test workers/42164\nRunning test: command\nTest successful.\nRunning test: command after separator\nTest successful.\nRunning test: redirection after \"for ...; do\"\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {for f in 1; do <}{ x}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptest $'for f in 1; do < x\\C-b\\C-b\\t'\nWas testing: redirection after \"for ...; do\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nThe following may (or may not) help identifying the cause:\n  regression test workers/31611\nRunning test: directory name is not a glob qualifier\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {cd \"A(B)/}{}\n-line: {cd \"A(B)/C/}{}\n-line: {cd ../C/}{}\n+line: {cd \"A(B)/}{}\n+line: {cd ../}{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  {\n    mkdir 'A(B)' 'A(B)/C'\n    comptest $'cd \"A(B)\\t\\t'\n    comptesteval 'cd \"A(B)/C\"'\n    comptest $'cd ../\\t'\n  } always {\n    comptesteval 'cd -' # Reset CWD\n    rmdir 'A(B)/C' 'A(B)'\n  }\nWas testing: directory name is not a glob qualifier\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: remove exact number of characters from a prefix\nTest successful.\nRunning test: remove exact number of characters from a suffix\nTest successful.\nRunning test: try to remove excess characters from prefix and suffix\nTest successful.\nRunning test: remove multibyte character from a prefix\nTest successful.\nRunning test: allow for suffixes when moving cursor to end of match (with ignored suffix)\nTest successful.\nRunning test: allow for suffixes when moving cursor to end of match (without ignored suffix)\nTest successful.\nRunning test: ignore backslashes when sorting completion matches\n--- expected\n+++ actual\n@@ -1,9 +1,2 @@\n line: {: sortnobslash/}{}\n-DESCRIPTION:{file}\n-FI:{\\!foo}\n-FI:{\\#foo}\n-FI:{Afoo}\n-FI:{\\\\foo}\n-FI:{bfoo}\n-FI:{\\|foo}\n-FI:{\\~foo}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  if [[ $OSTYPE = cygwin ]]; then\n    ZTST_skip=\"\\\\ is equivalent to / in pathname on cygwin\"\n  else\n  {\n    mkdir sortnobslash\n    touch sortnobslash/{'!foo','#foo','\\foo','|foo','~foo',Afoo,bfoo}\n    comptesteval 'old_LC_ALL=$LC_ALL; LC_ALL=C'\n    comptest $': sortnobslash/\\t'\n  } always {\n    comptesteval 'LC_ALL=$old_LC_ALL'\n    rm -rf sortnobslash\n  }\n  fi\nWas testing: ignore backslashes when sorting completion matches\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: reverse numeric sorting of matches\n--- expected\n+++ actual\n@@ -1,6 +1 @@\n line: {tst r}{}\n-NO:{r2.34}\n-NO:{r2.3}\n-NO:{r1.10}\n-NO:{r1.2}\n-NO:{r1.1}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"_tst() { compadd -onum,rev -J versions r1.10 r1.1 r1.2 r2.3 r2.34 }\"\n  comptest $'tst r\\t'\nWas testing: reverse numeric sorting of matches\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: reverse numeric sorting of matches via a style\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {tst r}{}\n-DESCRIPTION:{time}\n-NO:{r2.34}\n-NO:{r2.3}\n-NO:{r1.10}\n-NO:{r1.2}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"_tst() { local expl; _wanted times expl time compadd -o match r1.10 r1.2 r2.3 r2.34 }\"\n  comptesteval \"zstyle ':completion:*:tst:*' sort reverse numeric\"\n  comptest $'tst r\\t'\nWas testing: reverse numeric sorting of matches via a style\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: sort in match rather than display name order\n--- expected\n+++ actual\n@@ -1,4 +1 @@\n line: {tst }{}\n-NO:{c}\n-NO:{b}\n-NO:{a}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"_tst() { local disp=(a b c); compadd -o -J letters -d disp 3 2 1 }\"\n  comptest $'tst \\t'\nWas testing: sort in match rather than display name order\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: sorting disabled via the sort style\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{time}\n-NO:{3am}\n-NO:{12pm}\n-NO:{3pm}\n-NO:{10pm}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"_tst() { local expl; _wanted times expl time compadd 3am 12pm 3pm 10pm }\"\n  comptesteval \"zstyle ':completion:*:tst:*' sort false\"\n  comptest $'tst \\t'\nWas testing: sorting disabled via the sort style\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: -F does not break _sequence\n--- expected\n+++ actual\n@@ -1,4 +1 @@\n line: {tst 1,}{}\n-DESCRIPTION:{desc}\n-NO:{2}\n-NO:{3}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"_tst() { _arguments ':desc:_sequence compadd - 1 2 3' }\"\n  comptesteval \"zstyle ':completion:*:tst:*' ignored-patterns 2\"\n  comptest $'tst 1,\\t'\n  comptesteval \"zstyle -d ':completion:*:tst:*' ignored-patterns\"\nWas testing: -F does not break _sequence\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: multiple envarrays\n--- expected\n+++ actual\n@@ -1,6 +1,2 @@\n line: {a=() b=(}{}\n-DESCRIPTION:{file}\n-DI:{dir1}\n-DI:{dir2}\n-FI:{file1}\n-FI:{file2}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n comptest $'a=() b=(\\t'\nWas testing: multiple envarrays\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: extra-verbose shows parameter values\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {: $ba}{}\n-DESCRIPTION:{parameter}\n-NO:{bar  -- ( '^@' '^A' '^B' '^C' '^D' '^E' '^F' '^G' '^H' '\\t' '\\n' '^K' '^L' '}\n-NO:{bat  -- ( [' ']='!' ['\"']='#' ['$']=% ['&']=\\' ['(']=')' ['*']=+ [,]=- [.]=/}\n-NO:{bay  -- '^@ ^A ^B ^C ^D ^E ^F ^G ^H \\t \\n ^K ^L ^M ^N ^O ^P ^Q ^R ^S ^T ^U ^}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"typeset -a bar=({$'\\\\0'..$'\\\\C-?'})\"\n  comptesteval 'typeset -A bat=( \"$bar[@]\" )'\n  comptesteval 'typeset bay=\"$bar\"'\n  comptesteval 'zstyle \":completion:*:parameters\" extra-verbose yes'\n  comptesteval 'zstyle \":completion:*\" fake-parameters bar bat bay'\n  comptest $': $ba\\t'\nWas testing: extra-verbose shows parameter values\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: verbose doesn't show special or hidden parameter values\n--- expected\n+++ actual\n@@ -1,4 +1 @@\n line: {: $path}{}\n-DESCRIPTION:{parameter}\n-NO:{path}\n-NO:{paths}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval \"path=( $ZTST_srcdir:A )\"\n  comptesteval 'typeset -H paths=HIDDEN'\n  comptest $': $path\\t'\nWas testing: verbose doesn't show special or hidden parameter values\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test: parameter values not shown without verbose\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {: $ba}{}\n-DESCRIPTION:{parameter}\n-NO:{bar}\n-NO:{bat}\n-NO:{bay}\n+DESCRIPTION:{h:file}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval 'zstyle \":completion:*:parameters\" verbose no'\n  comptest $': $ba\\t'\nWas testing: parameter values not shown without verbose\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nRunning test:  menu select=long-list starts menu selection for list widgets\n--- expected\n+++ actual\n@@ -1,27 +0,0 @@\n-NO:{<INSERT>menu</INSERT>}\n-NO:{a}\n-NO:{b}\n-NO:{c}\n-NO:{d}\n-NO:{e}\n-NO:{f}\n-NO:{g}\n-NO:{h}\n-NO:{i}\n-NO:{j}\n-NO:{k}\n-NO:{l}\n-NO:{m}\n-NO:{n}\n-NO:{o}\n-NO:{p}\n-NO:{q}\n-NO:{r}\n-NO:{s}\n-NO:{t}\n-NO:{u}\n-NO:{v}\n-NO:{w}\n-NO:{x}\n-NO:{y}\n-NO:{z}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst failed: output differs from expected as shown above for:\n  comptesteval '_tst() { local disp=( {a..z} ); compadd -ld disp $disp[@]; comppostfuncs=( _pst ) }'\n  comptesteval '_pst() { local disp=( \"<INSERT>$compstate[insert]</INSERT>\" ); compadd -Qld disp $disp }'\n  comptesteval \"zstyle ':completion:*' menu select=long-list\"\n  # This test is sensitive to sorting differences across platforms\n  comptesteval 'export LC_ALL=C'\n  comptest $'tst \\C-d'\n  comptesteval \"export LC_ALL=${(q)ZSH_TEST_LANG}\"\nWas testing:  menu select=long-list starts menu selection for list widgets\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y01completion.ztst: test failed.\nZTST_test: 23 test(s) failed\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "directories and files",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}",
+      "line: {: dir1/}{}",
+      "line: {: dir2/}{}",
+      "line: {: file1}{}",
+      "line: {: file2}{}",
+      "line: {: dir1/}{}",
+      "line: {: dir2/}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: }{}",
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,12 +1,14 @@",
+      " line: {: }{}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "-line: {: dir1/}{}",
+      "-line: {: dir2/}{}",
+      "-line: {: file1}{}",
+      "-line: {: file2}{}",
+      "-line: {: dir1/}{}",
+      "-line: {: dir2/}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: }{}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 2,
+     "message": "unambiguous prefix and autoremovable suffix",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "line: {: dir1/}{}",
+      "line: {: dir2/}{}",
+      "line: {: dir1/}{}",
+      "line: {: dir1 }{}",
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir }{}",
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,14 +1,11 @@",
+      " line: {: dir}{}",
+      " line: {: dir}{}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-line: {: dir1/}{}",
+      "-line: {: dir2/}{}",
+      "-line: {: dir1/}{}",
+      "-line: {: dir1 }{}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir }{}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "unambiguous prefix and autoremovable suffix with _prefix completer",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "line: {: dir1/}{suf}",
+      "line: {: dir2/}{suf}",
+      "line: {: dir1/}{suf}",
+      "line: {: dir1 }{suf}",
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{suf}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{suf}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir}{suf}",
+      "DESCRIPTION:{h:file}",
+      "line: {: dir }{suf}",
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,14 +1,11 @@",
+      " line: {: dir}{suf}",
+      " line: {: dir}{suf}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-line: {: dir1/}{suf}",
+      "-line: {: dir2/}{suf}",
+      "-line: {: dir1/}{suf}",
+      "-line: {: dir1 }{suf}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{suf}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{suf}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir}{suf}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir }{suf}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "compstate[insert]=1 compstate[list]=",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "compstate[insert]=1 compstate[list]= with _prefix completer",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "_expand shows file types",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}",
+      "NO:{dir1 dir2 file1 file2}",
+      "DESCRIPTION:{original}",
+      "NO:{*}",
+      "line: {: dir2/}{}",
+      "line: {: file1 }{}",
+      "line: {: file2 }{}",
+      "line: {: dir1 dir2 file1 file2 }{}",
+      "line: {: *}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}",
+      "line: {: dir1/}{}",
+      "line: {: dir1/}{}",
+      "line: {: dir1/}{}",
+      "line: {: dir1/}{}",
+      "line: {: dir1/}{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,15 +1,9 @@",
+      " line: {: dir1/}{}",
+      " DESCRIPTION:{expansions}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      " DESCRIPTION:{all expansions}",
+      "-NO:{dir1 dir2 file1 file2}",
+      "-DESCRIPTION:{original}",
+      "-NO:{*}",
+      "-line: {: dir2/}{}",
+      "-line: {: file1 }{}",
+      "-line: {: file2 }{}",
+      "-line: {: dir1 dir2 file1 file2 }{}",
+      "-line: {: *}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: dir1/}{}",
+      "+line: {: dir1/}{}",
+      "+line: {: dir1/}{}",
+      "+line: {: dir1/}{}",
+      "+line: {: dir1/}{}"
+     ]
+    },
+    {
+     "index": 7,
+     "message": "_expand preserves array form",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{dir1}",
+      "NO:{dir2}",
+      "NO:{file1}",
+      "NO:{file2}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1 @@",
+      " DESCRIPTION:{expansions}",
+      "-NO:{dir1}",
+      "-NO:{dir2}",
+      "-NO:{file1}",
+      "-NO:{file2}"
+     ]
+    },
+    {
+     "index": 8,
+     "message": "tilde",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{zuser1}",
+      "NO:{zuser2}",
+      "line: {: ~zuser1}{}",
+      "line: {: ~zuser2}{}",
+      "line: {: ~zuser1}{}"
+     ],
+     "actual": [
+      "line: {: ~zuser}{}",
+      "line: {: ~zuser}{}",
+      "line: {: ~zuser}{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,7 +1,5 @@",
+      " line: {: ~zuser}{}",
+      " line: {: ~zuser}{}",
+      "-NO:{zuser1}",
+      "-NO:{zuser2}",
+      "-line: {: ~zuser1}{}",
+      "-line: {: ~zuser2}{}",
+      "-line: {: ~zuser1}{}",
+      "+line: {: ~zuser}{}",
+      "+line: {: ~zuser}{}",
+      "+line: {: ~zuser}{}"
+     ]
+    },
+    {
+     "index": 9,
+     "message": "dynamic directory names after ~[",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{dynamically named directory}",
+      "NO:{name/1}",
+      "NO:{name2}",
+      "line: {: ~[name/1]}{}",
+      "line: {: ~[name2]}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}",
+      "line: {: ~[name}{}",
+      "DESCRIPTION:{h:file}",
+      "line: {: ~[name}{}",
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,7 +1,7 @@",
+      " line: {: ~[name}{}",
+      " line: {: ~[name}{}",
+      "-DESCRIPTION:{dynamically named directory}",
+      "-NO:{name/1}",
+      "-NO:{name2}",
+      "-line: {: ~[name/1]}{}",
+      "-line: {: ~[name2]}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: ~[name}{}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: ~[name}{}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 10,
+     "message": "dynamic directory names inside ~[...]",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {: ~[name}{]}",
+      "line: {: ~[name}{]}",
+      "DESCRIPTION:{dynamically named directory}",
+      "NO:{name/1}",
+      "NO:{name2}",
+      "line: {: ~[name/1}{]}",
+      "line: {: ~[name2}{]}"
+     ],
+     "actual": [
+      "line: {: ~[}{]}",
+      "DESCRIPTION:{expansions}",
+      "DESCRIPTION:{all expansions}",
+      "DESCRIPTION:{h:file}",
+      "line: {: ~[}{]}",
+      "DESCRIPTION:{expansions}",
+      "DESCRIPTION:{all expansions}",
+      "DESCRIPTION:{h:file}",
+      "line: {: ~[}{]}",
+      "DESCRIPTION:{expansions}",
+      "DESCRIPTION:{all expansions}",
+      "DESCRIPTION:{h:file}",
+      "line: {: ~[}{]}",
+      "DESCRIPTION:{expansions}",
+      "DESCRIPTION:{all expansions}",
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,7 +1,16 @@",
+      "-line: {: ~[name}{]}",
+      "-line: {: ~[name}{]}",
+      "-DESCRIPTION:{dynamically named directory}",
+      "-NO:{name/1}",
+      "-NO:{name2}",
+      "-line: {: ~[name/1}{]}",
+      "-line: {: ~[name2}{]}",
+      "+line: {: ~[}{]}",
+      "+DESCRIPTION:{expansions}",
+      "+DESCRIPTION:{all expansions}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: ~[}{]}",
+      "+DESCRIPTION:{expansions}",
+      "+DESCRIPTION:{all expansions}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: ~[}{]}",
+      "+DESCRIPTION:{expansions}",
+      "+DESCRIPTION:{all expansions}",
+      "+DESCRIPTION:{h:file}",
+      "+line: {: ~[}{]}",
+      "+DESCRIPTION:{expansions}",
+      "+DESCRIPTION:{all expansions}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 11,
+     "message": "directories and files before separator",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {ls }{;:}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 12,
+     "message": "custom description with formatting sequences",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{*123abc*123abc*~*F123*}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{123abc \u001b[1m123abc\u001b[0m}"
+     ],
+     "diff": [
+      "Pattern match failed, line mismatch (6/2):",
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {: }{}",
+      "-DESCRIPTION:{*123abc*123abc*~*F123*}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{123abc \u001b[1m123abc\u001b[0m}"
+     ]
+    },
+    {
+     "index": 13,
+     "message": "command",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "command after separator",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "redirection after \"for ...; do\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {for f in 1; do <}{ x}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 16,
+     "message": "directory name is not a glob qualifier",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {cd \"A(B)/C/}{}",
+      "line: {cd ../C/}{}"
+     ],
+     "actual": [
+      "line: {cd \"A(B)/}{}",
+      "line: {cd ../}{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {cd \"A(B)/}{}",
+      "-line: {cd \"A(B)/C/}{}",
+      "-line: {cd ../C/}{}",
+      "+line: {cd \"A(B)/}{}",
+      "+line: {cd ../}{}"
+     ]
+    },
+    {
+     "index": 17,
+     "message": "remove exact number of characters from a prefix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "remove exact number of characters from a suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "try to remove excess characters from prefix and suffix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "remove multibyte character from a prefix",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "allow for suffixes when moving cursor to end of match (with ignored suffix)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "allow for suffixes when moving cursor to end of match (without ignored suffix)",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "ignore backslashes when sorting completion matches",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "FI:{\\!foo}",
+      "FI:{\\#foo}",
+      "FI:{Afoo}",
+      "FI:{\\\\foo}",
+      "FI:{bfoo}",
+      "FI:{\\|foo}",
+      "FI:{\\~foo}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,9 +1,2 @@",
+      " line: {: sortnobslash/}{}",
+      "-DESCRIPTION:{file}",
+      "-FI:{\\!foo}",
+      "-FI:{\\#foo}",
+      "-FI:{Afoo}",
+      "-FI:{\\\\foo}",
+      "-FI:{bfoo}",
+      "-FI:{\\|foo}",
+      "-FI:{\\~foo}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 24,
+     "message": "reverse numeric sorting of matches",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{r2.34}",
+      "NO:{r2.3}",
+      "NO:{r1.10}",
+      "NO:{r1.2}",
+      "NO:{r1.1}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1 @@",
+      " line: {tst r}{}",
+      "-NO:{r2.34}",
+      "-NO:{r2.3}",
+      "-NO:{r1.10}",
+      "-NO:{r1.2}",
+      "-NO:{r1.1}"
+     ]
+    },
+    {
+     "index": 25,
+     "message": "reverse numeric sorting of matches via a style",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{time}",
+      "NO:{r2.34}",
+      "NO:{r2.3}",
+      "NO:{r1.10}",
+      "NO:{r1.2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {tst r}{}",
+      "-DESCRIPTION:{time}",
+      "-NO:{r2.34}",
+      "-NO:{r2.3}",
+      "-NO:{r1.10}",
+      "-NO:{r1.2}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 26,
+     "message": "sort in match rather than display name order",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{c}",
+      "NO:{b}",
+      "NO:{a}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1 @@",
+      " line: {tst }{}",
+      "-NO:{c}",
+      "-NO:{b}",
+      "-NO:{a}"
+     ]
+    },
+    {
+     "index": 27,
+     "message": "sorting disabled via the sort style",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{time}",
+      "NO:{3am}",
+      "NO:{12pm}",
+      "NO:{3pm}",
+      "NO:{10pm}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{time}",
+      "-NO:{3am}",
+      "-NO:{12pm}",
+      "-NO:{3pm}",
+      "-NO:{10pm}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 28,
+     "message": "-F does not break _sequence",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{2}",
+      "NO:{3}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1 @@",
+      " line: {tst 1,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{2}",
+      "-NO:{3}"
+     ]
+    },
+    {
+     "index": 29,
+     "message": "multiple envarrays",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{file}",
+      "DI:{dir1}",
+      "DI:{dir2}",
+      "FI:{file1}",
+      "FI:{file2}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,2 @@",
+      " line: {a=() b=(}{}",
+      "-DESCRIPTION:{file}",
+      "-DI:{dir1}",
+      "-DI:{dir2}",
+      "-FI:{file1}",
+      "-FI:{file2}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 30,
+     "message": "extra-verbose shows parameter values",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{parameter}",
+      "NO:{bar  -- ( '^@' '^A' '^B' '^C' '^D' '^E' '^F' '^G' '^H' '\\t' '\\n' '^K' '^L' '}",
+      "NO:{bat  -- ( [' ']='!' ['\"']='#' ['$']=% ['&']=\\' ['(']=')' ['*']=+ [,]=- [.]=/}",
+      "NO:{bay  -- '^@ ^A ^B ^C ^D ^E ^F ^G ^H \\t \\n ^K ^L ^M ^N ^O ^P ^Q ^R ^S ^T ^U ^}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {: $ba}{}",
+      "-DESCRIPTION:{parameter}",
+      "-NO:{bar  -- ( '^@' '^A' '^B' '^C' '^D' '^E' '^F' '^G' '^H' '\\t' '\\n' '^K' '^L' '}",
+      "-NO:{bat  -- ( [' ']='!' ['\"']='#' ['$']=% ['&']=\\' ['(']=')' ['*']=+ [,]=- [.]=/}",
+      "-NO:{bay  -- '^@ ^A ^B ^C ^D ^E ^F ^G ^H \\t \\n ^K ^L ^M ^N ^O ^P ^Q ^R ^S ^T ^U ^}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 31,
+     "message": "verbose doesn't show special or hidden parameter values",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{parameter}",
+      "NO:{path}",
+      "NO:{paths}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1 @@",
+      " line: {: $path}{}",
+      "-DESCRIPTION:{parameter}",
+      "-NO:{path}",
+      "-NO:{paths}"
+     ]
+    },
+    {
+     "index": 32,
+     "message": "parameter values not shown without verbose",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{parameter}",
+      "NO:{bar}",
+      "NO:{bat}",
+      "NO:{bay}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:file}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {: $ba}{}",
+      "-DESCRIPTION:{parameter}",
+      "-NO:{bar}",
+      "-NO:{bat}",
+      "-NO:{bay}",
+      "+DESCRIPTION:{h:file}"
+     ]
+    },
+    {
+     "index": 33,
+     "message": " menu select=long-list starts menu selection for list widgets",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{<INSERT>menu</INSERT>}",
+      "NO:{a}",
+      "NO:{b}",
+      "NO:{c}",
+      "NO:{d}",
+      "NO:{e}",
+      "NO:{f}",
+      "NO:{g}",
+      "NO:{h}",
+      "NO:{i}",
+      "NO:{j}",
+      "NO:{k}",
+      "NO:{l}",
+      "NO:{m}",
+      "NO:{n}",
+      "NO:{o}",
+      "NO:{p}",
+      "NO:{q}",
+      "NO:{r}",
+      "NO:{s}",
+      "NO:{t}",
+      "NO:{u}",
+      "NO:{v}",
+      "NO:{w}",
+      "NO:{x}",
+      "NO:{y}",
+      "NO:{z}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,27 +0,0 @@",
+      "-NO:{<INSERT>menu</INSERT>}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "-NO:{d}",
+      "-NO:{e}",
+      "-NO:{f}",
+      "-NO:{g}",
+      "-NO:{h}",
+      "-NO:{i}",
+      "-NO:{j}",
+      "-NO:{k}",
+      "-NO:{l}",
+      "-NO:{m}",
+      "-NO:{n}",
+      "-NO:{o}",
+      "-NO:{p}",
+      "-NO:{q}",
+      "-NO:{r}",
+      "-NO:{s}",
+      "-NO:{t}",
+      "-NO:{u}",
+      "-NO:{v}",
+      "-NO:{w}",
+      "-NO:{x}",
+      "-NO:{y}",
+      "-NO:{z}"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Y02compmatch",
+   "exit_code": 1,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: starting.\nRunning test: Match Error for \"z:\"\nTest successful.\nRunning test: Match Error for \"m:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing word pattern}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code m: list1\n comptest  $'tst \\t'\nWas testing: Match Error for \"m:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"M:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing word pattern}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code M: list1\n comptest $'tst \\t'\nWas testing: Match Error for \"M:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error \"r:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing right anchor}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code r: list1\n comptest $'tst \\t'\nWas testing: Match Error \"r:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error \"R:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing right anchor}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code R: list1\n comptest $'tst \\t'\nWas testing: Match Error \"R:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"l:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing line pattern}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code l: list1\n comptest $'tst \\t'\nWas testing: Match Error for \"l:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"L:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing line pattern}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code L: list1\n comptest $'tst \\t'\nWas testing: Match Error for \"L:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"m:{0-9\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: unterminated character class}\n+COMPADD:{_tst:compadd: missing word pattern}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'm:{0-9' list1\n comptest $'tst \\t'\nWas testing: Match Error for \"m:{0-9\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"m:{0-9}\"\nTest successful.\nRunning test: Match Error for \"m:{0-9}={\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n-line: {tst }{}\n-COMPADD:{_tst:compadd: unterminated character class}\n-INSERT_POSITIONS:{}\n+line: {tst IndianRed}{}\n+COMPADD:{}\n+INSERT_POSITIONS:{13}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'm:{0-9}={' list1\n comptest $'tst \\t'\nWas testing: Match Error for \"m:{0-9}={\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"m:{0-9}={0-\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n-line: {tst }{}\n-COMPADD:{_tst:compadd: unterminated character class}\n-INSERT_POSITIONS:{}\n+line: {tst IndianRed}{}\n+COMPADD:{}\n+INSERT_POSITIONS:{13}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'm:{0-9}={0-' list1\n comptest $'tst \\t'\nWas testing: Match Error for \"m:{0-9}={0-\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error for \"m:{0-9}={-\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n-line: {tst }{}\n-COMPADD:{_tst:compadd: unterminated character class}\n-INSERT_POSITIONS:{}\n+line: {tst IndianRed}{}\n+COMPADD:{}\n+INSERT_POSITIONS:{13}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'm:{0-9}={-' list1\n comptest $'tst \\t'\nWas testing: Match Error for \"m:{0-9}={-\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Match Error \"r:\"\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst }{}\n-COMPADD:{_tst:compadd: missing patterns}\n+COMPADD:{_tst:compadd: missing right anchor}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code r: list1\n comptest $'tst \\t'\nWas testing: Match Error \"r:\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"nolistbee\"\nTest successful.\nRunning test: Documentation example for options, input \"list_bee\"\nTest successful.\nRunning test: Documentation example for options, input \"ListBee\"\nTest successful.\nRunning test: Documentation example for options, input \"NOList\"\n--- expected\n+++ actual\n@@ -1,11 +1,6 @@\n line: {tst NOList}{}\n COMPADD:{}\n INSERT_POSITIONS:{10}\n-NO:{NOListambiguous}\n-NO:{NOListbeep}\n-NO:{NOListpacked}\n-NO:{NOListrowsfirst}\n-NO:{NOListtypes}\n line: {tst NOListBeep }{}\n COMPADD:{}\n INSERT_POSITIONS:{14}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $options_matcher example1_list\n comptest $'tst NOList\\tB\\t'\nWas testing: Documentation example for options, input \"NOList\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"NO_List\\t__\\tB\\t\"\n--- expected\n+++ actual\n@@ -1,19 +1,9 @@\n line: {tst NO_List}{}\n COMPADD:{}\n INSERT_POSITIONS:{11}\n-NO:{NO_Listambiguous}\n-NO:{NO_Listbeep}\n-NO:{NO_Listpacked}\n-NO:{NO_Listrowsfirst}\n-NO:{NO_Listtypes}\n line: {tst NO_List__}{}\n COMPADD:{}\n INSERT_POSITIONS:{13}\n-NO:{NO_List__ambiguous}\n-NO:{NO_List__beep}\n-NO:{NO_List__packed}\n-NO:{NO_List__rowsfirst}\n-NO:{NO_List__types}\n line: {tst NO_List__Beep }{}\n COMPADD:{}\n INSERT_POSITIONS:{17}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $options_matcher example1_list\n comptest $'tst NO_List\\t__\\tB\\t'\nWas testing: Documentation example for options, input \"NO_List\\t__\\tB\\t\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"__\\tN\\t__o\\t___\\tlist_\\tbeep__\\t\" \n--- expected\n+++ actual\n@@ -1,18 +1,6 @@\n line: {tst __}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\n-NO:{__kshoptionprint}\n-NO:{__listambiguous}\n-NO:{__listbeep}\n-NO:{__listpacked}\n-NO:{__listrowsfirst}\n-NO:{__listtypes}\n-NO:{__shglob}\n-NO:{__shinstdin}\n-NO:{__shnullcmd}\n-NO:{__shoptionletters}\n-NO:{__shortloops}\n-NO:{__shwordsplit}\n line: {tst __N}{}\n COMPADD:{}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $options_matcher example1_list\n comptest $'tst __\\tN\\t__o\\t___\\tlist_\\tbeep__\\t'\nWas testing: Documentation example for options, input \"__\\tN\\t__o\\t___\\tlist_\\tbeep__\\t\" \n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"__\\tNo\\t___\\tlist_\\tbeep__\\t\" \n--- expected\n+++ actual\n@@ -1,18 +1,6 @@\n line: {tst __}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\n-NO:{__kshoptionprint}\n-NO:{__listambiguous}\n-NO:{__listbeep}\n-NO:{__listpacked}\n-NO:{__listrowsfirst}\n-NO:{__listtypes}\n-NO:{__shglob}\n-NO:{__shinstdin}\n-NO:{__shnullcmd}\n-NO:{__shoptionletters}\n-NO:{__shortloops}\n-NO:{__shwordsplit}\n line: {tst __No}{}\n COMPADD:{}\n INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $options_matcher example1_list\n comptest $'tst __\\tNo\\t___\\tlist_\\tbeep__\\t'\nWas testing: Documentation example for options, input \"__\\tNo\\t___\\tlist_\\tbeep__\\t\" \n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"___\\tlist_\\tbeep__\\t\" \n--- expected\n+++ actual\n@@ -1,26 +1,9 @@\n line: {tst ___}{}\n COMPADD:{}\n INSERT_POSITIONS:{7}\n-NO:{___kshoptionprint}\n-NO:{___listambiguous}\n-NO:{___listbeep}\n-NO:{___listpacked}\n-NO:{___listrowsfirst}\n-NO:{___listtypes}\n-NO:{___shglob}\n-NO:{___shinstdin}\n-NO:{___shnullcmd}\n-NO:{___shoptionletters}\n-NO:{___shortloops}\n-NO:{___shwordsplit}\n line: {tst ___list_}{}\n COMPADD:{}\n INSERT_POSITIONS:{12}\n-NO:{___list_ambiguous}\n-NO:{___list_beep}\n-NO:{___list_packed}\n-NO:{___list_rowsfirst}\n-NO:{___list_types}\n line: {tst ___list_beep__ }{}\n COMPADD:{}\n INSERT_POSITIONS:{18}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $options_matcher example1_list\n comptest $'tst ___\\tlist_\\tbeep__\\t'\nWas testing: Documentation example for options, input \"___\\tlist_\\tbeep__\\t\" \n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for options, input \"__no_listbe\"\nTest successful.\nRunning test: Documentation example for options, input \"nonono_listbe\"\nTest successful.\nRunning test: Documentation example for lowercase insenitive M, input \"ab\\tC\\t\"\n--- expected\n+++ actual\n@@ -1,8 +1,6 @@\n line: {tst ab}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\n-NO:{abC}\n-NO:{abc}\n line: {tst abC }{}\n COMPADD:{}\n INSERT_POSITIONS:{7}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n lower_insensitive_M=\"M:{a-z}={A-Z}\"\n lower_insensitive_m=\"m:{a-z}={A-Z}\"\n example2_list=(ABC Abc abc)\n test_code $lower_insensitive_M example2_list\n comptest $'tst ab\\tC\\t'\nWas testing: Documentation example for lowercase insenitive M, input \"ab\\tC\\t\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for lowercase insenitive m, input \"A\\t\\t\" \n--- expected\n+++ actual\n@@ -1,8 +1,6 @@\n line: {tst A}{}\n COMPADD:{}\n INSERT_POSITIONS:{5}\n-NO:{ABC}\n-NO:{Abc}\n-line: {tst ABC}{}\n+line: {tst A}{}\n COMPADD:{}\n INSERT_POSITIONS:{5}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $lower_insensitive_m example2_list\n comptest $'tst A\\t\\t'\nWas testing: Documentation example for lowercase insenitive m, input \"A\\t\\t\" \n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for case insenitive M, input \"aB\\t\\t\"\n--- expected\n+++ actual\n@@ -1,8 +1,6 @@\n line: {tst aB}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\n-NO:{aBC}\n-NO:{aBc}\n-line: {tst aBC}{}\n+line: {tst aB}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n example3_list=(ABC Abc abc)\n case_insensitive_M=\"M:{a-zA-Z}={A-Za-z}\"\n case_insensitive_m=\"m:{a-zA-Z}={A-Za-z}\"\n test_code $case_insensitive_M example3_list\n comptest $'tst aB\\t\\t'\nWas testing: Documentation example for case insenitive M, input \"aB\\t\\t\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example for case insenitive m, input \"aB\\t\\t\"\n--- expected\n+++ actual\n@@ -1,9 +1,6 @@\n-line: {tst a}{BC}\n+line: {tst aB}{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7}\n-line: {tst a}{BC}\n+INSERT_POSITIONS:{6}\n+line: {tst aB}{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7}\n-NO:{ABC}\n-NO:{Abc}\n-NO:{abc}\n+INSERT_POSITIONS:{6}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $case_insensitive_m example3_list\n comptest $'tst aB\\t\\t'\nWas testing: Documentation example for case insenitive m, input \"aB\\t\\t\"\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: r:|.=* should complete .s.u\nTest successful.\nRunning test: r:[^.]||.=* should not complete .s.u, but should complete c.s.u\nTest failed, as expected.\nRunning test: r:|.=* should complete .g.\n--- expected\n+++ actual\n@@ -4,33 +4,15 @@\n line: {tst comp.graphics.a}{}\n COMPADD:{}\n INSERT_POSITIONS:{19}\n-NO:{comp.graphics.algorithms}\n-NO:{comp.graphics.animation}\n-NO:{comp.graphics.api}\n-NO:{comp.graphics.apps}\n-NO:{comp.graphics.apps.alias}\n-NO:{comp.graphics.apps.gimp}\n-NO:{comp.graphics.apps.gnuplot}\n-NO:{comp.graphics.apps.lightwave}\n-NO:{comp.graphics.apps.pagemaker}\n-NO:{comp.graphics.apps.paint-shop-pro}\n-NO:{comp.graphics.apps.photoshop}\n-NO:{comp.graphics.apps.softimage}\n-NO:{comp.graphics.apps.ulead}\n line: {tst comp.graphics.apps.}{}\n COMPADD:{}\n INSERT_POSITIONS:{23}\n line: {tst comp.graphics.apps.p}{}\n COMPADD:{}\n INSERT_POSITIONS:{24}\n-NO:{comp.graphics.apps.pagemaker}\n-NO:{comp.graphics.apps.paint-shop-pro}\n-NO:{comp.graphics.apps.photoshop}\n line: {tst comp.graphics.apps.pa}{}\n COMPADD:{}\n INSERT_POSITIONS:{25}\n-NO:{comp.graphics.apps.pagemaker}\n-NO:{comp.graphics.apps.paint-shop-pro}\n line: {tst comp.graphics.apps.pagemaker }{}\n COMPADD:{}\n INSERT_POSITIONS:{32}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $example4_matcher example4_list\n comptest $'tst .g.\\ta\\t.\\tp\\ta\\tg\\t'\nWas testing: r:|.=* should complete .g.\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: r:[^.]||.=* should not complete .g., but should complete c.g.\nTest failed, as expected.\nRunning test: r:|.=* should complete ...pag\nTest successful.\nRunning test: r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p\nTest failed, as expected.\nRunning test: Documentation example using input c...pa\\tg\\t\nTest successful.\nRunning test: r:|[.,_-]=* should complete .c and .h\nTest successful.\nRunning test: r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h\nTest failed, as expected.\nRunning test: Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input H\nTest successful.\nRunning test: Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input 2\nTest successful.\nRunning test: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input H\n--- expected\n+++ actual\n@@ -1,5 +1,3 @@\n line: {tst H}{}\n COMPADD:{}\n-INSERT_POSITIONS:{4}\n-NO:{FooHoo}\n-NO:{LikeTHIS}\n+INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'r:|[A-Z0-9]=** r:|=*' example6_list\n comptest $'tst H\\t'\nWas testing: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input H\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input 2\n--- expected\n+++ actual\n@@ -1,8 +1,6 @@\n line: {tst 5}{23}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7}\n-line: {tst 5}{23}\n+INSERT_POSITIONS:{7}\n+line: {tst 23 }{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7}\n-NO:{5bar234}\n-NO:{5foo123}\n+INSERT_POSITIONS:{9}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code 'r:|[A-Z0-9]=** r:|=*' example6_list\n comptest $'tst 2\\t\\t'\nWas testing: Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input 2\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.\nTest failed, as expected.\nRunning test: r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.\nTest failed, as expected.\nRunning test: r:[^.]||.=* and l:.||[^.]=* should work symmetrically.\nTest failed, as expected.\nRunning test: Bug from workers 7311\nTest successful.\nRunning test: Bug from workers_7311 \n--- expected\n+++ actual\n@@ -4,9 +4,6 @@\n line: {tst Abc}{}\n COMPADD:{}\n INSERT_POSITIONS:{7}\n-NO:{Abc-Def-Ghij.txt}\n-NO:{Abc-def.ghi.jkl_mno.pqr.txt}\n-NO:{Abc_def_ghi_jkl_mno_pqr.txt}\n line: {tst Abc-def.ghi.jkl_mno.pqr.txt }{}\n COMPADD:{}\n INSERT_POSITIONS:{31}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $workers_7311_matcher workers_7311_list\n comptest $'tst a\\t\\t-d.\\t'\nWas testing: Bug from workers_7311 \n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Bug from workers 10886\nTest successful.\nRunning test: Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]\n--- expected\n+++ actual\n@@ -4,9 +4,6 @@\n line: {tst build.out}{}\n COMPADD:{}\n INSERT_POSITIONS:{13}\n-NO:{build.out}\n-NO:{build.out1}\n-NO:{build.out2}\n line: {tst build.out}{}\n COMPADD:{}\n INSERT_POSITIONS:{13}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_11081_matcher='m:{a-zA-Z}={A-Za-z} r:|[.,_-]=* r:|=*'\n workers_11081_list=(build.out build.out1 build.out2)\n test_code $workers_11081_matcher workers_11081_list\n comptest $'tst bui\\t\\t\\t'\nWas testing: Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Non-bug from workers 11388\nTest successful.\nRunning test: Non-bug from workers 11388\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst .:}{}\n COMPADD:{}\n-INSERT_POSITIONS:{4:5:6}\n+INSERT_POSITIONS:{6}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_11388_matcher='r:|[:.]=** r:|=*'\n workers_11388_list=(a.b:0 c.d:1)\n test_code $workers_11388_matcher workers_11388_list\n comptest $'tst :\\t'\nWas testing: Non-bug from workers 11388\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Disappearing characters bug from workers 11586: c00\\t -> c0[], c00\\t -> c0.abc[], c00.\\t -> c0.abc[]\n--- expected\n+++ actual\n@@ -1,13 +1,9 @@\n line: {tst c00}{}\n COMPADD:{}\n INSERT_POSITIONS:{6}\n-NO:{c00.abc}\n-NO:{c01.abc.def.00.0}\n line: {tst c00.}{}\n COMPADD:{}\n-INSERT_POSITIONS:{7:8}\n-NO:{c00.abc}\n-NO:{c01.abc.def.00.0}\n+INSERT_POSITIONS:{8}\n line: {tst c00.abc }{}\n COMPADD:{}\n INSERT_POSITIONS:{11}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_11586_matcher='r:|.=** r:[^0-9]||[0-9]=**'\n workers_11586_list=(c00.abc c01.abc.def.00.0)\n test_code $workers_11586_matcher workers_11586_list\n comptest $'tst c00\\t.\\ta\\t'\nWas testing: Disappearing characters bug from workers 11586: c00\\t -> c0[], c00\\t -> c0.abc[], c00.\\t -> c0.abc[]\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: First test from workers 12995\nTest successful.\nRunning test: Second test from workers 12995\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n-line: {tst ../Completion/Core }{}\n+line: {tst ../}{com/cor}\n COMPADD:{}\n-INSERT_POSITIONS:{22}\n+INSERT_POSITIONS:{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_12995b_matcher='m:{a-z}={A-Z} r:|/=* r:|=*'\n workers_12995b_list=(../Completion/Core ../Completion/Commands)\n test_code $workers_12995b_matcher workers_12995b_list \n comptest $'tst ../com/cor\\002\\002\\002\\002\\002\\002\\002\\t'\nWas testing: Second test from workers 12995\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Incorrect cursor position bug from workers 13320: glibc-2.1\\t -> glibc-2[.]1.94-3.i386.rpm\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst glibc}{-2.1.94-3.i386.rpm}\n COMPADD:{}\n-INSERT_POSITIONS:{9:27}\n+INSERT_POSITIONS:{27}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_13320_matcher='r:|[.,_-]=**'\n workers_13320_list=(glibc-2.1.94-3.i386.rpm glibc-devel-2.1.94-3.i386.rpm)\n workers_13320_list=($workers_13320_list  glibc-profile-2.1.94-3.i386.rpm)\n test_code $workers_13320_matcher workers_13320_list\n comptest $'tst glibc-2.1\\t'\nWas testing: Incorrect cursor position bug from workers 13320: glibc-2.1\\t -> glibc-2[.]1.94-3.i386.rpm\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Test from workers 13320\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst glibc}{-2.1.94-3.i386.rpm}\n COMPADD:{}\n-INSERT_POSITIONS:{9:27}\n+INSERT_POSITIONS:{27}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n test_code $workers_13320_matcher workers_13320_list\n comptest $'tst g-2\\t'\nWas testing: Test from workers 13320\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: First test from workers 13345\n--- expected\n+++ actual\n@@ -1,6 +1,3 @@\n line: {tst A.C}{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7}\n-NO:{A.B.C}\n-NO:{A.B.C.D}\n-NO:{A.C}\n+INSERT_POSITIONS:{7}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_13345a_matcher='r:|[.,_-]=**'\n workers_13345a_list=(A.B.C A.B.C.D A.C)\n test_code $workers_13345a_matcher workers_13345a_list\n comptest $'tst A.C\\t'\nWas testing: First test from workers 13345\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Disappearing character bug from workers 13345: a-b_2\\t -> a-b__\n--- expected\n+++ actual\n@@ -1,3 +1,3 @@\n line: {tst a-b_2_}{}\n COMPADD:{}\n-INSERT_POSITIONS:{8:10}\n+INSERT_POSITIONS:{10}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_13345b_matcher='r:|[.,_-]=** r:|[0-9]=**'\n workers_13345b_list=(a-b_1_2_2  a-b_2_0.gz a-b_2_0.zip)\n test_code $workers_13345b_matcher workers_13345b_list\n comptest $'tst a-b_2\\t'\nWas testing: Disappearing character bug from workers 13345: a-b_2\\t -> a-b__\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Test for insert positions\n--- expected\n+++ actual\n@@ -1,11 +1,9 @@\n line: {tst a.b.c.d}{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7:9:11}\n+INSERT_POSITIONS:{11}\n line: {tst a.b}{.cB.dA}\n COMPADD:{}\n-INSERT_POSITIONS:{5:7:13}\n-line: {tst a}{.bC.cB.dA}\n+INSERT_POSITIONS:{13}\n+line: {tst .cB.dA }{}\n COMPADD:{}\n-INSERT_POSITIONS:{5:14}\n-NO:{aA.bC.cB.dA}\n-NO:{aD.bC.cB.dA}\n+INSERT_POSITIONS:{6}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst failed: output differs from expected as shown above for:\n workers_13382_matcher='r:|.=**'\n workers_13382_list=(a.b.c  a.b.c.d  aA.bB.cB.dA  aA.bB.cC.dD  aD.bC.cB.dA aA.bC.cB.dA)\n test_code $workers_13382_matcher workers_13382_list\n comptest $'tst a...\\tA\\tC\\t'\nWas testing: Test for insert positions\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y02compmatch.ztst: test failed.\nRunning test: Test for wildcard left anchor with partial word right anchors\nTest successful.\nZTST_test: 33 test(s) failed\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "Match Error for \"z:\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "Match Error for \"m:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing word pattern}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing word pattern}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "Match Error for \"M:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing word pattern}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing word pattern}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "Match Error \"r:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing right anchor}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing right anchor}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 5,
+     "message": "Match Error \"R:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing right anchor}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing right anchor}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 6,
+     "message": "Match Error for \"l:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing line pattern}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing line pattern}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 7,
+     "message": "Match Error for \"L:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing line pattern}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing line pattern}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 8,
+     "message": "Match Error for \"m:{0-9\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: unterminated character class}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing word pattern}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: unterminated character class}",
+      "+COMPADD:{_tst:compadd: missing word pattern}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 9,
+     "message": "Match Error for \"m:{0-9}\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "Match Error for \"m:{0-9}={\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst }{}",
+      "COMPADD:{_tst:compadd: unterminated character class}",
+      "INSERT_POSITIONS:{}"
+     ],
+     "actual": [
+      "line: {tst IndianRed}{}",
+      "COMPADD:{}",
+      "INSERT_POSITIONS:{13}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      "-line: {tst }{}",
+      "-COMPADD:{_tst:compadd: unterminated character class}",
+      "-INSERT_POSITIONS:{}",
+      "+line: {tst IndianRed}{}",
+      "+COMPADD:{}",
+      "+INSERT_POSITIONS:{13}"
+     ]
+    },
+    {
+     "index": 11,
+     "message": "Match Error for \"m:{0-9}={0-\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst }{}",
+      "COMPADD:{_tst:compadd: unterminated character class}",
+      "INSERT_POSITIONS:{}"
+     ],
+     "actual": [
+      "line: {tst IndianRed}{}",
+      "COMPADD:{}",
+      "INSERT_POSITIONS:{13}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      "-line: {tst }{}",
+      "-COMPADD:{_tst:compadd: unterminated character class}",
+      "-INSERT_POSITIONS:{}",
+      "+line: {tst IndianRed}{}",
+      "+COMPADD:{}",
+      "+INSERT_POSITIONS:{13}"
+     ]
+    },
+    {
+     "index": 12,
+     "message": "Match Error for \"m:{0-9}={-\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst }{}",
+      "COMPADD:{_tst:compadd: unterminated character class}",
+      "INSERT_POSITIONS:{}"
+     ],
+     "actual": [
+      "line: {tst IndianRed}{}",
+      "COMPADD:{}",
+      "INSERT_POSITIONS:{13}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      "-line: {tst }{}",
+      "-COMPADD:{_tst:compadd: unterminated character class}",
+      "-INSERT_POSITIONS:{}",
+      "+line: {tst IndianRed}{}",
+      "+COMPADD:{}",
+      "+INSERT_POSITIONS:{13}"
+     ]
+    },
+    {
+     "index": 13,
+     "message": "Match Error \"r:\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "COMPADD:{_tst:compadd: missing patterns}"
+     ],
+     "actual": [
+      "COMPADD:{_tst:compadd: missing right anchor}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst }{}",
+      "-COMPADD:{_tst:compadd: missing patterns}",
+      "+COMPADD:{_tst:compadd: missing right anchor}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 14,
+     "message": "Documentation example for options, input \"nolistbee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "Documentation example for options, input \"list_bee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "Documentation example for options, input \"ListBee\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "Documentation example for options, input \"NOList\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{NOListambiguous}",
+      "NO:{NOListbeep}",
+      "NO:{NOListpacked}",
+      "NO:{NOListrowsfirst}",
+      "NO:{NOListtypes}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,11 +1,6 @@",
+      " line: {tst NOList}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{10}",
+      "-NO:{NOListambiguous}",
+      "-NO:{NOListbeep}",
+      "-NO:{NOListpacked}",
+      "-NO:{NOListrowsfirst}",
+      "-NO:{NOListtypes}",
+      " line: {tst NOListBeep }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{14}"
+     ]
+    },
+    {
+     "index": 18,
+     "message": "Documentation example for options, input \"NO_List\\t__\\tB\\t\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{NO_Listambiguous}",
+      "NO:{NO_Listbeep}",
+      "NO:{NO_Listpacked}",
+      "NO:{NO_Listrowsfirst}",
+      "NO:{NO_Listtypes}",
+      "NO:{NO_List__ambiguous}",
+      "NO:{NO_List__beep}",
+      "NO:{NO_List__packed}",
+      "NO:{NO_List__rowsfirst}",
+      "NO:{NO_List__types}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,19 +1,9 @@",
+      " line: {tst NO_List}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{11}",
+      "-NO:{NO_Listambiguous}",
+      "-NO:{NO_Listbeep}",
+      "-NO:{NO_Listpacked}",
+      "-NO:{NO_Listrowsfirst}",
+      "-NO:{NO_Listtypes}",
+      " line: {tst NO_List__}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{13}",
+      "-NO:{NO_List__ambiguous}",
+      "-NO:{NO_List__beep}",
+      "-NO:{NO_List__packed}",
+      "-NO:{NO_List__rowsfirst}",
+      "-NO:{NO_List__types}",
+      " line: {tst NO_List__Beep }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{17}"
+     ]
+    },
+    {
+     "index": 19,
+     "message": "Documentation example for options, input \"__\\tN\\t__o\\t___\\tlist_\\tbeep__\\t\" ",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{__kshoptionprint}",
+      "NO:{__listambiguous}",
+      "NO:{__listbeep}",
+      "NO:{__listpacked}",
+      "NO:{__listrowsfirst}",
+      "NO:{__listtypes}",
+      "NO:{__shglob}",
+      "NO:{__shinstdin}",
+      "NO:{__shnullcmd}",
+      "NO:{__shoptionletters}",
+      "NO:{__shortloops}",
+      "NO:{__shwordsplit}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,18 +1,6 @@",
+      " line: {tst __}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}",
+      "-NO:{__kshoptionprint}",
+      "-NO:{__listambiguous}",
+      "-NO:{__listbeep}",
+      "-NO:{__listpacked}",
+      "-NO:{__listrowsfirst}",
+      "-NO:{__listtypes}",
+      "-NO:{__shglob}",
+      "-NO:{__shinstdin}",
+      "-NO:{__shnullcmd}",
+      "-NO:{__shoptionletters}",
+      "-NO:{__shortloops}",
+      "-NO:{__shwordsplit}",
+      " line: {tst __N}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 20,
+     "message": "Documentation example for options, input \"__\\tNo\\t___\\tlist_\\tbeep__\\t\" ",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{__kshoptionprint}",
+      "NO:{__listambiguous}",
+      "NO:{__listbeep}",
+      "NO:{__listpacked}",
+      "NO:{__listrowsfirst}",
+      "NO:{__listtypes}",
+      "NO:{__shglob}",
+      "NO:{__shinstdin}",
+      "NO:{__shnullcmd}",
+      "NO:{__shoptionletters}",
+      "NO:{__shortloops}",
+      "NO:{__shwordsplit}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,18 +1,6 @@",
+      " line: {tst __}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}",
+      "-NO:{__kshoptionprint}",
+      "-NO:{__listambiguous}",
+      "-NO:{__listbeep}",
+      "-NO:{__listpacked}",
+      "-NO:{__listrowsfirst}",
+      "-NO:{__listtypes}",
+      "-NO:{__shglob}",
+      "-NO:{__shinstdin}",
+      "-NO:{__shnullcmd}",
+      "-NO:{__shoptionletters}",
+      "-NO:{__shortloops}",
+      "-NO:{__shwordsplit}",
+      " line: {tst __No}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 21,
+     "message": "Documentation example for options, input \"___\\tlist_\\tbeep__\\t\" ",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{___kshoptionprint}",
+      "NO:{___listambiguous}",
+      "NO:{___listbeep}",
+      "NO:{___listpacked}",
+      "NO:{___listrowsfirst}",
+      "NO:{___listtypes}",
+      "NO:{___shglob}",
+      "NO:{___shinstdin}",
+      "NO:{___shnullcmd}",
+      "NO:{___shoptionletters}",
+      "NO:{___shortloops}",
+      "NO:{___shwordsplit}",
+      "NO:{___list_ambiguous}",
+      "NO:{___list_beep}",
+      "NO:{___list_packed}",
+      "NO:{___list_rowsfirst}",
+      "NO:{___list_types}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,26 +1,9 @@",
+      " line: {tst ___}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{7}",
+      "-NO:{___kshoptionprint}",
+      "-NO:{___listambiguous}",
+      "-NO:{___listbeep}",
+      "-NO:{___listpacked}",
+      "-NO:{___listrowsfirst}",
+      "-NO:{___listtypes}",
+      "-NO:{___shglob}",
+      "-NO:{___shinstdin}",
+      "-NO:{___shnullcmd}",
+      "-NO:{___shoptionletters}",
+      "-NO:{___shortloops}",
+      "-NO:{___shwordsplit}",
+      " line: {tst ___list_}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{12}",
+      "-NO:{___list_ambiguous}",
+      "-NO:{___list_beep}",
+      "-NO:{___list_packed}",
+      "-NO:{___list_rowsfirst}",
+      "-NO:{___list_types}",
+      " line: {tst ___list_beep__ }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{18}"
+     ]
+    },
+    {
+     "index": 22,
+     "message": "Documentation example for options, input \"__no_listbe\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "Documentation example for options, input \"nonono_listbe\"",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "Documentation example for lowercase insenitive M, input \"ab\\tC\\t\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{abC}",
+      "NO:{abc}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,6 @@",
+      " line: {tst ab}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}",
+      "-NO:{abC}",
+      "-NO:{abc}",
+      " line: {tst abC }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{7}"
+     ]
+    },
+    {
+     "index": 25,
+     "message": "Documentation example for lowercase insenitive m, input \"A\\t\\t\" ",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{ABC}",
+      "NO:{Abc}",
+      "line: {tst ABC}{}"
+     ],
+     "actual": [
+      "line: {tst A}{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,6 @@",
+      " line: {tst A}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{5}",
+      "-NO:{ABC}",
+      "-NO:{Abc}",
+      "-line: {tst ABC}{}",
+      "+line: {tst A}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{5}"
+     ]
+    },
+    {
+     "index": 26,
+     "message": "Documentation example for case insenitive M, input \"aB\\t\\t\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{aBC}",
+      "NO:{aBc}",
+      "line: {tst aBC}{}"
+     ],
+     "actual": [
+      "line: {tst aB}{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,6 @@",
+      " line: {tst aB}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}",
+      "-NO:{aBC}",
+      "-NO:{aBc}",
+      "-line: {tst aBC}{}",
+      "+line: {tst aB}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}"
+     ]
+    },
+    {
+     "index": 27,
+     "message": "Documentation example for case insenitive m, input \"aB\\t\\t\"",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst a}{BC}",
+      "INSERT_POSITIONS:{5:7}",
+      "line: {tst a}{BC}",
+      "INSERT_POSITIONS:{5:7}",
+      "NO:{ABC}",
+      "NO:{Abc}",
+      "NO:{abc}"
+     ],
+     "actual": [
+      "line: {tst aB}{}",
+      "INSERT_POSITIONS:{6}",
+      "line: {tst aB}{}",
+      "INSERT_POSITIONS:{6}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,9 +1,6 @@",
+      "-line: {tst a}{BC}",
+      "+line: {tst aB}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7}",
+      "-line: {tst a}{BC}",
+      "+INSERT_POSITIONS:{6}",
+      "+line: {tst aB}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7}",
+      "-NO:{ABC}",
+      "-NO:{Abc}",
+      "-NO:{abc}",
+      "+INSERT_POSITIONS:{6}"
+     ]
+    },
+    {
+     "index": 28,
+     "message": "r:|.=* should complete .s.u",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 29,
+     "message": "r:[^.]||.=* should not complete .s.u, but should complete c.s.u",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 30,
+     "message": "r:|.=* should complete .g.",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{comp.graphics.algorithms}",
+      "NO:{comp.graphics.animation}",
+      "NO:{comp.graphics.api}",
+      "NO:{comp.graphics.apps}",
+      "NO:{comp.graphics.apps.alias}",
+      "NO:{comp.graphics.apps.gimp}",
+      "NO:{comp.graphics.apps.gnuplot}",
+      "NO:{comp.graphics.apps.lightwave}",
+      "NO:{comp.graphics.apps.pagemaker}",
+      "NO:{comp.graphics.apps.paint-shop-pro}",
+      "NO:{comp.graphics.apps.photoshop}",
+      "NO:{comp.graphics.apps.softimage}",
+      "NO:{comp.graphics.apps.ulead}",
+      "NO:{comp.graphics.apps.pagemaker}",
+      "NO:{comp.graphics.apps.paint-shop-pro}",
+      "NO:{comp.graphics.apps.photoshop}",
+      "NO:{comp.graphics.apps.pagemaker}",
+      "NO:{comp.graphics.apps.paint-shop-pro}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -4,33 +4,15 @@",
+      " line: {tst comp.graphics.a}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{19}",
+      "-NO:{comp.graphics.algorithms}",
+      "-NO:{comp.graphics.animation}",
+      "-NO:{comp.graphics.api}",
+      "-NO:{comp.graphics.apps}",
+      "-NO:{comp.graphics.apps.alias}",
+      "-NO:{comp.graphics.apps.gimp}",
+      "-NO:{comp.graphics.apps.gnuplot}",
+      "-NO:{comp.graphics.apps.lightwave}",
+      "-NO:{comp.graphics.apps.pagemaker}",
+      "-NO:{comp.graphics.apps.paint-shop-pro}",
+      "-NO:{comp.graphics.apps.photoshop}",
+      "-NO:{comp.graphics.apps.softimage}",
+      "-NO:{comp.graphics.apps.ulead}",
+      " line: {tst comp.graphics.apps.}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{23}",
+      " line: {tst comp.graphics.apps.p}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{24}",
+      "-NO:{comp.graphics.apps.pagemaker}",
+      "-NO:{comp.graphics.apps.paint-shop-pro}",
+      "-NO:{comp.graphics.apps.photoshop}",
+      " line: {tst comp.graphics.apps.pa}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{25}",
+      "-NO:{comp.graphics.apps.pagemaker}",
+      "-NO:{comp.graphics.apps.paint-shop-pro}",
+      " line: {tst comp.graphics.apps.pagemaker }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{32}"
+     ]
+    },
+    {
+     "index": 31,
+     "message": "r:[^.]||.=* should not complete .g., but should complete c.g.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 32,
+     "message": "r:|.=* should complete ...pag",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 33,
+     "message": "r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 34,
+     "message": "Documentation example using input c...pa\\tg\\t",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 35,
+     "message": "r:|[.,_-]=* should complete .c and .h",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 36,
+     "message": "r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 37,
+     "message": "Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input H",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 38,
+     "message": "Documentation example using \"r:|[A-Z0-9]=* r:|=*\", input 2",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 39,
+     "message": "Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input H",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{4}",
+      "NO:{FooHoo}",
+      "NO:{LikeTHIS}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,3 @@",
+      " line: {tst H}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{4}",
+      "-NO:{FooHoo}",
+      "-NO:{LikeTHIS}",
+      "+INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 40,
+     "message": "Documentation example using \"r:|[A-Z0-9]=** r:|=*\", input 2",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{5:7}",
+      "line: {tst 5}{23}",
+      "INSERT_POSITIONS:{5:7}",
+      "NO:{5bar234}",
+      "NO:{5foo123}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{7}",
+      "line: {tst 23 }{}",
+      "INSERT_POSITIONS:{9}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,6 @@",
+      " line: {tst 5}{23}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7}",
+      "-line: {tst 5}{23}",
+      "+INSERT_POSITIONS:{7}",
+      "+line: {tst 23 }{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7}",
+      "-NO:{5bar234}",
+      "-NO:{5foo123}",
+      "+INSERT_POSITIONS:{9}"
+     ]
+    },
+    {
+     "index": 41,
+     "message": "r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 42,
+     "message": "r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 43,
+     "message": "r:[^.]||.=* and l:.||[^.]=* should work symmetrically.",
+     "status": "xfail",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 44,
+     "message": "Bug from workers 7311",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 45,
+     "message": "Bug from workers_7311 ",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{Abc-Def-Ghij.txt}",
+      "NO:{Abc-def.ghi.jkl_mno.pqr.txt}",
+      "NO:{Abc_def_ghi_jkl_mno_pqr.txt}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -4,9 +4,6 @@",
+      " line: {tst Abc}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{7}",
+      "-NO:{Abc-Def-Ghij.txt}",
+      "-NO:{Abc-def.ghi.jkl_mno.pqr.txt}",
+      "-NO:{Abc_def_ghi_jkl_mno_pqr.txt}",
+      " line: {tst Abc-def.ghi.jkl_mno.pqr.txt }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{31}"
+     ]
+    },
+    {
+     "index": 46,
+     "message": "Bug from workers 10886",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 47,
+     "message": "Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{build.out}",
+      "NO:{build.out1}",
+      "NO:{build.out2}"
+     ],
+     "actual": [],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -4,9 +4,6 @@",
+      " line: {tst build.out}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{13}",
+      "-NO:{build.out}",
+      "-NO:{build.out1}",
+      "-NO:{build.out2}",
+      " line: {tst build.out}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{13}"
+     ]
+    },
+    {
+     "index": 48,
+     "message": "Non-bug from workers 11388",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 49,
+     "message": "Non-bug from workers 11388",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{4:5:6}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{6}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst .:}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{4:5:6}",
+      "+INSERT_POSITIONS:{6}"
+     ]
+    },
+    {
+     "index": 50,
+     "message": "Disappearing characters bug from workers 11586: c00\\t -> c0[], c00\\t -> c0.abc[], c00.\\t -> c0.abc[]",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "NO:{c00.abc}",
+      "NO:{c01.abc.def.00.0}",
+      "INSERT_POSITIONS:{7:8}",
+      "NO:{c00.abc}",
+      "NO:{c01.abc.def.00.0}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{8}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,13 +1,9 @@",
+      " line: {tst c00}{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{6}",
+      "-NO:{c00.abc}",
+      "-NO:{c01.abc.def.00.0}",
+      " line: {tst c00.}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{7:8}",
+      "-NO:{c00.abc}",
+      "-NO:{c01.abc.def.00.0}",
+      "+INSERT_POSITIONS:{8}",
+      " line: {tst c00.abc }{}",
+      " COMPADD:{}",
+      " INSERT_POSITIONS:{11}"
+     ]
+    },
+    {
+     "index": 51,
+     "message": "First test from workers 12995",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 52,
+     "message": "Second test from workers 12995",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst ../Completion/Core }{}",
+      "INSERT_POSITIONS:{22}"
+     ],
+     "actual": [
+      "line: {tst ../}{com/cor}",
+      "INSERT_POSITIONS:{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      "-line: {tst ../Completion/Core }{}",
+      "+line: {tst ../}{com/cor}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{22}",
+      "+INSERT_POSITIONS:{}"
+     ]
+    },
+    {
+     "index": 53,
+     "message": "Incorrect cursor position bug from workers 13320: glibc-2.1\\t -> glibc-2[.]1.94-3.i386.rpm",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{9:27}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{27}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst glibc}{-2.1.94-3.i386.rpm}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{9:27}",
+      "+INSERT_POSITIONS:{27}"
+     ]
+    },
+    {
+     "index": 54,
+     "message": "Test from workers 13320",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{9:27}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{27}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst glibc}{-2.1.94-3.i386.rpm}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{9:27}",
+      "+INSERT_POSITIONS:{27}"
+     ]
+    },
+    {
+     "index": 55,
+     "message": "First test from workers 13345",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{5:7}",
+      "NO:{A.B.C}",
+      "NO:{A.B.C.D}",
+      "NO:{A.C}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{7}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,3 @@",
+      " line: {tst A.C}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7}",
+      "-NO:{A.B.C}",
+      "-NO:{A.B.C.D}",
+      "-NO:{A.C}",
+      "+INSERT_POSITIONS:{7}"
+     ]
+    },
+    {
+     "index": 56,
+     "message": "Disappearing character bug from workers 13345: a-b_2\\t -> a-b__",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{8:10}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{10}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,3 +1,3 @@",
+      " line: {tst a-b_2_}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{8:10}",
+      "+INSERT_POSITIONS:{10}"
+     ]
+    },
+    {
+     "index": 57,
+     "message": "Test for insert positions",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "INSERT_POSITIONS:{5:7:9:11}",
+      "INSERT_POSITIONS:{5:7:13}",
+      "line: {tst a}{.bC.cB.dA}",
+      "INSERT_POSITIONS:{5:14}",
+      "NO:{aA.bC.cB.dA}",
+      "NO:{aD.bC.cB.dA}"
+     ],
+     "actual": [
+      "INSERT_POSITIONS:{11}",
+      "INSERT_POSITIONS:{13}",
+      "line: {tst .cB.dA }{}",
+      "INSERT_POSITIONS:{6}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,11 +1,9 @@",
+      " line: {tst a.b.c.d}{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7:9:11}",
+      "+INSERT_POSITIONS:{11}",
+      " line: {tst a.b}{.cB.dA}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:7:13}",
+      "-line: {tst a}{.bC.cB.dA}",
+      "+INSERT_POSITIONS:{13}",
+      "+line: {tst .cB.dA }{}",
+      " COMPADD:{}",
+      "-INSERT_POSITIONS:{5:14}",
+      "-NO:{aA.bC.cB.dA}",
+      "-NO:{aD.bC.cB.dA}",
+      "+INSERT_POSITIONS:{6}"
+     ]
+    },
+    {
+     "index": 58,
+     "message": "Test for wildcard left anchor with partial word right anchors",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y03arguments",
+   "exit_code": -9,
+   "timed_out": true,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst: starting.\nRunning test: one non-option argument\nTest successful.\nRunning test: a and b\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc1}\n-NO:{a}\n-NO:{b}\n+DESCRIPTION:{h:desc1}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst failed: output differs from expected as shown above for:\n tst_arguments ':desc1:(a b)'\n comptest $'tst \\t'\nWas testing: a and b\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst: test failed.\nRunning test: a and b with descriptions\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc2}\n-NO:{a  -- a value}\n-NO:{b  -- other\\value}\n+DESCRIPTION:{h:desc1}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst failed: output differs from expected as shown above for:\n tst_arguments ':desc2:((a\\:a\\ value b\\:other\\\\\\\\value))'\n comptest $'tst \\t'\nWas testing: a and b with descriptions\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y03arguments.ztst: test failed.\nRunning test: three arguments\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "one non-option argument",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "a and b",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc1}",
+      "NO:{a}",
+      "NO:{b}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc1}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc1}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "+DESCRIPTION:{h:desc1}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "a and b with descriptions",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc2}",
+      "NO:{a  -- a value}",
+      "NO:{b  -- other\\value}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc1}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc2}",
+      "-NO:{a  -- a value}",
+      "-NO:{b  -- other\\value}",
+      "+DESCRIPTION:{h:desc1}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "three arguments",
+     "status": "notrun",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 5,
+     "message": "first argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 6,
+     "message": "second argument but no first argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 7,
+     "message": "second and rest arguments but no first argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 8,
+     "message": "-+",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 9,
+     "message": "option beginning with + and -.",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 10,
+     "message": "option beginning with + and -, specified the other way around",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 11,
+     "message": "mix of + and - and exclusion of stacked options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 12,
+     "message": "mix of + and - and exclusion of stacked options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 13,
+     "message": "two option arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 14,
+     "message": "option argument to ignored option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 15,
+     "message": "ignored option not completed",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 16,
+     "message": "ignored option is not taken to be the normal argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 17,
+     "message": "unrecognised option has no effect on proceedings with no normal arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 18,
+     "message": "unrecognised option is taken to be the normal argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 19,
+     "message": "option argument follows in next argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 20,
+     "message": "option argument either direct or in following argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 21,
+     "message": "option argument follows directly",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "option argument follows optional equals",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "option argument follows optional equals, with -s",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 24,
+     "message": "option argument follows mandatory equals",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 25,
+     "message": "sticky option argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 26,
+     "message": "option argument with prefix that passes option prefix-needed test",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 27,
+     "message": "end of option sequence",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 28,
+     "message": "argument beginning with minus",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 29,
+     "message": "argument beginning with minus, guard on rest argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 30,
+     "message": "optional option argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 31,
+     "message": "variable length option arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 32,
+     "message": "opt_args",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 33,
+     "message": "opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 34,
+     "message": "opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 35,
+     "message": "option completion with rest arguments on the line but not in the specs",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 36,
+     "message": "optarg completion following rest operand on line (workers/42141)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 37,
+     "message": "rest arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 38,
+     "message": "rest arguments with single colon",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 39,
+     "message": "rest arguments with two colons",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 40,
+     "message": "rest arguments with three colons",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 41,
+     "message": "rest arguments with three colons following optional argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 42,
+     "message": "rest arguments with three colons following optional argument to an option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 43,
+     "message": "words array in rest arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 44,
+     "message": "opt_args",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 45,
+     "message": "options and words (zsh-workers:12257)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 46,
+     "message": "matcher applies to options but not rest arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 47,
+     "message": "matcher in combination with sets (implies separate cadef structure)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 48,
+     "message": "option after --",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 49,
+     "message": "-S: disallowed option after --",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 50,
+     "message": "-S: allowed option after -",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 51,
+     "message": "-S: allowed option before --",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 52,
+     "message": "-S: only first of duplicate -- is ignored",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 53,
+     "message": "-S -S: disallowed option after --",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 54,
+     "message": "-S -S: disallowed option after -",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 55,
+     "message": "option after a word",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 56,
+     "message": "long option after word that doesn't match -A pattern",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 57,
+     "message": "option after word that doesn't match -A pattern, no space before pattern",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 58,
+     "message": "option before a word that doesn't match -A pattern, separate -A from pattern",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 59,
+     "message": "continue completion after rest argument that looks like an option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 60,
+     "message": "word matching -A pattern doesn't exclude options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 61,
+     "message": "unrecognised word matching -A pattern not treated as a rest argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 62,
+     "message": "exclusion from option following word matching -A pattern should not apply",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 63,
+     "message": "repeatable options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 64,
+     "message": "rest arguments from another set not completed after option from first set",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 65,
+     "message": "continue completion after rest argument that looks like an option (with sets)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 66,
+     "message": "foreign option disables whole set (without -A)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 67,
+     "message": "foreign option disables whole set (with -A)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 68,
+     "message": "exclude option common to two sets and from one common option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 69,
+     "message": "rest argument rule in two sets",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 70,
+     "message": "exclude various forms of rest argument in set specific form",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 71,
+     "message": "exclusion lists",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 72,
+     "message": "exclude option from normal argument to the right of the cursor",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 73,
+     "message": "exclude own set from an option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 74,
+     "message": "exclude later set from an option common to both",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 75,
+     "message": "exclude earlier set from an option common to both",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 76,
+     "message": "single option sets are still mutually exclusive",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 77,
+     "message": "excluding a set doesn't exclude common options as part of the set",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 78,
+     "message": "exclude all other options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 79,
+     "message": "exclude all options from a normal argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 80,
+     "message": "exclusion only applies to later words",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 81,
+     "message": "exclusion with clumped options, in, after and before",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 82,
+     "message": "don't prematurely exclude option that current word is a prefix of",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 83,
+     "message": "don't prematurely exclude option that current word is a prefix of (with sets)",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 84,
+     "message": "option clumping mixed with real option that looks like clump",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 85,
+     "message": "option clumping mixed with direct argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 86,
+     "message": "exclusion with option argument that looks like an option",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 87,
+     "message": "exclude group options",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 88,
+     "message": "single option groups are not mutually exclusive",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 89,
+     "message": "exclude rest args listed within a group",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 90,
+     "message": "two forms of same option in different groups",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 91,
+     "message": "normal argument excludes options in internally mutually exclusive group",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 92,
+     "message": "mix sets, groups and option stacking",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 93,
+     "message": "sets and groups with - in their name",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 94,
+     "message": "with message and bashautolist, a third tab will get menu completion",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 95,
+     "message": "with message and bashautolist, a third tab is needed to display the list",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 96,
+     "message": "with message and noautomenu second tab redisplays the list",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 97,
+     "message": "with message two tabs will start menu completion",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 98,
+     "message": "with message and _oldlist, two tabs will start menu completion",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 99,
+     "message": "partial completion of option with an argument",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 100,
+     "message": "with -W options mixed with arguments",
+     "status": "unknown",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    }
+   ]
+  },
+  {
+   "name": "Y04regexargs",
+   "exit_code": 1,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: starting.\nRunning test: standalone spec\nTest successful.\nRunning test: simple alternation, use of _message for description with no matches\n--- expected\n+++ actual\n@@ -1,6 +1,4 @@\n line: {tst }{}\n-DESCRIPTION:{fixed}\n-NO:{one}\n-DESCRIPTION:{second}\n-NO:{two}\n-DESCRIPTION:{number}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst failed: output differs from expected as shown above for:\n tst_regex \\( /'one '/ ':fixed:fixed:(one)' \\| /'two '/ ':second:second:compadd two' \\| /'[0-9]## '/ ': _message -e numbers number' \\| /'0x[0-9a-f]## '/ ':hex:hex:' \\)\n comptest $'tst \\t'\nWas testing: simple alternation, use of _message for description with no matches\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: test failed.\nRunning test: optional fields after a suffix\n--- expected\n+++ actual\n@@ -1,5 +1,4 @@\n line: {tst rpc mountd,}{}\n line: {tst rpc mountd,}{}\n-DESCRIPTION:{version}\n line: {tst rpc mountd,1,}{}\n-DESCRIPTION:{procedure}\n+DESCRIPTION:{h:first}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst failed: output differs from expected as shown above for:\n tst_regex /$'rpc\\0'/ \\\n   \\(\\\n     /\"$word\"/ ':programs:program:compadd -qS, mountd nisd' \\\n   \\|\\\n     /$'[^,\\0]##,[^,\\0]##,'/ /$'[^,\\0]##\\0'/ ':procedures:procedure:' \\\n   \\|\\\n     /$'[^,\\0]##,'/ /$'[^,\\0]##\\0'/ ':versions:version:' \\\n   \\)\n  comptest $'tst rpc m\\t\\t1,\\t'\nWas testing: optional fields after a suffix\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: test failed.\nRunning test: simple repetition, note zero repititions allowed\n--- expected\n+++ actual\n@@ -1,9 +1,6 @@\n line: {tst }{}\n-DESCRIPTION:{number}\n-NO:{1}\n-NO:{2}\n-DESCRIPTION:{end}\n-NO:{end}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n line: {tst 1,}{}\n line: {tst 1,2,end }{}\n-line: {tst 1,2,end next }{}\n+line: {tst 1,2,end }{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst failed: output differs from expected as shown above for:\n tst_regex \\( /$'[0-9]##,'/ ':numbers:number:compadd -qS, 1 2' \\) \\# /$'end\\0'/ ':end:end:(end)' /next/ ':next:next:(next)'\n comptest $'tst \\t1\\t2,e\\t\\t'\nWas testing: simple repetition, note zero repititions allowed\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: test failed.\nRunning test: non-matching pattern to separate matches from consuming patterns\n--- expected\n+++ actual\n@@ -1,6 +1,4 @@\n line: {tst --}{}\n-DESCRIPTION:{option}\n-NO:{--fix}\n-NO:{--on}\n+DESCRIPTION:{h:first}\n line: {tst --on=true }{}\n-line: {tst --on=true --}{}\n+line: {tst --on=true }{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst failed: output differs from expected as shown above for:\n tst_regex \\( /--/+ /$'(on|fix)='/ $'/[^\\0]##\\0/' ':names:boolean value:(false true)' \\|\\\n    /\"[]\"/ ':options:option:compadd -qS= - --on --fix' \\) \\# /next/ ':next:next:(next)'\n comptest $'tst --\\ton=t\\t\\t'\nWas testing: non-matching pattern to separate matches from consuming patterns\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: test failed.\nRunning test: use guard and $match to reference prior argument\n--- expected\n+++ actual\n@@ -1,20 +1,10 @@\n line: {tst true }{}\n-DESCRIPTION:{boolean}\n-NO:{false}\n-NO:{true}\n-DESCRIPTION:{option}\n-NO:{opt}\n-NO:{val}\n-DESCRIPTION:{last}\n-NO:{bool}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n line: {tst true val }{}\n line: {tst true val }{}\n-DESCRIPTION:{boolean}\n-NO:{false}\n-NO:{true}\n-DESCRIPTION:{option}\n-NO:{opt}\n-NO:{val}\n-DESCRIPTION:{last}\n-NO:{val}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n+DESCRIPTION:{h:first}\n line: {tst true val false false }{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst failed: output differs from expected as shown above for:\n tst_regex \\\n   \\(\\\n     /$'(true|false)\\0'/ -'last=bool' ':names:boolean:(false true)' \\\n   \\|\\\n     /$'(val|opt)\\0'/ -'last=${match[1]%?}' ':opts:option:(val opt)' \\\n   \\) \\# \\\n   /$'[^\\0]##\\0'/ ':last:last:compadd - $last'\n comptest $'tst true \\tv\\t \\tfalse f\\t'\nWas testing: use guard and $match to reference prior argument\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y04regexargs.ztst: test failed.\nZTST_test: 5 test(s) failed\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "standalone spec",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 2,
+     "message": "simple alternation, use of _message for description with no matches",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{fixed}",
+      "NO:{one}",
+      "DESCRIPTION:{second}",
+      "NO:{two}",
+      "DESCRIPTION:{number}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,4 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{fixed}",
+      "-NO:{one}",
+      "-DESCRIPTION:{second}",
+      "-NO:{two}",
+      "-DESCRIPTION:{number}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "optional fields after a suffix",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{version}",
+      "DESCRIPTION:{procedure}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:first}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,4 @@",
+      " line: {tst rpc mountd,}{}",
+      " line: {tst rpc mountd,}{}",
+      "-DESCRIPTION:{version}",
+      " line: {tst rpc mountd,1,}{}",
+      "-DESCRIPTION:{procedure}",
+      "+DESCRIPTION:{h:first}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "simple repetition, note zero repititions allowed",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{number}",
+      "NO:{1}",
+      "NO:{2}",
+      "DESCRIPTION:{end}",
+      "NO:{end}",
+      "line: {tst 1,2,end next }{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "line: {tst 1,2,end }{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,9 +1,6 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{number}",
+      "-NO:{1}",
+      "-NO:{2}",
+      "-DESCRIPTION:{end}",
+      "-NO:{end}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      " line: {tst 1,}{}",
+      " line: {tst 1,2,end }{}",
+      "-line: {tst 1,2,end next }{}",
+      "+line: {tst 1,2,end }{}"
+     ]
+    },
+    {
+     "index": 5,
+     "message": "non-matching pattern to separate matches from consuming patterns",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{option}",
+      "NO:{--fix}",
+      "NO:{--on}",
+      "line: {tst --on=true --}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:first}",
+      "line: {tst --on=true }{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,4 @@",
+      " line: {tst --}{}",
+      "-DESCRIPTION:{option}",
+      "-NO:{--fix}",
+      "-NO:{--on}",
+      "+DESCRIPTION:{h:first}",
+      " line: {tst --on=true }{}",
+      "-line: {tst --on=true --}{}",
+      "+line: {tst --on=true }{}"
+     ]
+    },
+    {
+     "index": 6,
+     "message": "use guard and $match to reference prior argument",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{boolean}",
+      "NO:{false}",
+      "NO:{true}",
+      "DESCRIPTION:{option}",
+      "NO:{opt}",
+      "NO:{val}",
+      "DESCRIPTION:{last}",
+      "NO:{bool}",
+      "DESCRIPTION:{boolean}",
+      "NO:{false}",
+      "NO:{true}",
+      "DESCRIPTION:{option}",
+      "NO:{opt}",
+      "NO:{val}",
+      "DESCRIPTION:{last}",
+      "NO:{val}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}",
+      "DESCRIPTION:{h:first}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,20 +1,10 @@",
+      " line: {tst true }{}",
+      "-DESCRIPTION:{boolean}",
+      "-NO:{false}",
+      "-NO:{true}",
+      "-DESCRIPTION:{option}",
+      "-NO:{opt}",
+      "-NO:{val}",
+      "-DESCRIPTION:{last}",
+      "-NO:{bool}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      " line: {tst true val }{}",
+      " line: {tst true val }{}",
+      "-DESCRIPTION:{boolean}",
+      "-NO:{false}",
+      "-NO:{true}",
+      "-DESCRIPTION:{option}",
+      "-NO:{opt}",
+      "-NO:{val}",
+      "-DESCRIPTION:{last}",
+      "-NO:{val}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      "+DESCRIPTION:{h:first}",
+      " line: {tst true val false false }{}"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Y05describe",
+   "exit_code": 1,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: starting.\nRunning test: name1 as (...), description, escaped colon in name\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{b    -- descb}\n-NO:{c:c  -- descc}\n-NO:{a}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc '(a b:descb \"c\\:c:descc\")'\n  comptest $'tst \\t'\nWas testing: name1 as (...), description, escaped colon in name\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: name1 as ((...)) not supported\n--- expected\n+++ actual\n@@ -1 +1 @@\n-line: {tst  }{}\n+line: {tst }{}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc '(( a b:descb \"c\\:c:descc\" ))'\n  comptest $'tst \\t'\nWas testing: name1 as ((...)) not supported\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: name2 as (...)\n--- expected\n+++ actual\n@@ -1,6 +1,4 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{b    -- descb}\n-NO:{c:c  -- descc}\n-NO:{a}\n-line: {tst bx}{}\n+DESCRIPTION:{h:desc}\n+line: {tst }{}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc '(a b:descb \"c\\:c:descc\")' '(ax bx:descbx \"cx\\:cx:desccx\")'\n  comptest $'tst \\t\\t'\nWas testing: name2 as (...)\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: multiple groups\n--- expected\n+++ actual\n@@ -1,8 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{b}\n-NO:{c}\n-NO:{x}\n-NO:{y}\n-NO:{z}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc '(a b c)' -- '(x y z)'\n  comptest $'tst \\t'\nWas testing: multiple groups\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: arrays by name\n--- expected\n+++ actual\n@@ -1,6 +1,4 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{b    -- descb}\n-NO:{c:c  -- descc}\n-NO:{a}\n-line: {tst bx}{}\n+DESCRIPTION:{h:desc}\n+line: {tst }{}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  comptesteval '_tst() {\n    local -a name1=( a b:descb \"c\\:c:descc\" )\n    local -a name2=( ax bx:descbx \"cx\\:cx:desccx\" )\n    _describe desc name1 name2\n  }'\n  comptest $'tst \\t\\t'\nWas testing: arrays by name\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: compadd options, basic\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{c}\n-NO:{b}\n-NO:{a}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc '(b c a)' -oreverse\n  comptest $'tst \\t'\nWas testing: compadd options, basic\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nRunning test: compadd options, complex\n--- expected\n+++ actual\n@@ -1,10 +1,6 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{c}\n-NO:{b}\n-NO:{a}\n-DESCRIPTION:{desc}\n-NO:{y}\n-NO:{z}\n-NO:{x}\n-line: {tst cx}{}\n+DESCRIPTION:{h:desc}\n+DESCRIPTION:{h:desc}\n+line: {tst }{}\n+DESCRIPTION:{h:desc}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst failed: output differs from expected as shown above for:\n  tst_describe desc \\\n    '(b c a)' '(bx cx ax)' -oreverse \\\n    -- \\\n    '(y z x)' '(yx zx xx)' -onosort\n  comptest $'tst \\t\\t'\nWas testing: compadd options, complex\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y05describe.ztst: test failed.\nZTST_test: 7 test(s) failed\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "name1 as (...), description, escaped colon in name",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b    -- descb}",
+      "NO:{c:c  -- descc}",
+      "NO:{a}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b    -- descb}",
+      "-NO:{c:c  -- descc}",
+      "-NO:{a}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 2,
+     "message": "name1 as ((...)) not supported",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "line: {tst  }{}"
+     ],
+     "actual": [
+      "line: {tst }{}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1 +1 @@",
+      "-line: {tst  }{}",
+      "+line: {tst }{}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "name2 as (...)",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b    -- descb}",
+      "NO:{c:c  -- descc}",
+      "NO:{a}",
+      "line: {tst bx}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}",
+      "line: {tst }{}",
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,4 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b    -- descb}",
+      "-NO:{c:c  -- descc}",
+      "-NO:{a}",
+      "-line: {tst bx}{}",
+      "+DESCRIPTION:{h:desc}",
+      "+line: {tst }{}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "multiple groups",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{b}",
+      "NO:{c}",
+      "NO:{x}",
+      "NO:{y}",
+      "NO:{z}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "-NO:{x}",
+      "-NO:{y}",
+      "-NO:{z}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 5,
+     "message": "arrays by name",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b    -- descb}",
+      "NO:{c:c  -- descc}",
+      "NO:{a}",
+      "line: {tst bx}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}",
+      "line: {tst }{}",
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,6 +1,4 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b    -- descb}",
+      "-NO:{c:c  -- descc}",
+      "-NO:{a}",
+      "-line: {tst bx}{}",
+      "+DESCRIPTION:{h:desc}",
+      "+line: {tst }{}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 6,
+     "message": "compadd options, basic",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{c}",
+      "NO:{b}",
+      "NO:{a}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{c}",
+      "-NO:{b}",
+      "-NO:{a}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 7,
+     "message": "compadd options, complex",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{c}",
+      "NO:{b}",
+      "NO:{a}",
+      "DESCRIPTION:{desc}",
+      "NO:{y}",
+      "NO:{z}",
+      "NO:{x}",
+      "line: {tst cx}{}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}",
+      "DESCRIPTION:{h:desc}",
+      "line: {tst }{}",
+      "DESCRIPTION:{h:desc}",
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,10 +1,6 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{c}",
+      "-NO:{b}",
+      "-NO:{a}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{y}",
+      "-NO:{z}",
+      "-NO:{x}",
+      "-line: {tst cx}{}",
+      "+DESCRIPTION:{h:desc}",
+      "+DESCRIPTION:{h:desc}",
+      "+line: {tst }{}",
+      "+DESCRIPTION:{h:desc}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Y06values",
+   "exit_code": 1,
+   "timed_out": false,
+   "unimplemented": "",
+   "raw": "/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: starting.\nRunning test: basic value\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{b}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc a b\n  comptest $'tst \\t'\nWas testing: basic value\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: basic value, next word\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst a }{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{b}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc a b\n  comptest $'tst a \\t'\nWas testing: basic value, next word\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: basic value with description\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{a  -- adesc}\n-NO:{b  -- bdesc}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a[adesc]' 'b[bdesc]'\n  comptest $'tst \\t'\nWas testing: basic value with description\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: display of escaped char in value name\n--- expected\n+++ actual\n@@ -1,7 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{!x}\n-NO:{(z}\n-NO:{*y}\n-NO:{\\.:]&}\n-NO:{a[b}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a\\[b' '\\!x' '\\*y' '\\(z' '\\\\\\.\\:\\]\\&'\n  comptest $'tst \\t'\nWas testing: display of escaped char in value name\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: display of hidden value\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst }{}\n-DESCRIPTION:{desc}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc '!a' b c\n  comptest $'tst \\t'\nWas testing: display of hidden value\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: basic sequence\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst b,}{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc a b c\n  comptest $'tst b,\\t'\nWas testing: basic sequence\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: sequence in quotes\n--- expected\n+++ actual\n@@ -1,8 +1,4 @@\n line: {tst 'a,b,c,}{}\n-DESCRIPTION:{desc}\n-NO:{d}\n-NO:{e}\n+DESCRIPTION:{h:desc}\n line: {tst \"a,b,c,}{}\n-DESCRIPTION:{desc}\n-NO:{d}\n-NO:{e}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc a b c d e\n  comptest $'tst \\'a,b,c,\\t'\n  comptest $'tst \"a,b,c,\\t'\nWas testing: sequence in quotes\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: sequence continues after hidden value\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst a,}{}\n-DESCRIPTION:{desc}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '!a' b c\n  comptest $'tst a,\\t'\nWas testing: sequence continues after hidden value\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: sequence continues after value with escaped meta char\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst \\*a,}{}\n-DESCRIPTION:{desc}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '\\*a' b c\n  comptest $'tst \\\\*a,\\t'\nWas testing: sequence continues after value with escaped meta char\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: sequence continues after value with escaped non-meta char\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst :a,}{}\n-DESCRIPTION:{desc}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '\\:a' b c\n  comptest $'tst :a,\\t'\nWas testing: sequence continues after value with escaped non-meta char\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: multi value offered again\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a,a,}{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '*a' b c\n  comptest $'tst a,a,\\t'\nWas testing: multi value offered again\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: xor value not offered\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst a,}{}\n-DESCRIPTION:{desc}\n-NO:{d}\n-NO:{e}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '(b c)a' b c d e\n  comptest $'tst a,\\t'\nWas testing: xor value not offered\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: xor value with escaped char not offered\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst a,}{}\n-DESCRIPTION:{desc}\n-NO:{b}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s, desc '(d\\:e)a' b c 'd\\:e'\n  comptest $'tst a,\\t'\nWas testing: xor value with escaped char not offered\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument not enumerated\n--- expected\n+++ actual\n@@ -1,4 +1,4 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n+DESCRIPTION:{h:desc}\n line: {tst a=}{}\n-DESCRIPTION:{val}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val'\n  comptest $'tst a=\\t'\n  tst_values desc 'a:val:'\n  comptest $'tst a=\\t'\nWas testing: value with argument not enumerated\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x}\n-NO:{y}\n-NO:{z}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:(x y z)'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated with description\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x  -- descx}\n-NO:{y  -- descy}\n-NO:{z  -- descz}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:((x:descx y:descy z:descz))'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated with description\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated with description, escaped colon\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x  -- descx}\n-NO:{y  -- descy}\n-NO:{z  -- descz}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:((x\\:descx y\\:descy z\\:descz))'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated with description, escaped colon\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated with description, escaped colon with \\\\\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x  -- descx}\n-NO:{y  -- descy}\n-NO:{z  -- descz}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:((x\\\\:descx y\\\\:descy z\\\\:descz))'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated with description, escaped colon with \\\\\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated with description, escaped colon in arg name\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x:x  -- descx}\n-NO:{y    -- descy}\n-NO:{z    -- descz}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:((\"x\\\\:x\":descx y\\:descy z\\:descz))'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated with description, escaped colon in arg name\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument enumerated with description, un-escaped colon in arg desc\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst a=}{}\n-DESCRIPTION:{val}\n-NO:{x  -- x:descx}\n-NO:{y  -- descy}\n-NO:{z  -- descz}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values desc 'a:val:((x:x:descx y\\:descy z\\:descz))'\n  comptest $'tst a=\\t'\nWas testing: value with argument enumerated with description, un-escaped colon in arg desc\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: value with argument eval string, braces\nTest successful.\nRunning test: value with argument eval string, leading space\nTest successful.\nRunning test: -s and -S\n--- expected\n+++ actual\n@@ -1,5 +1,2 @@\n line: {tst b:a.}{}\n-DESCRIPTION:{val}\n-NO:{x}\n-NO:{y}\n-NO:{z}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -s: -S. desc 'a:val:(x y z)' b c\n  comptest $'tst b:a.\\t'\nWas testing: -s and -S\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: -w without -s\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst b }{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{c}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -w desc a b c\n  comptest $'tst b \\t'\nWas testing: -w without -s\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nRunning test: -w with -s\n--- expected\n+++ actual\n@@ -1,4 +1,2 @@\n line: {tst b,c }{}\n-DESCRIPTION:{desc}\n-NO:{a}\n-NO:{d}\n+DESCRIPTION:{h:desc}\nTest /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst failed: output differs from expected as shown above for:\n  tst_values -ws, desc a b c d\n  comptest $'tst b,c \\t'\nWas testing: -w with -s\n/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Test/Y06values.ztst: test failed.\nZTST_test: 23 test(s) failed\n",
+   "assertions": [
+    {
+     "index": 1,
+     "message": "basic value",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{b}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 2,
+     "message": "basic value, next word",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{b}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst a }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 3,
+     "message": "basic value with description",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a  -- adesc}",
+      "NO:{b  -- bdesc}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a  -- adesc}",
+      "-NO:{b  -- bdesc}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 4,
+     "message": "display of escaped char in value name",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{!x}",
+      "NO:{(z}",
+      "NO:{*y}",
+      "NO:{\\.:]&}",
+      "NO:{a[b}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,7 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{!x}",
+      "-NO:{(z}",
+      "-NO:{*y}",
+      "-NO:{\\.:]&}",
+      "-NO:{a[b}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 5,
+     "message": "display of hidden value",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 6,
+     "message": "basic sequence",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst b,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 7,
+     "message": "sequence in quotes",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{d}",
+      "NO:{e}",
+      "DESCRIPTION:{desc}",
+      "NO:{d}",
+      "NO:{e}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}",
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,8 +1,4 @@",
+      " line: {tst 'a,b,c,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{d}",
+      "-NO:{e}",
+      "+DESCRIPTION:{h:desc}",
+      " line: {tst \"a,b,c,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{d}",
+      "-NO:{e}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 8,
+     "message": "sequence continues after hidden value",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 9,
+     "message": "sequence continues after value with escaped meta char",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst \\*a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 10,
+     "message": "sequence continues after value with escaped non-meta char",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst :a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 11,
+     "message": "multi value offered again",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a,a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 12,
+     "message": "xor value not offered",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{d}",
+      "NO:{e}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{d}",
+      "-NO:{e}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 13,
+     "message": "xor value with escaped char not offered",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{b}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst a,}{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{b}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 14,
+     "message": "value with argument not enumerated",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "DESCRIPTION:{val}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}",
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,4 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "+DESCRIPTION:{h:desc}",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 15,
+     "message": "value with argument enumerated",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x}",
+      "NO:{y}",
+      "NO:{z}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x}",
+      "-NO:{y}",
+      "-NO:{z}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 16,
+     "message": "value with argument enumerated with description",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x  -- descx}",
+      "NO:{y  -- descy}",
+      "NO:{z  -- descz}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x  -- descx}",
+      "-NO:{y  -- descy}",
+      "-NO:{z  -- descz}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 17,
+     "message": "value with argument enumerated with description, escaped colon",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x  -- descx}",
+      "NO:{y  -- descy}",
+      "NO:{z  -- descz}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x  -- descx}",
+      "-NO:{y  -- descy}",
+      "-NO:{z  -- descz}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 18,
+     "message": "value with argument enumerated with description, escaped colon with \\\\",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x  -- descx}",
+      "NO:{y  -- descy}",
+      "NO:{z  -- descz}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x  -- descx}",
+      "-NO:{y  -- descy}",
+      "-NO:{z  -- descz}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 19,
+     "message": "value with argument enumerated with description, escaped colon in arg name",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x:x  -- descx}",
+      "NO:{y    -- descy}",
+      "NO:{z    -- descz}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x:x  -- descx}",
+      "-NO:{y    -- descy}",
+      "-NO:{z    -- descz}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 20,
+     "message": "value with argument enumerated with description, un-escaped colon in arg desc",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x  -- x:descx}",
+      "NO:{y  -- descy}",
+      "NO:{z  -- descz}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst a=}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x  -- x:descx}",
+      "-NO:{y  -- descy}",
+      "-NO:{z  -- descz}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 21,
+     "message": "value with argument eval string, braces",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 22,
+     "message": "value with argument eval string, leading space",
+     "status": "pass",
+     "reason": "",
+     "expected": [],
+     "actual": [],
+     "diff": []
+    },
+    {
+     "index": 23,
+     "message": "-s and -S",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{val}",
+      "NO:{x}",
+      "NO:{y}",
+      "NO:{z}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,5 +1,2 @@",
+      " line: {tst b:a.}{}",
+      "-DESCRIPTION:{val}",
+      "-NO:{x}",
+      "-NO:{y}",
+      "-NO:{z}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 24,
+     "message": "-w without -s",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{c}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst b }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{c}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    },
+    {
+     "index": 25,
+     "message": "-w with -s",
+     "status": "fail",
+     "reason": "output differs from expected as shown above for:",
+     "expected": [
+      "DESCRIPTION:{desc}",
+      "NO:{a}",
+      "NO:{d}"
+     ],
+     "actual": [
+      "DESCRIPTION:{h:desc}"
+     ],
+     "diff": [
+      "--- expected",
+      "+++ actual",
+      "@@ -1,4 +1,2 @@",
+      " line: {tst b,c }{}",
+      "-DESCRIPTION:{desc}",
+      "-NO:{a}",
+      "-NO:{d}",
+      "+DESCRIPTION:{h:desc}"
+     ]
+    }
+   ]
+  }
+ ]
+}

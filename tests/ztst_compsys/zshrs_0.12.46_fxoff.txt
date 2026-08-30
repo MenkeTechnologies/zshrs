@@ -1,0 +1,257 @@
+# ztst Y-series completion suite -- zshrs target/debug (fx off)
+
+date: 2026-08-30T04:34:03-0400
+fx: off
+harness: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+harness_version: 5.9.999.3-test
+modules_linked: 38
+sut: /Users/wizard/RustroverProjects/zshrs/target/debug/zshrs
+sut_env: ZSHRS_NATIVE_ZLE_FX=0
+sut_version: 5.9.2 zsh-5.9.2-0-gddee3e7
+tests: Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values
+zsh_build: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+zsh_build_version: 5.9.999.3-test
+
+files=6 assertions=229 fail=93 notrun=1 pass=32 unknown=96 xfail=7
+
+## Y01completion  exit=1  fail=23 pass=10
+  FAIL   1 directories and files
+  FAIL   2 unambiguous prefix and autoremovable suffix
+  FAIL   3 unambiguous prefix and autoremovable suffix with _prefix completer
+  ok     4 compstate[insert]=1 compstate[list]=
+  ok     5 compstate[insert]=1 compstate[list]= with _prefix completer
+  FAIL   6 _expand shows file types
+  FAIL   7 _expand preserves array form
+  FAIL   8 tilde
+  FAIL   9 dynamic directory names after ~[
+  FAIL  10 dynamic directory names inside ~[...]
+  FAIL  11 directories and files before separator
+  FAIL  12 custom description with formatting sequences
+  ok    13 command
+  ok    14 command after separator
+  FAIL  15 redirection after "for ...; do"
+  FAIL  16 directory name is not a glob qualifier
+  ok    17 remove exact number of characters from a prefix
+  ok    18 remove exact number of characters from a suffix
+  ok    19 try to remove excess characters from prefix and suffix
+  ok    20 remove multibyte character from a prefix
+  ok    21 allow for suffixes when moving cursor to end of match (with ignored suffix)
+  ok    22 allow for suffixes when moving cursor to end of match (without ignored suffix)
+  FAIL  23 ignore backslashes when sorting completion matches
+  FAIL  24 reverse numeric sorting of matches
+  FAIL  25 reverse numeric sorting of matches via a style
+  FAIL  26 sort in match rather than display name order
+  FAIL  27 sorting disabled via the sort style
+  FAIL  28 -F does not break _sequence
+  FAIL  29 multiple envarrays
+  FAIL  30 extra-verbose shows parameter values
+  FAIL  31 verbose doesn't show special or hidden parameter values
+  FAIL  32 parameter values not shown without verbose
+  FAIL  33  menu select=long-list starts menu selection for list widgets
+
+## Y02compmatch  exit=1  fail=33 pass=18 xfail=7
+  ok     1 Match Error for "z:"
+  FAIL   2 Match Error for "m:"
+  FAIL   3 Match Error for "M:"
+  FAIL   4 Match Error "r:"
+  FAIL   5 Match Error "R:"
+  FAIL   6 Match Error for "l:"
+  FAIL   7 Match Error for "L:"
+  FAIL   8 Match Error for "m:{0-9"
+  ok     9 Match Error for "m:{0-9}"
+  FAIL  10 Match Error for "m:{0-9}={"
+  FAIL  11 Match Error for "m:{0-9}={0-"
+  FAIL  12 Match Error for "m:{0-9}={-"
+  FAIL  13 Match Error "r:"
+  ok    14 Documentation example for options, input "nolistbee"
+  ok    15 Documentation example for options, input "list_bee"
+  ok    16 Documentation example for options, input "ListBee"
+  FAIL  17 Documentation example for options, input "NOList"
+  FAIL  18 Documentation example for options, input "NO_List\t__\tB\t"
+  FAIL  19 Documentation example for options, input "__\tN\t__o\t___\tlist_\tbeep__\t" 
+  FAIL  20 Documentation example for options, input "__\tNo\t___\tlist_\tbeep__\t" 
+  FAIL  21 Documentation example for options, input "___\tlist_\tbeep__\t" 
+  ok    22 Documentation example for options, input "__no_listbe"
+  ok    23 Documentation example for options, input "nonono_listbe"
+  FAIL  24 Documentation example for lowercase insenitive M, input "ab\tC\t"
+  FAIL  25 Documentation example for lowercase insenitive m, input "A\t\t" 
+  FAIL  26 Documentation example for case insenitive M, input "aB\t\t"
+  FAIL  27 Documentation example for case insenitive m, input "aB\t\t"
+  ok    28 r:|.=* should complete .s.u
+  xfail  29 r:[^.]||.=* should not complete .s.u, but should complete c.s.u
+  FAIL  30 r:|.=* should complete .g.
+  xfail  31 r:[^.]||.=* should not complete .g., but should complete c.g.
+  ok    32 r:|.=* should complete ...pag
+  xfail  33 r:[^.]||.=* should not complete ...pag or c...pag, but should complete c.g.a.p
+  ok    34 Documentation example using input c...pa\tg\t
+  ok    35 r:|[.,_-]=* should complete .c and .h
+  xfail  36 r:[^.,_-]||[.,_-]=* should not complete .c or .h, but should complete v.c and v.h
+  ok    37 Documentation example using "r:|[A-Z0-9]=* r:|=*", input H
+  ok    38 Documentation example using "r:|[A-Z0-9]=* r:|=*", input 2
+  FAIL  39 Documentation example using "r:|[A-Z0-9]=** r:|=*", input H
+  FAIL  40 Documentation example using "r:|[A-Z0-9]=** r:|=*", input 2
+  xfail  41 r:[^A-Z0-9]||[A-Z0-9]=** should not complete H, FH, 2 or 52, but should complete FoH and 5b2.
+  xfail  42 r:?||[A-Z0-9]=* r:|=* should not complete H or 2, but should complete FH and 52.
+  xfail  43 r:[^.]||.=* and l:.||[^.]=* should work symmetrically.
+  ok    44 Bug from workers 7311
+  FAIL  45 Bug from workers_7311 
+  ok    46 Bug from workers 10886
+  FAIL  47 Erratic completion bug from workers 11081: bui > build.out[] > build[.]out > build.out[] > build.out1[] > build.out2[]
+  ok    48 Non-bug from workers 11388
+  FAIL  49 Non-bug from workers 11388
+  FAIL  50 Disappearing characters bug from workers 11586: c00\t -> c0[], c00\t -> c0.abc[], c00.\t -> c0.abc[]
+  ok    51 First test from workers 12995
+  FAIL  52 Second test from workers 12995
+  FAIL  53 Incorrect cursor position bug from workers 13320: glibc-2.1\t -> glibc-2[.]1.94-3.i386.rpm
+  FAIL  54 Test from workers 13320
+  FAIL  55 First test from workers 13345
+  FAIL  56 Disappearing character bug from workers 13345: a-b_2\t -> a-b__
+  FAIL  57 Test for insert positions
+  ok    58 Test for wildcard left anchor with partial word right anchors
+
+## Y03arguments  exit=-9 TIMED-OUT  fail=2 notrun=1 pass=1 unknown=96
+  ok     1 one non-option argument
+  FAIL   2 a and b
+  FAIL   3 a and b with descriptions
+  ----   4 three arguments
+  ????   5 first argument
+  ????   6 second argument but no first argument
+  ????   7 second and rest arguments but no first argument
+  ????   8 -+
+  ????   9 option beginning with + and -.
+  ????  10 option beginning with + and -, specified the other way around
+  ????  11 mix of + and - and exclusion of stacked options
+  ????  12 mix of + and - and exclusion of stacked options
+  ????  13 two option arguments
+  ????  14 option argument to ignored option
+  ????  15 ignored option not completed
+  ????  16 ignored option is not taken to be the normal argument
+  ????  17 unrecognised option has no effect on proceedings with no normal arguments
+  ????  18 unrecognised option is taken to be the normal argument
+  ????  19 option argument follows in next argument
+  ????  20 option argument either direct or in following argument
+  ????  21 option argument follows directly
+  ????  22 option argument follows optional equals
+  ????  23 option argument follows optional equals, with -s
+  ????  24 option argument follows mandatory equals
+  ????  25 sticky option argument
+  ????  26 option argument with prefix that passes option prefix-needed test
+  ????  27 end of option sequence
+  ????  28 argument beginning with minus
+  ????  29 argument beginning with minus, guard on rest argument
+  ????  30 optional option argument
+  ????  31 variable length option arguments
+  ????  32 opt_args
+  ????  33 opt_args with multiple arguments and quoting of colons and backslashes, part #1: default behaviour
+  ????  34 opt_args with multiple arguments and quoting of colons and backslashes, part #2: NUL escaping
+  ????  35 option completion with rest arguments on the line but not in the specs
+  ????  36 optarg completion following rest operand on line (workers/42141)
+  ????  37 rest arguments
+  ????  38 rest arguments with single colon
+  ????  39 rest arguments with two colons
+  ????  40 rest arguments with three colons
+  ????  41 rest arguments with three colons following optional argument
+  ????  42 rest arguments with three colons following optional argument to an option
+  ????  43 words array in rest arguments
+  ????  44 opt_args
+  ????  45 options and words (zsh-workers:12257)
+  ????  46 matcher applies to options but not rest arguments
+  ????  47 matcher in combination with sets (implies separate cadef structure)
+  ????  48 option after --
+  ????  49 -S: disallowed option after --
+  ????  50 -S: allowed option after -
+  ????  51 -S: allowed option before --
+  ????  52 -S: only first of duplicate -- is ignored
+  ????  53 -S -S: disallowed option after --
+  ????  54 -S -S: disallowed option after -
+  ????  55 option after a word
+  ????  56 long option after word that doesn't match -A pattern
+  ????  57 option after word that doesn't match -A pattern, no space before pattern
+  ????  58 option before a word that doesn't match -A pattern, separate -A from pattern
+  ????  59 continue completion after rest argument that looks like an option
+  ????  60 word matching -A pattern doesn't exclude options
+  ????  61 unrecognised word matching -A pattern not treated as a rest argument
+  ????  62 exclusion from option following word matching -A pattern should not apply
+  ????  63 repeatable options
+  ????  64 rest arguments from another set not completed after option from first set
+  ????  65 continue completion after rest argument that looks like an option (with sets)
+  ????  66 foreign option disables whole set (without -A)
+  ????  67 foreign option disables whole set (with -A)
+  ????  68 exclude option common to two sets and from one common option
+  ????  69 rest argument rule in two sets
+  ????  70 exclude various forms of rest argument in set specific form
+  ????  71 exclusion lists
+  ????  72 exclude option from normal argument to the right of the cursor
+  ????  73 exclude own set from an option
+  ????  74 exclude later set from an option common to both
+  ????  75 exclude earlier set from an option common to both
+  ????  76 single option sets are still mutually exclusive
+  ????  77 excluding a set doesn't exclude common options as part of the set
+  ????  78 exclude all other options
+  ????  79 exclude all options from a normal argument
+  ????  80 exclusion only applies to later words
+  ????  81 exclusion with clumped options, in, after and before
+  ????  82 don't prematurely exclude option that current word is a prefix of
+  ????  83 don't prematurely exclude option that current word is a prefix of (with sets)
+  ????  84 option clumping mixed with real option that looks like clump
+  ????  85 option clumping mixed with direct argument
+  ????  86 exclusion with option argument that looks like an option
+  ????  87 exclude group options
+  ????  88 single option groups are not mutually exclusive
+  ????  89 exclude rest args listed within a group
+  ????  90 two forms of same option in different groups
+  ????  91 normal argument excludes options in internally mutually exclusive group
+  ????  92 mix sets, groups and option stacking
+  ????  93 sets and groups with - in their name
+  ????  94 with message and bashautolist, a third tab will get menu completion
+  ????  95 with message and bashautolist, a third tab is needed to display the list
+  ????  96 with message and noautomenu second tab redisplays the list
+  ????  97 with message two tabs will start menu completion
+  ????  98 with message and _oldlist, two tabs will start menu completion
+  ????  99 partial completion of option with an argument
+  ???? 100 with -W options mixed with arguments
+
+## Y04regexargs  exit=1  fail=5 pass=1
+  ok     1 standalone spec
+  FAIL   2 simple alternation, use of _message for description with no matches
+  FAIL   3 optional fields after a suffix
+  FAIL   4 simple repetition, note zero repititions allowed
+  FAIL   5 non-matching pattern to separate matches from consuming patterns
+  FAIL   6 use guard and $match to reference prior argument
+
+## Y05describe  exit=1  fail=7
+  FAIL   1 name1 as (...), description, escaped colon in name
+  FAIL   2 name1 as ((...)) not supported
+  FAIL   3 name2 as (...)
+  FAIL   4 multiple groups
+  FAIL   5 arrays by name
+  FAIL   6 compadd options, basic
+  FAIL   7 compadd options, complex
+
+## Y06values  exit=1  fail=23 pass=2
+  FAIL   1 basic value
+  FAIL   2 basic value, next word
+  FAIL   3 basic value with description
+  FAIL   4 display of escaped char in value name
+  FAIL   5 display of hidden value
+  FAIL   6 basic sequence
+  FAIL   7 sequence in quotes
+  FAIL   8 sequence continues after hidden value
+  FAIL   9 sequence continues after value with escaped meta char
+  FAIL  10 sequence continues after value with escaped non-meta char
+  FAIL  11 multi value offered again
+  FAIL  12 xor value not offered
+  FAIL  13 xor value with escaped char not offered
+  FAIL  14 value with argument not enumerated
+  FAIL  15 value with argument enumerated
+  FAIL  16 value with argument enumerated with description
+  FAIL  17 value with argument enumerated with description, escaped colon
+  FAIL  18 value with argument enumerated with description, escaped colon with \\
+  FAIL  19 value with argument enumerated with description, escaped colon in arg name
+  FAIL  20 value with argument enumerated with description, un-escaped colon in arg desc
+  ok    21 value with argument eval string, braces
+  ok    22 value with argument eval string, leading space
+  FAIL  23 -s and -S
+  FAIL  24 -w without -s
+  FAIL  25 -w with -s
+
