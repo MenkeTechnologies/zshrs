@@ -23,6 +23,28 @@ Usage:
     scripts/compsys_parity.py --only cd_slash       # run one built-in case
     scripts/compsys_parity.py -v                    # show both grids on PASS too
 
+Fuzz mode (`--random-combos N`) drives N randomised cells in lockstep and
+diffs both screens after EVERY keystroke. Three independent axes are fuzzed:
+
+    --random-combos N   zstyle subsets (always on in fuzz mode)
+    --buffer-fuzz       the COMMAND LINE itself, from a documented surface set
+                        (mid-word cursor, quotes, $var/${, globs, braces,
+                        tildes, redirection targets, assignment RHS,
+                        command-substitution interior, sudo-prefixed,
+                        backslash-escaped spaces, partial long options)
+    --geometry-fuzz     terminal (rows, cols) from a seeded pool that includes
+                        narrow (40 cols), tiny-rows (6-8) and wide (200 cols)
+
+and a failure is delta-debugged down to the minimal keystroke path and the
+minimal zstyle subset that still diverge at the SAME first-diff cell:
+
+    --shrink-probes N   probe budget per axis (0 disables shrinking)
+    --jobs N            run N cells concurrently (independent pty pairs)
+    --json PATH         machine-readable result document ('-' for stdout)
+
+Every failure prints a copy-pasteable `--lockstep` replay carrying the seed,
+buffer, minimal key path, geometry and the saved zstyle fixture.
+
 Env / flags of note:
     --zshrs PATH      zshrs binary (default: target/debug/zshrs under repo)
     --zsh PATH        reference zsh (default: `zsh` on PATH)
@@ -35,17 +57,22 @@ Env / flags of note:
 from __future__ import annotations
 
 import argparse
+import functools
 import glob
 import json
 import os
 import pty
+import random
 import select
 import shlex
+import shutil
 import signal
 import sys
 import tempfile
 import termios
+import threading
 import time
+from collections import Counter, namedtuple
 from dataclasses import dataclass, field
 
 try:
@@ -86,7 +113,16 @@ from parity_corpus import (  # noqa: E402
     KEY_SEQUENCES,
     KEYS,
     cases_by_tag,
+    key_bytes,
+    shrink as ddmin,
 )
+
+# `pty.fork()` forks a process that is running Python threads (--jobs > 1). The
+# child execs immediately, but between fork and exec it must not touch a lock
+# another thread held at fork time. Serialising the fork+exec pair keeps that
+# window to one thread at a time; it costs nothing at --jobs 1. Same guard as
+# comptab_parity._FORK_LOCK.
+_FORK_LOCK = threading.Lock()
 
 
 def resolve_dump(explicit: str | None) -> str | None:
@@ -139,19 +175,20 @@ class ShellSession:
         self.settle = settle_ms / 1000.0
         self.screen = _TolerantScreen(cols, rows)
         self.stream = pyte.ByteStream(self.screen)
-        self.pid, self.fd = pty.fork()
-        if self.pid == 0:  # child
-            try:
-                # Fixed geometry so completion column math is identical.
-                import fcntl
-                import struct
+        with _FORK_LOCK:
+            self.pid, self.fd = pty.fork()
+            if self.pid == 0:  # child
+                try:
+                    # Fixed geometry so completion column math is identical.
+                    import fcntl
+                    import struct
 
-                winsz = struct.pack("HHHH", rows, cols, 0, 0)
-                fcntl.ioctl(sys.stdout.fileno(), termios.TIOCSWINSZ, winsz)
-                os.execvpe(argv[0], argv, env)
-            except Exception as exc:  # pragma: no cover - child
-                os.write(2, f"exec failed: {exc}\n".encode())
-                os._exit(127)
+                    winsz = struct.pack("HHHH", rows, cols, 0, 0)
+                    fcntl.ioctl(sys.stdout.fileno(), termios.TIOCSWINSZ, winsz)
+                    os.execvpe(argv[0], argv, env)
+                except Exception as exc:  # pragma: no cover - child
+                    os.write(2, f"exec failed: {exc}\n".encode())
+                    os._exit(127)
         # parent: put the pty master in raw-ish mode isn't needed; slave already tty.
 
     # ── low-level io ──────────────────────────────────────────────────────────
@@ -226,7 +263,11 @@ class ShellSession:
         self.send(text.encode())
 
     def send_key(self, name: str):
-        self.send(KEYS.get(name, name.encode()))
+        # STRICT: parity_corpus.key_bytes rejects an unknown multi-character
+        # name outright. The old `KEYS.get(name, name.encode())` fallback turned
+        # a typo into that many self-inserted characters on BOTH shells, which
+        # looked like a passing case for a key that was never sent.
+        self.send(key_bytes(name))
 
     # ── screen access ─────────────────────────────────────────────────────────
     def grid(self):
@@ -299,8 +340,13 @@ class ShellSession:
                 select.select([], [], [], 0.025)
 
 
+@functools.lru_cache(maxsize=1)
 def ref_ostype() -> str | None:
     """`$OSTYPE` as the REFERENCE shell reports it.
+
+    Cached: `build_init_file` now runs once per shrink probe, and the value is
+    a compile-time constant of the reference binary, so re-forking a zsh for it
+    every probe only costs time.
 
     OSTYPE is baked into the binary at compile time from the build host's
     uname, not computed at run time: the reference `zsh` here says
@@ -325,7 +371,8 @@ def ref_ostype() -> str | None:
         return None
 
 
-def user_fpath() -> list[str]:
+@functools.lru_cache(maxsize=1)
+def _user_fpath_cached() -> tuple:
     """The user's real completion fpath, as `zsh -f` sees it on this host
     (global rc populates it even under -f). Used so both shells scan the
     identical function set the user's `.zcompdump` was built from."""
@@ -335,9 +382,13 @@ def user_fpath() -> list[str]:
             ["zsh", "-f", "-c", "print -rl -- $fpath"],
             capture_output=True, text=True, timeout=10,
         ).stdout
-        return [d for d in out.splitlines() if d and os.path.isdir(d)]
+        return tuple(d for d in out.splitlines() if d and os.path.isdir(d))
     except Exception:
-        return []
+        return ()
+
+
+def user_fpath() -> list[str]:
+    return list(_user_fpath_cached())
 
 
 def build_init_file(dump, fpath_dirs, zstyle_file):
@@ -432,14 +483,18 @@ print -u2 ''
     return path
 
 
-def child_env() -> dict:
+def child_env(rows: int = 24, cols: int = 80) -> dict:
+    """Environment for BOTH children. COLUMNS/LINES follow the geometry the pty
+    is actually sized to — they used to be hardcoded 80x24, so a run at any
+    other `--rows/--cols` handed the shells a window size that disagreed with
+    their own tty. Both shells always get the identical pair."""
     env = {
         "TERM": "xterm-256color",
         "LANG": "C",
         "LC_ALL": "C",
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "COLUMNS": "80",
-        "LINES": "24",
+        "COLUMNS": str(cols),
+        "LINES": str(rows),
         # zshrs ships ~145 builtins zsh does not have (peach, async, zf_*,
         # dbview, ...), so any listing that enumerates $builtins diverges by
         # construction. Those are deliberate zshrs FEATURES, not compat
@@ -623,11 +678,192 @@ def run_cases_against(init_file, cases, args, env, confirm=1):
     return passed, failed, fails
 
 
-def saved_path(outdir, seed, n):
-    return os.path.join(outdir, f"combo_{seed}_{n}.zsh")
+# ── terminal geometry ────────────────────────────────────────────────────────
+#
+# Rows and columns are not cosmetic for completion. The column count decides how
+# many columns compsys packs a listing into and where a long line wraps; the row
+# count decides whether the listing is paged ("do you wish to see all N
+# possibilities"), how far the display scrolls, and how much of the prompt the
+# redraw has to reconstruct. Two real bugs in this project were geometry-only:
+# a completion list that climbed upward under a multi-line prompt, and a
+# SIGWINCH-triggered infinite `zrefresh` recursion that reproduced only at tiny
+# row counts. A fuzzer pinned to 24x80 cannot see either.
+#
+# BOTH shells always get the SAME geometry: one Geom drives the TIOCSWINSZ of
+# both children and the COLUMNS/LINES of both environments. The fuzz varies
+# which geometry a CELL runs under, never which shell gets which.
+Geom = namedtuple("Geom", "rows cols")
+
+GEOMETRY_POOL: list = [
+    Geom(24, 80),    # the default every other harness uses
+    Geom(24, 40),    # narrow: single-column listings, mid-word wrapping
+    Geom(8, 80),     # tiny rows: forces the list pager
+    Geom(6, 100),    # tinier still: the SIGWINCH / zrefresh-recursion shape
+    Geom(40, 200),   # wide: many listing columns, nothing wraps
+    Geom(30, 120),   # ordinary large terminal
+    Geom(12, 60),    # awkward middle: pages AND wraps
+]
 
 
-def run_keyseq(init_file, buffer, keys, args, env):
+def geom_str(g) -> str:
+    return f"{g.rows}x{g.cols}"
+
+
+def pick_geom(rng, args):
+    """The geometry for one cell. Without --geometry-fuzz this is exactly the
+    explicit --rows/--cols, so the default behaviour is unchanged."""
+    if not getattr(args, "geometry_fuzz", False):
+        return Geom(args.rows, args.cols)
+    return rng.choice(GEOMETRY_POOL)
+
+
+# ── buffer surfaces ──────────────────────────────────────────────────────────
+#
+# `--combo-commands` is a fixed five-entry list ("git ", "ssh -", "cd /",
+# "kill -", "echo $PA"). Everything the completion engine does BEFORE it picks a
+# completer — the word-splitting, quoting, cursor-position and special-context
+# analysis in get_comp_string / _main_complete — is therefore never fuzzed at
+# all. Each Surface below is one of those pre-completer contexts, with a small
+# seeded family of concrete buffers.
+#
+# `make(rng) -> (buffer_text, pre_keys)`. `pre_keys` are sent (and parity-
+# asserted, like every other key) BEFORE the random key path, which is how the
+# mid-word-cursor surface gets the cursor off the end of the word.
+#
+# `needs` names binaries the surface is about. When one is absent the surface is
+# DROPPED AT GENERATION TIME and counted under `unavailable-surface` in the
+# summary — the harness declines to claim coverage of a completer this host does
+# not have. It never drops a cell that was already generated, and it never
+# converts a divergence into anything but a divergence.
+@dataclass
+class Surface:
+    name: str
+    note: str
+    make: object
+    needs: tuple = ()
+
+
+def _pick(rng, *choices):
+    return rng.choice(choices)
+
+
+BUFFER_SURFACES: list = [
+    Surface("midword", "cursor parked mid-word before TAB (suffix must survive)",
+            lambda rng: (_pick(rng, "ls /usr/share/zsh", "ls /usr/local/bin",
+                               "cd /usr/share/man", "ls /etc/paths.d"),
+                         ["left"] * rng.randint(1, 4))),
+    Surface("dquote", "inside an unterminated double quote",
+            lambda rng: (_pick(rng, 'ls "', 'ls "/us', 'echo "$HO',
+                               'ls "/usr/sh'), [])),
+    Surface("squote", "inside an unterminated single quote",
+            lambda rng: (_pick(rng, "ls '", "ls '/us", "ls '/usr/sh"), [])),
+    Surface("param", "$var prefix — parameter-name completion context",
+            lambda rng: (_pick(rng, "echo $PA", "echo $HO", "print $ZSH_",
+                               "echo $fpa"), [])),
+    Surface("braceparam", "${ prefix — braced parameter context",
+            lambda rng: (_pick(rng, "echo ${PA", "echo ${HO", "echo ${fpat",
+                               "echo ${#PA"), [])),
+    Surface("glob", "glob metacharacters in the word being completed",
+            lambda rng: (_pick(rng, "ls /usr/*", "ls /etc/?", "ls /usr/[bl]",
+                               "ls /usr/sh*/", "ls /usr/**/z"), [])),
+    Surface("brace", "brace expansion in the word being completed",
+            lambda rng: (_pick(rng, "ls /usr/{bin,lo", "echo {a,b}",
+                               "ls /{etc,usr}/", "ls /usr/{share,li"), [])),
+    Surface("tilde", "~ / ~user / ~/ prefixes",
+            lambda rng: (_pick(rng, "ls ~", "cd ~/", "ls ~roo", "ls ~/.z"), [])),
+    Surface("redir", "redirection target — completes as a file, not an argument",
+            lambda rng: (_pick(rng, "echo hi > /tm", "cat < /et",
+                               "echo x >> /var/lo", "ls 2> /tm"), [])),
+    Surface("assign", "assignment RHS — completes as a value, not a command",
+            lambda rng: (_pick(rng, "FOO=/us", "PATH=/bin:/us", "X=/et",
+                               "typeset Y=/usr/sh"), [])),
+    Surface("cmdsubst", "interior of $( ) — a nested command position",
+            lambda rng: (_pick(rng, "echo $(ls /us", "echo $(cd /et",
+                               "echo $(print $HO"), [])),
+    Surface("bslash", "backslash-escaped space inside a path",
+            lambda rng: (_pick(rng, "ls /tmp/a\\ b", "ls foo\\ ba",
+                               "ls /usr/sh\\ "), [])),
+    Surface("sudo", "sudo-prefixed — the completer re-dispatches on argv[1]",
+            lambda rng: (_pick(rng, "sudo ls /us", "sudo -u root ls /et",
+                               "sudo "), []), ("sudo",)),
+    Surface("opt_partial", "a partially typed long option",
+            lambda rng: (_pick(rng, "git log --on", "git commit --amen",
+                               "git diff --stat-c"), []), ("git",)),
+    Surface("opt_equals", "a long option whose =VALUE is being completed",
+            lambda rng: (_pick(rng, "git log --format=", "git log --pretty=on",
+                               "git log --date="), []), ("git",)),
+    Surface("subcmd", "subcommand position of a dispatching command",
+            lambda rng: (_pick(rng, "git ", "git checkout ", "git rebase --",
+                               "ssh -", "kill -", "cd /"), []), ("git",)),
+]
+
+
+def available_surfaces(skips: Counter) -> list:
+    """The surfaces usable on THIS host. Every dropped surface is counted under
+    `unavailable-surface:<name>` and printed in the summary — never silently
+    omitted."""
+    out = []
+    for s in BUFFER_SURFACES:
+        missing = [b for b in s.needs if shutil.which(b) is None]
+        if missing:
+            skips[f"unavailable-surface:{s.name}(no {','.join(missing)})"] += 1
+            continue
+        out.append(s)
+    return out
+
+
+def gen_buffer(rng, surfaces):
+    """One fuzzed command line. Returns (surface_name, buffer, pre_keys)."""
+    s = rng.choice(surfaces)
+    text, pre = s.make(rng)
+    return s.name, text, list(pre)
+
+
+# ── keystroke paths ──────────────────────────────────────────────────────────
+#
+# The vocabulary deliberately EXCLUDES:
+#   cr / ctrl-o  — accept-line; would run the fuzzed buffer as a command.
+#   ctrl-u / ctrl-h / ctrl-w — they empty the line, after which a later ctrl-d
+#                  is EOF and kills the shell mid-cell (a harness artefact, not
+#                  a completion difference).
+#   esc / esc-esc — a bare ESC makes the NEXT random letter a meta binding
+#                  (M-d kill-word, ...), which lands back in the empty-line case
+#                  above. Meta keys belong in the fixed corpus, not the fuzz.
+# Everything else that navigates, pages, cycles, aborts or filters is in.
+_NAV_KEYS = ["down", "up", "left", "right", "ctrl-n", "ctrl-p",
+             "ctrl-f", "ctrl-b", "home", "end", "pgup", "pgdn"]
+_LETTERS = "abcdefghijklmnopqrstuvwxyz"
+
+
+def gen_keyseq(rng, length):
+    """Generate a random lockstep key path: always start with a TAB (list +
+    enter menu-select), then a random mix of more TABs (cycle/page), reverse
+    TABs, arrows and emacs motion keys (menu navigation), pager keys, ctrl-d
+    (list-choices), ctrl-g (abort the menu) and literal letters (interactive
+    filter narrowing)."""
+    seq = ["tab"]
+    for _ in range(max(0, length - 1)):
+        r = rng.random()
+        if r < 0.30:
+            seq.append("tab")
+        elif r < 0.55:
+            seq.append(rng.choice(_NAV_KEYS))
+        elif r < 0.62:
+            seq.append("btab")
+        elif r < 0.67:
+            seq.append("ctrl-d")          # list-choices without inserting
+        elif r < 0.72:
+            seq.append("ctrl-g")          # send-break — abort the menu
+        else:
+            seq.append(rng.choice(_LETTERS))  # interactive-filter keystroke
+    return seq
+
+
+def saved_path(outdir, seed, n, suffix=""):
+    return os.path.join(outdir, f"combo_{seed}_{n}{suffix}.zsh")
+
+
+def run_keyseq(init_file, buffer, keys, args, env, geom):
     """Drive `zsh -f` and `zshrs --zsh -f` in LOCKSTEP: source init, type
     `buffer`, then send each key in `keys` one at a time, capturing +
     byte-diffing BOTH screens AFTER EACH keystroke. `keys` may mix "tab",
@@ -635,13 +871,16 @@ def run_keyseq(init_file, buffer, keys, args, env):
     menu-cycling, list-prompt paging, arrow navigation, AND interactive-filter
     narrowing (typing letters to filter the menu) are all verified per-key.
 
+    `geom` sizes BOTH ptys and BOTH environments identically.
+
     Returns (fail_step, records): fail_step is the 1-based index of the first
     key whose screens diverge (0 if all match); records is
     [(step, key, ref_grid, test_grid, diffs), ...]. Stops at first divergence
     (the two shells desync past that point)."""
     source_cmd = f"source {shlex.quote(init_file)}\n".encode()
-    ref = ShellSession([args.zsh, "-f", "-i"], env, args.rows, args.cols, "zsh", args.settle)
-    test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, args.rows, args.cols, "zshrs", args.settle)
+    env = dict(env, COLUMNS=str(geom.cols), LINES=str(geom.rows))
+    ref = ShellSession([args.zsh, "-f", "-i"], env, geom.rows, geom.cols, "zsh", args.settle)
+    test = ShellSession([args.zshrs, "--zsh", "-f", "-i"], env, geom.rows, geom.cols, "zshrs", args.settle)
     try:
         for s in (ref, test):
             s.drain_settled(max_wait=3.0, first_wait=2.0)
@@ -676,104 +915,463 @@ def run_keyseq(init_file, buffer, keys, args, env):
         test.close()
 
 
-def gen_keyseq(rng, length):
-    """Generate a random lockstep key path: always start with a TAB (list +
-    enter menu-select), then a random mix of more TABs (cycle/page), arrows
-    (menu navigation), and literal letters (interactive filter narrowing)."""
-    seq = ["tab"]
-    letters = "abcdefghijklmnopqrstuvwxyz"
-    for _ in range(max(0, length - 1)):
-        r = rng.random()
-        if r < 0.35:
-            seq.append("tab")
-        elif r < 0.60:
-            seq.append(rng.choice(["down", "up", "left", "right"]))
-        else:
-            seq.append(rng.choice(letters))  # interactive-filter keystroke
-    return seq
+def first_diff_cell(diffs):
+    """(row, col) of the first differing CELL, not just the first differing row."""
+    row, a, b = diffs[0]
+    col = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y),
+               min(len(a), len(b)))
+    return row, col
 
 
-def run_random_combos(args, dump, fpath_dirs, env):
-    """Fuzz random subsets of the user's zstyles: for each of N seeded combos,
-    keep each statement with probability `--combo-keep`, run the combo commands,
-    and report + save any combo whose completion output diverges. Each combo is
-    independently reproducible from (seed, index); failing combos are written to
-    a dir so they can be replayed with `--zstyle <that file>`."""
-    import random
+def signature(records):
+    """Fingerprint of a divergence, used as the delta-debugging invariant.
 
-    statements = parse_zstyle_statements(args.zstyle)
-    commands = [c.strip() for c in args.combo_commands.split(",") if c.strip()]
-    presses = max(1, args.presses)
-    outdir = os.path.join(tempfile.gettempdir(), f"compsys_parity_failing_combos_{args.seed}")
-    os.makedirs(outdir, exist_ok=True)
+    Deliberately NOT the step index: shrinking the key path changes the index of
+    the failing key, so keying on it would reject every real reduction. The
+    (row, col) of the first differing cell is what "the same bug" means here —
+    a candidate that diverges somewhere ELSE on the screen is a DIFFERENT
+    divergence and must not be accepted as a reduction of this one.
 
-    print(f"# random-combo fuzz: {args.random_combos} combos x {len(commands)} cmds "
-          f"x {presses}-key paths (TAB/arrow/filter-letter, parity asserted after EACH key)")
-    print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
-    print(f"# seed={args.seed}  keep-prob={args.combo_keep}  confirm={args.confirm}  geom={args.rows}x{args.cols}")
-    print(f"# failing combos saved to: {outdir}")
-    print()
+    ("boot", -1) marks the un-shrinkable case where a shell never reached a
+    prompt."""
+    step, key, rg, tg, diffs = records[-1]
+    if not diffs:
+        return None
+    return first_diff_cell(diffs)
 
-    fail_combos = 0
+
+# ── delta debugging ──────────────────────────────────────────────────────────
+
+def shrink_keys(cell, args, env, target_sig, budget, run):
+    """Reduce the key path to a subsequence that still diverges at `target_sig`.
+
+    "diverges at step #7 (path tab+down+q+tab+j+up+tab)" is a report you cannot
+    act on; "diverges after tab+q" is. Uses parity_corpus.shrink (ddmin) over
+    the key list, with `still_fails` re-running the whole lockstep. Bounded by
+    `budget` probes because each probe boots two shells.
+
+    The first key is pinned: every path starts with the TAB that enters
+    completion, and a candidate without it tests a different thing entirely."""
+    if budget <= 0 or len(cell.keys) <= 1:
+        return list(cell.keys), 0
+    probes = [0]
+
+    def still_fails(candidate):
+        probes[0] += 1
+        keys = [cell.keys[0]] + list(candidate)
+        fs, rec = run(cell.buffer, keys, cell.init_file, cell.geom)
+        return bool(fs) and signature(rec) == target_sig
+
+    tail = ddmin(list(cell.keys[1:]), still_fails, max_probes=budget)
+    return [cell.keys[0]] + tail, probes[0]
+
+
+def shrink_styles(cell, args, env, target_sig, budget, run, build_init, keys):
+    """Reduce the zstyle set to a subset that still diverges at `target_sig`.
+
+    A 100-statement random subset that diverges says nothing; the one or two
+    statements that actually cause it are the bug report. Reuses the same ddmin
+    from parity_corpus that comptab_parity uses for its combos."""
+    if budget <= 0 or len(cell.statements) <= 1:
+        return list(cell.statements), 0
+    probes = [0]
+
+    def still_fails(candidate):
+        probes[0] += 1
+        init = build_init(list(candidate))
+        fs, rec = run(cell.buffer, keys, init, cell.geom)
+        return bool(fs) and signature(rec) == target_sig
+
+    return ddmin(list(cell.statements), still_fails, max_probes=budget), probes[0]
+
+
+# ── fuzz cells ───────────────────────────────────────────────────────────────
+
+@dataclass
+class Cell:
+    idx: int
+    # Unique per CELL ("<combo>_<case>"), not per combo: two cells of the same
+    # combo can both fail and both write a shrunk fixture, and a per-combo name
+    # would have them overwrite each other's replay file (and race at --jobs>1).
+    uid: str
+    surface: str
+    buffer: str
+    keys: list
+    geom: object
+    statements: list
+    zstyle_path: str
+    init_file: str
+    workdir: str
+
+
+@dataclass
+class CellResult:
+    cell: object
+    status: str = "PASS"          # PASS | FAIL | FLAKY | SKIP
+    detail: str = ""
+    fail_step: int = 0
+    fail_key: str = ""
+    sig: object = None
+    diffs: list = field(default_factory=list)
+    ref_grid: list = field(default_factory=list)
+    test_grid: list = field(default_factory=list)
+    min_keys: list = None
+    min_styles: list = None
+    probes: int = 0
+    # True when a ddmin pass stopped because it ran out of probes rather than
+    # because it converged. The reduction is still valid (every kept element was
+    # shown to be load-bearing under the probes that DID run) but it is not a
+    # minimal set, and the report must not claim it is.
+    shrink_exhausted: bool = False
+    replay: str = ""
+
+
+def replay_command(args, buffer, keys, geom, zstyle_path):
+    """A copy-pasteable command that reproduces exactly this divergence."""
+    return ("scripts/compsys_parity.py --lockstep"
+            f" --seed {args.seed}"
+            f" --zstyle {shlex.quote(zstyle_path)}"
+            f" --case {shlex.quote(buffer)}"
+            f" --keys {','.join(keys)}"
+            f" --rows {geom.rows} --cols {geom.cols} -v")
+
+
+def run_cell(cell, args, env, dump, fpath_dirs, outdir) -> CellResult:
+    """One fuzz cell: lockstep run, flake labelling, then delta debugging."""
+    res = CellResult(cell=cell)
+
+    def run(buffer, keys, init_file, geom):
+        return run_keyseq(init_file, buffer, keys, args, env, geom)
+
+    fail_step, records = run(cell.buffer, cell.keys, cell.init_file, cell.geom)
+    if fail_step == 0:
+        res.status = "PASS"
+        return res
+
+    step, key, rg, tg, diffs = records[-1]
+    res.fail_step, res.fail_key = step, key
+    res.ref_grid, res.test_grid = rg or [], tg or []
+    if diffs is None:
+        # A shell that never reached a prompt is a FAILURE, not a skip: the
+        # comparison was attempted and one side could not be observed.
+        res.status = "FAIL"
+        res.detail = "a shell never reached prompt"
+        res.replay = replay_command(args, cell.buffer, cell.keys, cell.geom,
+                                    cell.zstyle_path)
+        return res
+
+    res.diffs = diffs
+    res.sig = signature(records)
+
+    # --confirm re-runs LABEL the failure; they never turn it into a pass. A
+    # cell that diverges once and not again is NONDETERMINISTIC, which is its
+    # own bug class (worker-pool tty races have produced exactly this), so it is
+    # reported as FLAKY in its own counted category — not quietly dropped, and
+    # not promoted to a clean divergence either.
+    reproduced = True
+    for _ in range(max(0, args.confirm)):
+        fs2, rec2 = run(cell.buffer, cell.keys, cell.init_file, cell.geom)
+        if fs2 == 0 or signature(rec2) != res.sig:
+            reproduced = False
+            break
+        records = rec2
+    res.status = "FAIL" if reproduced else "FLAKY"
+    res.detail = f"{len(diffs)} rows differ"
+
+    min_keys, min_styles = None, None
+    zstyle_for_replay = cell.zstyle_path
+    # Only a REPRODUCIBLE failure is shrunk: ddmin's oracle is "does this
+    # candidate still diverge at the same cell", and a flaky oracle would
+    # happily delete keys that matter. A FLAKY cell keeps its full path.
+    if args.shrink_probes > 0 and res.status == "FAIL":
+        min_keys, p1 = shrink_keys(cell, args, env, res.sig,
+                                   args.shrink_probes, run)
+        res.probes += p1
+        res.shrink_exhausted = p1 >= args.shrink_probes
+
+        def build_init(subset):
+            d = tempfile.mkdtemp(prefix="shrink_", dir=cell.workdir)
+            path = os.path.join(d, "zstyle.zsh")
+            with open(path, "w") as f:
+                f.write("\n".join(subset) + "\n")
+            return build_init_file(dump, fpath_dirs, path)
+
+        min_styles, p2 = shrink_styles(cell, args, env, res.sig,
+                                       args.shrink_probes, run, build_init,
+                                       min_keys)
+        res.probes += p2
+        res.shrink_exhausted = res.shrink_exhausted or p2 >= args.shrink_probes
+        if len(min_styles) < len(cell.statements):
+            zstyle_for_replay = saved_path(outdir, args.seed, cell.uid, ".min")
+            with open(zstyle_for_replay, "w") as f:
+                f.write(f"# shrunk from {len(cell.statements)} statements "
+                        f"(seed={args.seed} combo={cell.idx} "
+                        f"surface={cell.surface} geom={geom_str(cell.geom)})\n")
+                f.write("\n".join(min_styles) + "\n")
+    res.min_keys, res.min_styles = min_keys, min_styles
+    res.replay = replay_command(args, cell.buffer, min_keys or cell.keys,
+                                cell.geom, zstyle_for_replay)
+    return res
+
+
+def build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips):
+    """Materialise every fuzz cell up front (zstyle subset, buffer, key path,
+    geometry, init file) so the work list is fixed and reproducible from the
+    seed alone before any shell is booted."""
+    fixed = [c.strip() for c in args.combo_commands.split(",") if c.strip()]
+    per_combo = args.buffer_cases if args.buffer_cases > 0 else len(fixed)
+    cells = []
     for n in range(args.random_combos):
         rng = random.Random(f"{args.seed}:{n}")
         subset = [s for s in statements if rng.random() < args.combo_keep]
-        d = tempfile.mkdtemp(prefix=f"combo_{args.seed}_{n}_")
-        combo_path = os.path.join(d, "zstyle.zsh")
+        workdir = tempfile.mkdtemp(prefix=f"combo_{args.seed}_{n}_")
+        combo_path = os.path.join(workdir, "zstyle.zsh")
         with open(combo_path, "w") as f:
             f.write(f"# random combo seed={args.seed} index={n}: "
                     f"{len(subset)}/{len(statements)} statements\n")
             f.write("\n".join(subset) + "\n")
+        with open(saved_path(outdir, args.seed, n), "w") as f:
+            f.write(f"# random combo seed={args.seed} index={n}: "
+                    f"{len(subset)}/{len(statements)} statements\n")
+            f.write("\n".join(subset) + "\n")
         init_file = build_init_file(dump, fpath_dirs, combo_path)
+        count = per_combo if args.buffer_fuzz else len(fixed)
+        for ci in range(count):
+            crng = random.Random(f"{args.seed}:{n}:{ci}")
+            if args.buffer_fuzz:
+                surface, buf, pre = gen_buffer(crng, surfaces)
+            else:
+                surface, buf, pre = "fixed", fixed[ci], []
+            buffer = buf if buf.endswith(" ") or args.buffer_fuzz else buf + " "
+            geom = pick_geom(crng, args)
+            # A buffer that cannot even be TYPED inside the window (prompt +
+            # text wider than the whole screen) is not a comparison the harness
+            # can make; it is SKIPPED with a counted reason rather than compared
+            # against a truncated grid.
+            if len(PROMPT_SENTINEL) + 1 + len(buffer) >= geom.rows * geom.cols:
+                skips[f"buffer-exceeds-screen:{geom_str(geom)}"] += 1
+                continue
+            keys = pre + gen_keyseq(
+                random.Random(f"{args.seed}:{n}:{ci}:keys"), args.presses)
+            cells.append(Cell(idx=n, uid=f"{n}_{ci}", surface=surface,
+                              buffer=buffer, keys=keys,
+                              geom=geom, statements=subset,
+                              zstyle_path=saved_path(outdir, args.seed, n),
+                              init_file=init_file, workdir=workdir))
+    return cells
 
-        combo_failed = False
-        combo_fail_lines = []
-        for ci, b in enumerate(commands):
-            buffer = b if b.endswith(" ") else b + " "
-            # Random per-command key path (seeded): TAB list/cycle/page + arrow
-            # menu nav + literal-letter interactive filtering, asserted per key.
-            keys = gen_keyseq(random.Random(f"{args.seed}:{n}:{ci}:keys"), presses)
-            # Confirmation: re-run the whole lockstep up to `confirm` times; a
-            # divergence counts only if it reproduces at the same step index.
-            fail_step, records = run_keyseq(init_file, buffer, keys, args, env)
-            for _ in range(max(0, args.confirm)):
-                if fail_step == 0:
-                    break
-                fs2, rec2 = run_keyseq(init_file, buffer, keys, args, env)
-                if fs2 != fail_step:
-                    fail_step = 0  # not reproducible at the same step → flaky
-                    break
-                records = rec2
-            if fail_step:
-                combo_failed = True
-                step, key, rg, tg, diffs = records[-1]
-                pre = "+".join(keys[:step])
-                if diffs is None:
-                    combo_fail_lines.append(f"       {buffer!r}: a shell never reached prompt")
-                else:
-                    combo_fail_lines.append(
-                        f"       {buffer!r}: diverges at step #{step} (key {key!r}, path {pre}) "
-                        f"({len(diffs)} rows differ)")
-                    if args.verbose:
-                        for i, a, bb in diffs[:6]:
-                            combo_fail_lines.append(f"         row {i:2d}: zsh={a!r}")
-                            combo_fail_lines.append(f"                 zshrs={bb!r}")
-                    combo_fail_lines.append(
-                        f"       -> replay: scripts/compsys_parity.py --zstyle {saved_path(outdir, args.seed, n)} "
-                        f"--case '{buffer}' --keys {','.join(keys[:step])} -v")
-        tag = "OK  " if not combo_failed else "FAIL"
-        print(f"[{tag}] combo {n:3d}  {len(subset):3d}/{len(statements)} styles")
-        if combo_failed:
-            fail_combos += 1
-            with open(saved_path(outdir, args.seed, n), "w") as f, open(combo_path) as src:
-                f.write(src.read())
-            for line in combo_fail_lines:
-                print(line)
 
+def run_random_combos(args, dump, fpath_dirs, env):
+    """Fuzz random subsets of the user's zstyles — and, with --buffer-fuzz /
+    --geometry-fuzz, the command line and the terminal geometry too.
+
+    Each cell is an independent pty PAIR, so cells are safe to run concurrently
+    (--jobs N). Load slows a redraw, which can flip a marginal cell; that is
+    exactly why --confirm re-runs stay on and why a non-reproducing divergence
+    is reported as FLAKY in its own category instead of being counted either
+    way."""
+    statements = parse_zstyle_statements(args.zstyle)
+    skips: Counter = Counter()
+    surfaces = available_surfaces(skips) if args.buffer_fuzz else []
+    if args.buffer_fuzz and not surfaces:
+        sys.exit("compsys_parity: --buffer-fuzz has no usable surfaces on this host")
+    outdir = os.path.join(tempfile.gettempdir(),
+                          f"compsys_parity_failing_combos_{args.seed}")
+    os.makedirs(outdir, exist_ok=True)
+
+    cells = build_cells(args, dump, fpath_dirs, statements, surfaces, outdir, skips)
+
+    print(f"# random-combo fuzz: {args.random_combos} combos, {len(cells)} cells, "
+          f"{args.presses}-key paths (parity asserted after EACH key)")
+    print(f"# base zstyle: {args.zstyle} ({len(statements)} statements)")
+    print(f"# seed={args.seed}  keep-prob={args.combo_keep}  confirm={args.confirm}  "
+          f"jobs={max(1, args.jobs)}  shrink-probes={args.shrink_probes}")
+    print(f"# buffer-fuzz={args.buffer_fuzz} ({len(surfaces)} surfaces)  "
+          f"geometry-fuzz={args.geometry_fuzz}  "
+          f"geom={'pool' if args.geometry_fuzz else geom_str(Geom(args.rows, args.cols))}")
+    print(f"# failing combos saved to: {outdir}")
     print()
-    print(f"# {args.random_combos - fail_combos}/{args.random_combos} combos byte-identical, "
-          f"{fail_combos} diverged")
-    return 1 if fail_combos else 0
+
+    def work(cell):
+        return run_cell(cell, args, env, dump, fpath_dirs, outdir)
+
+    if args.jobs > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(max_workers=args.jobs)
+        # `map` yields in submission order, so the log is deterministic no
+        # matter which cell finishes first.
+        stream = pool.map(work, cells)
+    else:
+        pool = None
+        stream = (work(c) for c in cells)
+
+    passed = failed = flaky = 0
+    results = []
+    try:
+        for res in stream:
+            c = res.cell
+            head = (f"{res.status:5s} combo {c.idx:3d} [{c.surface:11s}] "
+                    f"{geom_str(c.geom):>7s} {c.buffer!r}")
+            if res.status == "PASS":
+                passed += 1
+                print(f"{head}  keys={'+'.join(c.keys)}")
+                results.append(_cell_json(res))
+                continue
+            if res.status == "FLAKY":
+                flaky += 1
+            else:
+                failed += 1
+            print(f"{head}  ({res.detail})")
+            print(f"      path      : {'+'.join(c.keys)}"
+                  f"  → diverges at step #{res.fail_step} (key {res.fail_key!r})")
+            if res.sig:
+                print(f"      first diff: row {res.sig[0]}, col {res.sig[1]}")
+            if res.min_keys is not None:
+                # "reduced", not "minimal": ddmin proves every element it KEPT
+                # was load-bearing under the probes it ran, not that no smaller
+                # set exists — and less so when the budget ran out. Raise
+                # --shrink-probes to reduce further.
+                label = ("reduced (budget exhausted, not minimal)"
+                         if res.shrink_exhausted else "reduced (ddmin converged)")
+                print(f"      {label}")
+                print(f"        keys  : {'+'.join(res.min_keys)}"
+                      f"  ({len(res.min_keys)}/{len(c.keys)})")
+                print(f"        styles: {len(res.min_styles)}/{len(c.statements)}"
+                      f"  [{res.probes} probes]")
+                for s in res.min_styles[:8]:
+                    print(f"          {s}")
+            elif res.status == "FLAKY":
+                print("      not shrunk: a flaky divergence is not a sound "
+                      "delta-debugging oracle")
+            for i, a, b in res.diffs[: (12 if args.verbose else 3)]:
+                print(f"        row {i:2d}: zsh  = {a!r}")
+                print(f"                 zshrs= {b!r}")
+            if args.verbose and res.ref_grid:
+                print("      --- zsh (ref) ---")
+                print(render_grid(res.ref_grid))
+                print("      --- zshrs (test) ---")
+                print(render_grid(res.test_grid))
+            print(f"      replay    : {res.replay}")
+            results.append(_cell_json(res))
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
+
+    skipped = sum(skips.values())
+    print()
+    print(f"# {passed} passed, {failed} failed, {flaky} flaky, "
+          f"{len(cells)} cells run")
+    if skips:
+        print(f"# {skipped} skipped (never compared):")
+        for reason, count in sorted(skips.items()):
+            print(f"#   {reason}: {count}")
+    if args.json:
+        doc = {
+            "schema": "compsys-parity/1",
+            "mode": "fuzz",
+            "argv": sys.argv[1:],
+            "zshrs": args.zshrs,
+            "zsh": args.zsh,
+            "dump": dump,
+            "zstyle": args.zstyle,
+            "seed": args.seed,
+            "buffer_fuzz": args.buffer_fuzz,
+            "geometry_fuzz": args.geometry_fuzz,
+            "geom": {"rows": args.rows, "cols": args.cols, "settle_ms": args.settle},
+            "jobs": max(1, args.jobs),
+            "confirm": args.confirm,
+            "shrink_probes": args.shrink_probes,
+            "summary": {"passed": passed, "failed": failed, "flaky": flaky,
+                        "skipped": skipped, "cells": len(cells)},
+            "skips": dict(skips),
+            "results": results,
+        }
+        _write_json(args.json, doc)
+    # Flaky is NOT a pass: a cell that diverges only sometimes is still a cell
+    # whose two shells did not agree, so it fails the run.
+    return 1 if (failed or flaky) else 0
+
+
+def _cell_json(res) -> dict:
+    c = res.cell
+    return {
+        "id": f"combo{c.idx}.{c.surface}",
+        "combo": c.idx,
+        "surface": c.surface,
+        "buffer": c.buffer,
+        "keys": list(c.keys),
+        "geom": {"rows": c.geom.rows, "cols": c.geom.cols},
+        "status": res.status,
+        "detail": res.detail,
+        "fail_step": res.fail_step,
+        "fail_key": res.fail_key,
+        "first_diff": ({"row": res.sig[0], "col": res.sig[1]} if res.sig else None),
+        "rows_differ": len(res.diffs),
+        "diff_rows": [{"row": i, "ref": a, "test": b} for i, a, b in res.diffs[:50]],
+        "min_keys": res.min_keys,
+        "min_styles": res.min_styles,
+        "shrink_probes": res.probes,
+        "shrink_exhausted": res.shrink_exhausted,
+        "zstyle_file": c.zstyle_path,
+        "replay": res.replay,
+    }
+
+
+def _write_json(path, doc):
+    text = json.dumps(doc, indent=2)
+    if path == "-":
+        print(text)
+    else:
+        with open(path, "w") as f:
+            f.write(text + "\n")
+        print(f"# json: {path}")
+
+
+def run_lockstep_case(args, init_file, env):
+    """`--case ... --keys ... --lockstep`: the ad-hoc case run the way the
+    fuzzer runs it — both screens diffed after EVERY key — so a replay line
+    printed by the fuzzer reproduces the same first-diff cell."""
+    keys = [k.strip() for k in args.keys.split(",") if k.strip()]
+    if not keys:
+        sys.exit("compsys_parity: --lockstep needs at least one key in --keys")
+    geom = Geom(args.rows, args.cols)
+    fail_step, records = run_keyseq(init_file, args.case, keys, args, env, geom)
+    step, key, rg, tg, diffs = records[-1]
+    if fail_step == 0:
+        print(f"PASS lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
+              f"  ({len(records)} keys, screens identical after every one)")
+        rc = 0
+        doc_res = {"status": "PASS"}
+    else:
+        row, col = first_diff_cell(diffs) if diffs else (-1, -1)
+        print(f"FAIL lockstep {args.case!r} [{'+'.join(keys)}] {geom_str(geom)}"
+              f"  diverges at step #{step} (key {key!r})"
+              + (f", {len(diffs)} rows differ, first diff row {row} col {col}"
+                 if diffs else " (a shell never reached prompt)"))
+        for i, a, b in (diffs or []):
+            print(f"  row {i:2d}: zsh  = {a!r}")
+            print(f"          zshrs= {b!r}")
+        if args.verbose and rg is not None:
+            print("  --- zsh (ref) ---")
+            print(render_grid(rg))
+            print("  --- zshrs (test) ---")
+            print(render_grid(tg))
+        rc = 1
+        doc_res = {"status": "FAIL", "fail_step": step, "fail_key": key,
+                   "first_diff": {"row": row, "col": col},
+                   "diff_rows": [{"row": i, "ref": a, "test": b}
+                                 for i, a, b in (diffs or [])[:50]]}
+    if args.json:
+        doc_res.update(id="lockstep", buffer=args.case, keys=keys,
+                       geom={"rows": geom.rows, "cols": geom.cols})
+        _write_json(args.json, {
+            "schema": "compsys-parity/1", "mode": "lockstep",
+            "argv": sys.argv[1:], "zshrs": args.zshrs, "zsh": args.zsh,
+            "summary": {"passed": 1 - rc, "failed": rc, "flaky": 0,
+                        "skipped": 0, "cells": 1},
+            "results": [doc_res],
+        })
+    return rc
 
 
 def main():
@@ -799,13 +1397,50 @@ def main():
                     help="per-statement keep probability for random combos (default 0.5)")
     ap.add_argument("--combo-commands", default="git ,ssh -,cd /,kill -,echo $PA",
                     help="comma-separated buffers to complete in each random combo")
+    ap.add_argument("--buffer-fuzz", action="store_true",
+                    help="fuzz the COMMAND LINE too, from the documented surface "
+                         "set (mid-word cursor, quotes, $var/${, globs, braces, "
+                         "tildes, redirection targets, assignment RHS, $( ) "
+                         "interior, sudo-prefixed, backslash-escaped spaces, "
+                         "partial long options). Without it the fixed "
+                         "--combo-commands list is used, unchanged.")
+    ap.add_argument("--buffer-cases", type=int, default=0, metavar="N",
+                    help="fuzzed buffers per combo (default: as many as "
+                         "--combo-commands has entries)")
+    ap.add_argument("--geometry-fuzz", action="store_true",
+                    help="draw (rows, cols) per cell from the seeded pool "
+                         "(narrow 40-col, tiny 6-8-row, wide 200-col, ...). Both "
+                         "shells always get the IDENTICAL geometry; the chosen "
+                         "one is printed in every result line and replay.")
+    ap.add_argument("--shrink-probes", type=int, default=20, metavar="N",
+                    help="delta-debugging budget PER AXIS (key path, then zstyle "
+                         "subset) for each reproducible failure; 0 disables "
+                         "shrinking. Each probe boots two shells. A reduction "
+                         "that hits the budget is reported as 'budget "
+                         "exhausted, not minimal' — raise it to reduce further.")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N",
+                    help="run N cells concurrently. Every cell is an independent "
+                         "pty pair, so the comparison itself is unaffected, but "
+                         "load slows a redraw and a marginal cell flips verdict: "
+                         "comptab_parity.py records two back-to-back sweeps at "
+                         "--jobs 4 --confirm 0 disagreeing on 3 cells. Keep "
+                         "--confirm on in parallel so those are LABELLED flaky "
+                         "instead of landing on whichever verdict the load "
+                         "happened to produce.")
+    ap.add_argument("--lockstep", action="store_true",
+                    help="run --case in lockstep (diff both screens after EVERY "
+                         "key, report the first diverging step) — the mode the "
+                         "fuzzer's replay lines use")
     ap.add_argument("--presses", type=int, default=5, metavar="N",
                     help="length of the random key path per combo case (TAB cycle/page + arrow "
                          "menu-nav + literal-letter interactive filter), parity asserted after "
                          "EACH key; default 5")
     ap.add_argument("--confirm", type=int, default=2, metavar="K",
-                    help="re-run a failing combo case K times; only report if it fails EVERY time "
-                         "(filters timing-flaky false positives, default 2)")
+                    help="re-run a failing cell K times to LABEL it: a divergence "
+                         "that does not reproduce at the same first-diff cell is "
+                         "reported as FLAKY in its own counted category. Never "
+                         "turns a failure into a pass — nondeterminism is a bug "
+                         "class of its own here (default 2)")
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--cols", type=int, default=80)
     ap.add_argument("--settle", type=int, default=250, help="quiet window ms")
@@ -854,7 +1489,14 @@ def main():
         sys.exit(f"zshrs binary not found: {args.zshrs} (run: cargo build --bin zshrs)")
 
     if args.random_combos > 0:
-        return run_random_combos(args, dump, fpath_dirs, child_env())
+        return run_random_combos(args, dump, fpath_dirs,
+                                 child_env(args.rows, args.cols))
+
+    if args.lockstep:
+        if args.case is None:
+            sys.exit("compsys_parity: --lockstep needs --case")
+        return run_lockstep_case(args, build_init_file(dump, fpath_dirs, zstyle_file),
+                                 child_env(args.rows, args.cols))
 
     if args.case is not None:
         cases = [Case("adhoc", args.case, [k.strip() for k in args.keys.split(",") if k.strip()])]
@@ -867,7 +1509,7 @@ def main():
         cases = builtin
 
     init_file = build_init_file(dump, fpath_dirs, zstyle_file)
-    env = child_env()
+    env = child_env(args.rows, args.cols)
 
     print(f"# dump   : {dump or '<none>'}")
     print(f"# fpath  : {len(fpath_dirs)} dirs" + (f" (first: {fpath_dirs[0]})" if fpath_dirs else ""))
@@ -876,6 +1518,7 @@ def main():
     print(f"# zshrs  : {args.zshrs}")
     print(f"# zsh    : {args.zsh}")
     print(f"# geom   : {args.rows}x{args.cols}  settle={args.settle}ms")
+    print(f"# jobs   : {max(1, args.jobs)}")
     print()
 
     # `-f`: no rc files; the harness sources the identical init explicitly.
@@ -898,11 +1541,52 @@ def main():
         finally:
             sess.close()
 
-    passed = failed = 0
-    results = []
-    for case in cases:
+    # Flake labelling in the DEFAULT sweep is enabled only at --jobs > 1. At
+    # --jobs 1 the harness is serial, which is the baseline every existing
+    # corpus verdict was scored under, and re-running every failure would
+    # triple the cost of a sweep for no new information. In parallel, a
+    # marginal cell demonstrably flips under load (see the --jobs help), so the
+    # re-run is what keeps the verdict honest — it can only ever turn FAIL into
+    # FLAKY, which is still a failure, never into PASS.
+    confirm_runs = args.confirm if args.jobs > 1 else 0
+
+    def evaluate(case):
+        """One cell: capture both shells, diff, and (in parallel mode) re-run a
+        failure to label nondeterminism. Returns (status, ref, test, diffs,
+        detail)."""
         ref_grid = capture(ref_argv, "zsh", case)
         test_grid = capture(test_argv, "zshrs", case)
+        if ref_grid is None or test_grid is None:
+            who = "zsh" if ref_grid is None else "zshrs"
+            return "FAIL", ref_grid, test_grid, None, f"{who} never reached prompt"
+        diffs = diff_grids(ref_grid, test_grid)
+        if not diffs:
+            return "PASS", ref_grid, test_grid, [], ""
+        for _ in range(max(0, confirm_runs)):
+            r2 = capture(ref_argv, "zsh", case)
+            t2 = capture(test_argv, "zshrs", case)
+            if r2 is None or t2 is None:
+                continue
+            d2 = diff_grids(r2, t2)
+            if not d2 or first_diff_cell(d2) != first_diff_cell(diffs):
+                return ("FLAKY", ref_grid, test_grid, diffs,
+                        f"{len(diffs)} rows differ, not reproducible")
+            ref_grid, test_grid, diffs = r2, t2, d2
+        return "FAIL", ref_grid, test_grid, diffs, f"{len(diffs)} rows differ"
+
+    if args.jobs > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        _pool = ThreadPoolExecutor(max_workers=args.jobs)
+        # `map` yields in submission order: the log stays deterministic no
+        # matter which cell finishes first.
+        verdicts = zip(cases, _pool.map(evaluate, cases))
+    else:
+        _pool = None
+        verdicts = ((c, evaluate(c)) for c in cases)
+
+    passed = failed = flaky = 0
+    results = []
+    for case, (status, ref_grid, test_grid, diffs, detail) in verdicts:
         keyspec = "+".join(case.keys)
         record = {
             # `case.name` is already `<corpus case>.<sequence>` for the built-in
@@ -917,30 +1601,34 @@ def main():
             "diff_rows": [],
         }
         results.append(record)
-        if ref_grid is None or test_grid is None:
+        if diffs is None:
             failed += 1
-            who = "zsh" if ref_grid is None else "zshrs"
             record["status"] = "FAIL"
-            record["detail"] = f"{who} never reached prompt"
-            print(f"FAIL {case.name:16s} {case.buffer!r} [{keyspec}]  ({who} never reached prompt)")
+            record["detail"] = detail
+            print(f"FAIL {case.name:16s} {case.buffer!r} [{keyspec}]  ({detail})")
             continue
-        diffs = diff_grids(ref_grid, test_grid)
-        if not diffs:
+        if status == "PASS":
             passed += 1
             print(f"PASS {case.name:16s} {case.buffer!r} [{keyspec}]")
             if args.verbose:
                 print(render_grid(ref_grid))
         else:
-            failed += 1
+            if status == "FLAKY":
+                flaky += 1
+            else:
+                failed += 1
             row, a, b = diffs[0]
             col = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y),
                        min(len(a), len(b)))
-            record.update(status="FAIL", detail=f"{len(diffs)} rows differ",
+            record.update(status=status, detail=detail,
                           rows_differ=len(diffs),
                           first_diff={"row": row, "col": col, "ref": a, "test": b},
                           diff_rows=[{"row": i, "ref": x, "test": y}
-                                     for i, x, y in diffs[:50]])
-            print(f"FAIL {case.name:16s} {case.buffer!r} [{keyspec}]  ({len(diffs)} rows differ)")
+                                     for i, x, y in diffs[:50]],
+                          replay=replay_command(
+                              args, case.buffer, list(case.keys),
+                              Geom(args.rows, args.cols), zstyle_file or "/dev/null"))
+            print(f"{status:4s} {case.name:16s} {case.buffer!r} [{keyspec}]  ({detail})")
             print("  --- zsh (ref) ---")
             print(render_grid(ref_grid))
             print("  --- zshrs (test) ---")
@@ -953,29 +1641,35 @@ def main():
             for i, x, y in diffs:
                 print(f"  row {i:2d}: zsh  = {x!r}")
                 print(f"          zshrs= {y!r}")
+            print(f"  replay: {record['replay']}")
+    if _pool is not None:
+        _pool.shutdown(wait=True)
 
     print()
-    print(f"# {passed} passed, {failed} failed, {len(cases)} total")
+    print(f"# {passed} passed, {failed} failed, {flaky} flaky, {len(cases)} total"
+          + (f"  ({failed + flaky} cells did not agree)" if failed + flaky else ""))
     if args.json:
         doc = {
             "schema": "compsys-parity/1",
+            "mode": "cases",
             "argv": sys.argv[1:],
             "zshrs": args.zshrs,
             "zsh": args.zsh,
             "dump": dump,
             "zstyle": zstyle_file,
             "geom": {"rows": args.rows, "cols": args.cols, "settle_ms": args.settle},
-            "summary": {"passed": passed, "failed": failed, "cells": len(cases)},
+            "jobs": max(1, args.jobs),
+            # `failed` counts every cell whose two shells did not agree, FLAKY
+            # included: a nondeterministic divergence is still a divergence, and
+            # downstream consumers (parity_matrix._collect) must never see a
+            # smaller number because a failure was relabelled. `flaky` is
+            # additional detail, not a subtraction.
+            "summary": {"passed": passed, "failed": failed + flaky,
+                        "flaky": flaky, "skipped": 0, "cells": len(cases)},
             "results": results,
         }
-        text = json.dumps(doc, indent=2)
-        if args.json == "-":
-            print(text)
-        else:
-            with open(args.json, "w") as f:
-                f.write(text + "\n")
-            print(f"# json: {args.json}")
-    return 1 if failed else 0
+        _write_json(args.json, doc)
+    return 1 if (failed or flaky) else 0
 
 
 if __name__ == "__main__":
