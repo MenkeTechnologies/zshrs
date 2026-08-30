@@ -2235,8 +2235,57 @@ impl ShellExecutor {
                         Some(pc)
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "plugin_cache: failed to open");
-                        None
+                        // A corrupt cache file is not a permanent condition:
+                        // `plugins.db` is derived data, rebuilt by the next
+                        // plugin scan. SQLite answers a clobbered header with
+                        // SQLITE_NOTADB ("file is not a database"), and the
+                        // old behaviour logged that and moved on — so the
+                        // cache stayed dead for every future shell too, with
+                        // nothing but a log line to say why plugin lookups
+                        // were slow. Discard the file and open once more;
+                        // this is the same "drop it and rebuild silently"
+                        // rule the shard cache already applies to a version
+                        // mismatch. A second failure keeps the old
+                        // behaviour, so a permissions problem still degrades
+                        // instead of looping.
+                        let corrupt = matches!(
+                            e.sqlite_error_code(),
+                            Some(rusqlite::ErrorCode::NotADatabase)
+                                | Some(rusqlite::ErrorCode::DatabaseCorrupt)
+                        );
+                        if corrupt {
+                            tracing::warn!(
+                                error = %e,
+                                path = %pc_path.display(),
+                                "plugin_cache: corrupt — discarding and rebuilding"
+                            );
+                            let _ = fs::remove_file(&pc_path);
+                            // The -wal/-shm side files belong to the database
+                            // that just went away; leaving them makes the
+                            // fresh open inherit a journal for a file that no
+                            // longer exists.
+                            for side in ["-wal", "-shm"] {
+                                let mut p = pc_path.clone().into_os_string();
+                                p.push(side);
+                                let _ = fs::remove_file(PathBuf::from(p));
+                            }
+                            match crate::plugin_cache::PluginCache::open(&pc_path) {
+                                Ok(pc) => {
+                                    tracing::info!(
+                                        path = %pc_path.display(),
+                                        "plugin_cache: rebuilt after corruption"
+                                    );
+                                    Some(pc)
+                                }
+                                Err(e2) => {
+                                    tracing::warn!(error = %e2, "plugin_cache: reopen after discard failed");
+                                    None
+                                }
+                            }
+                        } else {
+                            tracing::warn!(error = %e, "plugin_cache: failed to open");
+                            None
+                        }
                     }
                 }
             },
