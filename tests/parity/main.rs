@@ -16,6 +16,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::needless_raw_string_hashes)]
 
+mod param_type_flag_parity;
 mod parser_lock;
 mod zpty_probe;
 

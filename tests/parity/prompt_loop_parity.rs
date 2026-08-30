@@ -148,6 +148,86 @@ if [[ $all == *OUTBGJ* ]]; then print \"K=yes\"; else print \"K=no\"; fi
     assert_same_verdict(&driver, "K", "a background job delivered its output");
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// The `sched` builtin's BOOKKEEPING — correct; only the firing is not
+// ═══════════════════════════════════════════════════════════════════════
+
+/// These need no pty: they are what `sched` does to its own list, and
+/// they all pass. Keeping them next to the `#[ignore]`d firing case is
+/// the point — the gap is not "sched is unimplemented", it is that a
+/// correctly registered, correctly listed, correctly removable entry is
+/// never EXECUTED. That is a much narrower fix than the bookkeeping.
+///
+/// Absolute times are never compared: the two shells start seconds
+/// apart, so every assertion here is on the COUNT and the command text.
+mod sched_bookkeeping {
+    use super::*;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn assert_script_parity(script: &str) {
+        if !crate::zpty_probe::zsh_available() {
+            eprintln!("skip: zsh not found");
+            return;
+        }
+        let z = Command::new(Path::new(crate::zpty_probe::zsh_path()))
+            .args(["-f", "-c", script])
+            .output()
+            .expect("invoke zsh");
+        let r = Command::new(crate::zpty_probe::zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stdout),
+            String::from_utf8_lossy(&r.stdout),
+            "stdout divergence on:\n{script}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "stderr divergence on:\n{script}"
+        );
+    }
+
+    #[test]
+    fn an_empty_schedule_lists_nothing() {
+        assert_script_parity("zmodload zsh/sched; print N=$(sched | grep -c .)");
+    }
+
+    #[test]
+    fn entries_accumulate_in_the_list() {
+        assert_script_parity(
+            "zmodload zsh/sched; sched +5 print a; sched +9 print b; print N=$(sched|grep -c .)",
+        );
+    }
+
+    /// `sched -1` removes the FIRST entry, and the survivor keeps its
+    /// command text intact.
+    #[test]
+    fn removing_an_entry_leaves_the_others() {
+        assert_script_parity(
+            "zmodload zsh/sched; sched +5 print a; sched +9 print b; sched -1; \
+             print N=$(sched|grep -c .) LAST=${$(sched)[(w)-2,-1]}",
+        );
+    }
+
+    /// Removing past the end is an error, and leaves the list alone.
+    #[test]
+    fn removing_past_the_end_is_an_error() {
+        assert_script_parity(
+            "zmodload zsh/sched; sched +5 print a; sched -2; print N=$(sched|grep -c .)",
+        );
+    }
+
+    #[test]
+    fn removing_from_an_empty_schedule_reports_and_fails() {
+        assert_script_parity("zmodload zsh/sched; sched -1 2>&1; print rc=$?");
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SIGALRM-driven work — neither of these runs in zshrs
 // ═══════════════════════════════════════════════════════════════════════
