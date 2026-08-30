@@ -1,0 +1,469 @@
+[
+ {
+  "origin": "Y01completion#1",
+  "message": "directories and files",
+  "probes": 24,
+  "converged": true,
+  "signature": [
+   "DI",
+   "FI",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_001.zsh",
+  "kept_lines": [
+   "mkdir dir2",
+   "touch file2",
+   "comptest $': \\t\\t'"
+  ],
+  "zsh": [
+   "line: {: }{}",
+   "DESCRIPTION:{file}",
+   "DI:{dir2}",
+   "FI:{file2}",
+   "line: {: dir2/}{}"
+  ],
+  "sut": [
+   "line: {: }{}",
+   "DESCRIPTION:{file}",
+   "line: {: }{}",
+   "DESCRIPTION:{file}"
+  ]
+ },
+ {
+  "origin": "Y01completion#6",
+  "message": "_expand shows file types",
+  "probes": 25,
+  "converged": true,
+  "signature": [
+   "DI",
+   "FI",
+   "NO",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_006.zsh",
+  "kept_lines": [
+   "mkdir dir2",
+   "touch file2",
+   "comptest $'*\\t\\t'"
+  ],
+  "zsh": [
+   "line: {dir2/}{}",
+   "DESCRIPTION:{expansions}",
+   "DI:{dir2}",
+   "FI:{file2}",
+   "DESCRIPTION:{all expansions}",
+   "NO:{dir2 file2}",
+   "DESCRIPTION:{original}",
+   "NO:{*}",
+   "line: {file2 }{}"
+  ],
+  "sut": [
+   "line: {dir2/}{}",
+   "DESCRIPTION:{expansions}",
+   "DESCRIPTION:{all expansions}",
+   "DESCRIPTION:{original}",
+   "line: {dir2}{}"
+  ]
+ },
+ {
+  "origin": "Y01completion#7",
+  "message": "_expand preserves array form",
+  "probes": 31,
+  "converged": true,
+  "signature": [
+   "NO"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_007.zsh",
+  "kept_lines": [
+   "touch file2",
+   "comptesteval $'typeset -g tst=(*)'",
+   "comptest $'$tst\\C-D'"
+  ],
+  "zsh": [
+   "DESCRIPTION:{expansions}",
+   "NO:{file2}"
+  ],
+  "sut": [
+   "DESCRIPTION:{expansions}"
+  ]
+ },
+ {
+  "origin": "Y01completion#9",
+  "message": "dynamic directory names after ~[",
+  "probes": 24,
+  "converged": true,
+  "signature": [
+   "NO",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_009.zsh",
+  "kept_lines": [
+   "comptest $'[\\t\\t'"
+  ],
+  "zsh": [
+   "line: {[}{}",
+   "DESCRIPTION:{external command}",
+   "NO:{\\[}",
+   "DESCRIPTION:{builtin command}",
+   "NO:{[}",
+   "DESCRIPTION:{reserved word}",
+   "NO:{[[}",
+   "line: {\\[}{}"
+  ],
+  "sut": [
+   "line: {[}{}",
+   "DESCRIPTION:{external command}",
+   "DESCRIPTION:{builtin command}",
+   "DESCRIPTION:{reserved word}",
+   "line: {[}{}",
+   "DESCRIPTION:{external command}",
+   "DESCRIPTION:{builtin command}",
+   "DESCRIPTION:{reserved word}"
+  ]
+ },
+ {
+  "origin": "Y01completion#11",
+  "message": "directories and files before separator",
+  "probes": 30,
+  "converged": true,
+  "signature": [
+   "DI",
+   "FI"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_011.zsh",
+  "kept_lines": [
+   "mkdir dir2",
+   "touch file2",
+   "comptest $'s ;:\\C-b\\C-b\\t'"
+  ],
+  "zsh": [
+   "line: {s }{;:}",
+   "DESCRIPTION:{file}",
+   "DI:{dir2}",
+   "FI:{file2}"
+  ],
+  "sut": [
+   "line: {s }{;:}",
+   "DESCRIPTION:{file}"
+  ]
+ },
+ {
+  "origin": "Y01completion#16",
+  "message": "directory name is not a glob qualifier",
+  "probes": 8,
+  "converged": true,
+  "signature": [
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_016.zsh",
+  "kept_lines": [
+   "{",
+   "mkdir 'A(B)' 'A(B)/C'",
+   "comptest $'cd \"A(B)\\t\\t'",
+   "comptesteval 'cd \"A(B)/C\"'",
+   "comptest $'c'",
+   "} always {",
+   "comptesteval 'cd -' # Reset CWD",
+   "rmdir 'A(B)/C' 'A(B)'",
+   "}"
+  ],
+  "zsh": [
+   "line: {cd \"A(B)/}{}",
+   "line: {cd \"A(B)/C/}{}"
+  ],
+  "sut": [
+   "line: {cd \"A(B)/}{}",
+   "line: {cd \"A(B)/}{}"
+  ]
+ },
+ {
+  "origin": "Y01completion#23",
+  "message": "ignore backslashes when sorting completion matches",
+  "probes": 59,
+  "converged": true,
+  "signature": [
+   "FI"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_023.zsh",
+  "kept_lines": [
+   "if ]]; then",
+   "else",
+   "{",
+   "mkdir sortnobslash",
+   "touch sortnobslash/{'!foo','#foo','\\foo','|foo','~foo',Afoo,bfoo}",
+   "comptesteval 'old_LC_ALL=$LC_ALL; LC_ALL=C'",
+   "comptest $': sortnobslash/\\t'",
+   "} always {",
+   "comptesteval 'LC_ALL=$old_LC_ALL'",
+   "rm -rf sortnobslash",
+   "}",
+   "fi"
+  ],
+  "zsh": [
+   "line: {: sortnobslash/}{}",
+   "DESCRIPTION:{file}",
+   "FI:{\\!foo}",
+   "FI:{\\#foo}",
+   "FI:{Afoo}",
+   "FI:{\\\\foo}",
+   "FI:{bfoo}",
+   "FI:{\\|foo}",
+   "FI:{\\~foo}"
+  ],
+  "sut": [
+   "line: {: sortnobslash/}{}",
+   "DESCRIPTION:{file}"
+  ]
+ },
+ {
+  "origin": "Y01completion#28",
+  "message": "-F does not break _sequence",
+  "probes": 35,
+  "converged": true,
+  "signature": [
+   "DESCRIPTION",
+   "NO"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y01completion_028.zsh",
+  "kept_lines": [
+   "comptesteval 'compdef _tst tst'",
+   "comptesteval \"_tst() { _arguments ':desc:_sequence compadd - 1 2 3' }\"",
+   "comptest $'tst \\t'",
+   "comptesteval \"zstyle -d ':completion:*:tst:*' ignored-patterns\""
+  ],
+  "zsh": [
+   "line: {tst }{}",
+   "DESCRIPTION:{desc}",
+   "NO:{1}",
+   "NO:{2}",
+   "NO:{3}"
+  ],
+  "sut": [
+   "line: {tst }{}"
+  ]
+ },
+ {
+  "origin": "Y02compmatch#2",
+  "message": "Match Error for \"m:\"",
+  "probes": 25,
+  "converged": true,
+  "signature": [
+   "COMPADD"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y02compmatch_002.zsh",
+  "kept_lines": [
+   "test_code () {",
+   "matcher=$1;",
+   "list=$2;",
+   "code=\"compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '\"",
+   "code=\"$code$matcher\"",
+   "code=\"$code'  - ${(P)list} ; echo  -n '</COMPADD>'\"",
+   "code=\"$code; $extra_cmd\"",
+   "code=\"$code; echo -n '<INSERT_POSITIONS>'\"",
+   "code=\"$code; echo \\$compstate[insert_positions]\"",
+   "code=\"$code; echo -n '</INSERT_POSITIONS>'\"",
+   "code=\"$code}\"",
+   "comptesteval \"$code\"",
+   "}",
+   "test_code m:",
+   "comptest  $'tst \\t'"
+  ],
+  "zsh": [
+   "line: {tst }{}",
+   "COMPADD:{_tst:compadd: missing patterns}",
+   "INSERT_POSITIONS:{}"
+  ],
+  "sut": [
+   "line: {tst }{}",
+   "COMPADD:{_tst:compadd: missing word pattern}",
+   "INSERT_POSITIONS:{}"
+  ]
+ },
+ {
+  "origin": "Y02compmatch#10",
+  "message": "Match Error for \"m:{0-9}={\"",
+  "probes": 26,
+  "converged": true,
+  "signature": [
+   "COMPADD",
+   "INSERT_POSITIONS",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y02compmatch_010.zsh",
+  "kept_lines": [
+   "list1=(IndianRed IndianRed2 IndianRed3 IndianRed4)",
+   "test_code () {",
+   "matcher=$1;",
+   "list=$2;",
+   "code=\"compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '\"",
+   "code=\"$code$matcher\"",
+   "code=\"$code'  - ${(P)list} ; echo  -n '</COMPADD>'\"",
+   "code=\"$code; $extra_cmd\"",
+   "code=\"$code; echo -n '<INSERT_POSITIONS>'\"",
+   "code=\"$code; echo \\$compstate[insert_positions]\"",
+   "code=\"$code; echo -n '</INSERT_POSITIONS>'\"",
+   "code=\"$code}\"",
+   "comptesteval \"$code\"",
+   "}",
+   "test_code 'm:{0-9}={' list1",
+   "comptest $'tst \\t'"
+  ],
+  "zsh": [
+   "line: {tst }{}",
+   "COMPADD:{_tst:compadd: unterminated character class}",
+   "INSERT_POSITIONS:{}"
+  ],
+  "sut": [
+   "line: {tst IndianRed}{}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{13}"
+  ]
+ },
+ {
+  "origin": "Y02compmatch#57",
+  "message": "Test for insert positions",
+  "probes": 55,
+  "converged": true,
+  "signature": [
+   "INSERT_POSITIONS",
+   "NO",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y02compmatch_057.zsh",
+  "kept_lines": [
+   "test_code () {",
+   "matcher=$1;",
+   "list=$2;",
+   "code=\"compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '\"",
+   "code=\"$code$matcher\"",
+   "code=\"$code'  - ${(P)list} ; echo  -n '</COMPADD>'\"",
+   "code=\"$code; $extra_cmd\"",
+   "code=\"$code; echo -n '<INSERT_POSITIONS>'\"",
+   "code=\"$code; echo \\$compstate[insert_positions]\"",
+   "code=\"$code; echo -n '</INSERT_POSITIONS>'\"",
+   "code=\"$code}\"",
+   "comptesteval \"$code\"",
+   "}",
+   "workers_13382_matcher='r:|.=**'",
+   "workers_13382_list=(a.b.c aA.bB.cC.dD aD.bC.cB.dA aA.bC.cB.dA)",
+   "test_code $workers_13382_matcher workers_13382_list",
+   "comptest $'tst ...\\tA\\t\\t'"
+  ],
+  "zsh": [
+   "line: {tst a.b.c.d}{}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5:7:9:11}",
+   "line: {tst a}{.bC.cB.dA}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5:14}",
+   "line: {tst a}{.bC.cB.dA}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5:14}",
+   "NO:{aA.bC.cB.dA}",
+   "NO:{aD.bC.cB.dA}"
+  ],
+  "sut": [
+   "line: {tst a.b.c.d}{}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5:7:9:11}",
+   "line: {tst a}{.bC.cB.dA}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5:14}",
+   "line: {tst .bC.cB.dA }{}",
+   "COMPADD:{}",
+   "INSERT_POSITIONS:{5}"
+  ]
+ },
+ {
+  "origin": "Y04regexargs#3",
+  "message": "optional fields after a suffix",
+  "probes": 39,
+  "converged": true,
+  "signature": [
+   "DESCRIPTION"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y04regexargs_003.zsh",
+  "kept_lines": [
+   "word=$'[^\\0]#\\0'",
+   "comptesteval \\",
+   "'compdef _tst tst' \\",
+   "'setopt extended_glob' # running _regex_arguments outside of completion below",
+   "tst_regex() { comptesteval \"_regex_arguments _tst /$'[^\\0]#\\0'/ ${${(@q)*}}\" }",
+   "tst_regex /$'rpc\\0'/ \\",
+   "\\(\\",
+   "/\"$word\"/ ':programs:program:compadd -qS, mountd nisd' \\",
+   "\\|\\",
+   "/$'[^,\\0]##,[^,\\0]##,'/ /$'[^,\\0]##\\0'/ ':procedures:procedure:' \\",
+   "\\|\\",
+   "/$'[^,\\0]##,'/ /$'[^,\\0]##\\0'/ ':versions:version:' \\",
+   "\\)",
+   "comptest $'tst rpc m\\t\\t'"
+  ],
+  "zsh": [
+   "line: {tst rpc mountd,}{}",
+   "line: {tst rpc mountd,}{}",
+   "DESCRIPTION:{version}"
+  ],
+  "sut": [
+   "line: {tst rpc mountd,}{}",
+   "line: {tst rpc mountd,}{}"
+  ]
+ },
+ {
+  "origin": "Y05describe#3",
+  "message": "name2 as (...)",
+  "probes": 29,
+  "converged": true,
+  "signature": [
+   "NO",
+   "line"
+  ],
+  "reproducible_standalone": true,
+  "note": "",
+  "repro": "tests/ztst_compsys/repros/y05describe_003.zsh",
+  "kept_lines": [
+   "comptesteval 'compdef _tst tst'",
+   "tst_describe() { comptesteval \"_tst() { _describe ${${(@q+)@}} }\" }",
+   "tst_describe '(a b:descb \"c\\:c:descc\")' '(ax bx:descbx \"cx\\:cx:desccx\")'",
+   "comptest $'tst \\t\\t'"
+  ],
+  "zsh": [
+   "line: {tst }{}",
+   "DESCRIPTION:{(a b:descb \"c\\:c:descc\")}",
+   "NO:{bx     -- descbx}",
+   "NO:{cx:cx  -- desccx}",
+   "NO:{ax}",
+   "line: {tst bx}{}"
+  ],
+  "sut": [
+   "line: {tst }{}",
+   "DESCRIPTION:{(a b:descb \"c\\:c:descc\")}",
+   "line: {tst }{}",
+   "DESCRIPTION:{(a b:descb \"c\\:c:descc\")}"
+  ]
+ }
+]
