@@ -1,0 +1,2682 @@
+# ztst Y-series completion suite -- zshrs 0.12.49 @29ee728e
+
+date: 2026-08-30T08:05:16-0400
+fx: off
+harness: /var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_compsys.yc8oxnw7/sut/zsh
+harness_version: 5.9.2 zsh-5.9.2-0-gddee3e7
+mode: core (shell parity)
+modules_linked: 38
+sut: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs
+sut_env: ZSHRS_NATIVE_ZLE_FX=0
+sut_snapshot: yes
+sut_version: 5.9.2 zsh-5.9.2-0-gddee3e7
+tests: A01grammar,A02alias,A03quoting,A04redirect,A05execution,A06assign,A07control,A08time,A09zwc,B01cd,B02typeset,B03print,B04read,B05eval,B06fc,B07emulate,B08shift,B09hash,B10getopts,B11kill,B12limit,B13whence,C01arith,C02cond,C03traps,C04funcdef,C05debug,D01prompt,D02glob,D03procsubst,D04parameter,D05array,D06subscript,D07multibyte,D08cmdsubst,D09brace,D10nofork,E01options,E02xtrace,E03posix,K01nameref,K02parameter,P01privileged,V01zmodload,V02zregexparse,V03mathfunc,V04features,V05styles,V06parameter,V07pcre,V08zpty,V09datetime,V10private,V11db_gdbm,V12zparseopts,V13zformat,V14system,V15nearcolor,W01history,W02jobs,W03jobparameters,X02zlevi,X03zlebindkey,X04zlehighlight,X05zleincarg,X06termquery,Z01is-at-least,Z02zmathfunc,Z03run-help,Z04zgetopt
+timeout: 150
+zsh_build: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc
+zsh_build_version: 5.9.999.3-test
+
+files=70 assertions=2523 fail=428 notrun=5 pass=1855 skip=2 unknown=212 xfail=19 xpass=2
+
+## A01grammar  exit=1  fail=6 pass=107
+  ok     1 Test skipping if ZTST_test_skip is set
+  ok     2 Basic pipeline handling
+  ok     3 Exit status of pipeline with builtins (true)
+  ok     4 Exit status of pipeline with builtins (false)
+  ok     5 Executing command that evaluates to empty resets status
+  ok     6 Starting background command resets status
+  ok     7 Sourcing empty file resets status
+  ok     8 Basic coprocess handling
+  ok     9 Basic sublist (i)
+  ok    10 Basic sublist (ii)
+  ok    11 Basic subshell list with error
+  ok    12 Basic current shell list with error
+  ok    13 End of sublist containing ! with no command
+  ok    14 ! followed by no further commands
+  FAIL  15 exclamation marks without following commands
+  ok    16 ! followed by no command but by a pipe
+  FAIL  17 `-' precommand modifier
+  ok    18 `noglob' precommand modifier
+  ok    19 `exec' precommand modifier
+  ok    20 `exec' with -l option
+  ok    21 `exec' with -a option
+  ok    22 `exec' with -a option, no space
+  FAIL  23 rationalisation of arguments to exec -a
+  ok    24 `exec' with -a option from expansion
+  ok    25 `exec' with -c option
+  ok    26 precommand modifiers with quotes
+  ok    27 `command' precommand modifier
+  ok    28  command -p without -v or -V
+  ok    29 command -p in combination
+  ok    30 command -p in combination, using expansion
+  ok    31 `builtin' precommand modifier
+  ok    32 `if ...' (i)
+  ok    33 `if ...' (ii)
+  ok    34 `if ...' (iii)
+  ok    35 `if ...' (iv)
+  ok    36 `for' loop
+  ok    37 `for' loop with newline before in keyword
+  ok    38 arithmetic `for' loop
+  ok    39 regression test, nested cmdsubst in arithmetic `for' loop
+  ok    40 enhanced `for' syntax with two loop variables
+  ok    41 enhanced `for' syntax with three loop variables
+  ok    42 compatibility of enhanced `for' syntax with standard syntax
+  ok    43 `while' loop
+  ok    44 `until' loop
+  ok    45 `repeat' loop
+  ok    46 `case', old syntax
+  ok    47 `case', new syntax
+  ok    48 `case', new syntax, cascaded
+  ok    49 'case', redundant final ";&"
+  ok    50 `select' loop
+  ok    51 `function' keyword
+  ok    52 basic [[ ... ]] test
+  ok    53 Basic `always' syntax
+  ok    54 Always block with error not reset
+  FAIL  55 Always block with error reset
+  ok    56 Output of syntactic structures with and without always blocks
+  ok    57 Alternate `if' with braces
+  ok    58 Short form of `if'
+  ok    59 Short form of `if' can't be too short
+  ok    60 Form of `for' with parentheses.
+  ok    61 Short form of `for'
+  ok    62 Short arithmetic `for'
+  ok    63 Csh-like `for'
+  ok    64 Alternative `while'
+  ok    65 Alternative `until'
+  ok    66 Short `repeat'
+  ok    67 Tokens in repeat argument
+  ok    68 `case' with braces
+  ok    69 `case' with mixed ;& and ;|
+  ok    70 Bug regression: `while' loop with redirection and pipeline
+  ok    71 Handling of ||'s and &&'s with a for loop in between
+  ok    72 Handling of &&'s and ||'s with a for loop in between
+  ok    73 Parse error with file causes non-zero exit status
+  ok    74 Parse error on standard input causes non-zero exit status
+  ok    75 Parse error on inline command causes non-zero exit status
+  ok    76 Non-existent script causes exit status 127
+  ok    77 comments within $(...)
+  ok    78  Attempt to "." non-existent file.
+  ok    79  Attempt to "." file with bad syntax.
+  ok    80 Last status of successfully executed "." file is retained
+  ok    81 return in positive until test in dot file does not cause excess breaks
+  ok    82 "." file sees status from previous command
+  ok    83 PATHSCRIPT option
+  ok    84 PATHSCRIPT option not used.
+  ok    85 $0 is traditionally if bizarrely set to the first argument with -c
+  ok    86 Parentheses in shglob
+  ok    87 Always block interaction with return
+  ok    88 Exit status of always block is ignored
+  ok    89 Regression test for exit status of always block is ignored also in tailcalls
+  ok    90 Exit and always block with functions: simple
+  ok    91 Exit and always block with functions: nested
+  FAIL  92  case word handling in sh emulation (SH_GLOB parentheses)
+  ok    93  case patterns within words
+  ok    94 Unbalanced parentheses and spaces with zsh pattern
+  ok    95 Balanced parentheses and spaces with zsh pattern
+  ok    96 Long case with parsed alternatives turned back into text
+  ok    97 case retains exit status for execution of cases
+  ok    98 case sets exit status to zero if no patterns are matched
+  ok    99 case keeps exit status of last command executed in compound-list
+  ok   100  case with no opening parentheses and empty string 
+  ok   101 Assignment-only current shell commands in LHS of pipeline
+  ok   102 semicolon is equivalent to newline
+  ok   103 exec last command optimization inhibited for try/always
+  FAIL 104 Status on bad substitution in if without else
+  ok   105 Comments should be handled in command subst in interactively sourced files
+  ok   106 workers/47599: current-shell blocks masquerading as brace expansion
+  ok   107 Non-interactive shell command input is line buffered
+  ok   108 ! inverts the status of implicit return
+  ok   109 ! does not affect return status of explicit return
+  ok   110 continue causes immediate continuation
+  ok   111 return causes immediate return
+  ok   112 ! continue causes immediate continuation
+  ok   113 ! return causes immediate return
+
+## A02alias  exit=1  fail=3 pass=16
+  ok     1 Basic aliasing
+  ok     2 Global aliasing
+  ok     3 Not aliasing
+  ok     4 Aliasing with a backslash
+  ok     5 POSIX_ALIASES option
+  ok     6 Alias expansion works at the end of parsed strings
+  FAIL   7 We can now alias special tokens.  Woo hoo.
+  ok     8 Aliasing reserved tokens
+  ok     9 Global aliasing quotes
+  ok    10 unalias -a
+  ok    11 unalias -as
+  ok    12 printing invalid aliases warns
+  ok    13 No endless loop with suffix alias in command position
+  ok    14 error message has the correct sign
+  FAIL  15 ALIAS_FUNC_DEF off by default.
+  FAIL  16 ALIAS_FUNC_DEF reports original alias if multiple
+  ok    17 ALIAS_FUNC_DEF causes the icky behaviour to be available
+  ok    18 NO_ALIAS_FUNC_DEF works if the alias is a complete definition
+  ok    19 type -w of alias -g
+
+## A03quoting  exit=1  fail=2 pass=9
+  ok     1 Simple use of quotes
+  ok     2 Quoting inside quotes
+  ok     3 $'-style quotes
+  ok     4 $'-style quotes with backslashed backslashes
+  FAIL   5 $'-style quote with metafied backslash
+  ok     6 No RC_QUOTES with single quotes
+  ok     7 Yes RC_QUOTES with single quotes
+  ok     8 \u in both print and printf
+  FAIL   9 Embedded null characters in $'...' strings.
+  ok    10 $'' should not be elided, in common with other empty quotes
+  ok    11 Extended minimal quoting of quotes and backslashes
+
+## A04redirect  exit=1  fail=4 pass=74
+  ok     1 '>' and '<' redirection
+  ok     2 '<>' redirection
+  ok     3 '>|' redirection
+  ok     4 '>!' redirection
+  ok     5 '>>' redirection
+  ok     6 '>>|' and '>>!' redirection
+  ok     7 Here-documents
+  ok     8 Here-documents stripping tabs
+  ok     9 Here-documents don't perform shell expansion on the initial word
+  ok    10 Here-documents do perform $'...' expansion on the initial word
+  ok    11 '<<<' redirection
+  ok    12 here-strings with $'...' quoting
+  ok    13 Re-evaluation of function output with here document, unquoted
+  ok    14 Re-evaluation of function output with here document, quoted
+  ok    15 No input, not even newline, from empty here document.
+  ok    16 Line continuation in here-document with unquoted delimiter
+  ok    17 No line continuation in here-document on escaped backslash
+  ok    18 '>&' redirection
+  ok    19 '<&' redirection
+  ok    20 '<&-' redirection with numeric fd (no error message on failure)
+  ok    21 '<&-' redirection with fd in variable (error message on failure)
+  ok    22 Regression test for off-by-one in varid check
+  ok    23 '>&-' redirection
+  FAIL  24 '>&-' with attempt to use closed fd
+  ok    25 '>&p' and '<&p' redirection
+  ok    26 '>&FILE' handling
+  ok    27 '&>FILE' handling
+  ok    28 '>&|', '>&!', '&>|', '&>!' redirection
+  ok    29 'Combining > with >& (1)'
+  ok    30 'Combining > with >& (2)'
+  ok    31 2-file multio
+  ok    32 setup file+pipe multio
+  ok    33 read file+pipe multio
+  ok    34 multio with globbing
+  ok    35 setup multio for input
+  ok    36 read multio input
+  FAIL  37 read multio input with pipe
+  ok    38 null redir with NULLCMD unset
+  ok    39 null redir in $(...) with NULLCMD unset
+  ok    40 READNULLCMD with NULLCMD unset
+  ok    41 null redir with NULLCMD=:
+  ok    42 READNULLCMD
+  ok    43 null redir with NULLCMD=cat
+  ok    44 Using {fdvar}> syntax to open a new file descriptor
+  ok    45 NO_CLOBBER prevents overwriting parameter with allocated fd
+  ok    46 NO_CLOBBER doesn't complain about any other expression
+  ok    47 Closing file descriptor using brace syntax
+  ok    48 Error opening file descriptor using readonly variable
+  ok    49 Error closing file descriptor using readonly variable
+  ok    50 Optimised here-string to filename
+  ok    51 Parsing of redirection operators (no space required before operators)
+  ok    52 failed exec redir, no POSIX_BUILTINS
+  ok    53 failed exec redir, POSIX_BUILTINS
+  ok    54 failed special builtin redir, POSIX_BUILTINS
+  ok    55 failed special builtin redir with command prefix, POSIX_BUILTINS
+  ok    56 failed unspecial builtin redir, POSIX_BUILTINS
+  ok    57 failed dot, POSIX_BUILTINS
+  ok    58 failed dot, NO_POSIX_BUILTINS
+  ok    59 failed assignment on posix special, CONTINUE_ON_ERROR
+  ok    60 failed assignment on posix special, NO_CONTINUE_ON_ERROR
+  ok    61 failed assignment on non-posix-special, CONTINUE_ON_ERROR
+  ok    62 check behaviour with square brackets
+  ok    63 anonymous function redirections are applied immediately
+  ok    64 anonymous function redirections mixed with argument
+  ok    65 redirections with normal function definition
+  ok    66 text output of function with redirections
+  ok    67 multiply named functions with redirection
+  ok    68 Redirections in both function definition and command line
+  ok    69 Output from $functions[] for definition with redirection
+  ok    70 Output from $functions[] for definition with no redirection
+  ok    71 Assignment with exec used for redirection: no POSIX_BUILTINS
+  ok    72 Assignment with exec used for redirection: POSIX_BUILTINS
+  FAIL  73 Two here-documents in a line are shown correctly.
+  FAIL  74 Combination of HERE-document and |&
+  ok    75 Redirect in the middle of assignments
+  ok    76 Here-{string,document}s succeed with restrictive umask
+  ok    77 Regression test for here document with fd declarator
+  ok    78 CLOBBER_EMPTY
+
+## A05execution  exit=1  fail=4 pass=35
+  ok     1 ./prog execution
+  ok     2 path (1)
+  ok     3 path (2)
+  ok     4 path (3)
+  ok     5 path (4)
+  ok     6 path (5)
+  ok     7 function argument passing
+  ok     8 Aliases in functions
+  ok     9 EXIT trap environment
+  ok    10 return (1)
+  ok    11 return (2)
+  ok    12 autoloading (1)
+  ok    13 autoloading with initialization
+  ok    14 autoloading via -X
+  ok    15 chpwd
+  ok    16 chpwd_functions
+  ok    17 TRAPEXIT
+  ok    18 TRAPDEBUG
+  ok    19 trap DEBUG
+  ok    20 TRAPZERR
+  ok    21 trap ZERR
+  ok    22 Status reset by starting a backgrounded command
+  ok    23 Check whether '$pipestatus[]' behaves.
+  ok    24 Check $pipestatus with a known difficult case
+  ok    25 Bug regression: piping a shell construct to an external process may hang
+  ok    26 Bug regression: piping to anonymous function; piping to background function
+  ok    27 
+  ok    28 The status of recently exited background jobs is recorded
+  ok    29 False "if" condition handled correctly by "for" loops with ERR_EXIT
+  ok    30 The status of "select" is zero when the loop body does not execute
+  FAIL  31 Background job exit does not affect reaping foreground job
+  ok    32 "return" in "if" or "while" conditional
+  FAIL  33 'wait' exit status and warning for unknown ID
+  FAIL  34 'wait' exit status for unknown ID (POSIX mode)
+  ok    35 wait for stopped and continued process
+  ok    36 exit code 130 isn't mistaken for a signal (unit test for workers/46060)
+  ok    37 'repeat' loop can use lastval in the count
+  ok    38 'repeat 0' resets lastval
+  FAIL  39 shebang-less scripts are to be run by sh even when their file paths start with - or + (workers/52515)
+
+## A06assign  exit=1  fail=8 pass=103
+  ok     1 assign to association with odd no. of values
+  ok     2 Replacement of array element
+  ok     3 Replacement of array element with array
+  ok     4 Replacement of start of array
+  ok     5 Replacement of start of array with shorter slice
+  ok     6 Replacement of array by extending slice
+  ok     7 Replacement of middle element with array
+  ok     8 Replacement of slice in middle
+  ok     9 Appending by replacing elements off the end
+  ok    10 Replacement of last element of array, negative indices
+  ok    11 Replacement of last element of array with array, negative indices
+  ok    12 Replacement of middle of array, negative indices
+  ok    13 Replacement of entire array, negative indices
+  ok    14 Replacement of more than entire array, negative indices
+  ok    15 Replacement of element off start of array.
+  ok    16 Replacement off start doesn't leave gaps.  Hope this is right.
+  ok    17 Replacement of entire array, mixed indices
+  ok    18 Replacement of more than entire array, mixed indices
+  ok    19 Replacement of slice in middle, mixed indices
+  ok    20 Replacement of slice with end index preceding start index
+  ok    21 Append to empty array by range
+  ok    22 Append to 1-element array by range
+  ok    23 Append to 2-element array by range
+  ok    24 Append to 2-element array by [a,a] range
+  ok    25 Append array by range, continuously
+  ok    26 Append array by [a,a] range, continuously
+  ok    27 Append empty array via +=
+  ok    28 Append 1-element array via +=
+  ok    29 Assign $? to array (true)
+  ok    30 Assign $? to array (false)
+  ok    31 Assign $? to array with typeset (true)
+  ok    32 Assign $? to array with typeset (false)
+  ok    33 Append $? to array (true+false)
+  ok    34 append scalar to unset scalar
+  ok    35 append to scalar
+  ok    36 append to positional parameter
+  ok    37 add scalar to array
+  ok    38 add scalar to array with ksharrays set
+  ok    39 add scalar to array with alternate syntax
+  ok    40 add to integer
+  ok    41 add to float
+  FAIL  42 add scalar to association
+  ok    43 add array to empty parameter
+  ok    44 add array to unset parameter
+  ok    45 add array to declared unset parameter
+  ok    46 add array to existing array
+  ok    47 add array to scalar
+  ok    48 add array to integer
+  ok    49 add array to float
+  ok    50 add to empty association
+  ok    51 add to association
+  ok    52 add empty array to association
+  ok    53 insert scalar inside another
+  ok    54 insert scalar inside another with negative index
+  ok    55 append scalar to scalar using a range
+  ok    56 insert scalar inside another, specifying a slice
+  ok    57 append to array element
+  ok    58 append to array element with negative index
+  ok    59 append to array element, specifying a slice
+  ok    60 append to array element with ksharrays set
+  ok    61 append to association element
+  ok    62 append to non-existent association element
+  ok    63 attempt to append to slice of association
+  FAIL  64 attempt to add to indexed integer variable
+  FAIL  65 attempt to add to slice of float variable
+  ok    66 append to unset variable with index
+  ok    67 insert array inside another
+  ok    68 append to array using negative index
+  ok    69 insert array using negative range
+  FAIL  70 attempt to insert array into string
+  ok    71 attempt to insert array into string
+  ok    72 attempt to append array to hash element
+  ok    73 add array to indexed unset variable
+  ok    74 saving and restoring of exported special parameters
+  ok    75 save and restore multiple variables around builtin
+  ok    76 save and restore when using original value in temporary
+  FAIL  77 GLOB_ASSIGN with numeric types
+  ok    78 GLOB_ASSIGN option
+  ok    79 GLOB_ASSIGN doesn't monkey with type if not scalar assignment.
+  FAIL  80 command execution with assignments shadowing array parameter
+  FAIL  81 command execution with assignments shadowing array parameter with ksharrays
+  ok    82 assignment to unique array
+  ok    83 slice beyond length of array
+  ok    84 overwrite first character in string
+  ok    85 overwrite middle character in string
+  ok    86 overwrite last character in string
+  ok    87 overwrite -1 character in string
+  ok    88 overwrite -2 character (middle) in string
+  ok    89 overwrite -2 character (first) in string
+  ok    90 overwrite -3 character (first) in string
+  ok    91 overwrite -4 character (before first) in string
+  ok    92 overwrite -5 character (before-before first) in string
+  ok    93 overwrite [-4,0] characters (before first) in string
+  ok    94 overwrite [-4,-4] character (before first) in string
+  ok    95 overwrite [-40,-30] characters (far before first) in string
+  ok    96 overwrite [-40,1] characters in short string
+  ok    97 overwrite [-40,40] characters in short string
+  ok    98 overwrite [2,40] characters in short string
+  ok    99 overwrite [2,-1] characters in short string
+  ok   100 overwrite [-2,-1] characters in short string
+  FAIL 101 overwrite [6,3] characters in short string
+  ok   102 overwrite [-1] character with "xx"
+  ok   103 overwrite [-2] character (before first) with "xx"
+  ok   104 overwrite [2] character (after last) with "xx"
+  ok   105 overwrite [1] character (string: "") with "xx"
+  ok   106 overwrite [-1] character (string: "") with "xx"
+  ok   107 overwrite [2] character (string: "") with "xx"
+  ok   108 regression workers/53033: assigning $! to array element
+  ok   109 regression workers/54340
+  ok   110 string assignments don't take ownership of non-freeable pointers
+  ok   111 array assignments don't take ownership of non-freeable pointers
+
+## A07control  exit=0  pass=17
+  ok     1 Passing of return values back through functions
+  ok     2 continue outside loop
+  ok     3 continue with valid argument
+  ok     4 continue error case 0
+  ok     5 continue error case -1
+  ok     6 break from within function (this is a feature, I disovered)
+  ok     7 break with valid argument
+  ok     8 break error case 0
+  ok     9 break error case -1
+  ok    10 Status 0 from for with explicit empty list
+  ok    11 Status 0 from for with implicit empty list
+  ok    12 Status from previous command propagated into for loop
+  ok    13 Status from expansion propagated into for loop
+  ok    14 Status from expansion not propagated after unexecuted for loop
+  ok    15 Status from before for loop not propagated if empty after expansion
+  ok    16 Status reset by empty list in for loop
+  ok    17 Last status from loop body is kept even with other funny business going on
+
+## A08time  exit=0  pass=16
+  ok     1 `time' keyword (status only)
+  ok     2 `time' keyword with custom TIMEFMT
+  ok     3 TIMEFMT %[USE] use centisecond precision
+  ok     4 TIMEFMT %*[USE] use millisecond precision
+  ok     5 TIMEFMT %nU and %nS are limited to microsecond precision
+  ok     6 `time' elapsed time matches SECONDS
+  ok     7 TIMEFMT elapsed time values
+  ok     8 `time' simple assignment
+  ok     9 `time' assignment with external command
+  ok    10 `time' for-loop with arithmetic condition
+  ok    11 `time' of a builtin with argument command substitution
+  ok    12 `time' of external command with process substitution
+  ok    13 `time' of nonexistent builtin with command substitution
+  ok    14 `time' of nonexistent external
+  ok    15 `time' of failed builtin with errexit
+  ok    16 `time' of failed external with errexit
+
+## A09zwc  exit=1  fail=1 pass=1
+  ok     1 Unmodified .zwc loads and runs
+  FAIL   2 workers/54571: Malformed .zwc with implausible npats does not crash the shell
+
+## B01cd  exit=1  fail=2 pass=4 xfail=1
+  ok     1 Preserving symbolic links in the current directory string
+  ok     2 Changing directory up through symbolic links without following them
+  ok     3 Resolving symbolic links with chaselinks set
+  ok     4 
+  FAIL   5 Implicit cd with unset HOME.
+  xfail   6 (workers/45367) cd -P squashes multiple leading slashes
+  FAIL   7 cd . with moved PWD
+
+## B02typeset  exit=1  fail=27 pass=61
+  ok     1 Report types for global variables
+  ok     2 Simple local declarations
+  ok     3 Equivalence of local and typeset in functions
+  ok     4 Basic equivalence of declare and typeset
+  ok     5 declare previously lacked -m/+m options
+  ok     6 Global export
+  ok     7 Equivalence of export and typeset -x
+  ok     8 Local export
+  ok     9 Floating point, adding a precision, and fixed point
+  ok    10 Integer and changing the base
+  ok    11 Conversion of floating point to integer
+  ok    12 Equivalence of functions and typeset -f
+  ok    13 Readonly declaration
+  ok    14 Convert to readonly
+  ok    15 Uniquified arrays and non-local scope
+  ok    16 Tied parameters and uniquified colon-arrays
+  FAIL  17 Tied parameters and uniquified arrays with meta-character as separator
+  FAIL  18 Tied parameters and uniquified arrays with NUL-character as separator
+  ok    19 Untying is prohibited
+  ok    20 Export of tied parameters
+  FAIL  21 Tied arrays with separator specified
+  ok    22 Tied array syntax
+  ok    23 Illegal local array element assignment
+  ok    24 Legal local array element assignment
+  ok    25 Legal local associative array element assignment
+  ok    26 Local scalar subscript assignment
+  ok    27 Left justification of scalars
+  ok    28 Left justification of floating point
+  ok    29 Left justification of scalars with zero suppression
+  ok    30 Right justification of scalars
+  ok    31 Right justification of scalars with zeroes
+  ok    32 Right justification of integers with zero, no initial base
+  ok    33 Right justification of integers with zero, base 16, C_BASES off
+  ok    34 Right justification of integers with zero, base 16, C_BASES on
+  ok    35 Extracting substrings from padded integers
+  ok    36 Right justification of fixed point numbers with zero
+  ok    37 Stress test: all parameters are local and unset, using -m
+  FAIL  38 Parameter hiding and tagging, printing types and values
+  ok    39 Adding and removing values to and from the environment
+  ok    40 Can unset environment variables after exec
+  FAIL  41 Upper case conversion, does not apply to values used internally
+  FAIL  42 Lower case conversion, does not apply to values used internally
+  ok    43 typeset -p shouldn't create scoped values
+  ok    44 typeset -g should be silent even without TYPESET_SILENT
+  ok    45 retying arrays to same array works
+  FAIL  46 readonly with POSIX_BUILTINS
+  ok    47 readonly -p output (no readonly specials)
+  ok    48 readonly -p output
+  ok    49 typeset reserved word interface: basic
+  ok    50 typeset reserved word, more complicated cases
+  FAIL  51 reserved word and builtin interfaces
+  FAIL  52 typeset preserves existing variable types
+  ok    53 text output from typeset
+  ok    54 can set empty array
+  FAIL  55 can update array slices in typeset
+  ok    56 setting empty array in typeset
+  ok    57 typeset returns status 1 if setting readonly variable
+  FAIL  58 when cannot change UID, the command isn't run
+  ok    59 [key]=val for hashes
+  FAIL  60 [key]=val for normal arrays
+  FAIL  61 Substitution in [key]=val syntax
+  FAIL  62 mixed syntax [key]=val with normal arrays
+  ok    63 Mixed syntax with [key]=val not allowed for hash.
+  ok    64 typeset -p1 output for array
+  ok    65 typeset -p1 output for associative array
+  FAIL  66 parameter hiding preserved by "typeset -p"
+  ok    67 read-only special params are output when localized
+  ok    68 typeset output for some special tied parameters
+  FAIL  69 redeclare a tied variable with different attributes
+  FAIL  70 colonarray re-split when changing the join character
+  FAIL  71 cannot change the join character on a readonly tied variable
+  ok    72 Can't tie a special tied array to a different variable
+  ok    73 Can't tie a special tied scalar to a different variable
+  ok    74 Can't change the join character of a special tied variable
+  ok    75 reject attempt to tie special to downgraded peer
+  FAIL  76 OK to run typeset -T on tied specials as long as peer and joinchar are unchanged
+  ok    77 Make sure +x is honoured when tying a parameter
+  FAIL  78  readonly/export output for exported+readonly+special when started as sh
+  FAIL  79  readonly/export output for exported+readonly+tied+special after switching to sh emulation
+  ok    80  no array/hash in POSIX export/readonly -p
+  ok    81 Regression test for {...} parsing in typeset
+  FAIL  82 Global non -h variable doesn't hide special variable
+  FAIL  83 Global non -h variable doesn't hide autoload variable
+  FAIL  84 Global -h variable doesn't hide autoload variable
+  FAIL  85 Local non -h variable doesn't hide special variable
+  FAIL  86 Local non -h variable hides autoload variable
+  FAIL  87 Local -h variable hides autoload variable
+  ok    88 float NaN/Inf output formatting
+
+## B03print  exit=1  fail=1 pass=65
+  ok     1 replace directory name
+  ok     2 output to file-descriptor
+  ok     3 argument sorting
+  ok     4 print -f needs a format specified
+  ok     5 reverse argument sorting
+  ok     6 case-sensitive argument sorting
+  ok     7 case-insensitive argument sorting
+  ok     8 removal of non-matching arguments
+  ok     9 test s format specifier
+  ok    10 test b format specifier
+  ok    11  test q format specifier
+  ok    12 test c format specifier
+  ok    13 test n format specifier
+  ok    14 check count of width-specified %b
+  ok    15 ensure width is applied to empty param
+  ok    16 test d format specifier
+  ok    17 test g format specifier
+  ok    18 infinity constants
+  ok    19 override -C when -f was given
+  ok    20 initial quote to get numeric value of character with int
+  ok    21 initial quote to get numeric value of character with double
+  FAIL  22 numeric value of high numbered character
+  ok    23 using \x25 to print a literal % in format
+  ok    24 width specified in format specifier
+  ok    25 precision specified in format specifier
+  ok    26 width/precision specified in arguments
+  ok    27 use of invalid directive
+  ok    28 bad arithmetic expression
+  ok    29 out of range argument specifier
+  ok    30 out of range argument specifier on format reuse
+  ok    31 out of range argument specifier on width
+  ok    32 format not printed if no arguments left after -m removal
+  ok    33 format printed despite lack of arguments
+  ok    34 with no arguments empty string where string needed
+  ok    35 with no arguments, zero used where number needed
+  ok    36 multiple arguments with format reused
+  ok    37 %n count zeroed on format reuse
+  ok    38 maximal length format specification
+  ok    39 left-justification of string
+  ok    40 negative width specified
+  ok    41 negative precision specified
+  ok    42 specify argument to output explicitly
+  ok    43 specify output and precision arguments explicitly
+  ok    44 reuse format where arguments are explicitly specified
+  ok    45 reuse of specified arguments 
+  ok    46 testing -n with echo
+  ok    47 flags mixed with specified argument
+  ok    48 Truncating first echo arg using backslash-c
+  ok    49 Truncating third echo arg using backslash-c
+  ok    50 Truncating printf literal using backslash-c
+  ok    51 Truncating printf format using backslash-c
+  ok    52 Truncating printf early %b arg using backslash-c
+  ok    53 Truncating printf late %b arg using backslash-c
+  ok    54 mixed style of argument selection
+  ok    55 argument specified for width only
+  ok    56 argument specified for precision only
+  ok    57 initial `--' ignored to satisfy POSIX
+  ok    58 nothing after % in format specifier
+  ok    59 explicit null after % in format specifier
+  ok    60 printf handles \0... octal escapes in replacement text
+  ok    61 sorting with embedded nulls
+  ok    62 Tab expansion by print
+  ok    63 print and printf into a variable
+  ok    64 printf into an array variable
+  ok    65 printf to an array variable without format string reuse
+  ok    66 regression test of printf with assorted ambiguous options or formats
+
+## B04read  exit=1  fail=1 pass=17
+  ok     1 basic read command
+  ok     2 array read
+  ok     3 read specified number of chars
+  ok     4 read yes or no, default no
+  ok     5 read up to delimiter
+  ok     6 use different, IFS separator to array
+  ok     7 read from editor buffer stack
+  ok     8 read with echoing and assigning
+  ok     9 read with echoing but assigning disabled
+  ok    10 read with test first
+  ok    11 read with timeout (no waiting should occur)
+  ok    12 read with null delimiter
+  ok    13 empty delimiter terminates at nulls
+  ok    14 read with a delimiter >= 0x80
+  ok    15 read with trailing metafied characters
+  FAIL  16 return status on failing to set parameter
+  ok    17 Behaviour of -A and -E combination
+  ok    18 Behaviour of -A and -e combination
+
+## B05eval  exit=0  pass=4
+  ok     1 eval retains value of $?
+  ok     2 eval after command not found
+  ok     3 eval with empty command resets the status
+  ok     4 eval with empty command resets the status
+
+## B06fc  exit=0  pass=4
+  ok     1 Checking that fc -l foo doesn't core dump when history is empty
+  ok     2 Checking that fc -p doesn't core dump when history size is zero
+  ok     3 Checking that fc -p rejects non-integer history size
+  ok     4 Checking that fc -p rejects non-integer history save size
+
+## B07emulate  exit=1  fail=1 pass=19
+  ok     1 Basic use of emulate
+  ok     2 Use of emulate -L
+  ok     3 Use of emulate -R
+  ok     4 Use of emulate -c
+  ok     5 Use of emulate -R -c
+  ok     6 Basic sticky function emulation
+  ok     7 Basic sticky function emulation
+  ok     8 Sticky emulation not triggered if sticky emulation unchanged
+  ok     9 emulate -c with options
+  ok    10 emulate with options but no -c
+  ok    11 emulate -c with incorrect options
+  ok    12 options specified alongside emulation are also sticky
+  ok    13 options propagate between identical emulations
+  ok    14 options do not propagate between different emulations
+  ok    15 regression test for POSIX_ALIASES reserved words
+  ok    16 --emulate option
+  ok    17 --emulate must be first
+  ok    18 --emulate needs an argument
+  ok    19 --emulate followed by other options
+  FAIL  20 emulate sh uses subshell for last pipe entry
+
+## B08shift  exit=1  fail=1 pass=3
+  ok     1 shifting positional parameters
+  ok     2 shifting array
+  FAIL   3 shifting more elements than exist in array
+  ok     4 shifting non-array
+
+## B09hash  exit=0  pass=10
+  ok     1 Directory hash initially empty
+  ok     2 Populating directory hash and output with sort
+  ok     3 Empty hash
+  ok     4 Refill hash
+  ok     5 hash -L option
+  ok     6 hash -m option
+  ok     7 Multiple assignments
+  ok     8 Multiple arguments with no assignment not in verbose mode
+  ok     9 Multiple arguments with no assignment in verbose mode
+  ok    10 Dashes are untokenized in directory hash names
+
+## B10getopts  exit=1  fail=3 pass=20
+  ok     1 no arguments
+  ok     2 one operand
+  ok     3 one option
+  ok     4 one option, one operand
+  ok     5 one option, two operands, leading hyphen
+  ok     6 two options, single argument
+  ok     7 two options, separate arguments
+  ok     8 three options, + variant
+  ok     9 one option with value, single argument
+  ok    10 one option with value, single argument, + variant
+  ok    11 one option with value, separate arguments
+  ok    12 two options, one with value, single argument
+  ok    13 two options, one with value, separate arguments
+  ok    14 one option missing value
+  ok    15 one option missing value, + variant
+  ok    16 one invalid option
+  ok    17 one invalid option, + variant
+  ok    18 missing option-argument (error message mode)
+  ok    19 missing option-argument (quiet mode)
+  ok    20 OPTIND calculation with and without POSIX_BUILTINS (workers/42248)
+  FAIL  21 POSIX_BUILTINS disables '+' variant handling
+  FAIL  22 -p works like POSIX_BUILTINS
+  FAIL  23 option parsing
+
+## B11kill  exit=1  fail=4 pass=6
+  ok     1 kill with no sigspec
+  ok     2 kill with sigspec
+  FAIL   3 kill with multiple wrong inputs should increment status
+  FAIL   4 kill with sigspec and wrong inputs should increment status
+  ok     5 kill with no arguments
+  ok     6 kill with sigspec only
+  FAIL   7 kill with empty pid and sigspec should not send signal to current process group
+  FAIL   8 Plain kill with empty pid should not send signal to current process group
+  ok     9 kill -l
+  ok    10 kill -L
+
+## B12limit  exit=1  fail=1 pass=6
+  ok     1 Check if there is unknown resource(s) in the system
+  ok     2 check if limit option letters are unique
+  ok     3 bad option letter
+  ok     4 missing number after -N
+  ok     5 invalid number after -N
+  ok     6 resource option combined with -a
+  FAIL   7 bad multibyte option letter
+
+## B13whence  exit=1  fail=1 pass=2
+  ok     1 whence symlink resolution
+  ok     2 whence deals with symlink loops gracefully
+  FAIL   3 (workers/53524) whence -s doesn't print arrows for symlink-free paths
+
+## C01arith  exit=1  fail=1 pass=73
+  ok     1 basic integer arithmetic
+  ok     2 basic floating point arithmetic
+  ok     3 Test floating point modulo function
+  ok     4 base input
+  ok     5 conversion to float
+  ok     6 conversion to int
+  ok     7 precedence (arithmetic)
+  ok     8 precedence (arithmetic, with C_PRECEDENCES)
+  ok     9 precedence (logical)
+  ok    10 precedence (ternary)
+  ok    11 parsing ternary (1)
+  ok    12 parsing ternary (2)
+  ok    13 comma operator
+  ok    14 #, ## and $#
+  ok    15 ## without following character
+  ok    16 ## followed by a space
+  ok    17 promotion to float
+  ok    18 use of scalars to store integers and floats
+  ok    19 error using unset variable as index
+  ok    20 setting array elements in math context
+  ok    21 converting type from array
+  ok    22 bad lvalue
+  ok    23 assigning to scalar which contains non-math string
+  ok    24 empty math parse e.g. $(( )) acts like a zero
+  ok    25 empty assignment
+  ok    26 empty right hand of comma
+  ok    27 empty middle of comma
+  ok    28 commas and parentheses, part 1
+  ok    29 commas and parentheses, part 1
+  ok    30 leading zero doesn't affect floating point
+  ok    31 octalzeroes rejects invalid constants
+  ok    32 octalzeroes doesn't affect bases
+  ok    33 bases up to 36 work
+  ok    34 bases beyond 36 don't work
+  ok    35 Double quotes are not treated specially in arithmetic
+  ok    36 not a parse failure because not arithmetic
+  ok    37 doubled # in base removes radix
+  ok    38 no double increment for subscript
+  ok    39 double increment for repeated expression
+  ok    40 underscores in math constants
+  ok    41 underscores in front of a numeric identifier is not a math constant
+  ok    42 Forcing floating point constant evaluation, or not.
+  ok    43 Mixed float and non-decimal integer constants
+  ok    44 Grouping output with underscores: integers
+  ok    45 Grouping output with underscores: floating point
+  ok    46 Imported integer functions are not evaluated
+  ok    47 Binary input
+  ok    48 Binary numbers don't tend to have 2's in
+  ok    49 Infinity parsing
+  ok    50 Refer to Inf with an array subscript
+  ok    51 Assign to NaN
+  ok    52 Overflow to infinity
+  ok    53 Reinput infinity value into math context
+  ok    54 NaN results
+  ok    55 Integer division by zero
+  ok    56 Integer variable assignment converts result to integer
+  ok    57 Variables are forced to floating point where necessary
+  ok    58 Backing up a line of input when finding out it's not arithmetic
+  ok    59 Not needing to back up a line when reading multiline arithmetic
+  ok    60 Non-arithmetic subst with command substitution parse from hell
+  ok    61 Another tricky case that is actually a command substitution
+  ok    62 Same on a single line
+  ok    63 Would-be math expansion with extra parenthesis making it a cmd subst
+  ok    64 Arithmetic substitution nested in parameter substitution
+  ok    65 Null string in arithmetic evaluation after command substitution
+  ok    66 Nested math substitutions.  Yes, I know, very useful.
+  ok    67  Good and bad trailing parentheses
+  ok    68 type of variable when created in arithmetic context
+  ok    69  Allow rvalue but not lvalue operations with result of increment
+  ok    70  Unary minus doesn't apply to base but to number as a whole.
+  ok    71 Arithmetic, NO_UNSET part 1
+  ok    72 Arithmetic, NO_UNSET part 2
+  FAIL  73 Arithmetic, NO_UNSET part 3
+  ok    74 Double quotes are not treated specially in arithmetic (POSIX)
+
+## C02cond  exit=1  fail=3 pass=58
+  ok     1 -a cond
+  ok     2 -b cond
+  ok     3 -c cond
+  ok     4 -d cond
+  ok     5 -e cond
+  ok     6 -f cond
+  ok     7 -g cond
+  ok     8 -h cond
+  ok     9 -k cond
+  ok    10 -n cond
+  ok    11 -o cond
+  ok    12 -p cond
+  ok    13 -r cond
+  ok    14 -s cond
+  ok    15 -u cond
+  ok    16 -x cond
+  ok    17 -z cond
+  ok    18 -L cond
+  ok    19 -O cond
+  ok    20 -G cond
+  ok    21 -N cond
+  ok    22 -nt cond
+  ok    23 -ot cond
+  ok    24 -ef cond
+  ok    25 =, == and != conds
+  ok    26 < and > conds
+  ok    27 -eq and -ne conds
+  ok    28 -lt and -gt conds
+  ok    29 -le cond
+  ok    30 -ge cond
+  ok    31 || and && in conds
+  ok    32 /dev/fd support in conds handled by access
+  ok    33 /dev/fd support in conds handled by stat
+  ok    34 complex conds with skipping
+  ok    35 strings with `[' builtin
+  FAIL  36 string comparisons with `[' builtin
+  FAIL  37 string comparison with strings that look like operators
+  ok    38 substitution in `[' builtin
+  ok    39 argument checking for [ builtin
+  ok    40 argument checking for test builtin
+  ok    41 argument checking for [ builtin
+  ok    42 argument checking for test builtin
+  ok    43 argument checking for [ builtin
+  ok    44 argument checking for test builtin
+  ok    45 -nt shouldn't abort on non-existent files
+  ok    46 -v cond
+  ok    47 -v cond with array
+  ok    48 -v cond with association
+  ok    49 -v cond with positional parameters
+  ok    50 regex tests shouldn't crash
+  ok    51 MATCH, MBEGIN, MEND, match, mbegin, mend
+  ok    52 regex infix operator should not invert following conditions
+  ok    53 Error message for unknown prefix condition
+  ok    54 Error message for unknown infix condition
+  ok    55 Regression test for examining code with regular expression match
+  ok    56 test compatibility weirdness: treat ! as a string sometimes
+  ok    57 bash compatibility with single [[ ... ]] argument
+  ok    58 test with two arguments and a token
+  ok    59 yet more old-fashioned test fix ups: prefer comparison to parentheses
+  ok    60  = and == appear as input
+  FAIL  61 -o invalidoption
+
+## C03traps  exit=1  fail=10 pass=84
+  ok     1 Nested `trap ... EXIT'
+  ok     2  Nested TRAPEXIT
+  ok     3 Nested `trap - EXIT' on `trap ... EXIT'
+  ok     4 Nested `trap - EXIT' on `TRAPEXIT'
+  ok     5 EXIT traps on functions when exiting from function
+  ok     6 EXIT traps on a script
+  FAIL   7  Outputting traps correctly
+  ok     8  Nested `trap ... INT', not triggered
+  ok     9  Nested TRAPINT, not triggered
+  ok    10  Nested `trap - INT' on untriggered `trap ... INT'
+  FAIL  11  Nested `trap ... TERM', triggered on inner loop
+  FAIL  12  Nested `trap ... TERM', triggered on outer loop
+  ok    13  basic localtraps handling
+  ok    14  more sophisticated error trapping
+  ok    15 Unsetting ordinary traps with localtraps.
+  ok    16  ksh-style EXIT traps preserve return value
+  ok    17  ksh-style EXIT traps can force return status of enclosing function
+  FAIL  18  autoloaded TRAPEXIT (exit status > 128 indicates an old bug is back)
+  FAIL  19 waiting for trapped signal
+  ok    20  Combination of ERR_EXIT and ZERR trap
+  ok    21  Force return of containing function from TRAPZERR.
+  ok    22  Return with non-zero status triggered from within trap '...' ZERR.
+  ok    23  Normal return from TRAPZERR.
+  ok    24  Return with zero status triggered from within trap '...' ZERR.
+  FAIL  25 DDD
+  FAIL  26  EXIT trap set in current shell at left of pipeline
+  ok    27  EXIT trap set in subshell at left of pipeline
+  ok    28  EXIT trap set in subshell reset in subsubshell
+  ok    29  EXIT trap set in command substitution
+  ok    30 POSIX_TRAPS option
+  ok    31 POSIX_TRAPS effect on EXIT trap is sticky
+  FAIL  32 POSIX EXIT trap can have nested native mode EXIT trap
+  ok    33 POSIX EXIT trap not replaced if defined within function
+  ok    34 ERREXIT in loop with simple commands
+  ok    35 ERREXIT with false from inside && within function
+  ok    36 ERREXIT not triggered on empty function after false in if.
+  ok    37 ERREXIT is triggered in an else block after a cmd subst returning false
+  ok    38 ERR_RETURN not triggered in if condition
+  ok    39 ERR_RETURN in "if"
+  ok    40 ERR_RETURN in "else" branch (regression test)
+  ok    41 ERR_RETURN when false "if" is the first statement in an "else" (regression)
+  ok    42 ERR_RETURN, basic case
+  ok    43 ERR_RETURN with "!"
+  ok    44 ERR_RETURN with "!" and a following false
+  ok    45 ERR_RETURN with "!" suppressed inside complex structure
+  ok    46 ERR_RETURN with no "!" suppression (control case)
+  ok    47 ERR_RETURN with "&&" in function (regression test)
+  ok    48 ERR_RETURN not triggered on LHS of "&&" in function
+  ok    49 ERR_RETURN triggered on RHS of "&&" in function
+  ok    50 ERR_RETURN not triggered on LHS of "&&" in function on LHS of "&&" (regression test)
+  ok    51 ERR_RETURN within initialisation code with special flags
+  ok    52 ERR_RETURN caused by function returning false from within shell construct
+  ok    53 ERR_RETURN in "else" branch in nested function
+  ok    54 ERR_EXIT not triggered by "! true"
+  ok    55 ERR_EXIT not triggered by "! fn"
+  ok    56 ERR_EXIT not triggered by "false && true"
+  ok    57 ERR_EXIT not triggered by "false && true" but by return from fn
+  ok    58 ERR_EXIT not triggered by status 1 at end of for
+  ok    59 ERR_EXIT not triggered by status 1 at end of for but by return from fn
+  ok    60 ERR_EXIT not triggered by status 1 at end of repeat
+  ok    61 ERR_EXIT not triggered by status 1 at end of repeat but by return from fn
+  ok    62 ERR_EXIT not triggered by status 1 at end of if
+  ok    63 ERR_EXIT not triggered by status 1 at end of if but by return from fn
+  ok    64 ERR_EXIT not triggered by status 1 at end of while
+  ok    65 ERR_EXIT not triggered by status 1 at end of while but by return from fn
+  FAIL  66 ERR_EXIT not triggered by status 1 at end of always
+  ok    67 ERR_EXIT not triggered by status 1 at end of always but by return from fn
+  ok    68 ERR_EXIT not triggered by status 1 at end of { }
+  ok    69 ERR_EXIT not triggered by status 1 at end of { } but by return from fn
+  ok    70 ERR_EXIT triggered by status 1 within for
+  ok    71 ERR_EXIT triggered by status 1 within while
+  ok    72 ERR_EXIT triggered by status 1 within repeat
+  ok    73 ERR_EXIT triggered by status 1 within if
+  ok    74 ERR_EXIT triggered by status 1 within { }
+  ok    75 ERR_EXIT triggered by status 1 at end of anon func
+  ok    76  ERR_EXIT neither triggered inside loop nor triggered by while statement
+  ok    77  ERR_EXIT not triggered inside loop but triggered by rhs of ||
+  ok    78  ERR_EXIT not triggered inside loop but triggered by eval
+  ok    79  ERR_EXIT not triggered inside loop but triggered by source
+  ok    80  ERR_EXIT not triggered inside loop but triggered by command substitution
+  FAIL  81 ERR_EXIT is triggered by last command in an AND-OR list
+  ok    82 ERR_RETURN is triggered in function calls on the left of an AND-OR
+  ok    83 EXIT trap from TERM trap
+  ok    84 EXIT trap not called in LHS of pipeline: Shell construct on LHS
+  ok    85 EXIT trap not called in LHS of pipeline: External command on LHS
+  ok    86 No early exit from nested function in EXIT trap.
+  ok    87 Explicit exit in exit trap overrides status
+  ok    88 Progated exit status through exit trap
+  ok    89 Explicit exit in exit trap overrides implicit exit status
+  ok    90 Explicit exit status 0 in exit trap overrides implicit non-zero status
+  ok    91 Exit status from exit trap, script-like path
+  ok    92 Explicit exit status overrides implicit: script-like code path
+  ok    93 'exit' in trap causes calling function to return
+  ok    94 No memory problems with explicit call to TRAPEXIT.
+
+## C04funcdef  exit=1  fail=7 pass=46
+  ok     1 Basic status returns from functions
+  ok     2 Empty function body resets status
+  ok     3 Status is not reset on non-empty function body
+  ok     4 Regression test: 'function f$$ () { ... }'
+  ok     5 Function definition without braces
+  ok     6 Multiple function definition with duplicate name and redirection
+  ok     7  Safe output of multiple function definitions
+  ok     8 User-defined math functions, argument handling
+  ok     9 User-defined math functions, complex argument handling
+  ok    10 User-defined math functions, argument checking
+  ok    11 User-defined math functions, multiple interfaces
+  FAIL  12 User-defined math functions, string arguments
+  ok    13 Command not found handler, success
+  ok    14 Command not found handler, failure
+  ok    15 Anonymous function scope
+  ok    16 Anonymous function with patterns in loop
+  ok    17 Anonymous function redirection
+  ok    18 Nested anonymous functions
+  FAIL  19 Process substitution with anonymous functions
+  ok    20 Anonymous function with arguments
+  ok    21 Text representation of anonymous function with arguments
+  FAIL  22 Anonymous function arguments and command arguments
+  ok    23 Compatibility with other shells when not anonymous functions
+  FAIL  24 sticky emulation applies to autoloads and autoloaded function execution
+  FAIL  25 Anonymous function with arguments in a form nobody sane would ever use but unfortunately we have to support anyway
+  ok    26 Simple anonymous function should not simplify enclosing pipeline
+  ok    27 Alias expanded in command substitution does not appear expanded in text
+  ok    28 No alias expansion after "function" keyword
+  ok    29 autoload containing eval
+  ok    30 whence -v of zsh-style autoload
+  ok    31 autoload with explicit path
+  ok    32 autoload with explicit path with function in normal path, no -d
+  ok    33 autoload with explicit path with function in normal path, with -d
+  ok    34 autoload -r
+  ok    35 autoload -r is permissive
+  ok    36 autoload -R is not permissive
+  ok    37 autoload -X with path
+  ok    38 autoload -X with no path, failure
+  ok    39 autoload -X with wrong path and no -d
+  ok    40 autoload -dX with path
+  ok    41  autoload -X interaction with absolute filename used for source location
+  ok    42  Exercise the directory name cache for autoloads
+  ok    43 autoload with absolute path does not trash loaded function
+  ok    44 autoload with absolute path can be overridden if not yet loaded
+  ok    45 autoload with absolute path not cancelled by bare autoload
+  ok    46 
+  FAIL  47 autoload containing dash
+  ok    48 functions -c
+  ok    49 functions -c with autoload
+  ok    50 function -c with redefinition
+  FAIL  51 functions -c preserves file information
+  ok    52 functions -c updates non-file function information
+  ok    53 functions -c gracefully rejects failed autoload
+
+## C05debug  exit=0  pass=8
+  ok     1  Relationship between traps and sources
+  ok     2  trapreturn handling bug is properly fixed
+  ok     3 Skip line from DEBUG trap
+  ok     4 Skip assignment from DEBUG trap
+  ok     5 line numbers of complex sublists
+  ok     6 line numbers of multiline assignments
+  ok     7 ZSH_DEBUG_CMD in debug traps
+  ok     8 Status of forced return from eval-style DEBUG trap
+
+## D01prompt  exit=1  fail=1 pass=17 xfail=1
+  ok     1 Basic prompt escapes as shown.
+  ok     2 `%?' prompt escape
+  ok     3 `%_' prompt escape
+  ok     4 `%#' prompt escape and its equivalent
+  ok     5 `%v' prompt escape
+  ok     6 ternary prompt escapes
+  ok     7 ternary prompt escape with test character S
+  ok     8 prompt truncation
+  ok     9 Dates produced by prompt escapes
+  ok    10 Dynamic named directories
+  ok    11 Recursive use of prompts
+  ok    12 print -P -f
+  ok    13 Regression test for test on empty psvar
+  ok    14 Regression test for workers/44029
+  ok    15 Equivalence of terminal colour settings (foreground colour)
+  ok    16 Equivalence of terminal colour settings (background colour)
+  FAIL  17 Attribute optimisation - preserve initial disabling of attribute but drop useless later one
+  ok    18 Don't restore attributes from earlier substitution after disabling bold
+  xfail  19 RPS1 and RPROMPT are aliases (regression from 5.0.6) (workers/49600)
+
+## D02glob  exit=1  fail=9 pass=65 xfail=1
+  ok     1 zsh globbing
+  FAIL   2 ksh compatibility
+  ok     3 single byte match with top bit set
+  FAIL   4 exclusions regression test
+  ok     5 Just directories
+  ok     6 Just files
+  ok     7 Globbing used recursively (inside e glob qualifier)
+  ok     8 Recursive globbing used recursively (inside e glob qualifier)
+  ok     9 Head modifier
+  ok    10 Remove extension modifier
+  ok    11 Substitute modifier
+  ok    12 Just full dirs
+  ok    13 Omit full dirs
+  ok    14 Just empty dirs
+  ok    15 Exclusions with complicated path specifications
+  ok    16 Prepending words to each argument
+  ok    17 Prepending two words to each argument
+  ok    18 Empty strings
+  ok    19 Must-match arguments in complex patterns
+  ok    20 Bug with intermediate paths with plain strings but tokenized characters
+  ok    21 Named character sets handled internally
+  ok    22 Misplaced (#c...) flag
+  ok    23 Numeric glob is not usurped by process substitution.
+  FAIL  24 disable -p
+  ok    25 No error with empty null glob with (N).
+  ok    26 kshglob option does not break +, @, ! without following open parenthesis
+  ok    27 Force glob expansion in conditions using (#q)
+  FAIL  28 redirect to a non-matching pattern is an error even with flag (N)
+  ok    29 (#q) glob expansion only on lhs of pattern-match conditions
+  ok    30 short-circuit modifier
+  ok    31 (#q) is ignored completely in conditional pattern matching
+  ok    32 Optimisation to squeeze multiple *'s used as ordinary glob wildcards.
+  ok    33 Some more complicated backtracking with match counts.
+  ok    34 Stripping of quotes from patterns (1)
+  ok    35 Stripping of quotes from patterns (2)
+  ok    36 Stripping of quotes from patterns (3)
+  ok    37 Stripping of quotes from patterns (4)
+  ok    38 Stripping of quotes from patterns (4)
+  ok    39 - is a special character in ranges
+  ok    40 - is not a special character in ranges if quoted
+  ok    41 - untokenized following a bracketed subexpression
+  ok    42 - "]" after "[" is normal range character and - still works
+  ok    43 active - works in pattern in parameter
+  FAIL  44 quoted - works in pattern in parameter
+  ok    45 ^ active in character class if not quoted
+  ok    46 ^ not active in character class if quoted
+  ok    47 ! active in character class if not quoted
+  ok    48 ! not active in character class if quoted
+  ok    49 character set specified as quoted variable
+  FAIL  50 character set specified as active variable
+  ok    51 modifier ':a' doesn't require existence
+  ok    52 modifier ':A' doesn't require existence
+  FAIL  53 modifier ':A' resolves '..' components before symlinks
+  ok    54 modifier ':P' resolves symlinks before '..' components
+  ok    55 modifier ':P' with path too long
+  ok    56 modifier ':P' with tokenised input
+  ok    57 handling of - range in complicated pattern context
+  ok    58 modifiers :h and :t with numbers (main test is in D04parameter.ztst)
+  ok    59 unreadable directories can be globbed (users/24619, users/24626)
+  ok    60 names inside unreadable directories can be globbed if searchable
+  ok    61 glob files in readable directories inside unreadable directories
+  ok    62 non-directories not globbed as directories
+  xfail  63 (workers/45367) modifier ':P' squashes multiple slashes
+  ok    64 the ':P' modifier handles symlink loops in the last path component
+  ok    65 the ':P' modifier handles symlink loops before the last path component
+  ok    66 the ':P' modifier handles symlink loops other than the trivial case
+  ok    67 Regression test for exclusion after branches: empty first alternative
+  ok    68 Regression test for exclusion after branches: non-empty first alternative
+  ok    69 Regression test for exclusion after branches: full length first alternative
+  ok    70 Regression test for exclusion after branches: failure case 1
+  ok    71 Regression test for exclusion after branches: failure case 2
+  ok    72 Regression test for exclusion after branches: failure case 3
+  ok    73 general glob qualifier quoting and expansion
+  FAIL  74 e glob qualifier delimiters, quoting, and expansion
+  FAIL  75 the '*' qualfier enables extended_glob for pattern matching
+
+## D03procsubst  exit=2 SKIPPED(process substitution is not supported)  unknown=20
+  ????   1 <(...) substitution
+  ????   2 >(...) substitution
+  ????   3 =(...) substitution
+  ????   4 FDs remain open for external commands called from functions
+  ????   5 <(...) when embedded within an argument
+  ????   6 >(...) when embedded within an argument
+  ????   7 =(...) followed by something else without a break
+  ????   8 =(...) preceded by other stuff has no special effect
+  ????   9 Graceful handling of bad substitution in enclosed context
+  ????  10 Process environment of anonymous functions
+  ????  11 Process substitution as anonymous function argument
+  ????  12 backtacking within command string parsing with alias still pending
+  ????  13 full alias expanded when substitution starts in alias
+  ????  14 proc subst fd in forked subshell closed in parent
+  ????  15 proc subst fd in forked subshell closed in parent (external command)
+  ????  16 With /proc/self file descriptors must not be tidied up too early
+  ????  17 EQUALS expansion followed by =(...) (sh ordering) should work
+  ????  18 external command with =(...) on LHS of pipeline cleans up its tempfiles
+  ????  19 regression test: exit in shell function cleans up tempfiles
+  ????  20 regression test: race condition with pipe and procsubst
+
+## D04parameter  exit=-9 TIMED-OUT  fail=27 notrun=1 pass=107 unknown=118
+  ok     1 Basic scalar parameter substitution
+  ok     2 Basic array parameter substitution
+  ok     3 Basic ksharray substitution
+  ok     4 Basic shwordsplit option handling
+  ok     5 $+...
+  ok     6 $+... with arrays
+  ok     7 ${...:-...} and ${...-...}
+  ok     8 ${...:=...}, ${...::=...}, ${...=...}
+  FAIL   9 ::= respects expansion flags
+  FAIL  10 ${#${(A)=array=word}} counts array elements
+  ok    11 ${...:?...}, ${...?...}
+  FAIL  12 interactive shell returns to top level on ${...?...} error
+  ok    13 ${...?....} performs expansion on the message
+  ok    14 ${...:+...}, ${...+...}
+  ok    15 ${...#...}, ${...##...}
+  ok    16 ${...%...}, ${...%%...}
+  ok    17 ${...:#...}
+  ok    18 ${...:#...}, ${(M)...:#...} with array
+  ok    19 scalar ${.../.../...}, ${(S).../.../...}
+  ok    20 array ${.../.../...}, ${(S).../.../...}
+  ok    21 scalar ${...//.../...}, ${(S)...//.../...}
+  ok    22 array ${...//.../...}, ${(S)...//.../...}
+  ok    23 array ${...:/...}
+  ok    24 use of backslashes in //-substitutions
+  FAIL  25 "|" array exclusion and "*" array intersection
+  ok    26 ${#...}, $#...
+  ok    27 ${##} is length of $#, and other tales of hash horror
+  ok    28 basic ${^...}
+  ok    29 combined ${^...} and {...,...}
+  ok    30 ${=...}
+  ok    31 ${~...} and globsubst
+  ok    32 globsubst with backslashes
+  FAIL  33 globsubst together with nested quoted expansion
+  FAIL  34 splitting of $(...) inside ${...}
+  FAIL  35 SH_WORD_SPLIT inside $(...) inside ${...}
+  ok    36 ${(f)$(...)}
+  ok    37 ${(A)...=...}, ${(A)...::=...}, ${scalar=$array}
+  ok    38 "${(@)...}"
+  ok    39 ${(e)...}
+  ok    40 Regress ${(e)...} with backticks (see zsh-workers/15871)
+  FAIL  41 ${(g)...}
+  ok    42 ${(P)...}
+  ok    43 ${(o)...}, ${(O)...}
+  ok    44 ${(L)...}, ${(U)...}
+  ok    45 ${(C)...}
+  ok    46 ${(V)...}
+  ok    47 ${(q...)...}
+  ok    48 workers/36551: literal empty string in ${(qqqq)...}
+  ok    49 Another ${(q...)...} test
+  ok    50 ${(q-)...} minimal single quoting
+  ok    51 ${(Q)...}
+  ok    52 ${(Q)...} with handling of $'...'
+  FAIL  53 ${(z)...} and ${(Q)...} for some hard to parse cases
+  FAIL  54 Some syntactical expressions that are hard to split into words with (z).
+  FAIL  55 Comments with (z)
+  ok    56 Test we don't get an additional newline token
+  ok    57 Treating zplit newlines as ordinary whitespace
+  ok    58 ${(z)} with incomplete math expressions
+  FAIL  59 $($(z)} with parse error in command substitution.
+  FAIL  60 ${(z)} regression test: multiple array assignments
+  ok    61 Test real-world data that once seemed to fail
+  ok    62 ${(%)...}
+  FAIL  63 ${(QX)...}
+  ok    64 ${(c)#...}
+  ok    65 ${(w)...}, ${(W)...}
+  ok    66 ${(k)...}, ${(v)...}
+  ok    67 simple padding
+  ok    68 ${(pl...)...}
+  ok    69 simultaneous left and right padding
+  ok    70 ${(r...)...}
+  FAIL  71 regression test for <-> in flags
+  ok    72 ${(j)...}
+  ok    73 ${(F)...}
+  ok    74 ${(s...)...}
+  ok    75 ${(t)...}
+  ok    76 ${(S)...#...} etc.
+  ok    77 ${(I:...:)...}
+  ok    78 ${(M...)...}
+  ok    79 ${(R)...}
+  ok    80 ${(BE...)...}
+  ok    81 ${(N)...}
+  ok    82 ${(BEN)...} again, with match
+  ok    83 Rule 1:  Nested substitutions
+  FAIL  84 Rule 2: Parameter subscripting
+  ok    85 Rule 3: Parameter Name Replacement
+  ok    86 Rule 4: Double-Quoted Joining
+  ok    87 Rule 5: Nested Subscripting
+  ok    88 Rule 6: Modifiers
+  ok    89 Rule 7: Forced Joining, and 8: Forced splitting
+  FAIL  90 Rule 9: Shell Word Splitting
+  ok    91 Rule 10: Re-Evaluation
+  ok    92 Rule 11: Padding
+  ok    93 Examples in manual on parameter expansion
+  ok    94 Regression test of ${1+"$@"} bug
+  ok    95 Regression test of "${(A)foo=$@}" bug
+  FAIL  96 Regression test of ${=1+"$@"} bug and some related expansions
+  FAIL  97 More bourne-shell-compatible nested word-splitting with wildcards and ~
+  FAIL  98 Test of nested word splitting with and without quotes
+  ok    99 Joining with NULL character from IFS
+  ok   100 Unsetting and recreation of numerical special parameters
+  FAIL 101 Unsetting and recreation of tied special parameters
+  FAIL 102 Unsetting and recreation of tied normal parameters
+  ok   103 Attempts to swap tied variables are safe but futile
+  ok   104 Parameters associated with backreferences
+  ok   105 Parameters associated with (#m) flag
+  ok   106 (#m) flag with pure string
+  FAIL 107 (#m) flag with tokenized input
+  ok   108 Bug with (u) flag reducing arrays to one element
+  ok   109 New hash seive unique algorithm for arrays of more than 10 elements
+  ok   110 Quoted zero-length strings are handled properly
+  ok   111 Substitutions where $match is itself substituted in the replacement
+  ok   112 Modifiers with repetition
+  ok   113 Quoting of separator in substitution modifier
+  ok   114 Handling of backslashed backslashes in substitution modifier
+  ok   115 Quoting of ampersand in substitution modifier RHS
+  ok   116 Sorting arrays with embedded nulls
+  ok   117 Bad patterns should never match array elements
+  ok   118 Numeric sorting
+  ok   119 Numeric sorting of signed integers
+  ok   120 Out of range negative scalar subscripts
+  ok   121 Out of range negative array subscripts
+  ok   122 In and out of range reverse matched indices without and with b: arrays
+  ok   123 In and out of range reverse matched indices without and with b: strings
+  ok   124 Removal of empty fields in unquoted splitting
+  ok   125 Hacky removal of empty fields in quoted splitting with no "@"
+  ok   126 Retention of empty fields in quoted splitting with "@"
+  ok   127 splitting of strings into characters
+  ok   128 Matching array indices with and without quoting
+  ok   129 Reverse subscripting associative arrays with literal matching
+  FAIL 130 ZSH_SUBSHELL
+  ok   131 SECONDS
+  FAIL 132 GLOBSUBST only on parameter substitution arguments
+  FAIL 133 Lookup failures on elements of arrays with RC_EXPAND_PARAM
+  FAIL 134 $ZSH_EVAL_CONTEXT and $zsh_eval_context
+  ---- 135 zsh_eval_context resizing
+  ???? 136 more math context
+  ???? 137 Bash-style offsets, scalar
+  ???? 138 Bash-style offsets, array
+  ???? 139 Bash-style offsets, Bourne-style indexing
+  ???? 140 Bash-style offsets, quoted array
+  ???? 141 Regression test for identifier test
+  ???? 142 Regression test for missing length after offset
+  ???? 143 Regression test for total length < 0 in string
+  ???? 144 Regression test for total length < 0 in array
+  ???? 145 Nularg removed from split empty string
+  ???? 146 Regression test for shwordsplit with null or unset IFS and quoted array
+  ???? 147 Empty parameter should not cause modifiers to crash the shell
+  ???? 148 repeated upper/lowercase modifiers
+  ???? 149 Intersection and disjunction with empty parameters
+  ???? 150 Zipping arrays, correct output
+  ???? 151 Zipping arrays, one or both inputs empty
+  ???? 152 Zipping arrays, scalar input
+  ???? 153 Zipping arrays, parsing
+  ???? 154 Zipping arrays, NO_UNSET part 1
+  ???? 155 Zipping arrays, NO_UNSET part 2
+  ???? 156 Use of variable to get separator when splitting parameter
+  ???? 157 SHLVL appears sensible when about to exit shell
+  ???? 158 SHLVL decremented upon implicit exec optimisation
+  ???? 159 SHLVL not decremented upon exec in subshells
+  ???? 160 Alias expansion in command substitution in parameter evaluation
+  ???? 161 $_ with anonymous function
+  ???? 162 $_ with anonymous function without arguments
+  ???? 163 ${(b)...} quoting protects from GLOB_SUBST
+  ???? 164 Avoid confusion after overloaded characters in braceless substitution in sh
+  ???? 165 History modifier works the same for scalar and array substitution
+  ???? 166 Complicated backtracking with match counts
+  ???? 167 We Love SH_WORD_SPLIT Day celebrated with space at start of internal subst
+  ???? 168 We Love NO_SH_WORD_SPLIT Even More Day celebrated as sanity check
+  ???? 169 ${(P)...} with normal subscripting
+  ???? 170 ${(P)...} with array as name
+  ???? 171 ${(P)...} with internal subscripting
+  ???? 172 nested parameter name references
+  ???? 173 Local special variables with loose typing
+  ???? 174 ${(q+)...}
+  ???? 175 "-" works after "[" in same expression (Dash problem)
+  ???? 176 Splitting of $@ on IFS: single element
+  ???? 177 Splitting of $@ on IFS: multiple elements
+  ???? 178 Splitting of $@ on (s): multiple elements
+  ???? 179 Splitting of $@ on (@s): multiple elements
+  ???? 180 Joining of $@ does not happen when IFS is empty, but splitting $* does
+  ???? 181 Use of @ does not prevent forced join with j
+  ???? 182 (q) and (b) quoting deal with the EQUALS option
+  ???? 183 Out-of-range multiple array subscripts with quoting, with and without (@)
+  ???? 184 Regression: "-" became Dash in workers/37689, breaking ~- expansion
+  ???? 185 Assigning $@, $*, "$@", "$*" to var with various shwordsplit/IFS settings
+  ???? 186 reset IFS to default if it contains invalid character
+  ???? 187 eight bit chars in IFS should work if multibute option is off
+  ???? 188 $- expansion correctly handles Dash token
+  ???? 189 Zero-length string match in parameter substitution
+  ???? 190 Zero-length string match at end
+  ???? 191 Fully anchored string must be fully searched
+  ???? 192 Respect anchors
+  ???? 193 Test substitution that uses P,Q,A,s,r,m flags
+  ???? 194 (z) splitting with remaining tokens
+  ???? 195 [key]=val for hashes
+  ???? 196 [key]=val for normal arrays
+  ???? 197 [key]=val for normal arrays with KSH_ARRAYS
+  ???? 198 Substitution in [key]=val syntax
+  ???? 199 append to normal array using [key]=val
+  ???? 200 append to normal array using [key]=val with KSH_ARRAYS
+  ???? 201 quoting in [key]=value syntax
+  ???? 202 mixed syntax [key]=val with normal arrays
+  ???? 203 mixed syntax [key]=val with normal arrays with KSH_ARRAYS
+  ???? 204 Mixed syntax with [key]=val not allowed for hash.
+  ???? 205 Globbing in non-[key]=val parts of mixed syntax.
+  ???? 206 Globbing in non-[key]=val parts of mixed syntax with KSH_ARRAYS
+  ???? 207 Append to element(s) of array
+  ???? 208 Append to element(s) of array with KSH_ARRAYS
+  ???? 209 Append to element(s) of associative array
+  ???? 210 Append to element of array on creation
+  ???? 211 Append to element of array on creation with KSH_ARRAYS
+  ???? 212 Append to element of associative array on creation
+  ???? 213 (Z) flag splitting with $( closed after embedded newline
+  ???? 214 (z) flag with CSH_JUNKIE_QUOTES
+  ???? 215 Use of parameter subst + to test element of hash with KSH_ARRAYS.
+  ???? 216 double-quoted nested evaluation of empty string
+  ???? 217 Separation / join logic regression test
+  ???? 218 t with trailing digits
+  ???? 219 h with trailing digits
+  ???? 220 Combinations of :h and :t with and without trailing digits
+  ???? 221 Multiple slashes are treated as one in :h and :t but are not removed
+  ???? 222 Modifiers :h and :t remove trailing slashes before examining path
+  ???? 223 Global variables are not trashed by "foo=bar builtin" (regression test)
+  ???? 224 Smallest match at end can match zero-length string
+  ???? 225 Smallest match at end with a character always matches one
+  ???? 226 Smallest / largest match with non-trivial closure
+  ???? 227 Largest match at end matches entire string
+  ???? 228 (S) with zero-length matches at start
+  ???? 229 (S) with zero-length matches at end, part 1 (workers/45164)
+  ???? 230 (S) with zero-length matches at end, part 2
+  ???? 231 broken length in ${name:offset:length} (workers/45843#1)
+  ???? 232 regression test for workers/45843#2: escaped newline in command substitution start token
+  ???? 233 Normal command substitution with escaped newline
+  ???? 234 Normal math eval with escaped newline after $
+  ???? 235 Normal math eval with escaped newline after $(
+  ???? 236 Backslash character other than newline is normal after $(
+  ???? 237 parameter expansion flags parsing error gives a clue
+  ???? 238 (users/28784) substituting a single-quoted backslash, part #1: slash
+  ???? 239 (users/28784) substituting a single-quoted backslash, part #2: single quote
+  ???? 240 (users/28784 inspired this) substituting a single-quoted backslash, part #3: control
+  ???? 241 Different behaviour of :s and :S modifiers
+  ???? 242 ${(#X)...}: bad math expression
+  ???? 243 ${(#)...}: bad math expression
+  ???? 244 ${(#)...}: bad math expression, printf
+  ???? 245 ${(#X)...}: array of bad math expressions
+  ???? 246 ${(#)...}: array of bad math expressions, printf
+  ???? 247 ${(#X)...}: out-of-range character
+  ???? 248 ${(#)...}: out-of-range character
+  ???? 249 ${(#)...}: array of out-of-range characters
+  ???? 250 ${(#X)...}: array of out-of-range characters
+  ???? 251 regression for workers/53179 unicode ZDOTDIR
+  ???? 252 ZSH_EXEPATH
+  ???? 253 COLUMNS and LINES preserved from environment when non-interactive
+
+## D05array  exit=0  pass=20
+  ok     1 The first element
+  ok     2 Normal multi-item indexing
+  ok     3 This should be empty
+  ok     4 Another empty slice
+  ok     5 An empty slice with a negative end
+  ok     6 Treat 0 as empty
+  ok     7 Treat 0,0 as empty
+  ok     8 Another weird way to access the first element
+  ok     9 An inner element
+  ok    10 Another inner element
+  ok    11 A slice with a negative end
+  ok    12 A slice with a negative start
+  ok    13 A slice with a negative start and end
+  ok    14 Slices should return an array, elements a scalar
+  ok    15 Ksh array indexing
+  ok    16 Ksh array indexing (ii)
+  ok    17 Ksh array indexing (iii)
+  ok    18 Glob array indexing
+  ok    19 Glob array indexing (ii)
+  ok    20 Glob array indexing (iii)
+
+## D06subscript  exit=1  fail=9 pass=28 xfail=1
+  ok     1 Scalar pattern subscripts without wildcards
+  FAIL   2 Scalar pattern subscripts with wildcards
+  ok     3 Scalar pattern subscripts that do not match
+  FAIL   4 Scalar subscripting using a pattern subscript to get the index
+  ok     5 Array pattern subscripts
+  ok     6 Array pattern subscripts with multiple backslashes
+  ok     7 Associative array lookup (direct subscripting)
+  ok     8 Associative array lookup (pattern subscripting)
+  ok     9 Associative array lookup (reverse subscripting)
+  ok    10 Illegal associative array assignment
+  FAIL  11 Associative array assignment
+  ok    12 Associative array keys with open and close brackets
+  FAIL  13 Associative array lookup using a pattern subscript to get the key
+  ok    14 Associative array substitution-assignment with reverse pattern subscript key
+  ok    15 Associative array keys interpreted as patterns
+  ok    16 Associative array keys interpreted as patterns, single match
+  FAIL  17 Associative array keys with double quotes
+  FAIL  18 More keys with double quotes, used in assignment-expansion
+  FAIL  19 Keys with double quotes and the (P) expansion flag
+  ok    20 Negative index applied to substitution result from empty array
+  ok    21 (i) returns 1 for empty array, (I) returns 0.
+  ok    22 Element zero is empty if KSH_ZERO_SUBSCRIPT is off.
+  ok    23 Can't set element zero if KSH_ZERO_SUBSCRIPT is off.
+  ok    24 (R) returns empty if not found if KSH_ZERO_SUBSCRIPT is off.
+  ok    25 Element zero is element one if KSH_ZERO_SUBSCRIPT is on.
+  ok    26 Can set element zero if KSH_ZERO_SUBSCRIPT is on.
+  ok    27 (R) yuckily returns the first element on failure with KSH_ZERO_SUBSCRIPT
+  ok    28 [(R)notfound,(r)notfound] replaces the whole array
+  ok    29 String subscripts with KSH_ZERO_SUBSCRIPT unset
+  ok    30 String subscripts with KSH_ZERO_SUBSCRIPT set
+  ok    31 Assignment to chunk of string ignores element 0
+  ok    32 Can't set only element zero of string
+  FAIL  33  Parsing subscript with non-trivial tokenisation
+  ok    34 Commas inside parentheses do not confuse subscripts
+  ok    35 Pattern handling with scalars
+  xfail  36 Math evaluation of commas in array subscripts
+  ok    37 Word splitting by NUL
+  FAIL  38 Can check off end of zero length string
+
+## D07multibyte  exit=-9 TIMED-OUT  fail=8 notrun=1 pass=36 unknown=9 xfail=2
+  ok     1 Basic indexing with multibyte characters
+  ok     2 Out of range subscripts with multibyte characters
+  ok     3 Reverse indexing with multibyte characters
+  ok     4 Subscript searching with multibyte characters
+  FAIL   5 Subscript searching with initial offset
+  FAIL   6 Subscript searching with count
+  ok     7 Backward subscript searching with multibyte characters
+  ok     8 Multibyte offsets in pattern tests
+  ok     9 Case modification of multibyte strings
+  ok    10 Case modification of arrays with multibyte strings
+  ok    11 Conversion to Unicode in mathematical expressions
+  FAIL  12 POSIX_IDENTIFIERS option
+  ok    13 Regression test for workers/47745
+  ok    14 Splitting with multibyte characters
+  ok    15 read with multibyte delimiter
+  ok    16 read with multibyte delimiter where bytes of delimiter also occur in input
+  ok    17 read delimited by a byte that isn't a valid multibyte character
+  ok    18 read delimited by a single byte terminates if the byte is part of a multibyte character
+  ok    19 read -A with multibyte IFS
+  ok    20 read multibyte characters
+  ok    21 multibyte character makes read -q return false
+  ok    22 isw* functions on non-ASCII wide characters
+  ok    23 Parameter #, ##, %, %% with multibyte characters
+  ok    24 Flags B, E, N and S in ${...#...} and ${...%...}
+  ok    25 simultaneous left and right padding
+  ok    26 Delimiters in modifiers
+  ok    27 Delimiters in parameter flags
+  ok    28 Multibyte characters in printf widths
+  xfail  29 POSIX: width in %s should be computed in bytes, not in characters
+  xfail  30 POSIX: precision should also be computed in bytes, not in characers
+  ok    31 Multibyte characters in print sorting
+  FAIL  32 evaluated character number with multibyte characters
+  ok    33 NUMERIC_GLOB_SORT option in UTF-8 locale
+  ok    34 Backslash-quoting of unprintable/invalid characters uses $'...'
+  FAIL  35 error handling in Unicode quoting
+  ok    36 Backslashes and metafied characters in patterns
+  ok    37 Metafied characters in prompt expansion
+  ok    38 More metafied characters in prompt expansion
+  FAIL  39 read passes through invalid multibyte characters
+  ok    40 assignment with negative indices
+  FAIL  41 Invalid parameter name with following tokenized input
+  ok    42 Tab expansion with extra-wide characters
+  ok    43 cd with special characters
+  FAIL  44 Invalid characters in pattern matching
+  ok    45 Testing incomplete and invalid multibyte character components
+  ok    46 Raw bytes don't match multibyte characters in * patterns
+  ----  47 Raw bytes don't match multibyte characters part 2
+  ????  48 ${(q+)...} with printable multibyte characters
+  ????  49 Multibyte handling of functions parameter
+  ????  50 Sorting of metafied characters
+  ????  51 printf %q and quotestring and general metafy / token madness
+  ????  52 print and printf into a variable with multibyte text
+  ????  53 Ensure no confusion on metafied input to regex module
+  ????  54 locale gets restored when locale parameters go out of scope (regression test for 45772)
+  ????  55 (workers/50150) zsh/stat with Unicode and metafication
+  ????  56 workers/54583: select with multi-byte word
+
+## D08cmdsubst  exit=1  fail=1 pass=25
+  ok     1 Basic `...` substitution
+  ok     2 Basic $(...) substitution
+  ok     3 Quoted `...` substitution
+  ok     4 Quoted $(...) substitution
+  ok     5 Stripping of backslasshes in quoted `...`
+  ok     6 Stripping of backslashes in quoted $(...)
+  ok     7 Nested `...`
+  ok     8 Nested $(...)
+  ok     9 Nested quoted `...`
+  ok    10 Nested quoted $(...)
+  ok    11 $(( ... ) ... ) is not arithmetic
+  ok    12 quoted $(( ... ) .. ) is not arithmetic
+  ok    13 mixing $(...) with parameter substitution and globbing
+  ok    14 empty command uses exit value of last substitution
+  ok    15 variable assignments processed after other substitutions
+  ok    16 Empty command substitution resets status
+  ok    17 Non-empty command substitution inherits status
+  ok    18 Handling of backslash double quote in parenthesised substitutions
+  ok    19 Parsing of command substitution with unmatched parentheses: case, basic
+  ok    20 Parsing of command substitution with unmatched parentheses: case with quotes
+  ok    21 Parsing of command substitution with ummatched parentheses: with frills
+  ok    22 backtracking within command string parsing with alias still pending
+  ok    23 Empty $() is a valid empty substitution.
+  ok    24 Empty $() is a valid assignment
+  ok    25 Alias expansion needed in parsing substitutions
+  FAIL  26 Aliases with braces in command substitution can cause havoc
+
+## D09brace  exit=0  pass=28
+  ok     1 Basic brace expansion
+  ok     2 Brace expansion with arrays, no RC_EXPAND_PARAM
+  ok     3 Brace expansion with arrays, with RC_EXPAND_PARAM (1)
+  ok     4 Brace expansion with arrays, with RC_EXPAND_PARAM (2)
+  ok     5 Brace expansion with arrays, with RC_EXPAND_PARAM (3)
+  ok     6 Numeric range expansion, padding (1)
+  ok     7 Numeric range expansion, padding (2)
+  ok     8 Numeric range expansion, padding (or not) (3)
+  ok     9 Numeric range expansion, padding (4)
+  ok    10 Numeric range expansion, padding (5)
+  ok    11 Numeric range expansion, decreasing
+  ok    12 Numeric range expansion, combined braces
+  ok    13 Numeric range expansion, negative numbers (1)
+  ok    14 Numeric range expansion, negative numbers (2)
+  ok    15 Numeric range expansion, stepping and padding (1)
+  ok    16 Numeric range expansion, stepping and padding (1)
+  ok    17 Numeric range expansion, step alignment (1)
+  ok    18 Numeric range expansion, step alignment (2)
+  ok    19 Numeric range expansion, step alignment (3)
+  ok    20 Numeric range expansion, step alignment (4)
+  ok    21 BRACE_CCL on
+  ok    22 BRACE_CCL off
+  ok    23 {char..char} ranges, simple case
+  ok    24 {char..char} ranges, ASCII ordering
+  ok    25 {char..char} ranges, reverse
+  ok    26 {char..char} ranges with tokenized characters
+  ok    27 Unmatched braces after matched braces are left alone.
+  ok    28 range of 8bit chars, multibyte option unset
+
+## D10nofork  exit=1  fail=5 notrun=1 pass=29 unknown=28
+  ok     1 Basic substitution and REPLY scoping
+  ok     2 Basic substitution, brace quoting, and array result
+  ok     3 Basic substitution, ignorebraces, and array result
+  ok     4 re-scoping of REPLY in one statement
+  ok     5 Adjacent words
+  ok     6 Adjacent words and quoting, part 1
+  ok     7 Adjacent words and quoting, part 2
+  ok     8 Embedded newlines
+  ok     9 Embedded newlines and $'...'
+  ok    10 test word splitting on result
+  FAIL  11 globsubst on result
+  ok    12 newline removal should not occur, part 1
+  FAIL  13 newline removal in ${ ... }, zsh mode
+  ok    14 newline removal in ${ ... }, emulation mode, shwordsplit
+  FAIL  15 newline removal should not occur, part 2
+  ok    16 access to context $argv
+  ok    17 nofork inside parameter scope
+  FAIL  18 unclosed braces are sometimes a bad substitution
+  ok    19 other times lack of closing brace is merely unexpected
+  ok    20 unbalanced braces, part 0
+  ok    21 unbalanced braces, part 1
+  ok    22 unbalanced braces, part 2
+  ok    23 unbalanced braces, part 3
+  ok    24 unbalanced braces, part 4
+  ok    25 unbalanced braces, part 0+
+  ok    26 unbalanced braces, part 1+
+  ok    27 unbalanced braces, part 2+
+  ok    28 unbalanced braces, part 3+
+  ok    29 unbalanced braces, part 4+
+  FAIL  30 capture stdout
+  ok    31 mixing with forking cmdsubst
+  ok    32 mixing with backticks
+  ok    33 mixing with arithemetic
+  ok    34 array behavior with global assignment
+  ----  35 return statement inside, part 1
+  ????  36 return status propages in assignment like $(...)
+  ????  37 return statement inside, part 2
+  ????  38 errreturn works inside and remains outside
+  ????  39 exit statement inside
+  ????  40 errexit inside
+  ????  41 local declaration inside
+  ????  42 local declaration, global assignment, part 1
+  ????  43 local declaration, global assignment, part 2 (evaluation order)
+  ????  44 function definition, brace nesting, quote nesting
+  ????  45 here-document behavior
+  ????  46 here-string behavior
+  ????  47 another capture stdout
+  ????  48 assignment context
+  ????  49 return statement inside, part 1+
+  ????  50 return status propages in stdout capture
+  ????  51 return statement inside, part 2+
+  ????  52 errreturn works inside stdout capture
+  ????  53 exit statement inside stdout capture
+  ????  54 errexit inside stdout capture
+  ????  55 dummy test to set option soon enough
+  ????  56 ignored braces, part 1
+  ????  57 ignored braces, part 2
+  ????  58 ignored braces, part 3
+  ????  59 ignored braces, part 4
+  ????  60 break N propagates
+  ????  61 break after assignment completes the assignment
+  ????  62 error handling (without crashing)
+  ????  63 reserved parameter name (without crashing)
+
+## E01options  exit=1  fail=20 pass=83
+  FAIL   1 zsh --version output
+  ok     2 setopt error handling
+  ok     3 ALIASES option
+  ok     4 ALL_EXPORT option
+  ok     5 AUTO_PUSHD option
+  ok     6 BAD_PATTERN option
+  ok     7 BARE_GLOB_QUAL option
+  ok     8 BRACE_CCL option
+  ok     9 BRACE_CCL option starting from NUL
+  ok    10 BSD_ECHO option
+  ok    11 C_BASES option
+  FAIL  12 CDABLE_VARS option
+  ok    13 CLOBBER option
+  ok    14 CSH_JUNKIE_LOOPS option (for loop)
+  ok    15 CSH_JUNKIE_QUOTES option
+  ok    16 CSH_NULL_CMD option
+  ok    17 CSH_NULL_GLOB option
+  ok    18 EQUALS option
+  FAIL  19 ERR_EXIT option
+  ok    20 ERR_EXIT is suppressed within a function followed by "&&"
+  ok    21 ERR_RETURN is not suppressed within a function followed by "||"
+  ok    22 ERR_RETURN with additional levels
+  ok    23 NO_EXEC option
+  ok    24 NO_EXEC option should not attempt to parse subscripts
+  ok    25 NO_EXEC option should not do globbing
+  ok    26 NO_EXEC should not test for unset variables
+  ok    27 NO_EXEC handles parameter substitution examples
+  FAIL  28 NO_EXEC does recognize bad substitution syntax
+  ok    29 NO_EXEC does not attempt to read files in $(<....)
+  ok    30 EVAL_LINENO option
+  ok    31 EXTENDED_GLOB option
+  ok    32 FUNCTION_ARGZERO option
+  ok    33 GLOB option
+  ok    34 GLOBAL_EXPORT option
+  ok    35 GLOB_DOTS option
+  ok    36 GLOB_SUBST option
+  FAIL  37 HIST_SUBST_PATTERN option
+  ok    38 IGNORE_BRACES option
+  ok    39 KSH_ARRAYS option
+  ok    40 KSH_AUTOLOAD option
+  ok    41 KSH_OPTION_PRINT option
+  FAIL  42 KSH_TYPESET option
+  FAIL  43 LOCAL_OPTIONS option
+  FAIL  44 MAGIC_EQUAL_SUBST option
+  ok    45 MARK_DIRS option
+  ok    46 MULTIOS option
+  ok    47 Multios attached to a subshell
+  FAIL  48 Fix for race with input multios
+  FAIL  49 regression test: multios with nullexec
+  ok    50 NOMATCH option
+  ok    51 NULL_GLOB option
+  ok    52 NUMERIC_GLOB_SORT option
+  ok    53 OCTAL_ZEROES options
+  FAIL  54 PATH_DIRS option
+  ok    55 whence honours PATH_DIRS option
+  ok    56 POSIX_BUILTINS option
+  ok    57 command with options from expansion
+  ok    58 POSIX_BUILTINS and restoring variables
+  FAIL  59 POSIX_BUILTINS and exec
+  ok    60 PRINT_EXIT_VALUE option
+  ok    61 PRINT_EXIT_VALUE option for anonymous function
+  ok    62 PROMPT_BANG option
+  ok    63 PROMPT_PERCENT option
+  ok    64 PROMPT_SUBST option
+  ok    65 PUSHD_IGNOREDUPS option
+  ok    66 PUSHD_MINUS option
+  ok    67 PUSHD_TO_HOME option
+  ok    68 RC_EXPAND_PARAM option
+  ok    69 RC_QUOTES option
+  FAIL  70 SH_FILE_EXPANSION option
+  FAIL  71 SH_FILE_EXPANSION option with GLOB_SUBST et al.
+  ok    72 SH_FILE_EXPANSION interaction with inserting nodes from parameters
+  FAIL  73 SH_GLOB option
+  ok    74 SH_NULLCMD option
+  ok    75 SHORT_LOOPS option
+  ok    76 SH_WORD_SPLIT option
+  ok    77 UNSET option
+  ok    78 UNSET option with operators
+  FAIL  79 WARN_CREATE_GLOBAL option
+  ok    80 WARN_CREATE_GLOBAL negative cases
+  FAIL  81 WARN_NESTED_VAR option
+  ok    82 No false positive on parameter used with subscripted assignment
+  ok    83 Warn when changing type of nested variable: array to scalar.
+  ok    84 Warn when changing type of nested variable: scalar to array.
+  ok    85 XTRACE option
+  ok    86 IGNORE_CLOSE_BRACES option
+  FAIL  87 PIPE_FAIL option
+  ok    88 PIPE_FAIL causes ERR_RETURN with complex end of pipeline: braces
+  ok    89 PIPE_FAIL causes ERR_RETURN with complex end of pipeline: if
+  ok    90 PIPE_FAIL causes ERR_RETURN with complex end of pipeline: while
+  ok    91 PIPE_FAIL causes ERR_RETURN in simple case
+  ok    92 PIPE_FAIL causes ERR_RETURN with nested successful pipe
+  ok    93 PIPE_FAIL causes ERR_RETURN with nested failed pipe
+  ok    94 NO_LOCAL_LOOPS
+  ok    95 LOCAL_LOOPS
+  ok    96 PRIVILEGED sanity check: unsetting is idempotent
+  ok    97 PRIVILEGED sanity check: default value is correct
+  FAIL  98 RM_STAR_SILENT
+  ok    99 (t) returns correct type
+  ok   100 readonly with typeset -p
+  ok   101 ERR_RETURN inside 'source' and 'if'
+  ok   102 AUTO_NAME_DIRS
+  FAIL 103 workers/54309: AUTO_NAME_DIRS: local parameter not considered
+
+## E02xtrace  exit=1  fail=2 pass=12
+  FAIL   1 xtrace with and without redirection
+  ok     2 tracing function
+  ok     3 Trace output with sourcefile and line number.
+  ok     4 Trace for conditions
+  ok     5 tracing recurses into anonymous functions
+  FAIL   6 a function that redefines itself preserves tracing
+  ok     7 define traced function: anonymous function
+  ok     8 define traced function: named function
+  ok     9 define traced function: parse test
+  ok    10 function end-of-"options" syntax, #1
+  ok    11 function end-of-"options" syntax, #2
+  ok    12 functions -t smoke test #1
+  ok    13 functions -t smoke test #2
+  ok    14 ensure the behaviour  of 'functions -Tt f' doesn't change surreptitiously
+
+## E03posix  exit=1  fail=10 xfail=8
+  FAIL   1 Parameter hiding and tagging, printing types and values
+  FAIL   2 readonly -p output (no readonly specials)
+  FAIL   3 typeset -p1 output for array
+  FAIL   4 typeset -p1 output for associative array
+  FAIL   5 ${(t)...}
+  FAIL   6 (i) and (I) return nothing for empty array
+  FAIL   7 KSH_TYPESET option
+  FAIL   8 (t) returns correct type
+  FAIL   9 readonly with typeset -p
+  xfail  10 A single "-" for echo does not end the arguments
+  xfail  11 "foreach" is not a reserved word
+  xfail  12 "end" is not a reserved word
+  xfail  13 IFS is a separator, not a delimiter
+  xfail  14 All whitespace characters are "IFS whitespace"
+  xfail  15 IFS applies to math results (numbers treated as strings)
+  FAIL  16 All identifiers are variable references in POSIX arithmetic
+  xfail  17 EUID is not a special variable
+  xfail  18 PPID is not a readonly variable
+
+## K01nameref  exit=1  fail=29 pass=98 xfail=1
+  ok     1 minimal declaration
+  ok     2 nameref placeholder
+  ok     3 assign nameref placeholder
+  ok     4 assign placeholder with new typeset
+  ok     5 chain ending in placeholder
+  ok     6 convert scalar to nameref
+  ok     7 remove nameref attribute
+  ok     8 Local non-reference hides outside reference
+  ok     9 change type of a placeholder
+  ok    10 change type of referenced var
+  ok    11 change type of unset referenced var
+  ok    12 invalid nameref name
+  ok    13 nameref expansion, no braces
+  ok    14 nameref expansion, braces
+  ok    15 nameref array expansion, no braces
+  ok    16 nameref array expansion, braces
+  ok    17 nameref hash expansion, no braces
+  ok    18 nameref hash expansion, braces
+  ok    19 assign/typeset existing scalar via nameref
+  FAIL  20 assign/typeset existing array via nameref
+  FAIL  21 assign/typeset existing array via nameref
+  ok    22 assign/typeset new scalar via nameref
+  ok    23 assign/typeset new array via nameref
+  FAIL  24 unset via nameref
+  ok    25 unset of the nameref itself
+  ok    26 check state of paramtab ONE
+  ok    27 indirect nameref expansion
+  ok    28 check state of paramtab TWO
+  ok    29 typeset existing parameter indirectly
+  ok    30 unset parameter indirectly
+  ok    31 typeset new parameter indirectly
+  ok    32 assign new parameter indirectly
+  ok    33 check state of paramtab THREE
+  ok    34 typeset existing array indirectly
+  ok    35 typeset new array indirectly
+  ok    36 check state of paramtab FOUR
+  ok    37 assign new array indirectly
+  ok    38 direct nameref loop not allowed
+  ok    39 global reference to unset var
+  ok    40 global direct reference
+  ok    41 indirect nameref loop not allowed
+  ok    42 looping assignment not allowed
+  ok    43 regression: not a self reference (test 1)
+  ok    44 regression: not a self reference (test 2)
+  ok    45 regression: not a self reference (test 3)
+  FAIL  46 invalid nameref
+  ok    47 up-reference part 1
+  ok    48 check state of paramtab FIVE
+  ok    49 up-reference assignment part 1
+  ok    50 check state of paramtab SIX
+  ok    51 up-reference part 2
+  ok    52 localized namerefs hide global namerefs
+  FAIL  53 up-reference part 3, hidden global
+  ok    54 up-reference part 4, unset local and type change
+  ok    55 up-reference part 5, stacked namerefs, end not in scope
+  ok    56 up-reference part 6, stacked namerefs, end is in scope
+  FAIL  57 up-reference part 7, upscope namerefs, end not in scope
+  ok    58 up-reference part 8, upscope namerefs, end in scope
+  FAIL  59 up-reference part 9, autoloading with hidden special
+  ok    60 up-reference part 10, assignment to enclosing scope, types match
+  ok    61 up-reference part 11, assignment to enclosing scope, type mismatch
+  ok    62 up-reference part 12, assignment to enclosing scope, unset by reference
+  ok    63 up-reference part 13, assignment to enclosing scope, skip local
+  xfail  64 up-reference part 14, typeset -g to enclosing scope, skip local
+  ok    65 up-reference part 15, non-existent parameter in outer scope
+  ok    66 options reloaded
+  ok    67 Order of evaluation with ${(P)...}
+  ok    68 expansion flags and string replacement
+  ok    69 named references with (P), as ${(P)name_of_nameref}
+  ok    70 named references with (P), as ${(P)nameref}
+  ok    71 local reference points to same-name global reference, part 1
+  ok    72 local reference points to same-name global reference, part 2
+  ok    73 local reference hides same-name global reference
+  ok    74 for-loop variable is a reference, part 1
+  ok    75 for-loop variable is a reference, part 2
+  ok    76 for-loop variable is a reference, part 3
+  FAIL  77 unset various types via nameref, including a readonly special
+  ok    78 for-loop variable is a reference, part 4, warnings
+  FAIL  79 for-loop variable is a reference, part 5, errors
+  ok    80 Global variable is a reference, warning
+  ok    81 reset global reference within function
+  ok    82 add and remove readonly attribute with references
+  ok    83 unset nameref remains unset when resolved
+  ok    84 regression: local nameref may not in-scope a global parameter
+  ok    85 create nameref by pattern match not allowed
+  ok    86 regression: warn about invalid nameref options but never about valid ones
+  ok    87 assignment at different scope than declaration, -u 0
+  FAIL  88 assignment at different scope than declaration, '' 0
+  ok    89 assignment at different scope than declaration, -u 2
+  ok    90 assignment at different scope than declaration, -u 6
+  FAIL  91 assignment at different scope than declaration, '' 6
+  FAIL  92 Transitive references with scoping changes
+  ok    93 rebound nameref behaves the same as newly bound one
+  FAIL  94 references to invalid variable names
+  FAIL  95 references to builtin specials
+  FAIL  96 references to positional parameters
+  ok    97 regression: assign to local that shadows global named reference
+  ok    98 regression - converting a string into a named reference
+  ok    99 typeset reference chain to not-yet-defined variable including a hidden reference
+  ok   100 self reference chain including a hidden reference
+  FAIL 101 Referring and dereferring an autoload variable loads it
+  FAIL 102 Dereferring an autoload variable fails to load it if its hidden
+  ok   103 regression: don't follow references when computing base scope - part 1
+  ok   104 regression: don't follow references when computing base scope - part 2
+  FAIL 105 incidental reference loop triggers error
+  ok   106 type changes via assignments to references
+  FAIL 107 can't change type of hidden variables via assignments to references
+  ok   108 type changes via plain typeset to references
+  FAIL 109 type changes via typed typeset to references
+  ok   110 regression: reference loop with same name enclosing variable
+  ok   111 reference always prefers enclosing variable over itself
+  ok   112 self reference via upper reference
+  ok   113 assign not fully defined reference with string
+  ok   114 assign not fully defined reference with array
+  ok   115 typeset not fully defined reference with string
+  ok   116 typeset not fully defined reference with array
+  ok   117 typeset not fully defined reference with integer
+  FAIL 118 unsetting references with -n unsets the references
+  FAIL 119 unsetting references without -n unsets the referred parameters
+  FAIL 120 unsetting subscripted references unsets the referred elements
+  FAIL 121 unsetting read-only parameter triggers an error
+  FAIL 122 unsetting placeholder references or their referents has no effect
+  ok   123 unsetting references to not-yet-defined variables or their referents has no effect
+  FAIL 124 unsetting references referring to parameters in enclosing scopes unsets the parameters
+  FAIL 125 unsetting references referring to hidden parameters unsets the hidden parameters
+  FAIL 126 hidden reference refers to a nested variable
+  FAIL 127 reference refers successively to multiple variables in multiple nested scopes
+  ok   128 reference referring to a nested variable becomes an integer
+
+## K02parameter  exit=1  fail=3 pass=23
+  ok     1 Basic scalars with namespace
+  ok     2 Scalar but with typeset
+  ok     3 Basic arrays with namespace
+  ok     4 Array but with typeset
+  ok     5 Basic ksharray with namespace
+  ok     6 Basic shwordsplit with namespace
+  ok     7 $+... and namespace
+  ok     8 $+... with arrays and namespace
+  FAIL   9 ${(z)...} and ${(Q)...} for some hard to parse cases
+  ok    10 ${(c)#...}
+  FAIL  11 namerefs with namespaces
+  ok    12 Parse without leading dot (future proofing)
+  ok    13 With and without leading dot are distinct
+  ok    14 Bare namespace is usable (ksh compatibility)
+  ok    15 Bare namespace is not usable with two dots
+  ok    16 Namespace must precede an identifier, assignment
+  ok    17 Namespace must precede an identifier, typeset
+  ok    18 Namespace must precede an identifier, reference
+  ok    19 Namespace identifier must not begin with a digit, assignment
+  ok    20 Namespace identifier must not begin with a digit, typeset
+  ok    21 Namespace identifier must not begin with a digit, reference
+  ok    22 Identifier starting with a digit must be all digits, assignment
+  ok    23 Identifier starting with a digit must be all digits, typeset
+  ok    24 Identifier starting with a digit must be all digits, reference
+  FAIL  25 Nested namespace is not usable
+  ok    26 Namespaces in math context
+
+## P01privileged  exit=2 SKIPPED(PRIVILEGED tests require super-user privileges (or env var))  unknown=8
+  ????   1 PRIVILEGED automatically enabled when RUID != EUID
+  ????   2 PRIVILEGED automatically enabled when RGID != EGID
+  ????   3 EUID set to RUID after disabling PRIVILEGED
+  ????   4 RUID/EUID set to 0/0 when privileged after disabling PRIVILEGED
+  ????   5 not possible to regain EUID when unprivileged after disabling PRIVILEGED
+  ????   6 EGID set to RGID after disabling PRIVILEGED
+  ????   7 not possible to regain EGID when unprivileged after disabling PRIVILEGED
+  ????   8 getpwuid() fails with non-existent RUID and 0 EUID
+
+## V01zmodload  exit=1  fail=17 pass=22 xfail=1 xpass=1
+  ok     1 List the loaded modules
+  ok     2 Test reloading an already-loaded module
+  FAIL   3 Test loading of all compiled modules
+  FAIL   4 Check that zsh believes the modules did load
+  ok     5 Check that loading a nonexistent module fails
+  ok     6 Check that unloading a nonexistent module fails
+  ok     7 Add/remove autoloaded builtin
+  ok     8 Fail to remove unautoloaded builtin
+  ok     9 Add/remove autoloaded condition
+  ok    10 Fail to remove unautoloaded condition
+  ok    11 Add/remove autoloaded parameter
+  ok    12 Fail to remove unautoloaded parameter
+  ok    13 Add/remove autoloaded math function
+  ok    14 Fail to remove unautoloaded math function
+  ok    15 Autoload a module via a builtin
+  ok    16 Autoloads are persistent
+  FAIL  17 Failed builtin autoload
+  FAIL  18 Failed parameter autoload
+  FAIL  19 Failed condition autoload
+  FAIL  20 Failed math function autoload
+  ok    21 Immediate autoload failure on non-existent feature when module loaded
+  FAIL  22 Autoloads checked on loading but don't necessarily effect current command
+  FAIL  23 List default autoloads
+  FAIL  24 Autoload a module via a condition
+  FAIL  25 Autoload a module via a parameter
+  FAIL  26 Autoload a module via a math function
+  FAIL  27 Autoload tied parameters
+  ok    28 Test creating a module alias
+  FAIL  29 Unload/autoload the module via its alias
+  ok    30 Delete the module alias again
+  FAIL  31 Listing with zmodload should give all our modules.
+  FAIL  32 Unload the modules loaded by this test suite
+  ok    33 Listing feature autoloads includes unloaded modules
+  FAIL  34 Regression tests for index bug with math functions.
+  FAIL  35 Module Features for math functions
+  XPASS  36 can unset a non-readonly autoloadable parameter before loading the module
+  ok    37 can unset a non-readonly autoloadable parameter after loading the module
+  xfail  38 can't unset a readonly autoloadable parameter before loading the module
+  ok    39 can't unset a readonly autoloadable parameter after loading the module
+  ok    40 unloading a module doesn't implicitly unset autoloadable parameters
+  ok    41 zmodload -Fa can disable features from being loaded
+
+## V02zregexparse  exit=0  pass=61
+  ok     1 empty
+  ok     2 element
+  ok     3 closure
+  ok     4 concatenation
+  ok     5 alternation 1
+  ok     6 alternation 2
+  ok     7 grouping
+  ok     8 alternation, grouping and closure
+  ok     9 lookahead 1
+  ok    10 lookahead 2
+  ok    11 pattern, lookahead, guard and completion action
+  ok    12 guard failure
+  ok    13 action
+  ok    14 aaa
+  ok    15 aaa /a/
+  ok    16 aaa 2*/a/
+  ok    17 aaa 3*/a/
+  ok    18 aaa 4*/a/
+  ok    19 aaa 5*/a/
+  ok    20 aaa /aaa/
+  ok    21 aaa /aaa/ /a/
+  ok    22 aaa /aaa/ #
+  ok    23 aaa /aaa/ # #
+  ok    24 aaa ( /a/ )
+  ok    25 aaa ( /a/ ) #
+  ok    26 aaa /a/ /b/
+  ok    27 a /a/ '{A}'
+  ok    28 a /b/ '{A}'
+  ok    29 a /b/ ':A' '{B}'
+  ok    30 ab /a/ '{A}'
+  ok    31 ab /a/ '{A}' /b/ '{B}'
+  ok    32 ab /a/ ':A' '{B}' /b/ ':C' '{D}'
+  ok    33 abc /a/ '{A}' /b/ '{B}' /c/ '{C}'
+  ok    34 abz /a/ '{A}' /b/ '{B}' /c/ '{C}'
+  ok    35 azz /a/ '{A}' /b/ '{B}' /c/ '{C}'
+  ok    36 aba '{A}' /a/ '{B}' /b/ '{C}' /c/ '{D}'
+  ok    37 a /a/ '{M1}'
+  ok    38 aaa /a/ '{A}' //
+  ok    39 aaa /a/ '{M1}' // '{A}'
+  ok    40 abcdef /a/ '{M1}' /b/ '{M1}' /c/ '{M1}' // '{A}'
+  ok    41 abcdef /a/ '{A}' /b/ '{B}' /c/ '{C}' // '{D}'
+  ok    42 a /a/ {A} /b/ {B}
+  ok    43 abcdef /a/ -Ga {Aa} /b/ -Gb {Aa} /c/ -Gc {Ac} //
+  ok    44 abcdef /a/ -Ga {Aa} /b/ -Gb {Ab} /c/ -Gc {Ac} /[]/ :F
+  ok    45 abcdef /a/ -Ga {Aa} /b/ -Gb {Ab} /c/ -Gc {Ac} ( /[]/ :F1 | /z/ :F2 )
+  ok    46 a /[]/ :A
+  ok    47 "\0" /\0/ {A}
+  ok    48 "\0" /\0/ {A} / / {B}
+  ok    49 abcdef ( /?/ {M1} ) #
+  ok    50 abcdef ( /c?|?/ {M1} ) #
+  ok    51 abcacdef ( /a/ {M1} | /b/ {M1} | /c/ {M1} ) #
+  ok    52 abcdef ( /a/ :A | /b/ :B | /c/ :C ) #
+  ok    53 abcdef ( /a/ :A {M1} | /b/ :B {M1} | /c/ :C {M1} ) #
+  ok    54 "com\0xx" /W/ ( /W/ :A /W/ :B ) #
+  ok    55 "com\0xx\0yy" /W/ ( /W/ :A /W/ :B ) #
+  ok    56 "com\0xx\0yy\0zz" /W/ ( /W/ :A /W/ :B ) #
+  ok    57 abcdez /abc/ :A /def/ :B
+  ok    58 abcdez /abc/+ :A /def/ :B
+  ok    59 abcdez /abc/+ :A // /def/ :B
+  ok    60 abcdez /abc/+ :A //- /def/ :B
+  ok    61 "ZZZZ\0abcdef" /ZZZZ\0/ /abc/+ :A /dee/ :B
+
+## V03mathfunc  exit=0  pass=12
+  ok     1 Basic operation with atan
+  ok     2 atan with two arguments
+  ok     3 atan can't take three arguments
+  ok     4 rand48 with default initialisation
+  ok     5 rand48 with pre-generated seed
+  ok     6 Conversion of arguments from integer
+  ok     7 Use of abs on various numbers
+  ok     8 Non-negative argument checking for square roots.
+  ok     9 Test random number generator distributions are not grossly broken
+  ok    10 Test Gamma function gamma and lgamma
+  ok    11 log2
+  ok    12 isinf, isnan
+
+## V04features  exit=1  fail=1 pass=23
+  ok     1 Loading modules with no features
+  ok     2 Enabling features
+  ok     3 Disabling features
+  ok     4 Testing existing features
+  ok     5 Testing features are in given state (on feature is on)
+  ok     6 Testing features are in given state (on feature is not off
+  ok     7 Testing features are in given state (off feature is not on)
+  ok     8 Testing features are in given state (off feature is off
+  ok     9 Testing non-existent features
+  ok    10 Testing features via array parameter
+  ok    11 Module special parameter is hidden by a local parameter
+  ok    12 Unhidden readonly special can't be assigned to when made local
+  ok    13 Module unloaded
+  ok    14 Module doesn't exist when unloaded
+  ok    15 Module doesn't have features when unloaded
+  ok    16 Failed to add parameter if local parameter present
+  ok    17 Feature state with loading after error enabling
+  ok    18 Successfully added feature parameter that previously failed
+  FAIL  19 Successfully unloaded a module despite a parameter being hidden
+  ok    20 Using parameter as normal after unloading is OK
+  ok    21 Enabling and disabling of builtins as features
+  ok    22 Loading won't override global parameter
+  ok    23 unsetting a global parameter allows feature parameter to be enabled
+  ok    24 zmodload with no -F enables all features
+
+## V05styles  exit=0  pass=23
+  ok     1 zstyle -d restores a pristine state
+  ok     2 defining styles
+  ok     3 listing styles in default format
+  ok     4 listing styles in zstyle format
+  ok     5 boolean test -b/-t + true
+  ok     6 boolean test -b/-t + false
+  ok     7 boolean test -b/-t + unset
+  ok     8 boolean test -T + true
+  ok     9 boolean test -T + false
+  ok    10 boolean test -T + unset
+  ok    11 pattern matching rules
+  ok    12 scalar with separator
+  ok    13 zstyle -e evaluations
+  ok    14 retrieving patterns
+  ok    15 positive pattern match
+  ok    16 negative pattern match
+  ok    17 retrieving styles by pattern
+  ok    18 retrieving values by pattern and name
+  ok    19 deleting styles by pattern only
+  ok    20 deleting styles by pattern and style name
+  ok    21 patterns of equal weight are used in order of definition
+  ok    22 the example in the documentation remains correct
+  ok    23 zstyle -L escapes the key (regression: workers/48424)
+
+## V06parameter  exit=1  fail=1 pass=4
+  ok     1 Function tracing
+  ok     2 Eval tracing
+  ok     3  $functions_source
+  ok     4 $functions can be appended to twice
+  FAIL   5 workers/54617: $commands look-up with no_hash_list_all
+
+## V07pcre  exit=1  fail=4 pass=11
+  ok     1 Basic non-ASCII regexp matching
+  FAIL   2 Raw IMETA characters in input string
+  ok     3 Regex result inversion detection
+  ok     4 pcre_compile interface testing: basic, anchored & case-insensitive
+  ok     5 Empty string for optional captures that don't match
+  ok     6 pcre_match -b and pcre_match -n
+  ok     7 ensure ASCII NUL passes in and out of matched plaintext
+  ok     8 ensure ASCII NUL works also in the regex
+  ok     9 infix -pcre-match works
+  ok    10 bash-compatibility works
+  ok    11 regression for segmentation fault, workers/38307
+  FAIL  12 switch between C/UTF-8 locales
+  ok    13 empty capture
+  FAIL  14 named captures
+  FAIL  15 pcre_match -d
+
+## V08zpty  exit=0  pass=2
+  ok     1 zpty with a process that does not set up the terminal: internal write
+  ok     2 zpty with a process that does not set up the terminal: write via stdin
+
+## V09datetime  exit=0  pass=15 skip=2
+  ok     1 basic format specifiers
+  ok     2 zsh extensions
+  skip   3 alternate format extensions
+  skip   4 various extensions
+  ok     5 Embedded nulls
+  ok     6 bad format specifier
+  ok     7 epochtime optional
+  ok     8 optional nanoseconds
+  ok     9 empty epochtime not allowed
+  ok    10 empty nanoseconds not allowed
+  ok    11 too-large nanoseconds not allowed
+  ok    12 overflowed nanoseconds not allowed
+  ok    13 negative nanoseconds not allowed
+  ok    14 -r timestring not optional
+  ok    15 %. truncation
+  ok    16 -n option
+  ok    17 empty TZ respected
+
+## V10private  exit=1  fail=19 pass=23
+  ok     1 unload and reload the module without crashing
+  FAIL   2 basic scope hiding
+  ok     3 enter and exit a scope
+  FAIL   4 variable defined only in scope
+  FAIL   5 nested scope with different type, correctly restored
+  ok     6 type of private may not be changed by assignment
+  ok     7 associative array fields may not be private
+  ok     8 tied params may not be private, part 1
+  ok     9 tied params may not be private, part 2
+  ok    10 privates may hide tied parameters
+  FAIL  11 private hides value from surrounding scope in nested scope
+  ok    12 private cannot be re-declared as local
+  ok    13 local cannot be re-declared as private
+  ok    14 exported private behaves like a local, part 1
+  ok    15 exported private behaves like a local, part 2 (arrays do not export)
+  ok    16 exported private behaves like a local, part 3 (export does not change scope)
+  FAIL  17 privates are not visible in anonymous functions, part 1
+  FAIL  18 privates are not visible in anonymous functions, part 2
+  FAIL  19 privates are not visible in anonymous functions, part 3
+  FAIL  20 privates are not visible in anonymous functions, part 4
+  FAIL  21 privates are not visible in anonymous functions, part 5
+  ok    22 special parameters cannot be made private
+  ok    23 private parameter may hide a special parameter
+  FAIL  24 typeset still works with zsh/param/private module loaded
+  ok    25 nameref can be declared private
+  FAIL  26 assignment to private nameref in wrong scope, part 1
+  FAIL  27 assignment to private nameref in wrong scope, part 2
+  FAIL  28 up-reference for private namerefs, end unset and not in scope
+  FAIL  29 up-reference for private namerefs, end not in scope
+  FAIL  30 up-reference for private namerefs, end is in scope
+  ok    31 up-reference for private namerefs, end is in scope but private
+  ok    32 regression test for invalid reference detection
+  ok    33 regression test for unset private
+  ok    34 private may be called twice
+  ok    35 private may not change parameter type
+  FAIL  36 redirection cannot assign private in wrong scope
+  ok    37 nofork may read private in calling function
+  ok    38 nofork may write to private in calling function
+  ok    39 nofork cannot see private in surrounding nofork
+  FAIL  40 nofork may not change private in surrounding nofork
+  FAIL  41 function may not access private from inside nofork
+  FAIL  42 function may not access private declared in nofork
+
+## V11db_gdbm  exit=1  fail=28 pass=2
+  ok     1 unload and reload the module without crashing
+  FAIL   2 create the database
+  FAIL   3 open the database read-only
+  FAIL   4 store key in database
+  FAIL   5 remove key from database (different variables)
+  FAIL   6 store & remove key from database (the same variables)
+  FAIL   7 store 2 keys fetching 1st
+  FAIL   8 unset key that was fetched
+  FAIL   9 scan read-only tied hash, directly assign local -a
+  FAIL  10 Use scan directly, read-write mode
+  FAIL  11 replace hash / database, scan
+  FAIL  12 scan with no (kv)
+  FAIL  13 scan with keys only (k)
+  FAIL  14 scan with keys only explicit (v)
+  ok    15 read-only open non-existent database
+  FAIL  16 Append with +=( ), also with existing data, also (kv) scan
+  FAIL  17 Type of tied parameter
+  FAIL  18 Type of tied parameter, with preceding unset
+  FAIL  19 Type of tied parameter, with local parameter already existing
+  FAIL  20 Test of automatic untie (use of local scope) and of scoping
+  FAIL  21 Test of tie to hidden local via named reference
+  FAIL  22 zgdbm_tied parameter
+  FAIL  23 unset of read-only zgdbm_tied parameter
+  FAIL  24 Unicode test
+  FAIL  25 Metafication of $'\0'
+  FAIL  26 Unicode & metafication test, different hash access
+  FAIL  27 Hash scanning and metafication
+  FAIL  28 Sorted hash scanning and metafication
+  FAIL  29 zgdbmpath builtin
+  FAIL  30 Test store in forked Zsh
+
+## V12zparseopts  exit=1  fail=12 pass=20
+  FAIL   1 zparseopts with empty option spec (no options recognised)
+  FAIL   2 zparseopts without option specs, without array
+  ok     3 zparseopts -a
+  ok     4 zparseopts -A
+  ok     5 zparseopts -D
+  ok     6 zparseopts -E
+  ok     7 zparseopts -D -E
+  FAIL   8 zparseopts -F
+  ok     9 zparseopts -K -a
+  ok    10 zparseopts -K -A
+  FAIL  11 zparseopts -M
+  ok    12 zparseopts -v
+  ok    13 zparseopts -v with unset parameter
+  ok    14 zparseopts -v with non-array argument
+  ok    15 multiple arrays
+  ok    16 -/-- handling
+  ok    17 special characters in option names
+  ok    18 overlapping option specs without -G (scan order)
+  ok    19 overlapping option specs with -G (scan order)
+  FAIL  20 missing optarg
+  ok    21 zparseopts without -G, =optarg handling
+  ok    22 zparseopts -G, single parameter, with =
+  FAIL  23 zparseopts -G, single parameter, without =
+  ok    24 zparseopts -G, separate parameters
+  ok    25 zparseopts -G, empty optarg
+  ok    26 short options, with and without -G
+  FAIL  27 Sun-style long options, with and without -G
+  FAIL  28 only -- acts as explicit parsing terminator with -G
+  FAIL  29 zparseopts -n, internal vs external usage errors
+  FAIL  30 zparseopts option stacking
+  FAIL  31 zparseopts long-option spec guarding
+  FAIL  32 zparseopts missing/empty optargs
+
+## V13zformat  exit=1  fail=21 pass=14 xpass=1
+  ok     1 basic zformat test
+  ok     2 basic conditionals test
+  ok     3 nested conditionals test
+  ok     4 conditionals with empty and missing values
+  ok     5 minimum and maximum widths
+  ok     6 basic -a test
+  FAIL   7 one of -f -F -a required
+  FAIL   8 duplicate -f -F -a ignored
+  FAIL   9 more than one of -f -F -a not allowed
+  ok    10 -f and -F: param and format string required
+  ok    11 -a: param and separator required
+  ok    12 -a with empty separator
+  XPASS  13 width specifier is multi-byte-aware
+  ok    14 sequence with no matching spec falls through
+  FAIL  15 impossible spec in format string
+  FAIL  16 %% and %) in format string
+  FAIL  17 more literal % in format string
+  FAIL  18 spec with invalid char
+  FAIL  19 spec char longer than 1 byte
+  FAIL  20 weird spec char
+  FAIL  21 %( at end of format string
+  FAIL  22 incomplete ternary expression
+  FAIL  23 ternary expression with impossible spec char
+  ok    24 ternary expression with alternate delimiters
+  ok    25 ternary expression returning matching spec
+  ok    26 ternary expression returning non-matching spec
+  FAIL  27 ternary expression returning impossible spec
+  ok    28 ternary expression returning literal % or )
+  FAIL  29 -a + -q not allowed
+  FAIL  30 optional argument to -q
+  FAIL  31 -q with and without optarg
+  FAIL  32 -q with ternary expression
+  FAIL  33 -q: min-width specifier ignores extra %s
+  FAIL  34 -q: max-width specifier ignores extra %s
+  FAIL  35 -q: ternary width test ignores extra %s
+  FAIL  36 -Q, -Q0, -Q1
+
+## V14system  exit=0  pass=14 xfail=2
+  ok     1 zsystem flock valid time arguments
+  ok     2 zsystem flock invalid time arguments
+  ok     3 zsystem flock unsuccessful wait test
+  ok     4 zsystem flock successful wait test, no timeout
+  ok     5 zsystem flock successful wait test, integral seconds
+  ok     6 zsystem flock successful wait test, fractional seconds
+  ok     7 regression: zsystem flock optarg parsing
+  ok     8 sysread default
+  ok     9 sysread read error
+  xfail  10 sysread read error
+  ok    11 sysread write error
+  ok    12 sysread timeout
+  ok    13 sysread end of file
+  ok    14 regression test: sysread write error with both -o and a parameter
+  ok    15 regression test: sucessful sysread with both -o and a parameter
+  xfail  16 successful sysread with both -o and a parameter
+
+## V15nearcolor  exit=2 SKIPPED(the xterm-256color terminal definition is not available)  unknown=4
+  ????   1 automatically loaded without truecolor extension
+  ????   2 not automatically loaded with truecolor extension
+  ????   3 88-colour conversion
+  ????   4 256-colour conversion
+
+## W01history  exit=1  fail=1 pass=6
+  ok     1 History word references
+  ok     2 History line numbering
+  ok     3 History substitution
+  ok     4 Regression test for history references in command substitution
+  ok     5 Modifiers :h and :t with arguments
+  ok     6 Modifier :P
+  FAIL   7 Lines ending in backslash saved and restored to history
+
+## W02jobs  exit=-9 TIMED-OUT  fail=5 notrun=1 pass=5 unknown=15
+  FAIL   1 job notification with no_long_list_jobs
+  FAIL   2 job notification with long_list_jobs
+  ok     3 running job with no_hup + no_check_jobs
+  ok     4 running job with no_check_jobs
+  ok     5 running job with check_jobs + no_check_running_jobs
+  FAIL   6 running job with check_jobs + check_running_jobs
+  ok     7 `jobs` (misc.) with multiple running jobs
+  ok     8 `jobs -l` and `jobs -p` with running job
+  FAIL   9 `jobs -d` with running job
+  FAIL  10 `jobs -r` and `jobs -s` with running job
+  ----  11 various `kill` signals with multiple running jobs
+  ????  12 jobs with no jobs
+  ????  13 jobs in sub-shell with job in parent shell
+  ????  14 jobs in sub-shell with job in same shell
+  ????  15 jobs in sub-shell with job in parent + same shell
+  ????  16 jobs in sub-shell with two jobs in same shell
+  ????  17 disown current job
+  ????  18 disown with no jobs
+  ????  19 disown in sub-shell with job in parent shell
+  ????  20 disown in sub-shell with job in same shell
+  ????  21 disown in sub-shell with job in parent + same shell
+  ????  22 disown -a
+  ????  23 disown -a in sub-shell
+  ????  24 background and disown with &| and &!
+  ????  25 fg + bg in sub-shell
+  ????  26 fg %- with function superjob does not pick internal job as previous
+
+## W03jobparameters  exit=1  fail=2 pass=1
+  ok     1 $jobstate for running job in main shell and subshell
+  FAIL   2 $jobstate shows one job started in main shell or one started in subshell
+  FAIL   3 $jobstate shows no job started in main shell but one started in subshell
+
+## X02zlevi  exit=1  fail=58 pass=37
+  FAIL   1 change last character in buffer
+  FAIL   2 change forward to matching bracket
+  FAIL   3 delete backwards to matching bracket
+  ok     4 delete empty line
+  FAIL   5 yank and paste blank line
+  ok     6 swap case on a blank line
+  ok     7 replace character when at end of buffer or newline
+  ok     8 replace acts like insert at newline
+  FAIL   9 join lines with line count
+  ok    10 join more lines than possible
+  FAIL  11 don't indent blank lines
+  FAIL  12 additional indentation
+  FAIL  13 indent with one character on final line
+  ok    14 yank left moves the cursor
+  ok    15 yank right leaves the cursor
+  ok    16 yank up line moves cursor up but not to buffer start
+  ok    17 yank down line leaves the cursor
+  FAIL  18 yank up clears lastcol
+  ok    19 yank up honours lastcol
+  FAIL  20 delete up clears lastcol
+  ok    21 repeat replace chars at the end of the line consumes the replace char
+  ok    22 numeric argument to repeat replaces change count
+  FAIL  23 numeric args to both action and movement are multiplied (and saved for any repeat)
+  FAIL  24 paste register 1 to get last deletion
+  FAIL  25 paste register 0 to get last yank
+  ok    26 setting named register also sets unnamed register
+  FAIL  27 appending to named register
+  FAIL  28 set one and then a different register
+  FAIL  29 set register then set black hole register
+  ok    30 reset register after selecting black hole
+  FAIL  31 retrieve unnamed register after appending
+  FAIL  32 repeat advances to next killring register
+  FAIL  33 yank and delete to black hole register
+  FAIL  34 paste from black hole register and repeat
+  FAIL  35 repeat paste from named register
+  ok    36 line based put before followed by character based yank-pop
+  FAIL  37 character based put before followed by line based yank-pop
+  ok    38 put after cycled twice with yank-pop
+  ok    39 line based put after followed by character based yank-pop
+  FAIL  40 character based after before followed by line based yank-pop
+  FAIL  41 undo initial change
+  FAIL  42 repeat initial edit
+  FAIL  43 repeat initial edit with non-blank starting line
+  FAIL  44 repeat initial edit with overstrike set
+  ok    45 use of vi-repeat as the motion and repeat after a failed change
+  ok    46 use of undo in vi insert mode
+  FAIL  47 vi mode undo of initial and subsequent change
+  FAIL  48 undo invoked twice
+  FAIL  49 undo in insert mode, redo in command
+  FAIL  50 undo and redo in insert mode, undo in command
+  ok    51 undo starting with a next change in the change list
+  FAIL  52 split the undo sequence
+  FAIL  53 setting mark and returning to original position
+  FAIL  54 force character-wise change to join lines
+  FAIL  55 character-wise delete to beginning of line leaves the newline'
+  FAIL  56 force line-wise delete of line
+  FAIL  57 line-wise force of a text object
+  FAIL  58 change selection
+  FAIL  59 change character wise selection with C acts linewise
+  FAIL  60 x kills selections
+  ok    61 replace characters in selections
+  ok    62 put over selection at start of buffer
+  FAIL  63 put over selection at end of buffer
+  ok    64 yank empty selection
+  ok    65 delete empty selection
+  ok    66 yank linewise and put over linewise selection at start of buffer
+  ok    67 yank linewise and put over linewise selection in middle of buffer
+  FAIL  68 yank linewise and put over linewise selection at end of buffer
+  ok    69 yank character-wise and put over linewise selection
+  ok    70 yank linewise and put over character-wise selection at start of buffer
+  FAIL  71 yank linewise and put over character-wise selection in middle of buffer
+  FAIL  72 yank linewise and put over character-wise selection at end of buffer
+  FAIL  73 paste last (9th) register over a selection
+  FAIL  74 delete blank line using selection
+  FAIL  75 toggle case of selection
+  FAIL  76 backward word
+  ok    77 backword blank word
+  ok    78 backward word end
+  ok    79 backward blank word end
+  ok    80 forward word
+  ok    81 forward blank word
+  ok    82 forward word end
+  ok    83 forward blank word end
+  FAIL  84 word motion with multibyte characters
+  FAIL  85 delete all word on blanks
+  FAIL  86 delete all word on alphanumerics
+  FAIL  87 delete all word on other characters
+  ok    88 delete all word with numeric argument
+  FAIL  89 all word with existing selection and cursor before mark
+  FAIL  90 all word with existing selection and mark before cursor
+  FAIL  91 in word with existing selection and cursor before mark
+  FAIL  92 in word with existing selection and mark before cursor
+  FAIL  93 all argument for different arguments
+  FAIL  94 in argument for different arguments
+  ok    95 for a vi command, wait to allow a longer binding to be used
+
+## X03zlebindkey  exit=1  fail=2 pass=10
+  ok     1 bindkey -s
+  ok     2 bindkey with multiple definitions associated with prefix
+  ok     3 bindkey output
+  FAIL   4 binding to CSI introduction is not used if a full sequence arrives
+  ok     5 binding to longer prefix of a CSI sequence is used
+  ok     6 use prefix binding where we don't have a CSI sequence
+  ok     7 creating keymaps from existing keymaps
+  ok     8 deleting keymaps
+  ok     9 in multibyte mode all bytes with bit 7 set start self-insert
+  FAIL  10 bindkey -s multibyte characters
+  ok    11 history expansion of failed command substitution using magic-space binding
+  ok    12 delete all keymaps after expanding keymapnamtab
+
+## X04zlehighlight  exit=1  fail=20
+  FAIL   1 region highlight - standout overlapping on other region_highlight entry
+  FAIL   2 basic region_highlight with 8 colors
+  FAIL   3 later highlight attribute takes precedence over earlier one that contradicts
+  FAIL   4 unrecognised highlight attribute and any subsequent ones ignored
+  FAIL   5 disable highlight attribute with "no" prefix
+  FAIL   6 use layers to override precedence of ordering
+  FAIL   7 region_highlight memo information round trips
+  FAIL   8 region_highlight memo information forward compatibility, #1
+  FAIL   9 region_highlight memo information forward compatibility, #2
+  FAIL  10 region_highlight memo information forward compatibility, #3: NULs
+  FAIL  11 basic region_highlight with true-color (hex-triplets)
+  FAIL  12 basic region_highlight with near-color (hex-triplets at input)
+  FAIL  13 basic region_highlight with near-color using extremes - all black and all white
+  FAIL  14 overlapping region_highlight with 8 colors
+  FAIL  15 overlapping region_highlight with true-color
+  FAIL  16 overlapping region_highlight with near-color (hex-triplets at input)
+  FAIL  17 zle $widgetname -f nolast
+  FAIL  18 overlapping backgrounds with opacity and nearcolor
+  FAIL  19 opacity with an unknown base colour
+  FAIL  20 foreground and background opacity
+
+## X05zleincarg  exit=1  fail=4 pass=91
+  ok     1 incarg increments an integer
+  ok     2 decarg decrements an integer
+  ok     3 vim-incarg increments an integer
+  ok     4 vim-decarg decrements an integer
+  ok     5 vim-backward-incarg increments an integer
+  ok     6 vim-backward-decarg decrements an integer
+  ok     7 sync-incarg does nothing on unsupported terminals
+  ok     8 sync-incarg does nothing on tmux in pane 0
+  ok     9 sync-incarg increments by 1 on tmux in pane 1
+  ok    10 sync-incarg increments by 2 on tmux in pane 2
+  ok    11 sync-incarg does nothing on tmux in pane 0
+  ok    12 sync-incarg increments by 1 on tmux in pane 1
+  ok    13 sync-incarg increments by 2 on tmux in pane 2
+  ok    14 sync-incarg prioritizes tmux pane number over iTerm2's
+  ok    15 incarg changes the incremented amount based on the numeric argument
+  ok    16 incarg changes the default incremented amount based on the incarg variable
+  ok    17 incarg prioritizes the numeric argument over the incarg variable
+  ok    18 The sync- variants of incarg takes the numeric argument into account
+  ok    19 incarg preserves leading zeros of decimal integers
+  ok    20 incarg preserves leading zeros when the digit turns from negative to positive
+  ok    21 incarg preserves leading zeros when the digit turns from positive to negative
+  FAIL  22 incarg works when the result has more number of digits than the original
+  FAIL  23 decargs works on integers with leading zeros when the result has more digits than the original
+  ok    24 incarg produces the correct number of zeros when incrementing integers starting with -0
+  ok    25 decarg produces the correct number of zeros when incrementing integers starting with -0
+  ok    26 incarg removes the sign when the target integer starts with -0 and the increment amount is 0
+  ok    27 incarg turns -0 into 1
+  ok    28 decarg turns -0 into -1
+  ok    29 incarg turns -0 into 0 when the increment amount is 0
+  ok    30 incarg can increment a binary integer
+  ok    31 incarg can increment a binary integer with an upper case prefix
+  ok    32 decarg can decrement a binary integer
+  ok    33 incarg can preserve leading zeros of binaries
+  ok    34 incarg works on binaries when the result has more zeros than the original
+  ok    35 decarg fails to produce a negative binary value
+  ok    36 incarg can increment an octal integer
+  ok    37 incarg can increment an octal integer with an upper case prefix
+  ok    38 decarg can decrement an octal integer
+  ok    39 decarg fails to produce a negative octal value
+  ok    40 incarg can increment a hexadecimal integer
+  ok    41 incarg can increment a hexadecimal integer with an upper case prefix
+  ok    42 incarg can increment a hexadecimal integer with no numeric digit
+  ok    43 decarg can decrement a hexadecimal integer
+  ok    44 decarg fails to produce a negative hexadecimal value
+  ok    45 incarg interprets integers starting with 0x0b as a hexadecimal
+  ok    46 vim-backward-incarg interprets integers starting with 0x0b as a hexadecimal
+  ok    47 incarg does nothing when the cursor is placed just to the left of an integer
+  ok    48 incarg works when the cursor is placed at the leftmost digit of an integer
+  ok    49 incarg works when the cursor is placed at the inner digit of an integer
+  ok    50 incarg works when the cursor is placed at the rightmost digit of an integer
+  ok    51 incarg works when the cursor is placed just to the right of an integer
+  ok    52 incarg does nothing when the cursor is placed more than a single letter away to the right
+  ok    53 incarg turns [0-9]0x[0-9a-f] into [0-9]1x[0-9a-f] when the cursor is at the left of x
+  ok    54 incarg takes [0-9]0x[0-9a-f] and increments the hexadecimal part when the cursor is on x
+  ok    55 incarg takes [0-9]0x[0-9a-f] and increments the hexadecimal part when the cursor is at the right of x
+  ok    56 incarg turns [0-9]0b[01] into [0-9]1b[01] when the cursor is at the left of b
+  ok    57 incarg takes [0-9]0b[01] and increments the binary part when the cursor is on b
+  ok    58 incarg takes [0-9]0b[01] and increments binary part when the cursor is at the right of b
+  ok    59 incarg turns [0-9]0o[0-7] into [0-9]1o[0-7] when the cursor is at the left of o
+  ok    60 incarg takes [0-9]0o[0-7] and increments the octal part when the cursor is on o
+  ok    61 incarg takes [0-9]0o[0-7] and increments the octal part when the cursor is at the right of o
+  ok    62 incarg takes 0b0x[0-9a-f] and increments the binary part when the cursor is at the left of x
+  ok    63 incarg takes 0b0x[0-9a-f] and increments the hexadecimal part when the cursor is on x
+  ok    64 incarg takes 0b0x[0-9a-f] and increments the hexadecimal part when the cursor is at the right of x
+  ok    65 vim-incarg works when the cursor is placed to the left of an integer
+  ok    66 vim-incarg works when the cursor is placed at the leftmost digit of an integer
+  ok    67 vim-incarg works when the cursor is placed at the inner digit of an integer
+  ok    68 incarg works when the cursor is placed at the rightmost digit of an integer
+  ok    69 vim-incarg does nothing when the cursor is placed to the right of an integer
+  ok    70 vim-incarg does nothing when the cursor is placed more than a single letter away to the right
+  ok    71 vim-backward-incarg does nothing when the cursor is placed just to the left of an integer
+  ok    72 vim-backward-incarg works when the cursor is placed at the leftmost digit of an integer
+  ok    73 vim-backward-incarg works when the cursor is placed at the inner digit of an integer
+  ok    74 vim-backward-incarg works when the cursor is placed at the rightmost digit of an integer
+  ok    75 vim-backward-incarg works when the cursor is placed just to the right of an integer
+  ok    76 vim-backward-incarg works when the cursor is placed more than a single letter away to the right
+  ok    77 vim-backward-incarg will take [0-9]0x[0-9a-f] and increment the hexadecimal part when the cursor is on x
+  ok    78 vim-backward-incarg will take [0-9]0x[0-9a-f] and increment the hexadecimal part when the cursor is on the right of x
+  ok    79 vim-backward-incarg will turn [0-9]0b[01] into [0-9]1b[01] when the cursor is at the left of b
+  ok    80 vim-backward-incarg will take [0-9]0b[01] and increment the binary part when the cursor is on b
+  ok    81 vim-backward-incarg will take [0-9]0b[01] and increment the binary part when the cursor is on the right of b
+  ok    82 vim-backward-incarg will turn [0-9]0o[0-7] into [0-9]1o[0-7] when the cursor is at the left of o
+  ok    83 vim-backward-incarg will take [0-9]0o[0-7] and increment the octal part when the cursor is on o
+  ok    84 vim-backward-incarg will take [0-9]0o[0-7] and increment the octal part when the cursor is at the right of o
+  ok    85 vim-backward-incarg will take 0b0x[0-9a-f] and increment the binary 0b0 when the cursor is on the left of x
+  ok    86 vim-backward-incarg will take 0b0x[0-9a-f] and increment the hexadecimal part when the cursor is on x
+  ok    87 vim-backward-incarg will take 0b0x[0-9a-f] and increment the hexadecimal part when the cursor is at the right of x
+  ok    88 vim-incarg is compatible with the repeat command
+  ok    89 vim-decarg is compatible with the repeat command
+  ok    90 vim-backward-incarg is compatible with the repeat command
+  FAIL  91 Repeats of vim-incarg takes the numeric argument into account
+  FAIL  92 Repeats of vim-backward-incarg takes the numeric argument into account
+  ok    93 Repeats of vim-sync-incarg work in pane 0
+  ok    94 Repeats of vim-sync-incarg work in pane 1
+  ok    95 Repeats of vim-sync-incarg work in pane 2
+
+## X06termquery  exit=-9 TIMED-OUT  notrun=1 unknown=10
+  ----   1 foot response to terminal queries
+  ????   2 wayst response to terminal queries (shorter colour sequences)
+  ????   3 WezTerm response to terminal queries (space separates version and longer RGB response)
+  ????   4 urxvt response to terminal queries (bug in end of colour sequences)
+  ????   5 kitty response to terminal queries (responds with error to RGB request)
+  ????   6 xterm response to terminal queries
+  ????   7 type-ahead
+  ????   8 no response - timeout
+  ????   9 paste after from clipboard
+  ????  10 paste before from clipboard
+  ????  11 paste over from clipboard
+
+## Z01is-at-least  exit=0  pass=2 xfail=1
+  ok     1 is-at-least smoke test
+  xfail   2 regression test: Two trailing zeroes are filled in
+  ok     3 regression test: Two trailing zeroes are filled in
+
+## Z02zmathfunc  exit=0  pass=6
+  ok     1 basic functionality test
+  ok     2 regression test for ERR_EXIT 
+  ok     3 min() and max() with three arguments
+  ok     4 error test for min()
+  ok     5 error test for max()
+  ok     6 check errors from an unsupported use-case (workers/48156)
+
+## Z03run-help  exit=0  pass=12
+  ok     1 btrfs with option flag, no subcmd
+  ok     2 btrfs with subcmd
+  ok     3 sudo btrfs with subcmd
+  ok     4 ip with subcmd
+  ok     5 ip with subcmd, but no subcmd manuals
+  ok     6 ip with options and subcmd
+  ok     7 sudo ip with options and subcmd
+  ok     8 svn with options
+  ok     9 svn with options and subcmd
+  ok    10 git with option
+  ok    11 git with option, file & subcmd
+  ok    12 git with option, assignment & subcmd
+
+## Z04zgetopt  exit=1  fail=18
+  FAIL   1 -o or -l required (usage error)
+  FAIL   2 weird short-option specs
+  FAIL   3 weird long-option specs
+  FAIL   4 short options
+  FAIL   5 long options
+  FAIL   6 zero args to parse
+  FAIL   7 parsing terminator
+  FAIL   8 POSIXLY_CORRECT
+  FAIL   9 function-mode quoting style
+  FAIL  10 bad options
+  FAIL  11 missing optargs
+  FAIL  12 return status
+  FAIL  13 array output
+  FAIL  14 automatic name
+  FAIL  15 manual name with -n
+  FAIL  16 example from util-linux's getopt-example.bash
+  FAIL  17 result immediately after auto-load
+  FAIL  18 error name with no_function_argzero
+

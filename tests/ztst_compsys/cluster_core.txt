@@ -1,0 +1,1429 @@
+# failing assertions, clustered by root-cause key
+
+inputs    : tests/ztst_compsys/core_minimization.json
+assertions: 350
+clusters  : 103
+            27 with 2+ members, 76 singletons
+
+| n | files | key |
+|---|---|---|
+| 74 | A01grammar,A03quoting,A06assign,B01cd,B02typeset,B03print,B07emulate,B10getopts,C02cond,C04funcdef,D02glob,D04parameter,D06subscript,D07multibyte,E01options,E02xtrace,K01nameref,V01zmodload,V04features,V06parameter,V10private,V13zformat,W03jobparameters,X03zlebindkey | output: same number of lines, different values |
+| 27 | A01grammar,A05execution,B12limit,C03traps,D01prompt,E01options,V01zmodload,V04features,V11db_gdbm | (no witness: not reproducible standalone) |
+| 27 | V11db_gdbm | sut diagnostic: error opening database file |
+| 20 | V12zparseopts,Z04zgetopt | sut diagnostic: no default array defined: |
+| 19 | A04redirect,A06assign,B02typeset,C03traps,C04funcdef,D04parameter,D10nofork,E01options,K01nameref,V10private,X05zleincarg | output: 1 line(s) missing from the shell under test |
+| 15 | A01grammar,A02alias,A06assign,B02typeset,B04read,D04parameter,D10nofork,E01options,K01nameref,V01zmodload,V13zformat | exit status 1 -> 0, output identical |
+| 12 | A03quoting,A04redirect,B10getopts,D04parameter,E01options,K01nameref,V12zparseopts | (no witness: identical outputs) |
+| 11 | D02glob,D04parameter,E01options,K01nameref,V01zmodload,X03zlebindkey | output: 1 extra line(s) from the shell under test |
+| 10 | E03posix | sut diagnostic: command not found: rm |
+| 8 | B02typeset,K01nameref | sut diagnostic: no such module zsh/random |
+| 6 | V13zformat | sut diagnostic: invalid argument: -Fq |
+| 5 | A01grammar,B02typeset,K01nameref | exit status 0 -> 1, output identical |
+| 4 | A04redirect,D07multibyte,V10private | output: 2 line(s) missing from the shell under test |
+| 4 | D04parameter,K01nameref,K02parameter | output: 6 line(s) missing from the shell under test |
+| 4 | V10private | sut diagnostic: read-only variable: hash_test |
+| 3 | V07pcre | exit status 2 -> 0, output identical |
+| 3 | V12zparseopts | sut diagnostic: bad option: -x |
+| 3 | B01cd,D02glob,E01options | sut diagnostic: no such file or |
+| 3 | E01options | sut diagnostic: parse error: expected `}' |
+| 2 | D04parameter,K01nameref | output: 2 extra line(s) from the shell under test |
+| 2 | D04parameter,D10nofork | output: 3 line(s) missing from the shell under test |
+| 2 | D02glob | sut diagnostic: Permission denied |
+| 2 | D04parameter,K02parameter | sut diagnostic: bad substitution |
+| 2 | B11kill | sut diagnostic: illegal pid: |
+| 2 | B11kill | sut diagnostic: illegal pid: a |
+| 2 | V01zmodload | sut diagnostic: module `zsh/parameter' has no |
+| 2 | K01nameref | sut diagnostic: not valid in this |
+
+## clusters in detail
+
+### [74] output: same number of lines, different values
+members: A01grammar#23 A01grammar#92 A03quoting#5 A06assign#77 A06assign#101 B01cd#7 B02typeset#17 B02typeset#21 B02typeset#41 B02typeset#42 B02typeset#52 B02typeset#55 B02typeset#62 B02typeset#66 B02typeset#69 B02typeset#70 B02typeset#78 B02typeset#79 B03print#22 B07emulate#20 B10getopts#21 C02cond#61 C04funcdef#51 D02glob#24 D04parameter#9 D04parameter#10 D04parameter#33 D04parameter#41 D04parameter#60 D04parameter#101 D04parameter#102 D04parameter#133 D04parameter#134 D06subscript#2 D06subscript#4 D06subscript#11 D06subscript#13 D06subscript#17 D06subscript#18 D06subscript#19 D06subscript#38 D07multibyte#5 D07multibyte#6 D07multibyte#32 D07multibyte#39 E01options#1 E01options#37 E01options#42 E01options#54 E01options#59 E01options#71 E01options#73 E02xtrace#1 K01nameref#24 K01nameref#53 K01nameref#92 K01nameref#120 K01nameref#126 K01nameref#127 V01zmodload#34 V01zmodload#36 V04features#19 V06parameter#5 V10private#4 V10private#5 V13zformat#13 V13zformat#15 V13zformat#16 V13zformat#17 V13zformat#21 V13zformat#27 W03jobparameters#2 W03jobparameters#3 X03zlebindkey#4
+representative: A01grammar#23  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_023.zsh)
+  repro:
+    touch foo bar
+    (exec -a foo* $ZTST_testdir/../Src/zsh -fc 'print -r -- ${(V)0}')
+  zsh:
+    O:foo*
+    E:<<STATUS:0>>
+  zshrs:
+    O:foo
+    E:<<STATUS:0>>
+
+### [27] (no witness: not reproducible standalone)
+members: A01grammar#29 A05execution#31 A05execution#33 A05execution#34 A05execution#39 B12limit#7 C03traps#12 C03traps#18 C03traps#19 C03traps#25 C03traps#26 C03traps#32 C03traps#66 C03traps#81 D01prompt#17 E01options#18 V01zmodload#3 V01zmodload#4 V01zmodload#24 V01zmodload#25 V01zmodload#26 V01zmodload#27 V01zmodload#29 V01zmodload#31 V01zmodload#32 V04features#21 V11db_gdbm#23
+representative: A01grammar#29  ()
+  repro:
+    mkdir basic.tmp && cd basic.tmp
+    touch foo bar
+    echo "'" >unmatched_quote.txt
+    # Test skipping early to ensure we run the remainder...
+    if [[ -n $ZTST_test_skip ]]; then
+    ZTST_skip="Test system verification for skipping"
+    else
+    print "This is standard output"
+    print "This is standard error" >&2
+    false
+    fi
+    echo foo | cat | sed 's/foo/bar/'
+    false | true
+    true | false
+    false
+    $nonexistent_variable
+    false
+    sleep 1 &
+    print $?
+    # a tidy test is a happy test
+    wait $!
+    false
+    . /dev/null
+    fn() { local foo; read foo; print $foo; }
+    coproc fn
+    print -p coproc test output
+    read -p bar
+    print $bar
+    true | false && print true || print false
+    false | true && print true || print false
+    (cd /NonExistentDirectory >&/dev/null) || print false
+    { cd /NonExistentDirectory >&/dev/null } || print false
+    fn() { : && ! ; : }
+    functions -x3 fn
+    fn
+    if [[ m -eq y ]]; then
+    : && !
+    :
+    fi
+    fn() { ! {!} && ! (!) || ! {!} }
+    functions -x2 fn
+    fn
+    ! | true
+    #
+    # Tests for `Precommand Modifiers'
+    #
+    - $ZTST_testdir/../Src/zsh -fc "[[ \$0 = \"-$ZTST_testdir/../Src/zsh\" ]]"
+    echo f*
+    noglob echo f*
+    (exec /bin/sh; echo bar)
+    (exec -l $ZTST_testdir/../Src/zsh -fc 'echo $0' | sed 's%/.*/%%' )
+    (exec -a /bin/SPLATTER $ZTST_testdir/../Src/zsh -fc 'echo $0')
+    (exec -a/bin/SPLOOSH $ZTST_testdir/../Src/zsh -fc 'echo $0')
+    (exec -a foo* $ZTST_testdir/../Src/zsh -fc 'print -r -- ${(V)0}')
+    (exec -a "" $ZTST_testdir/../Src/zsh -fc 'print -r -- ${(V)0}')
+    (
+    opts=(-a /bin/WHOOOSH)
+    exec $opts $ZTST_testdir/../Src/zsh -fc 'echo $0'
+    )
+    (export FOO=bar; exec -c /bin/sh -c 'echo x${FOO}x')
+    (\exec /bin/sh -c 'echo Test one'; print Not reached)
+    ('exec' /bin/sh -c 'echo Test two'; print Not reached)
+    (\exec -c /bin/sh -c 'echo Test three'; print Not reached)
+    cat() { echo Function cat executed; }
+    command cat && unfunction cat
+    (command -p echo this is output)
+    (\command -p echo this is more output)
+    ('command' -p echo this is yet more output)
+    command -pv cat
+    command -pv echo
+    command -p -V cat
+    command -p -V -- echo
+  zsh:
+    O:/bin/cat
+    O:echo
+    O:cat is /bin/cat
+    O:echo is a shell builtin
+    E:<<STATUS:0>>
+  zshrs:
+    O:/bin/cat
+    O:echo
+    O:cat is /bin/cat
+    O:echo is a shell builtin
+    E:<<STATUS:0>>
+
+### [27] sut diagnostic: error opening database file
+members: V11db_gdbm#2 V11db_gdbm#3 V11db_gdbm#4 V11db_gdbm#5 V11db_gdbm#6 V11db_gdbm#7 V11db_gdbm#8 V11db_gdbm#9 V11db_gdbm#10 V11db_gdbm#11 V11db_gdbm#12 V11db_gdbm#13 V11db_gdbm#14 V11db_gdbm#16 V11db_gdbm#17 V11db_gdbm#18 V11db_gdbm#19 V11db_gdbm#20 V11db_gdbm#21 V11db_gdbm#22 V11db_gdbm#24 V11db_gdbm#25 V11db_gdbm#26 V11db_gdbm#27 V11db_gdbm#28 V11db_gdbm#29 V11db_gdbm#30
+representative: V11db_gdbm#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v11db_gdbm_002.zsh)
+  repro:
+    modname="zsh/db/gdbm"
+    dbfile=db.gdbm
+    if ! zmodload $modname 2>/dev/null; then
+    ZTST_unimplemented="can't load $modname module for testing"
+    fi
+    rm -f db.gdbm
+    ztie -d db/gdbm -f $dbfile dbase
+  zsh:
+    E:(eval):1: command not found: ztie
+    E:<<STATUS:127>>
+  zshrs:
+    E:(eval):ztie:1: error opening database file db.gdbm (GDBM support not compiled in)
+    E:<<STATUS:1>>
+
+### [20] sut diagnostic: no default array defined:
+members: V12zparseopts#30 V12zparseopts#31 Z04zgetopt#1 Z04zgetopt#2 Z04zgetopt#3 Z04zgetopt#4 Z04zgetopt#5 Z04zgetopt#6 Z04zgetopt#7 Z04zgetopt#8 Z04zgetopt#9 Z04zgetopt#10 Z04zgetopt#11 Z04zgetopt#12 Z04zgetopt#13 Z04zgetopt#14 Z04zgetopt#15 Z04zgetopt#16 Z04zgetopt#17 Z04zgetopt#18
+representative: V12zparseopts#30  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v12zparseopts_030.zsh)
+  repro:
+    () { zparseopts -DF - '' } -x
+  zsh:
+    E:(anon): bad option: -x
+    E:<<STATUS:1>>
+  zshrs:
+    E:(anon):zparseopts: no default array defined: -DF
+    E:<<STATUS:1>>
+
+### [19] output: 1 line(s) missing from the shell under test
+members: A04redirect#37 A06assign#80 A06assign#81 B02typeset#60 C03traps#7 C03traps#11 C04funcdef#47 D04parameter#34 D10nofork#30 E01options#43 E01options#49 K01nameref#59 V10private#11 V10private#17 V10private#41 X05zleincarg#22 X05zleincarg#23 X05zleincarg#91 X05zleincarg#92
+representative: A04redirect#37  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a04redirect_037.zsh)
+  repro:
+    print This is out1 >out1
+    print This is out2 >out2
+    cat out1 | sed s/out/bout/ <out2
+  zsh:
+    O:This is bout1
+    O:This is bout2
+    E:<<STATUS:0>>
+  zshrs:
+    O:This is bout2
+    E:<<STATUS:0>>
+
+### [15] exit status 1 -> 0, output identical
+members: A01grammar#104 A02alias#15 A02alias#16 A06assign#64 A06assign#70 B02typeset#71 B04read#16 D04parameter#63 D10nofork#11 D10nofork#18 E01options#28 K01nameref#105 V01zmodload#18 V13zformat#22 V13zformat#23
+representative: A01grammar#104  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_104.zsh)
+  repro:
+    a='${'
+    if : ${(e)a}; then echo x; fi
+  zsh:
+    E:(eval):2: bad substitution
+    E:<<STATUS:1>>
+  zshrs:
+    O:x
+    E:<<STATUS:0>>
+
+### [12] (no witness: identical outputs)
+members: A03quoting#9 A04redirect#73 B10getopts#22 D04parameter#25 D04parameter#55 D04parameter#130 D04parameter#132 E01options#19 K01nameref#118 K01nameref#121 K01nameref#122 V12zparseopts#11
+representative: A03quoting#9  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a03quoting_009.zsh)
+  repro:
+    null2="$(setopt posixstrings; print -r a$'b\0c'd)"
+    for string in $null1 $null2; do
+    print ":"
+    for (( i = 1; i <= $#string; i++ )); do
+    char=$string[$i]
+    print $(( [#16] #char ))
+    done
+    done
+  zsh:
+    O::
+    O:16#61
+    O:16#62
+    O:16#64
+    E:<<STATUS:0>>
+  zshrs:
+    O::
+    O:16#61
+    O:16#62
+    O:16#0
+    O:16#63
+    O:16#64
+    E:<<STATUS:0>>
+
+### [11] output: 1 extra line(s) from the shell under test
+members: D02glob#2 D02glob#50 D02glob#53 D04parameter#12 D04parameter#59 E01options#44 K01nameref#79 K01nameref#119 K01nameref#125 V01zmodload#23 X03zlebindkey#10
+representative: D02glob#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d02glob_002.zsh)
+  repro:
+    globtest () {
+    $ZTST_testdir/../Src/zsh -f $ZTST_srcdir/../Misc/$1
+    }
+    globtest globtests.ksh
+  zsh:
+    O:0:  [[ fofo = *(f*(o)) ]]
+    O:0:  [[ ffo = *(f*(o)) ]]
+    O:0:  [[ foooofo = *(f*(o)) ]]
+    O:0:  [[ foooofof = *(f*(o)) ]]
+    O:0:  [[ fooofoofofooo = *(f*(o)) ]]
+    O:1:  [[ foooofof = *(f+(o)) ]]
+    O:1:  [[ xfoooofof = *(f*(o)) ]]
+    O:1:  [[ foooofofx = *(f*(o)) ]]
+    O:0:  [[ ofxoofxo = *(*(of*(o)x)o) ]]
+    O:1:  [[ ofooofoofofooo = *(f*(o)) ]]
+    O:0:  [[ foooxfooxfoxfooox = *(f*(o)x) ]]
+    O:1:  [[ foooxfooxofoxfooox = *(f*(o)x) ]]
+  zshrs:
+    O:0:  [[ fofo = *(f*(o)) ]]
+    O:0:  [[ ffo = *(f*(o)) ]]
+    O:0:  [[ foooofo = *(f*(o)) ]]
+    O:0:  [[ foooofof = *(f*(o)) ]]
+    O:0:  [[ fooofoofofooo = *(f*(o)) ]]
+    O:1:  [[ foooofof = *(f+(o)) ]]
+    O:1:  [[ xfoooofof = *(f*(o)) ]]
+    O:1:  [[ foooofofx = *(f*(o)) ]]
+    O:0:  [[ ofxoofxo = *(*(of*(o)x)o) ]]
+    O:1:  [[ ofooofoofofooo = *(f*(o)) ]]
+    O:0:  [[ foooxfooxfoxfooox = *(f*(o)x) ]]
+    O:1:  [[ foooxfooxofoxfooox = *(f*(o)x) ]]
+
+### [10] sut diagnostic: command not found: rm
+members: E03posix#1 E03posix#2 E03posix#3 E03posix#4 E03posix#5 E03posix#6 E03posix#7 E03posix#8 E03posix#9 E03posix#16
+representative: E03posix#1  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/e03posix_001.zsh)
+  repro:
+    setopt POSIX_BUILTINS TYPESET_TO_UNSET
+    fn() {
+    typeset -h +g -m \*
+    unset -m \*
+    integer i=9
+    float -H f=9
+    declare -t scalar
+    declare -H -a array
+    typeset
+    typeset +
+    }
+    fn
+  zsh:
+    O:array local array
+    O:float local f
+    O:integer local i=9
+    O:local tagged scalar
+    O:array local array
+    O:float local f
+    O:integer local i
+    O:local tagged scalar
+    E:<<STATUS:0>>
+  zshrs:
+    O:array local array
+    O:float local f
+    O:integer local i=9
+    O:undefined keymaps
+    O:local tagged scalar
+    O:undefined termcap
+    O:undefined terminfo
+    O:undefined widgets
+    O:undefined zsh_scheduled_events
+    O:array local array
+    O:float local f
+    O:integer local i
+
+### [8] sut diagnostic: no such module zsh/random
+members: B02typeset#82 B02typeset#83 B02typeset#84 B02typeset#85 B02typeset#86 B02typeset#87 K01nameref#101 K01nameref#102
+representative: B02typeset#82  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b02typeset_082.zsh)
+  repro:
+    zmodload -u zsh/random
+  zsh:
+    E:<<STATUS:0>>
+  zshrs:
+    E:(eval):zmodload:1: no such module zsh/random
+    E:<<STATUS:1>>
+
+### [6] sut diagnostic: invalid argument: -Fq
+members: V13zformat#30 V13zformat#31 V13zformat#32 V13zformat#33 V13zformat#34 V13zformat#35
+representative: V13zformat#30  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v13zformat_030.zsh)
+  repro:
+    zformat -Fq     REPLY F && print -r - $REPLY
+  zsh:
+    O:F
+    E:<<STATUS:0>>
+  zshrs:
+    E:(eval):zformat:1: invalid argument: -Fq
+    E:<<STATUS:1>>
+
+### [5] exit status 0 -> 1, output identical
+members: A01grammar#17 A01grammar#55 B02typeset#18 B02typeset#58 K01nameref#96
+representative: A01grammar#17  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a01grammar_017.zsh)
+  repro:
+    - $ZTST_testdir/../Src/zsh -fc "[[ \$0 = \"-$ZTST_testdir/../Src/zsh\" ]]"
+  zsh:
+    E:<<STATUS:0>>
+  zshrs:
+    E:<<STATUS:1>>
+
+### [4] output: 2 line(s) missing from the shell under test
+members: A04redirect#74 D07multibyte#35 V10private#27 V10private#40
+representative: A04redirect#74  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/a04redirect_074.zsh)
+  repro:
+    fn-here-pipe() {
+    cat <<-HERE |& cat
+    FOO
+    HERE
+    }
+    which fn-here-pipe
+  zsh:
+    O:fn-here-pipe () {
+    O:	cat <<HERE 2>&1 | cat
+    O:FOO
+    O:HERE
+    O:}
+    E:<<STATUS:0>>
+  zshrs:
+    O:fn-here-pipe () {
+    O:	cat 2>&1 | cat
+    O:}
+    E:<<STATUS:0>>
+
+### [4] output: 6 line(s) missing from the shell under test
+members: D04parameter#53 D04parameter#98 K01nameref#107 K02parameter#9
+representative: D04parameter#53  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_053.zsh)
+  repro:
+    foo='<five> {six} (seven) >eight< }nine{ |forty-two| $many$ )ten( more'
+    array=(${(z)foo})
+    print -l ${(Q)array}
+  zsh:
+    O:<
+    O:five
+    O:>
+    O:{six}
+    O:(
+    O:seven
+    O:)
+    O:>
+    O:eight
+    O:<
+    O:}nine{
+    O:|
+  zshrs:
+    O:<five>
+    O:{six}
+    O:(seven)
+    O:>eight<
+    O:}nine{
+    O:|
+    O:forty-two
+    O:|
+    O:$many$
+    O:)
+    O:ten( more
+    E:<<STATUS:0>>
+
+### [4] sut diagnostic: read-only variable: hash_test
+members: V10private#18 V10private#19 V10private#20 V10private#21
+representative: V10private#18  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v10private_018.zsh)
+  repro:
+    if ! zmodload zsh/param/private 2>/dev/null; then
+    ZTST_unimplemented="can't load the zsh/param/private module for testing"
+    else
+    # Do not use .tmp here, ztst.zsh will remove it too soon (see %cleanup)
+    mkdir private.TMP
+    sed -e 's,# test_zsh_param_private,zmodload zsh/param/private,' < $ZTST_srcdir/B02typeset.ztst > private.TMP/B02
+    fi
+    setopt TYPESET_TO_UNSET
+    () {
+    local -PA hash_test=(in function)
+    () {
+    print X ${(kv)hash_test}
+    hash_test[in]=deeper
+    }
+    print Y ${(kv)hash_test}
+    }
+    print ${(okv)hash_test}
+  zsh:
+    O:X
+    E:(anon):local:1: bad option: -P
+    E:(anon):2: hash_test: assignment to invalid subscript range
+    E:<<STATUS:1>>
+  zshrs:
+    O:X in function
+    E:(anon):2: read-only variable: hash_test
+    E:<<STATUS:1>>
+
+### [3] exit status 2 -> 0, output identical
+members: V07pcre#2 V07pcre#12 V07pcre#14
+representative: V07pcre#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v07pcre_002.zsh)
+  repro:
+    setopt rematch_pcre
+    [[ A${s}${s}B =~ A([^[:ascii:]]*)B && $mend[1] == 3 ]] && print OK
+    unset s
+  zsh:
+    E:(eval):1: failed to load module `zsh/pcre': dlopen(/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so, 0x0009): tried: '/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file), '/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file), '/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file), '/private/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/Modules/zsh/pcre.so' (no such file)
+    E:(eval):1: -pcre-match not available for regex
+    E:<<STATUS:2>>
+  zshrs:
+    E:<<STATUS:0>>
+
+### [3] sut diagnostic: bad option: -x
+members: V12zparseopts#2 V12zparseopts#8 V12zparseopts#29
+representative: V12zparseopts#2  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v12zparseopts_002.zsh)
+  repro:
+    () { zparseopts -F -- } -x
+  zsh:
+    E:(anon):zparseopts: missing option descriptions
+    E:<<STATUS:1>>
+  zshrs:
+    E:(anon):zparseopts: bad option: -x
+    E:<<STATUS:1>>
+
+### [3] sut diagnostic: no such file or
+members: B01cd#5 D02glob#28 E01options#48
+representative: B01cd#5  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b01cd_005.zsh)
+  repro:
+    (unset HOME; ARGV0=sh $ZTST_testdir/../Src/zsh -c cd)
+  zsh:
+    E:zsh:cd:1: HOME not set
+    E:<<STATUS:1>>
+  zshrs:
+    E:/Users/wizard/.zshenv:.:2: no such file or directory: /.cargo/env
+    E:sh:cd:1: HOME not set
+    E:<<STATUS:1>>
+
+### [3] sut diagnostic: parse error: expected `}'
+members: E01options#87 E01options#98 E01options#103
+representative: E01options#87  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/e01options_087.zsh)
+  repro:
+    mkdir options.tmp && cd options.tmp
+    mkdir tmpcd homedir
+    touch tmpfile1 tmpfile2
+    mydir=$PWD
+    mydirt=`print -P %~`
+    mydirhome=`export HOME=$mydir/homedir; print -P %~`
+    catpath=$(which cat)
+    lspath==ls
+    # If the module fails to load, individual test points will skip.
+    zmodload zsh/zpty 2>/dev/null || true
+    print "Contents of file" >cat_arg
+    (
+    cat() { print Function with argument $1 }
+    print Without
+    (exec cat cat_arg; print Not reached)
+    print With
+    (setopt posixbuiltins; exec cat cat_arg; print Not reached)
+    )
+    # PRINTEXITVALUE only works if shell input is coming from standard input.
+    # Goodness only knows why.
+    $ZTST_testdir/../Src/zsh -f <<<'
+    setopt printexitvalue
+    func() {
+    false
+    }
+    func
+    '
+    $ZTST_testdir/../Src/zsh -f <<<'
+    setopt printexitvalue
+    () { false; }
+    '
+    setopt promptbang
+    print -P !
+    setopt nopromptbang
+    print -P !
+    unsetopt promptpercent
+    print -P '%/'
+    setopt promptpercent
+    print -P '%/'
+    setopt promptsubst
+    print -P '`echo waaah`'
+    unsetopt promptsubst
+    print -P '`echo waaah`'
+    dirs
+    pushd $mydir/tmpcd
+    dirs
+    pushd $mydir/tmpcd
+    dirs
+    setopt pushdignoredups
+    pushd $mydir/tmpcd
+    dirs
+    unsetopt pushdignoredups
+    popd >/dev/null
+    popd >/dev/null
+    mkdir newcd
+    cd $mydir
+    pushd $mydir/tmpcd
+    pushd $mydir/newcd
+    dirs
+    pushd -0
+    dirs
+    setopt pushdminus pushdsilent
+    pushd -0
+    dirs
+    unsetopt pushdminus
+    popd >/dev/null
+    popd >/dev/null
+    cd $mydir
+    (export HOME=$mydir/homedir
+    pushd $mydir/tmpcd
+    pushd
+    dirs
+    setopt pushdtohome
+    pushd
+    dirs
+    unsetopt pushdtohome
+    popd
+    pushd
+    popd
+    dirs)
+    array=(one two three four)
+    setopt rcexpandparam
+    print aa${array}bb
+    unsetopt rcexpandparam
+    print aa${array}bb
+    setopt rcquotes
+    # careful, this is done when parsing a complete block
+    eval "print 'one''quoted''expression'"
+    unsetopt rcquotes
+    eval "print 'another''quoted''expression'"
+    fn() {
+    print =ls ={ls,}
+    local foo='=ls'
+    print ${~foo}
+    }
+    setopt shfileexpansion
+    fn
+    unsetopt shfileexpansion
+    fn
+    () {
+    emulate -L sh
+    v='~/one ~/two'
+    print -l -- $v $v
+    }
+    (
+    setopt shfileexpansion
+    set -- also appearing
+    print -l $*$*
+    )
+    testpat() {
+    if [[ $1 = ${~2} ]]; then print $1 $2 yes; else print $1 $2 no; fi
+    }
+    print option on
+    setopt shglob
+    repeat 2; do
+    for str in 'a(b|c)' ab; do
+    testpat $str 'a(b|c)'
+    done
+    for str in 'a<1-10>' a9; do
+    testpat $str 'a<1-10>'
+    done
+    [[ ! -o shglob ]] && break
+    print option off
+    unsetopt shglob
+    done
+    print this is bar >bar
+    fn() {
+    local NULLCMD=cat READNULLCMD=cat
+    { echo hello | >foo } 2>/dev/null
+    cat foo
+    <bar
+    }
+    setopt shnullcmd
+    print option set
+    fn
+    unsetopt shnullcmd
+    print option unset
+    fn
+    rm -f foo bar
+    fn() {
+    eval 'for f in foo bar; print $f'
+    eval 'for f (word1 word2) print $f'
+    eval 'repeat 3 print nonsense'
+    }
+    unsetopt shortloops shortrepeat
+    print shortloops and shortrepeat unset
+    fn
+    setopt shortrepeat
+    print shortrepeat set
+    fn
+    setopt shortloops
+    print shortloops set
+    fn
+    fn() { print -l $*; }
+    setopt shwordsplit
+    print option set
+    repeat 2; do
+    foo='two words'
+    fn $foo
+    fn "${=foo}"
+    [[ ! -o shwordsplit ]] && break
+    unsetopt shwordsplit
+    print option unset
+    done
+    fn() { unset foo; print value is $foo; }
+    setopt nounset
+    print option unset unset by setting nounset
+    eval fn
+    print option unset reset
+    setopt unset
+    fn
+    fn1() { unset foo; print value 1 is ${foo#bar}; }
+    fn2() { unset foo; print value 2 is ${foo%bar}; }
+    fn3() { unset foo; print value 3 is ${foo/bar}; }
+    setopt nounset
+    print option unset unset by setting nounset
+    eval fn1
+    eval fn2
+    eval fn3
+    print option unset reset
+    setopt unset
+    fn1
+    fn2
+    fn3
+    fn() {
+    emulate -L zsh
+    setopt warncreateglobal
+    foo1=bar1
+    unset foo1
+    foo1=bar2
+    local foo2=bar3
+    unset foo2
+    foo2=bar4
+    typeset -g foo3
+    foo3=bar5
+    fn2() {
+    foo3=bar6
+    }
+    foo4=bar7 =true
+    (( foo5=8 ))
+    integer foo6=9
+    (( foo6=10 ))
+    }
+    # don't pollute the test environment with the variables...
+    (fn)
+    fn() {
+    emulate -L zsh
+    setopt warncreateglobal
+    TZ=UTC date >&/dev/null
+    local um=$(TZ=UTC date 2>/dev/null)
+    }
+    fn
+    (
+    foo1=global1 foo2=global2 foo3=global3 foo4=global4
+    integer foo5=5
+    # skip foo6, defined in fn_wnv
+    foo7=(one two)
+    fn_wnv() {
+    # warns
+    foo1=bar1
+    # doesn't warn
+    local foo2=bar3
+    unset foo2
+    # still doesn't warn
+    foo2=bar4
+    # doesn't warn
+    typeset -g foo3=bar5
+    # warns
+    foo3=bar6
+    fn2() {
+    # warns if global option, not attribute
+    foo3=bar6
+    }
+    fn2
+    # doesn't warn
+    foo4=bar7 =true
+    # warns
+    (( foo5=8 ))
+    integer foo6=9
+    # doesn't warn
+    (( foo6=10 ))
+    foo7[3]=three
+    foo7[4]=(four)
+    }
+    print option off >&2
+    fn_wnv
+    print option on >&2
+    setopt warnnestedvar
+    fn_wnv
+    unsetopt warnnestedvar
+    print function attribute on >&2
+    functions -W fn_wnv
+    fn_wnv
+    print all off again >&2
+    functions +W fn_wnv
+    fn_wnv
+    )
+    (
+    setopt warnnestedvar
+    () {
+    typeset -A a
+    : ${a[hello world]::=foo}
+    print ${(t)a}
+    key="hello world"
+    print $a[$key]
+    }
+    )
+    (
+    setopt warnnestedvar
+    () {
+    local var=(one two)
+    () { var=three; }
+    print $var
+    }
+    )
+    (
+    setopt warnnestedvar
+    () {
+    local var=three
+    () { var=(one two); }
+    print $var
+    }
+    )
+    # This really just tests if XTRACE is egregiously broken.
+    # To test it properly would need a full set of its own.
+    fn() { print message; }
+    PS4='+%N:%i> '
+    setopt xtrace
+    fn
+    unsetopt xtrace
+    fn
+    setopt ignoreclosebraces
+    eval "icb_test() { echo this is OK; }"
+    icb_test
+    icb_args() { print $#; }
+    eval "icb_args { this, is, ok, too }"
+    (setopt pipefail
+    true | true | true
+    print $?
+    true | false | true
+    print $?
+    exit 2 | false | true
+    print $?
+    false | exit 2 | true
+    print $?)
+  zsh:
+    E:/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p004443/probe-04443.zsh:402: parse error near `\n'
+  zshrs:
+    O:0
+    O:1
+    O:1
+    O:1
+    E:<<STATUS:0>>
+    E:/var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p004444/probe-04444.zsh:402: parse error: expected `}'
+
+### [2] output: 2 extra line(s) from the shell under test
+members: D04parameter#35 K01nameref#124
+representative: D04parameter#35  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_035.zsh)
+  repro:
+    (setopt shwordsplit # ensure this doesn't get set in main shell...
+    test_splitting ()
+    {
+    array="one two three"
+    for e in $array; do
+    echo "'$e'"
+    done
+    }
+    echo _${test_split_var:=$(test_splitting)}_
+    echo "_${test_split_var}_")
+  zsh:
+    O:_'one' 'two' 'three'_
+    O:_'one'
+    O:'two'
+    O:'three'_
+    E:<<STATUS:0>>
+  zshrs:
+    O:_'one'
+    O:'two'
+    O:'three'_
+    O:_'one'
+    O:'two'
+    O:'three'_
+    E:<<STATUS:0>>
+
+### [2] output: 3 line(s) missing from the shell under test
+members: D04parameter#90 D10nofork#13
+representative: D04parameter#90  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_090.zsh)
+  repro:
+    setopt shwordsplit
+    string='another poxy boring string'
+    print -l ${${string}/o/ }
+  zsh:
+    O:an
+    O:ther
+    O:p
+    O:xy
+    O:b
+    O:ring
+    O:string
+    E:<<STATUS:0>>
+  zshrs:
+    O:an ther
+    O:p xy
+    O:b ring
+    O:string
+    E:<<STATUS:0>>
+
+### [2] sut diagnostic: Permission denied
+members: D02glob#74 D02glob#75
+representative: D02glob#74  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d02glob_074.zsh)
+  repro:
+    mkdir glob.tmp
+    mkdir glob.tmp/dir{1,2,3,4}
+    mkdir glob.tmp/dir3/subdir
+    : >glob.tmp/{,{dir1,dir2}/}{a,b,c}
+    globtest () {
+    $ZTST_testdir/../Src/zsh -f $ZTST_srcdir/../Misc/$1
+    }
+    regress_absolute_path_and_core_dump() {
+    local absolute_dir=$(cd glob.tmp && pwd -P)
+    [[ -n $absolute_dir ]] || return 1
+    setopt localoptions extendedglob nullglob
+    print $absolute_dir/**/*~/*
+    setopt nonullglob nomatch
+    print glob.tmp/**/*~(.)#
+    }
+    globtest globtests
+    globtest globtests.ksh
+    (unsetopt multibyte
+    [[ bj�rn = *[������]* ]])
+    ( regress_absolute_path_and_core_dump )
+    print glob.tmp/*(/)
+    print glob.tmp/*(.)
+    print glob.tmp/*(.e^'reply=( glob.tmp/*/${REPLY:t} )'^:t)
+    print glob.tmp/*/*(e:'reply=( glob.tmp/**/*([1]) )'::t)
+    print glob.tmp/**/(:h)
+    print glob.tmp(:r)
+    print glob.tmp/*(:s/./_/)
+    print glob.tmp/*(F)
+    print glob.tmp/*(^F)
+    print glob.tmp/*(/^F)
+    setopt extendedglob
+    print glob.tmp/**/*~*/dir3(/*|(#e))(/)
+    print -l -- glob.tmp/*(P:-f:)
+    print -l -- glob.tmp/*(P:one word:P:another word:)
+    [[ "" = "" ]] && echo OK
+    foo="this string has a : colon in it"
+    print ${foo%% #:*}
+    mkdir glob.tmp/ra=1.0_et=3.5
+    touch glob.tmp/ra=1.0_et=3.5/foo
+    print glob.tmp/ra=1.0_et=3.5/???
+    doesmatch() {
+    setopt localoptions extendedglob
+    print -n $1 $2\
+    if [[ $1 = $~2 ]]; then print yes; else print no; fi;
+    }
+    doesmatch MY_IDENTIFIER '[[:IDENT:]]##'
+    doesmatch YOUR:IDENTIFIER '[[:IDENT:]]##'
+    IFS=$'\n' doesmatch $'\n' '[[:IFS:]]'
+    IFS=' ' doesmatch $'\n' '[[:IFS:]]'
+    IFS=':' doesmatch : '[[:IFSSPACE:]]'
+    IFS=' ' doesmatch ' ' '[[:IFSSPACE:]]'
+    WORDCHARS="" doesmatch / '[[:WORD:]]'
+    WORDCHARS="/" doesmatch / '[[:WORD:]]'
+    [[ foo = (#c0)foo ]]
+    mkdir glob.tmp/dir5
+    touch glob.tmp/dir5/N123
+    print glob.tmp/dir5/N<->(N)
+    rm -rf glob.tmp/dir5
+    tpd() {
+    [[ $1 = $~2 ]]
+    print -r "$1, $2: $?"
+    }
+    test_pattern_disables() {
+    emulate -L zsh
+    tpd 'forthcoming' 'f*g'
+    disable -p '*'
+    tpd 'forthcoming' 'f*g'
+    tpd 'f*g' 'f*g'
+    tpd '[frog]' '[frog]'
+    tpd '[frog]' '\[[f]rog\]'
+    disable -p '['
+    tpd '[frog]' '[frog]'
+    tpd '[frog]' '\[[f]rog\]'
+    setopt extendedglob
+    tpd 'foo' '^bar'
+    disable -p '^'
+    tpd 'foo' '^bar'
+    tpd '^bar' '^bar'
+    tpd 'rumble' '(rumble|bluster)'
+    tpd '(thunder)' '(thunder)'
+    disable -p '('
+    tpd 'rumble' '(rumble|bluster)'
+    tpd '(thunder)' '(thunder)'
+    setopt kshglob
+    tpd 'scramble' '@(panic|frenzy|scramble)'
+    tpd '@(scrimf)' '@(scrimf)'
+    disable -p '@('
+    tpd 'scramble' '@(panic|frenzy|scramble)'
+    tpd '@(scrimf)' '@(scrimf)'
+    disable -p
+    }
+    test_pattern_disables
+    print Nothing should be disabled.
+    disable -p
+    (
+    setopt nomatch
+    x=( '' )
+    print $^x(N)
+    )
+    (setopt kshglob
+    test_array=(
+    '+fours'    '+*'
+    '@titude'   '@*'
+    '!bang'     '!*'
+    # and check they work in the real kshglob cases too...
+    '+bus+bus'  '+(+bus|-car)'
+    '@sinhats'  '@(@sinhats|wrensinfens)'
+    '!kerror'   '!(!somethingelse)'
+    # and these don't match, to be sure
+    '+more'      '+(+less)'
+    '@all@all'   '@(@all)'
+    '!goesitall' '!(!goesitall)'
+    )
+    for str pat in $test_array; do
+    eval "[[ $str = $pat ]]" && print "$str matches $pat"
+    done
+    true
+    )
+    (
+    setopt extendedglob
+    cd glob.tmp
+    [[ -n a*(#qN) ]] && print File beginning with a
+    [[ -z z*(#qN) ]] && print No file beginning with z
+    setopt nonomatch
+    [[ -n z*(#q) ]] && print Normal string if nullglob not set
+    )
+    echo > glob.tmp/nonexistent(N)
+    (
+    setopt extended_glob no_nomatch
+    cd glob.tmp
+    [[ a(#q.) == a ]] && print lhs 1
+    [[ a(#q/) == a ]] && print lhs 2
+    [[ z == *(#q.) ]] && print rhs 1 # (#q...) ignored
+    [[ z == *(#q/) ]] && print rhs 2 # (#q...) ignored
+    )
+    (){ print $#@ } glob.tmp/dir*(Y1)
+    (){ print $#@ } glob.tmp/file*(NY1)
+    (){ [[ "$*" == */dir?\ */dir? ]] && print Returns matching filenames } glob.tmp/dir*(Y2)
+    (){ print "Limit is upper bound:" ${(o)@:t} } glob.tmp/dir*(Y5)
+    (){ print "Negated:" $@:t } glob.tmp/dir*(Y1^Y)
+    (){ print "Sorting:" $@:t } glob.tmp/dir*(Y4On)
+    (){ [[ $#@ -eq 1 ]] && print Globs before last path component } glob.tmp/dir?/subdir(NY1)
+    (){ [[ $1 == glob.tmp/a ]] } glob.tmp/**/a(Y1) && print Breadth first
+    (){ [[ $#@ -eq 0 ]] && print Respects qualifiers } glob.tmp/dir*(NY1.)
+    (print -- *(Y)) 2>/dev/null || print "Argument required"
+    [[ "ce fichier n'existe pas"  = (#b)ce\ (f[^ ]#)\ *s(#q./) ]]
+    print $match[1]
+    # The following should not cause excessive slowdown.
+    print glob.tmp/*.*
+    print glob.tmp/**************************.*************************
+    [[ 1_2_ = (*_)(#c1) ]] && print 1 OK  # because * matches 1_2
+    [[ 1_2_ = (*_)(#c2) ]] && print 2 OK
+    [[ 1_2_ = (*_)(#c3) ]] || print 3 OK
+    [[ foo = 'f'\o"o" ]]
+    [[ foo = 'f'('o'|'a')('o'|'b') ]]
+    [[ fob = 'f'('o'|'a')('o'|'b') ]]
+    [[ fab = 'f'('o'|'a')('o'|'b') ]]
+    [[ fib != 'f'('o'|'a')('o'|'b') ]]
+    [[ - != [a-z] ]]
+    [[ - = ['a-z'] ]]
+    [[ b-1 = [a-z]-[0-9] ]]
+    [[ b-1 = []a-z]-[]0-9] ]]
+    headremove="bcdef"
+    print ${headremove#[a-z]}
+    headremove="bcdef"
+    print ${headremove#['a-z']}
+    headremove="-cdef"
+    print ${headremove#['a-z']}
+    [[ a != [^a] ]]
+    [[ a = ['^a'] ]]
+    [[ a != [!a] ]]
+    [[ a = ['!a'] ]]
+    # Actually, we don't need the quoting here,
+    # c.f. the next test.  This just makes it look
+    # more standard.
+    cset="^a-z"
+    [[ "^" = ["$cset"] ]] || print Fail 1
+    [[ "a" = ["$cset"] ]] || print Fail 2
+    [[ "-" = ["$cset"] ]] || print Fail 3
+    [[ "z" = ["$cset"] ]] || print Fail 4
+    [[ "1" != ["$cset"] ]] || print Fail 5
+    [[ "b" != ["$cset"] ]] || print Fail 6
+    cset="^a-z"
+    [[ "^" = [$~cset] ]] || print Fail 1
+    [[ "a" != [$~cset] ]] || print Fail 2
+    [[ "-" = [$~cset] ]] || print Fail 3
+    [[ "z" != [$~cset] ]] || print Fail 4
+    [[ "1" = [$~cset] ]] || print Fail 5
+    [[ "b" != [$~cset] ]] || print Fail 6
+    () { print -l -- $@:a } / /..{,/} /1 /nonexistent/..{,/} /deeper/nonexistent/..{,/}
+    () { set -- ${PWD}/$^@; print -l -- $@:A } glob.tmp/nonexistent/foo/bar/baz
+    ln -s dir3/subdir glob.tmp/link
+    () {
+    print ${1:A} | grep glob.tmp
+    } glob.tmp/link/../../hello
+    rm glob.tmp/link
+    ln -s dir3/subdir glob.tmp/link
+    () {
+    print ${1:P}
+    } glob.tmp/link/../../hello/world
+    rm glob.tmp/link
+    # This is a bit brittle as it depends on PATH_MAX.
+    # We could use sysconf..
+    bad_pwd="/${(l:16000:: :):-}"
+    print ${#${bad_pwd:P}}
+    print -r ${${:-/a-b=c}:P}
+    foo=a
+    value="ac"
+    print ${value//[${foo}b-z]/x}
+    pathtotest=glob.tmp/my/test/dir/that/does/not/exist
+    mkdir -p $pathtotest
+    print $pathtotest(:h)
+    print $pathtotest(:h0)
+    print $pathtotest(:h10)
+    print $pathtotest(:h3)
+    print $pathtotest(:h2)
+    print $pathtotest(:h1)
+    print $pathtotest(:t)
+    print $pathtotest(:t0)
+    print $pathtotest(:t10)
+    print $pathtotest(:t3)
+    print $pathtotest(:t2)
+    print $pathtotest(:t1)
+    mkdir -m 000 glob.tmp/secret-d000
+    mkdir -m 111 glob.tmp/secret-d111
+    mkdir -m 444 glob.tmp/secret-d444
+    for 1 in 000 111 444 ; do ln -s secret-d$1 glob.tmp/secret-s$1; done
+    print -rC 2 -- glob.tmp/secret-*/ glob.tmp/secret-*(-/)
+    for 1 in 000 111 444 ; do
+    chmod 777 glob.tmp/secret-d$1
+    touch glob.tmp/secret-d$1/file
+    mkdir -m 777 glob.tmp/secret-d$1/dir
+    touch glob.tmp/secret-d$1/dir/file
+    chmod $1 glob.tmp/secret-d$1
+    done
+    if (( EUID == 0 )); then
+    ZTST_skip='Not testing unreadable directories (root reads anything)'
+    else
+    print -raC 2 -- glob.tmp/secret-*/* glob.tmp/secret-*/file
+    fi
+    if (( EUID == 0 )); then
+    ZTST_skip='Not testing unreadable directories (root reads anything)'
+    else
+    print -rC 2 -- glob.tmp/secret-*/dir/*
+    fi
+    # On macOS, stat(2) allows files to be treated as directories if the calling
+    # process has super-user privileges. e.g., stat() on /my/regular/file/. will
+    # succeed as root but (correctly) fail otherwise. This can produce strange
+    # results when globbing, depending on how it's implemented. This test should,
+    # when run with privileges, confirm that the implementation avoids this
+    # problem. See workers/42891 and workers/45291
+    : > glob.tmp/not-a-directory
+    print -r - glob.tmp/not-a-dir*(N) , glob.tmp/not-a-dir*/(N)
+    () { echo $1:P } ////dev
+    ln -s loop glob.tmp/loop
+    ln -s loop glob.tmp/trap
+    {
+    (set -- glob.tmp/trap; echo $1:P)
+    (set -- glob.tmp/loop; echo $1:P)
+    } always {
+    rm -f glob.tmp/trap glob.tmp/loop
+    }
+    ln -s loop glob.tmp/loop
+    ln -s loop glob.tmp/trap
+    {
+    (set -- glob.tmp/loop/trailing/components; echo $1:P)
+    (set -- glob.tmp/trap/trailing/components; echo $1:P)
+    } always {
+    rm -f glob.tmp/trap glob.tmp/loop
+    }
+    ln -s flip glob.tmp/flop
+    ln -s flop glob.tmp/flip
+    {
+    (set -- glob.tmp/flip; echo $1:P)
+    (set -- glob.tmp/flip/trailing/components; echo $1:P)
+    } always {
+    rm -f glob.tmp/flip glob.tmp/flop
+    }
+    # The following set test an obscure problem with branches followed by
+    # exclusions that shows up when the exclusion matches against
+    # something other than the complete test string, hence the complicated
+    # double negative.
+    [[ ab = (|a*)~^(*b) ]]
+    [[ ab = (b|a*)~^(*b) ]]
+    [[ ab = (b*|a*)~^(*b) ]]
+    # Corresponding tests where the exclusion should succeed, so the
+    # match fails.  It's hard to know how to provoke bugs here...
+    [[ abc = (|a*)~^(*b) ]]
+    [[ abc = (b|a*)~^(*b) ]]
+    [[ abc = (b*|a*)~^(*b) ]]
+    (
+    setopt extended_glob
+    cd glob.tmp
+    qual=.
+    echo [a](.)   [a]('.')   [a](".")   [a](\.)   [a]($qual)   [a]("$qual")
+    echo [a](#q.) [a](#q'.') [a](#q".") [a](#q\.) [a](#q$qual) [a](#q"$qual")
+    qual='(#q.)'; echo [a]$~qual
+    qual='(#';    echo [a]${~qual}q.${:-)}
+    qual='(#q';   echo [a]${~qual}.${:-)}
+    )
+    (
+    setopt extended_glob
+    cd glob.tmp
+    s='*' quals=(
+    '(#qe:"REPLY=*":)'       '(#qe":REPLY=*:")'       '(#qe:REPLY=\*:)'
+    '(#qe:"reply=( \*  )":)' '(#qe":reply=( \*  ):")' '(#qe:reply=( \\\* ):)'
+    '(#qe|"reply=( \*  )"|)' '(#qe"|reply=( \*  )|")' '(#qe|reply=( \\\* )|)'
+    '(#qe?"reply=( \*  )"?)' '(#qe"?reply=( \*  )?")' '(#qe?reply=( \\\* )?)'
+    '(#qe["reply=( \*  )"])' '(#qe"[reply=( \*  )]")' '(#qe[reply=( \\\* )])'
+    '(#qe("reply=( \*  )"))' '(#qe"(reply=( \*  ))")' '(#qe(reply=( \\\* )))'
+    '(#qe*"reply=( \*  )"*)' '(#qe"*reply=( \*  )*")' '(#qe*reply=( \\\* )*)'
+    '(#qe*"reply=( \$s )"*)' '(#qe"*reply=( \$s )*")' '(#qe*reply=( \$s  )*)'
+    )
+    for 1 2 3 in $quals; do
+    print -r - \
+    ${ eval "echo [a]$1" 2>&1 } \
+    ${ eval "echo [a]$2" 2>&1 } \
+    ${ eval "echo [a]$3" 2>&1 }
+    done
+    )
+  zsh:
+    O:* * *
+    O:* * *
+    O:* * *
+    O:* * *
+    O:* * *
+    O:* (eval):1: unknown file attribute: ) (eval):1: unknown file attribute: )
+    O:* (eval):1: unknown file attribute:   *
+    O:* * *
+    E:<<STATUS:0>>
+    E:rm: /var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p001911/ztst_core_repro.oLqPBV/Test/glob.tmp/secret-d000: Permission denied
+    E:rm: /var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p001911/ztst_core_repro.oLqPBV/Test/glob.tmp/secret-d111: Permission denied
+    E:rm: /var/folders/pr/1cyrcdk979dfkrrzyhlllc4c0000gn/T/ztst_coremin.dmpc3opm/p001911/ztst_core_repro.oLqPBV/Test/glob.tmp/secret-d444: Permission denied
+  zshrs:
+    O:* * (eval):1: command not found: REPLY=*
+    O:(eval):1: no matches found: [a](#qe:REPLY=*:)
+    O:* * (eval):1: command not found: reply=(
+    O:(eval):1: no matches found: [a](#qe:reply=( \* ):)
+    O:* * (eval):1: command not found: reply=(
+    O:(eval):1: no matches found: [a](#qe|reply=( \* )|)
+    O:* * (eval):1: command not found: reply=(
+    O:(eval):1: no matches found: [a](#qe?reply=( \* )?)
+    O:* * (eval):1: command not found: reply=(
+    O:(eval):1: no matches found: [a](#qe[reply=( \* )])
+    O:* * (eval):1: unknown file attribute: )
+    O:* (eval):1: unknown file attribute:   (eval):1: command not found: reply=(
+
+### [2] sut diagnostic: bad substitution
+members: D04parameter#84 K02parameter#11
+representative: D04parameter#84  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/d04parameter_084.zsh)
+  repro:
+    print ${array[4,5][1][2,3]}
+  zsh:
+    O:
+    E:<<STATUS:0>>
+  zshrs:
+    E:(eval):1: bad substitution
+    E:<<STATUS:1>>
+
+### [2] sut diagnostic: illegal pid:
+members: B11kill#7 B11kill#8
+representative: B11kill#7  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b11kill_007.zsh)
+  repro:
+    (
+    trap 'exit 11' URG
+    kill -URG ''
+    )
+  zsh:
+    E:(eval):kill:3: invalid pid: 
+    E:<<STATUS:1>>
+  zshrs:
+    E:(eval):kill:3: illegal pid: 
+    E:<<STATUS:1>>
+
+### [2] sut diagnostic: illegal pid: a
+members: B11kill#3 B11kill#4
+representative: B11kill#3  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/b11kill_003.zsh)
+  repro:
+    (
+    kill a b c
+    )
+  zsh:
+    E:(eval):kill:2: invalid pid: a
+    E:(eval):kill:2: invalid pid: b
+    E:(eval):kill:2: invalid pid: c
+    E:<<STATUS:3>>
+  zshrs:
+    E:(eval):kill:2: illegal pid: a
+    E:(eval):kill:2: illegal pid: b
+    E:(eval):kill:2: illegal pid: c
+    E:<<STATUS:3>>
+
+### [2] sut diagnostic: module `zsh/parameter' has no
+members: V01zmodload#17 V01zmodload#19
+representative: V01zmodload#17  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/v01zmodload_017.zsh)
+  repro:
+    (zmodload -u zsh/parameter
+    zmodload -aF zsh/parameter b:fail
+    fail
+    print "Shouldn't get here.")
+  zsh:
+    E:(eval):3: module `zsh/parameter' has no such feature: `b:fail': autoload cancelled
+    E:(eval):3: autoloading module zsh/parameter failed to define builtin: fail
+    E:<<STATUS:1>>
+  zshrs:
+    E:(eval):3: module `zsh/parameter' has no such feature: `b:fail': autoload cancelled
+    E:(eval):3: module `zsh/parameter' has no such feature: `b:fail'
+    E:(eval):3: autoloading module zsh/parameter failed to define builtin: fail
+    E:<<STATUS:1>>
+
+### [2] sut diagnostic: not valid in this
+members: K01nameref#88 K01nameref#91
+representative: K01nameref#88  (/private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/repros_core/k01nameref_088.zsh)
+  repro:
+    function e() {
+    local s=$0 a=($0);
+    f "$@";
+    }
+    function f() {
+    local s=$0 a=($0);
+    g "$@";
+    }
+    function g() {
+    if (($2)); then local -n $1 rs ra;
+    else local -n $1 rs=s ra=a; fi;
+    if (($2 == 1)); then rs=s; ra=a; fi;
+    echo "$0:1: rs=$rs - ra=$ra";
+    local s=$0 a=($0);
+    if (($2 == 2)); then rs=s; ra=a; fi;
+    echo "$0:2: rs=$rs - ra=$ra";
+    h "$@";
+    echo "$0:3: rs=$rs - ra=$ra";
+    }
+    function h() {
+    if (($2 == 3)); then rs=s; ra=a; fi;
+    echo "$0:1: rs=$rs - ra=$ra";
+    local s=$0 a=($0);
+    if (($2 == 4)); then rs=s; ra=a; fi;
+    echo "$0:2: rs=$rs - ra=$ra";
+    i "$@";
+    echo "$0:3: rs=$rs - ra=$ra";
+    # Check that re-entering the same scope doesn't undo scope exit
+    k "$@"
+    }
+    function i() {
+    if (($2 == 5)); then rs=s; ra=a; fi;
+    echo "$0:1: rs=$rs - ra=$ra";
+    local s=$0 a=($0);
+    if (($2 == 6)); then rs=s; ra=a; fi;
+    echo "$0:2: rs=$rs - ra=$ra";
+    j "$@";
+    echo "$0:3: rs=$rs - ra=$ra";
+    k "$@";
+    }
+    function j() {
+    echo "$0:1: rs=$rs - ra=$ra";
+    local s=$0 a=($0);
+    echo "$0:2: rs=$rs - ra=$ra";
+    }
+    functions -c j k
+    local s=T a=(T);
+    function f1() {
+    typeset var=$0;
+    typeset -n ref1 ref2; typeset -n ref3=ref2;
+    function f2() {
+    typeset ref2=XX;
+    function f3() {
+    typeset var=$0;
+    function f4() {
+    typeset var=$0;
+    ref1=var;
+    ref3=var; # Initializes ref2 to var
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    f4;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    function g4() {
+    typeset var=$0;
+    function g5() {
+    typeset var=$0;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    g5;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    g4;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    f3;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    f2;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    function h2() {
+    typeset var=$0;
+    function h3() {
+    typeset var=$0;
+    function h4() {
+    typeset var=$0;
+    function h5() {
+    typeset var=$0;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    h5;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    h4;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    h3;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    h2;
+    echo "$0: ref1=$ref1 ref2=$ref2 ref3=$ref3";
+    }
+    # Helper function to test assigning and typesetting named references
+    # in different contexts.
+    #
+    # Runs the code passed in "$1" for all combinations of the following
+    # variables:
+    #
+    # - K: Kind of target reference. The assigned/typeset reference is
+    #   one of the following kind:
+    #   - "i": unInitialized reference:
+    #     e.g., "ref0" in "typeset -n ref0"
+    #   - "s": unSet reference:
+    #     e.g., "ref0" in "typeset -n ref0; unset ref0"
+    #   - "d": reference to not-yet-Defined variable:
+    #     e.g., "ref0" in "typeset -n ref0=var" where "var" isn't defined
+    #
+    # - G: Global vs local references
+    #   - "-g": All test variables/references are global ones.
+    #   - ""  : All test variables/references are local ones.
+    #
+    # - N: direct vs indirect references
+    #   - "0": The target reference "ref0" is directly assigned/typeset.
+    #   - "1": The target reference "ref0" is assigned/typeset via a
+    #          named reference "ref1" that refers to "ref0".
+    test-setting-ref() {
+    local K G N;
+    for K in i s d; do
+    for G in -g ""; do
+    for N in 0 1; do
+    test-setting-ref-aux $1
+    done
+    done
+    done
+    unset -n ref0 ref1 var
+    }
+    # Helper function for the function test-setting-ref defined above.
+    #
+    # Runs the code passed in "$1" for the context specified by the
+    # variables "K", "G", and "N".
+    test-setting-ref-aux() {
+    unset -n ref0 ref1 var
+    # In several contexts different code paths are involved depending
+    # on whether the target reference "ref0" is assigned/typeset
+    # directly or via a named reference that refers to it. However, it
+    # doesn't seem to make a difference whether the chain of references
+    # is short or long. Therefore only chains of one reference are
+    # tested. One can manually double check that longer chains work the
+    # same by replacing the following line by one of the commented one
+    # just below and checking that all tests still pass.
+    ((N < 1)) || typeset $G -n ref1=ref0
+    # ((N < 1)) || typeset $G -n refX=ref0 ref1=refX
+    # ((N < 1)) || typeset $G -n refX=ref0 refY=refX ref1=refY
+    local kind print
+    case $K in
+    i) kind="uninitialized reference"     ; check=ref0; typeset $G -n ref0;;
+    s) kind="unset reference"             ; check=ref0; typeset $G -n ref0; unset -n ref0;;
+    d) kind="reference to not-yet-defined"; check=var ; typeset $G -n ref0=var;;
+    *) echo "Unrecognized case: $case"; return;;
+    esac
+    echo "# $K:$kind - ${${G:-local}/-g/global} - ref$N"
+    { eval ${(e)1}; typeset -p $check } always { TRY_BLOCK_ERROR=0 } 2>&1
+    }
+    e '' 0
+  zsh:
+    O:g:1: rs=f - ra=f
+    O:g:2: rs=f - ra=f
+    O:h:1: rs=f - ra=f
+    O:h:2: rs=f - ra=f
+    O:i:1: rs=f - ra=f
+    O:i:2: rs=f - ra=f
+    O:j:1: rs=f - ra=f
+    O:j:2: rs=f - ra=f
+    O:i:3: rs=f - ra=f
+    O:k:1: rs=f - ra=f
+    O:k:2: rs=f - ra=f
+    O:h:3: rs=f - ra=f
+  zshrs:
+    E:g:local:2: not valid in this context: 
+    E:<<STATUS:1>>

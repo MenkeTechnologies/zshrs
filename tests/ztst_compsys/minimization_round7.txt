@@ -1,0 +1,489 @@
+# assertion -> minimal standalone repro
+
+reference shell : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh
+shell under test: /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs
+budget per assertion: 60 probe pairs
+probe timeout   : 12s
+
+## Y01completion#7  _expand preserves array form
+    reduction: converged, 31 probe pairs spent
+    anchored on divergence in: NO
+
+    before (upstream assertion code):
+      comptesteval $'zstyle \'*\' glob no'
+      comptesteval $'typeset -g tst=(*)'
+      comptest $': $tst\C-D'
+
+    after (reduced):
+      touch file2
+      comptesteval $'typeset -g tst=(*)'
+      comptest $'$tst\C-D'
+
+    repro: tests/ztst_compsys/repros/y01completion_007.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_007.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_007.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      DESCRIPTION:{expansions}
+      NO:{file2}
+    sut:
+      DESCRIPTION:{expansions}
+
+## Y01completion#16  directory name is not a glob qualifier
+    reduction: converged, 8 probe pairs spent
+    anchored on divergence in: line
+
+    before (upstream assertion code):
+      {
+      mkdir 'A(B)' 'A(B)/C'
+      comptest $'cd "A(B)\t\t'
+      comptesteval 'cd "A(B)/C"'
+      comptest $'cd ../\t'
+      } always {
+      comptesteval 'cd -' # Reset CWD
+      rmdir 'A(B)/C' 'A(B)'
+      }
+
+    after (reduced):
+      {
+      mkdir 'A(B)' 'A(B)/C'
+      comptest $'cd "A(B)\t\t'
+      comptesteval 'cd "A(B)/C"'
+      comptest $'c'
+      } always {
+      comptesteval 'cd -' # Reset CWD
+      rmdir 'A(B)/C' 'A(B)'
+      }
+
+    repro: tests/ztst_compsys/repros/y01completion_016.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_016.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_016.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {cd "A(B)/}{}
+      line: {cd "A(B)/C/}{}
+    sut:
+      line: {cd "A(B)/}{}
+      line: {cd "A(B)/}{}
+
+## Y01completion#11  directories and files before separator
+    reduction: converged, 30 probe pairs spent
+    anchored on divergence in: DI, FI
+
+    before (upstream assertion code):
+      comptest $'ls ;:\C-b\C-b\t'
+
+    after (reduced):
+      mkdir dir2
+      touch file2
+      comptest $'s ;:\C-b\C-b\t'
+
+    repro: tests/ztst_compsys/repros/y01completion_011.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_011.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_011.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {s }{;:}
+      DESCRIPTION:{file}
+      DI:{dir2}
+      FI:{file2}
+    sut:
+      line: {s }{;:}
+      DESCRIPTION:{file}
+
+## Y01completion#9  dynamic directory names after ~[
+    reduction: converged, 24 probe pairs spent
+    anchored on divergence in: NO, line
+
+    before (upstream assertion code):
+      comptesteval 'zsh_directory_name() { compadd "$expl[@]" -- name/1 name2 }'
+      comptest $': ~[\t\t\t\t'
+
+    after (reduced):
+      comptest $'[\t\t'
+
+    repro: tests/ztst_compsys/repros/y01completion_009.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_009.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_009.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {[}{}
+      DESCRIPTION:{external command}
+      NO:{\[}
+      DESCRIPTION:{builtin command}
+      NO:{[}
+      DESCRIPTION:{reserved word}
+      NO:{[[}
+      line: {\[}{}
+    sut:
+      line: {[}{}
+      DESCRIPTION:{external command}
+      DESCRIPTION:{builtin command}
+      DESCRIPTION:{reserved word}
+      line: {[}{}
+      DESCRIPTION:{external command}
+      DESCRIPTION:{builtin command}
+      DESCRIPTION:{reserved word}
+
+## Y05describe#3  name2 as (...)
+    reduction: converged, 29 probe pairs spent
+    anchored on divergence in: NO, line
+
+    before (upstream assertion code):
+      tst_describe desc '(a b:descb "c\:c:descc")' '(ax bx:descbx "cx\:cx:desccx")'
+      comptest $'tst \t\t'
+
+    after (reduced):
+      comptesteval 'compdef _tst tst'
+      tst_describe() { comptesteval "_tst() { _describe ${${(@q+)@}} }" }
+      tst_describe '(a b:descb "c\:c:descc")' '(ax bx:descbx "cx\:cx:desccx")'
+      comptest $'tst \t\t'
+
+    repro: tests/ztst_compsys/repros/y05describe_003.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y05describe_003.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y05describe_003.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst }{}
+      DESCRIPTION:{(a b:descb "c\:c:descc")}
+      NO:{bx     -- descbx}
+      NO:{cx:cx  -- desccx}
+      NO:{ax}
+      line: {tst bx}{}
+    sut:
+      line: {tst }{}
+      DESCRIPTION:{(a b:descb "c\:c:descc")}
+      line: {tst }{}
+      DESCRIPTION:{(a b:descb "c\:c:descc")}
+
+## Y01completion#1  directories and files
+    reduction: converged, 24 probe pairs spent
+    anchored on divergence in: DI, FI, line
+
+    before (upstream assertion code):
+      comptest $': \t\t\t\t\t\t\t'
+
+    after (reduced):
+      mkdir dir2
+      touch file2
+      comptest $': \t\t'
+
+    repro: tests/ztst_compsys/repros/y01completion_001.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_001.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_001.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {: }{}
+      DESCRIPTION:{file}
+      DI:{dir2}
+      FI:{file2}
+      line: {: dir2/}{}
+    sut:
+      line: {: }{}
+      DESCRIPTION:{file}
+      line: {: }{}
+      DESCRIPTION:{file}
+
+## Y01completion#28  -F does not break _sequence
+    reduction: converged, 35 probe pairs spent
+    anchored on divergence in: DESCRIPTION, NO
+
+    before (upstream assertion code):
+      comptesteval "_tst() { _arguments ':desc:_sequence compadd - 1 2 3' }"
+      comptesteval "zstyle ':completion:*:tst:*' ignored-patterns 2"
+      comptest $'tst 1,\t'
+      comptesteval "zstyle -d ':completion:*:tst:*' ignored-patterns"
+
+    after (reduced):
+      comptesteval 'compdef _tst tst'
+      comptesteval "_tst() { _arguments ':desc:_sequence compadd - 1 2 3' }"
+      comptest $'tst \t'
+      comptesteval "zstyle -d ':completion:*:tst:*' ignored-patterns"
+
+    repro: tests/ztst_compsys/repros/y01completion_028.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_028.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_028.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst }{}
+      DESCRIPTION:{desc}
+      NO:{1}
+      NO:{2}
+      NO:{3}
+    sut:
+      line: {tst }{}
+
+## Y04regexargs#3  optional fields after a suffix
+    reduction: converged, 39 probe pairs spent
+    anchored on divergence in: DESCRIPTION
+
+    before (upstream assertion code):
+      tst_regex /$'rpc\0'/ \
+      \(\
+      /"$word"/ ':programs:program:compadd -qS, mountd nisd' \
+      \|\
+      /$'[^,\0]##,[^,\0]##,'/ /$'[^,\0]##\0'/ ':procedures:procedure:' \
+      \|\
+      /$'[^,\0]##,'/ /$'[^,\0]##\0'/ ':versions:version:' \
+      \)
+      comptest $'tst rpc m\t\t1,\t'
+
+    after (reduced):
+      word=$'[^\0]#\0'
+      comptesteval \
+      'compdef _tst tst' \
+      'setopt extended_glob' # running _regex_arguments outside of completion below
+      tst_regex() { comptesteval "_regex_arguments _tst /$'[^\0]#\0'/ ${${(@q)*}}" }
+      tst_regex /$'rpc\0'/ \
+      \(\
+      /"$word"/ ':programs:program:compadd -qS, mountd nisd' \
+      \|\
+      /$'[^,\0]##,[^,\0]##,'/ /$'[^,\0]##\0'/ ':procedures:procedure:' \
+      \|\
+      /$'[^,\0]##,'/ /$'[^,\0]##\0'/ ':versions:version:' \
+      \)
+      comptest $'tst rpc m\t\t'
+
+    repro: tests/ztst_compsys/repros/y04regexargs_003.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y04regexargs_003.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y04regexargs_003.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst rpc mountd,}{}
+      line: {tst rpc mountd,}{}
+      DESCRIPTION:{version}
+    sut:
+      line: {tst rpc mountd,}{}
+      line: {tst rpc mountd,}{}
+
+## Y01completion#6  _expand shows file types
+    reduction: converged, 25 probe pairs spent
+    anchored on divergence in: DI, FI, NO, line
+
+    before (upstream assertion code):
+      comptesteval 'comptest-postfunc() {}'
+      comptest $': *\t\t\t\t\t\t'
+
+    after (reduced):
+      mkdir dir2
+      touch file2
+      comptest $'*\t\t'
+
+    repro: tests/ztst_compsys/repros/y01completion_006.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_006.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_006.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {dir2/}{}
+      DESCRIPTION:{expansions}
+      DI:{dir2}
+      FI:{file2}
+      DESCRIPTION:{all expansions}
+      NO:{dir2 file2}
+      DESCRIPTION:{original}
+      NO:{*}
+      line: {file2 }{}
+    sut:
+      line: {dir2/}{}
+      DESCRIPTION:{expansions}
+      DESCRIPTION:{all expansions}
+      DESCRIPTION:{original}
+      line: {dir2}{}
+
+## Y01completion#23  ignore backslashes when sorting completion matches
+    reduction: converged, 59 probe pairs spent
+    anchored on divergence in: FI
+
+    before (upstream assertion code):
+      # Test for regression introduced by workers/41242, raised in workers/43842
+      if [[ $OSTYPE = cygwin ]]; then
+      ZTST_skip="\\ is equivalent to / in pathname on cygwin"
+      else
+      {
+      mkdir sortnobslash
+      touch sortnobslash/{'!foo','#foo','\foo','|foo','~foo',Afoo,bfoo}
+      comptesteval 'old_LC_ALL=$LC_ALL; LC_ALL=C'
+      comptest $': sortnobslash/\t'
+      } always {
+      comptesteval 'LC_ALL=$old_LC_ALL'
+      rm -rf sortnobslash
+      }
+      fi
+
+    after (reduced):
+      if ]]; then
+      else
+      {
+      mkdir sortnobslash
+      touch sortnobslash/{'!foo','#foo','\foo','|foo','~foo',Afoo,bfoo}
+      comptesteval 'old_LC_ALL=$LC_ALL; LC_ALL=C'
+      comptest $': sortnobslash/\t'
+      } always {
+      comptesteval 'LC_ALL=$old_LC_ALL'
+      rm -rf sortnobslash
+      }
+      fi
+
+    repro: tests/ztst_compsys/repros/y01completion_023.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_023.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y01completion_023.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {: sortnobslash/}{}
+      DESCRIPTION:{file}
+      FI:{\!foo}
+      FI:{\#foo}
+      FI:{Afoo}
+      FI:{\\foo}
+      FI:{bfoo}
+      FI:{\|foo}
+      FI:{\~foo}
+    sut:
+      line: {: sortnobslash/}{}
+      DESCRIPTION:{file}
+
+## Y02compmatch#2  Match Error for "m:"
+    reduction: converged, 25 probe pairs spent
+    anchored on divergence in: COMPADD
+
+    before (upstream assertion code):
+      test_code m: list1
+      comptest  $'tst \t'
+
+    after (reduced):
+      test_code () {
+      matcher=$1;
+      list=$2;
+      code="compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '"
+      code="$code$matcher"
+      code="$code'  - ${(P)list} ; echo  -n '</COMPADD>'"
+      code="$code; $extra_cmd"
+      code="$code; echo -n '<INSERT_POSITIONS>'"
+      code="$code; echo \$compstate[insert_positions]"
+      code="$code; echo -n '</INSERT_POSITIONS>'"
+      code="$code}"
+      comptesteval "$code"
+      }
+      test_code m:
+      comptest  $'tst \t'
+
+    repro: tests/ztst_compsys/repros/y02compmatch_002.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_002.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_002.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst }{}
+      COMPADD:{_tst:compadd: missing patterns}
+      INSERT_POSITIONS:{}
+    sut:
+      line: {tst }{}
+      COMPADD:{_tst:compadd: missing word pattern}
+      INSERT_POSITIONS:{}
+
+## Y02compmatch#57  Test for insert positions
+    reduction: converged, 55 probe pairs spent
+    anchored on divergence in: INSERT_POSITIONS, NO, line
+
+    before (upstream assertion code):
+      workers_13382_matcher='r:|.=**'
+      workers_13382_list=(a.b.c  a.b.c.d  aA.bB.cB.dA  aA.bB.cC.dD  aD.bC.cB.dA aA.bC.cB.dA)
+      test_code $workers_13382_matcher workers_13382_list
+      comptest $'tst a...\tA\tC\t'
+
+    after (reduced):
+      test_code () {
+      matcher=$1;
+      list=$2;
+      code="compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '"
+      code="$code$matcher"
+      code="$code'  - ${(P)list} ; echo  -n '</COMPADD>'"
+      code="$code; $extra_cmd"
+      code="$code; echo -n '<INSERT_POSITIONS>'"
+      code="$code; echo \$compstate[insert_positions]"
+      code="$code; echo -n '</INSERT_POSITIONS>'"
+      code="$code}"
+      comptesteval "$code"
+      }
+      workers_13382_matcher='r:|.=**'
+      workers_13382_list=(a.b.c aA.bB.cC.dD aD.bC.cB.dA aA.bC.cB.dA)
+      test_code $workers_13382_matcher workers_13382_list
+      comptest $'tst ...\tA\t\t'
+
+    repro: tests/ztst_compsys/repros/y02compmatch_057.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_057.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_057.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst a.b.c.d}{}
+      COMPADD:{}
+      INSERT_POSITIONS:{5:7:9:11}
+      line: {tst a}{.bC.cB.dA}
+      COMPADD:{}
+      INSERT_POSITIONS:{5:14}
+      line: {tst a}{.bC.cB.dA}
+      COMPADD:{}
+      INSERT_POSITIONS:{5:14}
+      NO:{aA.bC.cB.dA}
+      NO:{aD.bC.cB.dA}
+    sut:
+      line: {tst a.b.c.d}{}
+      COMPADD:{}
+      INSERT_POSITIONS:{5:7:9:11}
+      line: {tst a}{.bC.cB.dA}
+      COMPADD:{}
+      INSERT_POSITIONS:{5:14}
+      line: {tst .bC.cB.dA }{}
+      COMPADD:{}
+      INSERT_POSITIONS:{5}
+
+## Y02compmatch#10  Match Error for "m:{0-9}={"
+    reduction: converged, 26 probe pairs spent
+    anchored on divergence in: COMPADD, INSERT_POSITIONS, line
+
+    before (upstream assertion code):
+      test_code 'm:{0-9}={' list1
+      comptest $'tst \t'
+
+    after (reduced):
+      list1=(IndianRed IndianRed2 IndianRed3 IndianRed4)
+      test_code () {
+      matcher=$1;
+      list=$2;
+      code="compdef _tst tst ; _tst () { echo -n '<COMPADD>';compadd -M '"
+      code="$code$matcher"
+      code="$code'  - ${(P)list} ; echo  -n '</COMPADD>'"
+      code="$code; $extra_cmd"
+      code="$code; echo -n '<INSERT_POSITIONS>'"
+      code="$code; echo \$compstate[insert_positions]"
+      code="$code; echo -n '</INSERT_POSITIONS>'"
+      code="$code}"
+      comptesteval "$code"
+      }
+      test_code 'm:{0-9}={' list1
+      comptest $'tst \t'
+
+    repro: tests/ztst_compsys/repros/y02compmatch_010.zsh
+      /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_010.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/a.txt
+      ZSHRS_NATIVE_ZLE_FX=0 /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc/Src/zsh -f tests/ztst_compsys/repros/y02compmatch_010.zsh /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/sutsnap/zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/zshsrc > /tmp/b.txt
+      diff -u /tmp/a.txt /tmp/b.txt
+
+    zsh:
+      line: {tst }{}
+      COMPADD:{_tst:compadd: unterminated character class}
+      INSERT_POSITIONS:{}
+    sut:
+      line: {tst IndianRed}{}
+      COMPADD:{}
+      INSERT_POSITIONS:{13}

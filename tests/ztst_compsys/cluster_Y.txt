@@ -1,0 +1,148 @@
+# failing assertions, clustered by root-cause key
+
+inputs    : /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/5152e3c4-dbb3-47e6-bcca-262529ff281e/scratchpad/y_new.json
+assertions: 88
+clusters  : 9
+            6 with 2+ members, 3 singletons
+
+| n | files | key |
+|---|---|---|
+| 58 | Y01completion,Y02compmatch,Y03arguments,Y04regexargs,Y05describe,Y06values | missing=[NO] extra=[] |
+| 14 | Y01completion,Y02compmatch,Y05describe | missing=[] extra=[] same-kinds-different-values |
+| 4 | Y01completion | missing=[DI,FI] extra=[] |
+| 4 | Y01completion,Y05describe | missing=[NO] extra=[DESCRIPTION] |
+| 3 | Y01completion | missing=[DI,FI] extra=[DESCRIPTION] |
+| 2 | Y01completion | missing=[DESCRIPTION,NO] extra=[] |
+| 1 | Y04regexargs | missing=[DESCRIPTION] extra=[] |
+| 1 | Y01completion | missing=[DI,FI,NO] extra=[] |
+| 1 | Y01completion | missing=[FI] extra=[] |
+
+## clusters in detail
+
+### [58] missing=[NO] extra=[]
+members: Y01completion#7 Y01completion#8 Y01completion#10 Y01completion#24 Y01completion#25 Y01completion#26 Y01completion#27 Y01completion#30 Y01completion#32 Y01completion#33 Y02compmatch#17 Y02compmatch#18 Y02compmatch#19 Y02compmatch#20 Y02compmatch#21 Y02compmatch#24 Y02compmatch#25 Y02compmatch#26 Y02compmatch#27 Y02compmatch#30 Y02compmatch#39 Y02compmatch#40 Y02compmatch#45 Y02compmatch#47 Y02compmatch#50 Y02compmatch#55 Y02compmatch#57 Y03arguments#2 Y03arguments#3 Y04regexargs#2 Y04regexargs#4 Y04regexargs#5 Y04regexargs#6 Y05describe#1 Y05describe#4 Y05describe#6 Y06values#1 Y06values#2 Y06values#3 Y06values#4 Y06values#5 Y06values#6 Y06values#7 Y06values#8 Y06values#9 Y06values#10 Y06values#11 Y06values#12 Y06values#13 Y06values#15 Y06values#16 Y06values#17 Y06values#18 Y06values#19 Y06values#20 Y06values#23 Y06values#24 Y06values#25
+representative: Y01completion#7
+  zsh:
+    NO:{dir1}
+    NO:{dir2}
+    NO:{file1}
+    NO:{file2}
+  zshrs:
+    (none)
+
+### [14] missing=[] extra=[] same-kinds-different-values
+members: Y01completion#16 Y02compmatch#2 Y02compmatch#3 Y02compmatch#4 Y02compmatch#5 Y02compmatch#6 Y02compmatch#7 Y02compmatch#8 Y02compmatch#10 Y02compmatch#11 Y02compmatch#12 Y02compmatch#13 Y02compmatch#52 Y05describe#2
+representative: Y01completion#16
+  zsh:
+    line: {cd "A(B)/C/}{}
+    line: {cd ../C/}{}
+  zshrs:
+    line: {cd "A(B)/}{}
+    line: {cd ../}{}
+
+### [4] missing=[DI,FI] extra=[]
+members: Y01completion#11 Y01completion#12 Y01completion#15 Y01completion#29
+representative: Y01completion#11
+  zsh:
+    DI:{dir1}
+    DI:{dir2}
+    FI:{file1}
+    FI:{file2}
+  zshrs:
+    (none)
+
+### [4] missing=[NO] extra=[DESCRIPTION]
+members: Y01completion#9 Y05describe#3 Y05describe#5 Y05describe#7
+representative: Y01completion#9
+  zsh:
+    NO:{name/1}
+    NO:{name2}
+    line: {: ~[name/1]}{}
+    line: {: ~[name2]}{}
+  zshrs:
+    line: {: ~[name}{}
+    DESCRIPTION:{dynamically named directory}
+    line: {: ~[name}{}
+    DESCRIPTION:{dynamically named directory}
+
+### [3] missing=[DI,FI] extra=[DESCRIPTION]
+members: Y01completion#1 Y01completion#2 Y01completion#3
+representative: Y01completion#1
+  zsh:
+    DI:{dir1}
+    DI:{dir2}
+    FI:{file1}
+    FI:{file2}
+    line: {: dir1/}{}
+    line: {: dir2/}{}
+    line: {: file1}{}
+    line: {: file2}{}
+    line: {: dir1/}{}
+    line: {: dir2/}{}
+  zshrs:
+    line: {: }{}
+    DESCRIPTION:{file}
+    line: {: }{}
+    DESCRIPTION:{file}
+    line: {: }{}
+    DESCRIPTION:{file}
+    line: {: }{}
+    DESCRIPTION:{file}
+    line: {: }{}
+    DESCRIPTION:{file}
+    line: {: }{}
+    DESCRIPTION:{file}
+
+### [2] missing=[DESCRIPTION,NO] extra=[]
+members: Y01completion#28 Y01completion#31
+representative: Y01completion#28
+  zsh:
+    DESCRIPTION:{desc}
+    NO:{2}
+    NO:{3}
+  zshrs:
+    (none)
+
+### [1] missing=[DESCRIPTION] extra=[]
+members: Y04regexargs#3
+representative: Y04regexargs#3
+  zsh:
+    DESCRIPTION:{version}
+  zshrs:
+    (none)
+
+### [1] missing=[DI,FI,NO] extra=[]
+members: Y01completion#6
+representative: Y01completion#6
+  zsh:
+    DI:{dir1}
+    DI:{dir2}
+    FI:{file1}
+    FI:{file2}
+    NO:{dir1 dir2 file1 file2}
+    NO:{*}
+    line: {: dir2/}{}
+    line: {: file1 }{}
+    line: {: file2 }{}
+    line: {: dir1 dir2 file1 file2 }{}
+    line: {: *}{}
+  zshrs:
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+    line: {: dir1/}{}
+
+### [1] missing=[FI] extra=[]
+members: Y01completion#23
+representative: Y01completion#23
+  zsh:
+    FI:{\!foo}
+    FI:{\#foo}
+    FI:{Afoo}
+    FI:{\\foo}
+    FI:{bfoo}
+    FI:{\|foo}
+    FI:{\~foo}
+  zshrs:
+    (none)
