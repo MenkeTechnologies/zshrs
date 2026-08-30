@@ -69,6 +69,7 @@ mod glob_numeric_parity;
 mod history_expansion_parity;
 mod glob_parity;
 mod glob_qualifiers_real_parity;
+mod hashed_magic_shadow_parity;
 mod here_string_parity;
 mod heredoc_parity;
 mod if_elif_parity;
