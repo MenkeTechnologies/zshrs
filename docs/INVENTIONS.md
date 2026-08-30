@@ -224,7 +224,8 @@ notions of fidelity as distinct modes.
 `src/compsys/ported/` mirrors zsh's `Completion/` layout exactly, but engine
 functions are ported to Rust with citations while end-user completers are
 copied verbatim alongside them — same filenames, dispatched through a
-`_call_function` bridge (1,240 files under that tree). The shape is a JIT with
+`_call_function` bridge: **991 upstream files mirrored verbatim, 249 engine
+ports in Rust**, 1,240 files in total under that tree. The shape is a JIT with
 an interpreter fallback, applied to a script framework.
 
 ### 21. Inheriting the configuration vocabulary of what you replace
@@ -239,8 +240,9 @@ config surface so nobody migrates — appears twice in the codebase.
 ### 22. Absorbing the prompt theme into the binary
 
 powerlevel10k as 14 files and 15,479 lines of in-process Rust
-(`src/extensions/p10k/`), segment builders cited line-by-line against the
-theme spec, `gitstatusd` replaced by a native `.git` reader. Your `.p10k.zsh`
+(`src/extensions/p10k/`), 65 `*_segments` builder functions cited
+line-by-line against the theme spec, `gitstatusd` replaced by a native
+`.git` reader. Your `.p10k.zsh`
 sources unchanged. The framing generalizes: instant prompt exists to hide the
 cost of interpreting the theme, so when interpretation stops, the workaround
 is deleted rather than ported.
