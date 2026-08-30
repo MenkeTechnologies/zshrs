@@ -26,12 +26,12 @@
    {
     "row": 2,
     "zsh": "<absent>",
-    "zshrs": "HOME  -- /Users/wizard"
+    "zshrs": "HOME  -- /Users/USER"
    },
    {
     "row": 3,
     "zsh": "<absent>",
-    "zshrs": "HOST  -- codelabs-arm"
+    "zshrs": "HOST  -- HOSTNAME"
    }
   ],
   "rows_total": 2,
