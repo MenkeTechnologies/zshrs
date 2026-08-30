@@ -25826,6 +25826,72 @@ mod tests {
         }
     }
 
+    /// c:667-698 `filesub` — the MAGIC_EQUAL_SUBST / assignment arm
+    /// decides with the `Equals` and `Tilde` TOKENS, never with the
+    /// literal characters. The lexer emits those tokens only for an
+    /// UNQUOTED `=`/`~`, so the token test IS the quoting rule:
+    /// `--a='b:=c'` must come back untouched while `--a=b:=~` expands.
+    ///
+    /// This port used to accept literal ASCII at both trigger tests
+    /// (c:680 `sub[1] == Tilde || sub[1] == Equals`, and c:694 in the
+    /// `:`-component loop), and its bridge caller re-`shtokenize`d an
+    /// already-untokenized word before calling in — so quoted text was
+    /// expanded as though it were bare. With `setopt magic_equal_subst`,
+    /// `print -r -- --a='b:=c'` reported `c not found` and dropped the
+    /// word, and `A=( --height='${X:=75%}' )` (the shape
+    /// `fzf-tab.plugin.zsh:117-128` builds) failed at plugin load.
+    #[test]
+    fn filesub_triggers_on_tokens_not_on_literal_chars() {
+        let _g = crate::test_util::global_state_lock();
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let eq = crate::ported::zsh_h::Equals; // \u{8d}
+        let ti = crate::ported::zsh_h::Tilde; // \u{98}
+
+        // c:678-683 — Equals TOKEN, then a Tilde TOKEN right after it.
+        assert_eq!(
+            filesub(&format!("--a{eq}{ti}"), PREFORK_TYPESET),
+            format!("--a{eq}{}", home),
+            "c:680 — Tilde TOKEN after the Equals TOKEN must expand"
+        );
+
+        // c:688-699 — the `:`-component loop, Tilde TOKEN after a colon.
+        assert_eq!(
+            filesub(&format!("--a{eq}b:{ti}"), PREFORK_TYPESET),
+            format!("--a{eq}b:{}", home),
+            "c:694 — Tilde TOKEN after a `:` must expand"
+        );
+
+        // A LITERAL `~` in the same two positions is quoted text and
+        // must survive untouched.
+        assert_eq!(
+            filesub(&format!("--a{eq}~"), PREFORK_TYPESET),
+            format!("--a{eq}~"),
+            "c:680 — an ASCII `~` is quoted text, not the Tilde token"
+        );
+        assert_eq!(
+            filesub(&format!("--a{eq}b:~"), PREFORK_TYPESET),
+            format!("--a{eq}b:~"),
+            "c:694 — an ASCII `~` after a `:` is quoted text"
+        );
+
+        // No Equals TOKEN at all → c:684-685 returns before the loop, so
+        // a fully quoted `--a='b:~'` cannot expand either.
+        assert_eq!(
+            filesub("--a=b:~", PREFORK_TYPESET),
+            "--a=b:~",
+            "c:678 — the arm needs the Equals TOKEN; a literal `=` is quoted text"
+        );
+
+        // c:674-675 — without an assign flag nothing happens at all.
+        assert_eq!(
+            filesub(&format!("--a{eq}b:{ti}"), 0),
+            format!("--a{eq}b:{ti}"),
+            "c:674 — `assign == 0` returns after filesubstr"
+        );
+    }
+
     /// c:741 — ASCII `~` is NOT tilde-expanded; only the Tilde
     /// TOKEN form (lexer-emitted) triggers expansion. This pins the
     /// behavior that fixes `${var/pat/\~}` (replacement is literal)
