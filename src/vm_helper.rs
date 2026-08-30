@@ -1518,6 +1518,13 @@ impl ShellExecutor {
         if fpath.is_empty() {
             fpath = default_fpath(); // c:Src/init.c:1132-1143
         }
+        // Same directory as the main constructor, but never write it from
+        // a pool worker -- materialisation is the session's job.
+        if let Some(d) = crate::bundled_functions::functions_dir() {
+            if d.is_dir() && !fpath.contains(&d) {
+                fpath.insert(0, d);
+            }
+        }
         Self {
             scriptname: Some("zsh".to_string()),
             scriptfilename: Some("zsh".to_string()),
@@ -1635,8 +1642,20 @@ impl ShellExecutor {
         if fpath.is_empty() {
             fpath = default_fpath();
         }
+        // zshrs ships zsh's function tree with the binary; put its
+        // directory FIRST, like zsh's own <prefix>/share/zsh/<ver>/functions
+        // sits ahead of the user's additions. Materialised here (not only
+        // when FPATH is absent) so an inherited FPATH from a shell that
+        // lacks these still resolves is-at-least/colors/add-zsh-hook.
+        if let Some(d) = crate::bundled_functions::functions_dir() {
+            let _ = crate::bundled_functions::ensure_installed();
+            if d.is_dir() && !fpath.contains(&d) {
+                fpath.insert(0, d);
+            }
+        }
 
         let history = HistoryEngine::new().ok();
+        crate::startup_trace::mark("HistoryEngine::new");
 
         // Seed canonical OPTS_LIVE with defaults BEFORE any setsparam
         // call. assignstrvalue early-returns when `unset(EXECOPT)`
@@ -1902,6 +1921,7 @@ impl ShellExecutor {
         // typtab-driven — with a zeroed typtab every name fails IIDENT and the
         // seed aborts with "not an identifier: WORDCHARS".
         crate::ported::utils::inittyptab(); // c:1277
+        crate::startup_trace::mark("inittyptab");
         stamp_special_params(); // c:838-847 — create in C's order
                                 // Standard zsh scalar param defaults — direct port of
                                 // `createparamtable` (Src/params.c:817-988) + the `setupvals`
@@ -2199,6 +2219,7 @@ impl ShellExecutor {
         // init so the canonical port owns the default-alias set; the
         // Executor's `aliases` HashMap then mirrors aliastab.
         crate::ported::hashtable::createaliastables();
+        crate::startup_trace::mark("createaliastables");
         // Build the initial $path tied array as a local — fans out
         // to paramtab below; no ShellExecutor mirror anymore.
         let mut arrays: HashMap<String, Vec<String>> = HashMap::new();
@@ -2339,10 +2360,12 @@ impl ShellExecutor {
         // Publish the session worker pool so preprompt-time async hooks
         // (async_precmd) can reach it without an entered executor context.
         crate::async_precmd::set_session_pool(std::sync::Arc::clone(&exec.worker_pool));
+        crate::startup_trace::mark("worker pool ready");
         // Mirror env-derived path arrays into the `arrays` table so
         // user-level `fpath` / `path` array reads see the inherited
         // entries. zsh: `fpath+=…` should append to the inherited
         // 43-entry array, not replace it. Same for `path` (PATH).
+        crate::startup_trace::mark("exec struct built");
         let fpath_arr: Vec<String> = exec
             .fpath
             .iter()
@@ -2771,6 +2794,7 @@ impl ShellExecutor {
         // path; init_io is idempotent (c:615-618 closes and reopens SHTTY), so
         // that path just re-establishes it a moment later.
         crate::ported::init::init_io(None); // c:1908
+        crate::startup_trace::mark("exec: init_io");
 
         // c:Src/init.c:1274-1276 — `adjustwinsize(0)`, the first thing after
         // createparamtable (c:1270). Probes the tty via TIOCGWINSZ and
@@ -2791,6 +2815,7 @@ impl ShellExecutor {
         // `open("/dev/tty")` (c:667-670), so a piped-but-still-attached shell
         // gets the real width, matching `zsh -fc 'print $COLUMNS | cat'`.
         let _ = crate::ported::utils::adjustwinsize(0); // c:1276
+        crate::startup_trace::mark("exec: adjustwinsize");
 
         // c:Src/params.c:955 — `set_pwd_env();` runs AFTER the environ
         // import loop, overwriting the imported $PWD/$OLDPWD paramtab
@@ -2799,6 +2824,7 @@ impl ShellExecutor {
         // $PWD (env-import snapshot taken at process entry) survives
         // in paramtab even though the live env was corrected.
         crate::ported::builtin::set_pwd_env();
+        crate::startup_trace::mark("exec: set_pwd_env");
 
         // c:Src/params.c:975-992 — host/arch identification params:
         // CPUTYPE / MACHTYPE / OSTYPE / VENDOR. C zsh reads from
@@ -2925,6 +2951,7 @@ impl ShellExecutor {
         // which setupvals runs AFTER createparamtable, so the node lands
         // ahead of the imported environment in its bucket chain.
         crate::ported::params::setsparam("ZSH_NAME", "zsh"); // c:Src/init.c:1364
+        crate::startup_trace::mark("exec: base params set");
                                                              // LOGNAME is seeded pre-import now (c:878) — see the block by the
                                                              // TMPPREFIX/HOST seeds above.
                                                              //
@@ -2955,6 +2982,7 @@ impl ShellExecutor {
         // entry skips zsh_main → init_bltinmods, so run it from
         // ShellExecutor::new for the same effect. Bug #270.
         crate::ported::init::init_bltinmods(); // c:Src/init.c:1945
+        crate::startup_trace::mark("exec: init_bltinmods");
 
         // Populate paramtab with PM_SPECIAL Params for every PARTAB /
         // PARTAB_ARRAY magic-assoc name. Mirrors what C's zsh/parameter
@@ -2966,6 +2994,7 @@ impl ShellExecutor {
         // the stubs. Running this before init_bltinmods put `usergroups`
         // and friends behind `WATCH` in `${(k)parameters}`.
         init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
+        crate::startup_trace::mark("exec: init_partab_params");
 
         // HOST is seeded pre-import now (c:875) — see the block next to
         // the TMPPREFIX/LOGNAME seeds above.
@@ -2998,6 +3027,7 @@ impl ShellExecutor {
         // (not the binary path) so PS4's %x / %N print "zsh" not
         // "/path/to/zshrs" at the top level. Function dispatch
         // overrides scriptname per c:5903; scriptfilename stays.
+        crate::startup_trace::mark("exec: pre-scriptname");
         crate::ported::utils::set_scriptname(Some("zsh".to_string()));
         // c:Src/init.c:470-479 — `scriptname = scriptfilename =
         // ztrdup("zsh")` sits INSIDE the `-c` branch of the option parse.
@@ -3014,7 +3044,9 @@ impl ShellExecutor {
         }
 
         // call once that port is complete.
+        crate::startup_trace::mark("exec: pre-module_path_init");
         crate::ported::init::module_path_init();
+        crate::startup_trace::mark("new() end");
 
         exec
     }
