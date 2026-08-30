@@ -1386,18 +1386,6 @@ pub fn zleread(
     // Set up terminal
     zsetterm()?;
 
-    // c:1303 — `zlecallhook("zle-line-init", NULL)` — runs user's
-    // zle-line-init widget before the prompt is drawn (e.g. for
-    // bindkey installation / zle -A wiring).
-    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-init") {
-        let _ = execzlefunc("zle-line-init", &["zle-line-init".to_string()], 1, 0);
-    }
-
-    // c:1366 — `zrefresh()` paints the initial frame BEFORE the loop, so
-    // the prompt shown is the fully EXPANDED one (e.g. `codelabs-arm% `,
-    // not the raw `%m%# ` template) and the buffer/cursor are positioned.
-    // The previous manual `write_loop(SHTTY, lprompt)` drew the raw,
-    // unexpanded template until the first keypress triggered a refresh.
     // c:1337-1338 — `zleactive = 1; resetneeded = 1;`. zleactive marks ZLE
     // as running so widgets/trashzle/signal handlers act on the live line;
     // it was previously never set in the live path (only in tests), which
@@ -1407,8 +1395,29 @@ pub fn zleread(
     // whole prompt+line from column 0 (a fresh line — the previous command's
     // accept emitted a trailing CRLF; the incremental refresh otherwise
     // carries VCS/VLN across frames within a single line edit).
+    //
+    // MUST precede the `zle-line-init` hook below (C: c:1337 `zleactive = 1`,
+    // then c:1356 `zlecallhook(init, NULL)`). Calling the hook first left
+    // `zle_usable()` (zle_thingy.c:634) false for the whole widget, so any
+    // wrapper that re-dispatches with `zle .widget` — every
+    // zsh-syntax-highlighting / fast-syntax-highlighting binding goes through
+    // `_zsh_highlight_call_widget` → `builtin zle "$@"` — hit
+    // "widgets can only be called when ZLE is active" (zle_thingy.c:714) on
+    // every prompt.
     zleactive.store(1, SeqCst);
     crate::ported::zle::zle_refresh::RESETNEEDED.store(1, SeqCst);
+
+    // c:1356 — `zlecallhook(init, NULL)` — runs user's zle-line-init widget
+    // before the editing loop (e.g. for bindkey installation / zle -A wiring).
+    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-init") {
+        let _ = execzlefunc("zle-line-init", &["zle-line-init".to_string()], 1, 0);
+    }
+
+    // c:1366 — `zrefresh()` paints the initial frame BEFORE the loop, so
+    // the prompt shown is the fully EXPANDED one (e.g. `codelabs-arm% `,
+    // not the raw `%m%# ` template) and the buffer/cursor are positioned.
+    // The previous manual `write_loop(SHTTY, lprompt)` drew the raw,
+    // unexpanded template until the first keypress triggered a refresh.
 
     // C loads the zle module before the first zleread, running `setup_`
     // (zle_main.c:2246-2288) which assigns `$zle_bracketed_paste`
@@ -1463,6 +1472,24 @@ pub fn zleread(
     // (\e[?2004l) so pastes at the command's own stdin stay raw.
     crate::ported::zle::termquery::end_edit();
 
+    // c:1375-1376 — `if (done && !exit_pending && !errflag)
+    //                    zlecallhook(finish, NULL);`
+    // Runs the user's zle-line-finish widget while ZLE is STILL ACTIVE —
+    // before invalidatelist()/trashzle() (c:1379-1380) and before
+    // `zleactive = 0` (c:1383). The hook used to run after `zleactive = 0`,
+    // which made `zle_usable()` (zle_thingy.c:634) false inside it, so a
+    // wrapped zle-line-finish (`_zsh_highlight_call_widget` →
+    // `builtin zle "$@"`) printed "widgets can only be called when ZLE is
+    // active" (zle_thingy.c:714) after every accepted command. The C gate is
+    // also new here: an aborted (errflag) or exiting line skips the hook.
+    if DONE.load(SeqCst) != 0
+        && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+        && crate::utils::errflag.load(SeqCst) == 0
+        && crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-finish")
+    {
+        let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
+    }
+
     // c:1380 — `trashzle()` after the loop parks the cursor below the edited
     // line so the accepted command's output starts on a fresh row, AND — when
     // a completion list is on screen — clears it (moveto(nlnct,0) followed by
@@ -1492,12 +1519,6 @@ pub fn zleread(
     // from output/precmd) doesn't try to redraw an inactive line.
     zleactive.store(0, SeqCst);
 
-    // c:1335 — `zlecallhook("zle-line-finish", NULL)` — runs user's
-    // zle-line-finish widget after the line is accepted so cleanup
-    // (vi-mode reset etc.) can fire.
-    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-finish") {
-        let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
-    }
     // Native ZLE effects teardown (extensions/zle_fx.rs): drop the highlight
     // overlay, ghost text, and any active history search so nothing bleeds
     // into the next prompt.

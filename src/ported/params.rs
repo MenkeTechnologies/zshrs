@@ -8582,6 +8582,25 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         .copied()
         .find(|g| g.contains(&name))
         .unwrap_or(&[]);
+    // Mirror the value the assignment actually STORED, re-read from the
+    // table — not the incoming `val`. Under `ASSPM_AUGMENT` (`NAME+=frag`,
+    // c:Src/params.c:3320-3332) `val` is only the appended fragment, so
+    // mirroring it made the siblings hold the fragment alone: powerlevel10k
+    // builds `PROMPT` chunk-by-chunk with `+=`, leaving `$PS1` — the name
+    // `zleread` prompts with (input.rs:589) — holding just the LAST chunk,
+    // so only the final `╰─ … ❯` line of a multi-line p10k prompt was drawn.
+    let mirrored: Option<String> = if alias_group.is_empty() {
+        None
+    } else {
+        paramtab()
+            .read()
+            .ok()
+            .and_then(|tab| tab.get(name).map(|p| match p.u_arr.as_deref() {
+                Some(a) => a.join(" "),
+                None => p.u_str.clone().unwrap_or_default(),
+            }))
+    };
+    let mirrored = mirrored.unwrap_or_else(|| val.to_string());
     for other in alias_group.iter().copied().filter(|n| *n != name) {
         if let Ok(mut tab) = paramtab().write() {
             // c:Src/hashtable.c:157 — add only when absent; an existing
@@ -8615,7 +8634,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 tab.insert(other.to_string(), pm);
             }
             let entry = tab.get_mut(other).expect("inserted above");
-            entry.u_str = Some(val.to_string());
+            entry.u_str = Some(mirrored.clone());
             entry.u_arr = None;
         }
     }
