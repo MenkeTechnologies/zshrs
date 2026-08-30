@@ -17,7 +17,7 @@ screen byte for byte. Nothing but the zsh installation's own function
 directory is on `$fpath`; `$HOME`, `$PWD` and the whole environment are
 synthesised per case. The same `--seed` regenerates the same specs anywhere.
 
-Generation covers two layers, and `--kind` selects between them.
+Generation covers three layers, and `--kind` selects between them.
 
 The SPEC layer — `arguments`, `values`, `describe`, `alternative` — draws
 `_arguments` / `_values` / `_describe` / `_alternative` specs from a seeded
@@ -54,6 +54,62 @@ reachable from a spec at all:
     `nested`    a completer whose `*::args:->rest` dispatch re-enters
                 completion two levels deep, so state leaking across a
                 rewritten `words`/`CURRENT` boundary is exercised.
+
+The SUBSTRATE layer — `substrate` — is under BOTH of those. compsys is not an
+API, it is a 179-file shell PROGRAM, and the two layers above test the API
+while assuming the language it is written in works. That assumption failed
+measurably: `argv+=(...)` appends to the positional parameters in zsh and
+REPLACES them here, so `Completion/Base/Core/_description:83` — the line every
+description in the system passes through — builds the wrong argument list, and
+every completion in the tree renders `h:file` where zsh renders `file`. Running
+zsh's own completion suite scored 32/229 against zsh's 222/229, and 75 of the
+93 failures trace to that single line. No amount of `_arguments`-spec fuzzing
+could have found it.
+
+So `--kind substrate` generates completer bodies out of a catalogue of the
+shell-language constructs the stock completion functions actually use, derived
+by READING them (`--list-substrate` prints the catalogue with the
+`Completion/...` file:line that justifies every entry) in seven categories:
+
+    positional  `argv+=`, `argv[N]=`, `set --`, `shift [n] [name]`, `$#`,
+                `$@` vs `$*`, `${(@)argv[4,-1]}`, `${argv[(ib:4:)-]}`,
+                `zparseopts -D` rewriting the caller's own arguments
+    array       `local -a`, `+=`, subscript and slice assignment, sparse,
+                `${a[(r)pat]}` / `(i)` / `(I)` / `(R)`, `set -A $name`,
+                `${(@P)name}`, the match/description pairing idioms
+    assoc       `local -A`, `typeset -gA`, sorted `${(@ok)h}`, `${h[(K)pat]}`,
+                `${(k)h[(R)val]}`, `$+h[k]`, keys holding colons and NULs
+    flags       `(P) (e) (s:x:) (j:x:) (q) (qq) (qqqq) (q-) (q+) (Q) (f) (M)
+                (o) (O) (u) (b) (z) (t) (ps.\0.)` and the nested combinations
+    scope       `local` shadowing a special, `typeset -g`/`-gH`,
+                `setopt localoptions`, `emulate -L`/`-LR`, `$funcstack`
+                depth and the chained `${funcstack[2,-1][(I)_description]}`
+    control     `always` blocks, `return` from a nested function, `$?`
+                propagation, `&&`-chained return conventions, trap scope
+    ctx         the completion specials themselves — `$words`, `$CURRENT`,
+                `$PREFIX`, `$curcontext`, `$_comp_tags`, and the completer's
+                own `$@` — which are the constructs that only mean anything
+                once the completion system is the one running the code
+
+Every fragment is used TWO ways from one source, so the two cannot drift: it
+runs inside a real completion (its result added as a match, so a divergence is
+visible on the screen) and it runs STANDALONE on `zsh -f -c` on both shells.
+The standalone side is the deliverable, because it both reduces a finding to a
+plain shell one-liner of the `argv+=` kind and ATTRIBUTES it:
+
+    the two shells already differ standalone   -> CORE-LANGUAGE bug; the
+                                                  printed `repro` line is the
+                                                  whole reproducer
+    they agree standalone and the completion
+    case still diverged                        -> COMPLETION bug; the language
+                                                  is fine, the fixture is the
+                                                  reproducer
+
+A fragment real zsh REJECTS is a GENERATOR bug, not a finding, exactly as with
+the widget and hostile-text axes: every one is run on the reference shell
+before a case is generated, in every usable locale, and has to produce its
+probe line with nothing on stderr. Rejections are counted in their own category
+and printed. `--check-substrate` runs that check alone.
 
 Each case is judged over a key PATH, not one press: `--keys auto` (the
 default) draws a sequence per case — menu start, cycling, reverse cycling,
@@ -180,6 +236,9 @@ Typical use:
     scripts/compsys_spec_fuzz.py --seed 1 --cases 200 --jobs 4 --json out.json
     scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --kind compadd,compset
     scripts/compsys_spec_fuzz.py --seed 5 --cases 20 --keys tab,tab,down
+    scripts/compsys_spec_fuzz.py --seed 6 --cases 20 --kind substrate
+    scripts/compsys_spec_fuzz.py --check-substrate
+    scripts/compsys_spec_fuzz.py --list-substrate
     scripts/compsys_spec_fuzz.py --check-widgets
     scripts/compsys_spec_fuzz.py --check-locales
     scripts/compsys_spec_fuzz.py --seed 7 --cases 12 --widget zle-C:list-choices
@@ -1059,6 +1118,640 @@ def split_atom(a, n):
     return (parts + [""] * n)[:n]
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# the SUBSTRATE catalogue
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Every other kind in this file generates a completion API CALL — an
+# `_arguments` spec, a `compadd` flag set, a `_tags` loop. That tests the
+# completion engine and says nothing about the shell language the completion
+# system is WRITTEN IN, and compsys is a large shell program: 179 files under
+# `Completion/`, every one of them ordinary zsh.
+#
+# A bug in that substrate is invisible to a spec-level fuzzer and breaks
+# completion everywhere at once. The measured case: `argv+=(...)` appends to the
+# positional parameters in zsh and REPLACES them in this codebase, so
+# `Completion/Base/Core/_description:83` — which is how every description in the
+# system acquires its `h:`/`m:`/`r:`/`o:` zformat fields — builds the wrong
+# argument list, and every completion in the tree renders `h:file` where zsh
+# renders `file`. Running zsh's own completion test suite scored 32/229 against
+# zsh's 222/229, and 75 of the 93 failures trace to that one line.
+#
+# So this catalogue is derived by READING the stock functions, not by
+# imagination: every entry carries the `Completion/...` file:line that uses the
+# construct, and an entry with no stock caller says so in its citation rather
+# than borrowing one. Each entry is a self-contained fragment that sets
+# `_sfz_r`, and it is used TWO ways from that single source, so the two can
+# never drift:
+#
+#   in the completer   the fragment runs inside a real completion, under the
+#                      widget/locale/key-path axes, and its `_sfz_r` is added
+#                      as a match so a divergence is visible on the screen
+#   standalone         the same fragment runs on `zsh -f -c` on both shells.
+#                      That is the deliverable: a divergence reduces to a plain
+#                      shell one-liner of the `argv+=` kind, which is what
+#                      makes it fixable — and it ATTRIBUTES the divergence,
+#                      because a construct that already differs outside
+#                      completion is a core-language bug and one that differs
+#                      only inside it is a completion bug.
+#
+# `%V` in a fragment is replaced by a per-slot identifier prefix, so two
+# constructs in the same generated body cannot collide and the shrinker can
+# delete any one of them without leaving a dangling reference.
+
+class Construct:
+    """One shell-language construct compsys depends on."""
+
+    __slots__ = ("id", "category", "cite", "code")
+
+    def __init__(self, cid, category, cite, code):
+        self.id = cid
+        self.category = category
+        self.cite = cite
+        self.code = [ln for ln in code.strip("\n").split("\n")]
+
+    def lines(self, slot):
+        """The fragment's shell lines, with `%V` bound to this slot."""
+        pre = "_s%d_" % slot
+        return [ln.replace("%V", pre) for ln in self.code]
+
+    def script(self, slot=0):
+        """The fragment as a standalone program printing one probe line.
+
+        The result is folded exactly as the in-completion collector folds it
+        (`_SUB_FOLD`), so the standalone value and the value that reached the
+        listing are the same string and can be compared directly.
+        """
+        return "\n".join(["_sfz_r="] + self.lines(slot) +
+                         ['print -r -- "@@S %s %s"' % (self.id, _SUB_FOLD)]) + "\n"
+
+
+# (id, category, Completion/... citation, fragment).
+#
+# The fragment must run clean on `zsh -f` with nothing but this file's own
+# hermetic work directory around it — that is PROVED before a run generates
+# anything (see check_substrate()), and a fragment real zsh rejects is counted
+# as a GENERATOR bug in its own category, never as a finding.
+SUBSTRATE_SPECS = [
+
+    # ── positional parameters ────────────────────────────────────────────────
+    # The layer that broke. `argv` is an ordinary array name for the positional
+    # parameters, so every array operation is also a positional operation, and
+    # compsys uses that identity constantly: it appends to `argv` to extend its
+    # own argument list, slices it to forward a tail, and searches it to find a
+    # separator.
+    ("argv-append", "positional", "Base/Core/_description:83", r"""
+%Vf() { argv+=( h:$1 ); _sfz_r="$#:${(j:,:)argv}" }
+%Vf one two
+"""),
+    ("argv-append-fields", "positional", "Base/Core/_description:84-86", r"""
+%Vf() { argv+=( m:a ); argv+=( r:b ); argv+=( o:c ); _sfz_r="$#:${(j:,:)argv}" }
+%Vf d e
+"""),
+    ("argv-append-defaults", "positional", "Base/Utility/_arguments:200-205", r"""
+%Vf() { argv+=( '*=FILE*:file:_files' '*: :  ' ); _sfz_r="$#:${argv[-1]}" }
+%Vf '-a[one]' '-b[two]'
+"""),
+    ("argv-append-persist", "positional", "Base/Core/_description:83", r"""
+%Vf() { argv+=(X); _sfz_r="$_sfz_r$#," }
+_sfz_r=
+%Vf a
+%Vf a b
+%Vf a b c
+"""),
+    ("argv-subscript-assign", "positional", "Base/Utility/_as_if:5", r"""
+%Vf() { argv[1]=("$@"); _sfz_r="$#:${(j:,:)argv}" }
+%Vf a b c
+"""),
+    ("argv-set-tail", "positional", "Base/Utility/_arguments:35,56", r"""
+%Vf() { integer l=$argv[(I)--]; set -- "${(@)argv[l+1,-1]}"; _sfz_r="$#:${(j:,:)argv}" }
+%Vf a b -- c d
+"""),
+    ("argv-set-restore", "positional", "Base/Utility/_describe:56,72", r"""
+%Vf() { %Vo=( "$@" ); set -- z; set -- "$%Vo[@]"; _sfz_r="$#:${(j:,:)argv}" }
+%Vf a "b c"
+"""),
+    ("argv-set-single-dash", "positional", "Base/Utility/_describe:118", r"""
+%Vf() { set - p "q r"; _sfz_r="$#:${(j:,:)argv}" }
+%Vf a
+"""),
+    ("argv-shift", "positional", "Base/Core/_dispatch:18", r"""
+%Vf() { shift; _sfz_r="$#:${(j:,:)argv}" }
+%Vf a b c
+"""),
+    ("argv-shift2", "positional", "Base/Core/_description:78", r"""
+%Vf() { shift 2; _sfz_r="$#:${(j:,:)argv}" }
+%Vf a b c d
+"""),
+    ("argv-shift-named", "positional", "Base/Core/_description:116", r"""
+%Vf() { %Vo=(-F _comp_ignore -J g); shift 2 %Vo; _sfz_r=${(j:,:)%Vo} }
+%Vf
+"""),
+    ("argv-while-count", "positional", "Base/Utility/_arguments:207", r"""
+%Vf() { while (( $# )); do _sfz_r="$_sfz_r$1."; shift; done }
+_sfz_r=
+%Vf a b c
+"""),
+    ("argv-at-vs-star", "positional", "Base/Utility/_describe:56", r"""
+%Vf() { _sfz_r="Q@[$@] Q*[$*] U@[${(j:|:)${(@)argv}}]" }
+%Vf "a b" c
+"""),
+    ("argv-slice-2", "positional", "Base/Core/_description:89", r"""
+%Vf() { _sfz_r=${(j:,:)${(@)argv[2,-1]}} }
+%Vf a b c
+"""),
+    ("argv-slice-5", "positional", "Base/Core/_all_labels:35", r"""
+%Vf() { _sfz_r="${#${(@)argv[5,-1]}}:${(j:,:)${(@)argv[5,-1]}}" }
+%Vf a b c d e f
+"""),
+    ("argv-slice-empty", "positional", "Base/Core/_all_labels:39", r"""
+%Vf() { %Vp=-2; _sfz_r="[${(j:,:)${(@)argv[4,%Vp]}}][${(j:,:)${(@)argv[6,-1]}}]" }
+%Vf a b c d e
+"""),
+    ("argv-last", "positional", "Base/Core/_dispatch:61,84", r"""
+%Vf() { _sfz_r=${argv[-1]} }
+%Vf a b c
+"""),
+    ("argv-ib-search", "positional", "Base/Core/_all_labels:13", r"""
+%Vf() { _sfz_r=${argv[(ib:4:)-]} }
+%Vf - b - d -
+"""),
+    ("argv-I-pattern", "positional", "Base/Completer/_approximate:57", r"""
+%Vf() { setopt localoptions extendedglob; _sfz_r=${argv[(I)-[a-zA-Z]#U[a-zA-Z]#]} }
+%Vf -a -xUy b
+"""),
+    ("argv-chain-subscript", "positional", "Base/Completer/_approximate:66-67", r"""
+%Vf() { setopt localoptions extendedglob
+  _sfz_r="[${argv[1,(r)-(|-)][(I)-*[JV]]}][${argv[1,(r)-(-|)][(R)-*[JV]]}]" }
+%Vf -J g1 -x - -V h1
+"""),
+    ("argv-colon-hash", "positional", "Base/Core/_tags:50", r"""
+%Vf() { setopt localoptions extendedglob
+  %Vt=(a c); _sfz_r=${(j:,:)${(@)argv:#(${(j:|:)~%Vt})}} }
+%Vf a b c d
+"""),
+    ("argv-regex-subst", "positional", "Base/Utility/_regex_arguments:60", r"""
+%Vf() { setopt localoptions extendedglob
+  _sfz_r=${(j:,:)${@:/(#b):(*)/"[${match[1]}]"}} }
+%Vf :foo :bar plain
+"""),
+    ("argv-at-offset", "positional",
+     "no stock caller — required by the round-6 brief", r"""
+%Vf() { _sfz_r="${(j:,:)${@:2}}|${(j:,:)${@:1:2}}" }
+%Vf a b c d
+"""),
+    ("argv-zparseopts-D", "positional", "Base/Core/_requested:6", r"""
+%Vf() { local -a g; zparseopts -D -a g 1 2 V J x
+  _sfz_r="g=${(j:,:)g} rest=$#:${(j:,:)argv}" }
+%Vf -1 -J foo bar
+"""),
+    ("argv-zparseopts-KD", "positional", "Base/Core/_description:11", r"""
+%Vf() { local -a n gr ign xo; gr=(keep)
+  zparseopts -K -D -a n 1 2 V=gr J=ign x=xo
+  _sfz_r="n=${(j:,:)n} gr=${(j:,:)gr} rest=${(j:,:)argv}" }
+%Vf -2 -V vv tail
+"""),
+    ("argv-zparseopts-AD", "positional", "Base/Core/_normal:6", r"""
+%Vf() { local -A o; local -a pc; zparseopts -A o -D - P p+:-=pc s
+  _sfz_r="P=${+o[-P]} pc=${(j:,:)pc} rest=${(j:,:)argv}" }
+%Vf -P -p x cmd
+"""),
+    ("argv-slice-call", "positional", "Base/Core/_all_labels:39", r"""
+%Vg() { _sfz_r="g:$#:${(j:,:)argv}" }
+%Vf() { "${(@)argv[1,1]}" "${(@)argv[2,-1]}" }
+%Vf %Vg x "y z"
+"""),
+    ("argv-nested-frames", "positional", "Base/Core/_description:83", r"""
+%Vg() { argv+=(G); _sfz_r="g:$#" }
+%Vf() { %Vg m; _sfz_r="$_sfz_r f:$#:${(j:,:)argv}" }
+%Vf a b
+"""),
+
+    # ── arrays ───────────────────────────────────────────────────────────────
+    ("arr-local-a", "array", "Base/Utility/_arguments:37,39", r"""
+%Vf() { local -a t; t=( "${(@)argv[1,-2]}" ); _sfz_r="${#t}:${(j:,:)t}" }
+%Vf a "b c" d
+"""),
+    ("arr-append-args", "array", "Base/Utility/_arguments:24-25", r"""
+%Vf() { local -a s; s+=( $1 ); s+=( $1 $2 ); _sfz_r=${(j:,:)s} }
+%Vf -S -A
+"""),
+    ("arr-append-elem", "array", "Base/Core/_description:60", r"""
+%Vq=(w1 "w 2" w3); %Vc=2; %Va=()
+%Va+=( $%Vq[%Vc] )
+_sfz_r="${#%Va}:${(j:,:)%Va}"
+"""),
+    ("arr-append-slices", "array", "Base/Core/_description:64-65", r"""
+%Vq=(w1 w2 w3 w4); %Vc=2; %Va=()
+%Va+=( $%Vq[1,%Vc-1] $%Vq[%Vc+1,-1] )
+_sfz_r="${#%Va}:${(j:,:)%Va}"
+"""),
+    ("arr-subscript-assign", "array", "Base/Completer/_complete:85,99", r"""
+%Va=(x y z); %Va[3]="q r"; _sfz_r="${#%Va}:${(j:,:)%Va}"
+"""),
+    ("arr-subscript-in", "array", "Base/Utility/_combination:80", r"""
+%Vk=(a b a b); %Vp=()
+%Vp[$%Vk[(in:2:)a]]=hit
+_sfz_r="${#%Vp}:${(j:,:)%Vp}"
+"""),
+    ("arr-count", "array", "Base/Utility/_arguments:100,160", r"""
+%Vt=(1 2 3)
+(( $#%Vt )) && _sfz_r="dollar=$#%Vt brace=${#%Vt}"
+"""),
+    ("arr-typeset-Ua", "array", "Base/Utility/_arguments:49", r"""
+%Vf() { typeset -Ua l; l=(a b a c b); _sfz_r="${(t)l}:${(j:,:)l}" }
+%Vf
+"""),
+    ("arr-set-A-name", "array", "Base/Core/_description:94,100", r"""
+%Vn=%Vt; %Vo=(-F _comp_ignore); set -A $%Vn "$%Vo[@]" -J -default-
+_sfz_r=${(j:,:)%Vt}
+"""),
+    ("arr-P-splat", "array", "Base/Core/_description:114", r"""
+%Vt=(o1 "o 2"); %Vn=%Vt; _sfz_r=${(j:,:)${(@P)%Vn}}
+"""),
+    ("arr-P-exists", "array", "Base/Utility/_arguments:47", r"""
+%Vn=%Vabsent; _sfz_r=${(P)+%Vn}
+%Vabsent=1; _sfz_r="$_sfz_r/${(P)+%Vn}"
+"""),
+    ("arr-P-assign", "array", "Base/Utility/_pick_variant:20,40", r"""
+%Vv=; %Vo=(-r %Vv); : ${(P)%Vo[2]::=through-P}
+_sfz_r=$%Vv
+"""),
+    ("arr-descr-pair", "array", "Base/Core/_description:112", r"""
+setopt localoptions extendedglob
+%Vm=(a:one b c:two)
+%Vd=( "${(@M)%Vm:#*[^\\]:*}" )
+_sfz_r="${#%Vd}:${(j:,:)%Vd}"
+"""),
+    ("arr-desc-unescape", "array", "Base/Core/_description:118", r"""
+setopt localoptions extendedglob
+%Vm=('a\:x:one' 'b:two' plain)
+_sfz_r=${(j:,:)${(@)${(@)%Vm:#*[^\\]:*}:s/\\:/:/}}
+"""),
+    ("arr-mats-strip", "array", "Base/Utility/_describe:112,115", r"""
+setopt localoptions extendedglob
+%Vs=('a\:b:desc' 'c:d'); %Vn=%Vs
+_sfz_r=${(j:,:)${(@)${(@M)${(@P)%Vn}##([^:\\]|\\?)##}//\\(#b)(?)/$match[1]}}
+"""),
+    ("arr-sparse", "array",
+     "no stock caller — required by the round-6 brief", r"""
+%Va=(); %Va[4]=four; _sfz_r="${#%Va}:[${(j:,:)%Va}]"
+"""),
+    ("arr-slice-assign", "array",
+     "no stock caller — required by the round-6 brief", r"""
+%Va=(1 2 3 4); %Va[2,3]=( x ); _sfz_r="${#%Va}:${(j:,:)%Va}"
+"""),
+    # `${(@ps.\0.)help_funcs[$i][2,-1]}` is a nested expansion over a CHAINED
+    # subscript on an assoc element. `_complete_help` writes it into a `for`
+    # list; the same expansion on an unquoted assignment RHS is the shape that
+    # has been wrong here before, so both bases are pinned separately.
+    ("arr-nested-chain-print", "array", "Base/Widget/_complete_help:53", r"""
+%Va=(abcdef)
+_sfz_r="[${(j:,:)${(s.c.)%Va[1][2,-1]}}]"
+"""),
+    # A slice whose BOUND is a search flag, then a second subscript on the
+    # result — `_approximate` picks the group option this way, so getting it
+    # wrong sends every corrected match into the wrong group.
+    ("arr-slice-search-chain", "array", "Base/Completer/_approximate:66-67", r"""
+setopt localoptions extendedglob
+%Va=(A b C d)
+_sfz_r="[${%Va[1,(r)b][(R)C]}][${%Va[1,(r)d][(I)C]}][${%Va[(r)d,4][(I)C]}]"
+"""),
+    ("arr-nested-chain-assign", "array",
+     "Base/Widget/_complete_help:53 (same expansion, unquoted assignment RHS)", r"""
+%Va=(abcdef)
+%Vr=${(j:,:)${(s.c.)%Va[1][2,-1]}}
+_sfz_r="[$%Vr]"
+"""),
+    ("arr-split-flag-assign", "array",
+     "Base/Utility/_regex_words:42 (same (s) flag, unquoted assignment RHS)", r"""
+%Vv=abcdef
+%Vr=${(s.c.)%Vv[2,-1]}
+_sfz_r="[$%Vr]"
+"""),
+
+    # ── associative arrays ───────────────────────────────────────────────────
+    # Iteration order over a hash is not defined, so every construct here that
+    # walks one sorts first — exactly as `_complete_help:50` does with `(@ok)`.
+    # A case whose expected output depended on hash order would be flaky on
+    # BOTH shells and would prove nothing about either.
+    ("h-local-A", "assoc", "Base/Core/_normal:4,39", r"""
+%Vf() { local -A o; o=( -s , -P "pre fix" )
+  for %Vk in ${(ok)o}; do _sfz_r="$_sfz_r$%Vk=$o[$%Vk];"; done }
+_sfz_r=
+%Vf
+"""),
+    ("h-typeset-gA", "assoc", "Base/Utility/_pick_variant:7,41", r"""
+%Vf() { (( $+%VG )) || typeset -gA %VG; %VG[$1]="$2" }
+%Vf k1 v1
+%Vf k2 "v 2"
+_sfz_r="${(t)%VG}:${(j:,:)${(@ok)%VG}}:$%VG[k2]"
+"""),
+    ("h-keys-sorted", "assoc", "Base/Widget/_complete_help:50,63", r"""
+typeset -A %Vh; %Vh=(b 2 a 1 c 3)
+_sfz_r="${(j:,:)${(@ok)%Vh}}/${(j:,:)${(@o)${(@v)%Vh}}}"
+"""),
+    ("h-val-by-i", "assoc", "Zsh/Command/_zstyle:331", r"""
+typeset -A %Vh; %Vh=(-e x -s y)
+_sfz_r=${(v)%Vh[(i)(-e|-s|-b)]}
+"""),
+    ("h-K-sub", "assoc", "Base/Core/_dispatch:27,71", r"""
+typeset -A %Vh; %Vh=(ab p ac q b r)
+_sfz_r=${(j:,:)${(@o)${(@)%Vh[(K)a*]}}}
+"""),
+    ("h-k-R", "assoc", "Base/Core/_main_complete:18-19", r"""
+typeset -A %Vh; %Vh=(x on y off z on)
+_sfz_r=${(j:,:)${(@o)${(k)%Vh[(R)on]}}}
+"""),
+    ("h-plus-key", "assoc", "Base/Utility/_pick_variant:20,31", r"""
+typeset -A %Vh; %Vh=(-r name)
+(( $+%Vh[-r] )) && _sfz_r=have-r
+(( $+%Vh[-b] )) || _sfz_r="$_sfz_r/no-b"
+"""),
+    ("h-append-colon-key", "assoc", "Base/Widget/_complete_help:33,87", r"""
+typeset -A %Vh; %Vh=()
+%Vh[:ctx:x]=",t1"
+%Vh[:ctx:x]+=",t2"
+_sfz_r="${(j:,:)${(@ok)%Vh}}=$%Vh[:ctx:x]"
+"""),
+    ("h-nul-key-split", "assoc", "Base/Widget/_complete_help:86,53", r"""
+typeset -A %Vh; %Vh=()
+%Vh[ctx]=$'\0'"f1"
+%Vh[ctx]+=$'\0'"f2"
+_sfz_r=${(j:,:)${(@ps.\0.)%Vh[ctx][2,-1]}}
+"""),
+    ("h-space-key", "assoc",
+     "no stock caller — required by the round-6 brief", r"""
+typeset -A %Vh; %Vh=("a b" 1 "c:d" 2)
+%Vk="a b"
+_sfz_r="${(j:|:)${(@ok)%Vh}}/$%Vh[$%Vk]"
+"""),
+    ("h-hide-special", "assoc", "Zsh/Type/_command_names:70", r"""
+%Vf() { local -A +h commands; commands=(fake /bin/fake); _sfz_r="${(t)commands}:$commands[fake]" }
+%Vf
+"""),
+    # The same shadow WITHOUT `+h`, so a divergence can be attributed: if both
+    # forms break, `+h` is not what is wrong — shadowing a special HASHED
+    # parameter with a local assoc is.
+    ("h-shadow-special", "assoc", "Zsh/Type/_command_names:70 (same shadow, no +h)", r"""
+%Vf() { local -A commands; commands=(fake /bin/fake); _sfz_r="${(t)commands}:$commands[fake]" }
+%Vf
+"""),
+
+    # ── parameter expansion flags ────────────────────────────────────────────
+    ("pf-s", "flags", "Base/Utility/_regex_words:42", r"""
+%Va=(x:y:z); _sfz_r=${(j:,:)${(s.:.)%Va[1]}}
+"""),
+    ("pf-s-slash", "flags", "Base/Utility/_combination:69", r"""
+%Vv=a-b-c; _sfz_r=${(j:,:)${(s/-/)%Vv}}
+"""),
+    ("pf-j-colon", "flags", "Base/Core/_main_complete:393", r"""
+%Va=("=(#i)a*==34" "=b*==31"); _sfz_r=${(j.:.)%Va}
+"""),
+    ("pf-j-comma", "flags", "Base/Core/_description:42", r"""
+%Va=(match reverse); _sfz_r=${(j.,.)%Va}
+"""),
+    ("pf-j-pipe-tilde", "flags", "Base/Core/_tags:50", r"""
+setopt localoptions extendedglob
+%Vt=(a b); %Va=(a x b y)
+_sfz_r=${(j:,:)${(@)%Va:#(${(j:|:)~%Vt})}}
+"""),
+    ("pf-j-paren", "flags", "Zsh/Command/_zle:63", r"""
+%Va=(w1 w2); _sfz_r="(${(j(|))%Va})"
+"""),
+    ("pf-q", "flags", "Base/Completer/_expand:77", r"""
+%Vv='a b|c*'; _sfz_r=${(q)%Vv}
+"""),
+    ("pf-qq", "flags", "Base/Widget/_complete_debug:7", r"""
+%Va=(x "y z"); _sfz_r=${(qq)%Va}
+"""),
+    ("pf-qqqq", "flags", "Base/Utility/_regex_arguments:60", r"""
+%Vv='a b'; _sfz_r=${(qqqq)%Vv}
+"""),
+    ("pf-q-dash", "flags", "Base/Utility/_shadow:58,61", r"""
+%Vv='a b$c'; _sfz_r=${(q-)%Vv}
+"""),
+    ("pf-q-plus", "flags", "Zsh/Type/_command_names:44", r"""
+typeset -A %Vh; %Vh=(k1 "v 1" k2 v2)
+_sfz_r=${(j:,:)${(@q+)${(@ok)%Vh}}}
+"""),
+    ("pf-Q", "flags", "Base/Core/_dispatch:51", r"""
+%Vv="'a b' c"; _sfz_r=${(Q)%Vv}
+"""),
+    ("pf-e", "flags", "Base/Completer/_expand:38", r"""
+%Vx=hello; %Vw='${%Vx} world'; _sfz_r=${(e)%Vw}
+"""),
+    ("pf-e-tilde-glob", "flags", "Base/Completer/_extensions:13", r"""
+setopt localoptions extendedglob nonomatch
+%Vx=al; %Vw='${%Vx}pha*'
+_sfz_r=${(j:,:)${(e)~%Vw}}
+"""),
+    ("pf-f", "flags", "Zsh/Command/_sched:7", r"""
+%Vv=$'a\nb\nc'; _sfz_r="${#${(f)%Vv}}:${(j:,:)${(f)%Vv}}"
+"""),
+    ("pf-M", "flags", "Base/Utility/_arguments:215", r"""
+setopt localoptions extendedglob
+%Vv='pre:post'; _sfz_r="${${(M)%Vv#*[^\\]:}[1,-2]}"
+"""),
+    ("pf-M-colhash", "flags", "Base/Core/_main_complete:252,270", r"""
+%Va=(yes=long no=x true=y)
+_sfz_r=${(j:,:)${(@M)%Va:#(yes|true|1|on)*}}
+"""),
+    ("pf-o", "flags", "Base/Completer/_user_expand:63", r"""
+%Va=(gamma alpha beta); _sfz_r=${(j:,:)${(@o)%Va}}
+"""),
+    ("pf-O-len", "flags", "Base/Completer/_extensions:14", r"""
+setopt localoptions extendedglob
+%Vf=(a.b.c x.y); _sfz_r=${#${(O)%Vf//[^.]/}[1]}
+"""),
+    ("pf-u", "flags", "Zsh/Type/_command_names:65", r"""
+%Vp=(a b a c); _sfz_r=${(j:,:)${(u)%Vp}}
+"""),
+    ("pf-ps-nul", "flags", "Base/Widget/_complete_help:53,66", r"""
+%Vv=$'a\0b\0c'; _sfz_r=${(j:,:)${(@ps.\0.)%Vv}}
+"""),
+    ("pf-nest-MSI", "flags", "Base/Completer/_extensions:14", r"""
+setopt localoptions extendedglob
+%Vf=(a.b.c); _sfz_r=${(MSI:1:)%Vf%%.[^/]##}
+"""),
+    ("pf-nest-jq", "flags", "Base/Utility/_regex_arguments:67", r"""
+%Va=(x "y z"); _sfz_r=${(j: :)${(qqqq)%Va[@]}}
+"""),
+    ("pf-b", "flags", "Zsh/Command/_zstyle:305,311", r"""
+%Vv='a*b?c'; _sfz_r=${(b)%Vv}
+"""),
+    ("pf-z", "flags", "Base/Completer/_expand_alias:48", r"""
+%Vv="a  b 'c d'"; _sfz_r=${(j:|:)${(z)%Vv}}
+"""),
+    ("pf-Pt", "flags", "Base/Utility/_store_cache:47", r"""
+%Va=(1); %Vn=%Va; %Vs=x; %Vn2=%Vs
+_sfz_r="${(Pt)%Vn}/${(Pt)%Vn2}"
+"""),
+    ("pf-t", "flags", "Base/Completer/_complete:16,21", r"""
+typeset -A %Vh; %Va=(1); integer %Vi=1
+_sfz_r="${(t)%Vh}/${(t)%Va}/${(t)%Vi}"
+"""),
+    ("pf-hash-arith", "flags",
+     "no stock caller — required by the round-6 brief", r"""
+%Vv=65; _sfz_r="${(#)%Vv}"
+"""),
+
+    # ── scoping ──────────────────────────────────────────────────────────────
+    ("sc-local-curcontext", "scope", "Base/Core/_dispatch:4", r"""
+%Vf() { local curcontext="$curcontext"; curcontext=":sfz:in:fn"; _sfz_r="in=$curcontext" }
+%Vc=$curcontext
+%Vf
+_sfz_r="$_sfz_r out-unchanged=$([[ $curcontext == $%Vc ]] && print yes || print NO)"
+"""),
+    ("sc-typeset-g", "scope", "Base/Widget/_read_comp:29", r"""
+%Vf() { typeset -g %VG=set-in-fn }
+%Vf
+_sfz_r="$%VG/${(t)%VG}"
+"""),
+    ("sc-typeset-gHi", "scope", "Base/Utility/_shadow:36", r"""
+%Vf() { builtin typeset -gHi %VD=0; (( %VD++ )) }
+%Vf
+%Vf
+_sfz_r="$%VD/${(t)%VD}"
+"""),
+    ("sc-typeset-gHa", "scope", "Base/Utility/_shadow:37,42", r"""
+%Vf() { builtin typeset -gHa %VS; %VS+=( "$1" ) }
+%Vf e1
+%Vf "e 2"
+_sfz_r="${(j:,:)%VS}/${(t)%VS}"
+"""),
+    ("sc-localoptions", "scope", "Base/Completer/_expand:10", r"""
+%Vb=$options[nonomatch]
+%Vf() { setopt localoptions nonomatch; _sfz_r=$options[nonomatch] }
+%Vf
+_sfz_r="before=$%Vb in=$_sfz_r after=$options[nonomatch]"
+"""),
+    ("sc-emulate-L", "scope", "Base/Utility/_arg_compile:91", r"""
+%Vb=$options[shwordsplit]
+%Vf() { emulate -L zsh; _sfz_r="$options[shwordsplit]$options[kshglob]" }
+%Vf
+_sfz_r="before=$%Vb in=$_sfz_r after=$options[shwordsplit]"
+"""),
+    ("sc-emulate-LR", "scope", "Base/Widget/_correct_filename:16", r"""
+%Vb=$options[extendedglob]
+%Vf() { emulate -LR zsh; _sfz_r=$options[extendedglob] }
+%Vf
+_sfz_r="before=$%Vb in=$_sfz_r after=$options[extendedglob]"
+"""),
+    ("sc-integer-status", "scope", "Base/Widget/_complete_debug:26", r"""
+%Vg() { return 3 }
+%Vf() { %Vg; integer ret=$?; _sfz_r="ret=$ret type=${(t)ret}" }
+%Vf
+"""),
+    ("sc-funcstack-depth", "scope", "Base/Core/_all_labels:27-28", r"""
+%Vg() { _sfz_r="depth=$#funcstack" }
+%Vf() { %Vg }
+%Vf
+"""),
+    ("sc-funcstack-chain", "scope", "Base/Core/_description:106", r"""
+%Vg() { _sfz_r="idx=${funcstack[2,-1][(I)%Vf]}" }
+%Vf() { %Vg }
+%Vf
+"""),
+    ("sc-functrace", "scope", "Base/Utility/_shadow:42", r"""
+%Vg() { _sfz_r="caller=${funcstack[2]}" }
+%Vf() { %Vg }
+%Vf
+"""),
+    ("sc-nested-dynamic", "scope", "Base/Core/_description:71", r"""
+%Vg() { _sfz_r="seen=$%VL" }
+%Vf() { local %VL=inner; %Vg }
+%VL=outer
+%Vf
+_sfz_r="$_sfz_r after=$%VL"
+"""),
+
+    # ── control flow ─────────────────────────────────────────────────────────
+    ("cf-always", "control", "Base/Core/_main_complete:384", r"""
+%Vf() { { _sfz_r=body; false } always { _sfz_r="$_sfz_r/always" }
+  _sfz_r="$_sfz_r/rc=$?" }
+%Vf
+"""),
+    ("cf-always-return", "control", "Base/Completer/_approximate:113", r"""
+%Vf() { { return 4 } always { _sfz_r=alw } }
+%Vf
+_sfz_r="$_sfz_r/rc=$?"
+"""),
+    ("cf-always-nested", "control", "Base/Utility/_call_program:36", r"""
+%Vf() { { { return 5 } always { _sfz_r=inner } } always { _sfz_r="$_sfz_r/outer" } }
+%Vf
+_sfz_r="$_sfz_r/rc=$?"
+"""),
+    ("cf-return-nested", "control", "Base/Core/_all_labels:35", r"""
+%Vg() { return 2 }
+%Vf() { %Vg && _sfz_r=ok || _sfz_r="fail=$?"; return $? }
+%Vf
+_sfz_r="$_sfz_r/outer=$?"
+"""),
+    ("cf-andand-ret", "control", "Base/Core/_all_labels:35,39", r"""
+%Vg() { return $1 }
+%Vf() { local r=1; %Vg 0 && r=0; %Vg 1 && r=9; _sfz_r="r=$r" }
+%Vf
+"""),
+    ("cf-while-break", "control", "Base/Core/_tags:26 (the _tags loop shape)", r"""
+%Vf() { local i=0 ret=1
+  while (( i < 4 )); do (( i++ )); (( i == 2 )) && ret=0; (( ret )) || break; done
+  _sfz_r="i=$i ret=$ret" }
+%Vf
+"""),
+    ("cf-trap-scope", "control", "Base/Core/_main_complete:159", r"""
+%Vf() { setopt localoptions localtraps; TRAPINT() { return 130 }
+  _sfz_r="in=${+functions[TRAPINT]}" }
+%Vf
+_sfz_r="$_sfz_r after=${+functions[TRAPINT]}"
+"""),
+    ("cf-status-reread", "control", "Base/Widget/_complete_debug:26", r"""
+%Vg() { return 7 }
+%Vf() { %Vg; _sfz_r="first=$?"; _sfz_r="$_sfz_r second=$?" }
+%Vf
+"""),
+
+    # ── the completion context itself ────────────────────────────────────────
+    # These read state that only exists inside a completion. They still run
+    # clean standalone (the parameters are simply empty), which is the point:
+    # the standalone side proving IDENTICAL while the in-completion side
+    # diverges is what attributes a divergence to the completion system rather
+    # than to the language.
+    ("ctx-completer-argc", "ctx", "Base/Core/_dispatch:84 (how a completer is called)", r"""
+_sfz_r="argc=$# argv=${(j:|:)argv}"
+"""),
+    ("ctx-words-current", "ctx", "Base/Core/_description:60,64", r"""
+_sfz_r="cur=$CURRENT n=${#words} w=${(j:|:)words}"
+"""),
+    ("ctx-prefix-suffix", "ctx", "Base/Widget/_next_tags:8", r"""
+_sfz_r="P=$PREFIX S=$SUFFIX IP=$IPREFIX IS=$ISUFFIX"
+"""),
+    ("ctx-curcontext", "ctx", "Base/Core/_dispatch:4", r"""
+_sfz_r="cc=$curcontext"
+"""),
+    ("ctx-comp-tags", "ctx", "Base/Core/_all_labels:29 / _description:71", r"""
+_sfz_r="tags=$_comp_tags ignore=${(j:,:)_comp_ignore}"
+"""),
+    ("ctx-funcstack", "ctx", "Base/Core/_main_complete:160", r"""
+_sfz_r="stack=${(j:>:)funcstack}"
+"""),
+]
+
+# A newline or a NUL in a result would break the listing into rows that no
+# longer line up with the matches they came from. Both are folded to a visible
+# two-character escape, on BOTH shells, so a divergence in the character itself
+# still shows as a different fold. `${(V)...}` would be the obvious tool and is
+# deliberately not used: its multibyte handling is itself a known divergence
+# here, and injecting that into every substrate case would mask the constructs.
+_SUB_FOLD = "${${_sfz_r//$'\\n'/\\\\n}//$'\\0'/\\\\0}"
+
+SUBSTRATE = [Construct(*s) for s in SUBSTRATE_SPECS]
+SUBSTRATE_BY_ID = {c.id: c for c in SUBSTRATE}
+# Ordered as the catalogue declares them, so the printed tables read in the
+# order a human would read the constructs, not alphabetically.
+SUBSTRATE_CATEGORIES = list(dict.fromkeys(c.category for c in SUBSTRATE))
+
+
 class Gen:
     """Seeded generator state for ONE case.
 
@@ -1425,6 +2118,27 @@ class Gen:
         return FS.join((form, tag, self.desc(),
                         r.choice(["compadd", "compadd", "_files", "_files -/"])))
 
+    # ── substrate ────────────────────────────────────────────────────────────
+
+    def substrate_ids(self, pool, n):
+        """`n` distinct construct ids, drawn so every CATEGORY gets a turn.
+
+        A flat draw from the catalogue would be dominated by whichever category
+        has the most entries (`positional` and `flags` are both ~28), and a case
+        that happened to draw six parameter-expansion flags would say nothing
+        about scoping. So the first pick is a category, and only then an entry
+        inside it.
+        """
+        bycat = {}
+        for c in pool:
+            bycat.setdefault(c.category, []).append(c)
+        cats = sorted(bycat)
+        out = []
+        while len(out) < n and any(bycat.values()):
+            cat = self.rng.choice([c for c in cats if bycat[c]])
+            out.append(bycat[cat].pop(self.rng.randrange(len(bycat[cat]))).id)
+        return out
+
 
 # ── one generated case ───────────────────────────────────────────────────────
 
@@ -1481,6 +2195,7 @@ class Case:
             "compset": self._compset_body,
             "tags": self._tags_body,
             "nested": self._nested_body,
+            "substrate": self._substrate_body,
         }
         body = builders[self.kind]()
         groups = []
@@ -1521,7 +2236,12 @@ class Case:
         out = ["_sfz_main() {"]
         out += ["  " + ln for ln in body]
         out.append("}")
-        out.append("_sfz_main; _sfz_ret=$?")
+        # `"$@"` is forwarded, not dropped. Without it the wrapper silently
+        # changes what the body sees: a completer's own positional parameters
+        # are part of how compsys calls it (Base/Core/_dispatch:84), and the
+        # `substrate` kind reads them directly. Applied identically to both
+        # shells, so it cannot make a comparison greener — only more faithful.
+        out.append('_sfz_main "$@"; _sfz_ret=$?')
         for pre, entries, label, group in groups:
             out += pre
             out += self._probe_group(entries, label, group=group)
@@ -1619,6 +2339,43 @@ class Case:
         ], "compset state")
         out.append("")
         out.append("compadd -- %s" % " ".join(self.extra.get("tail", PLAIN_WORDS[:3])))
+        return out
+
+    def _substrate_body(self):
+        """The shell-language constructs, run inside a real completion.
+
+        Each atom is a catalogue id. Its fragment runs at the completer's own
+        top level — not inside a helper — so the constructs that read the
+        completer's positional parameters and the completion specials see what
+        compsys itself would see. The result each fragment leaves in `_sfz_r`
+        is collected and then added as a match, so a divergence in a VALUE is
+        visible on the rendered screen and not only in a match set.
+
+        The completer still adds ordinary matches afterwards, so the widget and
+        key-path axes have a real listing to drive; a body that only ever added
+        probe values would never open a menu.
+        """
+        out = ["local -a _sfz_sub", "local _sfz_r", ""]
+        for slot, cid in enumerate(self.atoms):
+            c = SUBSTRATE_BY_ID.get(cid)
+            if c is None:                      # only reachable via a hand-edited
+                continue                       # fixture naming a removed entry
+            out.append("# %s  (%s)  %s" % (c.id, c.category, c.cite))
+            out.append("_sfz_r=")
+            out += c.lines(slot)
+            # A newline or a NUL in a result would break the listing into rows
+            # that no longer line up with the matches they came from. Folded to
+            # a visible escape on BOTH shells, so a divergence in the character
+            # itself still shows as a different fold.
+            out.append("_sfz_sub+=( \"%s=%s\" )" % (c.id, _SUB_FOLD))
+            out.append("")
+        if self.atoms:
+            out += self._probe_group(
+                ['"$_sfz_sub[%d]"' % (i + 1) for i in range(len(self.atoms))],
+                "substrate", group="_sfzsub")
+            out.append("")
+        out.append("compadd -- %s" % " ".join(self.extra.get("tail",
+                                                             PLAIN_WORDS[:3])))
         return out
 
     def _tags_body(self):
@@ -1922,6 +2679,13 @@ def generate(seed, idx, args):
             zq("%s:%s" % (w, g.desc())) for w in PLAIN_WORDS[:3])]
         for i in range(g.rng.randint(1, 3)):
             atoms.append(g.tag_branch(i))
+
+    elif kind == "substrate":
+        # The construct pool is what the reference shell has already been
+        # PROVED to accept (check_substrate); a fragment real zsh rejects is a
+        # generator bug and never reaches a case.
+        extra["tail"] = PLAIN_WORDS[:3]
+        atoms = g.substrate_ids(args.substrate_pool, args.substrate_count)
 
     elif kind == "nested":
         extra["pre"] = ["_sfz_deep=( %s )" % " ".join(
@@ -2423,6 +3187,8 @@ class Verdict:
         self.test_only_diags = set()
         self.duration = 0.0
         self.fixture = None
+        # [(construct, "core-language"|"completion"|"rejected", ref, test, err)]
+        self.attribution = []
         if ref and test and ref.grid is not None and test.grid is not None:
             text_diff = {i for i, _a, _b in self.diffs}
             self.attr_rows = [r for r in attr_diff_rows(ref.attrs, test.attrs)
@@ -2667,6 +3433,17 @@ def write_fixture(path, args, case, note):
                case.extra.get("widget", "default"), case.locale, case.cols,
                " ".join("%s(%s)" % (n, c) for n, c in used) or "-",
                case.buffer, ",".join(case.keys), " ".join(args.test_argv)))
+        # For a substrate case: which language construct each surviving atom is,
+        # the stock function that justifies it, and the standalone command that
+        # runs it with no completion around it at all. Informational — `@setup`
+        # and the heredoc below are what `--replay` reconstructs from — but it
+        # is the part a human reads first when the file turns up later.
+        for a in case.atoms:
+            c = SUBSTRATE_BY_ID.get(a)
+            if c is not None:
+                f.write("# @construct %s  (%s)  %s\n"
+                        % (c.id, c.category, c.cite))
+                f.write("# @repro %s\n" % substrate_repro_cmd(c))
         # One header line per init line, so `--replay` reconstructs the exact
         # shell state the divergence needed (the widget declaration and its
         # binding, the widget's own function, menu selection, styles, modules).
@@ -3021,6 +3798,221 @@ def print_text_check(report, entries):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# substrate self-check + standalone attribution
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Two jobs, one mechanism.
+#
+# The SELF-CHECK is the same contract every other axis in this file carries: a
+# construct real zsh REJECTS is a generator bug, not a finding, so every
+# fragment is run on the reference shell before a case is generated and proved
+# to produce its probe line with nothing on stderr. Rejections are counted in
+# their own named category and printed; they never reach a case.
+#
+# The ATTRIBUTION is the deliverable. The identical fragment is also run on
+# zshrs, outside any completion, and the two outputs compared. That answers the
+# question a screen diff cannot:
+#
+#   the standalone outputs already differ  -> CORE-LANGUAGE bug. The printed
+#                                             `zsh -f -c '...'` line IS the
+#                                             reproducer, of the kind
+#                                             `f(){ argv+=(X); print -l "$@" }`
+#                                             that made the last round's
+#                                             largest failure fixable.
+#   the standalone outputs are identical
+#   and the in-completion case diverged    -> COMPLETION bug. The language is
+#                                             fine; the construct only breaks
+#                                             once the completion system is the
+#                                             one running it, and the fixture is
+#                                             the reproducer.
+#
+# The zshrs side is NEVER used to prune. A construct zsh accepts and zshrs does
+# not is a divergence and is reported as one.
+
+_SUB_RE = re.compile(rb"^@@S (\S+)(?: (.*))?$")
+
+
+def _run_substrate(argv, env, path, cwd, timeout):
+    """-> (value-bytes or None, error-text or None)."""
+    try:
+        p = subprocess.run(list(argv) + ["-f", path],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=timeout, env=env, cwd=cwd)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "could not run: %r" % (exc,)
+    val = None
+    for line in p.stdout.split(b"\n"):
+        m = _SUB_RE.match(line.rstrip(b"\r"))
+        if m:
+            val = m.group(2) or b""
+    err = (p.stderr or b"").decode("utf-8", "replace").strip()
+    err = re.sub(r"\s+", " ", err.replace(path, "<probe>"))
+    if val is None:
+        return None, (err or "no @@S line and no message")[:180]
+    return val, (err[:180] or None)
+
+
+def substrate_probe(args, root, cwd, locale, constructs):
+    """Run every fragment standalone on BOTH shells, in one locale.
+
+    -> {id: {"ref": bytes|None, "ref_err": str|None,
+             "test": bytes|None, "test_err": str|None}}
+    """
+    os.makedirs(root, exist_ok=True)
+    env = child_env(cwd, locale)
+    out = {}
+    for c in constructs:
+        p = os.path.join(root, "sub-%s.zsh" % re.sub(r"\W", "_", c.id))
+        with _wopen(p) as f:
+            f.write(c.script())
+        rv, re_ = _run_substrate([args.zsh], env, p, cwd, args.substrate_timeout)
+        tv, te_ = _run_substrate(args.test_base, env, p, cwd,
+                                 args.substrate_timeout)
+        out[c.id] = {"ref": rv, "ref_err": re_, "test": tv, "test_err": te_,
+                     "script": p}
+    return out
+
+
+def check_substrate(args, constructs):
+    """-> (pool, report). `pool` is the constructs real zsh proved it accepts.
+
+    `report` is {locale: {id: probe}} for every locale in the pool, because a
+    fragment can be locale-sensitive (one of them globs) and a check run in one
+    locale would not be a check of the environment the cases run in.
+    """
+    root = os.path.join(REPO, "target", "spec-fuzz-%d" % args.seed,
+                        "substrate-check")
+    work = os.path.join(root, "work")
+    os.makedirs(work, exist_ok=True)
+    for f in WORK_FILES:
+        p = os.path.join(work, f)
+        if not os.path.exists(p):
+            open(p, "w").close()
+    for sub in WORK_DIRS:
+        os.makedirs(os.path.join(work, sub), exist_ok=True)
+
+    report = {}
+    for loc in args.locale_pool:
+        report[loc] = substrate_probe(args, root, work, loc, constructs)
+    # A fragment the reference shell refused, or complained about, in ANY
+    # locale is out of the pool everywhere: generating it in the locales where
+    # it happens to work would make the catalogue's coverage depend silently on
+    # which locales this host has.
+    bad = set()
+    for loc, probes in report.items():
+        for cid, pr in probes.items():
+            if pr["ref"] is None or pr["ref_err"]:
+                bad.add(cid)
+    pool = [c for c in constructs if c.id not in bad]
+    return pool, report
+
+
+def print_substrate_check(report, constructs):
+    """-> (generator-rejected ids, core-language-divergent ids). Prints both."""
+    ids = [c.id for c in constructs]
+    bycat = {}
+    for c in constructs:
+        bycat.setdefault(c.category, []).append(c.id)
+    print("# substrate self-check — every construct's fragment run STANDALONE "
+          "on both shells")
+    print("#   catalogue: %d construct(s) in %d categor(ies) — %s"
+          % (len(ids), len(bycat),
+             "  ".join("%s:%d" % (k, len(bycat[k])) for k in SUBSTRATE_CATEGORIES
+                       if k in bycat)))
+
+    rejected, diverged = {}, {}
+    for loc in sorted(report):
+        for cid in ids:
+            pr = report[loc].get(cid)
+            if pr is None:
+                continue
+            if pr["ref"] is None or pr["ref_err"]:
+                rejected.setdefault(cid, []).append(
+                    (loc, pr["ref_err"] or "no probe line"))
+            elif pr["test"] is None or pr["test"] != pr["ref"]:
+                diverged.setdefault(cid, []).append(
+                    (loc, pr["ref"], pr["test"], pr["test_err"]))
+
+    print("#   %-22s %-9s %-10s %s"
+          % ("locale", "checked", "rejected", "zsh-vs-zshrs divergences"))
+    for loc in sorted(report):
+        nrej = sum(1 for cid in ids
+                   if report[loc][cid]["ref"] is None or report[loc][cid]["ref_err"])
+        ndiv = sum(1 for cid in ids
+                   if not (report[loc][cid]["ref"] is None or report[loc][cid]["ref_err"])
+                   and report[loc][cid]["test"] != report[loc][cid]["ref"])
+        print("#   %-22s %-9d %-10d %d" % (loc, len(ids), nrej, ndiv))
+
+    if rejected:
+        print("#   GENERATOR-rejected (dropped from the pool; a fragment real "
+              "zsh refuses is a generator bug, not a finding):")
+        for cid in ids:
+            if cid in rejected:
+                loc, why = rejected[cid][0]
+                print("#     %-24s %-14s %s" % (cid, loc, why[:120]))
+    if diverged:
+        print("#   CORE-LANGUAGE DIVERGENCE — the construct differs OUTSIDE "
+              "completion, so this is a shell bug and not a completion bug:")
+        for cid in ids:
+            if cid not in diverged:
+                continue
+            c = SUBSTRATE_BY_ID[cid]
+            loc, rv, tv, terr = diverged[cid][0]
+            print("#     %-24s %-9s %s" % (cid, c.category, c.cite))
+            print("#       zsh   : %s" % disp(bdec(rv))[:150])
+            print("#       zshrs : %s"
+                  % (disp(bdec(tv))[:150] if tv is not None
+                     else "<no probe line: %s>" % (terr or "?")))
+            print("#       repro : %s" % substrate_repro_cmd(c))
+    print("# %d construct(s): %d generator-rejected, %d core-language divergent"
+          % (len(ids), len(rejected), len(diverged)))
+    sys.stdout.flush()
+    return sorted(rejected), sorted(diverged)
+
+
+def substrate_repro_cmd(c, shell="zsh"):
+    """The standalone reproducer, as a command line that can be pasted."""
+    body = "; ".join(ln.strip() for ln in c.lines(0) if ln.strip()
+                     and not ln.strip().startswith("#"))
+    return "%s -f -c %s" % (shell, shlex.quote(
+        "%s; print -r -- \"%s=$_sfz_r\"" % (body, c.id)))
+
+
+def substrate_attribute(args, root, case):
+    """Standalone-diff every construct a substrate case still contains.
+
+    Run in the case's OWN work directory and locale, so the comparison happens
+    in the environment the divergence happened in — one of the fragments globs,
+    and a probe run somewhere else would not be the same probe.
+
+    -> [(construct, verdict, ref-bytes, test-bytes, err)] with verdict one of
+       "core-language" (already differs outside completion),
+       "completion"    (identical outside completion),
+       "rejected"      (the reference shell refused it here).
+    """
+    cdir = os.path.join(root, case.name)
+    work = os.path.join(cdir, "work")
+    if not os.path.isdir(work):
+        return []
+    cs = [SUBSTRATE_BY_ID[a] for a in case.atoms if a in SUBSTRATE_BY_ID]
+    if not cs:
+        return []
+    probes = substrate_probe(args, os.path.join(cdir, "standalone"), work,
+                             case.locale, cs)
+    out = []
+    for c in cs:
+        pr = probes[c.id]
+        if pr["ref"] is None or pr["ref_err"]:
+            out.append((c, "rejected", pr["ref"], pr["test"], pr["ref_err"]))
+        elif pr["test"] is None or pr["test"] != pr["ref"]:
+            out.append((c, "core-language", pr["ref"], pr["test"],
+                        pr["test_err"]))
+        else:
+            out.append((c, "completion", pr["ref"], pr["test"], None))
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # widget self-check
 # ═════════════════════════════════════════════════════════════════════════════
 #
@@ -3224,6 +4216,10 @@ def print_case_spec(case):
              if case.extra.get("hostile_used") else ""))
     print("  buffer   : %s   keys=%s"
           % (disp(repr(case.buffer)), ",".join(case.keys)))
+    for a in case.atoms:
+        c = SUBSTRATE_BY_ID.get(a)
+        if c is not None:
+            print("  construct: %-24s %-9s %s" % (c.id, c.category, c.cite))
     # The init lines are part of the case now: with a `zle -C` / `compdef -k`
     # widget the function under test lives here, not in the fpath file.
     for ln in case.init_lines():
@@ -3290,6 +4286,31 @@ def print_failure(v, args):
             print("  --- raw escape-stream diff ---")
             for ln in sd:
                 print(ln)
+    if v.attribution:
+        print("  --- standalone attribution (each surviving construct re-run "
+              "OUTSIDE completion, on both shells) ---")
+        for c, verdict, rv, tv, err in v.attribution:
+            print("  %-14s %-24s %-9s %s"
+                  % (verdict, c.id, c.category, c.cite))
+            if verdict == "core-language":
+                print("      zsh   : %s" % disp(bdec(rv))[:150])
+                print("      zshrs : %s"
+                      % (disp(bdec(tv))[:150] if tv is not None
+                         else "<no probe line: %s>" % (err or "?")))
+                print("      repro : %s" % substrate_repro_cmd(c))
+            elif verdict == "rejected":
+                print("      the reference shell refused it here: %s"
+                      % (err or "?"))
+        core = [c.id for c, k, _r, _t, _e in v.attribution
+                if k == "core-language"]
+        comp = [c.id for c, k, _r, _t, _e in v.attribution if k == "completion"]
+        if core:
+            print("  => CORE-LANGUAGE bug(s): %s  (reproduce with the `repro` "
+                  "line above; no completion needed)" % " ".join(core))
+        if comp and not core:
+            print("  => COMPLETION bug: every surviving construct agrees "
+                  "OUTSIDE completion (%s), so the language is not what broke "
+                  "— replay the fixture" % " ".join(comp))
     if v.fixture:
         print("  fixture  : %s" % os.path.relpath(v.fixture, REPO))
         print("  replay   : %s --replay %s"
@@ -3323,6 +4344,15 @@ def to_json(v):
         "hostile": [{"name": n, "category": c}
                     for n, c in v.case.extra.get("hostile_used", [])],
         "width_probe": bool(v.case.extra.get("width_texts")),
+        "constructs": [{"id": c.id, "category": c.category, "cite": c.cite}
+                       for c in (SUBSTRATE_BY_ID[a] for a in v.case.atoms
+                                 if a in SUBSTRATE_BY_ID)],
+        "attribution": [{"id": c.id, "verdict": k,
+                         "zsh": disp(bdec(r)) if r is not None else None,
+                         "zshrs": disp(bdec(t)) if t is not None else None,
+                         "repro": substrate_repro_cmd(c),
+                         "error": e}
+                        for c, k, r, t, e in v.attribution],
         "buffer": disp(v.case.buffer),
         "keys": v.case.keys,
         "init": [disp(x) for x in v.case.init_lines()],
@@ -3402,7 +4432,30 @@ def main():
                          "letter, an abort. Names: " + ",".join(sorted(KEYS)))
     ap.add_argument("--kind", default="all",
                     help="comma-separated: arguments,values,describe,"
-                         "alternative,compadd,compset,tags,nested")
+                         "alternative,compadd,compset,tags,nested,substrate")
+    ap.add_argument("--substrate-count", type=int, default=4,
+                    help="how many language constructs one --kind substrate "
+                         "case runs (default 4). Each is drawn from a "
+                         "different category where the pool allows it.")
+    ap.add_argument("--substrate-categories", default="all",
+                    help="restrict --kind substrate to these construct "
+                         "categories (comma separated). A generation-scope "
+                         "control, NOT a comparison one: whatever is generated "
+                         "is still compared in full, and every excluded "
+                         "category is named in the summary as untested. "
+                         "Categories: " + ",".join(SUBSTRATE_CATEGORIES))
+    ap.add_argument("--check-substrate", action="store_true",
+                    help="run only the substrate self-check — every catalogue "
+                         "fragment STANDALONE on both shells, in every usable "
+                         "locale — print the table, and exit. A construct real "
+                         "zsh rejects is a GENERATOR bug and is counted as "
+                         "one; a construct that already differs outside "
+                         "completion is a core-language bug and is named.")
+    ap.add_argument("--list-substrate", action="store_true",
+                    help="print the construct catalogue with the stock "
+                         "Completion/... citation that justifies each entry, "
+                         "and exit")
+    ap.add_argument("--substrate-timeout", type=float, default=30.0)
     ap.add_argument("--widget", default="auto",
                     help="which WIDGET the completion is reached through. "
                          "`auto` (default) draws one per case from the whole "
@@ -3497,7 +4550,7 @@ def main():
                          "`auto`, any single character, or: %s)"
                          % (k, ",".join(sorted(KEYS))))
     all_kinds = ["arguments", "values", "describe", "alternative",
-                 "compadd", "compset", "tags", "nested"]
+                 "compadd", "compset", "tags", "nested", "substrate"]
     args.kinds = all_kinds if args.kind == "all" else [
         k.strip() for k in args.kind.split(",") if k.strip()]
     for k in args.kinds:
@@ -3560,6 +4613,16 @@ def main():
             sys.exit("compsys_spec_fuzz: --cols takes a number or `auto`")
         args.cols_pool = []
 
+    if args.list_substrate:
+        for cat in SUBSTRATE_CATEGORIES:
+            print("# %s" % cat)
+            for c in SUBSTRATE:
+                if c.category == cat:
+                    print("  %-24s %s" % (c.id, c.cite))
+        print("# %d construct(s) in %d categor(ies)"
+              % (len(SUBSTRATE), len(SUBSTRATE_CATEGORIES)))
+        return 0
+
     if args.list_widgets:
         for w in WIDGET_IDS:
             p = widget_plan(w)
@@ -3618,6 +4681,37 @@ def main():
         print()
     if args.check_locales:
         return 1 if (locale_bad or text_rejected) else 0
+
+    # ── substrate self-check ─────────────────────────────────────────────────
+    if args.substrate_categories.strip() in ("all", ""):
+        want_sub = list(SUBSTRATE_CATEGORIES)
+    else:
+        want_sub = [c.strip() for c in args.substrate_categories.split(",")
+                    if c.strip()]
+        for c in want_sub:
+            if c not in SUBSTRATE_CATEGORIES:
+                sys.exit("compsys_spec_fuzz: unknown --substrate-categories %r "
+                         "(have all, or: %s)"
+                         % (c, ",".join(SUBSTRATE_CATEGORIES)))
+    args.substrate_cats = want_sub
+    args.substrate_pool = [c for c in SUBSTRATE if c.category in want_sub]
+    sub_rejected, sub_core = [], []
+    if args.check_substrate or ("substrate" in args.kinds and not args.replay
+                                and not args.spec):
+        wanted = args.substrate_pool
+        args.substrate_pool, sub_report = check_substrate(args, wanted)
+        sub_rejected, sub_core = print_substrate_check(sub_report, wanted)
+        excluded = [c for c in SUBSTRATE_CATEGORIES if c not in want_sub]
+        if excluded:
+            print("#   categor(ies) this run EXCLUDED "
+                  "(--substrate-categories), so NOT tested: %s"
+                  % " ".join(excluded))
+        print()
+        if args.check_substrate:
+            return 1 if sub_rejected else 0
+        if not args.substrate_pool:
+            sys.exit("compsys_spec_fuzz: real zsh rejected EVERY substrate "
+                     "construct in scope — nothing left to generate")
 
     # ── widget self-check ────────────────────────────────────────────────────
     widget_bad_ref, widget_bad_test = [], []
@@ -3723,6 +4817,18 @@ def main():
             v.fixture = write_fixture(
                 os.path.join(root, "%s.min.zsh" % case.name), args, case,
                 "%s: %s (not shrunk)" % (v.category, v.detail))
+        # A substrate failure is only actionable once it is known WHICH layer
+        # broke, so every construct that survived the reduction is re-run
+        # standalone on both shells. That produces the plain-shell reproducer
+        # and, for the constructs that agree standalone, the proof that the
+        # language is fine and the completion system is not.
+        if v.status == FAIL and v.case.kind == "substrate":
+            target = getattr(v, "minimal", None) or v.case
+            try:
+                v.attribution = substrate_attribute(args, root, target)
+            except Exception as exc:
+                print("  ! substrate attribution failed for %s: %r"
+                      % (case.name, exc))
         with lock:
             results.append(v)
             mark = {PASS: "PASS", PASS_ERR: "PASS(err)", FAIL: "FAIL", SKIP: "SKIP"}[v.status]
@@ -3844,6 +4950,62 @@ def main():
         nwp = sum(1 for v in results if v.case.extra.get("width_texts"))
         print("#   %d case(s) also compared ${#text} vs ${(m)#text} "
               "(characters vs display columns)" % nwp)
+    # Per-CONSTRUCT, for the same reason as per-kind: a substrate run is only
+    # evidence about the constructs it actually drew, and the totals cannot say
+    # which those were. A construct with 0 uses was not tested.
+    subs = [v for v in results if v.case.kind == "substrate"]
+    if subs:
+        percon, percat = {}, {}
+        for v in subs:
+            for a in v.case.atoms:
+                c = SUBSTRATE_BY_ID.get(a)
+                if c is None:
+                    continue
+                row = percon.setdefault(a, [0, 0])
+                row[0] += 1
+                row[1] += (v.status == FAIL)
+                crow = percat.setdefault(c.category, [0, 0])
+                crow[0] += 1
+                crow[1] += (v.status == FAIL)
+        print("#   by substrate category:  uses   in FAILing cases")
+        for cat in SUBSTRATE_CATEGORIES:
+            if cat in percat:
+                print("#     %-20s %5d  %5d" % (cat, percat[cat][0],
+                                                percat[cat][1]))
+        hit = [c for c in percon if percon[c][1]]
+        if hit:
+            print("#   construct(s) present in a FAILing case: %s"
+                  % " ".join(sorted(hit)))
+        untested = sorted(c.id for c in args.substrate_pool
+                          if c.id not in percon)
+        if untested:
+            print("#   construct(s) in scope that NO case happened to draw — "
+                  "untested by this run: %s" % " ".join(untested))
+        offcat = [c for c in SUBSTRATE_CATEGORIES
+                  if c not in args.substrate_cats]
+        if offcat:
+            print("#   substrate categor(ies) this run EXCLUDED — untested: %s"
+                  % " ".join(offcat))
+        core, comp = set(), set()
+        for v in subs:
+            for c, k, _r, _t, _e in v.attribution:
+                (core if k == "core-language" else
+                 comp if k == "completion" else set()).add(c.id)
+        if core:
+            print("#   CORE-LANGUAGE bug(s) — the construct differs with NO "
+                  "completion involved: %s" % " ".join(sorted(core)))
+        if comp - core:
+            print("#   construct(s) that agreed standalone and were present in "
+                  "a failing completion (COMPLETION-side): %s"
+                  % " ".join(sorted(comp - core)))
+    if sub_rejected:
+        print("#   generator-rejected substrate construct(s), dropped before "
+              "generating (real zsh refused the fragment): %d  (%s)"
+              % (len(sub_rejected), " ".join(sub_rejected)))
+    if sub_core:
+        print("#   substrate construct(s) that ALREADY diverge outside "
+              "completion (core-language): %d  (%s)"
+              % (len(sub_core), " ".join(sub_core)))
     if locale_bad:
         print("#   locale(s) where zshrs read the canary differently from "
               "zsh: %d  (%s)" % (len(locale_bad), " ".join(locale_bad)))
@@ -3926,6 +5088,11 @@ def main():
                                      "rejected": [list(x) for x in r["rejected"]],
                                      "test_diff": [list(x) for x in r["test_diff"]]}
                                for loc, r in text_report.items()},
+                "substrate_catalogue": [
+                    {"id": c.id, "category": c.category, "cite": c.cite}
+                    for c in SUBSTRATE],
+                "substrate_generator_rejected": sub_rejected,
+                "substrate_core_language_divergent": sub_core,
                 "widgets": sorted(perw),
                 "widget_generator_rejected": widget_bad_ref,
                 "widget_decl_divergence": widget_bad_test,
