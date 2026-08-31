@@ -506,8 +506,8 @@ fn fpath_default_leads_with_bundle_and_has_no_distribution_tree() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let entries: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert!(
-        entries.first().is_some_and(|e| e.ends_with("/.zshrs/functions")),
-        "the bundled tree must lead fpath, got {:?}",
+        entries.last().is_some_and(|e| e.ends_with("/.zshrs/functions")),
+        "the bundled tree must be LAST on fpath, got {:?}",
         entries
     );
     assert!(
@@ -569,11 +569,27 @@ fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
             "{keep} carries third-party completions and must survive, got {entries:?}"
         );
     }
+    // The bundle goes LAST, so it supplies only what nothing else does.
+    // Leading it shadowed every curated completion of the same name --
+    // 242 of zsh-more-completions' files on the author's setup, `_ls`
+    // among them. Nothing is lost by trailing: the only tree that could
+    // out-rank it is a host zsh's own, which is filtered off fpath.
     assert!(
-        entries[0].ends_with("/.zshrs/functions"),
-        "the bundled tree stays first, got {:?}",
+        entries.last().is_some_and(|e| e.ends_with("/.zshrs/functions")),
+        "the bundled tree must trail, got {:?}",
         entries
     );
+    let bundle_at = entries
+        .iter()
+        .position(|e| e.ends_with("/.zshrs/functions"))
+        .expect("bundle on fpath");
+    for user_dir in ["/tmp/zshrs-pin-plugin/src", "/tmp/zshrs-pin-zinit/completions"] {
+        let at = entries.iter().position(|e| *e == user_dir).expect(user_dir);
+        assert!(
+            at < bundle_at,
+            "{user_dir} must out-rank the bundle so a curated function wins, got {entries:?}"
+        );
+    }
 }
 
 /// c:Src/lex.c:523-527 — `cmd_or_math`'s unget loop is
