@@ -3071,6 +3071,33 @@ impl ShellExecutor {
         // call once that port is complete.
         crate::startup_trace::mark("exec: pre-module_path_init");
         crate::ported::init::module_path_init();
+
+        // Publish `fpath` LAST, once every special has been seeded.
+        //
+        // The earlier `set_array("fpath", …)` above lands before the tied
+        // FPATH/fpath special is created, and creating it resets the node
+        // to empty -- so an INTERACTIVE shell reached its first prompt with
+        //     typeset -aT FPATH fpath=(  )
+        // while `$FPATH` still read the full four-entry string. `path`
+        // hid the bug: `PATH` is always in the environ, so the env import
+        // refills it, whereas zsh never exports `FPATH` and nothing
+        // refilled that one.
+        //
+        // The damage was not a missing default: a `.zshrc` that does
+        // `fpath=( mydir $fpath )` -- the standard idiom -- appended to
+        // NOTHING, so the shell ended up with only what the rc file added
+        // and lost the bundled tree entirely.
+        //
+        // `-c` was unaffected, which is why every non-interactive probe of
+        // this passed.
+        let fpath_final: Vec<String> = exec
+            .fpath
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        if !fpath_final.is_empty() {
+            exec.set_array("fpath".to_string(), fpath_final);
+        }
         crate::startup_trace::mark("new() end");
 
         exec
