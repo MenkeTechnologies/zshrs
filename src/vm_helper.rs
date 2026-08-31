@@ -1520,11 +1520,12 @@ impl ShellExecutor {
         if fpath.is_empty() {
             fpath = default_fpath(); // c:Src/init.c:1143
         }
-        // Same directory as the main constructor, but never write it from
-        // a pool worker -- materialisation is the session's job.
+        // Same directory as the main constructor, and LAST for the same
+        // reason, but never written from a pool worker -- materialisation
+        // is the session's job.
         if let Some(d) = crate::bundled_functions::functions_dir() {
             if d.is_dir() && !fpath.contains(&d) {
-                fpath.insert(0, d);
+                fpath.push(d);
             }
         }
         Self {
@@ -1654,15 +1655,27 @@ impl ShellExecutor {
         if fpath.is_empty() {
             fpath = default_fpath();
         }
-        // zshrs ships zsh's function tree with the binary; put its
-        // directory FIRST, like zsh's own <prefix>/share/zsh/<ver>/functions
-        // sits ahead of the user's additions. Materialised here (not only
-        // when FPATH is absent) so an inherited FPATH from a shell that
-        // lacks these still resolves is-at-least/colors/add-zsh-hook.
+        // zshrs ships zsh's function tree with the binary; its directory
+        // goes LAST, so it supplies only what nothing else on fpath does.
+        //
+        // It was first at one point, mirroring where zsh's own
+        // <prefix>/share/zsh/<ver>/functions sits. That is wrong here: zsh
+        // puts its tree ahead of nothing the user curated, because the
+        // user's own directories are prepended to it, whereas an inherited
+        // FPATH arrives ALREADY assembled. Leading it shadowed every
+        // curated completion of the same name -- 242 of
+        // zsh-more-completions' files on this author's setup, `_ls` among
+        // them, which is how `ls -<TAB>` started diverging from zsh.
+        //
+        // Being last costs nothing: the only tree that could out-rank the
+        // bundle is a host zsh's own, and `is_host_zsh_function_tree`
+        // already removes that from fpath entirely. Materialised here (not
+        // only when FPATH is absent) so an inherited FPATH from a shell
+        // that lacks these still resolves is-at-least/colors/add-zsh-hook.
         if let Some(d) = crate::bundled_functions::functions_dir() {
             let _ = crate::bundled_functions::ensure_installed();
             if d.is_dir() && !fpath.contains(&d) {
-                fpath.insert(0, d);
+                fpath.push(d);
             }
         }
 
