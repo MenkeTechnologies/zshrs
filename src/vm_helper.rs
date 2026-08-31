@@ -8129,7 +8129,7 @@ pub use crate::ported::params::*;
 ///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions    drop
 ///     /opt/homebrew/share/zsh/site-functions                keep
 ///     ~/.zinit/plugins/…/src                                keep
-/// Enforce zshrs's two `fpath` invariants on every assignment:
+/// Enforce zshrs's two `fpath` invariants on every SHELL-LEVEL assignment:
 /// the bundled tree is ALWAYS present, a host zsh installation's own
 /// function tree is ALWAYS absent. The two are never mixed — a foreign
 /// zsh's `compinit`/`_git`/`add-zsh-hook` sitting beside zshrs's own
@@ -8150,27 +8150,35 @@ pub use crate::ported::params::*;
 /// where third-party formulae install completions the bundle has no copy
 /// of. See [`is_host_zsh_function_tree`].
 ///
-/// Lives here rather than beside its call sites because `src/ported/` is a
+/// Applied in `assignaparam` only -- the path a shell `fpath=( … )` takes.
+/// NOT in `setaparam`, the internal setter: compsys swaps `fpath` to a
+/// controlled value and restores it (`compsys/router.rs`), `compaudit`
+/// needs a genuinely empty one to report an error, and a dozen unit tests
+/// assert an exact array. Appending the bundle there rewrote all of them.
+///
+/// Lives here rather than beside its call site because `src/ported/` is a
 /// port of the C source and takes no new functions (build.rs:172).
-pub(crate) fn drop_host_zsh_function_trees(name: &str, val: Vec<String>) -> Vec<String> {
-    if name != "fpath" {
-        return val;
-    }
-    let mut out: Vec<String> = val
-        .into_iter()
-        .filter(|e| !is_host_zsh_function_tree(Path::new(e)))
-        .collect();
-    // Append, never insert: a curated completion of the same name must
-    // still win, so the bundle only supplies what nothing else does.
+pub(crate) fn normalize_fpath_after_assignment() {
+    let mut arr = match crate::ported::params::getaparam("fpath") {
+        Some(a) => a,
+        None => return,
+    };
+    let before = arr.clone();
+    arr.retain(|e| !is_host_zsh_function_tree(Path::new(e)));
     if let Some(d) = crate::bundled_functions::functions_dir() {
         if d.is_dir() {
             let dir = d.to_string_lossy().into_owned();
-            if !out.iter().any(|e| *e == dir) {
-                out.push(dir);
-            }
+            // Re-appended, never left mid-array: the bundle supplies only
+            // what nothing else does, so a curated completion of the same
+            // name has to be reached first. `fpath+=( mydir )` otherwise
+            // left the bundle ahead of `mydir` and shadowed it.
+            arr.retain(|e| *e != dir);
+            arr.push(dir);
         }
     }
-    out
+    if arr != before {
+        crate::ported::params::setaparam("fpath", arr);
+    }
 }
 
 pub(crate) fn is_host_zsh_function_tree(p: &Path) -> bool {
