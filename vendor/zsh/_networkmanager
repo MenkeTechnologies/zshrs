@@ -1,0 +1,458 @@
+#compdef nmcli
+
+_networkmanager() {
+  local curcontext="$curcontext" state line
+  local nmcli="$words[1]"
+
+  _arguments -C \
+    '(-a --ask)'{-a,--ask}'[ask for missing parameters]' \
+    '(-c --colors)'{-c,--colors}='[whether to use colors in output]:value [auto]:(auto yes no)' \
+    '!--complete-args' \
+    '(-e --escape)'{-e,--escape}='[escape column separators in values]:value:(yes no)' \
+    '(-f --fields)'{-f,--fields}='[specify fields to output]:field:_nm_fields' \
+    '(-f --fields -g -get-values -m -mode -p -pretty -t -terse)'{-g,--get-values}='[shortcut for -m tabular -t -f]:field:_nm_fields' \
+    '(-m --mode)'{-m,--mode}='[output mode]:mode:(tabular multiline)' \
+    '--offline[work without a daemon]' \
+    '(-o --overview)'{-o,--overview}'[overview mode (hide default values)]' \
+    '(-p --pretty -t --terse)'{-p,--pretty}'[pretty output]' \
+    '(-s --show-secrets)'{-s,--show-secrets}'[allow passwords to be displayed]' \
+    '(-p --pretty -t --terse)'{-t,--terse}'[terse output]' \
+    '(-w --wait)'{-w,--wait}='[set time limit on wait for operations to finish]:timeout (seconds)' \
+    '(- *)'{-v,--version}'[display version information]' \
+    '(- *)'{-h,--help}'[display usage information]' \
+    '1:command:(general networking radio connection device agent monitor help)' \
+    '*::arg:->args'
+
+  case $line[1] in
+    g*) _nm_general ;;
+    n*) _nm_networking ;;
+    r*) _nm_radio ;;
+    c*) _nm_connection ;;
+    d*) _nm_device ;;
+    a*) _nm_agent ;;
+  esac
+}
+
+_nm_fields() {
+  local -a fields=( all common
+    ${(f)"$(_call_program fields $nmcli --complete-args --fields \'\')"}
+  )
+  _values -s , 'field' $fields
+}
+
+_nm_general() {
+  local curcontext="$curcontext" state line
+  _arguments "1:command:(status hostname permissions logging reload help)" \
+    "*::arguments:->args"
+
+  case $line[1] in
+    l*)
+      _values -w -S ' ' values \
+        'level:level' \
+        'domains:domain'
+    ;;
+    r*)
+      _describe -t flags 'flag' '(
+        "conf:NetworkManager.conf configuration"
+        "dns-rc:update DNS configuration"
+        "dns-full:restart the DNS plugin"
+      )'
+    ;;
+  esac
+}
+
+_nm_networking() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:command:(on off connectivity help)" \
+    "*::arg:->args"
+
+  case $line[1] in
+    c*) _nm_networking_connectivity ;;
+  esac
+}
+
+_nm_networking_connectivity() {
+  _arguments "1:flag:(check)"
+}
+
+_nm_radio() {
+  _arguments \
+    "1:type:(all wifi wwan help)" \
+    "2:switch:(on off)"
+}
+
+_nm_connection() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:command:(show up down add modify clone edit delete monitor reload load import export migrate help)" \
+    "*::arg:->args"
+
+  case $line[1] in
+    s*)   _nm_connection_show ;;
+    u*)   _nm_connection_up ;;
+    d*)   _nm_connection_down ;;
+    a*)   _nm_connection_add ;;
+    m*)   _nm_connection_modify ;;
+    c*)   _nm_connection_clone ;;
+    e*)   _nm_connection_edit ;;
+    de*)  _nm_connection_delete ;;
+    mon*) _nm_connection_monitor ;;
+    l*)   _nm_connection_load ;;
+    i*)   _nm_connection_import ;;
+    ex*)  _nm_connection_export ;;
+    mi*)  _nm_connection_migrate ;;
+  esac
+}
+
+_nm_connection_show() {
+  _arguments \
+    '--active[only show active profiles]' \
+    '--order=[sort connections]:order:_sequence -s "\:" compadd - active name type path' \
+    "1:connection:_nm_connection_specs"
+}
+
+_nm_connection_up() {
+  if [[ $CURRENT == 2 ]]; then
+    _nm_connection_specs
+  elif [[ $words[CURRENT-1] = passwd-file ]]; then
+    _files
+  else
+    _values option ifname ap passwd-file
+  fi
+}
+
+_nm_connection_down() {
+  _arguments "1:connection:_nm_connection_active"
+}
+
+_nm_connection_add() {
+  local -a props types expl
+  if (( !(CURRENT % 2) )); then
+    props=( ${(f)"$(_call_program properties $nmcli --complete-args connection add \'\')"} )
+    _alternative \
+      'special-options:option:(save type)' \
+      'properties:property:_multi_parts . props'
+  elif [[ $words[CURRENT-1] = save ]]; then
+    _values 'persistent [yes]' yes no
+  elif [[ $words[CURRENT-1] = (connection.|)type ]]; then
+    types=( ${(f)"$(_call_program connection-types $nmcli --complete-args connection add type \'\')"} )
+    _wanted connection-types expl 'connection type' compadd -a types
+  else
+    _message -e values value
+  fi
+}
+
+_nm_connection_modify() {
+  local curcontext="$curcontext" ret=1
+  local -a state line expl properties
+
+  _arguments -A "-*" \
+    "--temporary" \
+    "1:connection:_nm_connection_specs" \
+    '2::remove:(remove):*:setting:->properties' \
+    '3:option:->properties' && ret=0
+
+  if [[ -n "$state" ]]; then
+    properties=( ${${(f)"$(_call_program properties $nmcli -t connection show $words[CURRENT-1])"}%%:*} )
+    _description properties expl property
+    _multi_parts "$expl[@]" . properties && ret=0
+  fi
+
+  return ret
+}
+
+_nm_connection_clone() {
+  _arguments \
+    "--temporary" \
+    "1:connection:_nm_connection_specs" \
+    "2:new name"
+}
+
+_nm_connection_edit() {
+  if [[ $CURRENT == 2 ]]; then
+    _nm_connection_specs
+  elif [[ $words[CURRENT-1] = type ]]; then
+    types=( ${(f)"$(_call_program connection-types $nmcli --complete-args connection add type \'\')"} )
+    _wanted connection-types expl 'connection type' compadd -a types
+  elif [[ $words[CURRENT-1] = con-name ]]; then
+    _message -e names name
+  else
+    _values option type con-name
+  fi
+}
+
+_nm_connection_delete() {
+  _arguments "*:connection:_nm_connection_specs"
+}
+
+_nm_connection_monitor() {
+  _arguments "*:connection:_nm_connection_specs"
+}
+
+_nm_connection_load() {
+  _files
+}
+
+_nm_connection_import() {
+  _arguments \
+    "--temporary" \
+    "1: :(type)" \
+    "2:type:(vpnc openvpn pptp openconnect openswan libreswan ssh l2tp iodine)" \
+    "3: :(file)" \
+    "4:file:_files"
+}
+
+_nm_connection_export() {
+  _arguments \
+    "1:connection:_nm_connection_specs" \
+    "2:file:_files"
+}
+
+_nm_connection_specs() {
+  # TODO: add support for uuids and D-Bus paths
+  _nm_connection_ids
+}
+
+_nm_connection_ids() {
+  local -a con_ids
+  con_ids=(${(f)"$(_call_program nmcli nmcli -t -f name connection)"})
+  _describe 'connection' con_ids
+}
+
+_nm_connection_active() {
+  local -a con_ids
+  con_ids=(${(f)"$(_call_program nmcli nmcli -t -f name connection show --active)"})
+  _describe 'connection' con_ids
+}
+
+_nm_device() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:command:(status show set up connect reapply modify down disconnect delete monitor wifi lldp checkpoint help)" \
+    "*::arg:->args"
+
+  case $line[1] in
+    sh*)  _nm_device_show ;;
+    u*)   _nm_device_ifnames ;;
+    se*)  _nm_device_set ;;
+    co*)  _nm_device_connect ;;
+    r*)   _nm_device_reapply ;;
+    mod*) _nm_device_modify ;;
+    d*)   _nm_device_down ;;
+    de*)  _nm_device_delete ;;
+    m*)   _nm_device_monitor ;;
+    w*)   _nm_device_wifi ;;
+    l*)   _nm_device_lldp ;;
+    c*)   _nm_device_checkpoint ;;
+  esac
+}
+
+_nm_device_show() {
+  _arguments "1:interface:_nm_device_ifnames"
+}
+
+_nm_device_set() {
+  # TODO: allow specifying both options, and in any order
+  _arguments \
+    "1:interface:_nm_device_ifnames" \
+    "2:property:(autoconnect managed)" \
+    "3:switch:(yes no)"
+}
+
+_nm_device_connect() {
+  _arguments "1:interface:_nm_device_ifnames"
+}
+
+_nm_device_reapply() {
+  _arguments "1:interface:_nm_device_ifnames"
+}
+
+_nm_device_modify() {
+  local settings
+  settings=( ${(f)"$(_call_program settings $nmcli --complete-args device modify $words[2,CURRENT-1] \'\')"} )
+  _arguments "1:interface:_nm_device_ifnames" \
+    '*:setting:_multi_parts . settings'
+}
+
+_nm_device_down() {
+  _arguments "*:interface:_nm_device_ifnames"
+}
+
+_nm_device_delete() {
+  _arguments "*:interface:_nm_device_ifnames"
+}
+
+_nm_device_monitor() {
+  _arguments "*:interface:_nm_device_ifnames"
+}
+
+_nm_device_wifi() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:command:(list connect hotspot rescan show-password)" \
+    "*::arg:->args"
+
+  case $line[1] in
+    l*)  _nm_device_wifi_list ;;
+    c*)  _nm_device_wifi_connect ;;
+    ho*) _nm_device_wifi_hotspot ;;
+    r*)  _nm_device_wifi_rescan ;;
+    s*)  _nm_device_wifi_show-password ;;
+  esac
+}
+
+_nm_device_wifi_list() {
+  # TODO: support bssid on its own
+  _arguments \
+    '--rescan[force or disable network scan]:network scan:(yes no auto)' \
+    "1: :(ifname)" \
+    "2:interface:_nm_device_ifnames" \
+    "3: :(bssid)" \
+    "4:bssid:_nm_device_wifi_bssids"
+}
+
+_nm_device_wifi_connect() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:ssid:_nm_device_wifi_ssids" \
+    "*::arg:->args"
+
+  if [[ -n $line[1] ]]; then
+    _nm_device_wifi_connect_opts
+  fi
+}
+
+_nm_device_wifi_connect_opts() {
+  # TODO: there must be a cleaner way to implement this
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:property:(password wep-key-type ifname bssid name private hidden)" \
+    "*::arg:->args"
+
+  local min_line_len=2
+  case $line[-2] in
+    password)
+      _arguments -C "1:password" "*::arg:->args"
+    ;;
+    wep-key-type)
+      _arguments -C "1:wep key type:(key phrase)" "*::arg:->args"
+    ;;
+    ifname)
+      _arguments -C "1:device:_nm_device_ifnames" "*::arg:->args"
+    ;;
+    bssid)
+      _arguments -C "1:bssid:_nm_device_wifi_bssids" "*::arg:->args"
+    ;;
+    name)
+      _arguments -C "1:name" "*::arg:->args"
+    ;;
+    private)
+      _arguments -C "1:private:(yes no)" "*::arg:->args"
+    ;;
+    hidden)
+      _arguments -C "1:hidden:(yes no)" "*::arg:->args"
+    ;;
+    *)
+      min_line_len=1
+    ;;
+  esac
+  if [[ $#line > $min_line_len ]]; then
+    _nm_device_wifi_connect_opts
+  fi
+}
+
+_nm_device_wifi_hotspot() {
+  local curcontext="$curcontext" state line
+
+  _arguments -C \
+    "1:property:(ifname con-name ssid band channel password)" \
+    "*::arg:->args"
+
+  local min_line_len=2
+  case $line[-2] in
+    ifname)
+      _arguments -C "1:device:_nm_device_ifnames" "*::arg:->args"
+    ;;
+    con-name)
+      _arguments -C "1:connection name" "*::arg:->args"
+    ;;
+    ssid)
+      _arguments -C "1:ssid" "*::arg:->args"
+    ;;
+    band)
+      _arguments -C "1:band:(a bg)" "*::arg:->args"
+    ;;
+    channel)
+      _arguments -C "1:channel" "*::arg:->args"
+    ;;
+    password)
+      _arguments -C "1:password" "*::arg:->args"
+    ;;
+    *)
+      min_line_len=1
+    ;;
+  esac
+  if [[ $#line > $min_line_len ]]; then
+    _nm_device_wifi_hotspot
+  fi
+}
+
+_nm_device_wifi_rescan() {
+  # TODO: support ssid on its own and multiple ssids
+  _arguments \
+    "1: :(ifname)" \
+    "2:interface:_nm_device_ifnames" \
+    "3: :(ssid)" \
+    "4:ssid:_nm_device_wifi_ssids"
+}
+
+_nm_device_wifi_show-password() {
+  _arguments \
+    "1: :(ifname)" \
+    "2:interface:_nm_device_ifnames"
+}
+
+_nm_device_wifi_bssids() {
+  local -a bssids
+  bssids=(${(f)"$(_call_program nmcli nmcli -t -f bssid device wifi list)"})
+  _describe 'network' bssids
+}
+
+_nm_device_wifi_ssids() {
+  local -a ssids
+  ssids=(${(f)"$(_call_program nmcli nmcli -t -f ssid device wifi list)"})
+  _describe 'network' ssids
+}
+
+_nm_device_lldp() {
+  _arguments \
+    "1: :(list)" \
+    "2: :(ifname)" \
+    "3:interface:_nm_device_ifnames"
+}
+
+_nm_device_checkpoint() {
+  _arguments \
+    '--timeout=[delay before restoring in the absence of confirmation]:delay (seconds) [15]' \
+    '*:device:_nm_device_ifnames' \
+    '(*)--[command]:program:_command_names -e:*::args: _normal'
+}
+
+_nm_device_ifnames() {
+  local -a ifnames
+  ifnames=(${(f)"$(_call_program nmcli nmcli -t -f device device)"})
+  _describe 'device' ifnames
+}
+
+_nm_agent() {
+  _arguments "1:type:(secret polkit all help)"
+}
+
+_networkmanager "$@"
