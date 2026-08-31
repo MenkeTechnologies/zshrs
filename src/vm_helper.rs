@@ -174,6 +174,7 @@ use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
@@ -1514,9 +1515,10 @@ impl ShellExecutor {
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .filter(|d| !is_host_zsh_function_tree(d))
             .collect();
         if fpath.is_empty() {
-            fpath = default_fpath(); // c:Src/init.c:1132-1143
+            fpath = default_fpath(); // c:Src/init.c:1143
         }
         // Same directory as the main constructor, but never write it from
         // a pool worker -- materialisation is the session's job.
@@ -1638,6 +1640,7 @@ impl ShellExecutor {
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .filter(|d| !is_host_zsh_function_tree(d))
             .collect();
         if fpath.is_empty() {
             fpath = default_fpath();
@@ -1647,6 +1650,10 @@ impl ShellExecutor {
         // sits ahead of the user's additions. Materialised here (not only
         // when FPATH is absent) so an inherited FPATH from a shell that
         // lacks these still resolves is-at-least/colors/add-zsh-hook.
+        // zsh's man/info pages ride along with the function tree: same
+        // reason (zshrs is not installed under a zsh prefix), same
+        // one-stamp-read steady-state cost.
+        crate::bundled_docs::install_and_publish();
         if let Some(d) = crate::bundled_functions::functions_dir() {
             let _ = crate::bundled_functions::ensure_installed();
             if d.is_dir() && !fpath.contains(&d) {
@@ -8037,60 +8044,67 @@ pub use crate::ported::utils::zsh_errno_msg;
 
 pub use crate::ported::params::*;
 
-/// Default `fpath` when `FPATH` is absent from the environment.
+/// True for an `fpath` entry that is a host zsh **distribution's own**
+/// function tree — the copy of `Completion/**` + `Functions/**` that
+/// `make install` flattens into the zsh package.
 ///
-/// c:Src/init.c:1132-1143 — zsh's `setupvals` builds `fpath` from paths
-/// fixed at compile time by `configure`: `FIXED_FPATH_DIR`, then
-/// `SITEFPATH_DIR`, then `FPATH_DIR`'s subdirs
-/// (`<prefix>/share/zsh/<version>/functions`).
+/// c:Src/init.c:1132-1143 — zsh's `setupvals` seeds `fpath` with
+/// `FIXED_FPATH_DIR`, `SITEFPATH_DIR`, then
+/// `<prefix>/share/zsh/<version>/functions`. zshrs keeps the first two and
+/// drops the last, from the compiled-in default and from an inherited
+/// `FPATH` alike.
 ///
-/// zshrs is a drop-in binary that is NOT installed under a zsh
-/// `--prefix`, so its own generated constants
-/// (`/usr/local/share/zsh/5.9.0.3-test/functions`) name a tree that does
-/// not exist on the host. Probe the standard prefixes instead and keep
-/// the directories that are actually present, preserving C's order:
-/// site-functions before the versioned functions dir.
+/// The distribution tree goes because zshrs ships its own: `vendor/zsh` is
+/// packed into the binary by `build.rs` and materialised into
+/// `~/.zshrs/functions`, which sits first on `fpath`. A host tree is not a
+/// fallback for that — it is a second, differently-versioned copy of the
+/// same `compinit`, `_git` and `_describe`, and letting it linger means a
+/// Homebrew zsh upgrade can change how zshrs completes.
 ///
-/// Without this, a zshrs started with no `FPATH` in the environment came
-/// up with an EMPTY fpath where zsh has three entries, so every autoload
-/// failed -- `exec zshrs` from a shell that does not export FPATH (zsh
-/// does not export it) produced:
-///     zsh: is-at-least: function definition file not found
-///     zsh: colors: function definition file not found
-///     zsh: add-zsh-hook: function definition file not found
-fn default_fpath() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    let mut push = |p: PathBuf| {
-        if !out.contains(&p) {
-            out.push(p);
-        }
-    };
-    // c:1143 — SITEFPATH_DIR is a fixed constant, listed by zsh even when
-    // it does not exist on disk.
-    push(PathBuf::from("/usr/local/share/zsh/site-functions"));
-    const PREFIXES: [&str; 3] = ["/usr/local", "/opt/homebrew", "/usr"];
-    for pfx in PREFIXES {
-        let site = PathBuf::from(format!("{pfx}/share/zsh/site-functions"));
-        if site.is_dir() {
-            push(site);
+/// `share/zsh/site-functions` STAYS. Nothing in it comes from zsh: it is
+/// where third-party formulae install their completions (`_brew`,
+/// `_docker`, `_kubectl`, `_gh` …), the bundle has no copy of them, and
+/// dropping the directory would silently disable completion for every
+/// tool installed through a package manager.
+///
+/// The two shapes to reject differ in depth — Homebrew's Cellar layout has
+/// no version component under `share/zsh` — so the test is a `share`
+/// component followed by `zsh`, plus a final component of exactly
+/// `functions`:
+///     /usr/share/zsh/5.9/functions                          drop
+///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions    drop
+///     /opt/homebrew/share/zsh/site-functions                keep
+///     ~/.zinit/plugins/…/src                                keep
+fn is_host_zsh_function_tree(p: &Path) -> bool {
+    if p.file_name() != Some(OsStr::new("functions")) {
+        return false;
+    }
+    let mut comps = p.components().map(|c| c.as_os_str());
+    while let Some(c) = comps.next() {
+        if c == "share" && comps.clone().next() == Some(OsStr::new("zsh")) {
+            return true;
         }
     }
-    // c:1123 — `<prefix>/share/zsh/<version>/functions`. The version is
-    // whatever zsh is installed on this host, so take the highest one
-    // that actually carries a `functions` directory.
-    for pfx in PREFIXES {
-        let root = PathBuf::from(format!("{pfx}/share/zsh"));
-        let mut versions: Vec<PathBuf> = match std::fs::read_dir(&root) {
-            Ok(rd) => rd
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| p.join("functions").is_dir())
-                .collect(),
-            Err(_) => continue,
-        };
-        versions.sort();
-        if let Some(v) = versions.pop() {
-            push(v.join("functions"));
+    false
+}
+
+/// Default `fpath` when `FPATH` is absent from the environment.
+///
+/// c:Src/init.c:1143 — `SITEFPATH_DIR`, listed by zsh even when it does
+/// not exist on disk. zshrs adds the same directory under whichever
+/// prefixes are actually present, because that is where package managers
+/// put third-party completions and the bundled tree has none of them.
+///
+/// The versioned `<prefix>/share/zsh/<version>/functions` that C also
+/// seeds here is deliberately NOT included — see
+/// [`is_host_zsh_function_tree`]. `~/.zshrs/functions` supplies it, and is
+/// prepended by both constructors.
+fn default_fpath() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = vec![PathBuf::from("/usr/local/share/zsh/site-functions")];
+    for pfx in ["/usr/local", "/opt/homebrew", "/usr"] {
+        let site = PathBuf::from(format!("{pfx}/share/zsh/site-functions"));
+        if site.is_dir() && !out.contains(&site) {
+            out.push(site);
         }
     }
     out
