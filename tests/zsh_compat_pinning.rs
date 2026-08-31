@@ -1038,6 +1038,49 @@ fn assigning_fpath_refuses_a_host_zsh_function_tree() {
     for keep in ["/opt/homebrew/share/zsh/site-functions", "/tmp/zshrs-pin-assign"] {
         assert!(got.iter().any(|e| e == keep), "{keep} must survive, got {got:?}");
     }
+    // Both halves of the invariant, on the same assignment.
+    assert!(
+        got.last().is_some_and(|e| e.ends_with("/.zshrs/functions")),
+        "the bundled tree must be re-appended by the assignment, got {got:?}"
+    );
+}
+
+/// The bundled tree survives an assignment that drops it outright.
+///
+/// `fpath=( mydir )` and `fpath=( )` are both things a config does. The
+/// invariant is not "filter what was passed" but "the bundle is always
+/// there and a host zsh's tree never is" -- otherwise a single assignment
+/// leaves the shell unable to autoload `compinit` or `is-at-least` at all.
+#[test]
+fn assignment_that_drops_the_bundle_gets_it_back() {
+    let run = |script: &str| -> Vec<String> {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+
+    let only_mine = run("fpath=( /tmp/zshrs-pin-only ); print -l $fpath");
+    assert_eq!(
+        only_mine,
+        vec![
+            "/tmp/zshrs-pin-only".to_string(),
+            dirs::home_dir().unwrap().join(".zshrs/functions").display().to_string(),
+        ],
+        "a replacing assignment keeps the user's dir first and the bundle last"
+    );
+
+    let emptied = run("fpath=( ); print -l $fpath");
+    assert!(
+        emptied.len() == 1 && emptied[0].ends_with("/.zshrs/functions"),
+        "even `fpath=( )` must leave the bundle, got {emptied:?}"
+    );
 }
 
 /// The bundled tree is on `fpath` whether or not `FPATH` was inherited.
