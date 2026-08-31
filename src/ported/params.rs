@@ -8738,6 +8738,7 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::
 ///   - resetparam from non-array (c:3415-3420) — handled implicitly
 ///     by the type-mask rewrite below; matches C observable behavior.
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
+    let val = crate::vm_helper::drop_host_zsh_function_trees(name, val);
     // c:3357
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -9509,6 +9510,22 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
 /// `check_warn_pm` (params.rs:4428).
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
 pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
+    // A host zsh installation's own function tree never belongs on
+    // zshrs's `fpath`, and the rule has to hold on ASSIGNMENT, not just
+    // at startup. Filtering only the inherited FPATH left the door open:
+    // a `.zshrc` that re-adds `<prefix>/share/zsh/<ver>/functions` -- or a
+    // plugin manager that restores a saved fpath -- put a foreign zsh's
+    // `add-zsh-hook`, `compinit` and `_git` back in front of the bundled
+    // copies. On this author's setup that is exactly what happened:
+    //   add-zsh-hook is a shell function from
+    //   /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/add-zsh-hook
+    // so zshrs's own override (which knows the `async_precmd` hook) never
+    // ran and `add-zsh-hook async_precmd f` kept failing.
+    //
+    // `share/zsh/site-functions` is untouched -- see
+    // `vm_helper::is_host_zsh_function_tree`; only the distribution's
+    // flattened `functions` directory is dropped.
+    let val = crate::vm_helper::drop_host_zsh_function_trees(name, val);
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
     assignaparam(name, val, ASSPM_WARN)
 }

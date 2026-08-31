@@ -991,3 +991,84 @@ fn add_zsh_hook_accepts_the_async_precmd_hook() {
     );
     assert_eq!(out, "[]", "-d must remove the hook again");
 }
+
+/// A host zsh installation's function tree is refused even when the
+/// user's own config puts it back.
+///
+/// The startup filter only sees the INHERITED `FPATH`. A `.zshrc` that
+/// re-adds `<prefix>/share/zsh/<ver>/functions`, or a plugin manager
+/// restoring a saved fpath, then put a foreign zsh's `add-zsh-hook`,
+/// `compinit` and `_git` back ahead of the bundled copies -- observed as
+///     add-zsh-hook is a shell function from
+///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/add-zsh-hook
+/// which meant zshrs's own override, the one that knows `async_precmd`,
+/// never ran. The rule has to hold on assignment.
+///
+/// `site-functions` is NOT a distribution tree and must survive: it is
+/// where third-party formulae install completions.
+#[test]
+fn assigning_fpath_refuses_a_host_zsh_function_tree() {
+    let out = Command::new(zshrs_bin())
+        .args([
+            "--zsh",
+            "-f",
+            "-c",
+            "fpath=( /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions \
+                     /usr/share/zsh/5.9/functions /usr/share/zsh/functions \
+                     /opt/homebrew/share/zsh/site-functions /tmp/zshrs-pin-assign )\nprint -l $fpath",
+        ])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    let got: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    for drop in [
+        "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
+        "/usr/share/zsh/5.9/functions",
+        "/usr/share/zsh/functions",
+    ] {
+        assert!(
+            !got.iter().any(|e| e == drop),
+            "{drop} must not survive an fpath assignment, got {got:?}"
+        );
+    }
+    for keep in ["/opt/homebrew/share/zsh/site-functions", "/tmp/zshrs-pin-assign"] {
+        assert!(got.iter().any(|e| e == keep), "{keep} must survive, got {got:?}");
+    }
+}
+
+/// The bundled tree is on `fpath` whether or not `FPATH` was inherited.
+///
+/// `setupvals` re-seeds the tied specials after the constructor ran. With
+/// FPATH UNSET the array came back empty and a split refilled it; with
+/// FPATH SET the env import refilled it non-empty, the split was skipped,
+/// and the bundle -- appended by the constructor to the param that had
+/// just been overwritten -- was gone. So `~/.zshrs/functions` was present
+/// with FPATH unset and missing with FPATH set.
+#[test]
+fn inherited_fpath_still_carries_the_bundled_tree() {
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "print -l $fpath"])
+        .env("FPATH", "/tmp/zshrs-pin-inherit-a:/tmp/zshrs-pin-inherit-b")
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    let entries: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    assert!(
+        entries.iter().any(|e| e.ends_with("/.zshrs/functions")),
+        "the bundled tree must survive an inherited FPATH, got {entries:?}"
+    );
+    for inherited in ["/tmp/zshrs-pin-inherit-a", "/tmp/zshrs-pin-inherit-b"] {
+        assert!(
+            entries.iter().any(|e| e == inherited),
+            "{inherited} must be kept, got {entries:?}"
+        );
+    }
+}
