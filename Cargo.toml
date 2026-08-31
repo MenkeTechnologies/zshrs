@@ -36,6 +36,11 @@ exclude = [
     # tree is missing, so excluding it shipped a crate that cannot build.
     # vendor/fish is porting reference only -- no build step reads it.
     "/vendor/fish/",
+    # The Texinfo manual, dropped from the PUBLISHED crate only -- it is
+    # 0.44 MiB of the tarball and the crate is against crates.io's 10 MiB
+    # ceiling. `zshall.1` carries the same content, and a git or Homebrew
+    # build still bundles it. build.rs treats this tree as optional.
+    "/vendor/zsh/info/",
     "/zshrs_dump.*",
     "/tmux",
     "/zterm_columns",
@@ -45,7 +50,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.54"
+version = "0.12.55"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]

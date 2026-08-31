@@ -783,18 +783,25 @@ fn bundle_zsh_docs() {
     // `vendor/zsh/man1/zsh.1` ships as `man/man1/zsh.1`. Emitting the
     // vendored name verbatim put the pages in `~/.zshrs/man1` while
     // MANPATH named `~/.zshrs/man`, which did not exist.
+    // (vendored dir, installed path, required). `info` is the one
+    // OPTIONAL tree: it is excluded from the published crate to keep the
+    // .crate under crates.io's size ceiling, so a crates.io build has no
+    // vendor/zsh/info to read. Every other tree is required -- a missing
+    // one is a build error, never a quiet short bundle. `zshall.1` carries
+    // the same content as the Texinfo manual, which is why info is the
+    // one that gives way; a git or Homebrew build still ships it.
     let trees = [
-        ("man1", "man/man1"),
-        ("info", "info"),
+        ("man1", "man/man1", true),
+        ("info", "info", false),
         // `run-help`'s help database. The vendored `run-help` defaults
         // HELPDIR to the <prefix>/share/zsh/<ver>/help of whichever zsh
         // built it, which is a dead path on a host without that exact
         // install -- so zshrs ships the tree and points HELPDIR at it.
-        ("help", "help"),
+        ("help", "help", true),
         // `newuser`, sourced by zsh's first-run path.
-        ("scripts", "scripts"),
+        ("scripts", "scripts", true),
     ];
-    for (src, installed) in trees {
+    for (src, installed, required) in trees {
         let dir = root.join(src);
         let before = files.len();
         let rd = match fs::read_dir(&dir) {
@@ -814,7 +821,7 @@ fn bundle_zsh_docs() {
                 files.push((format!("{installed}/{base}"), body));
             }
         }
-        if files.len() == before {
+        if required && files.len() == before {
             panic!("vendor/zsh/{src} is missing or empty -- zsh's {src} pages must be vendored");
         }
     }
