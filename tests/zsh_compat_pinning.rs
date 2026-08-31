@@ -518,6 +518,92 @@ fn fpath_default_leads_with_bundle_and_has_no_distribution_tree() {
     );
 }
 
+/// An INTERACTIVE shell has a populated `fpath`, not an empty one.
+///
+/// c:Src/params.c:893-988 — `createparamtable` imports `environ` and, for
+/// an IPDEF8 PM_TIED colon-array, installs BOTH sides: the scalar and the
+/// array split on ':'. zshrs re-seeds the specials from the static table
+/// in `setupvals`, which leaves each tied array empty, and nothing split
+/// the scalar back in. An interactive shell therefore reached its first
+/// prompt with
+///     typeset -aT FPATH fpath=(  )
+/// while `$FPATH` still held the full value.
+///
+/// `path` masked it -- `PATH` is always exported, so a later env import
+/// refilled it -- and `-c` never runs that path at all, so every
+/// non-interactive probe passed. The damage was not a missing default: a
+/// `.zshrc` doing the standard `fpath=( mydir $fpath )` appended to
+/// NOTHING, leaving the shell with only what the rc file added.
+///
+/// Driven through a pty because the bug does not exist without one.
+#[test]
+fn interactive_shell_has_a_populated_fpath() {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    let mut master: libc::c_int = 0;
+    let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert!(pid >= 0, "forkpty failed");
+    if pid == 0 {
+        // Child: an interactive shell with no rc files and no FPATH, which
+        // is exactly how a terminal launches one (zsh does not export it).
+        unsafe {
+            libc::setenv(c"TERM".as_ptr(), c"dumb".as_ptr(), 1);
+            libc::unsetenv(c"FPATH".as_ptr());
+        }
+        let bin = std::ffi::CString::new(zshrs_bin().to_string_lossy().as_ref()).unwrap();
+        let arg = std::ffi::CString::new("-f").unwrap();
+        unsafe {
+            libc::execl(bin.as_ptr(), bin.as_ptr(), arg.as_ptr(), std::ptr::null::<libc::c_char>());
+            libc::_exit(127);
+        }
+    }
+
+    let mut f = unsafe { std::fs::File::from_raw_fd(master) };
+    // Let it reach a prompt, then ask.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let _ = f.write_all(b"print \"NFPATH=$#fpath\"\nexit\n");
+    let _ = f.flush();
+
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8192];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                if String::from_utf8_lossy(&out).contains("NFPATH=") && out.len() > 32 {
+                    // keep reading briefly so the full number lands
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    unsafe {
+        let mut st = 0;
+        libc::waitpid(pid, &mut st, 0);
+    }
+    let text = String::from_utf8_lossy(&out).replace('\r', "");
+    // The pty echoes the typed line, so the FIRST "NFPATH=" is the literal
+    // `NFPATH=$#fpath` being typed. Take the last one that is followed by
+    // digits -- that is the shell's own answer.
+    let n: usize = text
+        .split("NFPATH=")
+        .skip(1)
+        .filter_map(|rest| {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse::<usize>().ok()
+        })
+        .last()
+        .unwrap_or_else(|| panic!("no NFPATH=<n> in interactive output: {text:?}"));
+    assert!(
+        n > 0,
+        "an interactive shell must have a non-empty fpath, got {n}; \
+         a .zshrc doing `fpath=( dir $fpath )` would keep only its own entry"
+    );
+}
+
 /// A host zsh distribution tree is dropped from an INHERITED `FPATH`,
 /// while `site-functions` and user/plugin directories survive.
 ///
