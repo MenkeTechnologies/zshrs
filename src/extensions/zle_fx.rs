@@ -71,10 +71,16 @@ pub fn enabled() -> bool {
     }
 }
 
-/// OPT-IN POLICY (user ruling): `zshrs -f` must behave IDENTICALLY to
-/// `zsh -f` for parity purposes — every native engine defaults OFF and is
-/// enabled per-feature in `~/.zshrs/zshrs.toml` `[zle]`. The env kill
-/// switch ZSHRS_NATIVE_ZLE_FX=0 still force-disables everything.
+/// POLICY: the native engines are ON by default in a shell that reads rc
+/// files, and OFF in one that does not.
+///
+/// `zshrs -f` / `--no-rcs` must stay byte-identical to `zsh -f` — that is
+/// what the emulation-parity and corpus suites measure — so RCS being
+/// unset refuses every engine no matter what the config says. Everywhere
+/// else they default on: they are the point of the shell, and a user with
+/// an rc file is asking for a configured interactive shell, not a bare
+/// POSIX one. Per-feature `false` in `~/.zshrs/zshrs.toml` `[zle]` turns
+/// one off; ZSHRS_NATIVE_ZLE_FX=0 still force-disables everything.
 ///
 /// When enabled, NATIVE WINS over loaded script plugins (a full rc loads
 /// zsh-autosuggestions/z-sy-h/substring-search, whose zpty/async paths
@@ -86,16 +92,23 @@ pub fn enabled() -> bool {
 ///     handled natively — its shfuncs simply never run;
 ///   * highlighting: user $region_highlight (what z-sy-h writes) paints
 ///     ABOVE the native layer, so a functioning plugin overrides cleanly.
+/// True when rc files are in play. `-f` / `--no-rcs` unsets RCS
+/// (init.rs:422-425), which is exactly the parity mode the engines must
+/// stay out of.
+fn rcs_shell() -> bool {
+    crate::ported::zsh_h::isset(crate::ported::zsh_h::RCS)
+}
+
 fn autosuggest_active() -> bool {
-    enabled() && crate::config::current().zle.autosuggest
+    enabled() && rcs_shell() && crate::config::current().zle.autosuggest
 }
 
 fn highlight_active() -> bool {
-    enabled() && crate::config::current().zle.syntax_highlight
+    enabled() && rcs_shell() && crate::config::current().zle.syntax_highlight
 }
 
 fn search_active() -> bool {
-    enabled() && crate::config::current().zle.history_search
+    enabled() && rcs_shell() && crate::config::current().zle.history_search
 }
 
 /// Native autopair yields to the zsh-autopair script plugin when loaded
@@ -104,6 +117,7 @@ fn search_active() -> bool {
 /// (autopair.zsh:211/216/223-225).
 fn autopair_engine_active() -> bool {
     enabled()
+        && rcs_shell()
         && crate::config::current().zle.autopair
         && crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(SeqCst) == 0
         && !crate::ported::zle::zle_thingy::rthingy_nocreate("autopair-insert")

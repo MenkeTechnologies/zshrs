@@ -3156,9 +3156,16 @@ pub fn refreshline(ln: i32) {
     let put_rpmpt = PUT_RPMPT.load(Ordering::SeqCst);
     let oput_rpmpt = OPUT_RPMPT.load(Ordering::SeqCst);
     let winw = WINW.load(Ordering::SeqCst);
+    // c:1787-1788 test C's row 0, which is the row the right prompt rides.
+    // This port lays every prompt row into NBUF, so that row is
+    // `PROMPT_LAST_ROW` -- the same bridge the head-skip at c:1862 makes.
+    // Testing `ln == 0` left the pad DEAD for multi-line prompts: when
+    // put_rpmpt flips 1 -> 0 because the edit text grew into the right
+    // prompt, nothing overwrote its cells, so it stayed on screen.
+    let rp_row = PROMPT_LAST_ROW.load(Ordering::SeqCst);
     if cleareol                                                          // c:1786
-            || (nllen == 0 && (ln != 0 || put_rpmpt == 0))                   // c:1787
-            || (ln == 0 && put_rpmpt != oput_rpmpt)
+            || (nllen == 0 && (ln != rp_row || put_rpmpt == 0))              // c:1787
+            || (ln == rp_row && put_rpmpt != oput_rpmpt)
     // c:1788
     {
         // !!! STUB: zhalloc — Rust uses Vec growth instead of arena alloc.
@@ -3504,8 +3511,14 @@ pub fn refreshline(ln: i32) {
             return; // c:1962
         }
 
-        // c:1965-1970 — insert/delete eligibility
-        let eligible = (ln != 0 || put_rpmpt == 0 || oput_rpmpt == 0)
+        // c:1965-1970 — insert/delete eligibility. C's `ln` guard names the
+        // right-prompt row (see the c:1787 bridge above): shifting cells on
+        // that row would drag the right prompt sideways, so C declines the
+        // optimisation there. `ln != 0` let it run on the right-prompt row of
+        // every multi-line prompt.
+        let eligible = (ln != PROMPT_LAST_ROW.load(Ordering::SeqCst)
+            || put_rpmpt == 0
+            || oput_rpmpt == 0)
             && !nl.is_empty()
             && nl_second.map(|e| e.chr != '\0').unwrap_or(false)
             && !ol.is_empty()

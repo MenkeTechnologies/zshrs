@@ -165,11 +165,20 @@ pub struct LogConfig {
 }
 
 /// `[zle]` — the native fish-ported line-editor engines and other
-/// deliberate ZLE deviations. ALL DEFAULT OFF: `zshrs -f` must behave
-/// identically to `zsh -f` for parity purposes; these are opt-in via
-/// `~/.zshrs/zshrs.toml`. `ZSHRS_NATIVE_ZLE_FX=0` still force-disables
-/// the engines regardless of config (emergency kill switch).
-#[derive(Debug, Clone, Deserialize, Default)]
+/// deliberate ZLE deviations.
+///
+/// The four ENGINES default ON. They are the point of the shell, not an
+/// experiment to opt into, and a user who has an rc file is asking for a
+/// configured interactive shell. Parity is preserved at the other end:
+/// `zle_fx` refuses every engine when RCS is unset, so `zshrs -f` still
+/// behaves identically to `zsh -f` and the parity suites are unaffected.
+/// Set any field `false` in `~/.zshrs/zshrs.toml` to turn one off;
+/// `ZSHRS_NATIVE_ZLE_FX=0` remains the blanket kill switch.
+///
+/// `vi_backspace_unrestricted` stays OFF by default: it is a keybinding
+/// deviation from classic vi, not one of the engines, so it keeps opt-in
+/// semantics.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ZleConfig {
     /// fish-ported history autosuggestions (ghost text).
@@ -184,6 +193,18 @@ pub struct ZleConfig {
     /// (vim's backspace=indent,eol,start) instead of the classic-vi
     /// vi-backward-delete-char.
     pub vi_backspace_unrestricted: bool,
+}
+
+impl Default for ZleConfig {
+    fn default() -> Self {
+        Self {
+            autosuggest: true,
+            syntax_highlight: true,
+            history_search: true,
+            autopair: true,
+            vi_backspace_unrestricted: false,
+        }
+    }
 }
 
 /// `[provenance]` — master switch for the value-lineage engine
