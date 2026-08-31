@@ -801,3 +801,73 @@ fn bundled_docs_materialise_and_publish_search_paths() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// `add-zsh-hook` accepts zshrs's own `async_precmd` hook.
+///
+/// `async_precmd` functions run on a POOL WORKER THREAD instead of
+/// blocking the prompt (src/extensions/async_precmd.rs). zsh has no such
+/// hook, so upstream's `add-zsh-hook` carries a fixed `hooktypes` list
+/// that rejects the name:
+///
+///   add-zsh-hook async_precmd my_fn
+///   Usage: add-zsh-hook hook function
+///   Valid hooks are:
+///     chpwd precmd preexec periodic zshaddhistory zshexit ...
+///
+/// -- which left the hook reachable only by assigning
+/// `async_precmd_functions` by hand. zshrs ships an override in
+/// `functions/`, walked ahead of `vendor/zsh/functions` by build.rs so a
+/// re-sync of the vendored tree cannot revert it.
+///
+/// The rest of the function must keep working: the six upstream hooks
+/// still register, an unknown name is still refused, and `-d` / `-L`
+/// still operate on the new hook's array.
+#[test]
+fn add_zsh_hook_accepts_the_async_precmd_hook() {
+    let run = |script: &str| -> (String, String) {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        (
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
+    };
+
+    let (out, err) = run(
+        "autoload -Uz add-zsh-hook; f(){ }; add-zsh-hook async_precmd f          && print \"list=$async_precmd_functions\"",
+    );
+    assert_eq!(
+        out, "list=f",
+        "async_precmd must register; stderr was {err:?}"
+    );
+
+    // zsh's own hooks are untouched.
+    let (out, err) = run(
+        "autoload -Uz add-zsh-hook; g(){ };          for h in chpwd precmd preexec periodic zshaddhistory zshexit; do            add-zsh-hook $h g || print BAD=$h; done; print OK",
+    );
+    assert_eq!(out, "OK", "upstream hooks must still register; {err:?}");
+
+    // An unknown hook is still an error -- the list was extended, not
+    // replaced by a blanket accept.
+    let (out, _) = run("autoload -Uz add-zsh-hook; h(){ }; add-zsh-hook nonesuch h; print rc=$?");
+    assert!(
+        out.contains("rc=1"),
+        "an unknown hook name must still be refused, got {out:?}"
+    );
+
+    // -L lists it and -d removes it.
+    let (out, _) = run(
+        "autoload -Uz add-zsh-hook; f(){ }; add-zsh-hook async_precmd f;          add-zsh-hook -L async_precmd",
+    );
+    assert!(
+        out.contains("async_precmd_functions") && out.contains(" f "),
+        "-L must show the registered hook, got {out:?}"
+    );
+    let (out, _) = run(
+        "autoload -Uz add-zsh-hook; f(){ }; add-zsh-hook async_precmd f;          add-zsh-hook -d async_precmd f; print \"[$async_precmd_functions]\"",
+    );
+    assert_eq!(out, "[]", "-d must remove the hook again");
+}

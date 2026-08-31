@@ -30,6 +30,7 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/zsh");
+    println!("cargo:rerun-if-changed=functions");
     println!("cargo:rerun-if-changed=completions");
     bundle_zsh_functions();
     bundle_zsh_docs();
@@ -656,7 +657,11 @@ fn bundle_zsh_functions() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for root in ["completions", "vendor/zsh/functions"] {
+    // Per-root counts ride along in the summary line: a tree that quietly
+    // stops contributing is the failure mode that shipped a 26-file
+    // ~/.zshrs/functions, and a single total hides it.
+    let mut per_root: Vec<String> = Vec::new();
+    for root in ["functions", "completions", "vendor/zsh/functions"] {
         let before = files.len();
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
@@ -704,6 +709,7 @@ fn bundle_zsh_functions() {
         // still returned the 26 files from `completions/`, the build
         // stayed green, and a 26-file `~/.zshrs/functions` shipped with
         // no compinit, no _git, no is-at-least.
+        per_root.push(format!("{root} {}", files.len() - before));
         if files.len() == before {
             panic!(
                 "{root} contributed no functions -- the tree must be present \
@@ -744,9 +750,10 @@ fn bundle_zsh_functions() {
     )
     .expect("write zsh_functions_id.rs");
     println!(
-        "cargo:warning=bundled {} zsh functions ({} KiB packed)",
+        "cargo:warning=bundled {} zsh functions ({} KiB packed; {})",
         files.len(),
-        packed.len() / 1024
+        packed.len() / 1024,
+        per_root.join(", ")
     );
 }
 
