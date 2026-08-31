@@ -670,6 +670,38 @@ fn zattr_to_sgr(attr: zattr) -> String {
 /// buffstr: the buffer (metafied, as the ZLE metaline) on which to perform syntax
 /// highlighting; ctx: cancellation check; io_ok: if set, allow IO which may block —
 /// e.g. invalid commands may be detected; cursor: cursor position in the commandline.
+/// Every registry a command word can dispatch as a builtin, asked in one
+/// place so the next registry added to the shell needs one edit, not one per
+/// highlighter site.
+///
+/// zshrs has FOUR of them and only the first is C's:
+///
+///   * `createbuiltintable()` — the ported `Src/builtin.c:40-137` table;
+///   * `EXT_BUILTIN_NAMES` — zshrs extension builtins (`provenance`,
+///     `dbview`, `zcache`, …), gated by `builtin_in_builtintab` so a
+///     `disable`d name or `--zsh` emulation takes them back out. Membership
+///     has to be tested FIRST: `builtin_in_builtintab` alone reports every
+///     unknown string as available (`builtin_owning_module` returns None and
+///     its `None => true` arm answers yes);
+///   * `ZSHRS_BUILTIN_NAMES` — the daemon `z*` family (`zjob`, `zls`, `zid`,
+///     `zping`, …), a SECOND extension registry that dispatches by name
+///     through `try_dispatch` and has no `createbuiltintable` entry. Every
+///     consumer has had to be patched for it one at a time (`builtin zjob`,
+///     `whence -w zjob`, `${(k)builtins}`); the highlighter was the next one,
+///     which is why `zjob` painted as an unknown token while `whence -v zjob`
+///     answered "zjob is a shell builtin" in the same shell;
+///   * `native_cmds` — builtins contributed by the linking binary, which is
+///     how the fat `zshrs-native` build gets `git` / `arb` / `stryke`. Uses
+///     `is_enabled`, not `is_registered`, so `disable git` un-highlights it
+///     the same way it un-dispatches it.
+fn builtin_word_available(word: &str) -> bool {
+    crate::ported::builtin::createbuiltintable().contains_key(word)
+        || (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&word)
+            && crate::ext_builtins::builtin_in_builtintab(word))
+        || crate::daemon::builtins::is_zshrs_builtin(word)
+        || crate::native_cmds::is_enabled(word)
+}
+
 pub fn highlight_shell(
     buff: &str,
     color: &mut Vec<HighlightSpec>,
@@ -814,28 +846,7 @@ fn command_is_valid_tables(cmd: &str, decoration: StatementDecoration) -> bool {
     // fish:272-275 — Builtins. (Reserved words resolve at the lexer level and never
     // reach here as STRING tokens, so no reswdtab check is needed.)
     if !is_valid && builtin_ok {
-        is_valid = crate::ported::builtin::createbuiltintable().contains_key(cmd)
-            // zshrs's extension builtins (provenance, dbview, zcache, …)
-            // are NOT in createbuiltintable — they live in
-            // EXT_BUILTIN_NAMES and dispatch through ext_builtins. The
-            // highlighter asked only the core table, so every one of them
-            // painted as an unknown token even though `whence -w
-            // provenance` says `builtin` and `${+builtins[provenance]}`
-            // is 1 in the same shell.
-            //
-            // `builtin_in_builtintab` is the predicate every OTHER
-            // consumer asks (ext_builtins.rs:207-228), and it already
-            // honours the `--zsh` / ZSHRS_HIDE_EXT_BUILTINS gate, so a
-            // zshrs-original builtin correctly goes back to unknown-token
-            // under emulation, where it is hidden from the namespace.
-            // NOTE: `builtin_in_builtintab` alone is NOT a membership
-            // test — `builtin_owning_module` returns None for an unknown
-            // name and its `None => true` arm then reports every string
-            // as available. Membership in EXT_BUILTIN_NAMES has to come
-            // first; the availability call adds the `disable`/module and
-            // ZSHRS_HIDE_EXT_BUILTINS gates on top.
-            || (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&cmd)
-                && crate::ext_builtins::builtin_in_builtintab(cmd));
+        is_valid = builtin_word_available(cmd);
     }
 
     // fish:277-280 — Functions.
@@ -2389,21 +2400,7 @@ impl<'s> Highlighter<'s> {
         }
         // fast-highlight:306-307 — builtins.  `[` has its own style key
         // (fast-highlight:679-682).
-        if crate::ported::builtin::createbuiltintable().contains_key(word)
-            // zshrs's extension builtins (provenance, dbview, zcache, …) are
-            // NOT in createbuiltintable — they live in EXT_BUILTIN_NAMES and
-            // dispatch through ext_builtins, so asking only the core table
-            // painted every one of them as an unknown token even though
-            // `whence -w provenance` says `builtin`.
-            //
-            // NOTE: `builtin_in_builtintab` alone is NOT a membership test —
-            // `builtin_owning_module` returns None for an unknown name and its
-            // `None => true` arm then reports every string as available.
-            // Membership in EXT_BUILTIN_NAMES has to come first; the
-            // availability call adds the `disable`/module and
-            // ZSHRS_HIDE_EXT_BUILTINS gates on top.
-            || (crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&word)
-                && crate::ext_builtins::builtin_in_builtintab(word))
+        if builtin_word_available(word)
         {
             return Some(if word == "[" {
                 HighlightRole::single_sq_bracket
@@ -3539,6 +3536,34 @@ mod tests {
         for no in ["", "sud", "commander", "execute", "noglobber", "Sudo", "-"] {
             assert!(!fsh_is_precommand(no), "{no} is NOT a precommand");
         }
+    }
+
+    /// Each of the four builtin registries paints as a builtin at command
+    /// position. The daemon `z*` family was the one the highlighter never
+    /// asked about: `zjob` came out an unknown token (error colour) while
+    /// `whence -v zjob` answered "zjob is a shell builtin" in the same shell.
+    #[test]
+    fn builtin_word_available_asks_every_registry() {
+        // c-port table (Src/builtin.c:40-137).
+        assert!(builtin_word_available("print"), "core builtin");
+        // EXT_BUILTIN_NAMES.
+        assert!(
+            builtin_word_available("dbview"),
+            "zshrs extension builtin"
+        );
+        // ZSHRS_BUILTIN_NAMES — the daemon z* family, dispatched by name.
+        for name in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
+            assert!(
+                builtin_word_available(name),
+                "daemon builtin {name} must not paint as an unknown token"
+            );
+        }
+        // A name in none of the four registries stays unknown, or the
+        // predicate is answering yes to everything and pins nothing.
+        assert!(
+            !builtin_word_available("definitely_not_a_builtin_xyzzy"),
+            "unknown words must stay unknown"
+        );
     }
 
     /// fast-highlight:562-563 — `command -pvV--` / `exec -cla-` keep command
