@@ -410,6 +410,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 
     // c:541 — drain the unget buffer first.
     if let Some(b) = KUNGETBUF.lock().unwrap().pop_front() {
+        RAW_GETBYTE_R.store(1, Ordering::SeqCst); // c:562 — `return 1`
         return Some(b);
     }
 
@@ -507,13 +508,25 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 
             // c:632-634 — let a user interrupt through immediately.
             if selret < 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+                // c:630-631 then c:825 — C breaks out of the poll loop and
+                // `return selret`, a NEGATIVE value: getbyte's errno arm
+                // (EINTR here) turns it into EOF without exiting the shell.
+                RAW_GETBYTE_ERRNO.store(
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+                    Ordering::SeqCst,
+                );
+                RAW_GETBYTE_R.store(-1, Ordering::SeqCst);
                 return None;
             }
             // c:638-643 — EINTR retries; any other poll error gives up.
             if selret < 0 {
-                if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                let e = std::io::Error::last_os_error().raw_os_error();
+                if e == Some(libc::EINTR) {
                     continue;
                 }
+                // c:825 — `return selret`, negative: an error, not EOF.
+                RAW_GETBYTE_ERRNO.store(e.unwrap_or(0), Ordering::SeqCst);
+                RAW_GETBYTE_R.store(-1, Ordering::SeqCst);
                 return None;
             }
             // c:646-660 — timed out, nothing ready.
@@ -528,6 +541,10 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                     crate::ported::builtins::sched::checksched();
                     continue;
                 }
+                // c:656-657 — `selret = -2`, "nothing ready": a key timeout,
+                // NOT EOF. getbyte returns EOF to the caller and the shell
+                // stays alive.
+                RAW_GETBYTE_R.store(-2, Ordering::SeqCst);
                 return None;
             }
             // c:710-714 — terminal input ready: break out and read it.
@@ -631,6 +648,9 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             crate::ported::signals_h::winch_unblock(); // c:850
             let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             let errno = std::io::Error::last_os_error().raw_os_error();
+            // Publish the read's errno HERE: winch_block() below (and any
+            // later call) may clobber the real one before getbyte branches.
+            RAW_GETBYTE_ERRNO.store(errno.unwrap_or(0), Ordering::SeqCst);
             crate::ported::signals_h::winch_block(); // c:852
             // c:917 — retry a signal-interrupted read unless a shell condition
             // is pending. On macOS/BSD a blocking tty read interrupted by a
@@ -685,6 +705,8 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
             );
         }
+        // c:854 — `return ret`: 1 (byte), 0 (EOF) or -1 (error) verbatim.
+        RAW_GETBYTE_R.store(n as i32, Ordering::SeqCst);
         return if n == 1 { Some(buf[0]) } else { None };
     }
 
@@ -707,6 +729,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         true
     };
     if !in_raw_mode {
+        RAW_GETBYTE_R.store(-2, Ordering::SeqCst);
         tracing::warn!(
             "DIAG raw_getbyte simple-read returns None (EOF): NOT in raw mode. shtty={} is_tty={}",
             shtty,
@@ -734,6 +757,8 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         crate::ported::signals_h::winch_unblock(); // c:850
         let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
         let errno = std::io::Error::last_os_error().raw_os_error();
+        // See the poll-path read above: capture before winch_block().
+        RAW_GETBYTE_ERRNO.store(errno.unwrap_or(0), Ordering::SeqCst);
         crate::ported::signals_h::winch_block(); // c:852
         // c:917 — retry a signal-interrupted read unless a shell condition is
         // pending. On macOS/BSD a blocking tty read interrupted by a signal
@@ -782,6 +807,8 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         }
         break n;
     };
+    // c:854 — `return ret` verbatim: 1, 0 (EOF) or -1 (error).
+    RAW_GETBYTE_R.store(n as i32, Ordering::SeqCst);
     if n == 1 {
         Some(buf[0])
     } else {
@@ -814,13 +841,9 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
     // key set the wide cache and every subsequent self-insert re-emitted
     // it (typing "world" produced "wwwwwww").
     LASTCHAR_WIDE_VALID.store(0, SeqCst);
-    // c:889-918 — raw_getbyte returning no byte (timeout / EOF / give-up)
-    // is C's `return lastchar = EOF`: the trigger char becomes EOF so
-    // widgets that read `lastchar` after a failed read see EOF, not a
-    // stale previous keystroke. (The full IGNOREEOF retry counter and the
-    // EIO tty-reattach kludge at c:898-938 need zlereadflags / attachtty
-    // substrate and stay deferred; the common timeout/EOF result is the
-    // load-bearing case and is now faithful.)
+    // c:889-938 — the read dispatch. A missing byte is not one condition
+    // but four, and C treats them differently; see RAW_GETBYTE_R for how
+    // the port carries the distinction across `Option<u8>`.
     // c:884-887 —
     // ```c
     //     int q = queue_signal_level();
@@ -838,16 +861,86 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
     // $ZLE_LINE_ABORTED. `dont_queue_signals()` also DRAINS what is already
     // queued (run_queued_signals), which is how a SIGCHLD that arrived during
     // the previous keystroke gets reaped here.
-    let q = crate::ported::signals_h::queue_signal_level();
-    crate::ported::signals_h::dont_queue_signals();
-    let raw = raw_getbyte(do_keytmout);
-    crate::ported::signals_h::restore_queue_signals(q);
-    let b = match raw {
-        Some(b) => b,
-        None => {
-            LASTCHAR.store(-1, SeqCst); // c:891 — `lastchar = EOF` (EOF == -1)
+    // c:865 — `for (;;)`: the read is retried for IGNOREEOF and EINTR, so
+    // the signal-queue dance belongs INSIDE the loop, as in C.
+    let mut icnt = 0i32; // c:866 — bounds the IGNOREEOF retries
+    let b = loop {
+        let q = crate::ported::signals_h::queue_signal_level();
+        crate::ported::signals_h::dont_queue_signals();
+        let raw = raw_getbyte(do_keytmout);
+        crate::ported::signals_h::restore_queue_signals(q);
+        if let Some(b) = raw {
+            break b; // c:894 — `if (r == 1) break;`
+        }
+        let r = RAW_GETBYTE_R.load(SeqCst);
+        // c:888-893 — `if (r == -2) { *timeout = 1; return lastchar = EOF; }`
+        // A key timeout ends this read and nothing more.
+        if r == -2 {
+            LASTCHAR.store(-1, SeqCst); // c:892 — `lastchar = EOF` (EOF == -1)
             return None;
         }
+        if r == 0 {
+            // c:895-908 — read() returned 0: the terminal is at EOF.
+            //
+            //   "shells that lost their xterm (e.g. if it was killed with -9)
+            //    didn't fail to read from the terminal but instead happily
+            //    continued to read EOFs, so that the above read returned with
+            //    0, and, with IGNOREEOF set, this caused an infinite loop.
+            //    The simple way around this was to add the counter (icnt) so
+            //    that this happens 20 times and than the shell gives up"
+            //
+            // c:907 — under IGNOREEOF the first 20 EOFs are ignored (a ^D
+            // typed while a command ran), and the 21st is fatal.
+            if (ZLEREADFLAGS.load(SeqCst) & crate::ported::zsh_h::ZLRF_IGNOREEOF) != 0 && icnt < 20
+            {
+                icnt += 1;
+                continue;
+            }
+            // c:909-910 — `stopmsg = 1; zexit(1, ZEXIT_NORMAL);`. THIS is what
+            // terminates a shell whose terminal has gone away: without it the
+            // EOF is handed back to the caller, and any caller that keeps
+            // editing (a non-empty line, or IGNOREEOF) reads EOF again
+            // immediately — a 100%-CPU loop that never ends.
+            // RUST-ONLY GATE: C reaches getbyte only from a live interactive
+            // ZLE session, so `interact` is always true there. In this port
+            // getbyte is also reachable from unit tests, whose stdin is a pipe
+            // at EOF — exiting the process would kill the test harness.
+            if crate::ported::zsh_h::interact() {
+                crate::ported::builtin::STOPMSG.store(1, SeqCst); // c:909
+                crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+                // c:912 — "If called from an exit hook, zexit() returns, so:"
+            }
+            LASTCHAR.store(-1, SeqCst);
+            return None;
+        }
+        // r < 0: a read error. c:914 — `icnt = 0` (only EOFs accumulate).
+        icnt = 0;
+        let e = RAW_GETBYTE_ERRNO.load(SeqCst);
+        // c:915-921 — EINTR with a shell condition pending (or none of the
+        // above) reports EOF to the caller; the bare retry already happened
+        // inside raw_getbyte, which owns the read loop in this port.
+        if e == libc::EINTR || e == 0 {
+            LASTCHAR.store(-1, SeqCst); // c:920 — `return lastchar = EOF`
+            return None;
+        }
+        // c:922-923 — `else if (errno == EWOULDBLOCK) fcntl(0, F_SETFL, 0);`
+        // A non-blocking fd 0 inherited from whoever started the shell: clear
+        // the flag and read again rather than treating it as a failure.
+        if e == libc::EWOULDBLOCK || e == libc::EAGAIN {
+            unsafe { libc::fcntl(0, libc::F_SETFL, 0) }; // c:923
+            continue;
+        }
+        // c:931-937 — every other TTY read error is fatal, EIO included: the
+        // one-shot reattach for EIO already ran inside raw_getbyte (c:924-930,
+        // bounded by its `die` flag), so reaching here means it did not help.
+        // Same interactive gate as the EOF arm above.
+        if crate::ported::zsh_h::interact() {
+            crate::ported::utils::zerrmsg("error on TTY read: %e", Some(e)); // c:932
+            crate::ported::builtin::STOPMSG.store(1, SeqCst); // c:933
+            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL); // c:934
+        }
+        LASTCHAR.store(-1, SeqCst); // c:936 — zexit returns from an exit hook
+        return None;
     };
 
     // Handle newline/carriage return translation
@@ -3884,6 +3977,22 @@ pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 = std::sync::atomic::A
 /// `selfinsert()` to choose insert vs replace semantics.
 pub static INSMODE: std::sync::atomic::AtomicI32 = // c:124
     std::sync::atomic::AtomicI32::new(1);
+
+/// C's `raw_getbyte()` returns an `int` the port's `Option<u8>` cannot
+/// carry: 1 = a byte was read, 0 = EOF, -1 = read error (errno in
+/// [`RAW_GETBYTE_ERRNO`]), -2 = "nothing ready" (c:657, the key
+/// timeout). `getbyte` needs that distinction to reproduce C's
+/// c:888-938 dispatch — above all C's `r == 0` arm, which EXITS the
+/// shell instead of handing EOF back to the caller. Published here
+/// rather than by widening `raw_getbyte`'s signature, which
+/// `raw_getbyte_returns_option_u8_type` pins.
+pub static RAW_GETBYTE_R: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+
+/// `errno` captured at [`RAW_GETBYTE_R`]'s `-1` returns. Read at the
+/// point of failure: any intervening libc call would clobber the real
+/// `errno` before `getbyte` could branch on it.
+pub static RAW_GETBYTE_ERRNO: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `int lastchar_wide` from `Src/Zle/zle_main.c`. Wide
 /// (multi-byte) version of the last input character — populated by
