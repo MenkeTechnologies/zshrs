@@ -2835,8 +2835,28 @@ pub fn zrefresh() {
                 VCS.store(0, Ordering::SeqCst); // c:1723
             }
             // c:1725 — the prompt's literal escapes leave the terminal in
-            // rpmpt_attr; publish it so the next attr-diff is correct.
-            crate::ported::prompt::treplaceattrs(RPMPT_ATTR.load(Ordering::SeqCst));
+            // rpmpt_attr. C can publish that and rely on the per-character
+            // attr diff to turn it off when the edit line is painted,
+            // because in C the buffer is painted AFTER the right prompt.
+            // zshrs paints the edit row first and the right prompt last, so
+            // nothing follows to emit the off: the terminal stayed in the
+            // right prompt's trailing attribute and everything typed
+            // inherited it. With p10k, whose RPROMPT ends
+            //     %b%k%f%244F─╯
+            // (fg 244 set, never reset), the command line came out GRAY.
+            //
+            // Turn the attributes off on the wire and publish that state, so
+            // the terminal and the tracker agree.
+            // UNCONDITIONAL, not `applytextattributes(0)`: the right
+            // prompt's SGR are literal bytes inside the expanded string,
+            // which the attribute tracker never sees. It still believes
+            // attributes are off, so a diff-based reset emits nothing while
+            // the terminal is left holding the prompt's colour.
+            {
+                let fd = SHTTY.load(Ordering::Relaxed);
+                let _ = write_loop(if fd >= 0 { fd } else { 1 }, b"\x1b[0m");
+            }
+            crate::ported::prompt::treplaceattrs(0);
         }
     }
     CLEAREOL.store(saved_cleareol, Ordering::SeqCst);
