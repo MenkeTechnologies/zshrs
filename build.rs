@@ -776,7 +776,17 @@ fn bundle_zsh_docs() {
     // `vendor/zsh/man1/zsh.1` ships as `man/man1/zsh.1`. Emitting the
     // vendored name verbatim put the pages in `~/.zshrs/man1` while
     // MANPATH named `~/.zshrs/man`, which did not exist.
-    let trees = [("man1", "man/man1"), ("info", "info")];
+    let trees = [
+        ("man1", "man/man1"),
+        ("info", "info"),
+        // `run-help`'s help database. The vendored `run-help` defaults
+        // HELPDIR to the <prefix>/share/zsh/<ver>/help of whichever zsh
+        // built it, which is a dead path on a host without that exact
+        // install -- so zshrs ships the tree and points HELPDIR at it.
+        ("help", "help"),
+        // `newuser`, sourced by zsh's first-run path.
+        ("scripts", "scripts"),
+    ];
     for (src, installed) in trees {
         let dir = root.join(src);
         let before = files.len();

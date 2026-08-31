@@ -57,6 +57,11 @@ pub fn info_dir() -> Option<PathBuf> {
     Some(base_dir()?.join("info"))
 }
 
+/// `~/.zshrs/help` — the `HELPDIR` entry, `run-help`'s database.
+pub fn help_dir() -> Option<PathBuf> {
+    Some(base_dir()?.join("help"))
+}
+
 /// True when the tree is absent or holds a different bundle.
 fn needs_write(base: &Path) -> bool {
     match std::fs::read_to_string(base.join(STAMP)) {
@@ -137,7 +142,9 @@ fn prepend_search_path(var: &str, dir: &Path) {
     unsafe { std::env::set_var(var, next) };
 }
 
-/// The two directories to publish, once materialised.
+/// The search-path directories to publish, once materialised. `HELPDIR`
+/// is not among them: it is a plain scalar naming ONE directory, not a
+/// colon list, so it is set outright by [`publish_helpdir`].
 fn published_dirs() -> Vec<(&'static str, PathBuf)> {
     let mut out = Vec::new();
     if let Some(d) = man_dir() {
@@ -153,6 +160,20 @@ fn published_dirs() -> Vec<(&'static str, PathBuf)> {
     out
 }
 
+/// `HELPDIR`, if the user has not chosen one.
+///
+/// zsh does not export `HELPDIR`; `run-help` falls back to a default
+/// baked in at build time by whichever zsh compiled it — the vendored copy
+/// carries `/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/help`, a path that
+/// does not exist on a host without that exact install. Pointing it at the
+/// bundled tree is what makes `run-help` work with no zsh on the machine.
+///
+/// A user-set value always wins: this only fills an empty slot.
+fn helpdir_value() -> Option<String> {
+    let d = help_dir()?;
+    d.is_dir().then(|| d.to_string_lossy().into_owned())
+}
+
 /// Materialise the pages and put them on `MANPATH` / `INFOPATH` in the OS
 /// environment, so any child process (`man`, `info`) inherits them.
 ///
@@ -166,6 +187,11 @@ pub fn install_and_publish() {
     let _ = ensure_installed();
     for (var, dir) in published_dirs() {
         prepend_search_path(var, &dir);
+    }
+    if let Some(v) = helpdir_value() {
+        if std::env::var_os("HELPDIR").is_none() {
+            unsafe { std::env::set_var("HELPDIR", v) };
+        }
     }
 }
 
@@ -200,5 +226,12 @@ pub fn publish_into(env: &mut Vec<(String, String)>) {
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
         unsafe { std::env::set_var(var, val) };
+    }
+    if let Some(v) = helpdir_value() {
+        if !env.iter().any(|(k, val)| k == "HELPDIR" && !val.is_empty()) {
+            env.retain(|(k, _)| k != "HELPDIR");
+            env.push(("HELPDIR".to_string(), v.clone()));
+            unsafe { std::env::set_var("HELPDIR", v) };
+        }
     }
 }
