@@ -8129,28 +8129,48 @@ pub use crate::ported::params::*;
 ///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions    drop
 ///     /opt/homebrew/share/zsh/site-functions                keep
 ///     ~/.zinit/plugins/…/src                                keep
-/// Strip a host zsh installation's own function tree out of an `fpath`
-/// assignment.
+/// Enforce zshrs's two `fpath` invariants on every assignment:
+/// the bundled tree is ALWAYS present, a host zsh installation's own
+/// function tree is ALWAYS absent. The two are never mixed — a foreign
+/// zsh's `compinit`/`_git`/`add-zsh-hook` sitting beside zshrs's own
+/// copies means whichever wins the lookup decides the shell's behaviour,
+/// and that answer changes when the OS package manager upgrades zsh.
 ///
-/// The rule has to hold on ASSIGNMENT, not only at startup. Filtering just
-/// the inherited `FPATH` left the door open: a `.zshrc` that re-adds
-/// `<prefix>/share/zsh/<ver>/functions`, or a plugin manager restoring a
-/// saved fpath, put a foreign zsh's `add-zsh-hook`, `compinit` and `_git`
-/// back ahead of the bundled copies. Observed on a real setup:
+/// Doing this only at startup was not enough. The constructor filters the
+/// inherited `FPATH`, but a `.zshrc` that re-adds
+/// `<prefix>/share/zsh/<ver>/functions` -- or a plugin manager restoring a
+/// saved fpath, or any plain `fpath=( … )` -- reintroduced it afterwards:
 ///     add-zsh-hook is a shell function from
 ///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/add-zsh-hook
-/// so zshrs's own override -- the one that knows the `async_precmd` hook --
-/// never ran, and `add-zsh-hook async_precmd f` kept failing.
+/// so zshrs's own override, the one that knows the `async_precmd` hook,
+/// never ran. The same assignment can drop the bundle entirely
+/// (`fpath=( mydir )`), which is why the append is here too.
+///
+/// `share/zsh/site-functions` is NOT a distribution tree and stays: it is
+/// where third-party formulae install completions the bundle has no copy
+/// of. See [`is_host_zsh_function_tree`].
 ///
 /// Lives here rather than beside its call sites because `src/ported/` is a
-/// port of the C source and takes no new functions.
+/// port of the C source and takes no new functions (build.rs:172).
 pub(crate) fn drop_host_zsh_function_trees(name: &str, val: Vec<String>) -> Vec<String> {
     if name != "fpath" {
         return val;
     }
-    val.into_iter()
+    let mut out: Vec<String> = val
+        .into_iter()
         .filter(|e| !is_host_zsh_function_tree(Path::new(e)))
-        .collect()
+        .collect();
+    // Append, never insert: a curated completion of the same name must
+    // still win, so the bundle only supplies what nothing else does.
+    if let Some(d) = crate::bundled_functions::functions_dir() {
+        if d.is_dir() {
+            let dir = d.to_string_lossy().into_owned();
+            if !out.iter().any(|e| *e == dir) {
+                out.push(dir);
+            }
+        }
+    }
+    out
 }
 
 pub(crate) fn is_host_zsh_function_tree(p: &Path) -> bool {
