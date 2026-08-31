@@ -30,7 +30,6 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/zsh");
-    println!("cargo:rerun-if-changed=vendor/zsh-doc");
     println!("cargo:rerun-if-changed=completions");
     bundle_zsh_functions();
     bundle_zsh_docs();
@@ -657,7 +656,7 @@ fn bundle_zsh_functions() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for root in ["completions", "vendor/zsh"] {
+    for root in ["completions", "vendor/zsh/functions"] {
         let before = files.len();
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
@@ -767,12 +766,20 @@ fn bundle_zsh_functions() {
 /// Format: repeated `u32 name_len | name | u32 body_len | body`, all
 /// little-endian, then zstd -- identical to the function bundle.
 fn bundle_zsh_docs() {
-    use std::io::Write;
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let root = PathBuf::from("vendor/zsh-doc");
+    let root = PathBuf::from("vendor/zsh");
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut stack = vec![root.clone()];
-    while let Some(dir) = stack.pop() {
+    // Only the doc subdirectories -- `functions/` is the function bundle's
+    // and must not be duplicated into the doc tree. Each is paired with the
+    // path it INSTALLS to, which is not its vendored name: `man` has to be
+    // the MANPATH entry with the section directory beneath it, so
+    // `vendor/zsh/man1/zsh.1` ships as `man/man1/zsh.1`. Emitting the
+    // vendored name verbatim put the pages in `~/.zshrs/man1` while
+    // MANPATH named `~/.zshrs/man`, which did not exist.
+    let trees = [("man1", "man/man1"), ("info", "info")];
+    for (src, installed) in trees {
+        let dir = root.join(src);
+        let before = files.len();
         let rd = match fs::read_dir(&dir) {
             Ok(rd) => rd,
             Err(_) => continue,
@@ -780,25 +787,19 @@ fn bundle_zsh_docs() {
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
-                stack.push(p);
                 continue;
             }
-            let name = match p.strip_prefix(&root).ok().and_then(|r| r.to_str()) {
-                Some(n) => n.replace('\\', "/"),
-                None => continue,
+            let base = match p.file_name().and_then(|n| n.to_str()) {
+                Some(n) if !n.starts_with('.') => n.to_string(),
+                _ => continue,
             };
-            if name.starts_with('.') || name.contains("/.") {
-                continue;
-            }
             if let Ok(body) = fs::read(&p) {
-                files.push((name, body));
+                files.push((format!("{installed}/{base}"), body));
             }
         }
-    }
-    // Same rule as the function bundle: an empty tree is a build error,
-    // never a quiet empty payload shipped to every install.
-    if files.is_empty() {
-        panic!("vendor/zsh-doc is missing or empty -- zsh's man and info pages must be vendored");
+        if files.len() == before {
+            panic!("vendor/zsh/{src} is missing or empty -- zsh's {src} pages must be vendored");
+        }
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut raw: Vec<u8> = Vec::new();

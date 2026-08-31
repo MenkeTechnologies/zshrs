@@ -1145,8 +1145,14 @@ fn main() {
     if let Some(entry) = entry_env.as_deref() {
         prune_preinit_env_injections(entry);
     }
-    let _ =
-        zsh::ported::params::environ.set(entry_env.unwrap_or_else(|| std::env::vars().collect()));
+    let mut entry_env = entry_env.unwrap_or_else(|| std::env::vars().collect());
+    // zshrs ships zsh's man/info pages (build.rs packs vendor/zsh/{man1,info};
+    // bundled_docs writes ~/.zshrs/{man,info}). Their directories have to go
+    // onto MANPATH/INFOPATH HERE, while the snapshot is still mutable: once
+    // it is frozen, paramtab is built from it and a later setenv can no
+    // longer change what `$INFOPATH` reports in the shell.
+    zsh::bundled_docs::publish_into(&mut entry_env);
+    let _ = zsh::ported::params::environ.set(entry_env);
     // Restore default SIGPIPE behavior before anything writes to
     // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in
     // some Linux builds and ignores it on macOS — either way,
