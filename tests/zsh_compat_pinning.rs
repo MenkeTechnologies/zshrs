@@ -609,6 +609,90 @@ fn interactive_shell_has_a_populated_fpath() {
     );
 }
 
+/// The native ZLE engines run by default, and are refused under `-f`.
+///
+/// They were opt-in via `[zle]` in `~/.zshrs/zshrs.toml`, which meant the
+/// shell's own line editor was off for everyone who had not read that
+/// file. Default is now ON, with the parity guarantee kept at the other
+/// end: `zle_fx` refuses every engine when `RCS` is unset, so `zshrs -f`
+/// emits no highlighting and stays byte-identical to `zsh -f` -- which is
+/// what the emulation-parity and corpus suites measure.
+///
+/// Driven through a pty: the engines only run against a real terminal, so
+/// a `-c` test cannot observe them.
+#[test]
+fn native_zle_engines_default_on_but_not_under_dash_f() {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    let home = std::env::temp_dir().join(format!("zshrs-zle-pin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir temp HOME");
+    // An EMPTY rc: enough for RCS to stay set, nothing else loaded.
+    std::fs::write(home.join(".zshrc"), "PROMPT='P> '\n").expect("write rc");
+
+    let sgr_seen = |dash_f: bool| -> bool {
+        let mut master: libc::c_int = 0;
+        let termp = std::ptr::null_mut::<libc::termios>();
+        let winp = std::ptr::null_mut::<libc::winsize>();
+        let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), termp, winp) };
+        assert!(pid >= 0, "forkpty failed");
+        if pid == 0 {
+            unsafe {
+                libc::setenv(c"TERM".as_ptr(), c"xterm-256color".as_ptr(), 1);
+                let h = std::ffi::CString::new(home.to_string_lossy().as_ref()).unwrap();
+                libc::setenv(c"HOME".as_ptr(), h.as_ptr(), 1);
+            }
+            let bin = std::ffi::CString::new(zshrs_bin().to_string_lossy().as_ref()).unwrap();
+            let i = std::ffi::CString::new("-i").unwrap();
+            let f = std::ffi::CString::new("-f").unwrap();
+            unsafe {
+                if dash_f {
+                    libc::execl(bin.as_ptr(), bin.as_ptr(), f.as_ptr(), i.as_ptr(), std::ptr::null::<libc::c_char>());
+                } else {
+                    libc::execl(bin.as_ptr(), bin.as_ptr(), i.as_ptr(), std::ptr::null::<libc::c_char>());
+                }
+                libc::_exit(127);
+            }
+        }
+        let mut term = unsafe { std::fs::File::from_raw_fd(master) };
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        // Type, but never accept: the highlighter paints as the buffer grows.
+        let _ = term.write_all(b"echo hi");
+        let _ = term.flush();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let _ = term.write_all(b"\x15exit\n");
+        let _ = term.flush();
+
+        let mut out = Vec::new();
+        let mut buf = [0u8; 8192];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
+            match term.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+        }
+        unsafe {
+            let mut st = 0;
+            libc::waitpid(pid, &mut st, 0);
+        }
+        // Any colour SGR at all. Under -f with a bare PROMPT there is none.
+        String::from_utf8_lossy(&out).contains("\u{1b}[3")
+    };
+
+    assert!(
+        sgr_seen(false),
+        "the native engines must run in a shell that reads rc files"
+    );
+    assert!(
+        !sgr_seen(true),
+        "`zshrs -f` must emit no highlighting -- parity with `zsh -f`"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 /// A host zsh distribution tree is dropped from an INHERITED `FPATH`,
 /// while `site-functions` and user/plugin directories survive.
 ///
