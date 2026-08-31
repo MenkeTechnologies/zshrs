@@ -1439,6 +1439,10 @@ pub fn zleread(
     crate::ported::zle::termquery::start_edit();
 
     zrefresh();
+    // First paint of the first prompt — the end of "time to first prompt".
+    // One-shot: `mark_first_prompt` fires once per process, so this costs a
+    // relaxed atomic load per redraw when tracing is off.
+    crate::startup_trace::mark_first_prompt();
 
     // Enter core loop
     zlecore();

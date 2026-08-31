@@ -347,3 +347,58 @@ mod p_flag_indirect_assoc_subscript {
         assert_parity(r#"arr=(hello world); print -r - ${${arr}[2]}"#);
     }
 }
+
+mod assignment_subscript_expansion {
+    use super::*;
+
+    /// An assignment subscript is expanded before it is used as a key
+    /// (`parsestr` + `singsub`, Src/params.c:1585-1592). The compiler
+    /// recognises `$(( … ))` only in the lexer's tokenized spelling, and the
+    /// assoc-assign path handed it the UNTOKENIZED subscript text, so a key
+    /// that mixed literal text with arithmetic was stored verbatim. p10k hit
+    /// this with `_p9k__prompt_char_saved[left14$((!_p9k__status))]`.
+    #[test]
+    fn arith_subscript_after_literal_text() {
+        assert_parity(r#"typeset -A h; h[x$((1+1))]=v; print -r -- ${(k)h}"#);
+    }
+
+    /// Same shape with the arithmetic FIRST and literal text after.
+    #[test]
+    fn arith_subscript_before_literal_text() {
+        assert_parity(r#"typeset -A h; h[$((1+1))x]=v; print -r -- ${(k)h}"#);
+    }
+
+    /// Arithmetic reading a parameter, wrapped in literal text on both sides.
+    #[test]
+    fn arith_subscript_with_param_between_text() {
+        assert_parity(r#"typeset -A h; s=3; h[a$((s+1))b]=v; print -r -- ${(k)h}"#);
+    }
+
+    /// Command substitution in the same position — the other shape the
+    /// untokenized text hid from the word compiler.
+    #[test]
+    fn cmdsubst_subscript_after_literal_text() {
+        assert_parity(r#"typeset -A h; h[x$(echo 2)]=v; print -r -- ${(k)h}"#);
+    }
+
+    /// The `+=` form compiles the key twice; both sites must expand it.
+    #[test]
+    fn arith_subscript_append_uses_same_key() {
+        assert_parity(
+            r#"typeset -A h; h[x$((1+1))]=a; h[x$((1+1))]+=b; print -r -- "${(kv)h}""#,
+        );
+    }
+
+    /// Guard: a subscript that is ONLY arithmetic already worked and must stay.
+    #[test]
+    fn bare_arith_subscript_still_expands() {
+        assert_parity(r#"typeset -A h; h[$((1+1))]=v; print -r -- ${(k)h}"#);
+    }
+
+    /// Guard: a literal key with no expansion is stored verbatim, and a
+    /// `(e)` flag group still forces the literal reading.
+    #[test]
+    fn literal_and_e_flag_keys_unchanged() {
+        assert_parity(r#"typeset -A h; h[k2]=v; h[(e)*]=w; print -r -- ${(ok)h}"#);
+    }
+}

@@ -2475,7 +2475,30 @@ impl ShellExecutor {
         if use_cache {
             if let Some(dump) = crate::ported::params::getsparam("_comp_dumpfile") {
                 let dump = std::path::PathBuf::from(dump);
-                if dump.is_file() {
+                // `-C` skips zsh's security check, and sh:492-514's checked
+                // branch is the only place upstream compares the dump against
+                // reality. zshrs materialises its bundled function tree into
+                // ~/.zshrs/functions out of band, so a dump written before an
+                // upgrade lists none of it and `-C` would trust it forever:
+                // every zshrs builtin then completed as if nothing shipped
+                // (`_comps[zjob]` empty with _zjob sitting on fpath). Treat
+                // the dump as stale when the bundle stamp is newer, which is
+                // what a real zsh does whenever its own staleness check trips.
+                let bundle_newer = (|| {
+                    let stamp = crate::bundled_functions::functions_dir()?
+                        .join(".zshrs-bundle-version");
+                    let s = std::fs::metadata(&stamp).ok()?.modified().ok()?;
+                    let d = std::fs::metadata(&dump).ok()?.modified().ok()?;
+                    Some(s > d)
+                })()
+                .unwrap_or(false);
+                if bundle_newer {
+                    tracing::info!(
+                        dump = %dump.display(),
+                        "compinit: dump predates the bundled function tree — rescanning"
+                    );
+                }
+                if dump.is_file() && !bundle_newer {
                     let names = crate::compsys::ported::compinit::dump_autoload_names(&dump);
                     let added = crate::compsys::ported::compinit::register_autoload_stubs(&names);
                     dump_sourced = true;
