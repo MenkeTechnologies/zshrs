@@ -1,1 +1,0 @@
-man openssl${1:+-$1} || man ${1:-openssl}

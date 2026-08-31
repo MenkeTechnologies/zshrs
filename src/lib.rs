@@ -101,6 +101,9 @@ pub mod autoload_cache;
 /// `autoload_prewarm` submodule.
 #[path = "extensions/autoload_prewarm.rs"]
 pub mod autoload_prewarm;
+/// `bundled_docs` submodule — zsh's man/info pages, shipped in-binary.
+#[path = "extensions/bundled_docs.rs"]
+pub mod bundled_docs;
 #[path = "extensions/bundled_functions.rs"]
 pub mod bundled_functions;
 /// `bash_complete` submodule.

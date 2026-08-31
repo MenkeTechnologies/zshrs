@@ -1,0 +1,94 @@
+#compdef shutdown
+
+local curcontext="$curcontext" variant="$OSTYPE" ret=1
+local -a state line args suffixes
+
+[[ -d /run/systemd/system ]] && variant=systemd
+
+case $variant in
+  systemd)
+    args=(
+      "(-k)--no-wall[don't send a wall message]"
+      '1: :->times'
+      '*:warning message'
+      + '(action)'
+      '(* : -)--help[display usage information]'
+      "(--no-wall)-k[don't shutdown, just write wall message]"
+      {-H,--halt}'[halt the machine]'
+      {-P,--poweroff,-h}'[power-off the machine (default)]'
+      {-r,--reboot}'[reboot the machine]'
+      '-c[cancel pending shutdown]'
+    )
+  ;;
+  *bsd*|dragonfly*|linux*|darwin*)
+    args=(
+      '(-p -r -c)-h[halt the system after shutdown]'
+      '(-p -h -c)-r[reboot the system]'
+      '-k[kick everybody off]'
+      '-n[prevent file system cache from being flushed]'
+      '1: :->times'
+      '(*)-[read warning message from standard input]' \
+      '*:warning message'
+    )
+  ;|
+  *bsd*|dragonfly*)
+    args+=(
+      '(-h -r -c)-p[turn off power after shutdown]'
+    )
+  ;|
+  (net|open)bsd*)
+    args+=(
+      '-d[cause system to perform a dump]'
+      '-f[create /fastboot so that file systems will not be checked during the next boot]'
+    )
+  ;|
+  freebsd*|dragonfly*)
+    suffixes=( s:seconds :m:minutes h:hours )
+    args+=(
+      '-o[execute halt or reboot instead of sending a signal to init]'
+    )
+  ;|
+  freebsd<12->.*)
+    args+=(
+      '(-h -r -p)-c[power cycle the system instead of halting if possible]'
+    )
+  ;;
+  netbsd*)
+    args+=(
+      '-b[specify boot string to pass to reboot]:boot string'
+      '-v[enable verbose console messages]'
+      '-x[enable debug console messages]'
+      '-z[silence some console messages]'
+      '-D[prevent shutdown from detaching from the tty]'
+    )
+  ;;
+  darwin*)
+    args+=(
+      '-o[execute halt or reboot instead of sending a signal to launchd]'
+      '-s[put the system to sleep]'
+      '-u[with -h, wait 5 minutes before removing power]'
+    )
+  ;;
+  solaris2.<11->) args=( '(-i)-r[reboot]' ) ;&
+  solaris*)
+    args+=(
+      '(-r)-i+[specify init-state]:init state:((0\:stop 1\:administrative s\:single\ user 5 6\:reboot))'
+      '-y[pre-answer yes to confirmation question]'
+      '-g+[specify grace period]:grace period (seconds) [60]'
+    )
+  ;;
+esac
+
+_arguments -C $args && ret=0
+
+if [[ -n $state ]]; then
+  if compset -P '+'; then
+    _numbers -u minutes "grace period" $suffixes
+  else
+    _alternative \
+      'relative-times:relative time:{ compadd "$expl[@]" -S "" +; compadd "$expl[@]" now }' \
+      'absolute-times: :_guard "^-*" "time ([yymmdd]hhmm)"' && ret=0
+  fi
+fi
+
+return ret

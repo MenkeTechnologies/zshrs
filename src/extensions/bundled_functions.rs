@@ -36,9 +36,18 @@ use std::path::{Path, PathBuf};
 /// build.rs.
 static BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zsh_functions.zst"));
 
-/// Written into the directory so an upgraded zshrs refreshes the tree
-/// instead of leaving a stale one from an older build.
+/// Written into the directory so a zshrs carrying a different tree
+/// refreshes it instead of leaving a stale one from an older build.
 const STAMP: &str = ".zshrs-bundle-version";
+
+include!(concat!(env!("OUT_DIR"), "/zsh_functions_id.rs"));
+
+/// What [`STAMP`] holds: crate version plus the bundle's content hash.
+/// The version alone is not enough -- the tree can change within a
+/// version, and then a version-only stamp never triggers a rewrite.
+fn stamp_value() -> String {
+    format!("{}-{}", env!("CARGO_PKG_VERSION"), BUNDLE_ID)
+}
 
 /// `~/.zshrs/functions`.
 pub fn functions_dir() -> Option<PathBuf> {
@@ -46,10 +55,10 @@ pub fn functions_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".zshrs").join("functions"))
 }
 
-/// True when the directory is absent or was written by another version.
+/// True when the directory is absent or holds a different bundle.
 fn needs_write(dir: &Path) -> bool {
     match std::fs::read_to_string(dir.join(STAMP)) {
-        Ok(s) => s.trim() != env!("CARGO_PKG_VERSION"),
+        Ok(s) => s.trim() != stamp_value(),
         Err(_) => true,
     }
 }
@@ -95,7 +104,7 @@ pub fn ensure_installed() -> Option<usize> {
         }
     }
     if let Ok(mut f) = std::fs::File::create(dir.join(STAMP)) {
-        let _ = f.write_all(env!("CARGO_PKG_VERSION").as_bytes());
+        let _ = f.write_all(stamp_value().as_bytes());
     }
     tracing::info!(target: "bundled_functions", written = n, dir = %dir.display(),
                    "materialised bundled zsh functions");

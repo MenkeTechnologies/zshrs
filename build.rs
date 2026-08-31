@@ -29,10 +29,11 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/zsh_c_fn_names.txt");
     println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/zsh/Completion");
-    println!("cargo:rerun-if-changed=src/zsh/Functions");
+    println!("cargo:rerun-if-changed=vendor/zsh");
+    println!("cargo:rerun-if-changed=vendor/zsh-doc");
     println!("cargo:rerun-if-changed=completions");
     bundle_zsh_functions();
+    bundle_zsh_docs();
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
 
     // Parse `src/zsh/Config/version.mk` for VERSION + VERSION_DATE
@@ -642,7 +643,11 @@ fn load_c_fn_index(path: &Path) -> Result<HashMap<String, HashSet<String>>, std:
 /// it flattens `Completion/**` and `Functions/**` into one directory --
 /// so the bundle is keyed by basename and the installed layout matches.
 /// zshrs's own completions live in the same directory for the same
-/// reason: at runtime they are peers of zsh's.
+/// reason: at runtime they are peers of zsh's. `completions/` is walked
+/// FIRST because `seen` keeps the first basename it meets -- vendor/zsh
+/// held byte-identical copies of all 26 of them until this commit, and
+/// with vendor first an edit to `completions/` would have been silently
+/// shadowed by the stale vendored copy.
 ///
 /// Format: repeated `u32 name_len | name | u32 body_len | body`, all
 /// little-endian, then zstd. Deliberately not tar: this avoids a second
@@ -652,7 +657,8 @@ fn bundle_zsh_functions() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for root in ["vendor/zsh"] {
+    for root in ["completions", "vendor/zsh"] {
+        let before = files.len();
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
             let rd = match fs::read_dir(&dir) {
@@ -693,15 +699,18 @@ fn bundle_zsh_functions() {
                 }
             }
         }
-    }
-    // A missing or empty tree is a BUILD ERROR, not a quiet empty bundle.
-    // The silent-`continue` version of this shipped an empty
-    // `~/.zshrs/functions` to every crates.io install.
-    if files.is_empty() {
-        panic!(
-            "vendor/zsh is missing or empty -- the zsh function tree must be \
-             vendored for the bundle to be built. Nothing to pack."
-        );
+        // A root that yielded nothing is a BUILD ERROR, not a quiet
+        // short bundle. Checking the TOTAL is not enough: when
+        // `src/zsh/{Completion,Functions}` stopped existing, the walk
+        // still returned the 26 files from `completions/`, the build
+        // stayed green, and a 26-file `~/.zshrs/functions` shipped with
+        // no compinit, no _git, no is-at-least.
+        if files.len() == before {
+            panic!(
+                "{root} contributed no functions -- the tree must be present \
+                 and non-empty for the bundle to be built."
+            );
+        }
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut raw: Vec<u8> = Vec::new();
@@ -715,8 +724,107 @@ fn bundle_zsh_functions() {
     let dest = out_dir.join("zsh_functions.zst");
     let mut f = fs::File::create(&dest).expect("create zsh_functions.zst");
     f.write_all(&packed).expect("write zsh_functions.zst");
+    // Identify the bundle by content, not by crate version: the tree can
+    // change within one version (it did -- a build.rs root that no longer
+    // existed silently shrank it from 1271 files to 26), and a
+    // version-only stamp leaves that stale tree on disk forever.
+    // FNV-1a over the packed bytes, computed here so startup pays nothing.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in &packed {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    fs::write(
+        out_dir.join("zsh_functions_id.rs"),
+        format!(
+            "/// FNV-1a of the packed function bundle, from build.rs.\n\
+             /// Stamped into `~/.zshrs/functions` so a changed bundle is\n\
+             /// rewritten even when the crate version did not move.\n\
+             pub const BUNDLE_ID: &str = \"{hash:016x}\";\n"
+        ),
+    )
+    .expect("write zsh_functions_id.rs");
     println!(
         "cargo:warning=bundled {} zsh functions ({} KiB packed)",
+        files.len(),
+        packed.len() / 1024
+    );
+}
+
+/// Pack zsh's man and info pages into a zstd blob for
+/// `crate::bundled_docs` to materialise into `~/.zshrs/{man,info}`.
+///
+/// Same reasoning as the function tree: zshrs is a drop-in binary, not a
+/// program installed under a zsh `--prefix`, so `man zshall` and
+/// `info zsh` only worked on a host that happened to have zsh installed.
+/// The pages describe the language zshrs implements, so it ships them.
+///
+/// Unlike the function bundle this one is NOT flat -- entries keep their
+/// `man1/…` or `info/…` prefix, because `man` resolves a page by section
+/// directory and `INFOPATH` expects the split `zsh.info-N` files beside
+/// their `zsh.info` index.
+///
+/// Format: repeated `u32 name_len | name | u32 body_len | body`, all
+/// little-endian, then zstd -- identical to the function bundle.
+fn bundle_zsh_docs() {
+    use std::io::Write;
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let root = PathBuf::from("vendor/zsh-doc");
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let rd = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let name = match p.strip_prefix(&root).ok().and_then(|r| r.to_str()) {
+                Some(n) => n.replace('\\', "/"),
+                None => continue,
+            };
+            if name.starts_with('.') || name.contains("/.") {
+                continue;
+            }
+            if let Ok(body) = fs::read(&p) {
+                files.push((name, body));
+            }
+        }
+    }
+    // Same rule as the function bundle: an empty tree is a build error,
+    // never a quiet empty payload shipped to every install.
+    if files.is_empty() {
+        panic!("vendor/zsh-doc is missing or empty -- zsh's man and info pages must be vendored");
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut raw: Vec<u8> = Vec::new();
+    for (name, body) in &files {
+        raw.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        raw.extend_from_slice(name.as_bytes());
+        raw.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        raw.extend_from_slice(body);
+    }
+    let packed = zstd::encode_all(&raw[..], 19).expect("zstd encode zsh doc bundle");
+    fs::write(out_dir.join("zsh_docs.zst"), &packed).expect("write zsh_docs.zst");
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in &packed {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    fs::write(
+        out_dir.join("zsh_docs_id.rs"),
+        format!(
+            "/// FNV-1a of the packed man/info bundle, from build.rs.\n\
+             pub const DOCS_ID: &str = \"{hash:016x}\";\n"
+        ),
+    )
+    .expect("write zsh_docs_id.rs");
+    println!(
+        "cargo:warning=bundled {} zsh doc files ({} KiB packed)",
         files.len(),
         packed.len() / 1024
     );

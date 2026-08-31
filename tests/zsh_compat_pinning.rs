@@ -479,19 +479,23 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// With `FPATH` absent from the environment, zsh falls back to paths
-/// fixed at compile time (c:Src/init.c:1132-1143) and `fpath` is
-/// non-empty. zshrs had no such fallback: `env::var("FPATH")` +
-/// `unwrap_or_default()` produced an EMPTY fpath, so a shell started
-/// without FPATH could not autoload anything --
-///   zsh: is-at-least: function definition file not found
-/// That is reachable in practice because zsh does not export FPATH, so
-/// `exec zshrs` from any shell handed the new one an empty fpath.
+/// With `FPATH` absent, `fpath` leads with the bundled tree and carries no
+/// host zsh *distribution* directory.
 ///
-/// Asserts only that the fallback is non-empty and looks like a zsh
-/// function tree, so it holds on a CI box with a different layout.
+/// zsh falls back to paths fixed at compile time by `configure`
+/// (c:Src/init.c:1132-1143): `SITEFPATH_DIR` and
+/// `<prefix>/share/zsh/<version>/functions`. zshrs keeps the first and
+/// drops the second, because it carries zsh's own function tree
+/// (`vendor/zsh` -> `~/.zshrs/functions`). Keeping a host copy on top of
+/// the bundle means two differently-versioned `compinit`s racing for the
+/// same lookup, and the winner changes when Homebrew upgrades zsh.
+///
+/// The earlier bug this still guards: `env::var("FPATH")` +
+/// `unwrap_or_default()` left fpath EMPTY, so nothing autoloaded --
+///   zsh: is-at-least: function definition file not found
+/// reachable from any `exec zshrs`, since zsh does not export FPATH.
 #[test]
-fn fpath_falls_back_to_defaults_when_env_is_absent() {
+fn fpath_default_leads_with_bundle_and_has_no_distribution_tree() {
     let out = Command::new(zshrs_bin())
         .args(["--zsh", "-f", "-c", "print -l $fpath"])
         .env_remove("FPATH")
@@ -502,12 +506,72 @@ fn fpath_falls_back_to_defaults_when_env_is_absent() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let entries: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert!(
-        !entries.is_empty(),
-        "fpath must not be empty with FPATH unset; zsh has a compiled-in default"
+        entries.first().is_some_and(|e| e.ends_with("/.zshrs/functions")),
+        "the bundled tree must lead fpath, got {:?}",
+        entries
     );
     assert!(
-        entries.iter().any(|e| e.contains("share/zsh")),
-        "fallback should name a zsh function tree, got {:?}",
+        !entries.iter().any(|e| e.ends_with("/share/zsh/functions")
+            || (e.contains("/share/zsh/") && e.ends_with("/functions"))),
+        "no host zsh distribution tree may be seeded, got {:?}",
+        entries
+    );
+}
+
+/// A host zsh distribution tree is dropped from an INHERITED `FPATH`,
+/// while `site-functions` and user/plugin directories survive.
+///
+/// `exec zshrs` from a running zsh inherits that shell's fpath, which on
+/// any Homebrew box names `/opt/homebrew/Cellar/zsh/<ver>/share/zsh/functions`
+/// -- a second copy of every function the bundle already carries, able to
+/// shadow it. `share/zsh/site-functions` is the opposite case: nothing in
+/// it comes from zsh, it is where formulae install `_brew`, `_docker`,
+/// `_kubectl`, and the bundle has no copy of those, so dropping it would
+/// silently disable completion for package-manager-installed tools.
+///
+/// Both rejected shapes are covered: Homebrew's Cellar layout has no
+/// version component under `share/zsh`, the FHS layout does.
+#[test]
+fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
+    let inherited = [
+        "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
+        "/usr/share/zsh/5.9/functions",
+        "/opt/homebrew/share/zsh/site-functions",
+        "/usr/local/share/zsh/site-functions",
+        "/tmp/zshrs-pin-plugin/src",
+        "/tmp/zshrs-pin-zinit/completions",
+    ];
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "print -l $fpath"])
+        .env("FPATH", inherited.join(":"))
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let entries: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    for drop in [
+        "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
+        "/usr/share/zsh/5.9/functions",
+    ] {
+        assert!(
+            !entries.contains(&drop),
+            "{drop} duplicates the bundled tree and must be dropped, got {entries:?}"
+        );
+    }
+    for keep in [
+        "/opt/homebrew/share/zsh/site-functions",
+        "/usr/local/share/zsh/site-functions",
+        "/tmp/zshrs-pin-plugin/src",
+        "/tmp/zshrs-pin-zinit/completions",
+    ] {
+        assert!(
+            entries.contains(&keep),
+            "{keep} carries third-party completions and must survive, got {entries:?}"
+        );
+    }
+    assert!(
+        entries[0].ends_with("/.zshrs/functions"),
+        "the bundled tree stays first, got {:?}",
         entries
     );
 }
