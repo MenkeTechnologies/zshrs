@@ -627,10 +627,22 @@ fn load_c_fn_index(path: &Path) -> Result<HashMap<String, HashSet<String>>, std:
 /// Pack the vendored zsh function tree into a single zstd blob for
 /// `crate::bundled_functions` to materialise into `~/.zshrs/functions`.
 ///
-/// zsh's own `make install` FLATTENS `Completion/**` and `Functions/**`
-/// into one directory -- /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions
-/// holds 1235 files and zero subdirectories -- so the bundle is keyed by
-/// basename and the installed layout matches it.
+/// Source of truth is `vendor/zsh/`, which is TRACKED. It used to be
+/// `src/zsh/Completion` + `src/zsh/Functions` + `completions/`, and all
+/// three were absent from the published crate: `src/zsh/` is gitignored
+/// (it is the upstream C checkout used as the porting reference) and
+/// `/completions/` was in Cargo's exclude list. `cargo package --list`
+/// showed ZERO files from any of them, so every `cargo install zshrs`
+/// built a bundle of nothing and materialised an empty
+/// `~/.zshrs/functions`. Nothing failed loudly because the walk below
+/// swallowed a missing directory with `continue`; it now hard-errors
+/// instead.
+///
+/// The tree is FLAT, matching what zsh's own `make install` produces --
+/// it flattens `Completion/**` and `Functions/**` into one directory --
+/// so the bundle is keyed by basename and the installed layout matches.
+/// zshrs's own completions live in the same directory for the same
+/// reason: at runtime they are peers of zsh's.
 ///
 /// Format: repeated `u32 name_len | name | u32 body_len | body`, all
 /// little-endian, then zstd. Deliberately not tar: this avoids a second
@@ -640,10 +652,7 @@ fn bundle_zsh_functions() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // `completions/` carries zshrs's OWN completions -- one per builtin in
-    // ZSHRS_BUILTIN_NAMES (daemon/builtins.rs) plus the hand-written _zd --
-    // so they land in ~/.zshrs/functions alongside zsh's tree.
-    for root in ["src/zsh/Completion", "src/zsh/Functions", "completions"] {
+    for root in ["vendor/zsh"] {
         let mut stack = vec![PathBuf::from(root)];
         while let Some(dir) = stack.pop() {
             let rd = match fs::read_dir(&dir) {
@@ -661,13 +670,15 @@ fn bundle_zsh_functions() {
                     None => continue,
                 };
                 // Mirror what zsh's install skips: docs and build inputs.
-                // completions/ also holds a data file that is not a function.
-                if dir.ends_with("completions") && !name.starts_with('_') {
-                    continue;
-                }
+                // LICENCE and the provenance README sit in the vendored
+                // directory so the notice travels with the code, and are
+                // not functions.
                 if name.starts_with('.')
                     || name.starts_with("README")
+                    || name == "LICENCE"
                     || name == "Makefile"
+                    || name.ends_with(".md")
+                    || name.ends_with(".txt")
                     || name.ends_with(".in")
                     || name.ends_with(".mdd")
                     || name.ends_with(".pro")
@@ -682,6 +693,15 @@ fn bundle_zsh_functions() {
                 }
             }
         }
+    }
+    // A missing or empty tree is a BUILD ERROR, not a quiet empty bundle.
+    // The silent-`continue` version of this shipped an empty
+    // `~/.zshrs/functions` to every crates.io install.
+    if files.is_empty() {
+        panic!(
+            "vendor/zsh is missing or empty -- the zsh function tree must be \
+             vendored for the bundle to be built. Nothing to pack."
+        );
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut raw: Vec<u8> = Vec::new();
