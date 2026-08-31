@@ -8738,7 +8738,6 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::
 ///   - resetparam from non-array (c:3415-3420) — handled implicitly
 ///     by the type-mask rewrite below; matches C observable behavior.
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
-    let val = crate::vm_helper::drop_host_zsh_function_trees(name, val);
     // c:3357
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -9525,7 +9524,6 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
     // `share/zsh/site-functions` is untouched -- see
     // `vm_helper::is_host_zsh_function_tree`; only the distribution's
     // flattened `functions` directory is dropped.
-    let val = crate::vm_helper::drop_host_zsh_function_trees(name, val);
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
     assignaparam(name, val, ASSPM_WARN)
 }
