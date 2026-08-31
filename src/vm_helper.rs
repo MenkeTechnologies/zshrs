@@ -1583,6 +1583,15 @@ impl ShellExecutor {
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
+        // zsh's man/info pages ride along with the function tree: same
+        // reason (zshrs is not installed under a zsh prefix), same
+        // one-stamp-read steady-state cost. This runs FIRST because it
+        // edits MANPATH/INFOPATH in the OS environment, and the env is
+        // read into paramtab further down -- publishing after that point
+        // left an inherited $INFOPATH untouched in the shell while the
+        // process environment carried the new value.
+        crate::bundled_docs::install_and_publish();
+
         // c:Src/init.c:1236-1259 — setupvals' pwd/oldpwd init, ported
         // here because the bin entry skips setupvals (see the
         // init_bltinmods note below). The validated value lands in the
@@ -1650,10 +1659,6 @@ impl ShellExecutor {
         // sits ahead of the user's additions. Materialised here (not only
         // when FPATH is absent) so an inherited FPATH from a shell that
         // lacks these still resolves is-at-least/colors/add-zsh-hook.
-        // zsh's man/info pages ride along with the function tree: same
-        // reason (zshrs is not installed under a zsh prefix), same
-        // one-stamp-read steady-state cost.
-        crate::bundled_docs::install_and_publish();
         if let Some(d) = crate::bundled_functions::functions_dir() {
             let _ = crate::bundled_functions::ensure_installed();
             if d.is_dir() && !fpath.contains(&d) {

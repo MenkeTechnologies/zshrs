@@ -137,20 +137,68 @@ fn prepend_search_path(var: &str, dir: &Path) {
     unsafe { std::env::set_var(var, next) };
 }
 
-/// Materialise the pages and put them on `MANPATH` / `INFOPATH`.
-///
-/// Called once from `ShellExecutor::new`, alongside
-/// `bundled_functions::ensure_installed`.
-pub fn install_and_publish() {
-    let _ = ensure_installed();
+/// The two directories to publish, once materialised.
+fn published_dirs() -> Vec<(&'static str, PathBuf)> {
+    let mut out = Vec::new();
     if let Some(d) = man_dir() {
         if d.is_dir() {
-            prepend_search_path("MANPATH", &d);
+            out.push(("MANPATH", d));
         }
     }
     if let Some(d) = info_dir() {
         if d.is_dir() {
-            prepend_search_path("INFOPATH", &d);
+            out.push(("INFOPATH", d));
         }
+    }
+    out
+}
+
+/// Materialise the pages and put them on `MANPATH` / `INFOPATH` in the OS
+/// environment, so any child process (`man`, `info`) inherits them.
+///
+/// Called from `ShellExecutor::new`. This alone does NOT make the shell's
+/// own `$MANPATH` / `$INFOPATH` show the new value when the variable was
+/// already in the inherited environment — paramtab is built from the
+/// process-entry `environ` snapshot taken in `main`, which a later
+/// `setenv` cannot reach. The binary entry calls [`publish_into`] on that
+/// snapshot for the shell-visible half.
+pub fn install_and_publish() {
+    let _ = ensure_installed();
+    for (var, dir) in published_dirs() {
+        prepend_search_path(var, &dir);
+    }
+}
+
+/// Materialise the pages and publish them into a process-entry `environ`
+/// snapshot before it is frozen.
+///
+/// c:Src/params.c:893 — `createparamtable` imports `environ` exactly as it
+/// was at process entry, and zshrs preserves that by snapshotting `envp`
+/// in `main`. An `$INFOPATH` inherited from the parent therefore keeps its
+/// old value in the shell no matter what the shell `setenv`s afterwards;
+/// `$MANPATH` only appeared to work because it is a PM_TIED colonarray
+/// re-derived from the live environment later. Editing the snapshot fixes
+/// both, and keeps the process environment in step for child commands.
+pub fn publish_into(env: &mut Vec<(String, String)>) {
+    let _ = ensure_installed();
+    for (var, dir) in published_dirs() {
+        let dir = dir.to_string_lossy().into_owned();
+        match env.iter_mut().find(|(k, _)| k == var) {
+            Some((_, v)) if !v.is_empty() => {
+                if !v.split(':').any(|e| e == dir) {
+                    *v = format!("{dir}:{v}");
+                }
+            }
+            Some((_, v)) => *v = format!("{dir}:"),
+            None => env.push((var.to_string(), format!("{dir}:"))),
+        }
+        // Keep the live environment in step so `man` / `info` launched as
+        // children see the same path the shell reports.
+        let val = env
+            .iter()
+            .find(|(k, _)| k == var)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        unsafe { std::env::set_var(var, val) };
     }
 }
