@@ -90,6 +90,29 @@ pub fn fire_async_precmd() {
         // Lightweight worker executor — shares the global param/function tables.
         let mut wex = crate::vm_helper::ShellExecutor::new_worker(pool_for_worker);
         for name in &names {
+            // A hook whose function is gone is SKIPPED, never executed as a
+            // command word. c:Src/utils.c:1514-1518 -- `callhookfunc` looks
+            // each `${hook}_functions` member up in `shfunctab` and only
+            // calls it `if (shfunc)`; a stale name is silently ignored. The
+            // ported loop in `ported::utils::callhookfunc` does the same.
+            //
+            // Running the name through the script pipeline instead made this
+            // path diverge: with no function to find, the word fell through
+            // to `execute_external` and printed
+            //     zshrs: command not found: :hist:precmd
+            // once per prompt, forever. Self-removing hooks reach that state
+            // by design -- zsh-hist registers `:hist:precmd`, and on its
+            // first run the body does `add-zsh-hook -d precmd $0` followed by
+            // `unfunction $0`. The delete names the `precmd` hook, so a copy
+            // registered on `async_precmd` keeps the now-dangling name.
+            //
+            // Looking the function up also skips a re-parse per hook per
+            // prompt, and stops the name being subjected to alias expansion
+            // and globbing on its way to being run.
+            if !wex.function_exists(name) {
+                tracing::debug!(hook = %name, "async_precmd: no such function — skipping");
+                continue;
+            }
             // Invoking the function by name runs its body on this worker; any
             // `typeset -g` lands in the shared global param table.
             let _ = wex.execute_script_zsh_pipeline(name);
