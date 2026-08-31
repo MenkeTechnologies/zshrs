@@ -542,7 +542,12 @@ fn interactive_shell_has_a_populated_fpath() {
     use std::os::unix::io::FromRawFd;
 
     let mut master: libc::c_int = 0;
-    let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    // `termp`/`winp` are `*mut` on macOS and `*const` on Linux; naming the
+    // pointee keeps one source compiling for both (a `*mut T` coerces to
+    // `*const T`, never the reverse).
+    let termp = std::ptr::null_mut::<libc::termios>();
+    let winp = std::ptr::null_mut::<libc::winsize>();
+    let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), termp, winp) };
     assert!(pid >= 0, "forkpty failed");
     if pid == 0 {
         // Child: an interactive shell with no rc files and no FPATH, which
@@ -619,11 +624,20 @@ fn interactive_shell_has_a_populated_fpath() {
 /// version component under `share/zsh`, the FHS layout does.
 #[test]
 fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
+    // Every layout zshrs runs on. macOS: Homebrew's Cellar (no version
+    // component under share/zsh) and its opt prefix. Linux: the FHS
+    // versioned tree, the unversioned one Debian ships, and Homebrew's
+    // Linux prefix -- which is /home/linuxbrew/.linuxbrew, NOT
+    // /opt/homebrew.
     let inherited = [
         "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
         "/usr/share/zsh/5.9/functions",
+        "/usr/share/zsh/functions",
+        "/home/linuxbrew/.linuxbrew/Cellar/zsh/5.9/share/zsh/functions",
         "/opt/homebrew/share/zsh/site-functions",
         "/usr/local/share/zsh/site-functions",
+        "/usr/share/zsh/site-functions",
+        "/home/linuxbrew/.linuxbrew/share/zsh/site-functions",
         "/tmp/zshrs-pin-plugin/src",
         "/tmp/zshrs-pin-zinit/completions",
     ];
@@ -638,6 +652,8 @@ fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
     for drop in [
         "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions",
         "/usr/share/zsh/5.9/functions",
+        "/usr/share/zsh/functions",
+        "/home/linuxbrew/.linuxbrew/Cellar/zsh/5.9/share/zsh/functions",
     ] {
         assert!(
             !entries.contains(&drop),
@@ -647,6 +663,8 @@ fn inherited_fpath_drops_distribution_tree_but_keeps_site_functions() {
     for keep in [
         "/opt/homebrew/share/zsh/site-functions",
         "/usr/local/share/zsh/site-functions",
+        "/usr/share/zsh/site-functions",
+        "/home/linuxbrew/.linuxbrew/share/zsh/site-functions",
         "/tmp/zshrs-pin-plugin/src",
         "/tmp/zshrs-pin-zinit/completions",
     ] {
