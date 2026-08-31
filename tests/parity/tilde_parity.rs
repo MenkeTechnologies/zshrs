@@ -335,3 +335,91 @@ mod tilde_in_match_pattern {
         );
     }
 }
+
+mod tilde_in_substitution_default {
+    use super::*;
+
+    /// `prefork` runs `filesub` on the word AFTER the substitution
+    /// (Src/subst.c:178-181), and `filesubstr` (c:741) matches the lexer's
+    /// `Tilde` TOKEN — so a `~` written inside a `${var:-word}` default is
+    /// tilde-expanded. zshrs parses the modifier out of an UNTOKENIZED copy of
+    /// the word, which folded the token to a plain `~` that `filesubstr`
+    /// correctly refuses, and the default came back literal. powerlevel10k's
+    /// `__p9k_dump_file` is exactly this shape
+    /// (`${XDG_CACHE_HOME:-~/.cache}/p10k-dump-$USER.zsh`).
+    #[test]
+    fn colon_default_expands_tilde() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-~/.cache}"#);
+    }
+
+    /// Bare `~` as the whole default.
+    #[test]
+    fn colon_default_bare_tilde() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-~}"#);
+    }
+
+    /// The no-colon form takes the same path.
+    #[test]
+    fn plain_default_expands_tilde() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T-~/.cache}"#);
+    }
+
+    /// `:=` expands the tilde AND assigns the expanded value.
+    #[test]
+    fn assign_default_expands_and_stores_tilde() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:=~/.cache}; print -r -- $ZR_T"#);
+    }
+
+    /// The alternate-value forms (`:+` / `+`) expand it too.
+    #[test]
+    fn alternate_value_expands_tilde() {
+        assert_parity(r#"ZR_T=1; print -r -- ${ZR_T:+~} ${ZR_T+~/x}"#);
+    }
+
+    /// `~user` resolves through the same path.
+    #[test]
+    fn named_user_tilde_in_default() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-~root}"#);
+    }
+
+    /// Inside double quotes the lexer never makes a `Tilde` token, so the
+    /// default stays literal — the guard against over-expanding.
+    #[test]
+    fn quoted_substitution_keeps_tilde_literal() {
+        assert_parity(r#"unset ZR_T; print -r -- "${ZR_T:-~/.cache}""#);
+    }
+
+    /// A single-quoted or backslash-escaped `~` in the default is literal.
+    #[test]
+    fn quoted_or_escaped_tilde_in_default_is_literal() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-'~'} ${ZR_T:-\~}"#);
+    }
+
+    /// A `~` that is not at the start of the word is not a tilde expansion.
+    #[test]
+    fn mid_word_tilde_in_default_is_literal() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-a~b}"#);
+    }
+
+    /// The expansion is a real path, so a following literal joins onto it —
+    /// this is p10k's actual dump-file expression.
+    #[test]
+    fn default_tilde_concatenates_with_suffix() {
+        assert_parity(
+            r#"unset ZR_XDG; print -r -- ${ZR_XDG:-~/.cache}/p10k-dump-x.zsh"#,
+        );
+    }
+
+    /// An unknown user still errors the way zsh errors.
+    #[test]
+    fn unknown_user_tilde_in_default_errors() {
+        assert_parity(r#"unset ZR_T; print -r -- ${ZR_T:-~zr_no_such_user}"#);
+    }
+
+    /// `${#var:-~}` counts the EXPANDED default (the length pre-pass shares
+    /// the same word handling).
+    #[test]
+    fn length_of_default_counts_expanded_tilde() {
+        assert_parity(r#"unset ZR_T; print -r -- $(( ${#ZR_T:-~} == ${#HOME} ))"#);
+    }
+}

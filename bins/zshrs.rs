@@ -1186,6 +1186,8 @@ fn main() {
 pub fn zshrs_main() {
     // Initialize logging first — everything after this can use tracing macros.
     let startup_t0 = Instant::now();
+    zsh::startup_trace::init(startup_t0);
+    zsh::startup_trace::mark("main entry");
 
     // Make sure ~/.zshrs exists with the default config files. Every
     // binary (zshrs / zshrs-daemon / zshrs-recorder / zd) does this,
@@ -1229,6 +1231,7 @@ pub fn zshrs_main() {
         }
     };
     zsh::log::init_named(log_name);
+    zsh::startup_trace::mark("log init");
 
     // Single-shot daemon-presence probe. Honors `[daemon].enabled` in
     // ~/.config/zshrs/zshrs.toml (auto / off / require). After this,
@@ -1237,11 +1240,13 @@ pub fn zshrs_main() {
     // shell runs in vanilla mode (re-evaluate every config per launch
     // — "rebuilding your house every morning").
     let _ = zsh::daemon_presence::probe();
+    zsh::startup_trace::mark("daemon probe");
 
     // Arm the lineage engine when `[provenance] track_all` asks for it.
     // Before this call the engine is inert whatever the config says —
     // nothing has read it.
     zsh::provenance::init_from_config();
+    zsh::startup_trace::mark("provenance init");
 
     // Pre-warm any per-process caches that depend on knowing the
     // current PID — pid lookup is cheap, but the call site here
@@ -2828,6 +2833,7 @@ pub fn zshrs_main() {
         startup_ms = startup_t0.elapsed().as_millis() as u64,
         "startup complete, entering main loop"
     );
+    zsh::startup_trace::mark("arg/mode dispatch done");
 
     // Recording-staleness oracle: the startup path ignores rc files and
     // replays the recorder shard, so an edited `.zshrc` is invisible until
@@ -2836,6 +2842,7 @@ pub fn zshrs_main() {
     // discoverable via `~/.cache/zshrs/zshrs.log` + `--doctor` instead of
     // silently serving yesterday's environment. One directory listing + a
     // few stats; no IPC, no re-source.
+    zsh::startup_trace::mark("before staleness check");
     if let Some(stale_rc) = zsh::daemon_presence::recording_staleness() {
         tracing::warn!(
             rc = %stale_rc,
@@ -2858,9 +2865,12 @@ pub fn zshrs_main() {
     // `execode` (init.c:220) runs each parsed program through the fusevm
     // VM. The executor must outlive zsh_main; it never drops because
     // zsh_main exits the process from inside loop().
+    zsh::startup_trace::mark("staleness check done");
     let executor = Box::leak(Box::new(ShellExecutor::new()));
+    zsh::startup_trace::mark("ShellExecutor::new");
     zsh::ported::exec::install_session_executor(executor);
     let argv: Vec<String> = std::env::args().collect();
+    zsh::startup_trace::mark("entering zsh_main");
     std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
 }
 
