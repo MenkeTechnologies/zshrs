@@ -1,0 +1,156 @@
+#compdef autoload declare export functions integer float local nameref private readonly typeset
+
+local expl state state_descr line func i use curcontext="$curcontext" ret=1
+local fopts="-f -k -z +k +z"
+local popts="-A +A -E +E -F +F -L +L -R +R -T -Z +Z -a +a -g +g -h +h -H +H -i +i -l +l -n +n -r +r -x +x"
+local -A allargs opt_args
+local -a args
+
+allargs=(
+  A "($fopts -A +A -E +E -F +F -L +L -R +R -T -U +U -Z +Z -a +a -i +i -m +m -n +n)-+A[specify that arguments refer to associative arrays]"
+  E "($fopts -A +A -E +E -F +F -L +L -R +R -T -U +U -Z +Z -a +a -i +i -m +m -n +n)-+E[floating point, use engineering notation on output]"
+  F "($fopts -A +A -E +E -F +F -L +L -R +R -T -U +U -Z +Z -a +a -i +i -m +m -n +n)-+F[floating point, use fixed point decimal on output]"
+  L "($fopts -A +A -E +E -F +F -L +L -R +R -i -n +n)-+L+[left justify and remove leading blanks from value]:width"
+  R "($fopts -A +A -E +E -F +F -L +L -R +R -i -n +n)-+R+[right justify and fill with leading blanks]:width"
+  T "($fopts -A +A -E -F -a +a -g -h -i -l +l -m +m -n +n -t)-T[tie scalar to array or trace function]"
+  Tf "($popts -t +t -T +T)-+T[trace execution of this function only]"
+  Tp "($fopts -A +A -E +E -F +F -a +a -g -h -i -l +l -m +m -n +n -t)-T[tie scalar to array]"
+  U '(-A +A -E +E -F +F -i)-U[keep array values unique and suppress alias expansion for functions]'
+  Uf '-U[suppress alias expansion for functions]'
+  Up '(-E +E -F +F -i -n +n)-+U[keep array values unique]'
+  X '+X[immediately autoload function]'
+  Z "($fopts -A +A -E +E -F +F -Z +Z -i -n +n)-+Z+[right justify and fill with leading zeros]:width"
+  a "($fopts -A +A -E +E -F +F -T -i +i)-+a[specify that arguments refer to arrays]"
+  df "-d[default absolute path autoload to fpath]"
+  f "($popts -f +f)-+f[specify that arguments refer to functions]"
+  g "($fopts -T)-+g[don't restrict parameter to local scope]"
+  h "($fopts -T -n +n)-+h[hide specialness of parameter]"
+  H "($fopts -T)-+H[hide value of parameter in listings]"
+  i "($fopts -A +A -E +E -F +F -T -n +n)-+i[represent internally as an integer]"
+  k "($popts -w -z)-+k[mark function for ksh-style autoloading]"
+  l "($popts -T -n +n)-+l[convert the value to lowercase]"
+  m '(-A +A -E +E -F +F -T -i -n)-+m[treat arguments as patterns]'
+  n "($fopts -A +A -E +E -F +F -L -R -T -U +U -Z +Z -a +a -i +i -h +h -l +l -m +m -t +t -x +x)-+n[make parameter a reference to another parameter]"
+  p '-p+[output parameters in form of calls to typeset]::option:((1\:multi-line\ output\ of\ arrays))'
+  r '(-f -r +r)-+r[mark parameters as readonly]'
+  rf '-r[remember autoload path]'
+  Rf '-R[remember autoload path, error if not found]'
+  t '(-T -n +n)-+t[tag parameters and turn on execution tracing for functions]'
+  tf '(-t +t -T +T)-+t[turn on execution tracing for functions]'
+  tp '(-T -n +n)-+t[tag parameters]'
+  u '-u[convert the value to uppercase or mark function for autoloading]'
+  uf '-u[mark function for autoloading]'
+  up '(-u +u)-+u[convert the value to uppercase]'
+  w '(-k -z)-w[specify that arguments refer to files compiled with zcompile]'
+  W '-+W[turn on WARN_NESTED_VAR for function]'
+  x "($fopts -n +n)-+x[export parameter]"
+  z "($popts -k -w)-+z[mark function for zsh-style autoloading]"
+)
+allargs[rp]="$allargs[r]"
+
+use="AEFHLRTUZafghiklmnprtuxz"
+
+case ${service} in
+  autoload)
+    use="URTXdkrtwz"
+    func=f
+  ;;
+  float) use="EFHghlprtux" func=p ;;
+  functions)
+    use="UkmTtuzW"
+    func=f
+    args=(
+      '(-k -t -T +T -u -U -W -x -z -M +M +k +t +W +z)-+M[define mathematical function]'
+      '(-k -m +m -t -T +T -u -U -W -x -z +M +k +t +W +z)-s[define mathematical function that takes a string argument]'
+      '(-M)-x+[specify spaces to use for indentation]:spaces'
+      '(-* +*)-c[copy shell function to another name]:old name:_functions:new name:_functions'
+    )
+  ;;
+  integer)
+    use="Hghilprtux"
+    func=p
+    allargs[i]='-i+[specify arithmetic base for output]:: :_guard "[0-9]#" base' \
+  ;;
+  readonly) use="${use//[nr]/}" func=p ;;
+  local) use="${use//[fgkpz]/}" func=p ;;
+  export) use="${use//[fgknxz]/}" func=p ;;
+  nameref) use="gpur" func=p ;;
+  private) use="${use//[fgkpzT]/}" func=p ;;
+esac
+
+[[ -z "${words[(r)-*[AEFHLRTZaghinrx]*]}" ]] || func=p
+[[ -z "${words[(r)-*f*]}" ]] || func=f
+[[ $service = nameref || -n "${words[(r)-*n*]}" ]] &&
+    allargs[up]='-u[reference the upper (calling function) scope]'
+
+# This function uses whacky features of _arguments which means we
+# need to look for options to the command beforehand.
+local onopts offopts
+onopts=${(j..)${${words[1,CURRENT-1]:#^-[^-]*}##-}}
+offopts=${(j..)${${words[1,CURRENT-1]:#^+*}##+}}
+
+for ((i=1;i<=$#use;++i)); do
+  args+=( ${allargs[${use[$i]}${${(s::)use[$i]}[(r)[dUurRtT]]:+$func}]} )
+done
+
+_arguments -C -s -A "-*" -S "${args[@]}" '*::vars:= ->vars_eq' && ret=0
+
+if [[ "$state" = vars_eq ]]; then
+  if [[ $func = f ]]; then
+    if (( $+opt_args[+M] || ( $+opt_args[-M] && $+opt_args[-m] ) )); then
+      _wanted functions expl 'math function' compadd -F line - \
+          ${${${(f)"$(functions -M)"}##*-M }%% *} && ret=0
+    elif (( $+opt_args[-M] )); then
+      _arguments ':new math function:_functions' \
+	":minimum arguments${(k)opt_args[-s]:+:(1)}" \
+	":maximum arguments${(k)opt_args[-s]:+:(1)}" \
+	':shell function:_functions' && ret=0
+    elif (( $+opt_args[-w] )); then
+      _wanted files expl 'zwc file' _files -g '*.zwc(-.)' && ret=0
+    elif [[ $service = autoload || -n $opt_args[(i)-[uU]] ]]; then
+      if [[ ${"${(e)PREFIX}"[1]} = [/~] ]] && _files; then
+	# Autoload by absolute path
+	ret=0
+      else
+	  args=(${^fpath}/*(-.:t))
+	  # Filter out functions already loaded or marked for autoload.
+	  local -a funckeys
+	  funckeys=(${(k)functions})
+	  args=(${args:|funckeys})
+	  _wanted functions expl 'shell function' compadd -a args && ret=0
+      fi
+    elif [[ -n $onopts$offopts ]]; then
+      if [[ -n $offopts ]]; then
+	args=(${(f)"$(functions +${offopts//[^UXkmtTuz]/})"})
+      else
+	args=(${(k)functions})
+      fi
+      if [[ -n $onopts ]]; then
+	local -a funckeys
+	funckeys=(${(f)"$(functions +${onopts//[^UXkmtTuz]/})"})
+	args=(${args:|funckeys})
+      fi
+      if zstyle -t ":completion:${curcontext}:functions" prefix-needed &&
+	[[ $PREFIX != [_.]* ]]; then
+	args=(${args:#_*})
+      fi
+      _wanted functions expl 'shell function' compadd -a args && ret=0
+    else
+      _functions && ret=0
+    fi
+  elif [[ "$PREFIX" = *\=* ]]; then
+    compstate[parameter]="${PREFIX%%\=*}"
+    compset -P 1 '*='
+    _value && ret=0
+  elif (( $+opt_args[-a] || $+opt_args[-A] )); then
+    _parameters -q && ret=0
+  elif (( $+opt_args[-T] )); then
+    _arguments \
+      ':scalar parameter:_parameters -g "*scalar*" -q -S "="' \
+      ':array parameter:_parameters -g "*array*"' \
+      ':separator character' && ret=0
+  else
+    _parameters -q -S '=' && ret=0
+  fi
+fi
+return ret

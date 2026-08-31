@@ -1,0 +1,18 @@
+#compdef dmidecode
+
+_arguments -s \
+  '(-d --dev-mem --from-dump)'{-d+,--dev-mem=}'[read memory from specified file]:memory device [/dev/mem]:_files' \
+  '(-)'{-h,--help}'[display usage information]' \
+  '(-q --quiet -u --dump)'{-q,--quiet}'[be less verbose]' \
+  '--no-quirks[decode everything without quirks]' \
+  '(-t --type -H --handle -u --dump --dump-bin -s --string)'{-s+,--string=}'[only display value of specified DMI string]:DMI string:compadd -M "r\:|-=* r\:|=*" - $(_call_program strings dmidecode --list-strings)' \
+  '--list-strings[list available string keywords]' \
+  '(-s --string -H --handle --dump-bin)*'{-t+,--type=}'[only display entries of specified type]:entry type:compadd - $(_call_program types dmidecode --list-types)' \
+  '--list-types[list available type keywords]' \
+  '(-s --string -t --type -H --handle --dump-bin)'{-H,--handle=}'[only display the entry of specified handle]:handle' \
+  '(-q --quiet -u --dump -s --string)'{-u,--dump}"[don't decode entries]" \
+  '(-s --string -t --type -H --handle)--dump-bin=[dump DMI data to a binary file]:file:_files' \
+  '(-d --dev-mem)--from-dump=[read DMI data from a binary file]:file:_files' \
+  "--no-sysfs[don't attempt to read DMI data from sysfs files]" \
+  '--oem-string=[only display the value of the specified OEM string]:OEM string number' \
+  '(-)'{-V,--version}'[display version information]'
