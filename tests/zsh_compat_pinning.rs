@@ -669,3 +669,97 @@ fn bundled_functions_materialise_and_resolve() {
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// zsh's man and info pages ship inside the binary and land in
+/// `~/.zshrs/{man,info}`, with those directories published on `MANPATH`
+/// and `INFOPATH`.
+///
+/// zsh's `make install` puts the pages under `<prefix>/share/{man,info}`,
+/// which `man` and `info` already search. zshrs is not installed under a
+/// zsh prefix, so `man zshall` worked only on a host that happened to have
+/// zsh installed -- while the pages document the language zshrs itself
+/// implements.
+///
+/// Two failure modes this pins, both of which shipped:
+///   1. the pages were written to `~/.zshrs/man1` while `MANPATH` named
+///      `~/.zshrs/man`, so nothing resolved;
+///   2. an INHERITED `MANPATH`/`INFOPATH` kept its old value in the shell,
+///      because paramtab is built from the process-entry `environ`
+///      snapshot and a later `setenv` cannot reach it.
+///
+/// Runs against a throwaway HOME so it never touches the user's tree.
+#[test]
+fn bundled_docs_materialise_and_publish_search_paths() {
+    let tmp = std::env::temp_dir().join(format!("zshrs-docs-pin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("mkdir temp HOME");
+
+    let run = |script: &str, manpath: Option<&str>| -> String {
+        let mut cmd = Command::new(zshrs_bin());
+        cmd.args(["--zsh", "-f", "-c", script])
+            .env("HOME", &tmp)
+            .env_remove("ZSHRS_CACHE")
+            .env_remove("INFOPATH");
+        match manpath {
+            Some(v) => cmd.env("MANPATH", v),
+            None => cmd.env_remove("MANPATH"),
+        };
+        let out = cmd.output().expect("invoke zshrs");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+
+    // First run materialises. The section directory must be BENEATH the
+    // MANPATH entry -- `man` resolves a page as <manpath>/man1/<name>.1.
+    let man1 = tmp.join(".zshrs").join("man").join("man1");
+    let info = tmp.join(".zshrs").join("info");
+    let manpath = run("print $MANPATH", None);
+    for page in ["zsh.1", "zshall.1", "zshbuiltins.1", "zshexpn.1", "zshmisc.1"] {
+        assert!(
+            man1.join(page).is_file(),
+            "{page} missing from {}",
+            man1.display()
+        );
+    }
+    for f in ["zsh.info", "zsh.info-1"] {
+        assert!(
+            info.join(f).is_file(),
+            "{f} missing from {}",
+            info.display()
+        );
+    }
+
+    // With MANPATH unset, ours leads and the trailing empty entry keeps
+    // the system default path spliced in -- a bare replacement would hide
+    // every other man page on the machine.
+    let want = tmp.join(".zshrs").join("man").display().to_string();
+    assert_eq!(
+        manpath,
+        format!("{want}:"),
+        "MANPATH must be our dir plus the default-path marker"
+    );
+    let infopath = run("print $INFOPATH", None);
+    assert_eq!(
+        infopath,
+        format!("{}:", info.display()),
+        "INFOPATH must be our dir plus the default-path marker"
+    );
+
+    // An inherited value is PREPENDED to, never replaced, and the shell
+    // must report the new value -- not the frozen entry-environ one.
+    let got = run("print $MANPATH", Some("/tmp/zshrs-pin-manpath"));
+    assert_eq!(
+        got,
+        format!("{want}:/tmp/zshrs-pin-manpath"),
+        "inherited MANPATH must survive behind ours"
+    );
+
+    // Re-entering must not stack a second copy.
+    let twice = run("print $MANPATH", Some(&format!("{want}:/tmp/zshrs-pin-manpath")));
+    assert_eq!(
+        twice,
+        format!("{want}:/tmp/zshrs-pin-manpath"),
+        "an already-published MANPATH must not be prepended again"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
