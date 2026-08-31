@@ -8143,10 +8143,25 @@ fn is_host_zsh_function_tree(p: &Path) -> bool {
 /// The versioned `<prefix>/share/zsh/<version>/functions` that C also
 /// seeds here is deliberately NOT included — see
 /// [`is_host_zsh_function_tree`]. `~/.zshrs/functions` supplies it, and is
-/// prepended by both constructors.
+/// appended by both constructors.
+///
+/// The prefix list is the set of places a package manager puts
+/// `share/zsh/site-functions` on the platforms zshrs targets. `/usr/local`
+/// and `/usr` cover Linux distributions and a from-source install;
+/// `/opt/homebrew` is Homebrew on Apple silicon, `/usr/local` doubles as
+/// Homebrew on Intel macOS, and `/home/linuxbrew/.linuxbrew` is
+/// Homebrew's Linux prefix — which is NOT `/opt/homebrew`, so a Linux box
+/// with brew-installed completions found none of them before it was
+/// listed. Only directories that exist are added, so naming a prefix
+/// costs nothing on a machine that lacks it.
 fn default_fpath() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = vec![PathBuf::from("/usr/local/share/zsh/site-functions")];
-    for pfx in ["/usr/local", "/opt/homebrew", "/usr"] {
+    for pfx in [
+        "/usr/local",
+        "/opt/homebrew",
+        "/home/linuxbrew/.linuxbrew",
+        "/usr",
+    ] {
         let site = PathBuf::from(format!("{pfx}/share/zsh/site-functions"));
         if site.is_dir() && !out.contains(&site) {
             out.push(site);
