@@ -2036,6 +2036,34 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
     init_io(cmd.as_deref()); // c:1908
     crate::startup_trace::mark("init_io");
     setupvals(cmd.as_deref(), runscript.as_deref(), &zsh_name); // c:1909
+    // c:Src/params.c:893-988 — createparamtable imports `environ` and, for
+    // an IPDEF8 PM_TIED colon-array, installs BOTH sides: the scalar and
+    // the array split on ':'. `setupvals` above re-seeds the specials from
+    // the static table, which leaves each tied array EMPTY; without the
+    // split, an interactive shell reached its first prompt with
+    //     typeset -aT FPATH fpath=(  )
+    // while `$FPATH` still held the full value.
+    //
+    // `path` masked this: `PATH` is always exported, so a later env import
+    // refilled it. zsh never exports `FPATH`, so nothing refilled that one,
+    // and `-c` never runs this path at all -- which is why only an
+    // interactive shell lost `$fpath`. A `.zshrc` doing the standard
+    // `fpath=( mydir $fpath )` then appended to nothing and the shell kept
+    // only what the rc file added.
+    for (arr, scalar) in crate::ported::params::TIED_COLON_ARRAYS {
+        let empty = crate::ported::params::getaparam(arr)
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if !empty {
+            continue;
+        }
+        let joined = crate::ported::params::getsparam(scalar).unwrap_or_default();
+        if joined.is_empty() {
+            continue;
+        }
+        let split: Vec<String> = joined.split(':').map(str::to_string).collect();
+        crate::ported::params::setaparam(arr, split);
+    }
     crate::startup_trace::mark("setupvals");
 
     init_signals(); // c:1911
