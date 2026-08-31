@@ -761,5 +761,43 @@ fn bundled_docs_materialise_and_publish_search_paths() {
         "an already-published MANPATH must not be prepended again"
     );
 
+    // `run-help`'s database. The vendored `run-help` defaults HELPDIR to
+    // the <prefix>/share/zsh/<ver>/help of whichever zsh built it -- a
+    // path that does not exist on a host without that exact install --
+    // so the shell has to point HELPDIR at the bundled tree itself.
+    let help = tmp.join(".zshrs").join("help");
+    for topic in ["zmodload", "bindkey", "autoload", "setopt"] {
+        assert!(
+            help.join(topic).is_file(),
+            "{topic} missing from {}",
+            help.display()
+        );
+    }
+    assert_eq!(
+        run("print $HELPDIR", None),
+        help.display().to_string(),
+        "HELPDIR must name the bundled help tree"
+    );
+    // `newuser`, which zsh's first-run path sources.
+    assert!(
+        tmp.join(".zshrs").join("scripts").join("newuser").is_file(),
+        "the scripts tree must materialise too"
+    );
+
+    // A user-chosen HELPDIR always wins: the shell fills an empty slot,
+    // it does not override.
+    let mine = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "print $HELPDIR"])
+        .env("HOME", &tmp)
+        .env("HELPDIR", "/tmp/zshrs-pin-helpdir")
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    assert_eq!(
+        String::from_utf8_lossy(&mine.stdout).trim(),
+        "/tmp/zshrs-pin-helpdir",
+        "an explicit HELPDIR must not be overwritten"
+    );
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
