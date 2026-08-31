@@ -1,0 +1,17 @@
+dirs [ -c ] [ arg ... ]
+dirs [ -lpv ]
+       With no arguments, print the contents of the directory  stack.   Di-
+       rectories  are  added  to this stack with the pushd command, and re-
+       moved with the cd or popd commands.   If  arguments  are  specified,
+       load  them  onto  the  directory  stack, replacing anything that was
+       there, and push the current directory onto the stack.
+
+       -c     clear the directory stack.
+
+       -l     print directory names in full instead of using of using ~ ex-
+              pressions (see Dynamic and Static named directories  in  zsh-
+              expn(1)).
+
+       -p     print directory entries one per line.
+
+       -v     number the directories in the stack when printing.

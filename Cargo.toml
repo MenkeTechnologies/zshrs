@@ -31,8 +31,11 @@ exclude = [
     "/editors/",
     "/scripts/",
     "/bench/",
-    "/vendor/",
-    "/completions/",
+    # NOT "/vendor/": build.rs packs vendor/zsh into the binary (the
+    # function tree, man/info/help pages, newuser) and hard-errors when a
+    # tree is missing, so excluding it shipped a crate that cannot build.
+    # vendor/fish is porting reference only -- no build step reads it.
+    "/vendor/fish/",
     "/zshrs_dump.*",
     "/tmux",
     "/zterm_columns",
@@ -42,7 +45,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.53"
+version = "0.12.54"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]

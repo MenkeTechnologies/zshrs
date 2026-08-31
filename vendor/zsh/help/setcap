@@ -1,0 +1,2 @@
+setcap
+       See the section `The zsh/cap Module' in zshmodules(1).
