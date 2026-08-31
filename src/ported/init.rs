@@ -2064,6 +2064,23 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
         let split: Vec<String> = joined.split(':').map(str::to_string).collect();
         crate::ported::params::setaparam(arr, split);
     }
+    // The bundled tree has to survive the re-seed too, and the split above
+    // does not restore it: with an INHERITED FPATH the array comes back
+    // non-empty (the env import refilled it), so the split is skipped --
+    // and the entry `ShellExecutor::new` appended lives only in the param
+    // it just overwrote. The result was that `~/.zshrs/functions` was
+    // present with FPATH unset and missing with FPATH set, in interactive
+    // shells only. Append it here, last, exactly as the constructor does.
+    if let Some(d) = crate::bundled_functions::functions_dir() {
+        if d.is_dir() {
+            let dir = d.to_string_lossy().into_owned();
+            let mut arr = crate::ported::params::getaparam("fpath").unwrap_or_default();
+            if !arr.iter().any(|e| *e == dir) {
+                arr.push(dir);
+                crate::ported::params::setaparam("fpath", arr);
+            }
+        }
+    }
     crate::startup_trace::mark("setupvals");
 
     init_signals(); // c:1911

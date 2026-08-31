@@ -3096,6 +3096,15 @@ impl ShellExecutor {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         if !fpath_final.is_empty() {
+            // The ENVIRONMENT has to carry the final value too, not just
+            // paramtab. `setupvals` re-seeds the tied specials and the
+            // split that refills `fpath` reads the FPATH string; with an
+            // inherited FPATH that string was still the one this process
+            // started with, so the bundled tree -- appended to the param
+            // only -- vanished the moment a shell was interactive AND had
+            // FPATH set. `-c` never re-seeds, which is why it kept showing
+            // the correct list.
+            unsafe { std::env::set_var("FPATH", fpath_final.join(":")) };
             exec.set_array("fpath".to_string(), fpath_final);
         }
         crate::startup_trace::mark("new() end");
@@ -8120,7 +8129,31 @@ pub use crate::ported::params::*;
 ///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions    drop
 ///     /opt/homebrew/share/zsh/site-functions                keep
 ///     ~/.zinit/plugins/…/src                                keep
-fn is_host_zsh_function_tree(p: &Path) -> bool {
+/// Strip a host zsh installation's own function tree out of an `fpath`
+/// assignment.
+///
+/// The rule has to hold on ASSIGNMENT, not only at startup. Filtering just
+/// the inherited `FPATH` left the door open: a `.zshrc` that re-adds
+/// `<prefix>/share/zsh/<ver>/functions`, or a plugin manager restoring a
+/// saved fpath, put a foreign zsh's `add-zsh-hook`, `compinit` and `_git`
+/// back ahead of the bundled copies. Observed on a real setup:
+///     add-zsh-hook is a shell function from
+///     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/add-zsh-hook
+/// so zshrs's own override -- the one that knows the `async_precmd` hook --
+/// never ran, and `add-zsh-hook async_precmd f` kept failing.
+///
+/// Lives here rather than beside its call sites because `src/ported/` is a
+/// port of the C source and takes no new functions.
+pub(crate) fn drop_host_zsh_function_trees(name: &str, val: Vec<String>) -> Vec<String> {
+    if name != "fpath" {
+        return val;
+    }
+    val.into_iter()
+        .filter(|e| !is_host_zsh_function_tree(Path::new(e)))
+        .collect()
+}
+
+pub(crate) fn is_host_zsh_function_tree(p: &Path) -> bool {
     if p.file_name() != Some(OsStr::new("functions")) {
         return false;
     }
