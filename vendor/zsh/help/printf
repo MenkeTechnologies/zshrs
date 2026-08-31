@@ -1,0 +1,34 @@
+printf [ -v name ] format [ arg ... ]
+       Print  the  arguments according to the format specification. Format-
+       ting rules are the same as used in C. The same escape  sequences  as
+       for  echo  are recognised in the format. All C conversion specifica-
+       tions ending in one of csdiouxXeEfgGn are handled.  In  addition  to
+       this,  `%b' can be used instead of `%s' to cause escape sequences in
+       the argument to be recognised and `%q' can be used to quote the  ar-
+       gument  in  such  a  way that allows it to be reused as shell input.
+       With the numeric format specifiers, if  the  corresponding  argument
+       starts  with  a  quote character, the numeric value of the following
+       character is used as the number to print; otherwise the argument  is
+       evaluated  as  an arithmetic expression. See the section `Arithmetic
+       Evaluation' in zshmisc(1) for a description  of  arithmetic  expres-
+       sions.  With `%n', the corresponding argument is taken as an identi-
+       fier which is created as an integer parameter.
+
+       Normally, conversion specifications are applied to each argument  in
+       order but they can explicitly specify the nth argument is to be used
+       by  replacing `%' by `%n$' and `*' by `*n$'.  It is recommended that
+       you do not mix references of this explicit  style  with  the  normal
+       style and the handling of such mixed styles may be subject to future
+       change.
+
+       If  arguments  remain  unused after formatting, the format string is
+       reused until all  arguments  have  been  consumed.  With  the  print
+       builtin,  this can be suppressed by using the -r option. If more ar-
+       guments are required by the format than have been specified, the be-
+       haviour is as if zero or an empty string had been specified  as  the
+       argument.
+
+       The -v option causes the output to be stored as the value of the pa-
+       rameter name, instead of printed. If name is an array and the format
+       string  is  reused  when  consuming arguments then one array element
+       will be used for each use of the format string.

@@ -1,6 +1,11 @@
 /target
 /compsys/target
 zsh/
+# ...but vendor/zsh IS the shipped payload: build.rs packs its functions,
+# man1, info, help and scripts trees into the binary and hard-errors when
+# one is missing. The rule above exists for src/zsh (the upstream C
+# checkout kept as porting reference), which stays ignored.
+!/vendor/zsh/
 docs/PORT.md
 
 # Paid products — companion book + reference manual PDF + their build pipeline —

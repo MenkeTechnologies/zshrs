@@ -1,0 +1,5 @@
+let arg ...
+       Evaluate  each  arg  as  an  arithmetic expression.  See the section
+       `Arithmetic Evaluation' in zshmisc(1) for a  description  of  arith-
+       metic  expressions.   The  exit status is 0 if the value of the last
+       expression is nonzero, 1 if it is zero, and 2 if an error occurred.
