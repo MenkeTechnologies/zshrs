@@ -1,0 +1,110 @@
+#compdef softwareupdate
+
+# rebuild cache for available updates everyday (ad hoc)
+_softwareupdate_caching_policy() {
+  local -a newer=( "$1"(Nmd-1) )
+  return $#newer
+}
+
+# completes available updates (with description)
+
+_softwareupdate_update_names () {
+  local name line update_policy ret=1
+  local cache_id=softwareupdate-updates
+  zstyle -s ":completion:${curcontext}:" cache-policy update_policy
+  if [[ -z "$update_policy" ]]; then
+    zstyle ":completion:${curcontext}:" cache-policy \
+                                      _softwareupdate_caching_policy
+ fi
+ if { [[ ! -v _softwareupdate_updates ]] || _cache_invalid $cache_id } &&
+    ! _retrieve_cache $cache_id; then
+    # Output format of 'softwareupdate --list' seems to be not stable,
+    # but at least on macOS 12 and 13 it contains the following two lines
+    # for each update:
+    #* Label: update name (may contain spaces)
+    #        Title: description of the update (single TAB before Title:)
+    # softwareupdate(1) manpage says the '*' before the Label: is replaced
+    # by '-' for non-recommended updates (but I've never seen it).
+    _softwareupdate_updates=()
+    for line in ${(f)"$(_call_program updates softwareupdate --list)"}; do
+      if [[ $line = [-\*]\ Label:\ (#b)(*) ]]; then
+        # add '*' or '-' in front of the name; this will be removed later
+        name=$line[1]$match[1]
+      elif [[ -n $name && $line = $'\t'Title:\ (#b)(*) ]]; then
+        _softwareupdate_updates+=( $name:$match[1] )
+        name=
+      fi
+    done
+    _store_cache $cache_id _softwareupdate_updates
+  fi
+  # recommended and non-recommended updates
+  local rec=( ${${_softwareupdate_updates:#-*}#\*} )
+  local non=( ${${(M)_softwareupdate_updates:#-*}#-} )
+  _describe -t updates "update" rec && ret=0
+  _describe -t non-recommended-updates "non-recommended update" non && ret=0
+  return ret
+}
+
+# completes versions of available macOS full installer (with description)
+
+_softwareupdate_installer_versions () {
+  local versions=()
+  for line in ${(f)"$(_call_program installer-versions
+                        softwareupdate --list-full-installers 2>/dev/null)"}; do
+    if [[ $line = \*\ Title:\ *\ Version:\ (#b)([0-9.]##)* ]]; then
+      versions+=( ${match[1]}:${line#*Title: } )
+    fi
+  done
+  _describe -t insteller-versions "version" versions
+}
+
+# main completion script
+
+_softwareupdate() {
+  local -a specs
+
+  if (( ${words[(I)(-i|--install)]} == 0 )); then
+    specs=(
+      '--no-scan[do not scan when listing or installing updates]'
+      '--product-types[limit a scan to a particular product type only]:list of product types'
+      '--products[a comma separated list of product keys to operate on]:list of product keys'
+      '--force[force an operation to complete]'
+      '--agree-to-license[agree to the software license agreement without user interaction]'
+      '--verbose[enable verbose output]'
+      '(* -)'{-h,--help}'[print command usage]:*:'
+
+      + '(operation)'
+
+      {-l,--list}'[list all available updates]'
+      {-d,--download}'[download but not install specified updates]:*: : _softwareupdate_update_names'
+      {-i,--install}'[download and install specified updates]'
+      '(* -)--list-full-installers[list the available macOS installers]'
+      '(* -)--fetch-full-installer[install the latest recommended macOS installer]: :(--full-installer-version): : _softwareupdate_installer_versions'
+      '--install-rosetta[install Rosetta 2 (Apple Silicon only)]'
+      '(* -)--schedule[returns the per-machine automatic check preference]'
+      '--background[trigger a background scan and update operation]'
+      '(* -)--dump-state[log the internal state of the SU daemon to /var/log/install.log]'
+      '--evaluate-products[evaluate a list of product keys specified by the --products option]'
+      '--history[show the install history]'
+    )
+  else    # if -i/--install is already on the command line
+    specs=(
+      !{-i,--install}
+      '(-R --restart)'{-R,--restart}'[automatically restart if required to complete installation]'
+      '--stdinpass[password to authenticate as an owner (Apple Silicon only)]'
+      '--user[local username to authenticate as an owner (Apple Silicon only)]'
+      '*: : _softwareupdate_update_names'
+
+      + '(select-updates)'
+
+      '(*)'{-a,--all}'[all updates that are applicable to your system]'
+      '(*)'{-r,--recommended}'[all updates recommended for your system]'
+      '(*)--os-only[only macOS updates]'
+      '(*)--safari-only[only Safari updates]'
+    )
+  fi
+
+  _arguments -s : $specs
+}
+
+_softwareupdate "$@"

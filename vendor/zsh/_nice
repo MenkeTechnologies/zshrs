@@ -1,0 +1,23 @@
+#compdef nice
+
+local -a specs=( '*:: : _normal -p $service' )
+
+# See if the 1st arg is such as -10 --10 or -+10
+if [[ $words[2] = -(-|+|)[0-9]## ]]; then
+  if (( $CURRENT == 2 )); then
+    _message 'niceness increment' && return
+  fi
+  compset -n 2  # Ignore the 1st arg
+else
+  if _pick_variant gnu='(GNU|uutils)' unix --version; then
+    specs+=(
+      '(-)'{-n+,--adjustment=}'[adjust niceness]:niceness increment'
+      '(* -)--help[display help and exit]'
+      '(* -)--version[output version information and exit]'
+    )
+  else
+    specs+=( '-n+[specify increment of niceness]:niceness increment' )
+  fi
+fi
+
+_arguments : $specs

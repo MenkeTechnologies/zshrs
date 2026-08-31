@@ -1,0 +1,42 @@
+#compdef jq
+
+local ign
+(( $#words > 2 )) && ign='!'
+
+# Note:
+#   Arguments to options must be in separate words.  Thus,
+#     {-f,--from-file}'[foo]'
+#   is correct like that, without the usual {-f+,--from-file=} suffixes.
+#
+_arguments -S -s : \
+  "${ign}(- 1 *)"{-V,--version}'[display version information]' \
+  "${ign}(- 1 *)"{-h,--help}'[display help information]' \
+  "${ign}(- 1 *)--build-configuration[display jq's build configuration]" \
+  "--seq[use application/json-seq ASCII RS/LF scheme in input and output]" \
+  "(--stream-errors -n --null-input)--stream[parse the input value in streaming fashion]" \
+  '(--stream -n --null-input)--stream-errors[parse the input value in streaming fashion with errors as an array]' \
+  '(-s --slurp -n --null-input)'{-s,--slurp}'[read all inputs into an array and use it as single input value]' \
+  '(-R --raw-input -n --null-input)'{-R,--raw-input}'[read each line as string instead of JSON]' \
+  '(-n --null-input --stream --stream-errors -s --slurp -R --raw-input)'{-n,--null-input}'[use `null` as the single input value]' \
+  '(-c --compact-output)'{-c,--compact-output}"[don't pretty-print]" \
+  '(--indent)--tab[indent output using TAB characters]' \
+  '(--tab)--indent[indent output using given number of spaces]:number of spaces (integer):(-1 0 1 2 3 4 5 6 7)' \
+  '(-C --color-output -M --monochrome-output)'{-C,--color-output}'[output in color]' \
+  '(-C --color-output -M --monochrome-output)'{-M,--monochrome-output}'[output without color]' \
+  '(-a --ascii-output)'{-a,--ascii-output}'[restrict output to ASCII using escape sequences]' \
+  '--unbuffered[flush output after each JSON object]' \
+  '(-S --sort-keys)'{-S,--sort-keys}'[output object keys in sorted order]' \
+  '(-r --raw-output -j --join-output --raw-output0)'{-r,--raw-output}"[don't JSON-quote output if it's a string]" \
+  '(-r --raw-output -j --join-output)--raw-output0[like -r, with NUL after each output]' \
+  '(-r --raw-output --raw-output0 -j --join-output)'{-j,--join-output}"[like -r, without newlines between outputs]" \
+  '(-f --from-file)'{-f,--from-file}'[read filter from file]: :_files' \
+  '-L+[prepend a directory to the module search path]:_directories' \
+  '(-e --exit-status)'{-e,--exit-status}'[report "false" and "null" results via exit code]' \
+  '*--arg[pre-set a variable to a string]:variable name: :value (string)' \
+  '*--argjson[pre-set a variable to an object]:variable name: :value (JSON)' \
+  '*--slurpfile[pre-set a variable to an array of JSON texts read from a file]:variable name: :file:_files' \
+  '*--rawfile[pre-set a variable to the contents of a file]:variable name: :file:_files' \
+  '--args[remaining arguments are string arguments, not files]' \
+  '--jsonargs[remaining arguments are JSON arguments, not files]' \
+  "1: :_guard '|[^-]' filter" \
+  "*: :_files"
