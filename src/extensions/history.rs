@@ -73,6 +73,7 @@ impl HistoryEngine {
         // it has to land high in the first place. See crate::lowfd.
         let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(&path)?;
+        crate::startup_trace::mark("hist: sqlite open");
         // c:Src/utils.c:2007-2010 — every descriptor the shell takes for
         // itself is recorded as `FDT_INTERNAL`. SQLite never hands back a
         // descriptor, so the registration cannot ride along with the open
@@ -80,10 +81,21 @@ impl HistoryEngine {
         crate::lowfd::register_internal_fds();
         let engine = Self { conn };
         engine.init_schema()?;
-        let count = engine.count().unwrap_or(0);
+        crate::startup_trace::mark("hist: init_schema");
+        // The exact row count is a `SELECT COUNT(*)` — a full table scan that
+        // costs ~37 ms on a 775k-row / 1.2 GB history and ran on EVERY shell
+        // start purely to fill in this log line (measured with
+        // `ZSHRS_STARTUP_TRACE=1`: it was the single largest item in
+        // time-to-first-prompt). `MAX(rowid)` answers from the b-tree's
+        // rightmost leaf instead — O(depth), and equal to the count until rows
+        // are deleted, which is why it is reported as an ESTIMATE. Callers
+        // that need the true number (the `--doctor` report, `fc -l` bounds)
+        // still call `count()`.
+        let est = engine.count_estimate().unwrap_or(0);
+        crate::startup_trace::mark("hist: count estimate");
         let db_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         tracing::info!(
-            entries = count,
+            entries_est = est,
             db_bytes = db_size,
             path = %path.display(),
             "history: sqlite opened"
@@ -92,9 +104,11 @@ impl HistoryEngine {
         // Rehydrate the flat text mirror from the sqlite index when
         // the text file is missing or stale (size 0 with a populated
         // db). Cheap: one-shot chronological dump, no FTS / no joins.
+        crate::startup_trace::mark("hist: metadata + log");
         if let Err(e) = engine.rehydrate_text_if_stale() {
             tracing::warn!(?e, "history: failed to rehydrate text mirror; continuing");
         }
+        crate::startup_trace::mark("hist: rehydrate_text_if_stale");
         Ok(engine)
     }
     /// `in_memory` — see implementation.
@@ -497,6 +511,21 @@ impl HistoryEngine {
     pub fn count(&self) -> rusqlite::Result<i64> {
         self.conn
             .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+    }
+
+    /// Row-count ESTIMATE that does not scan the table.
+    ///
+    /// `MAX(rowid)` is resolved by descending to the rightmost leaf of the
+    /// rowid b-tree, so it is independent of table size where `COUNT(*)` is
+    /// linear in it (37 ms at 775k rows). It equals the true count for an
+    /// append-only history and over-reports by the number of deleted rows
+    /// otherwise — good enough for a log line, never used for arithmetic on
+    /// history events.
+    pub fn count_estimate(&self) -> rusqlite::Result<i64> {
+        self.conn
+            .query_row("SELECT IFNULL(MAX(rowid), 0) FROM history", [], |row| {
+                row.get(0)
+            })
     }
 
     /// Get entry by index from end (0 = most recent, like !-1)

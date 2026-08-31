@@ -981,32 +981,39 @@ pub fn module_path_init() {
     static MODULE_DIR_CACHE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let module_dir: Vec<String> = MODULE_DIR_CACHE
         .get_or_init(|| {
-            use std::process::Command;
-            let candidates = [
-                "/opt/homebrew/bin/zsh",
-                "/usr/local/bin/zsh",
-                "/bin/zsh",
-                "/usr/bin/zsh",
-            ];
-            for path in candidates {
-                if !std::path::Path::new(path).exists() {
-                    continue;
-                }
-                let out = Command::new(path)
-                    .args(["-fc", "print -r ${module_path[1]}"])
-                    .output();
-                if let Ok(o) = out {
-                    if o.status.success() {
-                        let s = String::from_utf8_lossy(&o.stdout)
-                            .trim_end_matches('\n')
-                            .to_string();
-                        if !s.is_empty() {
-                            return vec![s];
-                        }
-                    }
-                }
+            // c:Src/init.c:1176 — `module_path = mkarray(ztrdup(MODULE_DIR))`,
+            // where `MODULE_DIR` is the C build's configure-time install
+            // prefix: the directory holding the `.so`/`.bundle` files that
+            // `try_load_module` (c:Src/module.c:1583) dlopens.
+            //
+            // zshrs's module directory is ITS OWN — `$ZSHRS_HOME/modules`,
+            // default `~/.zshrs/modules`, the single-directory rule every
+            // other zshrs artifact follows. It is emphatically NOT any zsh C
+            // installation's `lib`: zshrs links its modules statically (the
+            // port's `try_load_module` answers from `module_linked`, never
+            // from a path search) and its runtime-loadable modules are
+            // `znative` cdylibs reached through `zmodload -R`, which takes an
+            // explicit path. Pointing this parameter at a foreign zsh's
+            // bundle directory named files zshrs can never load, made the
+            // value depend on which zsh happened to be installed, and — in
+            // the shape this replaces — spent 7.3 ms of every single startup
+            // forking `zsh -fc 'print -r ${module_path[1]}'` to ask.
+            //
+            // Consequence, stated plainly: `$module_path` does not match the
+            // system zsh's, the same way `$0` does not (both are properties
+            // of the running binary's own installation).
+            let home = std::env::var_os("ZSHRS_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".zshrs"))
+                });
+            match home {
+                Some(h) => vec![h.join("modules").to_string_lossy().into_owned()],
+                // No $HOME and no $ZSHRS_HOME: C leaves `module_path` a
+                // one-element array whatever MODULE_DIR was, so keep the
+                // shape rather than inventing a path.
+                None => vec![String::new()],
             }
-            Vec::new()
         })
         .clone();
     let scalar_join = module_dir.join(":");
@@ -2027,11 +2034,16 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
 
     SHTTY.store(-1, Ordering::SeqCst); // c:1907
     init_io(cmd.as_deref()); // c:1908
+    crate::startup_trace::mark("init_io");
     setupvals(cmd.as_deref(), runscript.as_deref(), &zsh_name); // c:1909
+    crate::startup_trace::mark("setupvals");
 
     init_signals(); // c:1911
+    crate::startup_trace::mark("init_signals");
     init_bltinmods(); // c:1912
+    crate::startup_trace::mark("init_bltinmods");
     crate::ported::builtin::init_builtins(); // c:1913
+    crate::startup_trace::mark("init_builtins");
 
     // `setupvals` above is what opens the shell's own long-lived files —
     // the log, the history database, the plugin cache — and none of them
@@ -2091,8 +2103,11 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
     // own per-command context, and a broad/global executor scope would
     // re-enter on nested command substitution and hang.
     crate::fusevm_bridge::with_session_context(run_init_scripts); // c:1914
+    crate::startup_trace::mark("run_init_scripts");
     setupshin(runscript.as_deref()); // c:1915
+    crate::startup_trace::mark("setupshin");
     init_misc(cmd.as_deref(), &zsh_name); // c:1916
+    crate::startup_trace::mark("init_misc");
 
     loop {
         // c:1918

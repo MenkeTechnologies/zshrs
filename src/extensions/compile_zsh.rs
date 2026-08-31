@@ -4204,8 +4204,31 @@ impl ZshCompiler {
                 // resolved to a literal `$`) does NOT route through the word
                 // compiler and get re-expanded.
                 let key_has_expansion = !key_is_ansi_c_literal && key_live_expansion;
+                // The word compiler recognises `$( … )` and `$(( … ))` only in
+                // the LEXER's tokenized spelling — `Stringg` + `Inpar` /
+                // `Inparmath` (compile_zsh.rs:9835, 13183). `untoked_name`
+                // above folded those tokens back to ASCII `$(`, which the
+                // compiler emits verbatim, so `h[x$((1+1))]=v` stored the
+                // LITERAL key `x$((1+1))` where zsh stores `x2`
+                // (c:Src/params.c:1585-1592 `parsestr` + `singsub` expand the
+                // subscript before it is used as a key). A subscript that is
+                // NOTHING BUT `$((…))` survived only because it takes the
+                // whole-word arithmetic path. Hand those two shapes the
+                // tokenized slice of the subscript instead; `$var`, `${…}` and
+                // backticks are already resolved from the ASCII text.
+                let key_tokenized: Option<String> = if key_has_expansion && key.contains("$(") {
+                    use crate::ported::zsh_h::{Inbrack, Outbrack};
+                    let raw = assign.name.as_str();
+                    raw.find(Inbrack).and_then(|lb| {
+                        raw.strip_suffix(Outbrack)
+                            .map(|r| r[lb + Inbrack.len_utf8()..].to_string())
+                    })
+                } else {
+                    None
+                };
+                let key_word: &str = key_tokenized.as_deref().unwrap_or(key);
                 if key_has_expansion {
-                    self.compile_word_str(key);
+                    self.compile_word_str(key_word);
                 } else {
                     let key_const = self.builder.add_constant(Value::str(key));
                     self.builder.emit(Op::LoadConst(key_const), 0);
@@ -4214,7 +4237,7 @@ impl ZshCompiler {
                     // Append: dup name+key, GET_VAR via assoc, Concat with new tail
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     if key_has_expansion {
-                        self.compile_word_str(key);
+                        self.compile_word_str(key_word);
                     } else {
                         let key_const = self.builder.add_constant(Value::str(key));
                         self.builder.emit(Op::LoadConst(key_const), 0);
@@ -7801,6 +7824,43 @@ impl ZshCompiler {
         let in_dq = raw_dq_word || self.dq_context_depth > 0;
         if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
             if let Some(mut modifier) = parsed_mod {
+                // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word
+                // AFTER `stringsubst`, so a `~` the LEXER turned into a `Tilde`
+                // token (c:Src/lex.c:432) inside a `${var:-…}` default is tilde-
+                // expanded exactly like a bare `~`: `filesubstr` (c:741) tests
+                // for the TOKEN, and paramsubst copies the default's characters
+                // through with their tokens intact.
+                //
+                // This lowering parses the modifier out of the UNTOKENIZED word
+                // (`untoked` above), where the token has already been folded
+                // back to an ASCII `~` that `filesubstr` correctly refuses, so
+                // `${XDG_CACHE_HOME:-~/.cache}` came back literal. That is
+                // powerlevel10k's dump-file path (powerlevel10k.zsh-theme:62):
+                // p10k looked for `~/.cache/p10k-dump-<user>.zsh`, never found
+                // it, and — with the dump missing — never reached the async
+                // worker start in `_p9k_init`, so every worker-backed segment
+                // (battery / ram / disk / load / …) stayed empty. It also made
+                // the shell CREATE a literal `~` directory when a config wrote
+                // to such a path.
+                //
+                // Restore the token for a default that BEGINS with `~`, which is
+                // the only position `filesub` acts on outside an assignment
+                // (c:674-675 returns before the `:`/`=` scan when `assign` is 0).
+                // The DQ path is already excluded above (`in_dq`), and `\~`
+                // carries a `Bnull` that the `has_bnull` gate keeps out, so the
+                // only spelling left to protect is `'~'` — a single-quoted
+                // default reaches here with its `Snull` markers still in the
+                // TOKENIZED word, which is what the guard checks.
+                if let crate::compile_zsh::ParamModifierKind::DefaultFamily { rhs, .. } =
+                    &mut modifier.kind
+                {
+                    if rhs.starts_with('~')
+                        && s.contains(crate::ported::zsh_h::Tilde)
+                        && !s.contains(crate::ported::zsh_h::Snull)
+                    {
+                        rhs.replace_range(..1, &crate::ported::zsh_h::Tilde.to_string());
+                    }
+                }
                 // Default-word glob bracket for the native `:-`/`-`/`:+`/`+`
                 // lowering (#2 default-word globbing). DefaultFamily routes
                 // through BUILTIN_PARAM_DEFAULT_FAMILY → paramsubst, whose

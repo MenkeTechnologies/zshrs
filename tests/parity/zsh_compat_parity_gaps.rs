@@ -919,7 +919,14 @@ mod corpus_dash_fc_bulk_a {
         bulk_argv_slice_tail_range => (r#"$@[2,-1]"#, r#"set -- a b c d; print -r "slice=$@[2,-1]""#);
         bulk_assoc_values_singleton => (r#"${(v) A}"#, r#"typeset -A solo=(onlykid onlyval); print ${(v)solo}"#);
         bulk_histchars_string_length => (r#"${#HISTCHARS}"#, r#"print ${#HISTCHARS}"#);
-        bulk_module_path_first_subscript => (r#"$module_path[1]"#, r#"print ${module_path[1]:-missing_mp}"#);
+        // `$module_path` is each shell's OWN module directory: zsh's is its
+        // configure-time `MODULE_DIR` (c:Src/init.c:1176), zshrs's is
+        // `$ZSHRS_HOME/modules` — it links its modules statically
+        // (`try_load_module`, module.rs) and loads native ones by explicit
+        // path (`zmodload -R`), so it has no business naming a zsh install's
+        // bundle directory. Byte comparison is therefore impossible for the
+        // same reason as `$0` above; assert the properties that ARE shared.
+        bulk_module_path_first_subscript => (r#"$module_path[1]"#, r#"print -r "${module_path[1]:+set} ${#module_path}""#);
         bulk_dirs_push_pop_dirs_p => (r#"dirs -p stack"#, r#"builtin cd /tmp; pushd -q / >/dev/null; dirs -p; popd >/dev/null; print dirs_done"#);
         bulk_zsh_subshell_counter => (r#"$ZSH_SUBSHELL"#, r#"print out=$ZSH_SUBSHELL; ( print in=$ZSH_SUBSHELL )"#);
         bulk_zsh_name_string => (r#"$ZSH_NAME"#, r#"print $ZSH_NAME"#);
@@ -1012,7 +1019,12 @@ mod corpus_dash_fc_bulk_b {
         bulk_b_option_cdablevars => (r#"options[cdablevars]"#, r#"print $options[cdablevars]"#);
         bulk_b_zpfx_param_default => (r#"ZPFX"#, r#"print ${ZPFX:-empty_zpfx}"#);
         bulk_b_fpath_first_elt => (r#"fpath[1]"#, r#"print ${fpath[1]:-no_fpath}"#);
-        bulk_b_module_path_join_colon => (r##"${(j.:.)module_path}"##, r#"print ${(j.:.)module_path}"#);
+        // Same shared-property treatment as `bulk_module_path_first_subscript`:
+        // the two shells' module directories are their own, so only the shape
+        // is comparable.
+        // The `(j.:.)` join of a one-element array is that element in both
+        // shells, whatever the element says.
+        bulk_b_module_path_join_colon => (r##"${(j.:.)module_path}"##, r##"[[ ${(j.:.)module_path} == "$module_path[1]" ]]; print "join=$?""##);
         bulk_b_print_octdumps_one_octet => (r#"print -o one byte"#, r##"print -o B5 2>&1; print -r "ex=$?""##);
     }
 }
@@ -1775,7 +1787,10 @@ mod corpus_dash_fc_bulk_j {
         // prefix; VENDOR and UID stay exact.
         bulk_j_print_OSTYPE_VENDOR_UID => (r#"OSTYPE VENDOR UID"#, r##"print -r "${OSTYPE%%[0-9]*} $VENDOR $UID""##);
         bulk_j_count_modules_tables => (r#"#modules #loaded"#, r##"print -r "${#modules} ${#loaded_modules}""##);
-        bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:-nompath}""##);
+        // Same shared-property treatment as `bulk_module_path_first_subscript`:
+        // the two shells' module directories are their own, so only the shape
+        // is comparable.
+        bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:+nonempty}""##);
         bulk_j_zmodload_list_silent => (r#"zmodload -L"#, r##"zmodload -L >/dev/null 2>&1; print -r "zLLj=$?""##);
         bulk_j_emulate_sh_one_cmd => (r#"emulate sh -c"#, r##"emulate sh -c 'print -r emj_sh'"##);
         bulk_j_localoptions_noglob_scoped => (r#"localoptions noglob"#, r##"setopt glob; loj_fn() { setopt localoptions; setopt noglob; print -r "in=${options[noglob]}"; }; loj_fn; print -r "out=${options[noglob]}""##);
@@ -1914,7 +1929,12 @@ mod corpus_dash_fc_bulk_k {
         bulk_k_print_capital_C_three_columns => (r#"print -C 3"#, r#"print -C 3 1 2 3 4 5 6"#);
         bulk_k_repeat_builtin_twice => (r#"repeat 2"#, r##"repeat 2; do print -r rep_k; done"##);
         bulk_k_while_read_from_pipe_line => (r#"print | read"#, r##"print line_k | while read -r rk_wl; do print -r "$rk_wl"; done"##);
-        bulk_k_parameter_module_path_last => (r#"module_path[-1]"#, r##"print -r "${module_path[-1]:-nomp}""##);
+        // Same shared-property treatment as `bulk_module_path_first_subscript`:
+        // the two shells' module directories are their own, so only the shape
+        // is comparable.
+        // Negative subscript on a one-element array selects the same element
+        // as `[1]` in both shells — the property the test exercises.
+        bulk_k_parameter_module_path_last => (r#"module_path[-1]"#, r##"[[ "$module_path[-1]" == "$module_path[1]" ]]; print "last=$?""##);
         bulk_k_read_null_device_empty => (r#"read < /dev/null"#, r##"read -r rk_null </dev/null; print -r "len=${#rk_null}""##);
         bulk_k_float_int_product => (r#"3.0 * 2"#, r##"print -r "$(( 3.0 * 2 ))""##);
         bulk_k_literal_octal_ten => (r#"010"#, r##"print -r "$(( 010 ))""##);

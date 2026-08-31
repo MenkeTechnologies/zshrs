@@ -6026,7 +6026,56 @@ pub fn paramsubst(
                     }
                 }
             }
-            let inner: String = body_chars[start..p].iter().collect(); // c:2671
+            let inner_raw: String = body_chars[start..p].iter().collect(); // c:2671
+            // c:Src/lex.c:1167-1169 — `case LX2_COMMA: if (unset(IGNOREBRACES)
+            // && !sub && bct > in_brace_param) c = Comma;`. C re-lexes a nested
+            // substitution's text with `sub = 1` (`parse_subst_string` →
+            // `gettokstr(c, 1)`, c:Src/lex.c:1812), and that `!sub` term is
+            // what stops a `,` inside the INNER expansion from becoming the
+            // brace-expansion `Comma` token. zshrs slices the inner text out of
+            // the OUTER lex, where the comma already went through the
+            // `bct > in_brace_param` arm, so the token came along for the ride:
+            // `${(s:,:)${x:-a,b,c}}` compared a `Comma` (\u{9a}) against the
+            // flag's ASCII `,` — `findsep` (c:Src/utils.c:3839) is a byte
+            // compare — and split nothing, where zsh prints `a b c`.
+            //
+            // Restore the source character for that one token. Every other
+            // token stays: `lextok2` (c:Src/lex.c:427-434) maps `^` → `Hat`
+            // and friends with no `sub` term, so they survive C's re-lex too —
+            // which is why `${(s:^:)${x:-a^b^c}}` does NOT split in zsh either,
+            // and must not here.
+            let inner: String = if inner_raw.contains(crate::ported::zsh_h::Comma) {
+                // C's counters restart for the inner text, so only a brace
+                // GROUP inside it (`{`…`}`) raises `bct` above
+                // `in_brace_param`; the inner `${` itself sets them equal.
+                // Walk the same way: `Comma` keeps its token meaning inside a
+                // literal brace group (that is what makes
+                // `${(s:,:)${x:-{a,b}}}` brace-expand to `a b` in zsh), and
+                // reverts to the source `,` everywhere else.
+                use crate::ported::zsh_h::{Comma, Inbrace, Outbrace, Qstring, Stringg};
+                let ch: Vec<char> = inner_raw.chars().collect();
+                let mut out = String::with_capacity(inner_raw.len());
+                let mut group_depth: i32 = 0;
+                for (i, &c) in ch.iter().enumerate() {
+                    if c == Inbrace || c == '{' {
+                        // `${` opens a parameter body, not a brace group.
+                        let is_param = i > 0
+                            && matches!(ch[i - 1], x if x == Stringg || x == Qstring || x == '$');
+                        if !is_param {
+                            group_depth += 1;
+                        }
+                    } else if (c == Outbrace || c == '}') && group_depth > 0 {
+                        group_depth -= 1;
+                    } else if c == Comma && group_depth == 0 {
+                        out.push(',');
+                        continue;
+                    }
+                    out.push(c);
+                }
+                out
+            } else {
+                inner_raw
+            };
                                                                        // Detect `${(…P…)NAME}` inner: the `(P)` indirect flag
                                                                        // referencing an assoc, so an outer subscript can do key
                                                                        // lookup on the referenced param (see subexp_passoc_name).
@@ -7483,6 +7532,25 @@ pub fn paramsubst(
             }
             out
         };
+
+        // c:Src/subst.c:3207-3228 — the default/alternate word of the
+        // `${var-word}` family is handed to `multsub`, i.e. C's own prefork,
+        // with the LEXER'S TOKENS still in it. That is what makes
+        // `${XDG_CACHE_HOME:-~/.cache}` expand the tilde: `filesub` →
+        // `filesubstr` (c:741) tests for the `Tilde` TOKEN and refuses a plain
+        // ASCII `~`. The `rest` built just above folds every token back to its
+        // source character (deliberately — the pattern/replacement consumers
+        // below need plain text), so keep the untouched slice alongside it and
+        // let the default-family arms take their word from HERE.
+        //
+        // Without it powerlevel10k's `__p9k_dump_file`
+        // (`${XDG_CACHE_HOME:-~/.cache}/p10k-dump-$USER.zsh`,
+        // powerlevel10k.zsh-theme:62) stayed literal: the dump was never found,
+        // `_p9k_init` never ran its async-worker branch, and every
+        // worker-backed segment (battery / ram / disk / load / …) came up
+        // empty. A config writing to such a path also CREATED a directory
+        // literally named `~`.
+        let rest_raw: String = body_chars[idx..].iter().collect();
 
         // !!! BASH-MODE GATE (no C counterpart) !!! bash case-modification
         // suffixes: `${v^^}` upper-all, `${v,,}` lower-all, `${v^}` upper-
@@ -11268,12 +11336,27 @@ pub fn paramsubst(
                 // BEFORE any chain transform. The C source's
                 // `${#var:-default}` also goes through this fast path.
                 if let Some(default) = r.strip_prefix(":-") {
+                    // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                    let default_tokenized: String = rest_raw.chars().skip(2).collect();
+                    let default: &str =
+                        if default_tokenized.chars().count() == default.chars().count() {
+                            default_tokenized.as_str()
+                        } else {
+                            default
+                        };
                     if raw_value.is_empty() {
                         singsub(default)
                     } else {
                         raw_value.clone()
                     }
                 } else if let Some(default) = r.strip_prefix('-') {
+                    // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                    let default_tokenized: String = rest_raw.chars().skip(1).collect();
+                    let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                        default_tokenized.as_str()
+                    } else {
+                        default
+                    };
                     if !vars_contains(&var_name)
                         && !arrays_contains(&var_name)
                         && !assoc_contains(&var_name)
@@ -11283,12 +11366,26 @@ pub fn paramsubst(
                         raw_value.clone()
                     }
                 } else if let Some(alt) = r.strip_prefix(":+") {
+                    // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                    let alt_tokenized: String = rest_raw.chars().skip(2).collect();
+                    let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                        alt_tokenized.as_str()
+                    } else {
+                        alt
+                    };
                     if !raw_value.is_empty() {
                         singsub(alt)
                     } else {
                         String::new()
                     }
                 } else if let Some(alt) = r.strip_prefix('+') {
+                    // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                    let alt_tokenized: String = rest_raw.chars().skip(1).collect();
+                    let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                        alt_tokenized.as_str()
+                    } else {
+                        alt
+                    };
                     if vars_contains(&var_name)
                         || arrays_contains(&var_name)
                         || assoc_contains(&var_name)
@@ -12716,6 +12813,13 @@ pub fn paramsubst(
                     }
                 } // c:3540
             } else if let Some(default) = r.strip_prefix(":-") {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let default_tokenized: String = rest_raw.chars().skip(2).collect();
+                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                    default_tokenized.as_str()
+                } else {
+                    default
+                };
                 // c:3193
                 // c:Src/subst.c:3193 vunset check — for arrays under
                 //   `(@)` (nojoin==2) the array's existence with ANY
@@ -12857,6 +12961,13 @@ pub fn paramsubst(
                     force_split = false; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix('-') {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let default_tokenized: String = rest_raw.chars().skip(1).collect();
+                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                    default_tokenized.as_str()
+                } else {
+                    default
+                };
                 // c:3193
                 if !is_set {
                     // c:3207-3228 — multsub, not singsub: a nested
@@ -12990,6 +13101,13 @@ pub fn paramsubst(
                     }
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let default_tokenized: String = rest_raw.chars().skip(2).collect();
+                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                    default_tokenized.as_str()
+                } else {
+                    default
+                };
                 // c:3245
                 if !is_set || raw_value.is_empty() {
                     // c:Src/subst.c:3269-3307 — array/assoc assign splits the
@@ -13057,6 +13175,13 @@ pub fn paramsubst(
                     }
                 }
             } else if let Some(default) = r.strip_prefix('=') {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let default_tokenized: String = rest_raw.chars().skip(1).collect();
+                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                    default_tokenized.as_str()
+                } else {
+                    default
+                };
                 // c:3245 (= — assign on unset only)
                 // Same as := but trigger ONLY on unset (not on
                 // empty). Direct port of subst.c case '=' which
@@ -13125,6 +13250,13 @@ pub fn paramsubst(
                     }
                 }
             } else if let Some(alt) = r.strip_prefix(":+") {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let alt_tokenized: String = rest_raw.chars().skip(2).collect();
+                let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                    alt_tokenized.as_str()
+                } else {
+                    alt
+                };
                 // c:3296
                 if is_set && !raw_value.is_empty() {
                     // c:3300-3313 — the alternate word also goes through
@@ -13171,6 +13303,13 @@ pub fn paramsubst(
                     split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(alt) = r.strip_prefix('+') {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
+                let alt_tokenized: String = rest_raw.chars().skip(1).collect();
+                let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                    alt_tokenized.as_str()
+                } else {
+                    alt
+                };
                 // c:3296
                 if is_set {
                     // c:3300-3313 — multsub, not singsub (see `:+` above).

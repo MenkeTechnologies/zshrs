@@ -12391,9 +12391,39 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // their output lands directly in argv slots — so apply it here.
     // Without it, quoted splits with empty pieces ("${(s:|:)x}" on
     // "|a|b|") leak U+00A1 into argv.
+    // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word AFTER
+    // `stringsubst` and BEFORE anything untokenizes it, which is what makes a
+    // `~` inside an expansion body expand: `filesubstr` (c:741) matches the
+    // lexer's `Tilde` TOKEN, never an ASCII `~`. These bridges are terminal
+    // and the untokenize below folds that token back to `~`, so the filesub
+    // the word path runs afterwards had nothing left to act on and
+    // `${XDG_CACHE_HOME:-~/.cache}` came back literal (powerlevel10k's dump
+    // path, powerlevel10k.zsh-theme:62). Run C's order here: filesub first,
+    // untokenize second.
+    //
+    // Gated exactly like the prefork site (subst.rs:396): not under
+    // `SHFILEEXPANSION` (whose file expansion runs BEFORE substitution, so an
+    // expansion result is never tilde-expanded), not inside `"…"` (`qt`), and
+    // not while `SKIP_FILESUB` marks a `${var/pat/repl}` pattern context where
+    // a literal `~` must survive.
+    let do_filesub = !qt
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
+        && !crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
     let nodes: Vec<String> = nodes
         .into_iter()
-        .map(|n| crate::ported::lex::untokenize(&n))
+        .map(|n| {
+            let n = if do_filesub {
+                crate::ported::subst::filesub(
+                    &n,
+                    pf_flags
+                        & (crate::ported::zsh_h::PREFORK_TYPESET
+                            | crate::ported::zsh_h::PREFORK_ASSIGN),
+                )
+            } else {
+                n
+            };
+            crate::ported::lex::untokenize(&n)
+        })
         .collect();
     let value = nodes_to_value(nodes);
     // Provenance: this is the funnel every `${...}` bytecode fast path

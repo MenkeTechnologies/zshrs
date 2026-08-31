@@ -304,3 +304,65 @@ mod bare_split_flag_special_names {
         assert_parity(r#"print $=notset; echo done"#);
     }
 }
+
+mod split_flag_over_nested_substitution {
+    use super::*;
+
+    /// `${(s:,:)${…}}` — the split flag applied to a NESTED substitution whose
+    /// value comes from literal text (a `${var:-word}` default). zshrs slices
+    /// the inner expansion out of the OUTER lex, where `,` had already gone
+    /// through `case LX2_COMMA` (c:Src/lex.c:1167-1169) and become the
+    /// brace-expansion `Comma` token; C re-lexes the inner text with `sub = 1`
+    /// (`parse_subst_string` → `gettokstr(c, 1)`, c:Src/lex.c:1812), where the
+    /// `!sub` term keeps it an ordinary comma. The split then compared a token
+    /// against the flag's ASCII `,` — `findsep` is a byte compare
+    /// (c:Src/utils.c:3839) — and produced one unsplit word.
+    #[test]
+    fn comma_split_over_nested_default() {
+        assert_parity(r#"print -l ${(s:,:)${:-a,b,c}}"#);
+    }
+
+    /// The reported shape: empty field between separators, counted by words.
+    #[test]
+    fn comma_split_over_nested_default_empty_field() {
+        assert_parity(r#"print ${(s:,:)${:-a,b,,c}} | wc -w"#);
+    }
+
+    /// Same with a named (unset) parameter rather than the empty-name form.
+    #[test]
+    fn comma_split_over_nested_named_default() {
+        assert_parity(r#"unset zr_s; print -l ${(s:,:)${zr_s:-a,b,c}}"#);
+    }
+
+    /// A comma inside a real brace GROUP keeps its token meaning — the group
+    /// brace-expands first and the split sees no separator, so both shells
+    /// print one word. This is the case the naive fix breaks.
+    #[test]
+    fn brace_group_inside_nested_default_still_expands() {
+        assert_parity(r#"unset zr_s; print -l ${(s:,:)${zr_s:-{a,b}}}"#);
+    }
+
+    /// Both at once: the top-level comma splits, the braced one expands.
+    #[test]
+    fn top_level_comma_splits_while_braced_comma_expands() {
+        assert_parity(r#"unset zr_s; print -l ${(s:,:)${zr_s:-a,{b,c}}}"#);
+    }
+
+    /// A quoted default was never tokenized and must keep splitting.
+    #[test]
+    fn quoted_nested_default_splits() {
+        assert_parity(r#"print -l ${(s:,:)${:-"a,b,c"}}"#);
+    }
+
+    /// Non-nested `${var:-…}` is unaffected — its comma is literal in both.
+    #[test]
+    fn plain_default_comma_is_literal() {
+        assert_parity(r#"unset zr_s; print -l ${zr_s:-a,b}"#);
+    }
+
+    /// Bare brace expansion outside any substitution still expands.
+    #[test]
+    fn bare_brace_expansion_unaffected() {
+        assert_parity(r#"print -l {a,b}"#);
+    }
+}

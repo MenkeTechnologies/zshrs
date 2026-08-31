@@ -392,6 +392,14 @@ dbview history docker         # search history
 | `profile` | In-process command profiling with nanosecond accuracy |
 | `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock; shell functions carry the same chain ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
 
+`ZSHRS_STARTUP_TRACE=1` turns on the startup phase timer: every startup phase
+prints `[startup <ms since process start>] <label>` to stderr, ending with
+`FIRST PROMPT PAINTED`, so time-to-first-prompt can be attributed to a phase
+rather than guessed at. Inert without the variable (one `OnceLock<bool>` read
+per mark), so ordinary launches stay silent. Measure the shell itself with
+`ZSHRS_STARTUP_TRACE=1 zshrs -f -i`; drop the `-f` to see what the rc files
+cost on top of it.
+
 `provenance` (ported from strykelang's `mark` / `provenance` / `unmark`) answers
 "where did this value come from?" for a running shell — an origin plus the op
 chain the bytecode actually executed. No other shell records this: `typeset -p`
