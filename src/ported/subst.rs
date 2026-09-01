@@ -13790,34 +13790,50 @@ pub fn paramsubst(
                 // subst.c's getmatcharr path that calls getmatch on
                 // each element separately. Single-shot helper to
                 // avoid duplicating the sliding-window logic.
+                // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
+                // getmatch) and hands the program to igetmatch, which then calls
+                // pattry per trial slice. This port compiled on EVERY trial —
+                // tokenize + patcompile, and patcompile's cache hit still deep-copies
+                // the program (Patprog is a Box, so the copy clones its hashbrown
+                // tables). A `${v##pat}`-shaped scan tries O(n) (substring: O(n^2))
+                // slices, so the compile cost multiplied by the scan: minutes of
+                // 100% CPU on a long value, allocating and freeing the whole way.
+                // Memoise by pattern text — the compiled program is immutable across
+                // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
+                // reuse one program for the whole scan.
+                let gms_memo: std::cell::RefCell<
+                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                > = std::cell::RefCell::new(std::collections::HashMap::new());
                 let gms = |s_: &str, p_: &str, off_: i32| -> bool {
-                    // c:Src/glob.c:2514 matchpat shape — tokenize +
-                    // patcompile + pattry. Captures, (#b) $match
-                    // arrays and (#m) $MATCH now publish INSIDE
-                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
-                    // ports), so plain pattry carries them; the
-                    // former vm_helper::glob_match_static wrapper is
-                    // gone. Silent false on bad pattern (caller arms
-                    // pre-validate where C zerrs).
-                    //
-                    // c:Src/glob.c:2964/3034 igetmatch — the substitution
-                    // scan calls `pattrylen(p, t, umlen, 0, &patstralloc,
-                    // ioff)`, where `ioff` is the CHARACTER offset of the
-                    // trial slice `t` within the whole subject. pattryrefs
-                    // adds it to every reported $match/$mbegin/$mend and to
-                    // $MBEGIN/$MEND (c:2543-2546, c:2596-2610), which is what
-                    // makes those offsets string-relative rather than
-                    // match-relative. `pattry` (c:2223) hardcodes offset 0 and
-                    // is only correct for a slice that starts at position 0.
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    let prog_ = {
+                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        match hit_ {
+                            Some(pr_) => pr_,
+                            None => {
+                                // c:Src/glob.c:2514 matchpat shape — tokenize +
+                                // patcompile. Captures, (#b) $match arrays and (#m)
+                                // $MATCH publish INSIDE pattryrefs (pattern.c:2526-2542
+                                // / 2570-2621 ports), so plain pattry carries them.
+                                // Silent None on a bad pattern (caller arms pre-validate
+                                // where C zerrs).
+                                let mut t_ = p_.to_string();
+                                crate::ported::glob::tokenize(&mut t_);
+                                let c_ = crate::ported::pattern::patcompile(
+                                    &t_,
+                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    None,
+                                )
+                                .map(std::rc::Rc::new);
+                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                c_
+                            }
+                        }
+                    };
+                    match prog_ {
+                        // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
+                        // `ioff`, the CHARACTER offset of the trial slice, so
+                        // pattryrefs reports $mbegin/$mend relative to the WHOLE
+                        // string (c:2596-2610). `pattry` hardcodes offset 0.
                         Some(pr_) => crate::ported::pattern::pattrylen(
                             &pr_,
                             s_,
@@ -13832,6 +13848,20 @@ pub fn paramsubst(
                 let replace_global = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
+                    // Byte offset of every character boundary, plus the end.
+                    // The scans below try O(n) (substring: O(n^2)) slices of
+                    // `val`; building each one with `cv[a..b].iter().collect()`
+                    // allocated and copied a fresh String per try, which is
+                    // what put `String::extend` at the top of the profile while
+                    // a ^D-triggered widget span burned CPU. C never copies —
+                    // igetmatch (Src/glob.c:2964) walks pointers into the ONE
+                    // string. One table up front makes a try a borrow.
+                    let bidx: Vec<usize> = val
+                        .char_indices()
+                        .map(|(b_, _)| b_)
+                        .chain(std::iter::once(val.len()))
+                        .collect();
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     let mut o = String::with_capacity(val.len());
                     // c:Src/glob.c:2882 — `p->flags &= ~(PAT_NOTSTART|PAT_NOTEND);`
                     // ("in case we used the prog before...") runs ONCE per
@@ -14751,29 +14781,50 @@ pub fn paramsubst(
                 // c:Src/pattern.c:2570-2621 — `(#b)` array
                 // publication lives inside pattryrefs now; plain
                 // pattry via `gms` carries it. Bug #590 history.
+                // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
+                // getmatch) and hands the program to igetmatch, which then calls
+                // pattry per trial slice. This port compiled on EVERY trial —
+                // tokenize + patcompile, and patcompile's cache hit still deep-copies
+                // the program (Patprog is a Box, so the copy clones its hashbrown
+                // tables). A `${v##pat}`-shaped scan tries O(n) (substring: O(n^2))
+                // slices, so the compile cost multiplied by the scan: minutes of
+                // 100% CPU on a long value, allocating and freeing the whole way.
+                // Memoise by pattern text — the compiled program is immutable across
+                // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
+                // reuse one program for the whole scan.
+                let gms_memo: std::cell::RefCell<
+                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                > = std::cell::RefCell::new(std::collections::HashMap::new());
                 let gms = |s_: &str, p_: &str, off_: i32| -> bool {
-                    // c:Src/glob.c:2514 matchpat shape — tokenize +
-                    // patcompile + pattry. Captures, (#b) $match
-                    // arrays and (#m) $MATCH now publish INSIDE
-                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
-                    // ports), so plain pattry carries them; the
-                    // former vm_helper::glob_match_static wrapper is
-                    // gone. Silent false on bad pattern (caller arms
-                    // pre-validate where C zerrs).
-                    //
-                    // c:Src/glob.c:2964/3034 — the substitution scan calls
-                    // `pattrylen(..., ioff)` with the CHARACTER offset of the
-                    // trial slice, which pattryrefs folds into every reported
-                    // $mbegin/$mend (c:2596-2610). `pattry` hardcodes 0.
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    let prog_ = {
+                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        match hit_ {
+                            Some(pr_) => pr_,
+                            None => {
+                                // c:Src/glob.c:2514 matchpat shape — tokenize +
+                                // patcompile. Captures, (#b) $match arrays and (#m)
+                                // $MATCH publish INSIDE pattryrefs (pattern.c:2526-2542
+                                // / 2570-2621 ports), so plain pattry carries them.
+                                // Silent None on a bad pattern (caller arms pre-validate
+                                // where C zerrs).
+                                let mut t_ = p_.to_string();
+                                crate::ported::glob::tokenize(&mut t_);
+                                let c_ = crate::ported::pattern::patcompile(
+                                    &t_,
+                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    None,
+                                )
+                                .map(std::rc::Rc::new);
+                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                c_
+                            }
+                        }
+                    };
+                    match prog_ {
+                        // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
+                        // `ioff`, the CHARACTER offset of the trial slice, so
+                        // pattryrefs reports $mbegin/$mend relative to the WHOLE
+                        // string (c:2596-2610). `pattry` hardcodes offset 0.
                         Some(pr_) => crate::ported::pattern::pattrylen(
                             &pr_,
                             s_,
@@ -15274,24 +15325,46 @@ pub fn paramsubst(
                 // relevant here when B/E/N suppress the implied
                 // SUB_REST, c:Src/subst.c:3176-3177).
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
+                // getmatch) and hands the program to igetmatch, which then calls
+                // pattry per trial slice. This port compiled on EVERY trial —
+                // tokenize + patcompile, and patcompile's cache hit still deep-copies
+                // the program (Patprog is a Box, so the copy clones its hashbrown
+                // tables). A `${v##pat}`-shaped scan tries O(n) (substring: O(n^2))
+                // slices, so the compile cost multiplied by the scan: minutes of
+                // 100% CPU on a long value, allocating and freeing the whole way.
+                // Memoise by pattern text — the compiled program is immutable across
+                // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
+                // reuse one program for the whole scan.
+                let gms_memo: std::cell::RefCell<
+                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                > = std::cell::RefCell::new(std::collections::HashMap::new());
                 let gms = |s_: &str, p_: &str, off_: i32| -> bool {
-                    // c:Src/glob.c:2514 matchpat shape — tokenize +
-                    // patcompile + pattry. Captures, (#b) $match
-                    // arrays and (#m) $MATCH now publish INSIDE
-                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
-                    // ports), so plain pattry carries them; the
-                    // former vm_helper::glob_match_static wrapper is
-                    // gone. Silent false on bad pattern (caller arms
-                    // pre-validate where C zerrs).
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    let prog_ = {
+                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        match hit_ {
+                            Some(pr_) => pr_,
+                            None => {
+                                // c:Src/glob.c:2514 matchpat shape — tokenize +
+                                // patcompile. Captures, (#b) $match arrays and (#m)
+                                // $MATCH publish INSIDE pattryrefs (pattern.c:2526-2542
+                                // / 2570-2621 ports), so plain pattry carries them.
+                                // Silent None on a bad pattern (caller arms pre-validate
+                                // where C zerrs).
+                                let mut t_ = p_.to_string();
+                                crate::ported::glob::tokenize(&mut t_);
+                                let c_ = crate::ported::pattern::patcompile(
+                                    &t_,
+                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    None,
+                                )
+                                .map(std::rc::Rc::new);
+                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                c_
+                            }
+                        }
+                    };
+                    match prog_ {
                         // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
                         // `ioff`, the CHARACTER offset of the trial slice, so
                         // pattryrefs reports $mbegin/$mend relative to the WHOLE
@@ -15310,6 +15383,20 @@ pub fn paramsubst(
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
+                    // Byte offset of every character boundary, plus the end.
+                    // The scans below try O(n) (substring: O(n^2)) slices of
+                    // `val`; building each one with `cv[a..b].iter().collect()`
+                    // allocated and copied a fresh String per try, which is
+                    // what put `String::extend` at the top of the profile while
+                    // a ^D-triggered widget span burned CPU. C never copies —
+                    // igetmatch (Src/glob.c:2964) walks pointers into the ONE
+                    // string. One table up front makes a try a borrow.
+                    let bidx: Vec<usize> = val
+                        .char_indices()
+                        .map(|(b_, _)| b_)
+                        .chain(std::iter::once(val.len()))
+                        .collect();
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
@@ -15340,20 +15427,35 @@ pub fn paramsubst(
                                 let target = flnum.max(1); // c:3095-3096
                                 let mut count: u32 = 0; // c:3055 `n`
                                 let mut found = None;
-                                'outer: for start in 0..=nn {
-                                    for k in (0..=(nn - start)).rev() {
-                                        let candidate: String =
-                                            cv[start..start + k].iter().collect();
-                                        if gms(&candidate, &p, ioff(start)) {
-                                            count += 1; // c:3055 `--n`
-                                            if count >= target {
-                                                found = Some((start, start + k));
-                                                break 'outer;
-                                            }
-                                            // c:3066 — advance one character and
-                                            // keep looking for a later match.
-                                            continue 'outer;
+                                // c:Src/glob.c:3033-3036 —
+                                //     set_pat_start(p, t-s);
+                                //     if (pattrylen(p, t, umlen, 0, &patstralloc, ioff)) {
+                                //         char *mpos = t + patmatchlen();
+                                // ONE pattry per start position: the matcher is
+                                // greedy, so it reports the LONGEST match from
+                                // here itself and `patmatchlen()` hands back its
+                                // byte length. The port used to enumerate every
+                                // end instead — O(n^2) compiled-pattern tries per
+                                // value, which is how a single expansion inside a
+                                // ^D widget could hold the shell at 100% CPU for
+                                // hours. Same match, n tries instead of n^2/2.
+                                for start in 0..=nn {
+                                    if gms(sl(start, nn), &p, ioff(start)) {
+                                        // c:3034 — `mpos = t + patmatchlen()`,
+                                        // a BYTE length within the trial slice.
+                                        let mlen = crate::ported::pattern::patmatchlen().max(0)
+                                            as usize;
+                                        let endb = (bidx[start] + mlen).min(val.len());
+                                        let e = start + val[bidx[start]..endb].chars().count();
+                                        count += 1; // c:3055 `--n`
+                                        if count >= target {
+                                            found = Some((start, e));
+                                            break;
                                         }
+                                        // c:3066 — a later match was asked for
+                                        // (`(I:N:)`): resume at the NEXT
+                                        // character, overlaps allowed.
+                                        continue;
                                     }
                                 }
                                 found
@@ -15361,7 +15463,7 @@ pub fn paramsubst(
                                 let mut k = nn;
                                 let mut found = None;
                                 loop {
-                                    let prefix: String = cv[..k].iter().collect();
+
                                     // Route through `glob_match_static` so (#b)
                                     // capture groups populate `$match`/`$mbegin`/
                                     // `$mend` on the first successful match —
@@ -15369,7 +15471,7 @@ pub fn paramsubst(
                                     // the captures from the matched prefix. No-op
                                     // for patterns without (#b) (GF_BACKREF gate
                                     // inside the helper).
-                                    if gms(&prefix, &p, 0) {
+                                    if gms(sl(0, k), &p, 0) {
                                         found = Some((0, k));
                                         break;
                                     }
@@ -15529,24 +15631,46 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
+                // getmatch) and hands the program to igetmatch, which then calls
+                // pattry per trial slice. This port compiled on EVERY trial —
+                // tokenize + patcompile, and patcompile's cache hit still deep-copies
+                // the program (Patprog is a Box, so the copy clones its hashbrown
+                // tables). A `${v##pat}`-shaped scan tries O(n) (substring: O(n^2))
+                // slices, so the compile cost multiplied by the scan: minutes of
+                // 100% CPU on a long value, allocating and freeing the whole way.
+                // Memoise by pattern text — the compiled program is immutable across
+                // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
+                // reuse one program for the whole scan.
+                let gms_memo: std::cell::RefCell<
+                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                > = std::cell::RefCell::new(std::collections::HashMap::new());
                 let gms = |s_: &str, p_: &str, off_: i32| -> bool {
-                    // c:Src/glob.c:2514 matchpat shape — tokenize +
-                    // patcompile + pattry. Captures, (#b) $match
-                    // arrays and (#m) $MATCH now publish INSIDE
-                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
-                    // ports), so plain pattry carries them; the
-                    // former vm_helper::glob_match_static wrapper is
-                    // gone. Silent false on bad pattern (caller arms
-                    // pre-validate where C zerrs).
-                    match crate::ported::pattern::patcompile(
-                        &{
-                            let mut t_ = p_.to_string();
-                            crate::ported::glob::tokenize(&mut t_);
-                            t_
-                        },
-                        crate::ported::zsh_h::PAT_HEAPDUP,
-                        None,
-                    ) {
+                    let prog_ = {
+                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        match hit_ {
+                            Some(pr_) => pr_,
+                            None => {
+                                // c:Src/glob.c:2514 matchpat shape — tokenize +
+                                // patcompile. Captures, (#b) $match arrays and (#m)
+                                // $MATCH publish INSIDE pattryrefs (pattern.c:2526-2542
+                                // / 2570-2621 ports), so plain pattry carries them.
+                                // Silent None on a bad pattern (caller arms pre-validate
+                                // where C zerrs).
+                                let mut t_ = p_.to_string();
+                                crate::ported::glob::tokenize(&mut t_);
+                                let c_ = crate::ported::pattern::patcompile(
+                                    &t_,
+                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    None,
+                                )
+                                .map(std::rc::Rc::new);
+                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                c_
+                            }
+                        }
+                    };
+                    match prog_ {
                         // c:Src/glob.c:2964 igetmatch — the tail/suffix scan passes
                         // `ioff`, the CHARACTER offset of the trial slice, so
                         // pattryrefs reports $mbegin/$mend relative to the WHOLE
@@ -15564,6 +15688,16 @@ pub fn paramsubst(
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // Byte offset of every character boundary, plus the end, so
+                    // a trial slice is a borrow of `val` rather than a fresh
+                    // String per try. See the sibling strip_one above for why
+                    // that mattered (C's igetmatch copies nothing).
+                    let bidx: Vec<usize> = val
+                        .char_indices()
+                        .map(|(b_, _)| b_)
+                        .chain(std::iter::once(val.len()))
+                        .collect();
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
@@ -15592,8 +15726,7 @@ pub fn paramsubst(
                             let mut count: u32 = 0;
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
-                                    let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, &p, ioff(start)) {
+                                    if gms(sl(start, start + k), &p, ioff(start)) {
                                         count += 1; // c:3057 `--n`
                                         if count >= target {
                                             return Some((start, start + k));
@@ -15806,6 +15939,16 @@ pub fn paramsubst(
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // Byte offset of every character boundary, plus the end, so
+                    // a trial slice is a borrow of `val` rather than a fresh
+                    // String per try. See the sibling strip_one above for why
+                    // that mattered (C's igetmatch copies nothing).
+                    let bidx: Vec<usize> = val
+                        .char_indices()
+                        .map(|(b_, _)| b_)
+                        .chain(std::iter::once(val.len()))
+                        .collect();
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
@@ -16055,6 +16198,16 @@ pub fn paramsubst(
                 };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
+                    // Byte offset of every character boundary, plus the end, so
+                    // a trial slice is a borrow of `val` rather than a fresh
+                    // String per try. See the sibling strip_one above for why
+                    // that mattered (C's igetmatch copies nothing).
+                    let bidx: Vec<usize> = val
+                        .char_indices()
+                        .map(|(b_, _)| b_)
+                        .chain(std::iter::once(val.len()))
+                        .collect();
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
