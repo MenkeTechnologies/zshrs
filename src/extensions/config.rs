@@ -169,11 +169,17 @@ pub struct LogConfig {
 ///
 /// The four ENGINES default ON. They are the point of the shell, not an
 /// experiment to opt into, and a user who has an rc file is asking for a
-/// configured interactive shell. Parity is preserved at the other end:
-/// `zle_fx` refuses every engine when RCS is unset, so `zshrs -f` still
-/// behaves identically to `zsh -f` and the parity suites are unaffected.
-/// Set any field `false` in `~/.zshrs/zshrs.toml` to turn one off;
-/// `ZSHRS_NATIVE_ZLE_FX=0` remains the blanket kill switch.
+/// configured interactive shell. Set any field `false` in
+/// `~/.zshrs/zshrs.toml` to turn one off; `ZSHRS_NATIVE_ZLE_FX=0` remains
+/// the blanket kill switch.
+///
+/// Parity is preserved at the other end, but by ABSENCE rather than by
+/// `-f`: `zle_fx` refuses every engine when RCS is unset AND the file
+/// carries no `[zle]` table, so a machine that has never configured the
+/// editor — CI, a fresh install — keeps `zshrs -f` byte-identical to
+/// `zsh -f`. Writing a `[zle]` section is a statement about the editor
+/// this shell should be, and `-f` (which is about RC FILES, not about the
+/// shell's own config) does not overrule it.
 ///
 /// `vi_backspace_unrestricted` stays OFF by default: it is a keybinding
 /// deviation from classic vi, not one of the engines, so it keeps opt-in
@@ -181,6 +187,15 @@ pub struct LogConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ZleConfig {
+    /// True when `~/.zshrs/zshrs.toml` actually carries a `[zle]` table.
+    ///
+    /// Not a TOML key — `load_from` sets it after parsing, and `#[serde(skip)]`
+    /// keeps a stray `configured = true` in a user's file from forging it. It
+    /// exists so `zle_fx` can tell "the user said nothing about the editor"
+    /// from "the user configured the editor", which is the difference between
+    /// a bare `zshrs -f` and one that honours the config (see `zle_fx::enabled`).
+    #[serde(skip)]
+    pub configured: bool,
     /// fish-ported history autosuggestions (ghost text).
     pub autosuggest: bool,
     /// fish-ported command-line syntax highlighting.
@@ -198,6 +213,7 @@ pub struct ZleConfig {
 impl Default for ZleConfig {
     fn default() -> Self {
         Self {
+            configured: false,
             autosuggest: true,
             syntax_highlight: true,
             history_search: true,
@@ -328,8 +344,17 @@ pub fn current() -> &'static ZshrsConfig {
 /// silently (per the project's "no startup chatter" rule).
 pub fn load_from(path: &Path) -> ZshrsConfig {
     match std::fs::read_to_string(path) {
-        Ok(content) => match toml::from_str(&content) {
-            Ok(config) => {
+        Ok(content) => match toml::from_str::<ZshrsConfig>(&content) {
+            Ok(mut config) => {
+                // Serde cannot report whether the `[zle]` TABLE was present —
+                // `#[serde(default)]` fills the struct either way — and the
+                // distinction is load-bearing: an explicitly configured editor
+                // survives `zshrs -f`, an unconfigured one does not. Ask the
+                // parsed document instead of the struct.
+                config.zle.configured = content
+                    .parse::<toml::Table>()
+                    .map(|t| t.contains_key("zle"))
+                    .unwrap_or(false);
                 tracing::info!(path = %path.display(), "config loaded");
                 config
             }
@@ -380,6 +405,45 @@ mod tests {
         // An unrelated section must not disturb the default.
         let other: ZshrsConfig = toml::from_str("[log]\nlevel = \"debug\"\n").expect("parses");
         assert!(other.provenance.enabled);
+    }
+
+    /// `[zle]` presence is what lets an explicitly configured editor survive
+    /// `zshrs -f` (zle_fx::engines_allowed), so it has to come from the TOML
+    /// DOCUMENT — serde fills the struct identically either way — and it must
+    /// not be forgeable by a key of the same name.
+    #[test]
+    fn zle_section_presence_is_read_from_the_document() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = std::env::temp_dir().join(format!("zshrs-cfg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("zshrs.toml");
+
+        // No [zle] table: the engines keep their defaults, but nothing was
+        // configured, so `-f` still gets a bare editor.
+        std::fs::write(&path, "[log]\nlevel = \"info\"\n").expect("write");
+        let none = load_from(&path);
+        assert!(!none.zle.configured, "no [zle] table means unconfigured");
+        assert!(none.zle.autosuggest, "the default is still on");
+
+        // An empty [zle] table is already a statement: the user configured the
+        // editor and accepted the defaults.
+        std::fs::write(&path, "[zle]\n").expect("write");
+        assert!(load_from(&path).zle.configured, "an empty [zle] table counts");
+
+        // Turning one engine off leaves the section configured.
+        std::fs::write(&path, "[zle]\nautosuggest = false\n").expect("write");
+        let off = load_from(&path);
+        assert!(off.zle.configured);
+        assert!(!off.zle.autosuggest);
+
+        // `configured` is #[serde(skip)]: writing it by hand under another
+        // section must not fabricate a configured editor.
+        std::fs::write(&path, "[log]\nlevel = \"info\"\nconfigured = true\n").expect("write");
+        assert!(
+            !load_from(&path).zle.configured,
+            "the marker comes from the [zle] table, not from a key"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
