@@ -1618,3 +1618,153 @@ fn funcdef_body_stdin_matches_file_and_dash_c() {
         "bodies missing: {from_stdin:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1126 — (M)/(B)/(E)/(N)/(R) survive a nested ${…} pattern
+// Fix: src/ported/subst.rs — the four strip arms read the per-paramsubst
+// `sub_flags_bits` instead of the shared cell a nested paramsubst resets.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn strip_operand_flags_survive_a_braced_pattern_operand() {
+    // `${(M)t##${~p}}` must yield the MATCHED prefix, exactly as the
+    // equivalent unbraced `$~p` and literal-pattern spellings already did.
+    // Reference values are `zsh -f` output for each line.
+    let cases: [(&str, &str); 6] = [
+        (r#"p=a; t=abc; print -r -- "${(M)t##${~p}}""#, "a\n"),
+        (r#"p='a*'; t=abc; print -r -- "${(M)t##${~p}}""#, "abc\n"),
+        (r#"p='(x|y)'; t=abc; print -r -- "${(M)t##${~p}}""#, "\n"),
+        (r#"p=c; t=abc; print -r -- "${(M)t%%${~p}}""#, "c\n"),
+        (r#"p=a; t=abc; print -r -- "${(B)t##${~p}}""#, "1\n"),
+        (r#"p=a; t=abc; print -r -- "${(N)t##${~p}}""#, "1\n"),
+    ];
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in cases {
+        let (_ec, out, err) = run_zshrs(script);
+        assert_eq!(out, want, "{script:?} stderr={err:?}");
+    }
+}
+
+#[test]
+fn path_files_skips_split_keeps_a_dashed_word_whole() {
+    // The exact expansion `_path_files` uses to peel leading `./` / `../`
+    // components off the word. A word with no path component must yield
+    // the empty string, or $PREFIX gets moved into the directory-prefix
+    // list and file completion globs `-*` instead of `*`.
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (_ec, out, err) = run_zshrs(
+        r#"setopt extendedglob; skips='((.|..)/)##'; t=-; print -r -- "[${(M)t##${~skips}}]"; t=./x; print -r -- "[${(M)t##${~skips}}]""#,
+    );
+    assert_eq!(out, "[]\n[./]\n", "stderr={err:?}");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1127 — an aliased command word kept the cursor word intact
+// Fix: src/ported/lex.rs — checkalias undoes hungetc's LEXFLAGS_ZLE
+// inbufct bump for the characters it re-routes into an INP_CONT frame.
+// ════════════════════════════════════════════════════════════════════
+
+/// With the command word aliased, the completion lexer must still hand the
+/// completer the word under the cursor.
+///
+/// `checkalias` reads one character ahead (`Src/lex.c:1918-1927`) before it
+/// pushes the alias body. zshrs's `hungetc` bumps `inbufct` for that character
+/// under `LEXFLAGS_ZLE` (C's `inbufptr--; inbufct++`, `Src/input.c:558-559`),
+/// expecting `hgetc`'s unget-pop to take the bump back on re-read; the
+/// re-routing into an `INP_CONT` frame skipped that pop and `inpush` counted
+/// the character a second time. `gotword` (`Src/lex.c:1884`) then placed the
+/// word end one column short of the cursor, so `get_comp_string` returned an
+/// EMPTY word and `$PREFIX` reached the completer as ''.
+///
+/// Driven through a pty: `get_comp_string` only runs under ZLE. The setup
+/// lives in an rc file rather than being typed, so the only thing the editor
+/// ever sees is the `tst -` + TAB this test is about.
+#[test]
+fn completion_lexer_finds_the_cursor_word_after_an_alias_expands() {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zshrs_alias_word_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    // `zle -C` gives a completion widget without pulling in compinit.
+    std::fs::write(
+        dir.join(".zshrc"),
+        "alias tst='echo one two'\n\
+         _probe() { print -rn -- \"<<[$PREFIX]>>\" >&2; compadd -- zz }\n\
+         zle -C probe complete-word _probe\n\
+         bindkey '^I' probe\n\
+         PS1='@ '\n",
+    )
+    .expect("write rc");
+
+    let mut master: libc::c_int = 0;
+    let termp = std::ptr::null_mut::<libc::termios>();
+    let winp = std::ptr::null_mut::<libc::winsize>();
+    let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), termp, winp) };
+    assert!(pid >= 0, "forkpty failed");
+    if pid == 0 {
+        let zdot = std::ffi::CString::new(dir.to_string_lossy().as_ref()).unwrap();
+        unsafe {
+            libc::setenv(c"TERM".as_ptr(), c"dumb".as_ptr(), 1);
+            libc::setenv(c"ZDOTDIR".as_ptr(), zdot.as_ptr(), 1);
+            libc::setenv(c"HOME".as_ptr(), zdot.as_ptr(), 1);
+        }
+        let bin =
+            std::ffi::CString::new(zshrs_bin().unwrap().to_string_lossy().as_ref()).unwrap();
+        let i = std::ffi::CString::new("-i").unwrap();
+        unsafe {
+            libc::execl(
+                bin.as_ptr(),
+                bin.as_ptr(),
+                i.as_ptr(),
+                std::ptr::null::<libc::c_char>(),
+            );
+            libc::_exit(127);
+        }
+    }
+
+    let mut f = unsafe { std::fs::File::from_raw_fd(master) };
+    std::thread::sleep(std::time::Duration::from_millis(4000));
+    // No newline: TAB must fire while `tst -` is the editor buffer.
+    let _ = f.write_all(b"tst -\t");
+    let _ = f.flush();
+
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8192];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if String::from_utf8_lossy(&out).contains("]>>") {
+            break;
+        }
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(_) => break,
+        }
+    }
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        let mut st = 0;
+        libc::waitpid(pid, &mut st, 0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out).replace('\r', "");
+    let got = text
+        .split("<<[")
+        .skip(1)
+        .filter_map(|rest| rest.split("]>>").next().map(str::to_string))
+        .last()
+        .unwrap_or_else(|| panic!("completion widget never ran; pty said: {text:?}"));
+    assert_eq!(
+        got, "-",
+        "the aliased command word swallowed the cursor word; \
+         completion saw an empty $PREFIX and every candidate matched"
+    );
+}

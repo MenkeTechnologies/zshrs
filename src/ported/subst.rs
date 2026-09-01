@@ -15313,18 +15313,18 @@ pub fn paramsubst(
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
                 // (M) handling per c:3176 — keep matched portion, discard rest.
-                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                let match_only = (sub_flags_bits & SUB_MATCH) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c igetmatch SUB_SUBSTR — `(S)` flag makes
                 // `##` search the WHOLE string for a substring match
                 // (leftmost), longest at that position. Bug #179 in
                 // docs/BUGS.md.
                 let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                                                                       // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
-                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                let ben = sub_flags_bits & (SUB_BIND | SUB_EIND | SUB_LEN); // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2626-2636 — (R) rest portion (only
                 // relevant here when B/E/N suppress the implied
                 // SUB_REST, c:Src/subst.c:3176-3177).
-                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let rest_flag = (sub_flags_bits & SUB_REST) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
                 // getmatch) and hands the program to igetmatch, which then calls
                 // pattry per trial slice. This port compiled on EVERY trial —
@@ -15621,16 +15621,16 @@ pub fn paramsubst(
                 // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
                 // default returns the rest (after the match); with (M)
                 // returns the matched prefix and discards the rest.
-                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                let match_only = (sub_flags_bits & SUB_MATCH) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c igetmatch SUB_SUBSTR — `(S)` flag makes
                 // `#` search the WHOLE string for a substring match
                 // (leftmost), shortest at that position. Bug #179 in
                 // docs/BUGS.md.
                 let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                                                                       // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
-                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                let ben = sub_flags_bits & (SUB_BIND | SUB_EIND | SUB_LEN); // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
-                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let rest_flag = (sub_flags_bits & SUB_REST) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2514/2964 — C compiles the pattern ONCE (matchpat /
                 // getmatch) and hands the program to igetmatch, which then calls
                 // pattry per trial slice. This port compiled on EVERY trial —
@@ -15886,16 +15886,16 @@ pub fn paramsubst(
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
-                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                let match_only = (sub_flags_bits & SUB_MATCH) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:3107 igetmatch SUB_END+SUB_LONG+SUB_SUBSTR
                 // — `(S)` flag makes `%%` search the WHOLE string for a
                 // substring match (rightmost), longest at that position.
                 // Bug #179 in docs/BUGS.md.
                 let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                                                                       // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
-                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                let ben = sub_flags_bits & (SUB_BIND | SUB_EIND | SUB_LEN); // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
-                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let rest_flag = (sub_flags_bits & SUB_REST) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2707-2714 `getmatch` — C compiles the
                 // pattern ONCE (`compgetmatch`, c:2671 `patcompile`) and
                 // hands the single `Patprog` to `igetmatch`, which then
@@ -16145,16 +16145,16 @@ pub fn paramsubst(
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
-                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
+                let match_only = (sub_flags_bits & SUB_MATCH) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:3106 igetmatch SUB_END+SUB_SUBSTR — `(S)`
                 // flag makes `%`/`%%` search the WHOLE string for a
                 // substring match (rightmost), then take shortest/longest
                 // at that position. Bug #179 in docs/BUGS.md.
                 let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                                                                       // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
-                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                let ben = sub_flags_bits & (SUB_BIND | SUB_EIND | SUB_LEN); // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
-                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let rest_flag = (sub_flags_bits & SUB_REST) != 0; // local: nested `${~pat}` paramsubst clobbers the shared sub_flags cell (same reason as substr_mode above); read the per-paramsubst parsed flags
                 // c:Src/glob.c:2707-2714 `getmatch` — C compiles the
                 // pattern ONCE (`compgetmatch`, c:2671 `patcompile`) and
                 // hands the single `Patprog` to `igetmatch`, which then
