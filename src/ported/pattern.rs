@@ -3418,7 +3418,22 @@ pub struct rpat {
     /// of the input. Without it, `(fo#)#` against ANY input that
     /// requires the closure to consume at least one char per iteration
     /// (like "ffo") burns through PATMATCH_MAX_DEPTH and aborts.
-    pub wbranch_visits: std::collections::HashMap<usize, Vec<u8>>,
+    ///
+    /// SHARED, not copied, across `rpat` clones. C hangs the buffer off
+    /// the bytecode operand (`ptrp->p`, c:3226-3233) and frees it once on
+    /// unwind (c:3253-3257), so every backtracking branch of one `pattry`
+    /// sees the SAME marks — that persistence is the whole point of the
+    /// guard: a branch already tried at this input position with no fewer
+    /// errors must not be re-explored.
+    ///
+    /// Owning it by value made `#[derive(Clone)]` deep-copy a
+    /// `|input|+1`-byte Vec per WBRANCH at all 12 `state.clone()` sites,
+    /// one of which (c:6379 here) runs per branch BEFORE the skip check.
+    /// Profiling `i<TAB>` put 58% of non-idle CPU in the resulting
+    /// `_platform_memmove` + `madvise`. It also silently WEAKENED the
+    /// guard: marks made inside a failed branch were thrown away with the
+    /// clone, so the same branch could be re-explored anyway.
+    pub wbranch_visits: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, Vec<u8>>>>,
     pub patbeginp: [usize; NSUBEXP], // c:241 capture starts (byte offsets)
     pub patendp: [usize; NSUBEXP],   // c:242 capture ends
     /// `parsfound` from `Src/pattern.c` (per c:2957/c:2989 references).
@@ -4932,7 +4947,9 @@ const I_OP: usize = 0; // opcode byte
 impl rpat {
     pub fn new() -> Self {
         Self {
-            wbranch_visits: std::collections::HashMap::new(),
+            wbranch_visits: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
             patbeginp: [usize::MAX; NSUBEXP],
             patendp: [0; NSUBEXP],
             captures_set: 0,
@@ -6387,8 +6404,12 @@ pub fn patmatch(
                     // until PATMATCH_MAX_DEPTH.
                     let mut wbranch_skip = false;
                     if br_op == P_WBRANCH {
-                        let bm = state
-                            .wbranch_visits
+                        // The map is shared with every clone of `state`, the
+                        // way C's operand buffer is shared across the whole
+                        // pattry — so a mark set here is still visible after
+                        // this branch fails and the walk backtracks.
+                        let mut visits = state.wbranch_visits.borrow_mut();
+                        let bm = visits
                             .entry(br)
                             .or_insert_with(|| vec![0u8; string.len() + 1]);
                         let slot = bm.get(s_off).copied().unwrap_or(0);
