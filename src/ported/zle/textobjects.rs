@@ -466,7 +466,18 @@ pub fn selectargument() -> i32 {
         .unwrap_or(ZLELL.load(Ordering::SeqCst));
     MARK.store(s, Ordering::SeqCst);
     ZLECS.store(e, Ordering::SeqCst);
-    if in_vi_cmd_mode() && ZLECS.load(Ordering::SeqCst) > 0 {
+    // c:315-316 — `if (!virangeflag && invicmdmode()) DECCS();`
+    //
+    // "vi operators don't include the cursor position" — but `virangeflag`
+    // is set precisely WHILE an operator is collecting its range, and then
+    // the operator does that adjustment itself. Dropping the guard made the
+    // decrement happen twice: `cia` on `echo "…"` selected `ech` and left
+    // the `o` behind. `selectword` reads the same flag (see the sibling at
+    // the top of this file), which is why the word objects were unaffected.
+    if VIRANGEFLAG.load(Ordering::Relaxed) == 0
+        && in_vi_cmd_mode()
+        && ZLECS.load(Ordering::SeqCst) > 0
+    {
         ZLECS.fetch_sub(1, Ordering::SeqCst);
     }
     0
