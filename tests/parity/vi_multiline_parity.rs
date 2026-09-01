@@ -303,3 +303,53 @@ fn ci_quote_does_what_zsh_does_with_an_unbound_object() {
         "vicmd ci\" — an object zsh does not bind",
     );
 }
+
+/// `ci"` through zsh's OWN `select-quoted` function, autoloaded and bound
+/// in `viopp` the way `Functions/Zle/select-quoted`'s header documents.
+///
+/// The object is a shell function, and its last two lines are
+///
+///     MARK=found
+///     CURSOR=end
+///
+/// Both are bare identifiers assigned to ZLE integer specials, which zsh
+/// evaluates ARITHMETICALLY. `CURSOR` was routed to the live-editor write
+/// path (params.rs:6827) with the raw word, which parsed as 0, while
+/// `MARK` — not in that list — evaluated correctly. Every quote and
+/// bracket object therefore selected from the mark to the START OF THE
+/// LINE: `ci"` on `echo "hello world" tail` produced
+/// `Xhello world" tail`.
+///
+/// Nothing in the six built-in text objects catches this: they are C
+/// widgets that set the cursor through `zlecs` directly and never assign
+/// `$CURSOR` as a shell parameter.
+#[test]
+fn ci_quote_via_the_autoloaded_select_quoted_function() {
+    let driver = format!(
+        "{OPEN}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N) /opt/homebrew/share/zsh/functions(N) $fpath)'
+zpty -w w 'autoload -Uz select-quoted; zle -N select-quoted'
+zpty -w w 'for m in visual viopp; do bindkey -M $m i\\\" select-quoted; bindkey -M $m a\\\" select-quoted; done'
+zpty -w w 'bindkey -v'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w 'echo \\\"hello world\\\" tail'
+sleep 2
+zpty -w -n w $'\\e'
+sleep 1
+zpty -w -n w '0'
+sleep 1
+zpty -w -n w 'ci\\\"'
+sleep 2
+zpty -w -n w 'X'
+sleep 1
+zpty -w -n w $'\\e'
+sleep 1
+{DUMP_KEY}
+{DRAIN}
+"
+    );
+    assert_same_dump(&driver, "ci\" through the autoloaded select-quoted function");
+}

@@ -6832,10 +6832,12 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             "BUFFER" => format!("{}{}", zp::get_buffer(), val),
             "LBUFFER" => format!("{}{}", zp::get_lbuffer(), val),
             "RBUFFER" => format!("{}{}", zp::get_rbuffer(), val),
-            // c:2775-2778 — integer augment is arithmetic add.
+            // c:2775-2778 — integer augment is arithmetic add. The added
+            // value is an ARITHMETIC EXPRESSION, not a literal: `CURSOR+=n`
+            // has to evaluate `n` the way any PM_INTEGER assignment does.
             _ => {
                 let old = zp::get_cursor() as i64;
-                let add = val.trim().parse::<i64>().unwrap_or(0);
+                let add = crate::ported::math::mathevali(val.trim()).unwrap_or(0);
                 (old + add).to_string()
             }
         };
@@ -6843,7 +6845,27 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     } else {
         val
     };
-    if zle_special && crate::zle_param_sync::live_write(s, zle_val) {
+    // CURSOR is PM_INTEGER (zle_params.rs:70, c:147), so its RHS is an
+    // ARITHMETIC EXPRESSION — `CURSOR=end` means "the value of end", not the
+    // string "end". The three string specials above pass through untouched,
+    // but routing CURSOR to live_write handed it the raw word, which parsed
+    // as 0. MARK is not in this list and so kept going down the PM_INTEGER
+    // path, which is why `MARK=found; CURSOR=end` — the last two lines of
+    // zsh's own select-quoted — set the mark correctly and the cursor to 0,
+    // making every quote/bracket text object select from the mark to the
+    // start of the line.
+    let zle_evaluated: Option<String> = if s == "CURSOR" {
+        // A bad expression is not a silent 0: fall through to the ordinary
+        // assignment path, which reports it the way any arithmetic error is.
+        crate::ported::math::mathevali(zle_val.trim())
+            .ok()
+            .map(|n| n.to_string())
+    } else {
+        None
+    };
+    let zle_ok = s != "CURSOR" || zle_evaluated.is_some();
+    let zle_val: &str = zle_evaluated.as_deref().unwrap_or(zle_val);
+    if zle_special && zle_ok && crate::zle_param_sync::live_write(s, zle_val) {
         return getsparam(s).map(|_| {
             Box::new(crate::ported::zsh_h::param {
                 node: crate::ported::zsh_h::hashnode {
