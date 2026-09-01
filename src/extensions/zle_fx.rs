@@ -92,23 +92,35 @@ pub fn enabled() -> bool {
 ///     handled natively — its shfuncs simply never run;
 ///   * highlighting: user $region_highlight (what z-sy-h writes) paints
 ///     ABOVE the native layer, so a functioning plugin overrides cleanly.
-/// True when rc files are in play. `-f` / `--no-rcs` unsets RCS
-/// (init.rs:422-425), which is exactly the parity mode the engines must
-/// stay out of.
-fn rcs_shell() -> bool {
+/// True when the engines are allowed to run at all.
+///
+/// `-f` / `--no-rcs` unsets RCS (init.rs:422-425) and that is the parity
+/// mode the engines stay out of — but only while the user has said nothing
+/// about the editor. `-f` suppresses RC FILES; `~/.zshrs/zshrs.toml` is not
+/// an rc file, it is the shell's own configuration, and a `[zle]` table in
+/// it is a statement about what this shell's editor is. Refusing it under
+/// `-f` meant `zshrs -f` from a configured install came up with a different
+/// editor than the same install without the flag, with nothing in the
+/// config able to say otherwise.
+///
+/// Parity still holds where it is measured: a machine with no `[zle]` table
+/// — CI, a fresh install — takes the old path exactly, and the pty harness
+/// pins `ZSHRS_NATIVE_ZLE_FX=0` (zpty_probe.rs:151) on top of that.
+fn engines_allowed() -> bool {
     crate::ported::zsh_h::isset(crate::ported::zsh_h::RCS)
+        || crate::config::current().zle.configured
 }
 
 fn autosuggest_active() -> bool {
-    enabled() && rcs_shell() && crate::config::current().zle.autosuggest
+    enabled() && engines_allowed() && crate::config::current().zle.autosuggest
 }
 
 fn highlight_active() -> bool {
-    enabled() && rcs_shell() && crate::config::current().zle.syntax_highlight
+    enabled() && engines_allowed() && crate::config::current().zle.syntax_highlight
 }
 
 fn search_active() -> bool {
-    enabled() && rcs_shell() && crate::config::current().zle.history_search
+    enabled() && engines_allowed() && crate::config::current().zle.history_search
 }
 
 /// Native autopair yields to the zsh-autopair script plugin when loaded
@@ -117,7 +129,7 @@ fn search_active() -> bool {
 /// (autopair.zsh:211/216/223-225).
 fn autopair_engine_active() -> bool {
     enabled()
-        && rcs_shell()
+        && engines_allowed()
         && crate::config::current().zle.autopair
         && crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(SeqCst) == 0
         && !crate::ported::zle::zle_thingy::rthingy_nocreate("autopair-insert")
