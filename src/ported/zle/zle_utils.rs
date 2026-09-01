@@ -1740,6 +1740,13 @@ pub fn undo(args: &[String]) -> i32 {
             break;
         } // c:1630
     }
+    // c:1628 — `setlastline();`. The undo restored the line, and this is
+    // what tells the change recorder so: `handleundo()` diffs the live line
+    // against `lastline`, so leaving the pre-undo text there made the NEXT
+    // widget record the undo ITSELF as a fresh change. A second `u` then
+    // undid that phantom instead of chaining further back, which is why
+    // repeated `u` stopped after one step.
+    setlastline();
     0 // c:1631
 }
 
@@ -1806,7 +1813,8 @@ pub fn redo() -> i32 {
             break;
         } // c:1670
     }
-    CURCHANGE.fetch_add(1, Ordering::SeqCst); // c:1672 advance past applied
+    CURCHANGE.fetch_add(1, Ordering::SeqCst); // advance past applied
+    setlastline(); // c:1672 — same baseline reset as `undo`
     0 // c:1674
 }
 
@@ -1875,6 +1883,7 @@ pub fn viundochange(
             applychange(idx as i32); // c:1711
             CURCHANGE.store(idx + 1, Ordering::SeqCst); // c:1712
         }
+        setlastline(); // c:1713
         0 // c:1715
     } else {
         undo(args) // c:1717

@@ -140,6 +140,7 @@ mod zinit_plugin_corpus_parity;
 mod zpwr_corpus_parity;
 mod always_break_parity;
 mod terminfo_parity;
+mod vi_multiline_parity;
 mod zsh_arrays_parity;
 mod zle_buffer_state_parity;
 mod zle_editing_parity;

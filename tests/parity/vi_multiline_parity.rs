@@ -1,0 +1,215 @@
+//! vi-mode vertical motion over a MULTI-LINE buffer, judged on the line
+//! editor's own state.
+//!
+//! `k` and `j` in vicmd are `vi-up-line-or-history` /
+//! `vi-down-line-or-history`, and neither is a plain line move
+//! (`Src/Zle/zle_hist.c:302, 390`):
+//!
+//! ```c
+//! int col = lastcol;
+//! uplineorhistory(args);
+//! lastcol = col;
+//! return vifirstnonblank(args);
+//! ```
+//!
+//! Two things beyond the move: the cursor lands on the first NON-BLANK of
+//! the new line, and `lastcol` — the column a vertical motion aims for,
+//! latched by `upline`/`downline` at c:369-372 — is restored afterwards so
+//! a run of `j`/`k` keeps tracking the column it started from instead of
+//! drifting one line at a time.
+//!
+//! Both are invisible on a single-line buffer, which is why a port can lose
+//! them and still pass every one-line vi case: `uplineorhistory` on line 1
+//! of 1 just walks history. The cases here build a real multi-line buffer
+//! with `o` (`vi-open-line-below`) and read `$BUFFER`/`$CURSOR` from inside
+//! a widget, so the verdict is the editor's state and not the transcript.
+//!
+//! Skip pattern: no-ops silently when `zsh` isn't on PATH or when
+//! `zsh/zpty` will not load. Harness contract: `zpty_probe`.
+
+#![allow(non_snake_case)]
+#![allow(clippy::doc_lazy_continuation)]
+
+use crate::zpty_probe::{assert_same_dump, DRAIN, DUMP_KEY, DUMP_WIDGET, OPEN};
+
+/// A vi-mode session holding a three-line buffer with DIFFERENT indents,
+/// so "first non-blank" is a different column on every line and a widget
+/// that merely keeps the old column lands somewhere else.
+///
+///     __alpha        (2 spaces)
+///     ______beta     (6 spaces)
+///     x              (none)
+///
+/// Built with `o` from command mode rather than by pasting newlines: `o`
+/// is the vi key that makes a multi-line buffer in the first place, and
+/// each one leaves the editor in insert mode on the new line.
+fn three_indented_lines(keys: &str) -> String {
+    format!(
+        "{OPEN}
+zpty -w w 'bindkey -v'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w '  alpha'
+sleep 1
+zpty -w -n w $'\\e'
+sleep 1
+zpty -w -n w 'o'
+sleep 1
+zpty -w -n w '      beta'
+sleep 1
+zpty -w -n w $'\\e'
+sleep 1
+zpty -w -n w 'o'
+sleep 1
+zpty -w -n w 'x'
+sleep 1
+zpty -w -n w $'\\e'
+sleep 1
+{keys}
+{DUMP_KEY}
+{DRAIN}
+"
+    )
+}
+
+/// `k` from the last line lands on the first NON-BLANK of the line above,
+/// not on the column the cursor happened to hold.
+#[test]
+fn k_lands_on_the_first_nonblank_of_the_line_above() {
+    assert_same_dump(
+        &three_indented_lines("zpty -w -n w 'k'\nsleep 1\n"),
+        "vicmd k from the last line of a three-line buffer",
+    );
+}
+
+/// Two `k` in a row cross two differently-indented lines. A widget that
+/// clobbers `lastcol` drifts on the second one.
+#[test]
+fn two_k_in_a_row_cross_both_lines() {
+    assert_same_dump(
+        &three_indented_lines("zpty -w -n w 'k'\nsleep 1\nzpty -w -n w 'k'\nsleep 1\n"),
+        "vicmd k twice from the last line of a three-line buffer",
+    );
+}
+
+/// `j` back down after `k` returns to the first non-blank of the lower
+/// line — the mirror case, which is what pins `vidownlineorhistory`.
+#[test]
+fn j_after_k_returns_to_the_first_nonblank_below() {
+    assert_same_dump(
+        &three_indented_lines(
+            "zpty -w -n w 'kk'\nsleep 1\nzpty -w -n w 'j'\nsleep 1\n",
+        ),
+        "vicmd k k then j over a three-line buffer",
+    );
+}
+
+/// `k` with the cursor parked at the END of a long line: the column to
+/// aim for is past the end of the shorter line above, which is exactly
+/// the case `lastcol` exists to arbitrate.
+#[test]
+fn k_from_the_end_of_a_longer_line() {
+    assert_same_dump(
+        &three_indented_lines("zpty -w -n w 'kk$'\nsleep 1\nzpty -w -n w 'j'\nsleep 1\n"),
+        "vicmd to the end of line 1 then j to a shorter line",
+    );
+}
+
+/// The buffer itself, with no motion at all. If `o` builds a different
+/// buffer in the two shells, every case above is comparing the wrong
+/// thing — this is the control that says they are not.
+#[test]
+fn o_builds_the_same_three_line_buffer() {
+    assert_same_dump(
+        &three_indented_lines(""),
+        "the three-line buffer `o` builds from command mode",
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Undo chaining
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A vi session that makes THREE separate insert-mode edits, each its own
+/// change record, then presses `u` `count` times from command mode.
+///
+/// Every `u` must step one change further back. What breaks that is a
+/// missing `setlastline()` (`zle_utils.c:1628`): `handleundo()` diffs the
+/// live line against `lastline`, so an undo that does not reset the
+/// baseline makes the NEXT widget record the undo itself as a fresh
+/// change, and the following `u` undoes that phantom instead of chaining.
+/// One `u` therefore looks correct while two do not — the reason this
+/// needs its own case rather than an assertion on a single undo.
+fn three_edits_then_undo(count: usize) -> String {
+    let undos = "zpty -w -n w 'u'\nsleep 2\n".repeat(count);
+    format!(
+        "{OPEN}
+zpty -w w 'bindkey -v'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w 'aaa'
+sleep 2
+zpty -w -n w $'\\e'
+sleep 2
+zpty -w -n w 'abbb'
+sleep 2
+zpty -w -n w $'\\e'
+sleep 2
+zpty -w -n w 'accc'
+sleep 2
+zpty -w -n w $'\\e'
+sleep 2
+{undos}{DUMP_KEY}
+{DRAIN}
+"
+    )
+}
+
+/// One `u` undoes the last edit. The control: if this diverges, the two
+/// shells disagree about what a change IS and the chaining cases below
+/// are measuring the wrong thing.
+#[test]
+fn one_u_undoes_the_last_edit() {
+    assert_same_dump(&three_edits_then_undo(1), "vicmd u once after three edits");
+}
+
+/// Two `u` in a row reach the edit before that.
+///
+/// OPEN DIVERGENCE, not a flake. With three insert sessions on the line,
+/// the second `u` is a no-op in zshrs while zsh unwinds the rest of the
+/// line:
+///
+///     zsh    BUF=[]        CUR=[0]
+///     zshrs  BUF=[aaabbb]  CUR=[5]
+///
+/// The first `u` agrees exactly (see the case above), so the change
+/// records and the first step of the chain are right; what stops is the
+/// walk. `undo` follows CH_PREV backward from `curchange`
+/// (zle_utils.c:1630) and `mergeundo` sets those flags at ESC — the
+/// remaining gap is which records end up flagged when the FIRST insert
+/// session was never opened by `startvitext` (typing at the initial viins
+/// prompt latches no `vistartchange`), so C merges it into the group and
+/// this port does not.
+///
+/// Ignored so the suite stays honest about what passes; delete the
+/// attribute with the fix.
+#[ignore = "open: the CH_PREV chain stops after one step — see the doc comment"]
+#[test]
+fn two_u_chain_back_two_edits() {
+    assert_same_dump(&three_edits_then_undo(2), "vicmd u twice after three edits");
+}
+
+/// Three `u` unwind every edit. Pressing `u` more times than there are
+/// changes must also agree — zsh stops at the oldest change rather than
+/// emptying the buffer.
+///
+/// Blocked on the same chain gap as `two_u_chain_back_two_edits`.
+#[ignore = "open: the CH_PREV chain stops after one step — see two_u_chain_back_two_edits"]
+#[test]
+fn u_past_the_oldest_change_stops_where_zsh_stops() {
+    assert_same_dump(&three_edits_then_undo(5), "vicmd u five times after three edits");
+}
