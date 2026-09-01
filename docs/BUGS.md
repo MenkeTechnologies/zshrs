@@ -57804,3 +57804,87 @@ Unrelated and pre-existing, surfaced by the new path because C reaches
 it: a syntax error names a different token. `if then` gives zsh `parse
 error near `\n'` and zshrs `parse error near `if'`. It reproduces on the
 untouched `-c` and stdin paths.
+
+---
+
+## #1126 — `(M)`/`(B)`/`(E)`/`(N)`/`(R)` were lost when the `#`/`##`/`%`/`%%` pattern came from a nested `${…}` — fixed
+
+**Status:** `fixed` 2026-09-01.
+
+```console
+$ zsh   -fc 'p=a; t=abc; print -r -- "${(M)t##${~p}}"'
+a
+$ zshrs --zsh -f -c 'p=a; t=abc; print -r -- "${(M)t##${~p}}"'
+bc
+```
+
+The `(M)` flag inverts the disposition of the anchored-strip operators: without
+it `${t##pat}` yields the REST after the matched prefix, with it the matched
+prefix itself (`Src/subst.c:3176` sets `SUB_MATCH`, consumed by `igetmatch` at
+`Src/glob.c:2900+`). zshrs dropped the flag whenever the pattern operand was
+written as a braced `${…}` — `$~p` and a literal pattern both worked, which is
+why this went unnoticed.
+
+The pattern operand of `#` / `##` / `%` / `%%` is expanded by `singsub(&s)`
+(`Src/subst.c:3412`), which re-enters `paramsubst`. In C the substitution flags
+live in a local `flags` variable, so the nested call cannot disturb the enclosing
+one. zshrs keeps them in a shared cell (`sub_flags_set`/`sub_flags_get`) that the
+nested `paramsubst` resets, so the four strip arms — which read the cell AFTER
+the operand was singsub'd — saw zero. Each arm also keeps `sub_flags_bits`, the
+flags this `paramsubst` parsed for itself; `SUB_SUBSTR` already read that local
+for exactly this reason, and the `:#` filter arm had been fixed the same way.
+
+**Fix.** `src/ported/subst.rs` — the `match_only` (`SUB_MATCH`), `ben`
+(`SUB_BIND`/`SUB_EIND`/`SUB_LEN`) and `rest_flag` (`SUB_REST`) reads in all four
+strip arms now come from the per-`paramsubst` local `sub_flags_bits` instead of
+the shared cell, matching the `substr_mode` reads beside them.
+
+Surfaced through completion: `_path_files` computes
+`tmp2="${(M)tpre##${~skips}}"` with `skips='((.|..)/)##'` to split leading
+`./` / `../` components off the word. With the flag dropped, a word with no
+leading path component (`-`) returned the whole word instead of the empty
+string, so `$PREFIX` was moved into the directory-prefix list and the glob
+became `-*` where zsh builds `*`. Under `zstyle ':completion:*' matcher-list`,
+`ls -<TAB>` then produced no matches at all.
+
+Still divergent, pre-existing and unrelated: `(S)` (substring) combined with
+`##` picks the wrong occurrence — `t=foobarfoo; ${(S)t##foo}` gives `foobar`
+where zsh gives `barfoo`, and the `(B)` index follows it.
+
+---
+
+## #1127 — an aliased command word made the completion lexer lose the word under the cursor — fixed
+
+**Status:** `fixed` 2026-09-01.
+
+```console
+$ zsh   -fc "alias ls='grc --colour=on ls'"   # then: ls -<TAB>
+# completes ls's arguments; the status row reads `interactive: -[]`
+$ zshrs --zsh -f -c "alias ls='grc --colour=on ls'"   # then: ls -<TAB>
+# offers every file in the directory; status row reads `interactive: []`,
+# and typing more characters never narrows the list
+```
+
+`get_comp_string` (`Src/Zle/zle_tricky.c:1087`) records the cursor word by
+letting the lexer clear `lexflags` when it reaches it: `gotword`
+(`Src/lex.c:1882`) derives the word end as `zlemetall + 1 - inbufct` and writes
+`wb`/`we` only when the cursor falls inside. With the count one too high the
+window closes one column short of the cursor, `clwpos` stays `-1`, and the
+`t0 == NULLTOK` arm at `Src/Zle/zle_tricky.c:1484` returns an EMPTY word with
+`wb == we == zlemetacs`. Completion then ran against an empty prefix.
+
+`checkalias` (`Src/lex.c:1918-1927`) does `c = hgetc(); hungetc(c);` before
+pushing the alias body. zshrs's `hungetc` queues into its own `LEX_UNGET_BUF`
+and, under `LEXFLAGS_ZLE`, mirrors C's `inbufptr--; inbufct++`
+(`Src/input.c:558-559`); the matching `inbufct--` happens when `hgetc` pops that
+queue. `checkalias` then re-routes the queued characters into an
+`inpush(pending, INP_CONT)` frame so read order matches C — and `inpush` adds
+their length to `inbufct` a second time, while the pop that would have taken the
+first bump back never runs for them.
+
+**Fix.** `src/ported/lex.rs` — `checkalias` subtracts the re-routed character
+count from `inbufct` under `LEXFLAGS_ZLE` before the `inpush`. The same commit
+restores the `!(inbufflags & INP_ALIAS)` half of C's guard on the `gotword` call
+in `exalias` (`Src/lex.c:1982`), which the port had dropped; the other three
+ZLE-tracking sites (`SETPARBEGIN` `Src/lex.c:469`, `SETPAREND` `:474`,
+`wordbeg` `:627`) already honoured it.

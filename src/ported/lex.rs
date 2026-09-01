@@ -3781,6 +3781,27 @@ fn checkalias(lextext: &str) -> bool {
                             let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
                             crate::ported::hist::hptr.store(pos + restore, Ordering::SeqCst);
                         }
+                        // `hungetc` bumped `inbufct` for each queued char
+                        // under LEXFLAGS_ZLE (c:input.c:558-559), expecting
+                        // `hgetc`'s unget-pop to take it back on re-read.
+                        // These chars leave the unget queue for an inbuf
+                        // frame instead, so that pop never runs for them —
+                        // and `inpush` below adds their length AGAIN for an
+                        // INP_CONT frame. Undo the unget bump here so the
+                        // count is not doubled. Without it `inbufct` stayed
+                        // one high for the rest of the line, and `gotword`
+                        // (c:lex.c:1884, `nwe = zlemetall + 1 - inbufct`)
+                        // placed the completion word END one column short of
+                        // the cursor: with `alias ls='grc --colour=on ls'`,
+                        // `ls -<TAB>` never matched the cursor word, so
+                        // `get_comp_string` returned an EMPTY word
+                        // (`clwpos == -1`, `wb == we == zlemetacs`) and
+                        // completion offered every file in the directory,
+                        // narrowing to nothing as more was typed.
+                        if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+                            let n = pending.chars().count() as i32;
+                            crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - n));
+                        }
                         if !pending.is_empty() {
                             inpush(&pending, INP_CONT, None);
                         }
@@ -4020,7 +4041,17 @@ pub fn exalias() -> bool {
     LEX_ZSHLEXTEXT.with_borrow_mut(|t| *t = Some(tokstr.clone()));
 
     // lex.c:1982-1991 — ZLE word-tracking for completion.
-    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+    //
+    // C's guard is `(lexflags & LEXFLAGS_ZLE) && !(inbufflags & INP_ALIAS)`;
+    // the INP_ALIAS half was missing here. While the lexer reads an
+    // `inpush`ed alias body, `inbufct`/`wordbeg` count that body, not the
+    // command line `gotword` measures the cursor against, so the word
+    // positions it would write are meaningless. The same guard is already
+    // honoured at the other three ZLE-tracking sites (`SETPARBEGIN` c:469,
+    // `SETPAREND` c:474, `wordbeg` c:627).
+    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0
+        && (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) == 0
+    {
         let zp = LEX_LEXFLAGS.get();
         gotword();
         // lex.c:1986-1990 — if gotword cleared lexflags, the cursor
