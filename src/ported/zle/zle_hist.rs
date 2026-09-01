@@ -428,11 +428,35 @@ pub fn uplineorhistory() -> i32 {
 }
 
 /// Port of `viuplineorhistory(char **args)` from Src/Zle/zle_hist.c:302.
-/// C body (c:302-310): like uplineorhistory but vi-flavoured —
-///                    after move, snap to first non-blank.
+///
+/// C body:
+/// ```c
+/// int col = lastcol;
+/// uplineorhistory(args);
+/// lastcol = col;
+/// return vifirstnonblank(args);
+/// ```
+///
+/// The two lines around the move are the whole widget. `uplineorhistory`
+/// consumes `lastcol` (the column a vertical motion aims for, latched by
+/// `upline`/`downline` at c:369-372) and leaves it pointing at wherever the
+/// move ended; restoring it keeps a run of `k`/`j` tracking the column the
+/// user started from instead of drifting. `vifirstnonblank` then puts the
+/// cursor on the first non-blank of the new line, which is what vi's `k`
+/// and `j` do.
+///
+/// The body was a bare `uplineorhistory()` — no column preserved and no
+/// snap — so in vicmd `k` left the cursor at a stale offset and repeated
+/// `j`/`k` walked sideways through a multi-line buffer.
 pub fn viuplineorhistory() -> i32 {
-    // c:302
-    uplineorhistory()
+    // c:304 — `int col = lastcol;`
+    let col = LASTCOL.load(Ordering::SeqCst);
+    // c:305 — `uplineorhistory(args);`
+    uplineorhistory();
+    // c:306 — `lastcol = col;`
+    LASTCOL.store(col, Ordering::SeqCst);
+    // c:307 — `return vifirstnonblank(args);`
+    crate::ported::zle::zle_move::vifirstnonblank()
 }
 
 /// Port of `uplineorsearch(char **args)` from Src/Zle/zle_hist.c:312.
@@ -517,11 +541,26 @@ pub fn downlineorhistory() -> i32 {
 }
 
 /// Port of `vidownlineorhistory(char **args)` from Src/Zle/zle_hist.c:390.
-/// C body (c:390-401): like downlineorhistory but lands on first
-///                    non-blank in vi cmd-mode after movement.
+///
+/// C body:
+/// ```c
+/// int col = lastcol;
+/// downlineorhistory(args);
+/// lastcol = col;
+/// return vifirstnonblank(zlenoargs);
+/// ```
+///
+/// The mirror of `viuplineorhistory` — see there for why the `lastcol`
+/// save/restore is the widget rather than decoration.
 pub fn vidownlineorhistory() -> i32 {
-    // c:390
-    downlineorhistory()
+    // c:392 — `int col = lastcol;`
+    let col = LASTCOL.load(Ordering::SeqCst);
+    // c:393 — `downlineorhistory(args);`
+    downlineorhistory();
+    // c:394 — `lastcol = col;`
+    LASTCOL.store(col, Ordering::SeqCst);
+    // c:395 — `return vifirstnonblank(zlenoargs);`
+    crate::ported::zle::zle_move::vifirstnonblank()
 }
 
 /// Port of `downlineorsearch(char **args)` from Src/Zle/zle_hist.c:400.

@@ -2961,7 +2961,14 @@ pub fn zle_reset() {
     *STATUSLINE.lock().unwrap() = None;
     STACKHIST.store(0, SeqCst);
     STACKCS.store(0, SeqCst);
-    VISTARTCHANGE.store(0, SeqCst);
+    // c:1286 — `vistartchange = -1`. The INACTIVE sentinel, which the
+    // readers spell `u64::MAX` (zle_utils.rs:1907, :1937) because the port
+    // holds a signed C `zlong` in an AtomicU64. Storing 0 here said
+    // "an insert session is open, and it began at change 0" on every fresh
+    // line, so `splitundo` took its active arm and `mergeundo` chained
+    // change records from a session that never started — which is what
+    // decided how far a single `u` unwound.
+    VISTARTCHANGE.store(u64::MAX, SeqCst);
     UNDO_STACK.lock().unwrap().clear();
     CHANGENO.store(0, SeqCst);
     KUNGETBUF.lock().unwrap().clear();
@@ -4100,7 +4107,12 @@ pub static STACKHIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
 /// Port of `int stackcs` from `Src/Zle/zle_hist.c`.
 pub static STACKCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// Port of `zlong vistartchange` from `Src/Zle/zle_vi.c`.
-pub static VISTARTCHANGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+///
+/// C's inactive value is `-1`; this port holds it in an `AtomicU64`, so
+/// the sentinel is `u64::MAX`. Initialise to that, not to 0 — 0 is a
+/// legitimate change number.
+pub static VISTARTCHANGE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
 /// Port of `struct change *changes` from `Src/Zle/zle_utils.c`.
 pub static UNDO_STACK: std::sync::Mutex<Vec<change>> = std::sync::Mutex::new(Vec::new());
 /// Port of `zlong changeno` from `Src/Zle/zle_utils.c`.

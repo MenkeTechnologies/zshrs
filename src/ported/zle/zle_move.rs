@@ -889,6 +889,12 @@ pub fn viendofline() -> i32 {
     if ZLECS.load(Ordering::SeqCst) > 0 {
         deccs();
     }
+    // c:722 — `lastcol = 1<<30`. The sentinel is what makes `$` STICKY: a
+    // later vertical motion aims for this column, never reaches it, and so
+    // lands at the end of whatever line it moved to. Dropping it left `$`
+    // as a one-shot move and a following `j` landed at the start of the
+    // next line instead of its end.
+    crate::ported::zle::zle_main::LASTCOL.store(1 << 30, Ordering::SeqCst);
     0
 }
 

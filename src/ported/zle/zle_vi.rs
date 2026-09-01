@@ -960,7 +960,13 @@ pub fn vicmdmode() -> i32 {
     if selectkeymap("vicmd", 0) != 0 {
         return 1;
     }
-    // c:681 — `mergeundo();` (undo-coalescing not yet wired — TODO)
+    // c:681 — `mergeundo();`. This is what makes one insert session ONE
+    // undo step: every self-insert records its own change, and leaving ESC
+    // without chaining them meant `u` walked back a single character at a
+    // time instead of undoing the insert. `mergeundo` reads `vistartchange`
+    // (latched by `startvitext`, zle_vi.c:122) and flags CH_PREV/CH_NEXT
+    // across everything recorded since, which is the chain `undo` follows.
+    crate::ported::zle::zle_utils::mergeundo();
     // c:682 — `insmode = unset(OVERSTRIKE);`
     let overstrike_set = crate::ported::zsh_h::isset(crate::ported::zsh_h::OVERSTRIKE);
     INSMODE.store(if overstrike_set { 0 } else { 1 }, SeqCst);
