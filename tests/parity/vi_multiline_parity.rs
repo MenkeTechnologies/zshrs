@@ -213,3 +213,93 @@ fn two_u_chain_back_two_edits() {
 fn u_past_the_oldest_change_stops_where_zsh_stops() {
     assert_same_dump(&three_edits_then_undo(5), "vicmd u five times after three edits");
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Text objects
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A vi session over `echo "hello world" tail` with the cursor parked on
+/// the `h` of `hello` — inside the quotes, inside a word, inside a shell
+/// argument, so every object zsh ships has something to select.
+///
+/// zsh binds exactly six text objects, in `viopp` and `visual`
+/// (`zle_keymap.c:1381-1386`): `aa` `ia` (shell word), `aw` `iw` (word),
+/// `aW` `iW` (blank word). `i"` is NOT among them — quote and bracket
+/// objects come from plugins, not the shell — so a case for `ci"` is a
+/// statement about what zsh does with an unbound sequence, which is still
+/// worth pinning: both shells have to do the SAME nothing.
+fn quoted_line(keys: &str) -> String {
+    format!(
+        "{OPEN}
+zpty -w w 'bindkey -v'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w 'echo \\\"hello world\\\" tail'
+sleep 2
+zpty -w -n w $'\\e'
+sleep 1
+zpty -w -n w '0'
+sleep 1
+zpty -w -n w 'fh'
+sleep 1
+{keys}
+sleep 2
+zpty -w -n w $'\\e'
+sleep 1
+{DUMP_KEY}
+{DRAIN}
+"
+    )
+}
+
+/// `ciw` changes the word under the cursor: `hello` goes, the rest stays.
+#[test]
+fn ciw_changes_the_word_under_the_cursor() {
+    assert_same_dump(
+        &quoted_line("zpty -w -n w 'ciw'\nsleep 1\nzpty -w -n w 'X'\n"),
+        "vicmd ciw on a word inside quotes",
+    );
+}
+
+/// `caw` takes the trailing whitespace with it, which is the whole
+/// difference between `a` and `i`.
+#[test]
+fn caw_takes_the_word_and_its_whitespace() {
+    assert_same_dump(
+        &quoted_line("zpty -w -n w 'caw'\nsleep 1\nzpty -w -n w 'X'\n"),
+        "vicmd caw on a word inside quotes",
+    );
+}
+
+/// `cia` selects the shell ARGUMENT — here the whole quoted string,
+/// quotes included or not per zsh's own splitting.
+#[test]
+fn cia_changes_the_shell_argument() {
+    assert_same_dump(
+        &quoted_line("zpty -w -n w 'cia'\nsleep 1\nzpty -w -n w 'X'\n"),
+        "vicmd cia on a quoted shell argument",
+    );
+}
+
+/// `diw` — the same object under a different operator, which is what
+/// separates "the object is broken" from "the operator is broken".
+#[test]
+fn diw_deletes_the_word_under_the_cursor() {
+    assert_same_dump(
+        &quoted_line("zpty -w -n w 'diw'\n"),
+        "vicmd diw on a word inside quotes",
+    );
+}
+
+/// `ci\"` is not a zsh binding. Whatever zsh does with the unbound `\"`
+/// after `ci`, this shell has to do the same — including leaving the
+/// buffer untouched.
+#[test]
+fn ci_quote_does_what_zsh_does_with_an_unbound_object() {
+    assert_same_dump(
+        &quoted_line("zpty -w -n w 'ci\\\"'\nsleep 1\n"),
+        "vicmd ci\" — an object zsh does not bind",
+    );
+}
