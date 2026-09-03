@@ -1045,6 +1045,104 @@ pub fn dump_assoc_tables(path: &Path) -> Option<DumpTables> {
     Some(tables)
 }
 
+/// Overlay `~/.zshrs/functions`'s own registrations onto a dump that
+/// predates that tree — the zshrs-only half of sh:469-496.
+///
+/// Upstream `-C` sources the dump and stops (sh:494-495); sh:501's
+/// `if [[ -z "$_i_done" ]]` then skips the whole `$fpath` scan, so in C zsh
+/// the dump alone defines the five tables.  zshrs adds one thing C zsh has no
+/// equivalent for: it materialises its bundled function tree into
+/// `~/.zshrs/functions` out of band and puts that directory on `$fpath`, so a
+/// dump written before an upgrade lists none of `_zjob`, `_ztag`, `_zcache`,
+/// … even though their files ARE on `$fpath`.
+///
+/// The previous handling of that case DISCARDED the whole dump and fell back
+/// to zshrs's SQLite cache.  That is far too blunt: the cache is a different
+/// table, not a superset.  Measured on this host with the fpath pinned to
+/// `zsh -f`'s and only the dump's mtime varied —
+///
+/// ```text
+/// cache path (dump discarded): n=51577  X=_X  7z=_7z    zjob=_zjob
+/// dump path:                   n=51708  X=_X  7z=_7zip  zjob=
+/// real zsh, same dump:         n=51708  X=_X  7z=_7zip  zjob=
+/// ```
+///
+/// — so the dump path is byte-identical to zsh while the cache path resolves
+/// `7z` to a DIFFERENT completer (`_7z` from a plugin instead of the
+/// distribution's `_7zip`) and, when the cache happens to be only partially
+/// built, drops tens of thousands of keys outright.  Overlaying instead keeps
+/// the dump authoritative and adds only what it cannot know about.
+///
+/// Routing is `compinit`'s own (sh:514-525) restricted to one directory, and
+/// sh:519's `compdef -na` — `-n` meaning "do not override an existing
+/// definition" — is why the dump wins every key it already carries.  Nothing
+/// is published to `CompdefState` here; the caller publishes the merged
+/// tables.  Returns the number of `_comps` keys added.
+pub fn merge_bundled_registrations(tables: &mut DumpTables) -> usize {
+    let Some(dir) = crate::bundled_functions::functions_dir() else {
+        return 0;
+    };
+    let files = scan_directory(&dir);
+    let mut added = 0usize;
+    for file in &files {
+        let (cmds, pats, postpats): (&[String], &[String], &[String]) = match &file.def {
+            CompFileDef::CompDef(CompDef::Commands(c)) => (c, &[], &[]),
+            CompFileDef::CompDef(CompDef::Pattern(p)) => (&[], p, &[]),
+            CompFileDef::CompDef(CompDef::PostPattern(p)) => (&[], &[], p),
+            CompFileDef::CompDef(CompDef::Mixed {
+                commands,
+                patterns,
+                postpatterns,
+            }) => (commands, patterns, postpatterns),
+            CompFileDef::Autoload(opts) => {
+                // sh:522-524 — an `#autoload` file lands in `_compautos`.
+                tables
+                    .compautos
+                    .entry(file.name.clone())
+                    .or_insert_with(|| opts.join(" "));
+                continue;
+            }
+            _ => continue,
+        };
+        for cmd in cmds {
+            // sh:519 `compdef -na` — `-n` keeps an existing claim, and the
+            // dump IS the existing claim.
+            let (name, service) = match cmd.find('=') {
+                Some(i) => (&cmd[..i], Some(&cmd[i + 1..])),
+                None => (cmd.as_str(), None),
+            };
+            if tables.comps.contains_key(name) {
+                continue;
+            }
+            tables.comps.insert(name.to_string(), file.name.clone());
+            added += 1;
+            if let Some(svc) = service {
+                tables.services.insert(name.to_string(), svc.to_string());
+            }
+        }
+        for pat in pats {
+            tables
+                .patcomps
+                .entry(pat.clone())
+                .or_insert_with(|| file.name.clone());
+        }
+        for pat in postpats {
+            tables
+                .postpatcomps
+                .entry(pat.clone())
+                .or_insert_with(|| file.name.clone());
+        }
+    }
+    // sh:523 — every registered completer is `autoload -rUz`'d.
+    register_autoload_stubs(
+        files
+            .iter()
+            .filter(|f| matches!(f.def, CompFileDef::CompDef(_) | CompFileDef::Autoload(_)))
+            .map(|f| f.name.as_str()),
+    );
+    added
+}
+
 /// Default `$_comp_dumpfile` path (sh:129-134). User can override
 /// via `compinit -d <file>`; without that, use `${ZDOTDIR:-$HOME}`
 /// + `/.zcompdump`.
@@ -1993,8 +2091,23 @@ pub fn load_from_cache(
         result.postpatcomps.insert(pat, func);
     }
 
-    // Services are loaded on-demand via cache.get_service() - no need to preload
-    // This matches zsh behavior where $_services is lazily populated
+    // sh:94 declares `_services` beside `_comps`, and sh:292 / sh:395 fill it
+    // AT REGISTRATION TIME, not on demand. `_dispatch` reads the PARAMETER
+    // (`service="${_services[$str]:-$str}"`, sh:Completion/Base/Core/_dispatch:26),
+    // so nothing ever calls back into the cache and a lazy `get_service` is
+    // never reached — the previous comment here ("loaded on-demand … zsh
+    // lazily populates") was simply wrong, and the table was left empty.
+    // `$service` then fell back to the COMMAND NAME, so `_virtualbox`'s
+    // `_call_function ret _$service` (sh:20) ran `_VBoxManage` instead of
+    // `_vboxmanage` — a different completer file with a different subcommand
+    // set. The rows were in the database the whole time (`VBoxManage` ->
+    // `vboxmanage`); only the read was missing.
+    for (cmd, svc) in cache
+        .services_kv()
+        .map_err(|e| std::io::Error::other(e.to_string()))?
+    {
+        result.services.insert(cmd, svc);
+    }
 
     result.scan_time_ms = start.elapsed().as_millis() as u64;
     result.files_scanned = result.comps.len();
@@ -2041,16 +2154,53 @@ pub const CACHE_COMPLETE_KEY: &str = "comps_rows_at_build_end";
 /// anything.
 pub const CACHE_BINARY_KEY: &str = "builder_binary_identity";
 
+/// Metadata key holding the ORDERED `$fpath` the cache was built from.
+///
+/// The row-count stamp says a build FINISHED and the binary stamp says
+/// WHICH BUILD wrote it; neither says WHAT INPUT it was built from. The
+/// cache is a function of `$fpath` — which directories exist and, because
+/// `compdef -na` is first-claim-wins (sh:519), in WHAT ORDER — so a cache
+/// built from a 4-directory `$fpath` was silently accepted by a session
+/// whose `$fpath` had 50, and every command whose completer lived in the
+/// other 46 resolved to nothing. With up to 16 of the user's shells racing
+/// on one cache file, whichever shell rebuilt it last decided what every
+/// later shell completed: observed `comps` row counts of 1849, 1881, 1928
+/// and 51578 for the same user on the same day, which is why parity cells
+/// appeared to "fix themselves" and then regress.
+///
+/// The value is the NUL-joined directory list, stored verbatim rather than
+/// hashed so a mismatch can be read straight out of the database.
+pub const CACHE_FPATH_KEY: &str = "fpath_identity";
+
+/// The cache-identity value for an ordered `$fpath`.
+pub fn fpath_identity(fpath: &[PathBuf]) -> String {
+    fpath
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("\0")
+}
+
 /// Record that a freshly built cache is complete.
 ///
 /// Must be the final write of a build. Pairs with `cache_is_valid`.
-pub fn stamp_cache_complete(cache: &crate::compsys::cache::CompsysCache) -> bool {
+pub fn stamp_cache_complete(
+    cache: &crate::compsys::cache::CompsysCache,
+    fpath: &[PathBuf],
+) -> bool {
     let Some(binary) = crate::compsys::cache::binary_identity_stamp() else {
         // No `current_exe()`: the cache cannot be attributed to a build,
         // and an unattributable cache is never installed.
         return false;
     };
     if cache.set_metadata(CACHE_BINARY_KEY, &binary).is_err() {
+        return false;
+    }
+    // Built FROM this `$fpath`, in this order.
+    if cache
+        .set_metadata(CACHE_FPATH_KEY, &fpath_identity(fpath))
+        .is_err()
+    {
         return false;
     }
     match cache.comp_count() {
@@ -2076,7 +2226,10 @@ pub fn stamp_cache_complete(cache: &crate::compsys::cache::CompsysCache) -> bool
 /// the live count makes "still filling" and "builder died midway" both
 /// fail: the stamp is written once, at the end, and any later insert
 /// moves the live count away from it.
-pub fn cache_is_valid(cache: &crate::compsys::cache::CompsysCache) -> bool {
+pub fn cache_is_valid(
+    cache: &crate::compsys::cache::CompsysCache,
+    fpath: &[PathBuf],
+) -> bool {
     let rows = cache.comp_count().unwrap_or(0);
     if rows <= 0 {
         return false;
@@ -2090,6 +2243,14 @@ pub fn cache_is_valid(cache: &crate::compsys::cache::CompsysCache) -> bool {
     };
     match cache.get_metadata(CACHE_BINARY_KEY) {
         Ok(Some(built_by)) if built_by == running => {}
+        _ => return false,
+    }
+    // Built from the SAME `$fpath`, in the same order. Without this a cache
+    // built by a shell with a short `$fpath` is accepted by one with a long
+    // `$fpath`, publishing a `_comps` that is missing every completer from
+    // the directories the builder never saw.
+    match cache.get_metadata(CACHE_FPATH_KEY) {
+        Ok(Some(built_from)) if built_from == fpath_identity(fpath) => {}
         _ => return false,
     }
     match cache.get_metadata(CACHE_COMPLETE_KEY) {
@@ -3129,10 +3290,11 @@ mod tests {
 
     #[test]
     fn cache_is_valid_rejects_a_cache_another_build_wrote() {
+        let fp = vec![PathBuf::from("/a"), PathBuf::from("/b")];
         let cache = crate::compsys::cache::CompsysCache::memory().expect("in-memory cache");
         cache.set_comp("git", "_git").unwrap();
-        assert!(stamp_cache_complete(&cache));
-        assert!(cache_is_valid(&cache), "our own stamp must be accepted");
+        assert!(stamp_cache_complete(&cache, &fp));
+        assert!(cache_is_valid(&cache, &fp), "our own stamp must be accepted");
 
         // Same rows, same count, stamped by a binary that is not this
         // one. Equality, so it is rejected whether that binary is older
@@ -3141,8 +3303,35 @@ mod tests {
             .set_metadata(CACHE_BINARY_KEY, "1.2.3")
             .expect("restamp");
         assert!(
-            !cache_is_valid(&cache),
+            !cache_is_valid(&cache, &fp),
             "a cache built by another zshrs must be rebuilt, not read"
+        );
+    }
+
+    /// A cache is a function of `$fpath`: which directories, in what order
+    /// (`compdef -na` is first-claim-wins, sh:519). Up to 16 of the user's
+    /// shells share one cache file, so without this a shell that rebuilt it
+    /// from a short `$fpath` decided what every later shell completed.
+    #[test]
+    fn cache_is_valid_rejects_a_cache_built_from_a_different_fpath() {
+        let short = vec![PathBuf::from("/a")];
+        let long = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        let cache = crate::compsys::cache::CompsysCache::memory().expect("in-memory cache");
+        cache.set_comp("git", "_git").unwrap();
+        assert!(stamp_cache_complete(&cache, &short));
+        assert!(cache_is_valid(&cache, &short), "same fpath is accepted");
+        assert!(
+            !cache_is_valid(&cache, &long),
+            "a cache built from a SHORTER fpath must not be read by a shell \
+             whose fpath has directories the builder never scanned"
+        );
+        // Order matters too: the same set in a different order resolves
+        // contested commands to a different completer.
+        let reordered = vec![PathBuf::from("/b"), PathBuf::from("/a")];
+        assert!(stamp_cache_complete(&cache, &long));
+        assert!(
+            !cache_is_valid(&cache, &reordered),
+            "the same directories in a different order are a different cache"
         );
     }
 
@@ -3151,18 +3340,19 @@ mod tests {
         // A row count alone cannot distinguish "finished" from "another
         // shell is 200 rows into a 50k-row rebuild" — accepting the latter
         // is what published a `_comps` with a handful of entries.
+        let fp = vec![PathBuf::from("/a")];
         let cache = crate::compsys::cache::CompsysCache::memory().expect("in-memory cache");
-        assert!(!cache_is_valid(&cache), "an empty cache is not valid");
+        assert!(!cache_is_valid(&cache, &fp), "an empty cache is not valid");
         cache.set_comp("git", "_git").unwrap();
         assert!(
-            !cache_is_valid(&cache),
+            !cache_is_valid(&cache, &fp),
             "a cache no build has stamped is not valid, however many rows it has"
         );
-        assert!(stamp_cache_complete(&cache));
-        assert!(cache_is_valid(&cache));
+        assert!(stamp_cache_complete(&cache, &fp));
+        assert!(cache_is_valid(&cache, &fp));
         cache.set_comp("man", "_man").unwrap();
         assert!(
-            !cache_is_valid(&cache),
+            !cache_is_valid(&cache, &fp),
             "a row written after the stamp means the build was not the last writer"
         );
     }

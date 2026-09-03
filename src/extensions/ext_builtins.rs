@@ -2492,13 +2492,7 @@ impl ShellExecutor {
                     Some(s > d)
                 })()
                 .unwrap_or(false);
-                if bundle_newer {
-                    tracing::info!(
-                        dump = %dump.display(),
-                        "compinit: dump predates the bundled function tree — rescanning"
-                    );
-                }
-                if dump.is_file() && !bundle_newer {
+                if dump.is_file() {
                     let names = crate::compsys::ported::compinit::dump_autoload_names(&dump);
                     let added = crate::compsys::ported::compinit::register_autoload_stubs(&names);
                     dump_sourced = true;
@@ -2518,24 +2512,97 @@ impl ShellExecutor {
                     // `$_comps[cargo]`, … and routes those commands to
                     // `-default-` file completion.
                     dump_tables = crate::compsys::ported::compinit::dump_assoc_tables(&dump);
+                    // A dump older than the bundled tree cannot list zshrs's
+                    // own completers (`_zjob`, `_ztag`, `_zcache`, …), but
+                    // DISCARDING the whole dump for that — which is what the
+                    // old `!bundle_newer` gate did — replaced it with the
+                    // SQLite cache, and the cache is a DIFFERENT table, not a
+                    // superset.  Measured on this host, fpath pinned to
+                    // `zsh -f`'s, only the dump's mtime varied:
+                    //   cache path: n=51577  X=_X  7z=_7z    zjob=_zjob
+                    //   dump path : n=51708  X=_X  7z=_7zip  zjob=
+                    //   real zsh  : n=51708  X=_X  7z=_7zip  zjob=
+                    // i.e. the dump path is byte-identical to zsh, while the
+                    // cache path is missing 163 of zsh's keys, carries 32 of
+                    // its own, and resolves 555 MORE keys to a DIFFERENT
+                    // completer (`7z` → `_7z` instead of the distribution's
+                    // `_7zip`) — a difference the net 131-key delta hides.
+                    // Keep sh:494's dump authoritative and add only what it
+                    // cannot know about, with sh:519's `compdef -na`
+                    // first-claim-wins so the dump wins every key it carries.
+                    if bundle_newer {
+                        if let Some(t) = dump_tables.as_mut() {
+                            let added =
+                                crate::compsys::ported::compinit::merge_bundled_registrations(t);
+                            tracing::info!(
+                                added,
+                                dump = %dump.display(),
+                                "compinit: dump predates the bundled tree — overlaid bundled registrations"
+                            );
+                        }
+                    }
                 }
             }
         }
 
-        // Run compaudit with SQLite cache (unless -u skips it entirely)
-        if !use_insecure && !self.posix_mode {
-            if let Some(ref cache) = self.plugin_cache {
-                let insecure = cache.compaudit_cached(&self.fpath);
-                if !insecure.is_empty() && !ignore_insecure {
-                    if !quiet {
-                        eprintln!("zshrs:compinit:1: insecure directories:");
-                        for d in &insecure {
-                            eprintln!("  {}", d);
+        // sh:434 `if [[ -n "$_i_check" ]]` — `-C` clears `_i_check` (sh:84
+        // `(( $+_i_opth[-C] )) && _i_check=`), so the cached path never
+        // audits.  `-u` sets `_i_fail=use` (sh:88), which makes compaudit
+        // itself return 0 before flagging anything.
+        if !use_cache && !use_insecure && !self.posix_mode {
+            // sh:436 `if ! eval compaudit`.  This MUST be the faithful port,
+            // not `plugin_cache::compaudit_cached`: that helper's
+            // `check_dir_security` short-circuits `if uid == 0 || uid == euid
+            // { return true }` (plugin_cache.rs:812-814), calling any
+            // caller-owned directory secure whatever its mode, while
+            // compaudit sh:125's qualifier list
+            // `(N-f:g+w:,-f:o+w:,-^${_i_owners})` treats the commas as
+            // ALTERNATIVES — group-writable OR other-writable OR untrusted
+            // owner each flag it.  A user-owned 0777 fpath directory is
+            // therefore insecure to zsh and "secure" to the helper, which
+            // made every branch below dead code for the ordinary case:
+            // zshrs registered and RAN a completer out of a world-writable
+            // directory where zsh aborts initialization outright.
+            //   zsh  : compinit: initialization aborted / rc=1 / _comps[zz01] empty
+            //   zshrs: rc=0 / _comps[zz01]=_zz01
+            if let Err(audit) = crate::compsys::ported::compaudit::compaudit(&self.fpath) {
+                // sh:437 `if [[ -n "$_i_q" ]]` — compaudit only sets its
+                // description when it actually flagged something.
+                if !audit.is_empty() {
+                    if !ignore_insecure {
+                        // sh:438-451 — upstream's default `ask` arm prompts
+                        // with `read -q` and takes this branch when the answer
+                        // is "no" (or when there is no terminal: a
+                        // non-interactive zsh prints "initialization aborted"
+                        // and returns 1).  zshrs has no prompt here, so it
+                        // always takes the abort arm.
+                        if !quiet {
+                            eprintln!("zshrs:compinit:1: insecure directories:");
+                            for d in &audit.insecure_dirs {
+                                eprintln!("  {}", d.display());
+                            }
+                            eprintln!(
+                                "zshrs:compinit:1: run with -i to ignore or -u to use anyway"
+                            );
                         }
-                        eprintln!("zshrs:compinit:1: run with -i to ignore or -u to use anyway");
+                        return 1;
                     }
-                    return 1;
+                    // sh:452 `fpath=(${fpath:|_i_wdirs})` — element
+                    // subtraction, so a flagged PARENT directory that is not
+                    // itself an `$fpath` entry removes nothing, exactly as
+                    // upstream.  This also subsumes sh:506's
+                    // `(( $_i_wdirs[(I)$_i_dir] )) && continue`, because every
+                    // scan below reads `self.fpath`.
+                    self.fpath.retain(|d| !audit.insecure_dirs.contains(d));
+                    let fp: Vec<String> = self
+                        .fpath
+                        .iter()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect();
+                    crate::ported::params::setaparam("fpath", fp);
                 }
+                // sh:456 `typeset -g _comp_secure=yes`
+                let _ = crate::ported::params::setsparam("_comp_secure", "yes");
             }
         }
 
@@ -2606,7 +2673,7 @@ impl ShellExecutor {
         // Try to use existing cache if -C and cache is valid
         if use_cache {
             if let Some(cache) = self.compsys_cache() {
-                if crate::compsys::cache_is_valid(cache) {
+                if crate::compsys::cache_is_valid(cache, &self.fpath) {
                     // Load from cache instead of rescanning
                     if let Ok(result) = crate::compsys::load_from_cache(cache) {
                         if !quiet {
@@ -2692,6 +2759,10 @@ impl ShellExecutor {
             worker_pool = pool_size,
             "compinit: shipping to worker pool"
         );
+        // The cache-identity stamp must record the `$fpath` this build is
+        // scanning, and the closure below is `move` — capture it by value
+        // rather than borrowing `self` into a 'static thread.
+        let stamp_fpath: Vec<std::path::PathBuf> = self.fpath.clone();
         self.worker_pool.submit(move || {
             tracing::debug!("compinit-bg: thread started");
             let cache_path = crate::compsys::cache::default_cache_path();
@@ -2724,7 +2795,7 @@ impl ShellExecutor {
             // unique entry and none of their own.
             if use_cache {
             if let Ok(existing) = crate::compsys::cache::CompsysCache::open(&cache_path) {
-                if crate::compsys::cache_is_valid(&existing) {
+                if crate::compsys::cache_is_valid(&existing, &stamp_fpath) {
                     if let Ok(result) = crate::compsys::load_from_cache(&existing) {
                         tracing::info!(
                             path = %cache_path.display(),
@@ -2814,7 +2885,7 @@ impl ShellExecutor {
             // connection: SQLite checkpoints the WAL into the db and removes
             // the -wal/-shm side files on the last close, which is what makes
             // the single-file rename below carry the whole cache.
-            if !crate::compsys::ported::compinit::stamp_cache_complete(&cache) {
+            if !crate::compsys::ported::compinit::stamp_cache_complete(&cache, &stamp_fpath) {
                 tracing::error!("compinit: could not stamp cache as complete; not installing it");
                 return;
             }
