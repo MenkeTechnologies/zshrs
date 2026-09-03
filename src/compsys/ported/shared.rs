@@ -768,8 +768,48 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
     //
     // c:6203-6216 — `prog = parse_string(...); … execode(prog, …)`; a NULL
     // prog (parse failure) is `lastval = 1` at c:6215.
-    let lastval = crate::ported::exec::execute_script(comp).unwrap_or(1);
+    let mut lastval = crate::ported::exec::execute_script(comp).unwrap_or(1);
+    // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
+    {
+        let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+        if ef != 0 && lastval == 0 {
+            lastval = ef;
+        }
+    }
     drop(fstack); // c:6218-6219 `if (fpushed) funcstack = funcstack->prev;`
+    // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
+    //
+    // `eval` swallows the error bit on the way out, UNCONDITIONALLY, and that
+    // is load-bearing for completion: it is what lets an error deep inside a
+    // completer TRUNCATE the work while KEEPING the matches already banked.
+    // `_CC` ends in `_files -g "*(-.):t:source files" -g "*(-/):t:directories"`,
+    // which brace-expands to four sdefs; the third is a genuine bad pattern
+    // (`/` ends a segment at EVERY paren depth — c:Src/pattern.c:949-952 — so
+    // the group is unterminated and c:Src/pattern.c:913-914 rejects it).
+    // `zerr` raises ERRFLAG_ERROR (c:Src/utils.c:184); that aborts
+    // `_path_files`, `_files` (so the FOURTH sdef, `*(-/)` = every directory,
+    // never runs), `_arguments` and `_CC` — and then THIS clear runs at the
+    // `eval "$comp"` in sh:Completion/Base/Core/_dispatch:63, so
+    // `makecomplist`'s `(nmatches || nmessages) && !errflag`
+    // (c:Src/Zle/compcore.c:1031) still sees errflag == 0 and keeps the one
+    // match added before the error.  Without it the completion is discarded
+    // and `CC <TAB>` produces nothing at all.
+    //
+    // Measured on an instrumented zsh 5.9.999.3 driving `CC <TAB>`:
+    //   ZDBG SET   utils.c:184 zerr fmt=<bad pattern: %s> errflag=1
+    //   ZDBG FUNC< _path_files errflag=1 ret=1
+    //   ZDBG FUNC< _files      errflag=1 ret=1
+    //   ZDBG FUNC< _arguments  errflag=1 ret=1
+    //   ZDBG FUNC< _CC         errflag=1 ret=1
+    //   ZDBG CLR   builtin.c:6213 before=1 stmt=<errflag &= ~ERRFLAG_ERROR;>
+    //   ZDBG FUNC< _dispatch   errflag=0 ret=1
+    //   ZDBG CHECK compcore.c:1031 nmatches=1 nmessages=0 errflag=0
+    // Of the 87 errflag clear sites in the C source, that is the ONLY one in
+    // the whole session that observes a set ERRFLAG_ERROR.
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     crate::ported::utils::set_scriptname(oscriptname); // c:6222
     lastval // c:6225
 }
