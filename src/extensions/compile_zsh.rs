@@ -2820,8 +2820,26 @@ impl ZshCompiler {
         // doshfunc). Bug #27 in docs/BUGS.md: zshrs-extension-only
         // builtins (caller, help, …) shadowed user functions because
         // the builtin_id table beat the shfunctab check.
-        let user_function_shadow = self.defined_functions.contains(&first_clean)
-            || self.defined_functions.contains(dispatch_first_raw);
+        // c:Src/exec.c:3484-3488 — `if (!(cflags & (BINF_BUILTIN | BINF_COMMAND))
+        // && (hn = shfunctab->getnode(shfunctab, cmdarg))) { is_shfunc = 1;
+        // break; }`. A `builtin` or `command` precommand modifier makes C SKIP
+        // the shfunctab probe outright, so the name resolves against
+        // `builtintab` even when a shell function of that name exists. Without
+        // this gate the shadow was computed from the word AFTER the modifier
+        // and applied regardless, so `f() { compadd() { … builtin compadd
+        // "$@" }; … }` re-entered its own wrapper: every wrapped call ran
+        // TWICE. That silently doubled every `compadd`-wrapper probe used to
+        // debug completion, so wrapper-derived evidence taken before this fix
+        // is not trustworthy.
+        let precmd_is_builtin_or_command = simple.words[..precmd_skip.min(simple.words.len())]
+            .iter()
+            .any(|w| {
+                let u = crate::lex::untokenize(w);
+                u == "builtin" || u == "command"
+            });
+        let user_function_shadow = !precmd_is_builtin_or_command
+            && (self.defined_functions.contains(&first_clean)
+                || self.defined_functions.contains(dispatch_first_raw));
         // c:Src/exec.c:3298-3304 — `magic_assign = (hn->flags &
         // BINF_MAGICEQUALS) && type != WC_TYPESET` → esprefork =
         // PREFORK_TYPESET → `prefork(args, esprefork, NULL)` BEFORE
@@ -2924,7 +2942,7 @@ impl ZshCompiler {
                             // as compile_assign's array branch:
                             // `typeset b=( $(print q w) e )` → 3
                             // elements in zsh.
-                            if has_unquoted_expansion(e) {
+                            if needs_word_split(e) {
                                 self.builder.emit(
                                     Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0),
                                     0,
@@ -4584,7 +4602,7 @@ impl ZshCompiler {
                 if let Some((base, key)) = subscript {
                     for elem in elements {
                         self.compile_word_str(elem);
-                        if has_unquoted_expansion(elem) {
+                        if needs_word_split(elem) {
                             self.builder
                                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                         }
@@ -4713,7 +4731,7 @@ impl ZshCompiler {
                         // Same IFS-split rule as for-list words: unquoted
                         // `$(...)` / backtick inside an array literal
                         // (`a=($(...))`) should produce per-word elements.
-                        if has_unquoted_expansion(elem) {
+                        if needs_word_split(elem) {
                             self.builder
                                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                         }
@@ -6191,6 +6209,32 @@ impl ZshCompiler {
                     // path above, never here.
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
+                } else if opcode == crate::vm_helper::BUILTIN_GET_VAR && self.word_seg_depth == 0 {
+                    // c:Src/subst.c:180-187 — this word is exactly one
+                    // UNQUOTED `$NAME`, so each element the read yields IS a
+                    // finished word and prefork's empty-node removal applies.
+                    // GET_VAR's own array arm already filters, but its
+                    // RC_EXPAND_PARAM arm deliberately does not (a PREFIXED
+                    // plan9 word cross-products, where an empty element still
+                    // makes a non-empty word) — and `_comp_setup` sets
+                    // `rcexpandparam` for every completion (Completion/Base/
+                    // Core/compinit:146,180-182), so the leading empty of the
+                    // `local a; a+=(x)` idiom leaked into completer argv.
+                    // `opcode == BUILTIN_GET_VAR` already excludes the DQ /
+                    // scalar-assign / assign-builtin forms (they take
+                    // GET_VAR_DQ) and the `argv`/`@`/`*` specials above.
+                    // `word_seg_depth == 0` keeps it to a word that is ONLY
+                    // this reference: reached as a SEGMENT (`p$a`, compiled
+                    // via the split_word_segments recursion) the element is
+                    // not a finished word, and under plan9 the prefix
+                    // cross-products so an empty element still yields the
+                    // word `p` (c:Src/subst.c:4327-4373). Eliding there
+                    // dropped it: `setopt rcexpandparam; a=('' x);
+                    // print -rl -- p$a` printed only `px`.
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_ELIDE_EMPTY, 1),
                         0,
                     );
                 }
@@ -8871,7 +8915,7 @@ impl ZshCompiler {
             ForList::Words(ws) => {
                 for w in ws {
                     self.compile_word_str(w);
-                    if has_unquoted_expansion(w) {
+                    if needs_word_split(w) {
                         self.builder
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
@@ -9077,7 +9121,7 @@ impl ZshCompiler {
             // outer ran on the Array.to_str() join "a b c" which has
             // no IFS chars, collapsing back to 1 element. Bug #178
             // in docs/BUGS.md.
-            let has_cmdsub = has_unquoted_expansion(word);
+            let has_cmdsub = needs_word_split(word);
             if has_cmdsub {
                 self.assign_context_depth += 1;
             }
@@ -9089,7 +9133,7 @@ impl ZshCompiler {
             // Unquoted command/variable substitution in a for-list should
             // IFS-split. zsh's for-list naturally word-splits the result
             // of `$(...)` or unquoted `$var`. Quoted forms keep one word.
-            if has_unquoted_expansion(word) {
+            if needs_word_split(word) {
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
             }
@@ -9505,30 +9549,76 @@ impl ZshCompiler {
         // the name parse, so normalize it to the braced `${~name}` spelling
         // first — same fix the cond Binary path applies, hoisted here so `case`
         // gets it too. Without this, `case x in $~p) …` never forced the glob.
+        //
+        // c:Src/subst.c:2597-2603 — `} else if (c == '~' || c == Tilde) { /*
+        // GLOB_SUBST (forced) on or off (doubled) */ … globsubst = 2; }`.
+        // paramsubst reads the Tilde flag in its flag loop whether or not the
+        // spec is braced, so `$~name` is the same substitution ANYWHERE in the
+        // word. This rewrite used to require the WHOLE word to be `$~name`; an
+        // EMBEDDED one fell through to `split_pattern_for_glob_subst`, whose
+        // `$` arm stops at the Tilde (not a brace, a paren, a single-char
+        // special, nor a name char), emits `Subst("$")` and leaves `~name` in
+        // the following Literal — so the compiled pattern carried the LITERAL
+        // text `$~name` and matched nothing:
+        //     p=X; [[ aXb = *$~p* ]]   answered N   (zsh: M)
+        // That is `Completion/Base/Utility/_pick_variant:39`
+        // `if [[ $output = *$~pat* ]]`, so every stock completer that calls
+        // `_pick_variant` fell through to the default variant label.
         let normalized: Option<String> = {
             let cs: Vec<char> = word.chars().collect();
-            let dollar = matches!(
-                cs.first().map(|c| *c as u32),
-                Some(0x24) | Some(0x85) | Some(0x8c)
-            );
-            let tilde_bare = dollar
-                && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0x98))
-                && cs
-                    .get(2)
-                    .map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
-                && cs[2..]
-                    .iter()
-                    .all(|c| c.is_ascii_alphanumeric() || *c == '_');
-            if tilde_bare {
-                let mut s = String::new();
-                s.push(cs[0]);
-                s.push('\u{8f}'); // Inbrace
-                s.extend(&cs[1..]);
-                s.push('\u{90}'); // Outbrace
-                Some(s)
-            } else {
-                None
+            let is_dollar = |c: char| matches!(c as u32, 0x24 | 0x85 | 0x8c);
+            let is_tilde = |c: char| matches!(c as u32, 0x7e | 0x98);
+            let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_';
+            let mut out = String::with_capacity(word.len() + 4);
+            let mut i = 0usize;
+            let mut rewrote = false;
+            while i < cs.len() {
+                // A `$` the source ESCAPED (`\$~p`, Bnull/Bnullkeep + `$`) is
+                // DATA, not a substitution — c:Src/zsh.h Bnull/Bnullkeep.
+                let escaped = i > 0 && matches!(cs[i - 1], '\\' | '\u{9f}' | '\u{a0}');
+                if is_dollar(cs[i])
+                    && !escaped
+                    && cs.get(i + 1).copied().is_some_and(is_tilde)
+                    && cs.get(i + 2).copied().is_some_and(is_name)
+                {
+                    rewrote = true;
+                    out.push(cs[i]);
+                    out.push('\u{8f}'); // Inbrace
+                    out.push(cs[i + 1]); // `~` / Tilde — the GLOB_SUBST flag
+                    i += 2;
+                    while i < cs.len() && is_name(cs[i]) {
+                        out.push(cs[i]);
+                        i += 1;
+                    }
+                    // A trailing `[sub]` belongs to `$name` (c:Src/subst.c
+                    // getindex), so it goes INSIDE the braces or it would
+                    // become a `[...]` character class. Same depth-balancing
+                    // as split_pattern_for_glob_subst's subscript arm.
+                    if matches!(cs.get(i), Some('[') | Some('\u{91}')) {
+                        let mut depth = 0i32;
+                        while i < cs.len() {
+                            let cc = cs[i];
+                            out.push(cc);
+                            i += 1;
+                            match cc {
+                                '[' | '\u{91}' => depth += 1,
+                                ']' | '\u{92}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    out.push('\u{90}'); // Outbrace
+                    continue;
+                }
+                out.push(cs[i]);
+                i += 1;
             }
+            if rewrote { Some(out) } else { None }
         };
         let word: &str = normalized.as_deref().unwrap_or(word);
         let segments = split_pattern_for_glob_subst(word);
@@ -15698,6 +15788,79 @@ fn literal_array_elem_value(e: &str) -> Option<String> {
     } else {
         Some(crate::lex::untokenize(e))
     }
+}
+
+/// True when the word contains an unquoted command substitution that is a
+/// WORD of its own, and so must be IFS-split after expansion.
+///
+/// c:Src/subst.c — `stringsubst` performs that split for a BARE `$(...)`.
+/// One written INSIDE a `${...}` spec is just the spec's input text: the
+/// spec's own flags decide the splitting, and an explicit split flag
+/// (`(s:…:)`, `(f)`, `(0)`, `(z)`) makes the result `isarr`, which c:3920
+/// (`if (force_split && !isarr)`) then declines to split again. zshrs's
+/// `BUILTIN_WORD_SPLIT` does `pop().to_str()`, so running it over such a
+/// result JOINED the array and re-split it on IFS:
+/// `b=( ${(s:,:)$(print -n 'x y,z w')} )` gave 4 elements where zsh gives 2.
+/// That is `Completion/X/Type/_xft_fonts`'s
+/// `compadd … ${(us:,:)$(_call_program fonts fc-list …)}`, whose family
+/// names contain spaces — the `fc-list `/`fc-match ` count divergence.
+fn needs_word_split(e: &str) -> bool {
+    has_unquoted_expansion(e) && !cmdsubst_only_inside_braces(e)
+}
+
+/// True when `e` has at least one unquoted command substitution and EVERY
+/// one of them sits inside a `${...}` parameter expansion. Pairs with
+/// `has_unquoted_expansion`; see `needs_word_split`.
+fn cmdsubst_only_inside_braces(e: &str) -> bool {
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut brace_depth = 0i32;
+    let chars: Vec<char> = e.chars().collect();
+    let mut i = 0;
+    let mut saw_bare = false;
+    let mut saw_any = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\u{9d}' {
+            in_sq = !in_sq;
+            i += 1;
+            continue;
+        }
+        if c == '\u{9e}' {
+            in_dq = !in_dq;
+            i += 1;
+            continue;
+        }
+        if in_sq {
+            i += 1;
+            continue;
+        }
+        let is_dollar = matches!(c, '$' | '\u{85}' | '\u{8c}');
+        let next = chars.get(i + 1).copied();
+        // `${` — Inbrace TOKEN or a raw brace.
+        if is_dollar && matches!(next, Some('\u{8f}') | Some('{')) {
+            brace_depth += 1;
+            i += 2;
+            continue;
+        }
+        if matches!(c, '\u{90}' | '}') && brace_depth > 0 {
+            brace_depth -= 1;
+            i += 1;
+            continue;
+        }
+        // `$(` — Inpar TOKEN or a raw paren; plus the backtick forms
+        // (Tick / Qtick), matching has_unquoted_expansion's set.
+        let is_cmdsub = (is_dollar && matches!(next, Some('\u{88}') | Some('(')))
+            || matches!(c, '`' | '\u{93}' | '\u{99}');
+        if is_cmdsub && !in_dq {
+            saw_any = true;
+            if brace_depth == 0 {
+                saw_bare = true;
+            }
+        }
+        i += 1;
+    }
+    saw_any && !saw_bare
 }
 
 fn has_unquoted_expansion(s: &str) -> bool {

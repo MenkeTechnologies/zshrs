@@ -4922,6 +4922,46 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // c:Src/subst.c:180-187 — prefork's final loop deletes a list node whose
+    // text is EMPTY: `} else if (!(flags & PREFORK_SINGLE) &&
+    // !(*ret_flags & PREFORK_KEY_VALUE) && !keep) uremnode(list, node);`.
+    // `BUILTIN_GET_VAR`'s ordinary array arm already applies this (see the
+    // `!s.is_empty()` filter on the `in_dq` else-branch below), but its
+    // RC_EXPAND_PARAM arm must NOT: under plan9 (c:1665 `int plan9 =
+    // isset(RCEXPANDPARAM)`) a PREFIXED word cross-products, and there an
+    // empty ELEMENT still yields a non-empty WORD (`setopt rcexpandparam;
+    // a=('' x); print -rl -- p$a` → `p`, `px`). So the elision is applied
+    // here instead, where the compiler has already established that the
+    // whole word is one unquoted `$NAME` and each element IS a finished word.
+    //
+    // Skipped under SH_WORD_SPLIT: C's split empties are `nulstring`
+    // (c:Src/subst.c:36 `char nulstring[] = {Nularg, '\0'}`), whose node
+    // text is NON-empty, so c:184 keeps them; `get_var_impl`'s split arm has
+    // already rendered them as "" and the marker C tests on is gone.
+    vm.register_builtin(BUILTIN_WORD_ELIDE_EMPTY, |vm, _argc| {
+        let v = vm.pop();
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+            return v;
+        }
+        match v {
+            Value::Array(items) => {
+                // `items` is an `Arc<Vec<Value>>`; borrow rather than move.
+                let kept: Vec<Value> = items
+                    .iter()
+                    .filter(|x| !x.to_str().is_empty())
+                    .cloned()
+                    .collect();
+                // c:4245 — an array reference that ends up empty is still an
+                // ARRAY for the plan9 word-removal rule, not a scalar.
+                if kept.is_empty() {
+                    note_empty_is_scalar(false);
+                }
+                Value::array(kept)
+            }
+            other => other,
+        }
+    });
+
     // zsh nofork command substitution (c:Src/subst.c:1904-2100) — and the
     // ksh93 funsub / mksh valsub it subsumes. See the BUILTIN_KSH_FUNSUB
     // doc comment.
@@ -14581,6 +14621,13 @@ pub const BUILTIN_PAT_DATA_BACKSLASH: u16 = 668;
 /// zsh prints `hello`), and COLLAPSED N trailing newlines to one
 /// (`hello\n\n\n` printed as `hello\n`). argc = 1.
 pub const BUILTIN_HEREDOC_BODY_SINK: u16 = 669;
+
+/// `BUILTIN_WORD_ELIDE_EMPTY` — prefork's empty-word removal
+/// (c:Src/subst.c:180-187) for a word that is EXACTLY one unquoted
+/// `$NAME`. Emitted only by that compile fast path, because C's test is
+/// post-assembly and only the word SHAPE makes it decidable early.
+/// argc = 1.
+pub const BUILTIN_WORD_ELIDE_EMPTY: u16 = 670;
 
 
 /// Coerce a string parameter value to a math number (Int or Float)
