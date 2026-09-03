@@ -3609,8 +3609,30 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             let visible: Vec<&crate::ported::zle::comp_h::Cmatch> = g
                 .matches
                 .iter()
-                .filter(|m| (m.flags & CMF_DISPLINE) == 0)
-                .filter(|m| showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0)
+                // c:1479 — `int mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT))
+                // | CMF_HIDE;`. This filter reimplemented `skipnolist`
+                // (c:1476-1487) — the walker the grid loop uses at
+                // c:2116/2133/2152 — and diverged three ways: CMF_MULT was
+                // missing from the mask, CMF_HIDE was wrongly dropped when
+                // `showall != 0` (C keeps it unconditionally), and the
+                // DISPLINE/HIDE skip ran without C's `(*p)->disp` guard
+                // (c:1482). `calclist` (compresult.rs, c:1491) uses the full
+                // mask, so `g.lcount`/`listdat.nlist` were right while the
+                // grid printed one element too many — and since the geometry
+                // was sized from `lcount`, the surplus pushed a real match
+                // off the end of the list.
+                .filter(|m| {
+                    let mask = (if showall != 0 {
+                        0
+                    } else {
+                        CMF_NOLIST | CMF_MULT
+                    }) | CMF_HIDE; // c:1479
+                    (m.flags & mask) == 0
+                })
+                // c:1482-1483 — `((*p)->disp && ((*p)->flags & (CMF_DISPLINE
+                // | CMF_HIDE)))`: the DISPLINE/HIDE skip only applies to a
+                // match that HAS a display string.
+                .filter(|m| m.disp.is_none() || (m.flags & (CMF_DISPLINE | CMF_HIDE)) == 0)
                 .collect();
             let n = visible.len();
             if n > 0 {
