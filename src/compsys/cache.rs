@@ -895,6 +895,15 @@ impl CompsysCache {
         rows.collect()
     }
 
+    /// All `_services` entries as (command, service) pairs.
+    pub fn services_kv(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT command, service FROM services")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect()
+    }
+
     /// Count of `_postpatcomps` entries.
     pub fn postpatcomps_count(&self) -> rusqlite::Result<i64> {
         self.conn
