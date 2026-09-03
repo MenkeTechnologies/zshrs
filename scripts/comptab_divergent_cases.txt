@@ -11,6 +11,51 @@
 # buffer — `7z ` completes an argument, `7z` completes the command name. Never
 # put a comment on the same line as an entry; it would land in the buffer.
 #
+# ═══════════════════════════════════════════════════════════════════════════
+# RE-MEASURED 2026-09-03 — THE 2026-08-30 NUMBERS BELOW ARE SUPERSEDED
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The 2026-08-30 run was made against a binary that is now several releases
+# old.  This whole file was re-run serially on 2026-09-03, TWICE: once against
+# a binary built from pristine HEAD (500238d56c) and once against a working
+# tree carrying that day's compsys fixes.  Both runs are IDENTICAL, so nothing
+# below is attributable to those fixes:
+#
+#   # 29 cell(s):  PASS=17  FAIL=10  TIMEOUT=2
+#
+#   FAIL     '7z '  '7za '  '7zr '  'ansible-config '  'ansible-galaxy '
+#            'CC '  'getconf '  'gpg-agent '  'gptx -'  'irb -'
+#   TIMEOUT  'fc-list '  'fc-match '     (zshrs silent 10s after TAB)
+#
+# Two things follow, and both matter more than the old counts:
+#
+# 1. SEVEN entries in the "FIXED — kept as regression guards" section below
+#    have REGRESSED at HEAD: 7z, 7za, 7zr, ansible-config, ansible-galaxy,
+#    gptx -, irb -.  They pass on neither binary.  This is exactly what that
+#    section exists to catch.  '7z ' is a completer-RESOLUTION flip — zshrs
+#    reaches zsh-more-completions' `_7z` ("extract files from archive
+#    (without directory names)") where zsh reaches the distribution's `_7zip`
+#    ("… (without full paths)") — so look at compinit's fpath claim order
+#    first, not at the listing code.
+#
+# 2. 'fc-list '/'fc-match ' moved FAIL -> TIMEOUT, and the old grouping of
+#    all four count-divergences under one fingerprint is WRONG.  Instrumenting
+#    each completer for $compstate[nmatches] splits them into at least three
+#    unrelated bugs:
+#      * 'getconf '   nm 295 == 295 on both -> diverges AFTER the adds
+#      * 'fc-list '   nm 802 vs 803        -> diverges AT the adds
+#      * 'gpg-agent ' not characterised
+#    'fc-list '/'fc-match ' additionally carry a DISPLAY-ESCAPE divergence:
+#    non-UTF-8 font-name bytes render as $'\201' in zsh and \M-^A in zshrs,
+#    which is what moves the LINE count (825 vs 814) while the match count
+#    moves for a different reason.  Fixing the group's smallest reproducer
+#    will NOT clear the group.
+#
+# Also re-measured this day and NOT reproducing on either binary — do not
+# re-open without new evidence: 'tar -', 'tar ', 'tar --', 'tar -x', 'rm ',
+# 'rm -', 'ssh -', 'podman '.  'kill ' "fails" only because the two PTY
+# children have different process tables; it is not a compsys divergence.
+#
 # ── WHAT THE NUMBERS BELOW ARE ─────────────────────────────────────────────
 #
 # Every entry was re-verified SERIALLY (--jobs 1) on 2026-08-30 against harness
@@ -173,3 +218,132 @@ git-cvsserver -
 ansible-galaxy 
 chflags 
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NEW — mined 2026-09-03.  22 cells / 20 distinct fingerprints.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Sources: `--discover 500` (stopped at cell 300 of 500, last cell
+# 'applesingle ' — everything alphabetically after that is UNMINED),
+# `--fn-sweep` (99/99 calls, complete) and `--layout-fuzz 30` (27/27 runnable
+# layouts, complete).  Every entry below was re-run SERIALLY AND ALONE
+# (--jobs 1 --confirm 0), three passes, 3/3 FAIL with an identical
+# fingerprint each pass.  Zero flaky.  TIMEOUTs, REF-CRASHED (80 upstream zsh
+# SIGSEGVs) and INVALID-CALL were discarded, never scored.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# The dominant shape (10 cells): an `_arguments`-based completer yields
+# NOTHING and the chain falls through to plain cwd file completion.  zsh
+# either inserts the option-only common prefix or lists the completer's own
+# described set.  Worth treating as ONE investigation before filing ten.
+#
+# fingerprint 442cbf8a36  x2   the completer's own positional glob is not
+#   applied: zsh lists only what the spec allows, zshrs lists the whole cwd.
+#   _a2x has `1:asciidoc source:_files -g "*.(asc|adoc|asciidoc|txt)"`,
+#   _aac-enc has `1:input:_files -g "*.wav"`.
+#   smallest: --case 'a2x ' --keys tab
+a2x 
+aac-enc 
+
+# fingerprint f07c711b19  x1   zsh inserts the option-only prefix `-`,
+#   zshrs file-completes.  _Zzz = `_arguments -s -S $arguments`.
+#   smallest: --case 'Zzz ' --keys tab
+Zzz 
+
+# fingerprint cedca35539  x1   same shape, zsh inserts `--`.
+#   smallest: --case 'aalib-config ' --keys tab
+aalib-config 
+
+# fingerprint 153304965d  x1   same shape, zsh inserts `-`.
+aclocal 
+
+# fingerprint ae1c9dbd01  x1   same shape, zsh inserts `-`.
+alacritty 
+
+# fingerprint a60d833ee1  x1   _ab's only positional is `:URL:_urls`; `_urls`
+#   is a NATIVE PORT (src/compsys/router.rs) and produced nothing.
+#   zsh: 'file:  ftp://  gopher://  http://  https://'
+ab 
+
+# fingerprint 23c74f65bd  x1   one-sided DIAGNOSTIC plus match set: zsh's _R
+#   runs a helper that errors to the tty ('Undefined subroutine &if at -e
+#   line 1.'); zshrs never runs it and file-completes.
+R 
+
+# fingerprint 5fdc715c11  x1   zsh lists the whole described subcommand set
+#   (createvm/debugvm/...), zshrs lists cwd.  _virtualbox = `_arguments -C`
+#   plus a ->state machine.
+VBoxManage 
+
+# ──────────────────────────────────────────────────────────────────────────
+# X-server family — 6 fingerprints, one shared shape.  zsh offers each
+# completer's own full described option set; zshrs offers only the two-item
+# common X set `-display -geometry`, which appears in NONE of these completer
+# files.  src/compsys/router.rs has no `_X`/`_Xorg`/... arm but DOES port
+# `_x_arguments` — a completer-resolution divergence, not root-caused.
+#   7f00538137 'X -' (40 rows)     c3247991d4 'Xephyr -' (40 rows)
+#   bcc0846837 'Xnest -' (40 rows) 2e0c9ed42e 'Xorg -' (40 rows)
+#   f639a29c51 'Xvfb -' (40 rows)  89d02f8185 'Xquartz -' (2 rows)
+X -
+Xephyr -
+Xnest -
+Xorg -
+Xquartz -
+Xvfb -
+
+# ──────────────────────────────────────────────────────────────────────────
+# NOT corpus entries — other harness axes.  Replay commands only.
+#
+# --fn-sweep (utility functions called directly in a real completion context)
+#
+#   fingerprint 21055f3134  x1  deterministic 3/3
+#     replay: comptab_parity.py --fn-only _files --fn-call dirs-only
+#     call `_files '-/'`: the MATCH SET agrees (21 both sides), but the `expl`
+#     array `_description` leaves behind differs in both index and value —
+#     zsh `expl[0] =`, zshrs `expl[1] = ''`.
+#
+#   fingerprint 99d13d4a4b  x1  deterministic 3/3  [harness auto-recorded the
+#     repro at scripts/parity_corpus_fuzz/fn/fn_99d13d4a4b.json]
+#     replay: comptab_parity.py --fn-only _dispatch --fn-call two-names
+#     Everything the probe measures agrees (rc, nmatches 0->22, list_lines
+#     0->22, unambiguous ''->'-', _comp_tags ' options ').  zshrs simply never
+#     redraws the trailing prompt row after the listing.  _dispatch is a
+#     NATIVE PORT.
+#
+# --layout-fuzz (where completers are STORED and how compinit FINDS them)
+#
+#   fingerprint 7854c98a8f  x1  ** SECURITY-RELEVANT **  deterministic 3/3
+#     replay: comptab_parity.py --layout-only insecure-i \
+#               --layout-cases 'zz01 ' --combo-sequence tab1
+#     layout `insecure-i`: fpath dir mode 0777, which compaudit:125 calls
+#     insecure, with `compinit -i`.  `-i` must SKIP an insecure fpath
+#     directory: zsh does (falls back to file completion), zshrs registers the
+#     completer anyway and completes from it.  `insecure-C` and `insecure-u`
+#     both PASS, so it is specifically the -i path.
+#
+#   fingerprint ad149ae13c  x2  deterministic
+#     layouts digest-only, digest-explicit.  A completer living only inside a
+#     .zwc digest can reach its helper `_zzimpl` in zshrs but not in zsh
+#     (zsh: '_zz01:2: command not found: _zzimpl').  zshrs may be the more
+#     spec-conformant side (Doc func.yo:97-112) — either way they disagree.
+#
+#   fingerprints be256dd9c2 + 7c1e156ded  x1 each  deterministic 3/3
+#     layouts digest-corrupt (compinit=C-d), digest-corrupt-D (compinit=D).
+#     One-sided DIAGNOSTIC: zshrs's error prefix carries an EMPTY line number
+#     (doubled colon, `_main_complete::`) and misattributes the frame
+#     (`_complete:117` reported as `_main_complete::117`).  zsh emits 2
+#     warnings and still completes; zshrs emits 8 and never completes.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# ONE-SIDED SILENCE — a separate class.  NOT a FAIL, NOT a pass, and NOT a
+# budget artefact: re-measured serially with --silence-recheck 3, zshrs
+# produced NOTHING at all after TAB at 10.0s and again at 30.0s while zsh
+# drew a screen.  Listed here so they are not mistaken for slow cells.
+#
+#   IOMFB_FDR_Loader -  IOSDebug -  KernelEventAgent -  LS -
+#   Magick++-config -  MagickCore-config -  MagickWand-config -
+#   PasswordService -  R -  ResMerger -  Rez -  Rscript -  SafeEjectGPU -
+#   SetFile -  SplitForks -  SvtAv1EncApp -  VBoxAudioTest -  VBoxAutostart -
+#
+# ('CC -' was also a TIMEOUT and re-measured as pure budget, i.e. a PASS.)
+# A further 47 discover TIMEOUTs were NOT re-measured and are unclassified.
