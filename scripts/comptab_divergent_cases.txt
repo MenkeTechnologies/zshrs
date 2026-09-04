@@ -700,3 +700,81 @@ gawkbug -
 # had approximated that in three different places.  Any further ${(P)} report
 # should be checked against c:2210-2236 before anything else.
 # ══════════════════════════════════════════════════════════════════════════
+#
+# ══════════════════════════════════════════════════════════════════════════
+# b29792c9a7 RESOLVED (mostly) 2026-09-04 — the "ask-prompt count" class was
+# THREE things, one of them a real port bug
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Method that settled it: the count is unusable (the REFERENCE side moves
+# 47317/47321/47321 across serial runs), so nothing here was measured off it.
+# Both shells were driven on a PTY through the harness's own init (fpath from
+# `zsh -f`, `compinit -C -d` the pinned zpwr dump), with the completion
+# ANSWERED `y` and the whole 1.5 MB listing captured and parsed into a NAME
+# set; then, to remove the parse's error bars, the shell function
+# `_command_names` reaches for `_parameters` was redefined in the init on BOTH
+# sides so each candidate group's contribution to `$compstate[nmatches]` could
+# be read directly.  The named extras, not their count, are what follows.
+#
+#   1. THE PORT BUG — `_arguments`' sh:328-330 `local` names were GLOBAL.
+#      `src/compsys/ported/Base/Utility/_arguments.rs` emulated the `local`
+#      line with a save/restore pair (`SCRATCH_PARAMS`), which carries the
+#      VALUE half of the scope but never stamps `pm->level`.  The port's own
+#      `setaparam`/`setsparam` calls therefore created the names at level 0:
+#
+#         name      zsh              zshrs (before)
+#         next      array-local      array
+#         direct    array-local      array
+#         odirect   array-local      array
+#         equal     array-local      array
+#         descrs    array-local      array
+#         actions   array-local      array
+#         subcs     array-local      array
+#         matcher   scalar-local     scalar
+#
+#      That type string is load-bearing: `_parameters` builds its candidate
+#      list as `${(k)parameters[(R)${~pattern[2]}~*local*]}`
+#      (Completion/Zsh/Type/_parameters:43, and identically at line 34 of the
+#      user's fpath override ~/.zpwr/autoload/comp_utils/_parameters), i.e. it
+#      DROPS every parameter whose type matches `*local*`.  Eight `_arguments`
+#      scratch names sailed through that filter and were offered as parameters
+#      by every completion that reaches `_parameters` through `_arguments`.
+#      Fixed by declaring them at `locallevel`, exactly as sh:329-330's bare
+#      `local` does.  Measured, `--case 'command ' --keys tab`, 3 serial runs
+#      each, same pinned dump, same host:
+#         before  zsh 47321/47317/47321   zshrs 47377/47377/47381  (+56..60)
+#         after   zsh 47321/47321/47321   zshrs 47353/47349/47353  (+28..32)
+#
+#   2. NOT A BUG — 20 bundled `_z*` completers.  At `compadd -k functions`
+#      time zshrs's `$functions` carries exactly 20 names zsh's does not:
+#      _zask _zcache _zcmd-result _zcomplete _zhistory _zid _zjob _zlock _zlog
+#      _znotify _zping _zpublish _zsend _zsource _zsubscribe _zsuggest _ztag
+#      _zunsubscribe _zuntag _zwhere — the completers for zshrs's own `z*`
+#      extension builtins, merged by compinit (ext_builtins.rs:2516).  This is
+#      the same category `ZSHRS_HIDE_EXT_BUILTINS=1` already hides from
+#      `$builtins`; the hide simply does not extend to the completers.  +20.
+#
+#   3. NOT A BUG — `HELPDIR` and `INFOPATH`.  zshrs publishes its bundled help
+#      and info trees (extensions/bundled_docs.rs:157,192); `zsh -f` has
+#      neither, so `_parameters` offers two names more.  +8 matches.
+#
+#   So the residual +28 on this cell is 2 and 3, both deliberate zshrs
+#   features.  DO NOT force it to match by changing the shell; if it should be
+#   silenced it belongs with ZSHRS_HIDE_EXT_BUILTINS, as a decision.
+#
+#   Cells that moved: 'command ', 'getconf ', 'gpg-agent ', 'grc ',
+#   'gtester ', 'ifne ' — all six carried 1, all six still carry 2+3.
+#
+#   CLASS SPLIT — 'fc-list ' and 'fc-match ' are NOT this bug.  They collapse
+#   into fingerprint b29792c9a7 only because the fingerprint masks digits, so
+#   any ask-prompt count divergence hashes the same.  Their delta is +1
+#   (802 -> 803, 293 -> 294) and is byte-identical before and after the
+#   `_arguments` fix.  Unfiled, unexplained, and a different mechanism.
+#
+# HOST GOTCHA that cost a full first measurement, recorded so the next reader
+# does not repeat it: `cp target/debug/zshrs <scratch>/zshrs.pin` produces a
+# binary macOS SIGKILLs on exec (rc=137, no message).  Rust's linker-signed
+# ad-hoc signature does not survive the copy.  The harness reports it as
+# "zshrs never reached a prompt (boot budget)" — indistinguishable from a real
+# boot hang.  Re-sign the copy (`codesign -f -s - <scratch>/zshrs.pin`) and it
+# runs.  Pinning is still right; it just needs the second step.
