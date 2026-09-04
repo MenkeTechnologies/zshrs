@@ -425,6 +425,23 @@ pub fn _files(argv: &[String]) -> i32 {
                     pf.extend(new_expl.clone());
                     if _path_files(&pf) == 0 {
                         ret = 0;
+                    } else if crate::ported::utils::errflag
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        != 0
+                    {
+                        // c:Src/utils.c:179-184 + Src/exec.c `execlist`'s
+                        // errflag bail — a `zerr` raised inside `_path_files`
+                        // (a BAD PATTERN in one of the `-g` values) aborts the
+                        // rest of THIS function too in C, because the unwind
+                        // walks the whole shell-function stack. Both are
+                        // native ports here, so `_files` has to stop its own
+                        // sdef walk explicitly or it keeps trying the
+                        // remaining patterns. zsh's visible behaviour for
+                        // `CC <TAB>` (`_CC`'s `_files -g "*(-.):t:source
+                        // files" -g "*(-/):t:directories"`) is exactly this:
+                        // the second pattern is a bad pattern, so the
+                        // directory sdefs never run and only `files` remains.
+                        return ret;
                     } else {
                         // sh:121-138 — recursive-files.
                         let ps = format!("{}{}", get_str("PREFIX"), get_str("SUFFIX"));
