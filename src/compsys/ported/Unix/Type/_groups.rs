@@ -25,6 +25,7 @@
 use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::shared::LocalScope;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 
@@ -41,6 +42,30 @@ fn parse_dscacheutil(out: &str) -> Vec<String> {
 /// `/etc/group`), cached in `$_cache_groups`.
 pub fn _groups(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_groups");
+    // sh:3 — `local expl groups tmp`.
+    //
+    // Every name this port writes is one of those three: `groups` holds
+    // the candidate list this function builds and `expl` is the array
+    // `_wanted` fills in through its `$2`. Without the declaration the
+    // port's `setaparam` calls create them at level 0, so a `newgrp
+    // <TAB>` left a 327-element `groups` array standing in the user's
+    // shell where zsh leaves the name unset:
+    //
+    //   zsh  : groups=[][0]        _cache_groups=[array][327]
+    //   zshrs: groups=[array][327] _cache_groups=[array][327]
+    //
+    // Declared as scalars, exactly as upstream does; `groups` becomes an
+    // array on assignment the same way `groups=( "$_cache_groups[@]" )`
+    // (sh:25) converts the scalar upstream. `_cache_groups` is
+    // deliberately NOT in the list — it is upstream's cross-invocation
+    // cache and its whole purpose is to outlive the call (sh:8).
+    //
+    // [`LocalScope`] rather than a bare `declare_locals`: `_groups` is
+    // also reached as a DIRECT Rust call (`_alternative` -> the action
+    // dispatcher), and those never run `endparamscope`, so the shadow
+    // would otherwise stay for the rest of the caller's body.
+    let _locals = LocalScope::declare(&["expl", "groups", "tmp"], 0);
+
     // sh:5
     if _tags(&["groups".to_string()]) != 0 {
         return 1;
@@ -93,11 +118,11 @@ pub fn _groups(args: &[String]) -> i32 {
             setaparam("_cache_groups", c.clone());
             cache = Some(c);
         }
-        // sh:24
+        // sh:25
         groups = cache.unwrap_or_default();
     }
 
-    // sh:27
+    // sh:28
     setaparam("groups", groups);
     let mut w: Vec<String> = vec![
         "groups".to_string(),
