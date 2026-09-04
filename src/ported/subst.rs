@@ -410,9 +410,25 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 && !keep
             // c:100
             {
-                // c:100
-                list.delete_node(node_idx); // c:100
-                continue; // Don't increment, we removed    // c:100
+                // c:183-186 deletes an empty node of the FINISHED word. When
+                // a compiled caller preforks only ONE SEGMENT of a word it
+                // assembles itself, this list is not that word: the literals
+                // still to be glued on may land on the very node being
+                // deleted (`a=(x y z); print -rl -- P${a:s/z/}S` is `Px` `y`
+                // `S` in zsh, the `S` on the emptied third element). The
+                // caller says so with `PARAMSUBST_AFFIXES_DEFERRED` and runs
+                // the removal at the end of the word instead — see that
+                // declaration. A SPLIT field's empty never reaches here to
+                // begin with: it is c:36 `nulstring`, so the non-empty branch
+                // above claims it and `remnulargs` (c:170) only unwraps it
+                // afterwards.
+                if PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0 {
+                    PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.set(true));
+                } else {
+                    // c:100
+                    list.delete_node(node_idx); // c:100
+                    continue; // Don't increment, we removed    // c:100
+                }
             } // c:100
         } // c:100
 
@@ -21865,8 +21881,36 @@ pub fn paramsubst(
                 })
                 .unwrap_or(0);
             let pre_retain_len = nodes.len();
-            if !qt && nodes.len() > 1 {
+            // c:183-186 tests the FINISHED word, so the removal is only
+            // correct here when `prefix`/`suffix` above really were this
+            // word's surrounding text. A compiled caller passes just the
+            // `${…}` body and glues its literals on afterwards, and it
+            // declares that by setting `PARAMSUBST_AFFIXES_DEFERRED` — see
+            // that declaration for the full derivation. Deferring hands the
+            // removal to the caller's end-of-word drop, which is where C
+            // runs it: `a=(x y z); print -rl -- PRE${a%z}POST` then keeps
+            // the empty slot for `POST` to land on (`PREx` `y` `POST`).
+            // Non-empty `prefix`/`suffix` veto it: those ARE this word's
+            // surrounding text (the caller handed over the whole word, the
+            // way C's `stringsubst` always does), the nodes above already
+            // carry them, and c:183-186's test is in the right place.
+            let defer_empties = PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0
+                && prefix.is_empty()
+                && suffix.is_empty();
+            if !qt && nodes.len() > 1 && !defer_empties {
                 nodes.retain(|n| !n.is_empty());
+            } else if !qt && nodes.len() > 1 && nodes.iter().any(|n| n.is_empty()) {
+                // Report the skip so the caller arms its end-of-word elide —
+                // but only for a genuine ARRAY reference, C's `isarr != 2`
+                // at c:4354. A value that became array-shaped through a
+                // SPLIT (c:3274 / c:3938 `isarr = nojoin ? 1 : 2`, i.e. the
+                // `spsep` flags and the SH_WORD_SPLIT `force_split`) holds
+                // c:36 `nulstring` in its empty fields: non-empty at c:183,
+                // hence KEPT (`setopt shwordsplit; IFS=:; s='a::b'; P${s}S`
+                // is `Pa` `` `bS`). See `PARAMSUBST_EMPTIES_DEFERRED`.
+                if !force_split && spsep.is_none() {
+                    PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.set(true));
+                }
             }
             let first = nodes.first().cloned().unwrap_or_default();
             if nodes.len() > 1 {
@@ -24957,6 +25001,73 @@ thread_local! {
     /// (like PARAMSUBST_LF_ARRAY) so a stale value never leaks; read AND
     /// reset by the nested reader so it reflects only the immediate inner.
     pub static SUBEXP_NONAT_SPLIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO C COUNTERPART !!!
+// =====================================================================
+// `PARAMSUBST_AFFIXES_DEFERRED` / `PARAMSUBST_EMPTIES_DEFERRED` exist
+// only because zshrs calls `paramsubst` with a DIFFERENT argument than
+// C does.
+//
+// c:Src/subst.c:183-186 removes a list node whose text is empty, and
+// the node it tests is the FINISHED word: `stringsubst` has already
+// run, so the array emit block has attached the word's surrounding
+// literals — the prefix onto element 0 at c:4386, the suffix onto the
+// last element at c:4414, or BOTH onto every element under plan9 at
+// c:4341. The Rust port applies that same removal inside `paramsubst`
+// (the `nodes.retain` below), and there it IS correctly ordered when
+// the caller is the real `stringsubst`: `s` is the whole word, so
+// `prefix`/`suffix` (subst.rs:21118) hold the surrounding text and the
+// nodes carry it before the retain runs.
+//
+// The compiled fast paths do not call it that way. `compile_zsh`
+// splits a word into segments and hands `fusevm_bridge`'s
+// `paramsubst_to_value_pf` only the `${…}` BODY, assembling the
+// literals afterwards with its own concat opcodes. `prefix` and
+// `suffix` are then empty strings, so the retain again runs BEFORE the
+// affixes exist and the suffix lands on the last SURVIVING element:
+// `a=(x y z); print -rl -- PRE${a%z}POST` gave `PREx` `yPOST` where
+// zsh gives `PREx` `y` `POST`.
+//
+// `PARAMSUBST_AFFIXES_DEFERRED` is the caller's declaration that it
+// will attach text after this call AND will run the end-of-word
+// removal itself. `compile_zsh` opens it with
+// `BUILTIN_WORD_DEFER_EMPTIES` at exactly the two sites where the word
+// is closed by `BUILTIN_ARRAY_DROP_EMPTY` or
+// `BUILTIN_WORD_ELIDE_EMPTY`, so a deferral is never left without a
+// drop. While it is open the removal is skipped, and c:186's test then
+// happens where C has it.
+//
+// A non-empty `prefix`/`suffix` vetoes the deferral: those ARE the
+// word's surrounding text, so the caller handed over the whole word
+// (what C's `stringsubst` always does) and the nodes already carry
+// them.
+//
+// `PARAMSUBST_EMPTIES_DEFERRED` reports back that a removal was
+// actually skipped for a genuine ARRAY reference, so the bridge can
+// arm the end-of-word elide. It must NOT be reported for a
+// SPLIT-derived value: c:36 `char nulstring[] = {Nularg, '\0'}` is
+// what a split field's empty is in C, its node text is non-empty at
+// c:183, and it SURVIVES (`setopt shwordsplit; IFS=:; s='a::b';
+// print -rl -- P${s}S` is `Pa` `` `bS`). Same distinction the bridge's
+// `ARRAY_EMPTIES_ELIDABLE` carries for the read-time path.
+// =====================================================================
+thread_local! {
+    /// `PARAMSUBST_AFFIXES_DEFERRED` static — the caller's open-word depth.
+    ///
+    /// A DEPTH, not a flag: a segment of a word can itself be a word the
+    /// compiler assembles and closes with its own drop — `P${b[@]}${a%z}Q`
+    /// emits one for the splice — and that inner close must hand the
+    /// declaration back to the enclosing word rather than end it. The two
+    /// halves nest because `compile_zsh` emits the marker at exactly the
+    /// sites where one of the two drops will run.
+    pub static PARAMSUBST_AFFIXES_DEFERRED: std::cell::Cell<i32> =
+        const { std::cell::Cell::new(0) };
+
+    /// `PARAMSUBST_EMPTIES_DEFERRED` static — reported back to the caller.
+    pub static PARAMSUBST_EMPTIES_DEFERRED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 // =====================================================================
