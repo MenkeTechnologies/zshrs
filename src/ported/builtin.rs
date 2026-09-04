@@ -612,15 +612,31 @@ pub fn execbuiltin(
     // ERREXIT_CHECK pass — `set -u; echo $undefined; echo done`
     // would run `echo done` instead of aborting.
     //
-    // Non-interactive shells must preserve errflag so the
-    // immediately-following ERREXIT_CHECK aborts the script (c:Src/
-    // init.c:234 `((!interact || sourcelevel) && errflag)` break).
+    // The flag is preserved for EVERY shell, not only scripts. Gating the
+    // clear on INTERACTIVE made a ZLE widget / completion function the one
+    // place a prefork error was still swallowed: `: $((1/0))` inside a widget
+    // kept executing its LIST, where C ends the list at c:Src/exec.c:1443
+    // (`while (… && !breaks && !retflag && !errflag)`). Observable on the
+    // default config with no ZLE function at all:
+    //
+    //   setopt nounset; print pre; print $undefzz9; print DONEZZ
+    //     zsh  : pre / `undefzz9: parameter not set`            (stops)
+    //     zshrs: pre / `undefzz9: parameter not set` / DONEZZ   (continues)
+    //
+    // C's REPL does not depend on this clear: c:Src/init.c:150 and c:161 set
+    // `errflag = 0` twice per prompt iteration, and both are ported
+    // (init.rs, `// c:139` and `// c:150`), so a surviving flag cannot wedge
+    // the line editor.
+    //
+    // KNOWN, DELIBERATE DEVIATION: `eval` is itself a builtin, so an `eval`
+    // ENTERED with errflag already set now returns 1 without running its body
+    // and keeps the flag, where C returns 1 and clears it. That is the price
+    // of not having C's c:Src/exec.c:3760-3763 pre-dispatch gate
+    // (`if (errflag) { lastval = 1; goto err; }`) on the bytecode path — the
+    // same trade already accepted for scripts. The strictly faithful fix is
+    // to add that pre-gate and restore C's unconditional clear.
     let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
-        if !isset(INTERACTIVE) {
-            return 1;
-        }
-        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
         return 1; // c:428
     }
 
