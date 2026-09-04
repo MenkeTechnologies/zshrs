@@ -1857,6 +1857,13 @@ pub fn preprompt() {
     // wall-time, not prompt idle.
     crate::history::history_sqlite_finish(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Flush the autoload bytecode cache. `put_one` buffers rather than
+    // rewriting the whole shard per autoload, and this is the batch
+    // boundary: every function the just-finished command (or a <TAB>
+    // completion) autoloaded goes out in ONE write. Cheap when nothing
+    // is buffered, which is the common case.
+    crate::autoload_cache::try_flush_pending();
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine (src/extensions/p10k): snapshot `$?` and close
     // the command timer BEFORE the precmd hook runs, so precmd's own
     // commands can't clobber what the status / command_execution_time

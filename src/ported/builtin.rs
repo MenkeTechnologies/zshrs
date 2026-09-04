@@ -12978,6 +12978,12 @@ pub fn zexit(val: i32, from_where: i32) {
     SHELL_EXITING.store(-1, Relaxed); // c:6014
                                       // c:6019 — `errflag = 0;`
     errflag.store(0, Relaxed); // c:6019
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Exit is committed from here, so drain the buffered autoload
+    // bytecode entries. `preprompt()` is the batch boundary for an
+    // interactive shell; a script never reaches a prompt, so without
+    // this its compiles would never reach the cache at all.
+    crate::autoload_cache::try_flush_pending();
                                // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021

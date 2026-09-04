@@ -191,7 +191,25 @@ pub struct AutoloadCache {
     lock_path: PathBuf,
     /// `mmap` field.
     mmap: Mutex<Option<MmappedShard>>,
+    /// Cold-start writes not yet folded into the shard on disk.
+    ///
+    /// `put_one` is called once per autoload compile. Folding each one
+    /// in immediately costs a full read + `bytecheck` + deserialize +
+    /// re-serialize + write of the WHOLE file, so a single completion
+    /// run that autoloads N helpers was O(N x shard). On a 46k-completer
+    /// `$fpath` the shard reaches 40 MB and one `<TAB>` autoloads dozens
+    /// of `_*` helpers, which is how a keypress came to cost 30+ s.
+    /// Entries accumulate here and leave in ONE `put_many`.
+    pending: Mutex<Vec<(String, Vec<u8>, String, [u8; 32])>>,
 }
+
+/// Cap on un-flushed [`AutoloadCache::pending`] entries.
+///
+/// A MEMORY bound, not a latency knob: the flush that matters is the one
+/// at the next prompt (or at exit), and that is where the batching win
+/// comes from. This only stops a script that autoloads without ever
+/// reaching a prompt from growing the buffer without limit.
+const PENDING_FLUSH_MAX: usize = 256;
 
 impl AutoloadCache {
     /// `open` — see implementation.
@@ -210,6 +228,7 @@ impl AutoloadCache {
             path: path.to_path_buf(),
             lock_path,
             mmap: Mutex::new(None),
+            pending: Mutex::new(Vec::new()),
         })
     }
 
@@ -230,6 +249,9 @@ impl AutoloadCache {
     /// [`AutoloadCache::get_for_source`], which also proves the entry
     /// describes the definition text about to be installed.
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
+        if let Some(blob) = self.pending_lookup(name, None, None) {
+            return Some(blob);
+        }
         self.ensure_mmap();
         let guard = self.mmap.lock();
         let shard = guard.as_ref()?;
@@ -254,6 +276,9 @@ impl AutoloadCache {
         source_dir: &str,
         source_sha: &[u8; 32],
     ) -> Option<Vec<u8>> {
+        if let Some(blob) = self.pending_lookup(name, Some(source_dir), Some(source_sha)) {
+            return Some(blob);
+        }
         self.ensure_mmap();
         let guard = self.mmap.lock();
         let shard = guard.as_ref()?;
@@ -288,9 +313,14 @@ impl AutoloadCache {
         }
     }
 
-    /// Single-write: read shard, insert one entry, write shard. Used by the
-    /// cold-start path when a function is autoloaded before compinit
-    /// pre-warm completes.
+    /// Buffer one entry from the cold-start path, where a function is
+    /// autoloaded before compinit pre-warm has cached it.
+    ///
+    /// This used to call `put_many` with a single entry, which rewrote
+    /// the entire shard per autoload. See [`AutoloadCache::pending`] for
+    /// why that is quadratic in practice. The write now happens in
+    /// [`AutoloadCache::flush_pending`], called at the next prompt and
+    /// again on exit.
     pub fn put_one(
         &self,
         name: &str,
@@ -298,12 +328,66 @@ impl AutoloadCache {
         source_dir: &str,
         source_sha: [u8; 32],
     ) -> Result<(), String> {
-        self.put_many(&[(
-            name.to_string(),
-            chunk_blob,
-            source_dir.to_string(),
-            source_sha,
-        )])
+        {
+            let mut pending = self.pending.lock();
+            pending.push((
+                name.to_string(),
+                chunk_blob,
+                source_dir.to_string(),
+                source_sha,
+            ));
+            if pending.len() < PENDING_FLUSH_MAX {
+                return Ok(());
+            }
+        }
+        self.flush_pending()
+    }
+
+    /// Write every buffered entry in one shard rewrite. A no-op when
+    /// nothing is buffered, so it is cheap to call on every prompt.
+    ///
+    /// On failure the batch is NOT put back: a shard write that failed
+    /// once (read-only home, full disk) will fail again, and retrying it
+    /// at every prompt would turn a broken cache into a stall. Dropping
+    /// the batch only costs a recompile.
+    pub fn flush_pending(&self) -> Result<(), String> {
+        let batch = {
+            let mut pending = self.pending.lock();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut *pending)
+        };
+        self.put_many(&batch)
+    }
+
+    /// Serve an entry that is buffered but not yet on disk.
+    ///
+    /// Without this a lookup between a `put_one` and the next flush
+    /// would miss and recompile a body this very process just compiled.
+    /// The binary-identity check the on-disk path applies is trivially
+    /// true here — this process wrote these.
+    fn pending_lookup(
+        &self,
+        name: &str,
+        source_dir: Option<&str>,
+        source_sha: Option<&[u8; 32]>,
+    ) -> Option<Vec<u8>> {
+        let pending = self.pending.lock();
+        // Reverse: last write for a name wins, matching the repeated
+        // `entries.insert` in `put_many`.
+        pending.iter().rev().find_map(|(n, blob, dir, sha)| {
+            if n != name {
+                return None;
+            }
+            if source_dir.is_some_and(|d| d != dir) {
+                return None;
+            }
+            if source_sha.is_some_and(|s| s != sha) {
+                return None;
+            }
+            Some(blob.clone())
+        })
     }
 
     /// Insert many entries in one read + one write of the shard.
@@ -349,6 +433,9 @@ impl AutoloadCache {
     /// has to go, or every later process pays the same failure before
     /// falling back.
     pub fn remove(&self, name: &str) -> Result<(), String> {
+        // Drop any buffered copy first, or the next flush would write
+        // back the very entry just proven wrong.
+        self.pending.lock().retain(|(n, _, _, _)| n != name);
         let _lock = match acquire_lock(&self.lock_path) {
             Some(l) => l,
             None => return Ok(()),
@@ -554,6 +641,19 @@ pub fn try_put_many(entries: &[(String, Vec<u8>, String, [u8; 32])]) -> Result<(
     cache.put_many(entries)
 }
 
+/// Write out everything `put_one` buffered. See
+/// [`AutoloadCache::flush_pending`]. Called from `preprompt()` (the
+/// batch boundary for an interactive shell — every autoload a command
+/// or a `<TAB>` triggered lands in one write) and from `zexit` (the
+/// boundary for a script, which never reaches a prompt).
+pub fn try_flush_pending() {
+    if let Some(cache) = CACHE.as_ref() {
+        if let Err(e) = cache.flush_pending() {
+            tracing::warn!(error = %e, "autoload: could not flush cache");
+        }
+    }
+}
+
 /// Drop a proven-wrong entry. See [`AutoloadCache::remove`].
 pub fn try_remove(name: &str) {
     if let Some(cache) = CACHE.as_ref() {
@@ -596,6 +696,9 @@ mod tests {
         cache
             .put_one("foo", vec![1, 2, 3], DIR, source_digest("body"))
             .unwrap();
+        // Served from the pending buffer, before any shard write.
+        assert_eq!(cache.get("foo"), Some(vec![1, 2, 3]));
+        cache.flush_pending().unwrap();
         assert_eq!(cache.get("foo"), Some(vec![1, 2, 3]));
         assert_eq!(cache.entry_count(), 1);
     }
@@ -611,6 +714,7 @@ mod tests {
         let cache = AutoloadCache::open(&cache_path).unwrap();
         let sha = source_digest("foo() {\nprint one\n}");
         cache.put_one("foo", vec![1, 2, 3], DIR, sha).unwrap();
+        cache.flush_pending().unwrap();
         assert_eq!(cache.get_for_source("foo", DIR, &sha), Some(vec![1, 2, 3]));
         // Edited body.
         let edited = source_digest("foo() {\nprint two\n}");
@@ -631,6 +735,7 @@ mod tests {
         let cache = AutoloadCache::open(&cache_path).unwrap();
         let sha = source_digest("foo() {\nprint one\n}");
         cache.put_one("foo", vec![1, 2, 3], DIR, sha).unwrap();
+        cache.flush_pending().unwrap();
 
         // Rewrite the entry as if a newer build had produced it.
         let mut shard = read_owned_shard(&cache_path).expect("shard readable");
@@ -669,6 +774,7 @@ mod tests {
         let sha = source_digest("body");
         cache.put_one("alpha", vec![1], DIR, sha).unwrap();
         cache.put_one("beta", vec![2], DIR, sha).unwrap();
+        cache.flush_pending().unwrap();
         let names = cache.cached_names();
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
@@ -695,6 +801,7 @@ mod tests {
         cache
             .put_one("x", vec![1], DIR, source_digest("body"))
             .unwrap();
+        cache.flush_pending().unwrap();
         assert!(cache_path.exists());
         cache.clear().unwrap();
         assert!(!cache_path.exists());
@@ -711,6 +818,8 @@ mod tests {
         cache
             .put_one("x", vec![1], DIR, source_digest("body"))
             .unwrap();
+        // Must be a REAL write, or this regression test goes vacuous.
+        cache.flush_pending().unwrap();
         let temps: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .flatten()
@@ -718,5 +827,72 @@ mod tests {
             .filter(|n| n.contains(".tmp."))
             .collect();
         assert!(temps.is_empty(), "temp files left behind: {temps:?}");
+    }
+
+    #[test]
+    fn put_one_defers_the_shard_write_until_flush() {
+        // The whole point of buffering: N autoloads must not cost N
+        // rewrites of a shard that reaches 40 MB on a real $fpath.
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("autoloads.rkyv");
+        let cache = AutoloadCache::open(&cache_path).unwrap();
+        let sha = source_digest("body");
+
+        for i in 0..8 {
+            cache.put_one(&format!("f{i}"), vec![i], DIR, sha).unwrap();
+        }
+        assert!(
+            !cache_path.exists(),
+            "put_one wrote the shard before the flush boundary"
+        );
+        // Still readable while buffered — otherwise this process would
+        // recompile a body it just compiled.
+        assert_eq!(cache.get_for_source("f3", DIR, &sha), Some(vec![3]));
+
+        cache.flush_pending().unwrap();
+        assert_eq!(cache.entry_count(), 8);
+        assert_eq!(cache.get_for_source("f7", DIR, &sha), Some(vec![7]));
+    }
+
+    #[test]
+    fn flush_preserves_entries_written_by_another_process() {
+        // Concurrent shells share one shard; the flush is a
+        // read-modify-write under lock, so a peer's entries survive.
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("autoloads.rkyv");
+        let sha = source_digest("body");
+
+        let peer = AutoloadCache::open(&cache_path).unwrap();
+        peer.put_one("peer_fn", vec![9], DIR, sha).unwrap();
+        peer.flush_pending().unwrap();
+
+        let mine = AutoloadCache::open(&cache_path).unwrap();
+        mine.put_one("my_fn", vec![1], DIR, sha).unwrap();
+        mine.flush_pending().unwrap();
+
+        assert_eq!(mine.get_for_source("peer_fn", DIR, &sha), Some(vec![9]));
+        assert_eq!(mine.get_for_source("my_fn", DIR, &sha), Some(vec![1]));
+    }
+
+    #[test]
+    fn remove_drops_a_buffered_entry_before_it_reaches_disk() {
+        // The loader calls remove() when a cached chunk ran without
+        // defining its function. If the buffer kept it, the next flush
+        // would write back the entry just proven wrong.
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let cache_path = dir.path().join("autoloads.rkyv");
+        let cache = AutoloadCache::open(&cache_path).unwrap();
+        let sha = source_digest("body");
+
+        cache.put_one("bad", vec![1], DIR, sha).unwrap();
+        cache.remove("bad").unwrap();
+        cache.flush_pending().unwrap();
+
+        assert!(cache.get("bad").is_none());
+        let reopened = AutoloadCache::open(&cache_path).unwrap();
+        assert!(reopened.get("bad").is_none());
     }
 }
