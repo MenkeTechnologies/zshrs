@@ -831,6 +831,21 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let mut ret: i32 = 1;
     let mut completer_num: i64 = 1;
     for completer_spec in &chain {
+        // c:Src/exec.c `execlist` — `if (errflag) break;` before each element
+        // of a list. In C `_main_complete` is a SHELL function, so an error
+        // raised deep inside a completer (`zerr` sets `errflag |=
+        // ERRFLAG_ERROR`, c:Src/utils.c:176/194) stops every remaining
+        // statement in it, this `for` loop included, and `do_completion`
+        // then sees `(nmatches || nmessages) && !errflag`
+        // (c:Src/Zle/compcore.c:1031). The completer chain here is a NATIVE
+        // port, so nothing unwinds into it and each later completer
+        // (`_approximate`, `_ignored`, …) re-ran the whole failing pass —
+        // `CC <TAB>`, whose `_CC` glob `*(-/):t:directories` is a genuine
+        // bad pattern, spun instead of stopping with the one match zsh
+        // shows.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            break;
+        }
         let _ = setsparam("_completer_num", &completer_num.to_string());
 
         // sh:165  split `spec` on `:` — left of `:` is the fn name,

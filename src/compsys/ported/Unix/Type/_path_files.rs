@@ -1123,8 +1123,35 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                 a.extend(pats.clone());
                 compfiles(a);
             }
-            // sh:472 — tmp1=( $~tmp1 )
+            // sh:472 — `tmp1=( $~tmp1 ) 2> /dev/null`. The redirection is
+            // load-bearing and was dropped: a pattern zsh rejects still raises
+            // errflag — that is what unwinds `_files` and stops it trying the
+            // remaining `-g` file-patterns — but the DIAGNOSTIC must never
+            // reach the terminal mid-completion. `noerrs = 1` is exactly that
+            // split (c:Src/utils.c:179-183 — `if (errflag || noerrs) { if
+            // (noerrs < 2) errflag |= ERRFLAG_ERROR; return; }`: message
+            // suppressed, errflag still set). `noerrs = 2` would wrongly
+            // swallow errflag too and defeat the unwind.
+            let saved_noerrs = {
+                let mut ne = crate::ported::utils::noerrs_lock().lock().unwrap();
+                let old = *ne;
+                *ne = 1;
+                old
+            };
             tmp1 = tilde_glob(&get_arr("tmp1"));
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
+            // c:Src/utils.c:179-184 — `zerr` sets `errflag |= ERRFLAG_ERROR`,
+            // and in C every statement after it in the enclosing shell
+            // function is skipped: `execlist` bails on `errflag`, so the
+            // frame unwinds up through `_files` and the completion stops with
+            // whatever it had already added. That unwind is FREE in C because
+            // `_path_files` is a shell function; this is a NATIVE port, so
+            // nothing propagates it and the remaining `-g` patterns kept
+            // being tried against a glob that can no longer succeed. Check it
+            // explicitly at the one site that can raise it.
+            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                return 1;
+            }
 
             let cur_prefix = get_str("PREFIX");
             let cur_suffix = get_str("SUFFIX");

@@ -595,6 +595,16 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     patcompstart();
     if (inflags & PAT_FILE as i32) != 0 {
         patglobflags.store(incoming_globflags, Ordering::Relaxed); // c:568 — no reset for a file glob
+    } else {
+        // c:568-570 — `if (!(patflags & PAT_FILE)) { patcompcharsset();
+        // zpc_special[ZPC_SLASH] = Marker; … }`. A non-file pattern has no
+        // path components, so '/' is an ordinary character. C masks the slot
+        // rather than testing PAT_FILE at each use site, which is what lets
+        // `patcompbranch` (c:950) break on '/' unconditionally while
+        // `[[ x = ((#s)|/)a ]]` and `${arr:#*/*}` keep '/' literal.
+        // `patcompstart` → `patcompcharsset` re-seeds the slot to '/' on every
+        // compile (pattern.rs:434), so this mask does not leak between calls.
+        zpc_special.lock().unwrap()[ZPC_SLASH as usize] = Marker as u32 as u8; // c:570
     }
     // c:525 — `patcompstart` seeds `patglobflags` with the option-derived
     // default (GF_IGNCASE when CASEGLOB/CASEPATHS are off, GF_MULTIBYTE when
@@ -1202,6 +1212,9 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         let br: usize;
         // c:805 — `long gfnode = 0, newbr;`
         let mut gfnode: usize = 0;
+        // c:839-841 — C tracks this by bumping `tilde` to 2; a bool is the
+        // same signal in Rust, where `tilde` is the `is_tilde_exclude` bool.
+        let mut tilde_masked_slash = false;
         if is_tilde_exclude {
             // c:808-836 — `if (tilde)` arm. Emit the EXCSYNC sync node
             // (if first `~` in this switch) then the EXCLUDE / EXCLUDP
@@ -1241,6 +1254,19 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
             {
                 let mut buf = patout.lock().unwrap();
                 buf.extend_from_slice(&[0u8; 8]);
+            }
+            /* / is not treated as special if we are at top level */ // c:839
+            // c:840-842 — `if (!paren && zpc_special[ZPC_SLASH] == '/') {
+            // tilde++; zpc_special[ZPC_SLASH] = Marker; }`. This is what
+            // keeps a top-level exclusion like `*~(bench/x)y` legal, and it
+            // is the reason C can afford the unconditional '/' break in
+            // patcompbranch (c:950).
+            if paren == 0 {
+                let mut sp = zpc_special.lock().unwrap();
+                if sp[ZPC_SLASH as usize] == b'/' {
+                    tilde_masked_slash = true; // c:841 — `tilde++` (tilde becomes 2)
+                    sp[ZPC_SLASH as usize] = Marker as u32 as u8; // c:842
+                }
             }
         } else {
             // c:843 — `excsync = 0; br = patnode(P_BRANCH);`
@@ -1282,6 +1308,13 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         set_next(last_branch, br);
         let mut bf: i32 = 0;
         let inner = patcompbranch(&mut bf, paren);
+        // c:880-883 — `if (tilde == 2) { /* restore special treatment of / */
+        // zpc_special[ZPC_SLASH] = '/'; }`. C does this BEFORE the
+        // `if (!newbr) return 0` bail at c:884-885, so the restore must not
+        // sit behind the error return either.
+        if tilde_masked_slash {
+            zpc_special.lock().unwrap()[ZPC_SLASH as usize] = b'/';
+        }
         if inner < 0 {
             return -1;
         }
@@ -1388,7 +1421,7 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
     // `memchr(zpc_special, byte, ZPC_SEG_COUNT)`-equivalent lookups.
     // Only the first ZPC_SEG_COUNT slots (SLASH, NULL, BAR, OUTPAR,
     // TILDE) matter here.
-    let (sp_tilde, sp_seg_set, sp_inpar, sp_hash) = {
+    let (sp_tilde, sp_seg_set, sp_inpar, sp_hash, sp_slash) = {
         let sp = zpc_special.lock().unwrap();
         let tilde = sp[ZPC_TILDE as usize];
         let mut set = [false; 256];
@@ -1399,7 +1432,8 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             tilde,
             set,
             sp[ZPC_INPAR as usize],
-            sp[ZPC_HASH as usize], // c:1609
+            sp[ZPC_HASH as usize],  // c:1609
+            sp[ZPC_SLASH as usize], // c:949 — the slot holds '/' only while special
         )
     };
 
@@ -1420,14 +1454,20 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         if c == b'|' || c == b')' {
             break;
         }
-        // c:950 — '/' is ZPC_SLASH (slot 0, within ZPC_SEG_COUNT), so C
-        // breaks the segment here. zshrs gates this to FILE globs at top
-        // level: parsecomplist needs the path-component boundary, while
-        // matchpat/[[ ]]/:# (never PAT_FILE) and '/' inside parens (the
-        // `((#s)|/)` anchor pin) must keep '/' literal. C's unconditional
-        // break + c:914-917 file-accept termination is equivalent for the
-        // top-level file-glob case this serves.
-        if c == b'/' && paren == 0 && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0 {
+        // c:949-952 — '/' is ZPC_SLASH (slot 0, within ZPC_SEG_COUNT) and
+        // terminates the segment at EVERY paren depth: C's loop condition is
+        // `!memchr(zpc_special, *patparse, ZPC_SEG_COUNT)` with no `paren`
+        // test anywhere. C keeps '/' literal by MASKING THE SLOT instead —
+        // for a non-FILE pattern (c:568-570) and around a top-level `~`
+        // exclusion (c:840-842, restored c:880-883). A `/` inside a group
+        // therefore leaves the group unterminated and c:913-914
+        // (`if (paren && *patparse++ != Outpar) return 0`) rejects the whole
+        // pattern, which is why `*(-/):t:directories` is a "bad pattern" in
+        // zsh. Gating on `paren == 0 && PAT_FILE` instead compiled it happily
+        // and answered "no matches found": `_files` then never took the
+        // errflag unwind that stops it reaching its remaining `-g` patterns,
+        // so `CC <TAB>` listed every directory where zsh inserts one match.
+        if c == b'/' && sp_slash == b'/' {
             break;
         }
         // c:950-952 — `~` is an additional terminator when active as
@@ -2820,7 +2860,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // literal-run break in this Rust port, see
             // `zsh_corpus_hash_s_e_anchors_match_bare_test` which
             // expects `/` to stay literal inside `(...)` alternation).
-            let (sp_tilde_lit, sp_seg_lit_set, sp_hat_lit, sp_hash_lit) = {
+            let (sp_tilde_lit, sp_seg_lit_set, sp_hat_lit, sp_hash_lit, sp_slash_lit) = {
                 let sp = zpc_special.lock().unwrap();
                 let mut set = [false; 256];
                 for i in 0..(ZPC_SEG_COUNT as usize) {
@@ -2831,6 +2871,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     set,
                     sp[ZPC_HAT as usize],
                     sp[ZPC_HASH as usize],
+                    sp[ZPC_SLASH as usize],
                 )
             };
             while local_off < p.len() {
@@ -2877,7 +2918,9 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     // PURES fast path is off, i.e. under `(#i)`/`(#a1)`, so
                     // `(#i)sub/deep.txt` compiled `sub/deep.txt` as ONE
                     // component and matched nothing — even with exact case.
-                    b'/' => paren == 0 && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0,
+                    // c:949-952 — see patcompbranch: liveness of the segment
+                    // break comes from the MASKED SLOT, never from `paren`.
+                    b'/' => sp_slash_lit == b'/',
                     _ => false,
                 };
                 if stop_here {
