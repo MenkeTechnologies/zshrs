@@ -680,7 +680,7 @@ impl ShellExecutor {
         // here because the doctor previously buried it under the
         // (mis-labeled) "SQLite Caches" header.
         println!("{}", bold("History"));
-        if let Some(ref engine) = self.history {
+        if let Some(engine) = self.history() {
             let count = engine.count().unwrap_or(0);
             println!("  entries:     {}  {}", count, green("OK"));
         } else {
@@ -1082,7 +1082,7 @@ impl ShellExecutor {
                 println!();
             }
 
-            if let Some(ref engine) = self.history {
+            if let Some(engine) = self.history() {
                 println!("  {} {}", bold("history.db"), dim("(command history)"));
                 if let Ok(n) = engine.count() {
                     println!("    entries:      {:>6} rows", n);
@@ -1268,7 +1268,7 @@ impl ShellExecutor {
             }
 
             "history" => {
-                let Some(ref engine) = self.history else {
+                let Some(engine) = self.history() else {
                     eprintln!("zshrs:dbview:1: no history engine");
                     return 1;
                 };
