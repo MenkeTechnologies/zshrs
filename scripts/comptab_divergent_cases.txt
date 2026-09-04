@@ -496,3 +496,189 @@ Xvfb -
 #   literally compadd's own flags, which is what an `"$expl[@]"`-shaped splat
 #   would produce.  Re-check against that fix before treating as separate.
 command -
+
+# ══════════════════════════════════════════════════════════════════════════
+# TRIAGED 2026-09-04 (LATE) — 'fortune ', 'hyperfine -', 'gawkbug -'
+# ══════════════════════════════════════════════════════════════════════════
+#
+# All three were reported as default-backend divergences.  None of them is
+# one.  Re-measured 9 times each, serially, --jobs 1, against a binary pinned
+# from the tree at 32932110ca and a pinned copy of the dump: PASS 9/9.  The
+# passes are NOT vacuous — both grids were dumped for each and the reference
+# side is rich ('fortune ' inserts `/` on both, 'hyperfine -' draws 34
+# matching rows on both, 'gawkbug -' draws 26).
+#
+# They ARE reproducible, byte-for-byte as reported, under
+# `[compsys] backend = "shell"` (~/.zshrs/zshrs.toml).  The A/B, same binary,
+# same dump, ZSHRS_HOME the only variable:
+#
+#   'fortune '     rust: '@CT@ fortune /'   shell: '@CT@ fortune' + / listing
+#   'hyperfine -'  rust: 34 matching rows   shell: 'do you wish to see all
+#                                                   104 possibilities (35 lines)?'
+#   'gawkbug -'    rust: 26 matching rows   shell: '@CT@ gawkbug --'
+#
+# So the report was taken on a build from before `3dcb8a9755` (14:09), the
+# commit that made `is_stock_functions_dir` recognise the bundled tree and so
+# actually activated the default `backend = "rust"`.  These are shell-path
+# divergences, i.e. the 19-vs-13 FAIL gap that commit's A/B already records.
+# Do not re-file them as default-backend bugs.
+#
+# 'fortune ' is now FIXED on the shell path too, by `5118b92096`.  Root cause
+# was not `-W` at all: `_path_files` sh:87 builds its search roots with
+# `prepaths=( ${(P)^tmp1%/}/ )`, and the user's `_files` override hands it
+# `-W -g`, so the `(P)` operand is the literal `-g`.  zsh resolves that to
+# `$-` (fetchvalue takes the one-char special `-` and discards the `g`,
+# c:Src/params.c:2218-2232 + 2235-2236); zshrs resolved it to nothing, which
+# made `prepaths` exactly `/` and globbed `/*`.  The trigger is a `(` in the
+# `-W` value (it routes `_files` down the branch that emits `-W -g`), NOT the
+# directory being absent: `-W /nonexistent-dir-xyz` passed on every backend
+# before the fix, `-W /nonexistent-dir-xyz(|s)` failed.
+#
+# 'gawkbug -' is NOT a zsh bug and needs no zshrs change.  zsh listing 23
+# `_email-sleuth` options under a completer that declares only `--help` and
+# `--version` is correct behaviour for this host: `_gawkbug`'s positional is
+# `_email_addresses`, whose plugin protocol claims the whole `_email-*`
+# FUNCTION namespace —
+#   plugins=( ${${(k)functions[(I)_email-*]#*-}:#(${(kj.|.)~files})} ... )
+# (`.../zsh/functions/_email_addresses`), and compinit has autoloaded the
+# user's `_email-sleuth` completer into `$functions`.  `_email_addresses` then
+# calls it as the `sleuth` plugin and it adds its own `_arguments` options.
+# zshrs on the default backend reproduces this byte-for-byte.  Host artefact.
+#
+# Still open, shell path only, both deterministic 3/3:
+#   'hyperfine -'  the shell `_arguments` counts 104 matches where zsh is at
+#                  or below LISTMAX, so zshrs asks instead of listing.  It is
+#                  NOT the `b29792c9a7` ask-prompt class: that class is four
+#                  cells where BOTH shells ask and the numbers differ, and its
+#                  three causes are already recorded above (macOS qsort tie
+#                  order, zshrs's own $parameters, the harness's LC_ALL=C).
+#                  Here only zshrs asks at all, and only on backend=shell.
+#   'gawkbug -'    the shell path inserts `--` where zsh lists; the native
+#                  port lists correctly, so it is an `_arguments`/`_describe`
+#                  shell-path gap, not the completer's option set.
+#
+# Both are LATENT on the shipped configuration.  They become live for anyone
+# running `backend = "shell"`, and for any completer reached through an fpath
+# override of `_arguments` / `_path_files`.
+#
+# Added as regression guards.  They PASS on the shipped backend today; a
+# future FAIL here means the ports stood down again, which is the failure the
+# 2026-09-04 header describes.
+fortune 
+hyperfine -
+gawkbug -
+
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP RESULTS — 2026-09-04, ports active (post 3dcb8a9755)
+#
+# Two sweeps covered discover cells 1-3125.  Recorded here because both were
+# reported only in transcripts; the entries below are CURRENT status, not the
+# status at mining time — several were fixed the same day.
+#
+# CELLS 1-1025 (re-mine, ports active): PASS=627 FAIL=1 TIMEOUT=44
+#   REF-CRASHED=353 SKIP=0 TEST-CRASHED=0.  Supersedes every pre-3dcb8a9755
+#   number for this range: those sweeps measured the SHELL functions, because
+#   `is_stock_functions_dir` could not see the bundled tree and 244 of 249
+#   native ports stood down.
+#   Net effect of activation: cells 552-801 went 18 FAIL -> 0 FAIL, and NO
+#   cell in 1-1025 regressed into a new FAIL.
+#   Vacuous-pass audit: 26 PASSes replayed with -v --jobs 1, deliberately
+#   over-weighting thin grids; 24/26 substantive, 2 vacuous (both shells
+#   silent at 30s) — 'compaction-stress -', 'apachectl -'.
+#   Across all 627 PASSes: 0 one-sided diagnostics, 0 cursor diffs, 0
+#   attribute-only row diffs.
+#
+# CELLS 1026-3125: PASS=1973 FAIL=17 TIMEOUT=50 REF-CRASHED=60.
+#   REF-CRASHED collapses to ~0 past the `c*` band (54 of 60 in 1026-1325).
+#   All 17 FAILs re-confirmed serially and alone 3x: 9 survivors, 0 flaky.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# FIXED since mining
+#
+# 'ifconfig ' / 'ifconfig -'   fp 024a412b1a + 61d37daf4c
+#   FIXED 0040030fcd.  The port of _find_net_interfaces abridged its header
+#   from sh:13 (`case $OSTYPE`) and so dropped sh:9-11:
+#       # Make sure needed tools are in the path.
+#       local PATH=$PATH
+#       PATH=/sbin:$PATH
+#   /sbin is not on a default $PATH, so the darwin arm's `ifconfig -l` got
+#   "command not found" and the completion produced NOTHING while zsh listed
+#   21 interfaces.  The aix (lsdev) and irix (/usr/etc/netstat) arms had the
+#   same exposure.  Verified: 21 interfaces, matching zsh.
+#
+# 'dot_sandbox '   fp f49a6caf5b
+#   Root cause was NOT _arguments and NOT word-splitting.  It is ${(P)} on an
+#   operand with no parameter name before the bracket: zshrs split at the `[`
+#   and handed the text to the arithmetic evaluator.  Reproducible with no
+#   completion involved:
+#       zsh   -f -c 'print -r -- "[${(P)${:-[a b c]}}]"'   ->  []
+#       zshrs -f -c '...'  ->  bad math expression: operator expected at `b c'
+#   C parses the NAME first and every other leading byte returns NULL at
+#   c:Src/params.c:2233-2234; getindex (c:2281) is reached only after that
+#   name parse succeeds.  FIXED c9baddda10.
+#   Blast radius measured on this host's $fpath: 450 of 479 distinct `-O[...]`
+#   optspecs erroring before, 0 after; 722 completer files carried >=1 failing
+#   spec.  LATENT while the native _arguments port is active, LIVE whenever
+#   the shell function runs (fpath override, --fn-sweep, any ${(P)} consumer).
+#   Follow-on 715f568cf1: the same name parse mishandled a POSITIONAL — C's
+#   `if (ppar)` arm (c:2238-2247) returns without ever calling getindex, so
+#   `r="1[1]"; ${(P)r}` is the WHOLE of $1.  zshrs gave "o" for "one".
+#
+# ──────────────────────────────────────────────────────────────────────────
+# REFUTED — do not re-file
+#
+# 'dseditgroup '   fp 3128ffe548
+#   Reported as "native _groups port keeps only the last dscacheutil name".
+#   NOT REPRODUCIBLE at HEAD: byte-identical, 3/3 serial, non-vacuous (both
+#   sides ask "all 166 possibilities (56 lines)").  $_cache_groups measured at
+#   327 on BOTH shells; the parse is faithful and `_oahd` being last is a
+#   coincidence of it being the final `name:` line.  The mining binary
+#   probably predated 3dcb8a9755.
+#   It did surface a REAL adjacent defect, fixed as 5bbd9c2e11: the port never
+#   ported `local expl groups tmp` (_groups sh:3), so `groups` leaked to the
+#   caller (zshrs `groups=[array][327]` vs zsh `[][0]`).  See the local-leak
+#   defect class note below.
+#
+# 'gcore ' fp 316793080e / 'gstack ' fp 3b5951fa58
+#   ARTEFACT, not divergences: both diff only on live `ps` rows.  Same class
+#   as 'kill '.  Discarded.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# KNOWN-OPEN, additional reproducers only — do NOT file as new
+#
+# 'dtruss -' fp 80ff355281 / 'env -' fp 845946ef76
+#   The compadd FLAG-WORD leak already filed as ec5a44cd3b ('command -',
+#   'caffeinate -'), seen from two more commands.  'env -' carries BOTH a
+#   leading `-J -Qk -default- -k` row and a trailing `-J -default- -k` row,
+#   shifting the described list down one — byte-for-byte the 'command -'
+#   presentation.  Deterministic 3/3.
+#
+# 'grc ' (2387), 'gtester ' (2454), 'ifne ' (2812)
+#   Three more command instances of the b29792c9a7 ask-prompt count class
+#   that already owns 'getconf ' and 'gpg-agent '.
+#
+# 'command '   fp b29792c9a7 — NOISE FLOOR, recorded because the ledger did
+#   not say it: the REFERENCE side is itself non-deterministic.  Three serial
+#   runs, each its own process: zsh 47318 / 47322 / 47318 (23562/23563/23562
+#   lines).  zshrs is stable at 47362+-4, running ~+44 high.  The divergence
+#   is real but can never be an exact-equality test.  Under `-f` the obvious
+#   data sources are IDENTICAL on both shells (commands 5525, builtins 103,
+#   functions 0, aliases 2, reswords 31, galiases 0, saliases 0), so whatever
+#   inflates the count exists only under the harness config.
+#
+# 'CC -'   one-sided REFERENCE silence, already filed and already named in
+#   3dcb8a9755 as the one known regression from activating the ports.  New
+#   fact: zsh's silence is deterministic at 3x the budget (30.1/30.0/30.0s,
+#   three separate serial runs), so the TIMEOUT label is not a slow-shell
+#   artefact.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# OPEN — under separate triage, entries to follow
+#   'fortune '    fp bc83e06c2b   insert-vs-list on `_files -W <glob matching
+#                                 nothing>`; /usr/share/games/fortune absent
+#   'gawkbug -'   fp d5ba91f04f   zsh lists 25 rows, 23 of them belonging to
+#                                 _email-sleuth; which shell is right is the
+#                                 open question
+#   'hyperfine -' fp 7673c931bd   count crosses LISTMAX (104 vs <=100); may be
+#                                 the b29792c9a7 family
+# ══════════════════════════════════════════════════════════════════════════
