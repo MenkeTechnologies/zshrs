@@ -25145,6 +25145,25 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     }
     let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;
+    // c:Src/params.c:4010-4013 `arrgetfn` — `return pm->u.arr ? pm->u.arr :
+    // &nullarray;` with `static char *nullarray = NULL;` at c:4006. And
+    // `getaparam` (c:3048-3051) dispatches on
+    // `PM_TYPE(v->pm->node.flags) == PM_ARRAY`, i.e. on the TYPE, then goes
+    // through the vtable. So a DECLARED-BUT-UNASSIGNED array reads back as a
+    // ZERO-LENGTH ARRAY, never as "not an array".
+    //
+    // `createparam` (c:1136 `zshcalloc`) leaves `u.arr` NULL and c:1158
+    // `assigngetset` installs `stdarray_gsu`, so this is the normal state of a
+    // freshly-declared `local -a`. Reading the value slot instead of the type
+    // made such a name look scalar, paramsubst took the scalar arm, and
+    // `"${(@P)n}"` yielded ONE EMPTY WORD where zsh yields zero — visible as
+    // `expl[1] = ''` vs `expl[0] =` after any port that declares its own
+    // `expl` (132 stock completers splat that name).
+    if pm.u_arr.is_none()
+        && crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_ARRAY as u32
+    {
+        return Some(Vec::new()); // c:4012 `&nullarray`
+    }
     pm.u_arr.clone()
 }
 
@@ -25235,7 +25254,14 @@ fn arrays_contains(name: &str) -> bool {
         _ => None,
     };
     if paramtab().read().map_or(false, |tab| {
-        tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
+        // c:Src/params.c:3049 — array-ness is the TYPE
+        // (`PM_TYPE(v->pm->node.flags) == PM_ARRAY`), not whether the value
+        // slot happens to be populated; c:4010-4013 `arrgetfn` serves a NULL
+        // slot as the empty array.
+        tab.get(name).map_or(false, |pm| {
+            pm.u_arr.is_some()
+                || crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_ARRAY as u32
+        })
     }) {
         return true;
     }
