@@ -36,6 +36,7 @@ use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::shared::declare_locals;
 use crate::ported::exec::{dispatch_function_call, execute_script};
 use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
@@ -179,6 +180,11 @@ fn save_param(name: &str) -> SavedParam {
 /// ret=1`, `local next direct odirect equal single matcher matched ws
 /// tmp1 tmp2 tmp3`, `local opts subc tc prefix suffix descrs actions
 /// subcs anum`).
+///
+/// zsh declares them with a bare `local`, so each is born at
+/// `locallevel` and reads back as `…-local` — see the `declare_locals`
+/// call at the sh:328-330 site, which is what keeps them out of
+/// `_parameters`' candidate list.
 ///
 /// zsh gives them a real dynamic scope, so a NESTED `_arguments` — an
 /// action that completes some other command, e.g. `_mail`'s rest-argument
@@ -1112,6 +1118,26 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     let nm_live = nmatches_live();
     // sh:328-330 — enter the emulated `local` scope for the scratch names.
     let saved_scratch = save_scratch();
+    // sh:328-330 — and they are `local`, not merely scratch: zsh creates
+    // each one AT `locallevel`, so `${(t)descrs}` reads `array-local`
+    // once `comparguments -D` fills it. That bit is observable —
+    // `Completion/Zsh/Type/_parameters:43` builds its candidate list as
+    // `${(k)parameters[(R)${~pattern[2]}~*local*]:#$~pfilt}`, i.e. it
+    // DROPS every parameter whose type string matches `*local*`. Without
+    // the stamp the `setaparam`/`setsparam` calls below created these
+    // names at level 0 (`${(t)descrs}` = `array`), so every `_parameters`
+    // listing reached through `_arguments` offered `actions`, `descrs`,
+    // `direct`, `equal`, `matcher`, `next`, `odirect` and `subcs`
+    // alongside the real parameters (`command <TAB>`: 47357 matches
+    // against zsh's 47321).
+    //
+    // Plain scalars, exactly as sh:329-330 spells them (`local next
+    // direct odirect equal single matcher matched ws tmp1 tmp2 tmp3`);
+    // the array-valued ones convert to `array-local` when they are
+    // assigned, the same way `local x; x=(a b)` does in the shell.
+    // `save_scratch` above still carries the VALUE half of the scope for
+    // a nested `_arguments` reached at the same `locallevel`.
+    declare_locals(&SCRATCH_PARAMS, 0);
 
     // sh:333-356 — get descrs/actions/subcs and the option lists, then
     // pick the right `_tags` set.
