@@ -6295,6 +6295,10 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     // `compadd -k reswords` produced ZERO matches and `which <TAB>` lost
     // the entire reserved-words group.
     let mut needs_partab_dispatch = false;
+    // c:4010-4013 `arrgetfn` — a PM_ARRAY node whose value slot is NULL is
+    // served as the EMPTY array (`&nullarray`, c:4006), not as "no array".
+    // Tracked so the PARTAB dispatch below still gets its chance first.
+    let mut declared_empty_array = false;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             // c:Src/Modules/param_private.c:678 — the getnode hook
@@ -6321,11 +6325,20 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
                 needs_partab_dispatch = crate::ported::modules::parameter::PARTAB_ARRAY
                     .iter()
                     .any(|e| e.name == name);
+                declared_empty_array = !needs_partab_dispatch;
             }
         }
     }
     if needs_partab_dispatch {
         return crate::vm_helper::partab_array_get(name); // c:3107
+    }
+    if declared_empty_array {
+        // c:4012 — `return pm->u.arr ? pm->u.arr : &nullarray;`. A
+        // declared-but-unassigned `local -a` has a NULL slot (createparam
+        // zshcalloc's it, c:1136) with stdarray_gsu installed (c:1158), so C
+        // reads it back as a ZERO-LENGTH array. Returning None made such a
+        // name look scalar to every caller.
+        return Some(Vec::new());
     }
     None // c:3110
 }
