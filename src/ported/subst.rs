@@ -7679,21 +7679,12 @@ pub fn paramsubst(
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
                                    // c:params.c:2216 — fetchvalue reparses the operand as a
-                                   // parameter EXPRESSION via itype_end: only the leading
-                                   // identifier is used and trailing non-identifier text is
-                                   // discarded. So `${(P)t}` with t="a,b,c" derefs param `a`.
-                                   // A `name[sub]` value keeps its bracket for the subscript
-                                   // parser below; only bracket-free trailing junk is trimmed.
-                if !var_name.contains('[') {
-                    let n = var_name
-                        .as_bytes()
-                        .iter()
-                        .take_while(|&&b| b.is_ascii_alphanumeric() || b == b'_')
-                        .count();
-                    if n > 0 && n < var_name.len() {
-                        var_name.truncate(n);
-                    }
-                }
+                                   // parameter EXPRESSION and keeps only the NAME it parses;
+                                   // the trailing text is discarded. So `${(P)t}` with
+                                   // t="a,b,c" derefs param `a`. That trim is done once, for
+                                   // every branch of this arm, by the `name_len` block below —
+                                   // C reaches it from here (c:2741) and from the
+                                   // MULTSUB_PARAM_NAME splice (c:2718-2727) alike.
             } // c:2741
 
             // c:Src/subst.c — when the indirect name carries a
@@ -7793,6 +7784,53 @@ pub fn paramsubst(
                         var_name = base;
                         subscript = Some(key);
                     }
+                }
+                // c:Src/params.c:2235-2236 — `if ((sav = *s)) *s = '\0';`.
+                // Whatever follows the parsed name (and its optional `[...]`)
+                // is cut off before the paramtab lookup, and with `bracks > 0`
+                // the leftover is simply discarded — c:2290's
+                // `if (!bracks && *s) return NULL` cannot fire, because the
+                // aspar fetch passes `bracks = 1` (c:Src/subst.c:2741).
+                //
+                // Only the identifier arm was trimmed here before, so an
+                // operand naming a one-char SPECIAL (c:2218-2232) or a
+                // positional (c:2210-2214) with anything after it resolved to
+                // nothing instead of to the parameter: `${(P)}` on `-g` gave
+                // "" where zsh gives `$-`, and likewise `#a`->`$#`, `?z`->`$?`,
+                // `1x`->`$1`, `0a`->`$0`, `@x`/`*x`->`$@`, `$x`->`$$`,
+                // `!x`->`$!`.
+                //
+                // `_path_files` sh:87 (`prepaths=( ${(P)^tmp1%/}/ )`) is the
+                // completion-side consumer: reached with `tmp1="-g"` it wants
+                // `$-`, and the empty result turned the search root into `/`,
+                // so a `_files -W` under a directory that does not exist listed
+                // the whole filesystem root instead of nothing.
+                //
+                // The identifier arm is re-measured as an IIDENT run rather
+                // than reusing the INAMESPC `name_len` above, because the two
+                // disagree on `.` and the reference zsh disagrees with the C
+                // source here: c:Src/utils.c:4395-4409 folds ksh93 namespaces
+                // into INAMESPC, but that is a post-5.9 addition and zsh 5.9.2
+                // refuses `typeset 'a.b'` outright ("not valid in this
+                // context"). It stops the name at the first `.`, so
+                // `${(P)}` on `foo.x` is `$foo` there. Only the TRIM uses
+                // IIDENT; the subscript gate above keeps INAMESPC, so no
+                // namespaced `${(P)ns.v[k]}` changes shape.
+                let trunc_len = if var_name.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+                    name_len // c:2210-2214 — the digit run is the same either way.
+                } else if ident_len > 0 {
+                    // c:2216-2217 with `itype == IIDENT`, i.e. 5.9.2's
+                    // `itype_end(s, IIDENT, 0)`.
+                    var_name
+                        .as_bytes()
+                        .iter()
+                        .take_while(|&&b| b.is_ascii_alphanumeric() || b == b'_')
+                        .count()
+                } else {
+                    name_len // c:2218-2234 — one-char special, or no name at all.
+                };
+                if subscript.is_none() && trunc_len > 0 && trunc_len < var_name.len() {
+                    var_name.truncate(trunc_len); // c:2236
                 }
             }
             // c:Src/subst.c:2800 — the SECOND `fetchvalue` of the aspar
