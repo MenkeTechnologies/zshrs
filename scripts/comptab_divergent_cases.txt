@@ -12,6 +12,49 @@
 # put a comment on the same line as an entry; it would land in the buffer.
 #
 # ═══════════════════════════════════════════════════════════════════════════
+# RE-MEASURED 2026-09-04 — 42 PASS / 46, WITH THE NATIVE PORTS ACTUALLY ACTIVE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# READ THIS BEFORE TRUSTING ANY OLDER NUMBER IN THIS FILE.  Until
+# `3dcb8a9755`, zshrs's default `[compsys] backend = "rust"` was INERT: 244 of
+# 249 native ports stood down because `is_stock_functions_dir` could not
+# recognise the bundled function tree.  So EVERY parity number recorded above
+# was measured against the SHELL functions, not the ports the default config
+# claims to use.  `scripts/comptab_parity.py --fn-list` was mislabelling this
+# too — it derives fpath from real zsh, so it reported the post-fix split all
+# along.
+#
+# Whole file, serial, dump pinned, ports active:
+#
+#   42 passed, 4 failed, 46 cell(s)
+#
+# The four remaining are each understood and none is an ordinary completion
+# bug:
+#
+#   'getconf '            macOS libc `qsort` tie ordering, NOT a zshrs bug.
+#   'gpg-agent '          zshrs's own $parameters (it creates HELPDIR).
+#   'fc-list '/'fc-match ' the harness's forced LC_ALL=C; both shells are
+#                         byte-identical under en_US.UTF-8.
+#
+# Newly PASSING as a direct result of activating the ports: 'caffeinate -',
+# 'command -', 'R '.  Both compadd-flag-word cells are gone, so the
+# empty-array class they came from does not arise on the port path.
+#
+# ALSO FIXED, and not previously in this file because no cell covered it:
+# COMMAND-POSITION completion.  `zmodl<TAB>` produced NOTHING and `g<TAB>`
+# inserted the wrong match; both now PASS.  His `_command_names` funnels
+# builtins, functions, aliases, reswords, suffix-aliases, jobs, parameters and
+# files through a single `_alternative -O args "$defs[@]"`, and an empty
+# `args` poisoned that one call.
+#
+# KNOWN REGRESSION from activating the ports, one case in 306:
+#
+#   'CC -'   zsh yields NO matches on `_CC`'s 755-entry `_arguments` spec;
+#            the ported `_arguments` yields all 755.  Reference-side silence,
+#            so the harness scores it TIMEOUT rather than FAIL.
+CC -
+#
+# ═══════════════════════════════════════════════════════════════════════════
 # RE-MEASURED 2026-09-03 (LATE) — 41 PASS / 44.  SUPERSEDES BOTH BLOCKS BELOW.
 # ═══════════════════════════════════════════════════════════════════════════
 #
@@ -61,9 +104,39 @@
 # STILL OPEN, newly confirmed against this binary and NOT explained by any of
 # the above — the only genuinely open cell from a 250-cell sweep:
 #
-#   'caffeinate -'   1 row: zshrs renders a single match `- -- #BGPXZfims`,
-#                    i.e. the option-set letters leak out as a description
-#                    instead of expanding.
+#   'caffeinate -'   ROOT-CAUSED 2026-09-04, not yet fixed.  The symptom
+#                    recorded here on 09-03 (`- -- #BGPXZfims`) was STALE;
+#                    the actual differing row is an extra
+#                    `-J  -default-  -k`, i.e. compadd's own FLAG WORDS
+#                    listed as matches.
+#
+#                    Cause is not `_arguments` spec parsing.  A quoted
+#                    empty-ARRAY splat emits ONE empty word where zsh emits
+#                    zero: `_alternative` sh:9 `subopts=( "${(@P)OPTARG}" )`
+#                    yields one empty element, sh:71 then passes `''` to
+#                    `_path_commands`, and by `_all_labels` sh:39 that empty
+#                    word TERMINATES compadd's flag scan so `-J`, `-default-`
+#                    and `-k` are taken as match WORDS.
+#
+#                    C discriminates on SHAPE, not quoting: c:Src/subst.c
+#                    :4272-4286 strips the surrounding Dnull markers for an
+#                    empty array so the node is genuinely empty, and
+#                    c:183-186's `uremnode` then deletes it with NO quoting
+#                    condition.  An empty SCALAR survives only because its
+#                    markers are NOT stripped.  zshrs's `nodes_to_value`
+#                    (fusevm_bridge.rs) gates that drop on `in_dq_context`
+#                    instead, and its comment's premise ("one empty node = a
+#                    SCALAR-shaped empty result") is what c:4283-4288
+#                    disproves.
+#
+#                    Fix must thread the array-vs-scalar shape into
+#                    `nodes_to_value`; `EMPTY_EXPANSION_IS_SCALAR` is already
+#                    that discriminator but is not visible there.  Blocked on
+#                    one measurement needing an instrumented build: whether
+#                    the ported paramsubst returns one empty node in BOTH
+#                    frames, or zero in one of them.
+#
+#                    SAME FAMILY, filed separately below: 'command -'.
 caffeinate -
 #
 # The ONE-SIDED SILENCE list further down is now STALE: those cells were the
@@ -407,3 +480,19 @@ Xvfb -
 #
 # ('CC -' was also a TIMEOUT and re-measured as pure budget, i.e. a PASS.)
 # A further 47 discover TIMEOUTs were NOT re-measured and are unclassified.
+
+# ──────────────────────────────────────────────────────────────────────────
+# fingerprint ec5a44cd3b  x1   deterministic 3/3   mined 2026-09-04 (cell 998)
+#   compadd FLAG WORDS leak into the match set — an extra
+#   `-J  -Qk  -default-  -k` row above the real option list and a second
+#   `-J  -default-  -k` below it, shifting every described option down one
+#   row (6 rows differ, all by that shift).  The described options themselves
+#   agree, the completer resolves identically, nothing hangs.
+#     row  1  zsh  : '-  -- 569BGPXZfims'
+#             zshrs: '-J         -Qk        -default-  -k'
+#   smallest reproducer: --case 'command -' --keys tab
+#   VERY LIKELY the same cause as 'caffeinate -' above (a quoted empty-array
+#   splat putting an empty word on the line); the leaked words here are
+#   literally compadd's own flags, which is what an `"$expl[@]"`-shaped splat
+#   would produce.  Re-check against that fix before treating as separate.
+command -
