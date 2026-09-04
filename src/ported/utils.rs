@@ -7598,9 +7598,17 @@ pub fn mb_niceformat(
     // lone 0xe2 byte.
     let mb_single_byte = outstrp.is_none()
         && unsafe {
-            // Rust never calls `setlocale` on its own, so run it once from
-            // the environment before asking `nl_langinfo` — otherwise the
-            // startup default ("C") would shadow the process's LC_CTYPE.
+            // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
+            // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
+            // the wide character, so `\303\255` is TWO characters under
+            // LC_ALL=C, not `í`. Rust's UTF-8 decoder has no such notion, so
+            // the locale has to be asked directly. Inlined rather than
+            // factored out: src/ported/ is a port and build.rs rejects any fn
+            // with no C counterpart (its stated remedy #1 is to inline).
+            //
+            // Rust never calls `setlocale` on its own, so run it once from the
+            // environment before asking `nl_langinfo` — otherwise the startup
+            // default ("C") would shadow the process's LC_CTYPE.
             let _ = *MB_LOCALE_READY;
             let cs_ptr = libc::nl_langinfo(libc::CODESET);
             if cs_ptr.is_null() {
@@ -7968,7 +7976,36 @@ pub fn mb_metacharlenconv(s: &[u8]) -> (usize, Option<char>, String) {
     // its declared default (on, c:Src/options.c:197) rather than through
     // `isset()`, which maps a never-written slot to false and would invert
     // the default in any context that skips init's `emulate()`.
-    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) || s[0] <= 0x7f {
+    // `mb_single_byte` above is the SAME single-byte outcome reached the
+    // other way: the option is on, but the locale's `mbrtowc` is a single-byte
+    // codec, so c:5583 `mbrtowc(&wc, &inchar, 1, mbsp)` returns 1 with `wc` =
+    // the byte. C needs no such test because it calls the real `mbrtowc`; the
+    // Rust UTF-8 decoder below is locale-blind, so it has to ask.
+    let mb_single_byte = unsafe {
+            // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
+            // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
+            // the wide character, so `\303\255` is TWO characters under
+            // LC_ALL=C, not `í`. Rust's UTF-8 decoder has no such notion, so
+            // the locale has to be asked directly. Inlined rather than
+            // factored out: src/ported/ is a port and build.rs rejects any fn
+            // with no C counterpart (its stated remedy #1 is to inline).
+            //
+            // Rust never calls `setlocale` on its own, so run it once from the
+            // environment before asking `nl_langinfo` — otherwise the startup
+            // default ("C") would shadow the process's LC_CTYPE.
+            let _ = *MB_LOCALE_READY;
+            let cs_ptr = libc::nl_langinfo(libc::CODESET);
+            if cs_ptr.is_null() {
+                false
+            } else {
+                let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+                !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+            }
+        };
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true)
+        || mb_single_byte
+        || s[0] <= 0x7f
+    {
         // c:5616 — the byte itself is the scalar.
         return (1, Some(s[0] as char), encode(&s[..1]));
     }
@@ -8505,6 +8542,34 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // `isset(optlookup("shoptionletters"))` with the optno constant for
     // exactly this reason.
     let mb = isset(crate::ported::zsh_h::MULTIBYTE);
+    // c:5583 — `mbrtowc` is locale-driven; in a single-byte locale it consumes
+    // ONE byte and hands back that byte's value. Rust's UTF-8 decoder is not,
+    // so read the locale once per call (an `nl_langinfo` load, no allocation)
+    // instead of per byte. This runs once per completion match
+    // (`multiquote` -> `quotestring`, c:Src/Zle/compcore.c:1073), which is why
+    // it is hoisted out of the walk below.
+    let mb_sb = mb
+        && unsafe {
+            // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
+            // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
+            // the wide character, so `\303\255` is TWO characters under
+            // LC_ALL=C, not `í`. Rust's UTF-8 decoder has no such notion, so
+            // the locale has to be asked directly. Inlined rather than
+            // factored out: src/ported/ is a port and build.rs rejects any fn
+            // with no C counterpart (its stated remedy #1 is to inline).
+            //
+            // Rust never calls `setlocale` on its own, so run it once from the
+            // environment before asking `nl_langinfo` — otherwise the startup
+            // default ("C") would shadow the process's LC_CTYPE.
+            let _ = *MB_LOCALE_READY;
+            let cs_ptr = libc::nl_langinfo(libc::CODESET);
+            if cs_ptr.is_null() {
+                false
+            } else {
+                let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
+                !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
+            }
+        };
     let meta_chars = |s: &str| -> Vec<MetaChar> {
         // c:5672 — the byte stream is what mbrtowc consumes; a `Meta`+byte pair
         // and a literal high byte are the same input to the step below.
@@ -8518,7 +8583,15 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             // that is EVERY byte, which is why `unsetopt multibyte;
             // ${(q)$'\xe6\x97\xa5'}` comes out as `e6` `$'\227'` `a5` in zsh —
             // 0xe6 and 0xa5 are printable Latin-1, 0x97 is a C1 control.
-            if !mb || b <= 0x7f {
+            // `mb_sb` reaches the same place through the LOCALE rather than
+            // the option: c:5635 hands the bytes to `mb_metacharlenconv_r`,
+            // whose `mbrtowc` (c:5583) in a single-byte locale returns 1 with
+            // `wc` = the byte. `Raw(b)` is the right unit for it — c:6431-6433
+            // copies the ONE source byte through, which `push_metachar` does
+            // and `MetaChar::Ch(char::from(b))` would not (that emits the two
+            // UTF-8 bytes of U+00`b`). The printability test below then decides
+            // raw vs `$'\NNN'`, exactly as `WC_ISPRINT(cc)` does.
+            if !mb || mb_sb || b <= 0x7f {
                 out.push(if b <= 0x7f {
                     MetaChar::Ch(b as char)
                 } else {
@@ -8552,12 +8625,14 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // c:6212 / c:6424 — `cc != WEOF && WC_ISPRINT(cc)`.
     let mc_printable = |mc: MetaChar| -> bool {
         match mc {
-            MetaChar::Ch(c) => !c.is_control(),
+            MetaChar::Ch(c) => crate::ported::compat::u9_iswprint(c),
             // With MULTIBYTE on an undecodable byte IS the WEOF case, so the
             // `cc != WEOF` conjunct short-circuits. With it off there is no
             // WEOF at all (c:5615-5617 always sets `*wcp` to the byte), so the
             // test is `WC_ISPRINT` of that Latin-1 scalar.
-            MetaChar::Raw(b) => !mb && !(b as char).is_control(),
+            MetaChar::Raw(b) => {
+                (!mb || mb_sb) && crate::ported::compat::u9_iswprint(char::from(b))
+            }
         }
     };
     // c:6431-6433 — `while (u < uend) { if (*u == Meta) *v++ = *u++; *v++ = *u++; }`
