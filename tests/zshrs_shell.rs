@@ -5963,11 +5963,9 @@ fn test_param_flag_P_name_ends_at_the_special_char() {
     // compared in-shell rather than asserted literally because both differ
     // between the two shells by construction.
     //
-    // `@x` / `*x` are deliberately NOT asserted: they now resolve, but
-    // `${(P)}` on an ARRAY-valued special distributes the surrounding literal
-    // text over the elements (`"[${(P)r}]"` -> `[one] [two] [three]` where zsh
-    // splices one word list), which is a separate, pre-existing divergence
-    // reproducible on `r="@"` alone.
+    // `@x` / `*x` are deliberately NOT asserted here: they resolve, and the
+    // surrounding-literal SHAPE they then take is covered on its own by
+    // `test_param_flag_P_array_splices_surrounding_text`.
     let (_, output, _) = run_zshrs(
         r##"set -- one two three
 foo=bar
@@ -5980,6 +5978,78 @@ r="foo,x"; print -r -- "[${(P)r}]""##,
     );
     assert_eq!(
         output, "dash-ok\n[3]\n[0]\nzero-ok\n[bar]\n[bar]\n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_param_flag_P_array_splices_surrounding_text() {
+    // An array-valued expansion glues the surrounding literals to the FIRST
+    // and LAST elements only — c:Src/subst.c:4377-4432, the `else` of
+    // c:4327's `if (plan9)`: "Not RC_EXPAND_PARAM: simply join the first and
+    // last values." The cross-product (every element gets both literals) is
+    // the plan9 arm at c:4327-4376, and `plan9` is written by exactly two
+    // things: `isset(RCEXPANDPARAM)` at c:1663 and the unparenthesised
+    // `^`/`^^` at c:2551-2558.
+    //
+    // No `(…)` flag touches it — `case 'P': aspar = 1` (c:2273-2274),
+    // `case 'a': sortit |= SORTIT_SOMEHOW, indord = 1` (c:2226-2229),
+    // `case 'A': ++arrasg` (c:2163-2165) — but zshrs's compile-time
+    // concat-builtin choice listed `P`, `a` and `A` as distribute shapes
+    // (`is_distribute_expansion`, compile_zsh.rs), so each of them
+    // cross-producted where zsh splices.
+    //
+    // Verified against `/bin/zsh -f` (5.9.2), `print -rl` so the word
+    // boundaries are visible:
+    //   set -- one two three; r=@; "pre${(P)r}post"  -> preone / two / threepost
+    //   a=(x y z); r=a;           pre${(P)r}post     -> prex / y / zpost
+    //   typeset -A h=(k1 v1 k2 v2); r=h; pre${(P)r}post -> prev1 / v2post
+    //   a=(x y z);                pre${(a)a}post     -> prex / y / zpost
+    //   a=(x y z);                pre${(A)a}post     -> prex / y / zpost
+    // and the shapes that already agreed and must keep agreeing:
+    //   r=@;  "${(P)r}"        -> one / two / three   (no literals)
+    //   r=*;  "pre${(P)r}post" -> preone two threepost (joins in DQ)
+    //   r=a;  "pre${(P)r}post" -> prex y zpost         (joins in DQ)
+    //   r=s;  pre${(P)r}post   -> prehellopost         (scalar)
+    // plus the EXPLICIT `^` cross-product, which must stay a cross-product —
+    // `Completion/Unix/Type/_path_files` sh:87 is
+    // `prepaths=( ${(P)^tmp1%/}/ )`:
+    //   a=(d1 d2 d3); tmp1=a; ${(P)^tmp1%1}/ -> d/ / d2/ / d3/
+    let (_, output, _) = run_zshrs(
+        r##"set -- one two three; r="@"; print -rl -- "pre${(P)r}post"
+print -rl -- ---
+a=(x y z); r=a; print -rl -- pre${(P)r}post
+print -rl -- ---
+typeset -A h=(k1 v1); r=h; print -rl -- pre${(P)r}post
+print -rl -- ---
+a=(x y z); print -rl -- pre${(a)a}post
+print -rl -- ---
+a=(x y z); print -rl -- pre${(A)a}post
+print -rl -- ---
+set -- one two three; r="@"; print -rl -- "${(P)r}"
+print -rl -- ---
+set -- one two three; r="*"; print -rl -- "pre${(P)r}post"
+print -rl -- ---
+a=(x y z); r=a; print -rl -- "pre${(P)r}post"
+print -rl -- ---
+s=hello; r=s; print -rl -- pre${(P)r}post
+print -rl -- ---
+a=(d1 d2 d3); tmp1=a; print -rl -- ${(P)^tmp1%1}/"##,
+    );
+    assert_eq!(
+        output,
+        concat!(
+            "preone\ntwo\nthreepost\n---\n",
+            "prex\ny\nzpost\n---\n",
+            "prev1post\n---\n",
+            "prex\ny\nzpost\n---\n",
+            "prex\ny\nzpost\n---\n",
+            "one\ntwo\nthree\n---\n",
+            "preone two threepost\n---\n",
+            "prex y zpost\n---\n",
+            "prehellopost\n---\n",
+            "d/\nd2/\nd3/\n",
+        ),
         "got: {output:?}"
     );
 }
