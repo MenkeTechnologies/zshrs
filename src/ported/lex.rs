@@ -5261,7 +5261,20 @@ pub(crate) fn hgetc() -> Option<char> {
     // frame keeps the existing direct `ingetc` shortcut, whose observable
     // behaviour matches C's ihgetc-with-INP_ALIAS (histsubchar skipped,
     // ihwaddc a no-op).
-    let hist_active = crate::ported::hist::stophist.load(Ordering::SeqCst) == 0
+    // c:Src/hist.c:1134/1149 — `if (stophist == 2) { … hgetc = ingetc; }`
+    // else `hgetc = ihgetc`. The bypass is `== 2` ONLY. The lexer's own
+    // STOPHIST (`stophist += 4`, c:Src/Zle/lex.c for the single-quote scan)
+    // and NO_BANGHIST (`stophist = 4`, c:Src/hist.c:1157) must NOT divert off
+    // `ihgetc`: `stophist` gates only the bang substitution
+    // (c:Src/hist.c:458 `qbang = c == bangchar && (stophist < 2)`), while
+    // `hwaddc(c)` at c:459 runs UNCONDITIONALLY, so the history line keeps
+    // building through quoted text.
+    //
+    // Testing `== 0` dropped every character of a single-quoted string from
+    // `chline`, so on a `'…` continuation `$PREBUFFER` was `echo '` where zsh
+    // has `echo 'first line\n`. Under `setopt nobanghist` (stophist = 4 for
+    // the whole line) `chline` would never build at all.
+    let hist_active = crate::ported::hist::stophist.load(Ordering::SeqCst) != 2
         && ((flags & crate::ported::zsh_h::INP_ALIAS) == 0
             || (flags & crate::ported::zsh_h::INP_HIST) != 0);
     let read_stack = || -> Option<char> {
