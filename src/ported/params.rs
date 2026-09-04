@@ -2626,7 +2626,31 @@ pub fn createparam(
                     stk.entry(name.to_string()).or_default().push(saved);
                 }
                 if let Ok(mut m) = paramtab_hashed_storage().lock() {
-                    m.insert(name.to_string(), IndexMap::new());
+                    // c:Src/params.c:2270 — `if (PM_TYPE(pm->node.flags) &
+                    // (PM_ARRAY|PM_HASHED))`: a subscripted read dispatches on
+                    // the TYPE OF THE NODE paramtab returns, then `getindex`
+                    // (c:2282 / c:2112). Only a shadow that is ITSELF PM_HASHED
+                    // owns a bag in this parallel storage; a NON-hash shadow
+                    // must leave NO row at all, or `assoc_contains`
+                    // (subst.rs, `contains_key`) still answers "association"
+                    // for the empty map and every subscripted read of the local
+                    // ARRAY routes to the hash path and comes back empty:
+                    //
+                    //   g(){ local -a h; h=(a b c); print ${h[2]} }
+                    //   f(){ local -A h; h[x]=1; g }; f
+                    //   zsh: b     zshrs: <empty>
+                    //
+                    // That is `Completion/Base/Core/_normal:4`'s `local -A opts`
+                    // shadowed by `_ruby`'s `local -a opts`, whose
+                    // `$opts[(r)*-d\[*]` (sh:158) then found nothing and
+                    // dropped `-d` from `irb -`. `endparamscope` already
+                    // restores `Some(map) => insert` / `None => remove`, so
+                    // removing the row here is undone on scope exit.
+                    if (flags as u32 & PM_HASHED) != 0 {
+                        m.insert(name.to_string(), IndexMap::new());
+                    } else {
+                        m.remove(name);
+                    }
                 }
             }
             // c:Src/params.c:1138-1144 — the shadow arm, where C spells the
