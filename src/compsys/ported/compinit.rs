@@ -1832,19 +1832,31 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                             // and `df -<TAB>` produced nothing.
                             //
                             // Handle service syntax: cmd=service
-                            if let Some(eq_pos) = cmd.find('=') {
-                                let cmd_name = &cmd[..eq_pos];
-                                let service = &cmd[eq_pos + 1..];
-                                if !result.comps.contains_key(cmd_name) {
+// sh:393 — the `-n` guard indexes `${_comps[$1]}`,
+                            // the WHOLE word, while sh:394/sh:395 assign under
+                            // `$cmd` (`${1%%\=*}`, sh:387). `_comps[mailx=mail]`
+                            // is never a key, so upstream's `=`-form ALWAYS
+                            // (re)claims the command and always records the
+                            // service, even when a plain `#compdef` earlier on
+                            // `$fpath` already owns `$cmd`. Guarding on the
+                            // split-off name instead let `_mailx` suppress
+                            // `_mail`'s `mailx=mail`/`Mail=mail`, `_ncl`
+                            // suppress `_nedit`'s `ncl=nc`, and `_dch` suppress
+                            // `_debchange`'s `dch=debchange`. Plain words keep
+                            // genuine first-claim-wins.
+                            if !result.comps.contains_key(cmd) {
+                                if let Some(eq_pos) = cmd.find('=') {
+                                    let cmd_name = &cmd[..eq_pos]; // sh:387 ${1%%\=*}
+                                    let service = &cmd[eq_pos + 1..]; // sh:395 ${1#*\=}
                                     result.comps.insert(cmd_name.to_string(), file.name.clone());
-                                    // sh:395 — `_services[$cmd]` is set inside the
-                                    // same guard, never on its own.
+                                    // sh:395 — `_services[$cmd]` is set inside
+                                    // the same guard, never on its own.
                                     result
                                         .services
                                         .insert(cmd_name.to_string(), service.to_string());
+                                } else {
+                                    result.comps.insert(cmd.clone(), file.name.clone());
                                 }
-                            } else if !result.comps.contains_key(cmd) {
-                                result.comps.insert(cmd.clone(), file.name.clone());
                             }
                         }
                     }
@@ -1871,17 +1883,31 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                         postpatterns,
                     } => {
                         for cmd in commands {
-                            if let Some(eq_pos) = cmd.find('=') {
-                                let cmd_name = &cmd[..eq_pos];
-                                let service = &cmd[eq_pos + 1..];
-                                if !result.comps.contains_key(cmd_name) {
+// sh:393 — the `-n` guard indexes `${_comps[$1]}`,
+                            // the WHOLE word, while sh:394/sh:395 assign under
+                            // `$cmd` (`${1%%\=*}`, sh:387). `_comps[mailx=mail]`
+                            // is never a key, so upstream's `=`-form ALWAYS
+                            // (re)claims the command and always records the
+                            // service, even when a plain `#compdef` earlier on
+                            // `$fpath` already owns `$cmd`. Guarding on the
+                            // split-off name instead let `_mailx` suppress
+                            // `_mail`'s `mailx=mail`/`Mail=mail`, `_ncl`
+                            // suppress `_nedit`'s `ncl=nc`, and `_dch` suppress
+                            // `_debchange`'s `dch=debchange`. Plain words keep
+                            // genuine first-claim-wins.
+                            if !result.comps.contains_key(cmd) {
+                                if let Some(eq_pos) = cmd.find('=') {
+                                    let cmd_name = &cmd[..eq_pos]; // sh:387 ${1%%\=*}
+                                    let service = &cmd[eq_pos + 1..]; // sh:395 ${1#*\=}
                                     result.comps.insert(cmd_name.to_string(), file.name.clone());
+                                    // sh:395 — `_services[$cmd]` is set inside
+                                    // the same guard, never on its own.
                                     result
                                         .services
                                         .insert(cmd_name.to_string(), service.to_string());
+                                } else {
+                                    result.comps.insert(cmd.clone(), file.name.clone());
                                 }
-                            } else if !result.comps.contains_key(cmd) {
-                                result.comps.insert(cmd.clone(), file.name.clone());
                             }
                         }
                         for pat in patterns {
@@ -2830,8 +2856,13 @@ pub fn compdef(args: &[String]) -> i32 {
                         // as already-defined; testing only the session state
                         // let every `compdef -na` from an fpath rescan
                         // overwrite the dump's registration.
+                        // sh:393 — `${_comps[$1]}` is the WHOLE argument, so a
+                        // `cmd=svc` word is never "already defined" and always
+                        // reclaims. Keyed on `cmd` this made
+                        // `compdef -na _mail mailx=mail` a silent no-op whenever
+                        // another file already held `_comps[mailx]`.
                         if flags.new
-                            && (s.comps.contains_key(&cmd) || hparam_has_key("_comps", &cmd))
+                            && (s.comps.contains_key(&arg) || hparam_has_key("_comps", &arg))
                         {
                             return;
                         }
