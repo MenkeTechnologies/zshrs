@@ -57888,3 +57888,63 @@ restores the `!(inbufflags & INP_ALIAS)` half of C's guard on the `gotword` call
 in `exalias` (`Src/lex.c:1982`), which the port had dropped; the other three
 ZLE-tracking sites (`SETPARBEGIN` `Src/lex.c:469`, `SETPAREND` `:474`,
 `wordbeg` `:627`) already honoured it.
+
+---
+
+## #1128 — `${(P)…}`, `${(a)…}` and `${(A)…}` cross-producted the surrounding literals over every array element instead of splicing them — fixed
+
+**Status:** `fixed` 2026-09-04.
+
+```console
+$ set -- one two three; r="@"; print -rl -- "pre${(P)r}post"
+  zsh  : preone / two / threepost      # prefix on the first word, suffix on the last
+  zshrs: preonepost / pretwopost / prethreepost
+
+$ a=(x y z); r=a; print -rl -- pre${(P)r}post
+  zsh  : prex / y / zpost
+  zshrs: prexpost / preypost / prezpost
+
+$ a=(x y z); print -rl -- pre${(a)a}post      # and the same for ${(A)a}
+  zsh  : prex / y / zpost
+  zshrs: prexpost / preypost / prezpost
+```
+
+An array-valued expansion glues the surrounding literals to the FIRST and LAST
+elements only — `Src/subst.c:4377-4432`, the `else` of c:4327's `if (plan9)`:
+"Not RC_EXPAND_PARAM: simply join the first and last values." The cross-product
+is the plan9 arm at c:4327-4376, and `plan9` is written by exactly two things:
+`isset(RCEXPANDPARAM)` at c:1663 and the unparenthesised `^` / `^^` at
+c:2551-2558. No `(…)` flag touches it: the flag loop sets `case 'P': aspar = 1`
+(c:2273-2274), `case 'a': sortit |= SORTIT_SOMEHOW, indord = 1` (c:2226-2229)
+and `case 'A': ++arrasg` (c:2163-2165), none of which is `plan9`.
+
+**Root cause** — the compiler picks the concat opcode for a word made of
+literal + expansion segments from two predicates
+(`src/extensions/compile_zsh.rs`, `has_splice_seg` / `has_distribute_seg`), and
+`is_distribute_expansion` claimed the flag letters `A`, `a` and `P` for the
+cartesian `BUILTIN_CONCAT_DISTRIBUTE_FORCED`. Those three were the last letters
+in that list not already claimed by `is_splice_expansion`, which is tested
+first.
+
+**Fix** — move `P`, `a` and `A` to `is_splice_expansion`'s flag arm, alongside
+the `@ z Z s f 0 w` that bug #37 moved there for the same reason, and drop them
+from `is_distribute_expansion`. `${(P)^name}` is unaffected: the `^` test at the
+top of `is_splice_expansion` returns before the flag scan and
+`is_plan9_expansion` routes the word to `BUILTIN_CONCAT_PLAN9` — which is what
+`Completion/Unix/Type/_path_files` sh:87 (`prepaths=( ${(P)^tmp1%/}/ )`) relies
+on. `setopt rcexpandparam` also still cross-products, because
+`BUILTIN_CONCAT_SPLICE` re-reads the option at runtime.
+
+This supersedes the closing clause of bug #651's fix note ("a non-empty
+`(P)`→array still distributes"), which described the pre-fix shape.
+
+Verified against `/bin/zsh -f` (5.9.2) on 22 shapes, byte-identical on all of
+them, including the four that already agreed and had to keep agreeing:
+`"${(P)r}"` with `r=@` (no literals), `"pre$@post"`, `"pre${(P)r}post"` with
+`r=*`, and `"pre${(P)r}post"` naming an array (both join inside `"…"`).
+
+Still divergent, pre-existing and unrelated — both reproduce identically on
+shapes that never went through the changed predicates (`${a%z}`, `${(@)a%z}`,
+`${(O)a}`): a trailing element that a modifier empties is dropped rather than
+kept as its own empty word, and `(O)` reverse-sorts in scalar-assignment
+context where zsh does not.

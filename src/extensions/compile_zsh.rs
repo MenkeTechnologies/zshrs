@@ -12623,9 +12623,36 @@ fn is_splice_expansion(s: &str) -> bool {
                 // matching `Z`, the DQ-wrapped form `"${(Z+c+)cmd}"` fell
                 // through to scalar concat and the split words got
                 // IFS-joined back into one arg. Bug #244 in docs/BUGS.md.
+                //
+                // `P`, `a` and `A` are here for the same reason, and were the
+                // last three flags `is_distribute_expansion` still claimed for
+                // itself. None of them touches `plan9`: the flag loop sets
+                // `case 'P': aspar = 1` (c:Src/subst.c:2273-2274),
+                // `case 'a': sortit |= SORTIT_SOMEHOW, indord = 1`
+                // (c:2226-2229) and `case 'A': ++arrasg` (c:2163-2165), while
+                // `plan9` starts as `isset(RCEXPANDPARAM)` (c:1663) and is
+                // written by NOTHING but the unparenthesised `^`/`^^`
+                // (c:2551-2558). So an array carrying any of the three reaches
+                // c:4327's `if (plan9)` with plan9 still false and takes the
+                // c:4377 `else` — "simply join the first and last values",
+                // i.e. the prefix sticks to element 0 and the suffix to the
+                // last element. Routing them to CONCAT_DISTRIBUTE_FORCED
+                // cross-producted instead:
+                //     set -- one two three; r=@
+                //     print -rl -- "pre${(P)r}post"
+                //       zsh  : preone / two / threepost
+                //       zshrs: preonepost / pretwopost / prethreepost
+                // and the same for an unquoted `${(P)r}` naming an array or an
+                // assoc, for `${(a)arr}`, and for `${(A)arr}`.
+                //
+                // The explicit `${(P)^r}` form is unaffected: the `^` test at
+                // the top of this function returns before the flag scan, and
+                // `is_plan9_expansion` sends it to BUILTIN_CONCAT_PLAN9. That
+                // is what `Completion/Unix/Type/_path_files` sh:87
+                // (`prepaths=( ${(P)^tmp1%/}/ )`) relies on.
                 if flags
                     .chars()
-                    .any(|c| matches!(c, '@' | 'z' | 'Z' | 's' | 'f' | '0' | 'w'))
+                    .any(|c| matches!(c, '@' | 'z' | 'Z' | 's' | 'f' | '0' | 'w' | 'P' | 'a' | 'A'))
                 {
                     return true;
                 }
@@ -12778,7 +12805,19 @@ fn is_distribute_expansion(s: &str) -> bool {
                         // multsub-returned Value::Array got joined by
                         // BUILTIN_CONCAT_DISTRIBUTE's default-join
                         // path.
-                        'f' | 'z' | 'w' | 'A' | 'a' | 'P' | '@' | 's' | '0' => return true,
+                        //
+                        // `A`, `a` and `P` used to be listed here too. They do
+                        // not distribute: nothing in the `(…)` flag loop writes
+                        // `plan9` (c:Src/subst.c:1663 `int plan9 =
+                        // isset(RCEXPANDPARAM)`, and only the unparenthesised
+                        // `^`/`^^` at c:2551-2558 assigns it), so an array
+                        // carrying `(P)`/`(a)`/`(A)` takes c:4377's non-plan9
+                        // "simply join the first and last values" splice.
+                        // `is_splice_expansion` claims them now — and, being
+                        // tested first at the `has_splice_seg` site, it already
+                        // claimed every remaining letter below, so this arm is
+                        // shadowed.
+                        'f' | 'z' | 'w' | '@' | 's' | '0' => return true,
                         _ => {}
                     }
                 }
