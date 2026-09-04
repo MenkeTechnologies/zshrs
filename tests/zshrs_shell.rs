@@ -5942,6 +5942,49 @@ typeset -a a=(x y z); r="a[2]"; print -r -- "[${(P)r}]""#,
 }
 
 #[test]
+fn test_param_flag_P_name_ends_at_the_special_char() {
+    // `fetchvalue()` keeps only the NAME it parses out of a `(P)` operand and
+    // cuts the rest off at c:Src/params.c:2235-2236; the leftover is then
+    // discarded, because the aspar fetch passes `bracks = 1`
+    // (c:Src/subst.c:2741) so c:2290's `if (!bracks && *s) return NULL` can
+    // never fire. The one-char specials `? # $ ! @ * -` (c:2218-2232) are
+    // therefore complete names on their own, and anything after them is
+    // trailing text — only the identifier arm (c:2216-2217) was being trimmed
+    // here, so `-g` resolved to nothing instead of to `$-`.
+    //
+    // `Completion/Unix/Type/_path_files` sh:87 is the consumer that made this
+    // visible: `prepaths=( ${(P)^tmp1%/}/ )` reached with `tmp1="-g"` wants
+    // `$-`, and the empty answer left the search root as `/`, so a
+    // `_files -W <dir that does not exist>` listed the whole filesystem root
+    // instead of nothing.
+    //
+    // Verified against `/bin/zsh -f` (zsh 5.9.2): `-g`->$-, `#a`->$#,
+    // `?z`->$?, `0abc`->$0, `foo.x`->$foo, `foo,x`->$foo. `$-` and `$0` are
+    // compared in-shell rather than asserted literally because both differ
+    // between the two shells by construction.
+    //
+    // `@x` / `*x` are deliberately NOT asserted: they now resolve, but
+    // `${(P)}` on an ARRAY-valued special distributes the surrounding literal
+    // text over the elements (`"[${(P)r}]"` -> `[one] [two] [three]` where zsh
+    // splices one word list), which is a separate, pre-existing divergence
+    // reproducible on `r="@"` alone.
+    let (_, output, _) = run_zshrs(
+        r##"set -- one two three
+foo=bar
+r="-g";    [[ ${(P)r} == $- ]] && print -r -- dash-ok || print -r -- "dash-BAD:${(P)r}"
+r="#a";    print -r -- "[${(P)r}]"
+r="?z";    print -r -- "[${(P)r}]"
+r="0abc";  [[ ${(P)r} == $0 ]] && print -r -- zero-ok || print -r -- "zero-BAD:${(P)r}"
+r="foo.x"; print -r -- "[${(P)r}]"
+r="foo,x"; print -r -- "[${(P)r}]""##,
+    );
+    assert_eq!(
+        output, "dash-ok\n[3]\n[0]\nzero-ok\n[bar]\n[bar]\n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // zsh: each top-level statement on its own line, no trailing
     // semicolons, indented with TAB. Was preserving the input's
