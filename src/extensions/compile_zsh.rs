@@ -461,6 +461,32 @@ impl ZshCompiler {
         self.builder.emit(Op::Pop, 0);
     }
 
+    /// c:Src/loop.c:479-482 (execwhile) — `if (errflag) { lastval = 1;
+    /// break; }`; c:198-203 (execfor, with `if (breaks) breaks--;`),
+    /// c:535-538 (execrepeat) and c:329-330 (execselect, no `lastval` store)
+    /// are the same guard.
+    ///
+    /// C's LIST loop (c:Src/exec.c:1443, `while (… && !errflag)`) ENDS the
+    /// list on errflag; zshrs's per-statement prologue gate
+    /// (`BUILTIN_NOEXEC_CHECK`'s errflag arm, paired with a
+    /// `JumpIfTrue(after_statement)`) only SKIPS one statement. Outside a loop
+    /// the two are indistinguishable — which is why this gap survived — but
+    /// inside one, every statement is skipped while the loop's own exit test
+    /// still runs, and a residual `$? == 0` means it never terminates.
+    ///
+    /// Measured: a completer running `_files -g "*(-.):t:source files"
+    /// -g "(a:t:directories"` spun at 98% CPU forever, so `<cmd> <TAB>`
+    /// produced nothing at all; `Completion/Unix/Type/_files` sh:121's
+    /// `while _next_label "$tag" expl "$descr"; do` was the loop.
+    ///
+    /// Returns the `JumpIfTrue` index to patch to the loop exit.
+    fn emit_loop_errflag_break(&mut self) -> usize {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ERRFLAG_BREAK, 0),
+            0,
+        );
+        self.builder.emit(Op::JumpIfTrue(0), 0)
+    }
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             // Suppressed for errexit/ZERR — but a fatal errflag still ends
@@ -8836,6 +8862,8 @@ impl ZshCompiler {
         self.builder.emit(Op::GetStatus, 0);
         self.builder.emit(Op::SetSlot(status_slot), 0);
         self.emit_loop_body_end(); // c:Src/loop.c:529-534
+        // c:Src/loop.c — the loop's own post-body errflag guard.
+        let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -8848,6 +8876,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(errflag_break, loop_exit);
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:491 — `loops--;`
 
@@ -9050,6 +9079,9 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
+        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+        // lastval = 1; break; }`. See emit_loop_errflag_break.
+        let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -9063,6 +9095,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(errflag_break, loop_exit);
         self.builder.patch_jump(loop_var_abort, loop_exit);
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
@@ -9289,6 +9322,9 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
+        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+        // lastval = 1; break; }`. See emit_loop_errflag_break.
+        let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -9309,6 +9345,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(errflag_break, loop_exit);
         for aj in loop_var_abort_jumps {
             self.builder.patch_jump(aj, loop_exit);
         }
@@ -9461,6 +9498,9 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
+        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+        // lastval = 1; break; }`. See emit_loop_errflag_break.
+        let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -9489,6 +9529,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(errflag_break, loop_exit);
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
                                           // Pair with the cmdpush we did after init.
@@ -10052,6 +10093,8 @@ impl ZshCompiler {
 
         self.compile_program(&r.body);
         self.emit_loop_body_end(); // c:Src/loop.c:540-545
+        // c:Src/loop.c — the loop's own post-body errflag guard.
+        let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
@@ -10064,6 +10107,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(errflag_break, loop_exit);
         self.close_loop_scope(loop_exit); // c:Src/loop.c:546 — `loops--;`
         self.emit_cmd_pop();
     }

@@ -9131,6 +9131,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // loops jumped straight to the chunk-end landing and carried the cond's 2
     // out. `execselect` has no such assignment (c:217+), which is why
     // `compile_select` does not bump `open_loop_depth` and never emits this.
+    // c:Src/loop.c:479-482 — `if (errflag) { lastval = 1; break; }`, the
+    // guard every C loop runs AFTER its body. Without it a completer whose
+    // loop body raises an error spins forever in an interactive shell: the
+    // errflag makes the prologue skip every statement, but the loop's exit
+    // test reads a residual `$? == 0` and loops again.  Reproduced at 98% CPU
+    // with `_files -g "*(-.):t:source files" -g "(a:t:directories"` behind a
+    // `#compdef` — `while _next_label …; do` (Completion/Unix/Type/_files
+    // sh:121) never terminated, so `<cmd> <TAB>` produced nothing, ever.
+    // lldb pinned three samples at the same loop head in the `_files` chunk.
+    //
+    // C tests the WHOLE errflag word here (ERRFLAG_INT included), exactly as
+    // the list loop does at c:Src/exec.c:1443.
+    vm.register_builtin(BUILTIN_LOOP_ERRFLAG_BREAK, |vm, _argc| {
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            return Value::Int(0);
+        }
+        vm.last_status = 1; // c:481/201/536
+        with_executor(|exec| exec.set_last_status(1)); // c:481/201/536
+        Value::Int(1) // c:482/202/537 — break
+    });
+
     vm.register_builtin(BUILTIN_LOOP_ERRFLAG_STATUS, |vm, _argc| {
         // The `if (errflag)` half of the C guard is re-tested HERE, not at
         // compile time: the same abort edge also carries an ERREXIT
@@ -14349,6 +14370,19 @@ pub const BUILTIN_NOERREXIT_RESTORE: u16 = 666;
 /// such assignment in C and never emits it.
 /// Stack: pushes Int(0). argc = 0.
 pub const BUILTIN_LOOP_ERRFLAG_STATUS: u16 = 667;
+
+/// `BUILTIN_LOOP_ERRFLAG_BREAK` — the loop's own post-body errflag guard,
+/// `c:Src/loop.c:479-482` (execwhile) / `:198-203` (execfor) / `:535-538`
+/// (execrepeat) / `:329-330` (execselect). Returns 1 when the loop must
+/// BREAK. argc = 0.
+///
+/// This is NOT the same test as the per-statement prologue. C's list loop
+/// (`c:Src/exec.c:1443`, `while (… && !breaks && !retflag && !errflag)`)
+/// ENDS the list on errflag; the prologue gate only SKIPS one statement.
+/// Outside a loop those are indistinguishable, which is why the gap survived:
+/// inside one, every statement is skipped, the loop's own exit test still
+/// runs, and a residual `$? == 0` means it NEVER terminates.
+pub const BUILTIN_LOOP_ERRFLAG_BREAK: u16 = 671;
 
 thread_local! {
     /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local
