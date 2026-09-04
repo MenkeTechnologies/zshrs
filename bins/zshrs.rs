@@ -2607,7 +2607,7 @@ pub fn zshrs_main() {
         let duration = duration_ns_total / 1_000_000;
 
         // Track in local history
-        if let Some(ref engine) = executor.history {
+        if let Some(engine) = executor.history() {
             let cwd = std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());

@@ -616,8 +616,15 @@ pub struct ShellExecutor {
     pub jobs: JobTable,
     /// `fpath` field.
     pub fpath: Vec<PathBuf>,
-    /// `history` field.
-    pub history: Option<HistoryEngine>,
+    /// SQLite history index, opened on FIRST USE rather than at startup.
+    ///
+    /// Only `--doctor`, the cache report and `dbview history` read it, and
+    /// none of them runs on a script or `-c` invocation — but opening it
+    /// eagerly cost every `zshrs script.zsh` an sqlite open plus
+    /// `init_schema` (0.40 ms of a 1.75 ms startup, measured with
+    /// `ZSHRS_STARTUP_TRACE`). A pre-filled `None` is how a pool worker
+    /// declares it must never open one.
+    pub history: std::cell::OnceCell<Option<HistoryEngine>>,
     pub(crate) process_sub_counter: u32,
     pub completions: HashMap<String, CompSpec>, // command -> completion spec
     pub zstyles: Vec<zstyle_entry>,             // zstyle configurations
@@ -1568,7 +1575,9 @@ impl ShellExecutor {
             current_command_glob_failed: std::cell::Cell::new(false),
             jobs: JobTable::new(),
             fpath,
-            history: None, // worker: no interactive history engine
+            // Worker: no interactive history engine, ever — a pre-filled
+            // cell so `history()` cannot open one from a pool thread.
+            history: std::cell::OnceCell::from(None),
             completions: HashMap::new(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
@@ -1743,8 +1752,7 @@ impl ShellExecutor {
             }
         }
 
-        let history = HistoryEngine::new().ok();
-        crate::startup_trace::mark("HistoryEngine::new");
+        let history = std::cell::OnceCell::new();
 
         // Seed canonical OPTS_LIVE with defaults BEFORE any setsparam
         // call. assignstrvalue early-returns when `unset(EXECOPT)`
@@ -3174,6 +3182,18 @@ impl ShellExecutor {
         crate::startup_trace::mark("new() end");
 
         exec
+    }
+
+    /// The SQLite history index, opened on first call.
+    ///
+    /// Startup no longer pays for it: only the three diagnostic readers
+    /// (`--doctor`, the cache report, `dbview history`) reach this, and a
+    /// pool worker's cell is pre-filled with `None` so it stays closed
+    /// there.
+    pub fn history(&self) -> Option<&HistoryEngine> {
+        self.history
+            .get_or_init(|| HistoryEngine::new().ok())
+            .as_ref()
     }
 
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
