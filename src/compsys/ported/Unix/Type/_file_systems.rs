@@ -157,7 +157,9 @@ pub fn _file_systems(args: &[String]) -> i32 {
         fixed(&["ufs"])
     };
 
-    // sh:40
+    // sh:6-34 — publish the array the `case` arms built. sh:38's
+    // `_wanted fstypes expl … -a "$@" - fss` reads it BY NAME, so it has to
+    // exist as a parameter before that call, not just as a Rust vector.
     setaparam("fss", fss);
     let mut w: Vec<String> = vec![
         "fstypes".to_string(),
