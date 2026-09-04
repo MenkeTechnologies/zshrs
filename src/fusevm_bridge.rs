@@ -4914,6 +4914,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // multsub PREFORK_SPLIT (full IFS-split). Bug #166.
     vm.register_builtin(BUILTIN_ARRAY_DROP_EMPTY, |vm, _argc| {
         let v = vm.pop();
+        // End of word: whatever `ARRAY_EMPTIES_ELIDABLE` was carrying is
+        // spent here even though this builtin drops unconditionally, so a
+        // following word starts from a clean bit.
+        let _ = take_array_empties_elidable();
         match v {
             Value::Array(items) => {
                 let filtered: Vec<Value> = items
@@ -4931,22 +4935,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // c:Src/subst.c:180-187 — prefork's final loop deletes a list node whose
     // text is EMPTY: `} else if (!(flags & PREFORK_SINGLE) &&
     // !(*ret_flags & PREFORK_KEY_VALUE) && !keep) uremnode(list, node);`.
-    // `BUILTIN_GET_VAR`'s ordinary array arm already applies this (see the
-    // `!s.is_empty()` filter on the `in_dq` else-branch below), but its
-    // RC_EXPAND_PARAM arm must NOT: under plan9 (c:1665 `int plan9 =
-    // isset(RCEXPANDPARAM)`) a PREFIXED word cross-products, and there an
-    // empty ELEMENT still yields a non-empty WORD (`setopt rcexpandparam;
-    // a=('' x); print -rl -- p$a` → `p`, `px`). So the elision is applied
-    // here instead, where the compiler has already established that the
-    // whole word is one unquoted `$NAME` and each element IS a finished word.
+    // The compiler emits it once the word's segments have been folded, which
+    // is the ORDER c:183-186 has: the node text tested there is the finished
+    // word, prefix and suffix already attached by the array emit block
+    // (c:4245 onward — plan9 cross-product at c:4316-4365, the "simply join
+    // the first and last values" splice at c:4366-4437). So an element that
+    // is empty at read time is not yet an empty word: under plan9 a prefixed
+    // word cross-products (`setopt rcexpandparam; a=('' x);
+    // print -rl -- p$a` → `p`, `px`), and under the splice an affix lands on
+    // the boundary element (`a=(x y ""); print -rl -- ${a}POST` → `x`, `y`,
+    // `POST`).
     //
-    // Skipped under SH_WORD_SPLIT: C's split empties are `nulstring`
-    // (c:Src/subst.c:36 `char nulstring[] = {Nularg, '\0'}`), whose node
-    // text is NON-empty, so c:184 keeps them; `get_var_impl`'s split arm has
-    // already rendered them as "" and the marker C tests on is gone.
-    vm.register_builtin(BUILTIN_WORD_ELIDE_EMPTY, |vm, _argc| {
+    // Applies only to the empties of a genuine ARRAY reference. A split field
+    // — SH_WORD_SPLIT (c:3919 `sepsplit`) or command substitution — is
+    // `nulstring` in C (c:36), non-empty at c:183, so it SURVIVES:
+    // `setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s}S` is `Pa`,
+    // ``, `bS`. zshrs renders both as "", so the discriminator is the
+    // `ARRAY_EMPTIES_ELIDABLE` bit `get_var_impl` sets on the array read.
+    vm.register_builtin(BUILTIN_WORD_ELIDE_EMPTY, |vm, argc| {
         let v = vm.pop();
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+        let elidable = take_array_empties_elidable();
+        // argc == 2 is the compiler's "this word carries a quoted-empty
+        // literal segment" bit (see the emit site). c:4341 — under plan9 that
+        // affix is glued to EVERY element, so no node of the word can be
+        // empty and c:186 removes nothing: `setopt rcexpandparam;
+        // a=("" y); print -rl -- $a''` is `` `y`.
+        if argc == 2 && plan9_active() {
+            return v;
+        }
+        if !elidable {
             return v;
         }
         match v {
@@ -6390,6 +6407,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if arr.is_empty() {
                     note_empty_is_scalar(false);
                 }
+                // A genuine array reference, so an empty element that
+                // survives the plan9 cross-product IS an empty word:
+                // `setopt rcexpandparam; a=('' x); print -rl -- ${a}`
+                // is one word (`x`) in zsh. See `ARRAY_EMPTIES_ELIDABLE`.
+                note_array_empties_elidable();
                 return Value::array(arr.into_iter().map(Value::str).collect());
             }
         }
@@ -6433,6 +6455,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `setopt ksharrays; print $options`.
             if opt_state_get("ksharrays").unwrap_or(false) {
                 return Value::str(vals.into_iter().next().unwrap_or_default());
+            }
+            // Same array reference shape as the indexed-array arm below.
+            if !force_dq {
+                note_array_empties_elidable();
             }
             return Value::array(vals.into_iter().map(Value::str).collect());
         }
@@ -6494,20 +6520,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             None
         });
         if let Some((items, in_dq)) = arr_assoc_data {
-            // c:Src/subst.c:184-187 — prefork's `else if (!keep)
-            // uremnode(list, node)`: UNQUOTED expansion drops empty
-            // list nodes before they reach argv, so `a=(y '' x);
-            // print -- $a` passes TWO args in zsh (`y x`), while the
-            // quoted "${a[@]}" splat keeps the empty slot. The
-            // paramsubst splat path already does this (Bug #578
-            // retain); this GET_VAR fast path bypassed it and leaked
-            // empty argv slots (visible double-space, wrong arg
-            // counts in `for`/`print -l`).
-            let items: Vec<String> = if in_dq {
-                items
-            } else {
-                items.into_iter().filter(|s| !s.is_empty()).collect()
-            };
             if in_dq {
                 // c:Src/utils.c:3936-3945 sepjoin default-sep rule:
                 // set-but-empty IFS joins with "" (`IFS=""; echo
@@ -6516,6 +6528,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // couldn't distinguish unset from set-empty.
                 return Value::str(crate::ported::utils::sepjoin(&items, None));
             }
+            // c:Src/subst.c:184-187 — prefork's `else if (!keep)
+            // uremnode(list, node)`: UNQUOTED expansion drops empty
+            // list nodes before they reach argv, so `a=(y '' x);
+            // print -- $a` passes TWO args in zsh (`y x`), while the
+            // quoted "${a[@]}" splat keeps the empty slot.
+            //
+            // The removal must NOT happen HERE. c:186 deletes an
+            // assembled list NODE — it runs after stringsubst has
+            // concatenated the word's surrounding text onto the
+            // elements (the array emit block is c:4245 onward, the
+            // non-plan9 prefix/suffix attach c:4366-4437), so an
+            // element that is empty at READ time can still finish as a
+            // non-empty WORD. Filtering on the way out of the read cost
+            // exactly that: `a=(x y ""); print -rl -- ${a}POST` dropped
+            // the slot the suffix was going to land on and printed
+            // `x` `yPOST` where zsh prints `x` `y` `POST`. The elision
+            // now lives at the end of word assembly
+            // (`BUILTIN_WORD_ELIDE_EMPTY`, emitted by compile_zsh once
+            // the word's segments are folded); flag the value so that
+            // builtin can tell a genuine array's empty element from a
+            // split field's `nulstring` (see `ARRAY_EMPTIES_ELIDABLE`).
+            note_array_empties_elidable();
             // c:4245 — a real array reference: `isarr != 0`, so an empty
             // one takes plan9's word-removal path, not the scalar path.
             // Only note it when the array IS empty — see the rc_expand arm
@@ -12639,6 +12673,47 @@ fn note_empty_is_scalar(is_scalar: bool) {
 /// an empty SCALAR (c:4438-4467), not an empty array (c:4362).
 fn empty_is_scalar() -> bool {
     EMPTY_EXPANSION_IS_SCALAR.with(|c| c.get())
+}
+
+thread_local! {
+    /// The other `isarr` bit `Value` cannot carry: whether an empty element
+    /// of the array now on the stack is ELIDABLE.
+    ///
+    /// c:Src/subst.c:36 `char nulstring[] = {Nularg, '\0'};` — zsh does not
+    /// represent a split-produced empty field as the empty string. Every
+    /// place that manufactures one (the SH_WORD_SPLIT scalar split at
+    /// c:3919 `sepsplit`, command substitution's split, the quoted-array
+    /// retention at c:4354 `if (qt && !*y && isarr != 2) y =
+    /// dupstring(nulstring)`) stores `nulstring`, whose node text is
+    /// NON-empty — so prefork's node-removal test at c:183
+    /// `if (*(char *)getdata(node))` KEEPS it, and `remnulargs` (c:170)
+    /// turns it back into "" afterwards. Only an empty element that came
+    /// from a genuine ARRAY read is stored as a true empty string, and only
+    /// that one reaches c:186 `uremnode`.
+    ///
+    /// zshrs renders both shapes as `String::new()`, so the marker C tests
+    /// on is gone by the time a word is assembled. This cell carries it
+    /// instead: `get_var_impl` sets it on the unquoted array/assoc read
+    /// paths (C's `isarr` != 2 array reference), and `BUILTIN_WORD_ELIDE_EMPTY`
+    /// consumes it. Without the distinction the elide either dropped
+    /// split fields zsh keeps (`setopt shwordsplit; IFS=:; s='a::b';
+    /// print -rl -- ${s}` is `a` `` `b`; `IFS=:; print -rl -- $(printf
+    /// 'a::b')` likewise) or kept array empties zsh drops.
+    ///
+    /// Sticky across a word's segment folds, cleared when an end-of-word
+    /// drop builtin consumes it.
+    static ARRAY_EMPTIES_ELIDABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Record that the value just read is a genuine ARRAY reference, so an empty
+/// element of it is a true empty word. See `ARRAY_EMPTIES_ELIDABLE`.
+fn note_array_empties_elidable() {
+    ARRAY_EMPTIES_ELIDABLE.with(|c| c.set(true));
+}
+
+/// Read and clear the elidable-empties bit. See `ARRAY_EMPTIES_ELIDABLE`.
+fn take_array_empties_elidable() -> bool {
+    ARRAY_EMPTIES_ELIDABLE.with(|c| c.replace(false))
 }
 
 /// Re-assert `was_scalar` when `v` is an empty result.
