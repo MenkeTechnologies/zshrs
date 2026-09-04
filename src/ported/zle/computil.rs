@@ -4073,10 +4073,33 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         goto_cont = true; // c:2147 goto cont
                     }
                 } else {
-                    // c:2125 — advance to next arg slot.
+                    // c:2149 — `} else if ((state.def = state.def->next)) {`.
+                    // The assignment is INSIDE the condition, so `state.def`
+                    // is written UNCONDITIONALLY and the branch is merely
+                    // taken when the result is non-NULL. When the option has
+                    // no further argument slot that write CLEARS `state.def`,
+                    // and that clear is what stops the option from consuming
+                    // every following word.
+                    //
+                    // Reading `next` into a local and assigning only in the
+                    // `is_some()` arm left `state.def` pointing at the
+                    // option's argument on fall-through. Every later word then
+                    // re-entered this block and was pushed nowhere — not into
+                    // `oargs` (guarded by `curopt`, which c:2164 had just
+                    // cleared) and not into `state.args` — so a SEPARATED
+                    // option argument destroyed rest-argument completion:
+                    //     sudo -u root ls /et<TAB>   zsh: -> /etc/   zshrs: nothing
+                    // with `comparguments -W` reporting `line=()` where zsh
+                    // reports `line=(ls /et)`. `-H` (no argument) and
+                    // `--user=root` (CAO_EQUAL, collected inline at c:2263)
+                    // were unaffected, which is why only the two-word
+                    // CAO_NEXT/CAO_ODIRECT form broke.
+                    //
+                    // The sibling advances at c:2263 and c:2366-2367 already
+                    // assign unconditionally; this was the only miss.
                     let next = state.def.as_deref().and_then(|d| d.next.clone());
-                    if next.is_some() {
-                        state.def = next;
+                    state.def = next; // c:2149 — the assignment, always
+                    if state.def.is_some() {
                         state.argbeg = cur;
                         state.argend = argend_init;
                     } else if let Some(s) = sopts.first().cloned() {
