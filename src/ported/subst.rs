@@ -7706,7 +7706,59 @@ pub fn paramsubst(
             // missed it (no array/assoc entry by that name).
             // Bug #53 in docs/BUGS.md.
             if subscript.is_none() {
-                if let Some(open_idx) = var_name.find('[') {
+                // c:Src/params.c:2210-2234 — `fetchvalue()` resolves the NAME
+                // before it can ever reach a subscript: a digit run
+                // (c:2210-2214 `if (idigit(c = *s))`), an identifier
+                // (c:2216-2217 `else if ((ie = itype_end(s, itype, 0)) != s)`,
+                // where `itype` is INAMESPC here because the aspar fetch at
+                // c:Src/subst.c:2740 passes no SCANPM_NONAMESPC — c:2206), or one
+                // of the single-char specials `? # $ ! @ * -` (c:2218-2232).
+                // EVERY other leading byte falls to `else return NULL`
+                // (c:2233-2234), and `getindex()` (c:2281-2285) is reached only
+                // after that name parse succeeded. So a `(P)` operand that does
+                // not START with a name has no subscript at all in C: it is just
+                // an unset parameter whose brackets are literal text.
+                //
+                // `_arguments` depends on this. An optspec such as
+                // `-O[stdout and pipe the output to their desired file]` reaches
+                // `Completion/Base/Utility/_arguments` sh:19
+                // (`-O*) subopts=( "${(@P)${1[3,-1]}}" )`) with the operand
+                // `[stdout and pipe the output to their desired file]`. zsh
+                // yields empty; splitting it here made the description text a
+                // subscript and handed it to the arithmetic evaluator
+                // ("bad math expression: operator expected at `and pipe t...'"),
+                // aborting the completer.
+                // c:2216-2217 — `itype_end(s, itype, 0)`; 0 means "not an
+                // identifier char at all", i.e. C's `ie == s`.
+                let ident_len = crate::ported::utils::itype_end(
+                    &var_name,
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                );
+                let name_len = if var_name.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+                    // c:2210-2214 — `zstrtol(s, &s, 10)` positional parameter.
+                    var_name
+                        .as_bytes()
+                        .iter()
+                        .take_while(|b| b.is_ascii_digit())
+                        .count()
+                } else if ident_len > 0 {
+                    ident_len // c:2216-2217
+                } else if var_name.as_bytes().first().is_some_and(|b| {
+                    matches!(b, b'?' | b'#' | b'$' | b'!' | b'@' | b'*' | b'-')
+                }) {
+                    // c:2218-2232 — the one-char special names.
+                    1
+                } else {
+                    // c:2233-2234 — `else return NULL`.
+                    0
+                };
+                // c:2281 — `if (bracks > 0 && (*s == '[' || *s == Inbrack))`:
+                // the bracket must sit immediately after the parsed name.
+                if let Some(open_idx) = var_name
+                    .find('[')
+                    .filter(|&i| name_len > 0 && i == name_len)
+                {
                     if var_name.ends_with(']') {
                         let raw_key = var_name[open_idx + 1..var_name.len() - 1].to_string();
                         let base = var_name[..open_idx].to_string();
