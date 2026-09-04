@@ -6426,7 +6426,31 @@ pub fn doshfunc(
     };
     // c:6018-6019 — flineno: shfunc->lineno (function def line)
     let mut flineno = shfunc.lineno;
-    let mut filename = shfunc.filename.clone().or_else(|| Some(String::new()));
+    // c:6079 — `funcsave->fstack.filename = getshfuncfile(shfunc);`, NOT a raw
+    // read of `shfunc->filename`. `getshfuncfile` (c:Src/hashtable.c:1058-1068)
+    // appends `/name` when PM_LOADDIR is set:
+    //     if (shf->node.flags & PM_LOADDIR)
+    //         return zhtricat(shf->filename, "/", shf->node.nam);
+    // An fpath autoload stores the DIRECTORY in `filename` (loadautofnsetfile,
+    // c:5657), so reading the field directly rendered a funcstack frame as the
+    // directory — `$funcfiletrace` showed `/Users/…/.zshrs/functions:117`
+    // where zsh has `/…/functions/_complete:117`.
+    //
+    // The `.or_else(Some(String::new()))` coercion is DELIBERATELY kept: C's
+    // `getshfuncfile` can return NULL and c:5675 tests `!funcstack->filename`
+    // for it, but several readers here assume non-`None`, so making that
+    // distinction expressible is a separate change.
+    let mut filename = if (shfunc.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR) != 0 {
+        // c:1061-1062
+        shfunc
+            .filename
+            .as_ref()
+            .map(|d| format!("{}/{}", d, shfunc.node.nam))
+            .or_else(|| Some(String::new()))
+    } else {
+        // c:1063-1066
+        shfunc.filename.clone().or_else(|| Some(String::new()))
+    };
     // !!! WARNING: RUST-ONLY HELPER !!!
     //
     // c:6019 — `funcsave->fstack.filename = getshfuncfile(shfunc);`, which

@@ -2862,6 +2862,27 @@ impl ShellExecutor {
             crate::ported::params::addenv("HOME", &h);
         }
 
+        // c:Src/params.c:968-970 — `pm = realparamtab->getnode2(realparamtab,
+        // "LOGNAME"); if (!(pm->node.flags & PM_EXPORTED)) addenv(pm, pm->u.str);`
+        //
+        // Unconditional in C, right after the HOME block above, and the same
+        // shape: the param was SEEDED (c:878-882, from `getlogin()`) rather
+        // than imported, so it carries no PM_EXPORTED and C exports it here.
+        // The faithful port of this lives in `createparamtable`
+        // (ported/params.rs, c:968-970) but that function is not on this
+        // entry path — `ShellExecutor::new` is — so the seeded value never
+        // reached the environment. Measured under a scrubbed env:
+        //
+        //   env -i HOME=$HOME TERM=xterm PATH=... <shell> -f -c '${(t)LOGNAME}'
+        //     zsh  : scalar-export      zshrs: scalar
+        //
+        // and a child of zshrs saw no LOGNAME at all where a child of zsh did.
+        // Unlike the SHLVL case documented below, there is no paired exec-time
+        // adjustment to land first: C exports the value it already has.
+        if let Some(v) = crate::ported::params::getsparam("LOGNAME") {
+            crate::ported::params::addenv("LOGNAME", &v); // c:970
+        }
+
         // NOT DONE HERE: c:Src/params.c:951 `addenv(pm, buf)`, which zputenv's
         // the INCREMENTED SHLVL into the process environment so a forked child
         // sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`. zshrs still
@@ -7921,8 +7942,24 @@ pub fn seed_partab_param(name: &str) {
         Ok(t) => t,
         Err(_) => return,
     };
-    if tab.contains_key(name) {
-        return; // already seeded
+    // c:Src/module.c:1026-1052 `checkaddparam` — the node already present may
+    // be the PM_AUTOLOAD STUB that `add_autoparam` planted (c:1218-1223,
+    // ported at src/ported/module.rs), not a seeded special: forcing
+    // MODULESTAB registers `p:builtins` and friends as autoload scalars. C
+    // does NOT treat that as "already added" — `unsetparam_pm(pm, 0, 1)`
+    // UNLINKS the stub (c:1052) and only then does `createparam` install the
+    // real special (c:1065). The bulk path here already models that
+    // (`tab.remove(entry.name); // c:1052 unsetparam_pm`); the single-name
+    // sibling omitted it, so `builtins` stayed PM_SCALAR and `gethkparam`'s
+    // PM_TYPE == PM_HASHED test fell through to None.
+    //
+    // A genuine user parameter shadowing the name carries no PM_AUTOLOAD, so
+    // it still short-circuits exactly as before.
+    if tab
+        .get(name)
+        .is_some_and(|pm| (pm.node.flags as u32 & crate::ported::zsh_h::PM_AUTOLOAD) == 0)
+    {
+        return; // a real special is already seeded
     }
     let flags = PARTAB
         .iter()
@@ -7937,6 +7974,12 @@ pub fn seed_partab_param(name: &str) {
     let Some(flags) = flags else {
         return;
     };
+    // c:1052 `unsetparam_pm(pm, 0, 1)` — unlink the autoload stub, but only
+    // once we know a real special is going in to replace it. Doing it before
+    // the PARTAB lookup above would destroy an existing node for any name
+    // that is NOT a known special and then return, which is strictly worse
+    // than the early-return it replaced.
+    tab.remove(name);
     let pm = Box::new(param {
         node: hashnode {
             next: None,
