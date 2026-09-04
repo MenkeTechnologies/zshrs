@@ -6,6 +6,8 @@
 //! sh: 1  #autoload
 //! sh:    # Returns arrays net_intf_disp and net_intf_list which the
 //! sh:    # caller should make local.
+//! sh:10  local PATH=$PATH
+//! sh:11  PATH=/sbin:$PATH   # needed tools live in /sbin
 //! sh:13  case $OSTYPE in
 //! sh:     aix*)    lsdev -C -c if -F 'name:description'  (+ verbose disp)
 //! sh:     darwin|freebsd|dragonfly)  ifconfig -l
@@ -20,7 +22,7 @@
 //! output is captured via the ported `_call_program` (`$REPLY`).
 
 use crate::compsys::ported::_call_program::call_program_capture;
-use crate::ported::params::{getsparam, setaparam};
+use crate::ported::params::{getsparam, setaparam, setsparam};
 
 fn call(tag: &str, cmd: &str) -> Vec<String> {
     if call_program_capture(&[tag.to_string(), cmd.to_string()]).1 == 0 {
@@ -47,10 +49,39 @@ fn dir_basenames(path: &str) -> Vec<String> {
     out
 }
 
+/// sh:10-11 — `local PATH=$PATH` then `PATH=/sbin:$PATH`.
+///
+/// The upstream `local` scopes the prepend to this call, so the previous
+/// value is restored on the way out. Without it the darwin arm cannot
+/// find `/sbin/ifconfig` when `/sbin` is absent from the caller's `$PATH`,
+/// and the whole completion dies with `command not found: ifconfig`.
+struct PathScope(Option<String>);
+
+impl Drop for PathScope {
+    fn drop(&mut self) {
+        if let Some(prev) = self.0.take() {
+            setsparam("PATH", &prev);
+        }
+    }
+}
+
 /// `_find_net_interfaces` — enumerate network interface names into
 /// `$net_intf_list`.
 pub fn _find_net_interfaces(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_find_net_interfaces");
+
+    // sh:9-11 — "Make sure needed tools are in the path."
+    //   local PATH=$PATH
+    //   PATH=/sbin:$PATH
+    // `ifconfig`, `lsdev` and `netstat` all live in /sbin or /usr/sbin on
+    // the systems this dispatches to, and those are not on a default
+    // $PATH. Restored by `PathScope` when this function returns.
+    let prev_path = getsparam("PATH");
+    if let Some(p) = prev_path.as_deref() {
+        setsparam("PATH", &format!("/sbin:{}", p));
+    }
+    let _path_scope = PathScope(prev_path);
+
     // sh:13 — dispatch on $OSTYPE.
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let list: Vec<String> = if ostype.starts_with("darwin")
