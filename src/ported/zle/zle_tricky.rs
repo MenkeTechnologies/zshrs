@@ -5604,6 +5604,22 @@ mod tests {
     fn spellword_zeroes_globals_returns_docomplete() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
+        // `docomplete` runs BEFORECOMPLETEHOOK before it branches
+        // (c:Src/Zle/zle_tricky.c:621), and `before_complete`
+        // (c:Src/Zle/compcore.c:493-495) RE-RAISES usemenu to 2 when
+        // `startauto && lastambig`:
+        //     if (startauto && lastambig &&
+        //         (!isset(BASHAUTOLIST) || lastambig == 2))
+        //         usemenu = 2;
+        // So "usemenu is 0 on return" is C's behaviour only when no PREVIOUS
+        // completion left an ambiguity. Both are process globals that
+        // `zle_test_setup()` does not reset, and any earlier `callcompfunc`
+        // arms them at c:891-894 (`startauto = lastambig = isset(AUTOMENU)`,
+        // and AUTO_MENU is OPT_ALL so it is on in every emulation). State the
+        // precondition here rather than inheriting it from test ORDER — this
+        // test passed alone and failed with its module.
+        LASTAMBIG.store(0, Ordering::SeqCst);
+        crate::ported::zle::compcore::startauto.store(0, Ordering::Relaxed);
         // Pre-set non-zero so the c:263 reset is observable.
         USEMENU.store(99, Ordering::SeqCst);
         USEGLOB.store(99, Ordering::SeqCst);

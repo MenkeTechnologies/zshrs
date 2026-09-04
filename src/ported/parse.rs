@@ -4456,6 +4456,29 @@ pub fn bin_zcompile(
 /// Returns the header u32-array on success or None on any failure
 /// (emitting C-shaped warnings when `err != 0`).
 pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
+    // !!! WARNING: RUST-ONLY HELPER !!!
+    //
+    // C's `nam` is a `char *`, and `check_dump_file` passes it as NULL:
+    // c:Src/parse.c:3870 — `load_dump_header(NULL, file, 0)`. In C
+    // `zwarnnam(NULL, …)` is NOT silent: it reaches `zwarning(NULL, …)` and
+    // takes the else branch there, printing the bare `scriptname:` prefix —
+    // exactly what `zwarn` does. The Rust signature is `&str`, so NULL is
+    // encoded as `""`, and `zwarnnam("")` instead takes `zwarning(Some(""))`'s
+    // CMD branch (utils.rs) — prefix `:` then the empty cmd then another `:` —
+    // emitting a SECOND colon:
+    //     zsh    zsh:1: invalid zwc file: <path>    /  _zz01:2: …
+    //     zshrs  zshrs::1: invalid zwc file: <path> /  _zz01::2: …
+    //
+    // Route the empty name to `zwarn`, which is the same output C's NULL
+    // branch produces. Same trap, same C citations, as the note in
+    // `src/ported/jobs.rs`.
+    let warn_nam = |msg: &str| {
+        if nam.is_empty() {
+            crate::ported::utils::zwarn(msg)
+        } else {
+            zwarnnam(nam, msg)
+        }
+    };
     // c:3258
 
     let mut f = match File::open(name) {
@@ -4463,7 +4486,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
         Ok(h) => h,
         Err(_) => {
             if err != 0 {
-                zwarnnam(nam, &format!("can't open zwc file: {}", name)); // c:3265
+                warn_nam(&format!("can't open zwc file: {}", name)); // c:3265
             }
             return None;
         }
@@ -4473,7 +4496,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     let mut buf_bytes = vec![0u8; (FD_PRELEN + 1) * 4];
     if f.read_exact(&mut buf_bytes).is_err() {
         if err != 0 {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3277
+            warn_nam(&format!("invalid zwc file: {}", name)); // c:3277
         }
         return None;
     }
@@ -4488,14 +4511,13 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     let v_ok = fdversion(&buf) == crate::ported::patchlevel::ZSH_VERSION;
     if !magic_ok {
         if err != 0 {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3277
+            warn_nam(&format!("invalid zwc file: {}", name)); // c:3277
         }
         return None;
     }
     if !v_ok {
         if err != 0 {
-            zwarnnam(
-                nam,
+            warn_nam(
                 &format!(
                     "zwc file has wrong version (zsh-{}): {}", // c:3274
                     fdversion(&buf),
@@ -4511,7 +4533,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     if fdmagic(&buf) != FD_MAGIC {
         let other = fdother(&buf) as u64; // c:3290
         if f.seek(SeekFrom::Start(other)).is_err() || f.read_exact(&mut buf_bytes).is_err() {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3295
+            warn_nam(&format!("invalid zwc file: {}", name)); // c:3295
             return None;
         }
         buf = buf_bytes
@@ -4522,7 +4544,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
 
     let total_words = fdheaderlen(&buf) as usize; // c:3286/3299
     if total_words < FD_PRELEN + 1 {
-        zwarnnam(nam, &format!("invalid zwc file: {}", name));
+        warn_nam(&format!("invalid zwc file: {}", name));
         return None;
     }
 
@@ -4533,7 +4555,7 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     if remaining_words > 0 {
         let mut rest_bytes = vec![0u8; remaining_words * 4]; // c:3305
         if f.read_exact(&mut rest_bytes).is_err() {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3307
+            warn_nam(&format!("invalid zwc file: {}", name)); // c:3307
             return None;
         }
         for c in rest_bytes.chunks_exact(4) {
