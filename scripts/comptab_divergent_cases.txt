@@ -181,6 +181,12 @@ caffeinate -
 #    'fc-list '/'fc-match ' additionally carry a DISPLAY-ESCAPE divergence:
 #    non-UTF-8 font-name bytes render as $'\201' in zsh and \M-^A in zshrs,
 #    which is what moves the LINE count (825 vs 814) while the match count
+#    ** STALE AS OF 2026-09-04: the display-escape gap has CLOSED. Re-measured
+#    ** on a pinned binary at 32932110ca, 3 isolated runs, deterministic:
+#    ** zshrs now reports 803/826 against zsh's 802/825 — the line count
+#    ** matches the match count's +1 offset instead of running 11 LOW. Only
+#    ** the +1 match count remains, which is the LC_ALL=C cause at line 36.
+#    ** Do not re-derive the escape theory from the paragraph below.
 #    moves for a different reason.  Fixing the group's smallest reproducer
 #    will NOT clear the group.
 #
