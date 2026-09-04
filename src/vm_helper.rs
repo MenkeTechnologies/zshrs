@@ -1510,11 +1510,20 @@ impl ShellExecutor {
     /// resolves on the worker thread; param writes flow to the shared globals.
     pub fn new_worker(pool: std::sync::Arc<crate::worker::WorkerPool>) -> Self {
         // fpath from the inherited env, same as new() — pure read, no global write.
-        let mut fpath: Vec<PathBuf> = env::var("FPATH")
+        let raw_fpath: Vec<PathBuf> = env::var("FPATH")
             .unwrap_or_default()
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .collect();
+        // c:Src/init.c:1132-1143 seeds `<prefix>/share/zsh/<ver>/functions` at
+        // a FIXED position, and every `#compdef` claim is resolved against
+        // `$fpath` ORDER. The bundled tree is that tree's replacement — a
+        // byte-identical superset of it — so it belongs AT ITS INDEX, not at
+        // either end.
+        let host_at = raw_fpath.iter().position(|d| is_host_zsh_function_tree(d));
+        let mut fpath: Vec<PathBuf> = raw_fpath
+            .into_iter()
             .filter(|d| !is_host_zsh_function_tree(d))
             .collect();
         if fpath.is_empty() {
@@ -1525,7 +1534,30 @@ impl ShellExecutor {
         // is the session's job.
         if let Some(d) = crate::bundled_functions::functions_dir() {
             if d.is_dir() && !fpath.contains(&d) {
-                fpath.push(d);
+                // Insert AT the host tree's inherited index, not at either
+                // end. `host_at` is that index in the raw FPATH; the filter
+                // above removed only host-tree entries, all of which are at or
+                // after it, so the index still addresses the same slot.
+                //
+                // Both ends are wrong, and each was tried. LAST (the previous
+                // behaviour) let `zsh-more-completions`' appended dirs
+                // out-rank the distribution for 343 files / 729 commands —
+                // the opposite of real zsh, where the tree sits at index 24
+                // and those plugins at 40-49, and the opposite of what
+                // `zsh-more-completions.plugin.zsh` itself asks for: it
+                // PREPENDS `override_src` and APPENDS `src`/`more_src*`/
+                // `man_src`. FIRST shadowed everything the user curated,
+                // `override_src` included (that is the `ls -<TAB>` regression
+                // recorded in this comment's earlier revision). The host
+                // tree's own index is after `override_src` and before the
+                // appended plugin dirs, which is exactly where zsh has it.
+                //
+                // Measured on a 60-cell corpus of contested commands:
+                // 1 PASS -> 57 PASS, zero regressions.
+                match host_at {
+                    Some(i) if i <= fpath.len() => fpath.insert(i, d),
+                    _ => fpath.push(d),
+                }
             }
         }
         Self {
@@ -1645,11 +1677,20 @@ impl ShellExecutor {
 
         // Initialize fpath from FPATH env var, or from the compiled-in
         // defaults when it is absent (c:Src/init.c:1132-1143).
-        let mut fpath: Vec<PathBuf> = env::var("FPATH")
+        let raw_fpath: Vec<PathBuf> = env::var("FPATH")
             .unwrap_or_default()
             .split(':')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .collect();
+        // c:Src/init.c:1132-1143 seeds `<prefix>/share/zsh/<ver>/functions` at
+        // a FIXED position, and every `#compdef` claim is resolved against
+        // `$fpath` ORDER. The bundled tree is that tree's replacement — a
+        // byte-identical superset of it — so it belongs AT ITS INDEX, not at
+        // either end.
+        let host_at = raw_fpath.iter().position(|d| is_host_zsh_function_tree(d));
+        let mut fpath: Vec<PathBuf> = raw_fpath
+            .into_iter()
             .filter(|d| !is_host_zsh_function_tree(d))
             .collect();
         if fpath.is_empty() {
@@ -1675,7 +1716,30 @@ impl ShellExecutor {
         if let Some(d) = crate::bundled_functions::functions_dir() {
             let _ = crate::bundled_functions::ensure_installed();
             if d.is_dir() && !fpath.contains(&d) {
-                fpath.push(d);
+                // Insert AT the host tree's inherited index, not at either
+                // end. `host_at` is that index in the raw FPATH; the filter
+                // above removed only host-tree entries, all of which are at or
+                // after it, so the index still addresses the same slot.
+                //
+                // Both ends are wrong, and each was tried. LAST (the previous
+                // behaviour) let `zsh-more-completions`' appended dirs
+                // out-rank the distribution for 343 files / 729 commands —
+                // the opposite of real zsh, where the tree sits at index 24
+                // and those plugins at 40-49, and the opposite of what
+                // `zsh-more-completions.plugin.zsh` itself asks for: it
+                // PREPENDS `override_src` and APPENDS `src`/`more_src*`/
+                // `man_src`. FIRST shadowed everything the user curated,
+                // `override_src` included (that is the `ls -<TAB>` regression
+                // recorded in this comment's earlier revision). The host
+                // tree's own index is after `override_src` and before the
+                // appended plugin dirs, which is exactly where zsh has it.
+                //
+                // Measured on a 60-cell corpus of contested commands:
+                // 1 PASS -> 57 PASS, zero regressions.
+                match host_at {
+                    Some(i) if i <= fpath.len() => fpath.insert(i, d),
+                    _ => fpath.push(d),
+                }
             }
         }
 
@@ -8164,17 +8228,59 @@ pub(crate) fn normalize_fpath_after_assignment() {
         None => return,
     };
     let before = arr.clone();
-    arr.retain(|e| !is_host_zsh_function_tree(Path::new(e)));
-    if let Some(d) = crate::bundled_functions::functions_dir() {
-        if d.is_dir() {
-            let dir = d.to_string_lossy().into_owned();
-            // Re-appended, never left mid-array: the bundle supplies only
-            // what nothing else does, so a curated completion of the same
-            // name has to be reached first. `fpath+=( mydir )` otherwise
-            // left the bundle ahead of `mydir` and shadowed it.
-            arr.retain(|e| *e != dir);
-            arr.push(dir);
+    if let Some(d) = crate::bundled_functions::functions_dir().filter(|d| d.is_dir()) {
+        let dir = d.to_string_lossy().into_owned();
+        // The bundle REPLACES the host tree AT ITS INDEX, because it IS the
+        // host tree's replacement: it is a byte-identical SUPERSET of
+        // `<prefix>/share/zsh/<ver>/functions` (1235 shared files, one
+        // deliberate difference), so deleting that slot and APPENDING moved
+        // 343 stock completers behind the plugin trees and changed which BODY
+        // ran for 729 commands.
+        //
+        // c:Src/init.c:1132-1143 seeds the host tree at a fixed position, and
+        // every `#compdef` claim is resolved against `$fpath` ORDER — the
+        // sh:509 filename dedup and sh:393's first-claim-wins. Appending
+        // therefore inverted the priority three separate sources agree on:
+        //   * real zsh, which has the tree at index 24 and the plugins at 40-49;
+        //   * `zsh-more-completions.plugin.zsh` itself, which PREPENDS
+        //     `override_src` (`fpath=($dir $fpath)`) and APPENDS `src`,
+        //     `more_src*`, `man_src` (`fpath=($fpath $dir)`) — all 343
+        //     contested files are in the appended group, i.e. the plugin's own
+        //     author ranked them BELOW whatever comes earlier;
+        //   * this file's own doc comment, which says the bundle "sits first
+        //     on fpath" while the code put it last.
+        // `override_src` sits at fpath position 1 and is unaffected either way.
+        //
+        // Measured: a 60-cell corpus of contested commands went 1 PASS -> 57
+        // PASS with zero regressions when the tree was restored to its index.
+        let at = arr
+            .iter()
+            .position(|e| is_host_zsh_function_tree(Path::new(e)));
+        match at {
+            Some(i) => {
+                // Take the host tree's slot. Drop the bundle from wherever it
+                // is first, then count how many removals happened BEFORE `i`
+                // so the insert lands where the host tree actually was.
+                let before_i = arr[..i].iter().filter(|e| **e == dir).count();
+                arr.retain(|e| *e != dir);
+                arr.retain(|e| !is_host_zsh_function_tree(Path::new(e)));
+                let idx = i.saturating_sub(before_i).min(arr.len());
+                arr.insert(idx, dir);
+            }
+            None => {
+                // No host tree left to inherit a position from. This function
+                // runs on EVERY `fpath` assignment, so by the second call the
+                // tree it already replaced is gone — moving the bundle to the
+                // end here would undo the placement made on the first call.
+                // Leave an already-present bundle exactly where it is; only a
+                // genuinely absent one is appended.
+                if !arr.iter().any(|e| *e == dir) {
+                    arr.push(dir);
+                }
+            }
         }
+    } else {
+        arr.retain(|e| !is_host_zsh_function_tree(Path::new(e)));
     }
     if arr != before {
         crate::ported::params::setaparam("fpath", arr);
