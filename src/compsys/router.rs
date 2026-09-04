@@ -143,6 +143,31 @@ fn is_abspath_autoload(flags: u32, filename: Option<&str>) -> bool {
 /// installed at `…/share/zsh/<version>/functions`. `site-functions` is NOT
 /// stock: third parties install there.
 fn is_stock_functions_dir(dir: &str) -> bool {
+    // The BUNDLED tree IS the stock tree. `normalize_fpath_after_assignment`
+    // (vm_helper.rs) deletes every `<prefix>/share/zsh/<ver>/functions` entry
+    // and substitutes `~/.zshrs/functions` AT THAT INDEX, and `default_fpath`
+    // omits the versioned host tree for the same reason — the bundle is a
+    // byte-identical superset of it (243 of 244 shared files match the host
+    // tree exactly).
+    //
+    // Without this arm nothing on `$fpath` could ever match the
+    // `/share/zsh/` string test, so `stock_pos` below was ALWAYS `None` and
+    // every ported `_NAME` the bundle carries was misread as a user override:
+    // `try_rust_dispatch` returned None and 244 of 249 ports stood down. The
+    // default `[compsys] backend = "rust"` was inert on any real host.
+    //
+    // Measured A/B over 306 comparable cells, only the backend flipped:
+    //   backend=shell  PASS=275 FAIL=19 TIMEOUT=7
+    //   backend=rust   PASS=286 FAIL=13 TIMEOUT=2
+    // 12 cases better, 1 worse (`CC -`), and no utility function worse on the
+    // 99-call `--fn-sweep`. The three `comp_utils` overrides the user curates
+    // (`_files`, `_parameters`, `_command_names`, at fpath position 20) are
+    // preserved automatically by the `i < stock_pos` arbitration below.
+    if crate::bundled_functions::functions_dir()
+        .is_some_and(|d| std::path::Path::new(dir) == d)
+    {
+        return true;
+    }
     dir.contains("/share/zsh/")
         && std::path::Path::new(dir)
             .file_name()
