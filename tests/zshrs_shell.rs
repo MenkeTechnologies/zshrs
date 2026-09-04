@@ -5909,6 +5909,39 @@ fn test_param_flag_P_empty_deref_keeps_word() {
 }
 
 #[test]
+fn test_param_flag_P_positional_takes_no_subscript() {
+    // `fetchvalue()` parses the NAME before a subscript can exist. A
+    // digit run makes it a POSITIONAL (c:Src/params.c:2210-2214), and
+    // that arm serves `$N` straight out of `argvparam` and RETURNS
+    // (c:2238-2247) without ever reaching `getindex` (c:2281). So the
+    // brackets in `1[1]` are not a subscript at all — they are trailing
+    // text, cut off at c:2235-2236 and discarded because the aspar fetch
+    // passes `bracks = 1` (c:Src/subst.c:2741), which makes c:2290's
+    // leftover check unreachable.
+    //
+    // zshrs applied the subscript to the VALUE instead, so `$1` = "one"
+    // came back as "o" — a silent one-character truncation.
+    //
+    // `ppar == 0` is the exception: c:2238's `if (ppar)` is false for
+    // `$0`, so it falls through to the named branch (c:2251 looks it up
+    // as the name "0") where a subscript DOES apply. Not asserted here
+    // because `$0` differs between the two shells by construction.
+    //
+    // Verified against `/bin/zsh -f`:
+    //   set -- one two; r="1[1]"   → one
+    //   set -- abc def; r="1[2,3]" → abc
+    //   set -- one two; r="1abc"   → one
+    //   a=(x y z);      r="a[2]"   → y     (named array still subscripts)
+    let (_, output, _) = run_zshrs(
+        r#"set -- one two; r="1[1]"; print -r -- "[${(P)r}]"
+set -- abc def; r="1[2,3]"; print -r -- "[${(P)r}]"
+set -- one two; r="1abc"; print -r -- "[${(P)r}]"
+typeset -a a=(x y z); r="a[2]"; print -r -- "[${(P)r}]""#,
+    );
+    assert_eq!(output, "[one]\n[abc]\n[one]\n[y]\n", "got: {output:?}");
+}
+
+#[test]
 fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // zsh: each top-level statement on its own line, no trailing
     // semicolons, indented with TAB. Was preserving the input's

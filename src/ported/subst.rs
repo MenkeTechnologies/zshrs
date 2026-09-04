@@ -7735,13 +7735,26 @@ pub fn paramsubst(
                     crate::ported::ztype_h::INAMESPC,
                     false,
                 );
+                // c:2238 — `if (ppar)`. A NONZERO positional is served straight
+                // out of `argvparam` (c:2239-2246) and that arm RETURNS without
+                // ever reaching `getindex` (c:2281), so `${(P)}` on `1[1]`
+                // yields the WHOLE of `$1` and the brackets are discarded as
+                // trailing text (c:2235-2236 cuts at `s`, and `bracks > 0`
+                // means c:2290's leftover check cannot fire). Only `ppar == 0`
+                // — i.e. `$0`, which c:2251 looks up by the name "0" — falls
+                // through to the named branch where a subscript can apply.
+                let mut is_positional = false;
                 let name_len = if var_name.as_bytes().first().is_some_and(u8::is_ascii_digit) {
                     // c:2210-2214 — `zstrtol(s, &s, 10)` positional parameter.
-                    var_name
+                    let digits = var_name
                         .as_bytes()
                         .iter()
                         .take_while(|b| b.is_ascii_digit())
-                        .count()
+                        .count();
+                    // `ppar != 0` without parsing, so a digit run too long for
+                    // an integer cannot overflow into a wrong answer.
+                    is_positional = var_name.as_bytes()[..digits].iter().any(|&b| b != b'0');
+                    digits
                 } else if ident_len > 0 {
                     ident_len // c:2216-2217
                 } else if var_name.as_bytes().first().is_some_and(|b| {
@@ -7755,7 +7768,12 @@ pub fn paramsubst(
                 };
                 // c:2281 — `if (bracks > 0 && (*s == '[' || *s == Inbrack))`:
                 // the bracket must sit immediately after the parsed name.
-                if let Some(open_idx) = var_name
+                if is_positional {
+                    // c:2235-2236 — cut at `s`; whatever trails the digit run
+                    // (a `[...]` or anything else) is not part of the name and
+                    // no subscript is taken.
+                    var_name.truncate(name_len);
+                } else if let Some(open_idx) = var_name
                     .find('[')
                     .filter(|&i| name_len > 0 && i == name_len)
                 {
