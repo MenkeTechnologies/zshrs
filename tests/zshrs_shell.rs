@@ -6055,6 +6055,97 @@ a=(d1 d2 d3); tmp1=a; print -rl -- ${(P)^tmp1%1}/"##,
 }
 
 #[test]
+fn test_array_empty_element_is_elided_after_the_word_is_assembled() {
+    // c:Src/subst.c:183-186 — prefork's last loop deletes a list node whose
+    // text is empty:
+    //     if (*(char *)getdata(node)) { … }
+    //     else if (!(flags & PREFORK_SINGLE) &&
+    //              !(*ret_flags & PREFORK_KEY_VALUE) && !keep)
+    //         uremnode(list, node);
+    // The node it tests is the FINISHED word. `stringsubst` has already run,
+    // so the array emit block (c:4245 onward) has attached the surrounding
+    // literals: the non-plan9 arm at c:4366-4437 "simply join[s] the first
+    // and last values" (prefix onto element 0 at c:4386, suffix onto the last
+    // at c:4414), and the plan9 arm at c:4316-4365 glues both onto EVERY
+    // element (c:4341). An element that is empty at READ time is therefore
+    // not yet an empty word — the affix may be about to land on it.
+    //
+    // zshrs applied the removal in `BUILTIN_GET_VAR`'s array arm, i.e. as the
+    // value was read, before any of that. The affix then landed on the wrong
+    // element. It is now emitted at the end of word assembly instead
+    // (`BUILTIN_WORD_ELIDE_EMPTY`, compile_zsh.rs), keyed off the
+    // array-reference bit the read records — c:36 `char nulstring[] =
+    // {Nularg, '\0'}` is why a SPLIT field must not be dropped the same way:
+    // its node text is non-empty at c:183 and only `remnulargs` (c:170) turns
+    // it back into "".
+    //
+    // Verified against `/bin/zsh -f` (5.9), `print -rl` piped through a
+    // per-line boundary printer so an empty word is visible:
+    //   a=(x y "");  ${a}POST       -> x / y / POST
+    //   a=("" y z);  PRE${a}POST    -> PRE / y / zPOST
+    //   a=("" "");   A${a}B         -> A / B
+    //   a=(x y "");  ${a}${a}       -> x / y / x / y
+    //   a=(x "" y); b=(1 "" 2); ${a}-${b} -> x / y-1 / 2
+    //   typeset -A h=(a "" b 2); X${h}Y   -> X / 2Y
+    // and the standalone shapes, where the word IS the reference and the
+    // empty really is an empty word (these agreed before and must keep
+    // agreeing):
+    //   a=(y "" x);  $a  and  ${a}  -> y / x        (two words, not three)
+    //   a=(x y "");  PRE$a          -> PREx / y     (trailing empty goes)
+    //   a=(1 "" 3);  "${a[@]}"      -> 1 / (empty) / 3   (quoted keeps it)
+    //   a=(x y "");  ${#a}          -> 3
+    // plus the two shapes whose empties are c:36 `nulstring` and MUST
+    // survive — the reason the drop cannot simply move to the concat:
+    //   setopt shwordsplit; IFS=:; s='a::b'; P${s}S -> Pa / (empty) / bS
+    //   IFS=:; P$(printf 'a::b')S                   -> Pa / (empty) / bS
+    // and RC_EXPAND_PARAM, which `_comp_setup` sets for every completion
+    // (Completion/Base/Core/compinit:146,180-182) — there the prefix
+    // cross-products onto every element, so an empty one still makes a
+    // non-empty word:
+    //   setopt rcexpandparam; a=('' x); p$a  -> p / px
+    //   setopt rcexpandparam; a=('' x); ${a} -> x    (no affix: word IS empty)
+    let (_, output, _) = run_zshrs(
+        r##"sep() { print -rl -- ---; }
+a=(x y ""); print -rl -- ${a}POST; sep
+a=("" y z); print -rl -- PRE${a}POST; sep
+a=("" ""); print -rl -- A${a}B; sep
+a=(x y ""); print -rl -- ${a}${a}; sep
+a=(x "" y); b=(1 "" 2); print -rl -- ${a}-${b}; sep
+typeset -A h=(a "" b 2); print -rl -- X${h}Y; sep
+a=(y "" x); print -rl -- $a; sep
+a=(y "" x); print -rl -- ${a}; sep
+a=(x y ""); print -rl -- PRE$a; sep
+a=(1 "" 3); print -rl -- "${a[@]}"; sep
+a=(x y ""); print -r -- ${#a}; sep
+(setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s}S); sep
+(IFS=:; print -rl -- P$(printf 'a::b')S); sep
+(setopt rcexpandparam; a=('' x); print -rl -- p$a); sep
+(setopt rcexpandparam; a=('' x); print -rl -- ${a})"##,
+    );
+    assert_eq!(
+        output,
+        concat!(
+            "x\ny\nPOST\n---\n",
+            "PRE\ny\nzPOST\n---\n",
+            "A\nB\n---\n",
+            "x\ny\nx\ny\n---\n",
+            "x\ny-1\n2\n---\n",
+            "X\n2Y\n---\n",
+            "y\nx\n---\n",
+            "y\nx\n---\n",
+            "PREx\ny\n---\n",
+            "1\n\n3\n---\n",
+            "3\n---\n",
+            "Pa\n\nbS\n---\n",
+            "Pa\n\nbS\n---\n",
+            "p\npx\n---\n",
+            "x\n",
+        ),
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // zsh: each top-level statement on its own line, no trailing
     // semicolons, indented with TAB. Was preserving the input's

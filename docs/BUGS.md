@@ -57948,3 +57948,114 @@ shapes that never went through the changed predicates (`${a%z}`, `${(@)a%z}`,
 `${(O)a}`): a trailing element that a modifier empties is dropped rather than
 kept as its own empty word, and `(O)` reverse-sorts in scalar-assignment
 context where zsh does not.
+
+---
+
+## #1129 — an empty array element was elided at READ time, so the word's suffix landed on the wrong element — fixed
+
+**Status:** `fixed` 2026-09-04. Follow-up to the first divergence #1128 left
+open ("a trailing element that a modifier empties is dropped rather than kept
+as its own empty word") — the modifier turned out to be incidental.
+
+```console
+$ a=(x y ""); print -rl -- ${a}POST
+  zsh  : x / y / POST
+  zshrs: x / yPOST                      # before
+
+$ a=("" y z); print -rl -- PRE${a}POST
+  zsh  : PRE / y / zPOST
+  zshrs: PREy / zPOST                   # before
+
+$ a=("" ""); print -rl -- A${a}B
+  zsh  : A / B
+  zshrs: AB                             # before
+
+$ setopt rcexpandparam; a=('' x); print -rl -- ${a}
+  zsh  : x
+  zshrs: (empty) / x                    # before
+```
+
+`print` joins its arguments with spaces and hides this entirely; the shapes
+above are only visible with `print -rl` and a per-line boundary printer.
+
+**Root cause** — `Src/subst.c:183-186` removes a list node whose text is empty:
+
+```c
+if (*(char *)getdata(node)) { … }
+else if (!(flags & PREFORK_SINGLE) && !(*ret_flags & PREFORK_KEY_VALUE) && !keep)
+    uremnode(list, node);
+```
+
+The node it tests is the FINISHED word. `stringsubst` has already run, so the
+array emit block at c:4245 onward has attached the word's surrounding literals
+— the non-plan9 arm at c:4366-4437 puts the prefix on element 0 (c:4386) and
+the suffix on the last element (c:4414), the plan9 arm at c:4316-4365 glues
+both onto every element (c:4341). An element that is empty at READ time is
+therefore not yet an empty word; the affix may be about to land on it.
+
+`BUILTIN_GET_VAR`'s array/assoc arm (`src/fusevm_bridge.rs`) applied the
+removal as the value was read, i.e. c:186 evaluated before c:4366-4437. The
+suffix then landed on the last SURVIVING element instead of the empty one.
+The compiler already emitted `BUILTIN_WORD_ELIDE_EMPTY` at the right place,
+but only for the one shape where the read-time filter was harmless: a word
+that is exactly one bare `$NAME`.
+
+**Fix** — `src/fusevm_bridge.rs` drops the read-time filter, and
+`src/extensions/compile_zsh.rs` emits `BUILTIN_WORD_ELIDE_EMPTY` at the end of
+word assembly for the plain `${arr}` / `$arr` segment shape as well (the
+`${NAME}` braced fast path, and the multi-segment `split_word_segments` arm
+that folds `PRE${a}POST`). The pre-existing `BUILTIN_ARRAY_DROP_EMPTY` emit for
+splice / distribute / plan9 words is unchanged.
+
+The removal cannot simply move to the concat, because zshrs renders two
+different C shapes as the empty string. `Src/subst.c:36` declares
+`char nulstring[] = {Nularg, '\0'}`, and every SPLIT-produced empty field —
+`SH_WORD_SPLIT` (c:3919 `sepsplit`), command substitution, the quoted-array
+retention at c:4354 — stores that instead, so its node text is non-empty at
+c:183 and survives (`remnulargs`, c:170, restores `""` afterwards). Only a
+genuine array read stores a true empty string. `BUILTIN_GET_VAR` now records
+which of the two it produced (`ARRAY_EMPTIES_ELIDABLE`) and
+`BUILTIN_WORD_ELIDE_EMPTY` consumes that bit, so these keep their empties:
+
+```console
+$ setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s}S   # Pa / (empty) / bS
+$ IFS=:; print -rl -- P$(printf 'a::b')S                     # Pa / (empty) / bS
+```
+
+That bit also replaces the builtin's old blanket `SH_WORD_SPLIT` bail, which
+was too coarse: an ARRAY's empty element is elided under that option too
+(`setopt shwordsplit; a=(y "" x); print -rl -- ${a}` is two words in zsh).
+
+`RC_EXPAND_PARAM` — which `_comp_setup` sets for every completion
+(`Completion/Base/Core/compinit:146,180-182`) — is preserved by construction
+now that the drop runs after assembly: `setopt rcexpandparam; a=('' x);
+print -rl -- p$a` cross-products to `p` / `px`, neither of them empty.
+
+A word carrying a quoted-EMPTY literal segment (`$a''`, `${a}""`) is the one
+place a per-node `nulstring` would still be needed, since under the splice it
+lands on one boundary node but under plan9 on every node. The compiler passes
+"this word has a quoted-empty literal" to the builtin through `argc` and the
+builtin skips the drop when `RC_EXPAND_PARAM` is on, which keeps that family
+byte-identical to its previous behaviour.
+
+Verified against `/bin/zsh -f` (5.9) on 211 shapes across ten batteries;
+the regression set is pinned by
+`tests/zshrs_shell.rs::test_array_empty_element_is_elided_after_the_word_is_assembled`.
+
+Still divergent, pre-existing and NOT touched by this fix:
+
+* The same read-time elision exists a second time in the paramsubst splat
+  path, `src/ported/subst.rs` (`nodes.retain(|n| !n.is_empty())`, the bug #578
+  drop). The bridge builtins hand `paramsubst` only the `${…}` body, so its
+  prefix/suffix are empty and the retain again runs before the OUTER word's
+  affixes are attached: `a=(x y z); print -rl -- PRE${a%z}POST` is `PREx` /
+  `yPOST` where zsh gives `PREx` / `y` / `POST`. Same for `${a:u}POST`.
+* `PRE"${a[@]}"POST` drops the quoted array's empty element
+  (`BUILTIN_ARRAY_DROP_EMPTY` is unconditional), where zsh keeps it as its own
+  word.
+* `(o)` / `(O)` sort in scalar-substitution context, where zsh does not:
+  `a=(c a b); v=PRE${(o)a}POST` is `PREa b cPOST` in zshrs, `PREc a bPOST` in
+  zsh. C's sort block is at c:4301-4324, INSIDE the `if (isarr)` array emit
+  block, and `ssub` (a scalar-assignment RHS) has already zeroed `isarr` at
+  c:3901-3905, so the sort never runs. The DQ form `v="PRE${(O)a}POST"`
+  already agrees.

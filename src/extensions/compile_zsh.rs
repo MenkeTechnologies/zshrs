@@ -6250,10 +6250,10 @@ impl ZshCompiler {
                     // c:Src/subst.c:180-187 — this word is exactly one
                     // UNQUOTED `$NAME`, so each element the read yields IS a
                     // finished word and prefork's empty-node removal applies.
-                    // GET_VAR's own array arm already filters, but its
-                    // RC_EXPAND_PARAM arm deliberately does not (a PREFIXED
-                    // plan9 word cross-products, where an empty element still
-                    // makes a non-empty word) — and `_comp_setup` sets
+                    // The read itself does NOT filter (that was c:186 applied
+                    // before c:4366-4437 had attached the word's affixes); it
+                    // only flags the value as a genuine array reference and
+                    // this builtin does the removal — and `_comp_setup` sets
                     // `rcexpandparam` for every completion (Completion/Base/
                     // Core/compinit:146,180-182), so the leading empty of the
                     // `local a; a+=(x)` idiom leaked into completer argv.
@@ -6601,6 +6601,26 @@ impl ZshCompiler {
                     crate::vm_helper::BUILTIN_GET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(bid, 1), 0);
+                // c:Src/subst.c:180-187 — same finished-word empty-node
+                // removal the bare `$NAME` fast path emits; `${NAME}` is the
+                // identical word shape and reaches argv through the identical
+                // GET_VAR read, so it owes the same drop (`a=(y "" x);
+                // print -rl -- ${a}` is two words in zsh). Quote markers in
+                // the raw word veto it: `untokenize` erased them before
+                // `braced_var_ref` matched, so `${a}""` arrives here looking
+                // like a bare `${a}` while C still has the c:36 `nulstring`
+                // from the `""` sitting on the last node, keeping it
+                // (`a=(x y ""); print -rl -- ${a}""` → `x` `y` ``).
+                if bid == crate::vm_helper::BUILTIN_GET_VAR
+                    && self.word_seg_depth == 0
+                    && !s.contains('\u{9d}')
+                    && !s.contains('\u{9e}')
+                {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_ELIDE_EMPTY, 1),
+                        0,
+                    );
+                }
                 return;
             }
         }
@@ -8527,6 +8547,59 @@ impl ZshCompiler {
                 {
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
+                } else if !parent_is_dq
+                    && self.word_seg_depth == 0
+                    && self.scalar_assign_depth == 0
+                    && self.assign_builtin_arg_depth == 0
+                    && segs
+                        .iter()
+                        .any(|seg| matches!(seg, WordSegment::Expansion(_)))
+                {
+                    // c:Src/subst.c:36 `nulstring` — a QUOTED EMPTY literal
+                    // segment (`''`, `""`) is not the empty string in C: the
+                    // lexer leaves Snull/Dnull behind, so whichever node it
+                    // lands on is non-empty at c:183 and survives. Under the
+                    // splice it lands on ONE boundary node (`a=(x y "");
+                    // print -rl -- $a''` → `x` `y` ``, but `''$a` → `x` `y`);
+                    // under plan9 the affix is glued to EVERY element
+                    // (c:4341), so NO node of the word is ever empty
+                    // (`setopt rcexpandparam; a=("" y); print -rl -- $a''` →
+                    // `` `y`). Only the plan9 half is expressible without a
+                    // per-node Nularg — the option is a runtime one, so hand
+                    // the builtin the "this word has a quoted-empty literal"
+                    // bit through argc (the same channel CONCAT_DISTRIBUTE
+                    // uses for its DQ bit) and let it consult the option.
+                    let has_empty_quoted_lit = segs.iter().any(|seg| match seg {
+                        WordSegment::Literal(lit) => crate::lex::untokenize(lit).is_empty(),
+                        _ => false,
+                    });
+                    let argc = if has_empty_quoted_lit { 2 } else { 1 };
+                    // Same c:183-186 removal for the PLAIN `${arr}` / `$arr`
+                    // segment shape, which every predicate above misses: it is
+                    // neither a splice (`[@]`/`$@`), a distribute (`(@)`/`(f)`)
+                    // nor plan9 (`${^a}`), so it lands on the runtime-dispatched
+                    // CONCAT_DISTRIBUTE arm and no end-of-word drop was emitted.
+                    // `get_var_impl` compensated by filtering the empties as it
+                    // READ the array, which is c:186's test applied before
+                    // c:4366-4437 attaches the word's affixes — so the affix
+                    // then landed on the wrong element (`a=(x y "");
+                    // print -rl -- ${a}POST` → `x` `yPOST` for zsh's `x` `y`
+                    // `POST`). Emitting the drop HERE restores C's order.
+                    //
+                    // `BUILTIN_WORD_ELIDE_EMPTY`, not `BUILTIN_ARRAY_DROP_EMPTY`:
+                    // this arm also covers words whose only expansion is a
+                    // SCALAR, and a scalar that splits (SH_WORD_SPLIT, command
+                    // substitution) produces c:36 `nulstring` fields that
+                    // c:183 KEEPS. ELIDE_EMPTY fires only on the array-read bit
+                    // `get_var_impl` sets, so those survive.
+                    //
+                    // `word_seg_depth == 0`: the drop belongs to the finished
+                    // word, so a nested segment expansion must not consume it
+                    // (`PRE${a}POST` compiles `${a}` recursively at depth 1).
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_ELIDE_EMPTY, argc),
                         0,
                     );
                 }
