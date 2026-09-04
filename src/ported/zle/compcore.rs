@@ -5945,9 +5945,29 @@ pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {
 /// from `permmatches`. The `type=0` string-sort path on `lexpls` is
 /// inlined at the `permmatches` call site (C uses a `(char **)` cast
 /// trick that has no safe Rust equivalent).
-pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32) {
+///
+/// c:3230-3236 — `rp = hcalloc(...); for (nod = firstnode(l); nod; incnode(nod))
+/// *ap++ = (Cmatch) getdata(nod);`. The array holds the SAME `Cmatch`
+/// POINTERS the LinkList holds, so every `->flags |= CMF_MULT` /
+/// `|= CMF_FMULT` / `= CMF_DELETE` below writes THROUGH to the live match
+/// still sitting on `g->lmatches` — and C never empties that list, so the
+/// marks are still there on the NEXT `permmatches` call. `Cmatch` is a
+/// value struct in the port (`comp_h.rs:517`), so taking the list by value
+/// meant every one of those writes landed on a detached copy and was
+/// discarded; a second `permmatches` in the same completion (every
+/// `_description`/`_wanted` block reads `$compstate[nmatches]`, which is
+/// `permmatches(0)` — `Src/Zle/complete.c:1411-1413`) restarted from
+/// unmarked matches.
+///
+/// `src` is therefore `&mut` the LIVE list, and the "array" is an INDEX
+/// PERMUTATION `ord` into it — the exact analogue of C's array of aliasing
+/// pointers. Sorting, compacting (`*cp++ = *ap`) and truncating (`*cp =
+/// NULL`) move only indices, exactly as C moves only pointers; every flag
+/// write goes to `src[..]`, i.e. to the live match.
+pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32) {
     // c:3224
-    let mut n: i32 = rp.len() as i32; // c:3224
+    let mut ord: Vec<usize> = (0..src.len()).collect(); // c:3230-3236
+    let mut n: i32 = ord.len() as i32; // c:3224
     let mut nl: i32 = 0; // c:3231
     let mut ll: i32 = 0; // c:3231
 
@@ -5960,18 +5980,22 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                                                         // c:3262 — C `qsort(rp, n, sizeof(Cmatch), matchcmp)`. Must use the
                                                         // qsort-tolerant sort: matchcmp→zstrcmp is not a strict weak order
                                                         // (numeric/natural sort), which makes Rust's sort_by PANIC.
-            crate::tolerant_sort::qsort_tolerant(&mut rp, matchcmp);
+                                                        // Sorting the permutation is C's "qsort the POINTER array": the
+                                                        // matches themselves never move.
+            crate::tolerant_sort::qsort_tolerant(&mut ord, |a: &usize, b: &usize| {
+                matchcmp(&src[*a], &src[*b])
+            });
 
             if (flags & CGF_UNIQCON) == 0 {
                 // c:3269 not -2
                 // remove dupes
                 let mut cp = 0usize; // c:3272
                 let mut ap = 0usize;
-                while ap < rp.len() {
+                while ap < ord.len() {
                     // c:3274 for ap;*ap;ap++
                     // Scan the run of duplicates FIRST, using the element at
                     // `ap` (C keeps `*ap` stable — `*cp++ = *ap` copies, it
-                    // does not move). Doing `rp.swap(ap, cp)` before this scan
+                    // does not move). Doing `ord.swap(ap, cp)` before this scan
                     // (the old code) overwrote `rp[ap]` with a stale slot once
                     // any earlier removal made `cp < ap`, so `rp[ap].str ==
                     // rp[bp+1].str` compared the wrong element and same-string
@@ -5979,7 +6003,7 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                     // were never collapsed.
                     // c:3271 — collapse the run of matcheq duplicates.
                     let mut bp = ap;
-                    while bp + 1 < rp.len() && matcheq(&rp[ap], &rp[bp + 1]) {
+                    while bp + 1 < ord.len() && matcheq(&src[ord[ap]], &src[ord[bp + 1]]) {
                         bp += 1;
                         n -= 1; // c:3271 bp[1] && matcheq
                     }
@@ -6000,30 +6024,31 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                     // without ever offering the choice.
                     let mut mark = run_end;
                     let mut dup = 0i32; // c:3274
-                    while mark + 1 < rp.len()
-                        && rp[run_end].disp.is_none()
-                        && rp[mark + 1].disp.is_none()                       // c:3274 !disp
-                        && rp[run_end].str == rp[mark + 1].str
+                    while mark + 1 < ord.len()
+                        && src[ord[run_end]].disp.is_none()
+                        && src[ord[mark + 1]].disp.is_none()             // c:3274 !disp
+                        && src[ord[run_end]].str == src[ord[mark + 1]].str
                     {
-                        rp[mark + 1].flags |= CMF_MULT; // c:3276
+                        src[ord[mark + 1]].flags |= CMF_MULT; // c:3276
                         dup = 1; // c:3277
                         mark += 1;
                     }
                     if dup != 0 {
                         // c:3279
-                        rp[run_end].flags |= CMF_FMULT; // c:3280
+                        src[ord[run_end]].flags |= CMF_FMULT; // c:3280
                     }
                     // c:3270 `*cp++ = *ap` — keep the first of the run at `cp`.
                     if ap != cp {
-                        rp.swap(ap, cp);
+                        ord.swap(ap, cp);
                     }
                     cp += 1;
                     ap = run_end + 1; // c:3272 ap = bp; then outer ap++
                 }
-                rp.truncate(cp); // c:3282 *cp = NULL
+                ord.truncate(cp); // c:3282 *cp = NULL
             }
-            for m in rp.iter() {
+            for &i in ord.iter() {
                 // c:3293
+                let m = &src[i];
                 if m.disp.is_some() && (m.flags & CMF_DISPLINE) != 0 {
                     // c:3294
                     ll += 1;
@@ -6037,61 +6062,63 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
             // c:3300 used -O nosort or -V
             if (flags & CGF_UNIQALL) == 0 && (flags & CGF_UNIQCON) == 0 {
                 // c:3302 didn't use -1 or -2
-                MATCHORDER.store(flags, Ordering::Relaxed); // c:3306
-                let mut sp: Vec<Cmatch> = rp.clone(); // c:3309-3312 zhalloc + memcpy
-                                                      // c:3313 — qsort matchcmp; tolerant sort (non-total-order cmp).
-                crate::tolerant_sort::qsort_tolerant(&mut sp, matchcmp);
+                MATCHORDER.store(flags, Ordering::Relaxed); // c:3297
+                                                            // c:3298-3300 — `sp = zhalloc(...); memcpy(sp, rp, ...)` copies the
+                                                            // POINTER array, so each `sp` slot ALIASES the same match as the
+                                                            // `rp` slot it came from and the flag writes below ARE writes into
+                                                            // `rp`'s matches. A cloned index permutation reproduces that
+                                                            // aliasing exactly. The old `rp.clone()` produced detached copies
+                                                            // and had to hunt the original back down with `matcheq`, which
+                                                            // always found the FIRST equal element: a run of three identical
+                                                            // matches marked one element CMF_DELETE twice instead of two
+                                                            // elements once, so only one of the two dupes was ever dropped.
+                let mut sord: Vec<usize> = ord.clone();
+                // c:3301-3302 — qsort matchcmp; tolerant sort (non-total-order cmp).
+                crate::tolerant_sort::qsort_tolerant(&mut sord, |a: &usize, b: &usize| {
+                    matchcmp(&src[*a], &src[*b])
+                });
 
                 let mut del = false; // c:3303
-                                     // Sweep sorted dup-detection back onto rp via flag marks.
-                for w in sp.windows(2) {
-                    // c:3315-3329
-                    if matcheq(&w[0], &w[1]) {
-                        // Mark in original rp by str+disp equality.
-                        for m in rp.iter_mut() {
-                            if matcheq(m, &w[1]) {
-                                m.flags = CMF_DELETE; // c:3318
-                                del = true; // c:3319
-                                break;
-                            }
-                        }
-                    } else if w[0].disp.is_none() {
-                        if w[1].disp.is_none() && w[0].str == w[1].str {
-                            // c:3322
-                            for m in rp.iter_mut() {
-                                if matcheq(m, &w[1]) {
-                                    m.flags |= CMF_MULT; // c:3324
-                                    break;
-                                }
-                            }
-                            for m in rp.iter_mut() {
-                                if matcheq(m, &w[0]) {
-                                    m.flags |= CMF_FMULT; // c:3328
-                                    break;
-                                }
-                            }
+                                     // c:3303-3318 — walk the sorted permutation in pairs. C's inner
+                                     // `for (dup = 0; ...; bp = ++sp)` run-walk is NOT replicated (it
+                                     // advances the array BASE, not `bp` — an upstream oddity); the
+                                     // pairwise form is equivalent for CMF_MULT/CMF_FMULT because the
+                                     // array is sorted, so every element whose predecessor shares its
+                                     // `str` is exactly the set the run-walk marks.
+                for k in 1..sord.len() {
+                    let (ai, bi) = (sord[k - 1], sord[k]); // c:3304
+                    if matcheq(&src[ai], &src[bi]) {
+                        // c:3305
+                        src[bi].flags = CMF_DELETE; // c:3306
+                        del = true; // c:3307
+                    } else if src[ai].disp.is_none() {
+                        // c:3308
+                        if src[bi].disp.is_none() && src[ai].str == src[bi].str {
+                            // c:3310-3311
+                            src[bi].flags |= CMF_MULT; // c:3312
+                            src[ai].flags |= CMF_FMULT; // c:3316
                         }
                     }
                 }
                 if del {
-                    // c:3332
-                    rp.retain(|m| (m.flags & CMF_DELETE) == 0); // c:3334-3340
-                    n = rp.len() as i32;
+                    // c:3319
+                    ord.retain(|&i| (src[i].flags & CMF_DELETE) == 0); // c:3320-3328
+                    n = ord.len() as i32;
                 }
             } else if (flags & CGF_UNIQCON) == 0 {
                 // c:3344 -1 not -2
                 let mut cp = 0usize;
                 let mut ap = 0usize;
-                while ap < rp.len() {
+                while ap < ord.len() {
                     // c:3334
                     // Scan the runs BEFORE the compaction swap: once an
-                    // earlier removal makes `cp < ap`, `rp.swap(ap, cp)`
-                    // overwrites `rp[ap]` with a stale slot and every
+                    // earlier removal makes `cp < ap`, `ord.swap(ap, cp)`
+                    // overwrites slot `ap` with a stale index and every
                     // comparison below reads the wrong element. C copies
                     // (`*cp++ = *ap`), it does not swap. Same fix as the
                     // sorted branch above.
                     let mut bp = ap;
-                    while bp + 1 < rp.len() && matcheq(&rp[ap], &rp[bp + 1]) {
+                    while bp + 1 < ord.len() && matcheq(&src[ord[ap]], &src[ord[bp + 1]]) {
                         bp += 1;
                         n -= 1; // c:3336
                     }
@@ -6102,28 +6129,29 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                                       // LISTING via `nl` at c:3351-3352, not from `mcount`).
                     let mut mark = run_end;
                     let mut dup = 0i32;
-                    while mark + 1 < rp.len()
-                        && rp[run_end].disp.is_none()
-                        && rp[mark + 1].disp.is_none()
-                        && rp[run_end].str == rp[mark + 1].str
+                    while mark + 1 < ord.len()
+                        && src[ord[run_end]].disp.is_none()
+                        && src[ord[mark + 1]].disp.is_none()
+                        && src[ord[run_end]].str == src[ord[mark + 1]].str
                     {
-                        rp[mark + 1].flags |= CMF_MULT; // c:3340
+                        src[ord[mark + 1]].flags |= CMF_MULT; // c:3340
                         dup = 1; // c:3341
                         mark += 1;
                     }
                     if dup != 0 {
-                        rp[run_end].flags |= CMF_FMULT; // c:3344
+                        src[ord[run_end]].flags |= CMF_FMULT; // c:3344
                     }
                     if ap != cp {
-                        rp.swap(ap, cp); // c:3335 `*cp++ = *ap`
+                        ord.swap(ap, cp); // c:3335 `*cp++ = *ap`
                     }
                     cp += 1;
                     ap = run_end + 1;
                 }
-                rp.truncate(cp); // c:3346
+                ord.truncate(cp); // c:3346
             }
-            for m in rp.iter() {
+            for &i in ord.iter() {
                 // c:3361
+                let m = &src[i];
                 if m.disp.is_some() && (m.flags & CMF_DISPLINE) != 0 {
                     // c:3362
                     ll += 1;
@@ -6135,7 +6163,11 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
             }
         }
     }
-    (rp, n, nl, ll) // c:3366-3373
+    // c:3362 — C returns `rp` itself (the compacted pointer array).
+    // Materialise the permutation for the caller; the flag writes above have
+    // already landed on the live matches in `src`.
+    let arr: Vec<Cmatch> = ord.iter().map(|&i| src[i].clone()).collect();
+    (arr, n, nl, ll) // c:3366-3373
 }
 
 // =====================================================================
@@ -6291,15 +6323,28 @@ pub fn permmatches(last: i32) -> i32 {
         let must_rebuild = fi != ofi || g.perm.is_none() || g.new_.load(Ordering::Relaxed) != 0; // c:3456
         if must_rebuild {
             // c:3456
-            let src_list = if fi != 0 {
-                g.lfmatches.lock().unwrap().clone()
-            }
-            // c:3457
-            else {
-                g.lmatches.lock().unwrap().clone()
-            }; // c:3461
+            // c:3455-3457 — `mlist = g->lfmatches` / `mlist = g->lmatches`.
+            // C hands `makearray` the LIVE LinkList: the CMF_MULT/CMF_FMULT/
+            // CMF_DELETE marks it writes go through to the matches that stay
+            // on the group, and persist for the next `permmatches` call.
+            // Cloning the `Vec` here detached every one of those writes.
+            // Clone the `Arc` instead (shared storage, comp_h.rs:433) and
+            // hand `makearray` a `&mut` into it.
+            let src_arc = if fi != 0 {
+                g.lfmatches.clone() // c:3455
+            } else {
+                g.lmatches.clone() // c:3457
+            };
 
-            let (arr, nn, nl, ll) = makearray(src_list, g.flags); // c:3463
+            // The guard is scoped to the call. `makearray` locks nothing
+            // (`matchcmp`/`matcheq` read only MATCHORDER), and these two are
+            // the ONLY `lmatches`/`lfmatches` lock sites in the tree, so no
+            // re-entrant lock and no deadlock; the guard is dropped before
+            // the next loop iteration.
+            let (arr, nn, nl, ll) = {
+                let mut src_list = src_arc.lock().unwrap();
+                makearray(&mut src_list, g.flags) // c:3459
+            };
             g.mcount = nn; // c:3464
             g.lcount = nn - nl; // c:3465
             if g.lcount < 0 {
@@ -7984,7 +8029,7 @@ mod tests {
         b.str = Some("a".into());
         let mut c = Cmatch::default();
         c.str = Some("a".into());
-        let (arr, n, _nl, _ll) = makearray(vec![a, b, c], CGF_MATSORT);
+        let (arr, n, _nl, _ll) = makearray(&mut vec![a, b, c], CGF_MATSORT);
         // Two distinct visible strings after dedup ("a", "z").
         assert_eq!(arr.len(), 2);
         assert_eq!(n, 2);
@@ -8001,11 +8046,69 @@ mod tests {
         a.str = Some("z".into());
         let mut b = Cmatch::default();
         b.str = Some("a".into());
-        let (arr, n, _, _) = makearray(vec![a, b], CGF_NOSORT | CGF_UNIQALL);
+        let (arr, n, _, _) = makearray(&mut vec![a, b], CGF_NOSORT | CGF_UNIQALL);
         // UNIQALL active so no dedup pass runs.
         assert_eq!(n, 2);
         assert_eq!(arr[0].str.as_deref(), Some("z"));
         assert_eq!(arr[1].str.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn makearray_flag_writes_reach_the_live_list() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // c:3230-3236 + c:3274-3280 — `rp` aliases the LinkList's matches, so
+        // `(bp[1])->flags |= CMF_MULT` marks the LIVE match; C never empties
+        // `g->lmatches`, so the mark is still there on the next
+        // `permmatches`. Two matches with the same `str` but different `ppre`
+        // are NOT matcheq (c:3210 compares ppre) yet DISPLAY the same string
+        // (c:3274-3275 compares only `str`), so the first takes CMF_FMULT and
+        // the second CMF_MULT — and neither is removed.
+        let mut a = Cmatch::default();
+        a.str = Some("cfg".into());
+        a.ppre = Some("bin/".into());
+        let mut b = Cmatch::default();
+        b.str = Some("cfg".into());
+        b.ppre = Some("sbin/".into());
+        let mut live = vec![a, b];
+
+        let (arr, n, nl, _ll) = makearray(&mut live, CGF_MATSORT);
+        assert_eq!(n, 2, "not matcheq (ppre differs), so both stay in mcount");
+        assert_eq!(nl, 1, "the CMF_MULT one drops out of the LISTING only");
+        assert_eq!(arr.len(), 2);
+        // The writes landed on the live list, not on a detached copy.
+        assert_ne!(live[0].flags & CMF_FMULT, 0, "c:3280 on the live match");
+        assert_ne!(live[1].flags & CMF_MULT, 0, "c:3276 on the live match");
+
+        // A second permmatches pass over the SAME live list (every
+        // `_description` block reads `$compstate[nmatches]`, which is
+        // `permmatches(0)` — `Src/Zle/complete.c:1413`) sees the marks
+        // already set and agrees with the first.
+        let (arr2, n2, nl2, _) = makearray(&mut live, CGF_MATSORT);
+        assert_eq!((arr2.len(), n2, nl2), (arr.len(), n, nl));
+    }
+
+    #[test]
+    fn makearray_nosort_deletes_every_dupe_of_a_run() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // c:3305-3307 — in the CGF_NOSORT dedup-all branch C marks
+        // `bp[0]->flags = CMF_DELETE` on the SORTED-array element, which
+        // aliases a distinct live match on each pair. The old port searched
+        // the detached copy back to the first `matcheq` element, so a run of
+        // three identical matches marked the same element twice and dropped
+        // only one of the two dupes.
+        let mk = |s: &str| {
+            let mut m = Cmatch::default();
+            m.str = Some(s.into());
+            m
+        };
+        let mut live = vec![mk("dup"), mk("dup"), mk("dup"), mk("other")];
+        let (arr, n, _nl, _ll) = makearray(&mut live, CGF_NOSORT);
+        assert_eq!(n, 2, "both dupes removed, `dup` + `other` remain");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(live[1].flags & CMF_DELETE, CMF_DELETE, "c:3306");
+        assert_eq!(live[2].flags & CMF_DELETE, CMF_DELETE, "c:3306");
     }
 
     #[test]
