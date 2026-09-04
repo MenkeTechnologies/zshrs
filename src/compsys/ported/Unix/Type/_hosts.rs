@@ -198,6 +198,22 @@ pub fn _hosts_impl(args: &[String]) -> i32 {
             c.retain(|s| seen.insert(s.clone()));
 
             setaparam("_cache_hosts", c.clone());
+            // sh:10 `typeset -gUa _cache_hosts` — the `-U`. Stamped AFTER
+            // the assignment because `setaparam` creates the node and would
+            // not carry the bit through. The hand-dedup above already makes
+            // THIS value unique, so the flag changes nothing today; it
+            // matters because `_cache_hosts` is a cross-invocation GLOBAL,
+            // so a later append by any other completer must dedup too — and
+            // because `${(t)_cache_hosts}` reads `array-unique` in zsh where
+            // zshrs read plain `array`.
+            // Mirrors the attribute-only update in compinit.rs's
+            // `declare_global` (c:Src/builtin.c:2575), inlined because that
+            // helper is private to compinit.
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("_cache_hosts") {
+                    pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+                }
+            }
             cache = Some(c);
         }
         hosts = cache.unwrap_or_default();
