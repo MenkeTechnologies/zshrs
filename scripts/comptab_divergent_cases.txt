@@ -12,6 +12,66 @@
 # put a comment on the same line as an entry; it would land in the buffer.
 #
 # ═══════════════════════════════════════════════════════════════════════════
+# RE-MEASURED 2026-09-03 (LATE) — 41 PASS / 44.  SUPERSEDES BOTH BLOCKS BELOW.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Whole file, serial (--jobs 1 --key-budget 30), after nine compsys/core fixes:
+#
+#   41 passed, 3 failed, 44 cell(s)
+#
+# The three remaining FAILs are each understood and none is an ordinary
+# completion bug:
+#
+#   'CC '        needs the pattern.c:949-952 glob fix, which is written and
+#                unit-clean but NOT landed — see the git history for
+#                `fix(loop)`; it was never the cause of the silence it was
+#                blamed for twice.
+#   'getconf '   NOT a zshrs bug: macOS libc `qsort`'s permutation of TIED
+#                keys (compcore.c:3301, matchcmp returns 0 for two non-disp
+#                matches with equal str; insertion sort below n=7, quicksort
+#                at n>=7, so the pair flips between passes).  Verified by
+#                compiling the same comparator against libc and PREDICTING
+#                the 6/6, 6/7, 7/8 sequence before measuring it.  zshrs's
+#                qsort_tolerant is a stable merge sort and cannot reproduce
+#                that permutation; do not make it unstable to chase this.
+#   'gpg-agent ' NOT a completion bug: the engine is byte-identical on
+#                identical input (cross-fed both shells' arrays: 309/309 and
+#                325/325).  The delta is zshrs's own $parameters — it creates
+#                and exports HELPDIR and INFOPATH at startup where `zsh -f`
+#                has neither.  Deliberate bundled-docs behaviour.
+#
+# What moved the number, in rough order of blast radius:
+#   * $fpath ordering — the bundled tree now sits at the host tree's inherited
+#     index instead of last.  343 files / 729 commands had been resolving to a
+#     different completer BODY than zsh.  A 60-cell contested corpus went
+#     1 PASS -> 57 PASS with zero regressions.
+#   * loops now end on errflag (c:Src/loop.c:479-482).  A completer whose loop
+#     body raised an error span forever at 98% CPU, so `<cmd> <TAB>` produced
+#     nothing at all — the real cause of the ONE-SIDED SILENCE class below.
+#   * compinit: the dump is overlaid rather than discarded, the SQLite cache is
+#     stamped with the $fpath it was built from, `_services` is loaded, and the
+#     security audit uses the faithful compaudit port.
+#   * u9_iswprint now uses C's wcwidth9_nonprint table; the quoting walk is
+#     locale-aware.
+#   * makearray writes match flags through to the live matches; a local array
+#     shadowing an outer association no longer reads empty when subscripted;
+#     $words/$CURRENT set by a completer now reach comparguments; compdef -n's
+#     guard indexes the whole `cmd=svc` word.
+#
+# STILL OPEN, newly confirmed against this binary and NOT explained by any of
+# the above — the only genuinely open cell from a 250-cell sweep:
+#
+#   'caffeinate -'   1 row: zshrs renders a single match `- -- #BGPXZfims`,
+#                    i.e. the option-set letters leak out as a description
+#                    instead of expanding.
+caffeinate -
+#
+# The ONE-SIDED SILENCE list further down is now STALE: those cells were the
+# loop hang.  The 15 command cells in the "CANDIDATES — discover cells
+# 302-551" block are also stale (they were the $fpath ordering); 7 of the 8
+# spot-checked now PASS, `caffeinate -` being the exception recorded above.
+#
+# ═══════════════════════════════════════════════════════════════════════════
 # RE-MEASURED 2026-09-03 — THE 2026-08-30 NUMBERS BELOW ARE SUPERSEDED
 # ═══════════════════════════════════════════════════════════════════════════
 #
