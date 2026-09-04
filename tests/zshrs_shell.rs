@@ -6146,6 +6146,81 @@ a=(x y ""); print -r -- ${#a}; sep
 }
 
 #[test]
+fn test_paramsubst_defers_the_empty_element_drop_to_the_end_of_the_word() {
+    // Twin of the test above, on the OTHER path. c:Src/subst.c:183-186 removes
+    // a list node whose text is empty, and the node it tests is the FINISHED
+    // word: `stringsubst` has run, so the array emit block has attached the
+    // word's literals — prefix onto element 0 at c:4386, suffix onto the last
+    // at c:4414, or both onto every element under plan9 at c:4341.
+    //
+    // `src/ported/subst.rs`'s port of that removal reads the word out of its
+    // own `s`/`start_pos` arguments, which IS correct when `stringsubst`
+    // drives it. The compiled fast paths do not: `compile_zsh` splits a word
+    // into segments, hands the bridge only the `${…}` BODY, and glues the
+    // literals on afterwards with its own concat opcodes. `prefix`/`suffix`
+    // were empty there, so the removal ran before the affixes existed and the
+    // suffix landed on the last SURVIVING element:
+    //     a=(x y z); print -rl -- PRE${a%z}POST  ->  `PREx` `yPOST`
+    // where zsh prints `PREx` `y` `POST`. (`%z` is incidental — it is only a
+    // way to produce a trailing empty element.)
+    //
+    // `BUILTIN_WORD_DEFER_EMPTIES` now brackets such a word, so `paramsubst`
+    // and `prefork` leave the removal to the word's own end-of-word drop.
+    // Verified against `/bin/zsh -f` (5.9) with `print -rl` piped through a
+    // per-line boundary printer so an empty word is visible.
+    //
+    // The last four cells are the shapes that must NOT move: a SPLIT field's
+    // empty is c:36 `nulstring`, non-empty at c:183, so it survives; an
+    // unquoted array's own empty element really is an empty word; and an
+    // empty array contributes nothing at all.
+    let (_, output, _) = run_zshrs(
+        r##"sep() { print -rl -- ---; }
+a=(x y z); print -rl -- PRE${a%z}POST; sep
+a=(x y z); print -rl -- ${a%z}POST; sep
+a=(x y z); print -rl -- PRE${a%z}; sep
+a=(x y z); print -rl -- ${a%z}; sep
+a=(x y z); print -rl -- P${a//y/}S; sep
+a=(x y z); print -rl -- P${a%[xyz]}S; sep
+a=(x y z); print -rl -- A${a%z}B${a%x}C; sep
+a=(x y z); print -rl -- P${a%z}$(echo m)S; sep
+a=(x y z); print -rl -- P${a:s/z/}S; sep
+typeset -A h=(k1 v1 k2 ""); print -rl -- X${(v)h}Y; sep
+(setopt rcexpandparam; a=(x y z); print -rl -- PRE${a%z}POST); sep
+a=(x y z); print -rl -- PRE${^a%z}POST; sep
+a=(x y z); b=(1 2); print -rl -- P${b[@]}${a%z}Q; sep
+a=(x y z); f() { print -r -- $#; }; f PRE${a%z}POST; sep
+(setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s}S); sep
+(IFS=:; print -rl -- "P$(printf 'a::b')S"); sep
+a=(y "" x); print -- $a; sep
+e=(); print -rl -- x${e}y"##,
+    );
+    assert_eq!(
+        output,
+        concat!(
+            "PREx\ny\nPOST\n---\n",
+            "x\ny\nPOST\n---\n",
+            "PREx\ny\n---\n",
+            "x\ny\n---\n",
+            "Px\nzS\n---\n",
+            "P\nS\n---\n",
+            "Ax\ny\nB\ny\nzC\n---\n",
+            "Px\ny\nmS\n---\n",
+            "Px\ny\nS\n---\n",
+            "Xv1\nY\n---\n",
+            "PRExPOST\nPREyPOST\nPREPOST\n---\n",
+            "PRExPOST\nPREyPOST\nPREPOST\n---\n",
+            "P1\n2x\ny\nQ\n---\n",
+            "3\n---\n",
+            "Pa\n\nbS\n---\n",
+            "Pa::bS\n---\n",
+            "y x\n---\n",
+            "xy\n",
+        ),
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // zsh: each top-level statement on its own line, no trailing
     // semicolons, indented with TAB. Was preserving the input's

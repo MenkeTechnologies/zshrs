@@ -58050,6 +58050,7 @@ Still divergent, pre-existing and NOT touched by this fix:
   prefix/suffix are empty and the retain again runs before the OUTER word's
   affixes are attached: `a=(x y z); print -rl -- PRE${a%z}POST` is `PREx` /
   `yPOST` where zsh gives `PREx` / `y` / `POST`. Same for `${a:u}POST`.
+  **Fixed by #1130.**
 * `PRE"${a[@]}"POST` drops the quoted array's empty element
   (`BUILTIN_ARRAY_DROP_EMPTY` is unconditional), where zsh keeps it as its own
   word.
@@ -58059,3 +58060,137 @@ Still divergent, pre-existing and NOT touched by this fix:
   block, and `ssub` (a scalar-assignment RHS) has already zeroed `isarr` at
   c:3901-3905, so the sort never runs. The DQ form `v="PRE${(O)a}POST"`
   already agrees.
+
+---
+
+## #1130 — the same empty-element elision ran early on the PORTED path, so an operator-bearing expansion lost the slot its suffix belonged on — fixed
+
+**Status:** `fixed` 2026-09-04. Twin of #1129 on the other code path; #1129
+recorded it as the first of its three untouched divergences.
+
+```console
+$ a=(x y z); print -rl -- PRE${a%z}POST
+  zsh  : PREx / y / POST
+  zshrs: PREx / yPOST                   # before
+
+$ a=(x y z); print -rl -- P${a//y/}S
+  zsh  : Px / zS
+  zshrs: Px / (empty) / zS              # before, once the read-time filter went
+
+$ a=(x y z); print -rl -- A${a%z}B${a%x}C
+  zsh  : Ax / y / B / y / zC
+  zshrs: Ax / yBy / zC                  # before
+
+$ typeset -A h=(k1 v1 k2 ""); print -rl -- X${(v)h}Y
+  zsh  : Xv1 / Y
+  zshrs: Xv1Y                           # before
+
+$ setopt rcexpandparam; a=(x y z); print -rl -- PRE${a%z}POST
+  zsh  : PRExPOST / PREyPOST / PREPOST
+  zshrs: PRExPOST / PREyPOST            # before
+```
+
+The `%z` is incidental in every one of these — it is only a way to produce a
+trailing empty element. `${a//y/}` empties a middle one, `${a%[xyz]}` empties
+all three.
+
+**Root cause** — the same c:183-186 ordering #1129 fixed, one layer down.
+`Src/subst.c:183-186` removes an assembled list node whose text is empty, and
+`stringsubst` has already glued the word's literals onto the array elements by
+then (prefix onto element 0 at c:4386, suffix onto the last at c:4414, or both
+onto every element under plan9 at c:4341).
+
+`src/ported/subst.rs` carries that removal in two places, and BOTH are
+correctly ordered when the caller hands over the whole word: `paramsubst`'s
+`nodes.retain(|n| !n.is_empty())` runs after the loop that attaches its
+`prefix`/`suffix` (derived from its own `s`/`start_pos`), and `prefork`'s
+`list.delete_node` is the direct port of c:186.
+
+The compiled fast paths do not call them that way. `compile_zsh` splits a word
+into segments, hands `fusevm_bridge`'s `paramsubst_to_value_pf` (or
+`BUILTIN_EXPAND_TEXT` → `prefork`) only the `${…}` BODY, and assembles the
+literals afterwards with its own concat opcodes. `prefix` and `suffix` were
+then empty strings, so the removal again ran before the affixes existed and
+the suffix landed on the last SURVIVING element.
+
+**Fix** — `compile_zsh` brackets such a word with the new
+`BUILTIN_WORD_DEFER_EMPTIES` marker (argc 0 opens, argc 1 closes), emitted at
+exactly the two sites that already close a word with `BUILTIN_ARRAY_DROP_EMPTY`
+or `BUILTIN_WORD_ELIDE_EMPTY`, so a deferral is never left without a drop.
+While the marker is open, `paramsubst` and `prefork` skip the removal and
+report that they did (`PARAMSUBST_AFFIXES_DEFERRED` /
+`PARAMSUBST_EMPTIES_DEFERRED` in `src/ported/subst.rs`); the word's own
+end-of-word drop then performs it on the finished word, which is C's order.
+
+Three things the marker has to get right:
+
+* **Non-empty `prefix`/`suffix` veto the deferral.** Those are the word's real
+  surrounding text — the caller handed over the whole word, the way C's
+  `stringsubst` always does — so c:183-186's test is already in the right
+  place and the removal stays put.
+* **The marker is a DEPTH, and its closing half is emitted by the compiler
+  rather than performed by the drop op.** `BUILTIN_ARRAY_DROP_EMPTY` is also
+  emitted for a bare splice segment that opened nothing (`P${b[@]}${a%z}Q`
+  emits one for `${b[@]}`); letting that close the enclosing word ended the
+  declaration before `${a%z}` was compiled.
+* **A split field's empty is not an array element's.** `Src/subst.c:36`
+  `char nulstring[] = {Nularg, '\0'}` is what a split-produced empty field
+  holds, so it is non-empty at c:183 and SURVIVES. `prefork` never sees one
+  here (the non-empty branch claims it and `remnulargs` unwraps it
+  afterwards), and `paramsubst` reports the deferral only for C's `isarr != 2`
+  shape — not the `spsep` / `force_split` values. So these keep their empties:
+
+```console
+$ setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s}S   # Pa / (empty) / bS
+$ IFS=:; print -rl -- "P$(printf 'a::b')S"                   # Pa::bS
+```
+
+`BUILTIN_CMD_SUBST_TEXT` suspends the declaration for the duration of the
+command it runs: the enclosing word's marker covers that word's own segments,
+not the words of a command inside it.
+
+Verified against `/bin/zsh -f` (5.9) on 261 shapes across six batteries
+(operator + affix, split-through-operator, broad array/DQ/assignment shapes,
+sort-in-scalar-context, `RC_EXPAND_PARAM` / splice, and mixed-segment words):
+74 → 19 divergences, every remaining one reproducing unchanged on a build of
+296ad79a6c. The 19 are the four families listed below (the
+sort-in-scalar battery is 5 of them and the `SH_WORD_SPLIT` one 9). Pinned by
+`tests/zshrs_shell.rs::test_paramsubst_defers_the_empty_element_drop_to_the_end_of_the_word`.
+
+Still divergent, pre-existing and NOT touched by this fix:
+
+* A word carrying a quoted-EMPTY literal segment outside `RC_EXPAND_PARAM`:
+  `a=(x y ""); print -rl -- $a''` and `a=(x y z); print -rl -- ${a%z}""` are
+  `x` / `y` / (empty) in zsh, `x` / `y` in zshrs. #1129 explains why only the
+  plan9 half of that rule is expressible without a per-node `nulstring`.
+* An inner splice segment's own `BUILTIN_ARRAY_DROP_EMPTY` still drops
+  unconditionally, so `a=(x y ""); print -rl -- P${a[@]}${b}Q` loses the empty
+  slot that `1` should have landed on.
+* `SH_WORD_SPLIT` does not split at all through an operator:
+  `setopt shwordsplit; IFS=:; s='a::b'; print -rl -- P${s%x}S` is one word
+  `Pa::bS` in zshrs where zsh gives `Pa` / (empty) / `bS`. A separate defect
+  from this one — the split never happens, so there is nothing to elide.
+* `(o)` / `(O)` / `(n)` / `(u)` still run in scalar-substitution context,
+  where zsh does not run them at all:
+
+```console
+$ a=(c a b); v=PRE${(o)a}POST; print -r -- "$v"
+  zsh  : PREc a bPOST
+  zshrs: PREa b cPOST
+
+$ a=(c a b); v=${(o)a}; print -r -- "$v"
+  zsh  : c a b
+  zshrs: a b c
+```
+
+  Not reversal-specific, not `(O)`-specific, and not affix-related — the whole
+  sort should be skipped. C's sort block is c:4301-4326, INSIDE the
+  `if (isarr)` array emit block at c:4256, and a scalar-assignment RHS is
+  `ssub`, which already collapsed the array with `sepjoin` and zeroed `isarr`
+  at c:3916-3918. The Rust port's gate is `isarr != 0 && (sortit !=
+  SORTIT_ANYOLDHOW || unique) && sep.is_none()` in `src/ported/subst.rs`, and
+  nothing there zeroes `isarr` for `ssub`. The DQ form
+  `v="PRE${(O)a}POST"` already agrees, which is what makes the bug look
+  flag-specific. Left alone deliberately: the fix is in the c:3912-3944 block,
+  which decides array-vs-scalar shape for every `${…}` in an assignment RHS,
+  and is a much wider blast radius than this entry's ordering change.

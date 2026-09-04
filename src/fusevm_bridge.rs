@@ -4932,6 +4932,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // Opens (argc 0) / closes (argc 1) a word whose literals the compiler
+    // attaches itself — see `BUILTIN_WORD_DEFER_EMPTIES`. Pushes nothing
+    // meaningful; the emitter pops the status.
+    vm.register_builtin(BUILTIN_WORD_DEFER_EMPTIES, |_vm, argc| {
+        if argc == 0 {
+            open_deferred_affix_word();
+        } else {
+            close_deferred_affix_word();
+        }
+        Value::Int(0)
+    });
+
     // c:Src/subst.c:180-187 — prefork's final loop deletes a list node whose
     // text is EMPTY: `} else if (!(flags & PREFORK_SINGLE) &&
     // !(*ret_flags & PREFORK_KEY_VALUE) && !keep) uremnode(list, node);`.
@@ -4954,7 +4966,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `ARRAY_EMPTIES_ELIDABLE` bit `get_var_impl` sets on the array read.
     vm.register_builtin(BUILTIN_WORD_ELIDE_EMPTY, |vm, argc| {
         let v = vm.pop();
-        let elidable = take_array_empties_elidable();
+        // `PARAMSUBST_EMPTIES_DEFERRED` is the same bit reported from the
+        // other direction: `paramsubst` skipped c:186 for a genuine array
+        // reference because this word opened with
+        // `BUILTIN_WORD_DEFER_EMPTIES`, so the removal is owed here. It is
+        // cleared by that marker's closing half, emitted just below this op.
+        let elidable = take_array_empties_elidable()
+            | crate::ported::subst::PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.get());
         // argc == 2 is the compiler's "this word carries a quoted-empty
         // literal segment" bit (see the emit site). c:4341 — under plan9 that
         // affix is glued to EVERY element, so no node of the word can be
@@ -11372,6 +11390,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // output (trailing newlines stripped per POSIX cmd-sub semantics).
     vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
         let cmd = vm.pop().to_str();
+        // The enclosing word's `BUILTIN_WORD_DEFER_EMPTIES` declaration
+        // covers that word's own segments, not the words of a command run
+        // inside it (`PRE$(f)${a}POST` — `f`'s own words are finished words
+        // and owe c:183-186 where they stand). Suspend it for the call.
+        let saved_defer = crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get());
+        crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(0));
         // Inherit live $? into the inner shell so cmd-subst sees the
         // parent's most recent exit. Same rationale as the mode-3
         // backtick path above.
@@ -11396,6 +11420,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_EXEC_DYNAMIC's null-command branch keeps `$?` instead
         // of resetting to 0.
         crate::ported::exec::use_cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+        // Hand the enclosing word's declaration back — its remaining
+        // segments are still part of that word.
+        crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved_defer));
         Value::str(result)
     });
 
@@ -12537,8 +12564,29 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // propagates the DQ flag without changing every bridge call site.
     let qt = with_executor(|exec| exec.in_dq_context > 0);
     let mut ret_flags: i32 = 0;
+    // c:Src/subst.c:183-186 — `body` is the `${…}` BODY, not the word: the
+    // caller's literals are attached by its own concat opcodes afterwards.
+    // `PARAMSUBST_AFFIXES_DEFERRED` (set by `BUILTIN_WORD_DEFER_EMPTIES`)
+    // says the caller will also run the end-of-word empty-node removal, so
+    // `paramsubst` must not run it early — see that declaration in
+    // `src/ported/subst.rs`.
+    //
+    // The declaration belongs to the OUTERMOST expansion of the word only.
+    // A bridge expansion re-entered from inside this one is its own
+    // finished word with nobody left to attach anything to it, so it keeps
+    // the removal — `IN_BRIDGE_PARAMSUBST` is that re-entry guard (the
+    // ported `IN_PARAMSUBST_NEST` covers only the `stringsubst` route).
+    // Both cells are restored afterwards so the word's remaining segments
+    // still defer (`A${a%z}B${b%z}C`).
+    let reentered = IN_BRIDGE_PARAMSUBST.with(|c| c.replace(true));
+    let saved_defer = crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get());
+    if reentered {
+        crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(0));
+    }
     let (_full, _pos, nodes) =
         crate::ported::subst::paramsubst(body, 0, qt, pf_flags, &mut ret_flags);
+    crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved_defer));
+    IN_BRIDGE_PARAMSUBST.with(|c| c.set(reentered));
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
@@ -12714,6 +12762,47 @@ fn note_array_empties_elidable() {
 /// Read and clear the elidable-empties bit. See `ARRAY_EMPTIES_ELIDABLE`.
 fn take_array_empties_elidable() -> bool {
     ARRAY_EMPTIES_ELIDABLE.with(|c| c.replace(false))
+}
+
+/// Declare that the word now being assembled attaches its own literals, so
+/// `paramsubst` must leave c:183-186's empty-node removal to this word's
+/// end-of-word drop. See `BUILTIN_WORD_DEFER_EMPTIES` and, in
+/// `src/ported/subst.rs`, `PARAMSUBST_AFFIXES_DEFERRED`.
+fn open_deferred_affix_word() {
+    crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(c.get() + 1));
+}
+
+/// End the declaration `open_deferred_affix_word` made — the marker's
+/// closing half (argc 1), emitted by `compile_zsh` immediately after this
+/// word's drop. Pairing it with the OPEN rather than with the drop itself
+/// matters: `BUILTIN_ARRAY_DROP_EMPTY` is also emitted for a bare splice
+/// segment that opened nothing (`P${b[@]}${a%z}Q` emits one for `${b[@]}`),
+/// and letting that close the enclosing word ended the declaration before
+/// `${a%z}` was reached.
+///
+/// The `PARAMSUBST_EMPTIES_DEFERRED` report is cleared only when the
+/// OUTERMOST word closes: the drop that consumes it is that word's.
+fn close_deferred_affix_word() {
+    let depth = crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| {
+        c.set((c.get() - 1).max(0));
+        c.get()
+    });
+    if depth == 0 {
+        crate::ported::subst::PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.set(false));
+    }
+}
+
+thread_local! {
+    /// True while `paramsubst_to_value_pf` is inside `paramsubst`.
+    ///
+    /// The deferral `BUILTIN_WORD_DEFER_EMPTIES` declares is a property of
+    /// the WORD the compiler is assembling, so it applies to that word's own
+    /// segment expansions and to nothing they in turn expand. A bridge
+    /// expansion re-entered from inside one (a nested body the compiler
+    /// routed through its own opcodes, or anything the ported code drives
+    /// back through this funnel) is a finished word already, so c:183-186's
+    /// removal stays where it is for that one.
+    static IN_BRIDGE_PARAMSUBST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Re-assert `was_scalar` when `v` is an empty result.
@@ -14588,6 +14677,24 @@ pub const BUILTIN_ARITH_CMD_FINISH_VAL: u16 = 679;
 /// (c:Src/parse.c:2112's braceless short-function body), which C
 /// signals with `code == 0`.
 pub const BUILTIN_STMT_PROLOGUE_FAST: u16 = 680;
+
+/// `BUILTIN_WORD_DEFER_EMPTIES` constant — opens a word whose surrounding
+/// literals are attached by the compiler's own concat opcodes, not by
+/// `paramsubst`.
+///
+/// c:Src/subst.c:183-186 removes an assembled list node whose text is
+/// empty, and `stringsubst` has already glued the word's prefix and
+/// suffix onto the array elements by then (c:4386 / c:4414, or every
+/// element under plan9 at c:4341). `src/ported/subst.rs`'s port of that
+/// removal is correctly ordered when the caller hands it the whole word,
+/// but the compiled fast paths hand it only the `${…}` body. This marker
+/// tells it so (`PARAMSUBST_AFFIXES_DEFERRED`); the matching end-of-word
+/// `BUILTIN_WORD_ELIDE_EMPTY` / `BUILTIN_ARRAY_DROP_EMPTY` then performs
+/// the removal on the finished word, which is C's order.
+///
+/// argc 0 opens the word, argc 1 closes it; the pushed status is popped by
+/// the emitter in both halves. Emitted only where a drop will run.
+pub const BUILTIN_WORD_DEFER_EMPTIES: u16 = 681;
 
 thread_local! {
     /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local

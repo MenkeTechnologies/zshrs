@@ -8409,6 +8409,36 @@ impl ZshCompiler {
                 // BUILTIN_WORD_ASSEMBLE_PLAN9 assembler, which ports the edge
                 // tracking. Uniform words (all-plan9, all-splice) keep the fast
                 // fold — only the genuinely-mixed shape takes this path.
+                //
+                // c:Src/subst.c:183-186 — the empty-node removal tests the
+                // FINISHED word, i.e. after the array emit block has attached
+                // the word's literals (c:4386 prefix / c:4414 suffix, or
+                // c:4341 both onto every element under plan9). This arm
+                // assembles those literals ITSELF, out of the segments below,
+                // and closes with one of the two end-of-word drops. Anything
+                // `paramsubst` removes on the way out of a segment is
+                // therefore removed too early — the suffix then lands on the
+                // last SURVIVING element (`a=(x y z);
+                // print -rl -- PRE${a%z}POST` gave `PREx` `yPOST` where zsh
+                // gives `PREx` `y` `POST`). Open the word so `paramsubst`
+                // leaves the removal to the drop; the two drops below close
+                // it again. Emitted only when one of them WILL run, so a
+                // deferral is never dropped on the floor.
+                let word_end_drop_follows = !parent_is_dq
+                    && self.scalar_assign_depth == 0
+                    && self.assign_builtin_arg_depth == 0
+                    && ((has_splice_seg
+                        || has_distribute_seg
+                        || has_plan9_seg
+                        || has_plan9_off_seg)
+                        || self.word_seg_depth == 0);
+                if word_end_drop_follows {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_WORD_DEFER_EMPTIES, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0); // discard the marker status
+                }
                 let mixed_plan9 = has_plan9_seg
                     && segs.iter().any(
                         |seg| matches!(seg, WordSegment::Expansion(e) if !is_plan9_expansion(e)),
@@ -8602,6 +8632,20 @@ impl ZshCompiler {
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_ELIDE_EMPTY, argc),
                         0,
                     );
+                }
+                // Closing half of the marker above (argc 1). The drop that
+                // just ran consumed the deferral, so hand the declaration
+                // back to whatever word encloses this one. Paired with the
+                // OPEN and not with the drop op itself: an inner splice
+                // segment emits its own `BUILTIN_ARRAY_DROP_EMPTY` with no
+                // marker at all (`P${b[@]}${a%z}Q`), and closing on that one
+                // ended the word before `${a%z}` was compiled.
+                if word_end_drop_follows {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_WORD_DEFER_EMPTIES, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0); // discard the marker status
                 }
                 // c:Src/subst.c:3032 (sepjoin under ssub) — a SCALAR
                 // assignment RHS coerces an assembled array to one
