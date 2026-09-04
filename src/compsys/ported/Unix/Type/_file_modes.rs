@@ -49,6 +49,19 @@ fn compset(argv: &[&str]) -> i32 {
 /// (`chmod`-style: `u+rwx`, `0755`, …).
 pub fn _file_modes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_modes");
+    // sh:6 — `local -a context line state state_descr copts=( "${@}" ) privs`.
+    //
+    // `copts` is the only name on that line the port materialises as a
+    // shell parameter: it is assigned the port arguments below and
+    // then named to `_values -O copts` (sh:27) and `_alternative -O
+    // copts` (sh:31). The rest stay Rust-side. Without the declaration
+    // `chmod <TAB>` left it standing in the user's shell:
+    //
+    //   zsh  : copts=[][0]        zshrs: copts=[array][2]
+    crate::compsys::ported::shared::declare_locals(
+        &["copts"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:8-17 — privilege letters.
     let mut privs: Vec<String> = [
         "r[read]",

@@ -142,6 +142,19 @@ fn run_mount() -> Option<String> {
 /// points, split from the platform mount table.
 pub fn _umountable(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_umountable");
+    // sh:3 — `local -a dev_tmp dpath_tmp mp_tmp mline`.
+    //
+    // The three `*_tmp` arrays are the device / device-path / mount-point
+    // lists this function builds and then names to `_alternative`
+    // (sh:47-50). `mline` is the `while read` variable and stays
+    // Rust-side, as does sh:2's scalar `tmp`. Measured on `umount <TAB>`:
+    //
+    //   zsh  : dev_tmp=[][0]       dpath_tmp=[][0]        mp_tmp=[][0]
+    //   zshrs: dev_tmp=[array][1]  dpath_tmp=[array][10]  mp_tmp=[array][12]
+    crate::compsys::ported::shared::declare_locals(
+        &["dev_tmp", "dpath_tmp", "mp_tmp"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let (dev_raw, mp_raw) = collect_mounts();
 
     // sh:42-43 — decode octal escapes.

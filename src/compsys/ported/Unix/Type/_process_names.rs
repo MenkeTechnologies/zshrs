@@ -34,6 +34,19 @@ fn basename(s: &str) -> String {
 /// `_process_names` — complete names of running processes.
 pub fn _process_names(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_process_names");
+    // sh:12 — `typeset -a expl opts names all truncate`.
+    //
+    // `names` is the candidate list this function builds (sh:29-40) and
+    // `expl` is the array `_wanted` fills through its `$2`; both are
+    // written as shell parameters below, so both need the PM_LOCAL that
+    // `setaparam` alone does not supply. `opts`/`all`/`truncate` stay
+    // Rust-side here, so they cannot leak. Measured on `killall <TAB>`:
+    //
+    //   zsh  : names=[][0]        zshrs: names=[array][72]
+    crate::compsys::ported::shared::declare_locals(
+        &["expl", "names"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let tagname = "processes-names";
     // sh:14  zparseopts -E -D 'a=all' 't=truncate'
     let all = args.iter().any(|a| a == "-a");

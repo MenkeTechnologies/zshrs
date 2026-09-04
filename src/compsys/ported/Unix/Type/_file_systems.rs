@@ -44,6 +44,19 @@ fn darwin_mount_helpers() -> Vec<String> {
 /// `_file_systems` — complete file-system type names for the running OS.
 pub fn _file_systems(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_systems");
+    // sh:3 — `local expl fss`.
+    //
+    // `fss` is the file-system-type list this function builds and `expl`
+    // is the array `_wanted` fills through its `$2`; both are written as
+    // shell parameters below. Declared as plain scalars, exactly as sh:3
+    // does — `fss` becomes an array on assignment the same way the
+    // per-OSTYPE `fss=( … )` branches convert it upstream, and sh:9's
+    // `typeset -aU fss` inside the linux arm re-types it at the SAME
+    // level, so the scope is unchanged. Measured on `df -t <TAB>`:
+    //
+    //   zsh  : fss=[][0]  expl=[][0]
+    //   zshrs: fss=[array][19]  expl=[array][2]
+    crate::compsys::ported::shared::declare_locals(&["expl", "fss"], 0);
     // sh:5 — dispatch on $OSTYPE (runtime, like the shell case).
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let fss: Vec<String> = if ostype.starts_with("aix") {
