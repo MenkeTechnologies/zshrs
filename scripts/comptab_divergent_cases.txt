@@ -13,6 +13,9 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════
 # RE-MEASURED 2026-09-04 — 42 PASS / 46, WITH THE NATIVE PORTS ACTUALLY ACTIVE
+# ** SUPERSEDED later the same day: 45 passed / 4 failed / 1 timeout after
+# ** the `_arguments` SCRATCH_PARAMS fix (0b1902d2fa) moved six cells.
+# ** The 42/46 figures below are the state BEFORE that fix.
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # READ THIS BEFORE TRUSTING ANY OLDER NUMBER IN THIS FILE.  Until
@@ -31,7 +34,13 @@
 # The four remaining are each understood and none is an ordinary completion
 # bug:
 #
-#   'getconf '            macOS libc `qsort` tie ordering, NOT a zshrs bug.
+#   'getconf '            ** REFUTED 2026-09-04 — see the `_arguments`
+#                        SCRATCH_PARAMS entry near the end of this file.
+#                        It WAS a zshrs bug (params created at level 0,
+#                        so `_parameters`' ~*local* filter kept 8 names
+#                        it should have dropped) and it moved with that
+#                        fix. The qsort story below does not describe
+#                        today's failure.
 #   'gpg-agent '          zshrs's own $parameters (it creates HELPDIR).
 #   'fc-list '/'fc-match ' the harness's forced LC_ALL=C; both shells are
 #                         byte-identical under en_US.UTF-8.
@@ -69,6 +78,12 @@ CC -
 #                unit-clean but NOT landed — see the git history for
 #                `fix(loop)`; it was never the cause of the silence it was
 #                blamed for twice.
+#   ** STALE — the paragraph below was REFUTED on 2026-09-04. 'getconf '
+#   ** carried the `_arguments` SCRATCH_PARAMS level-0 leak along with
+#   ** 'command '/'gpg-agent '/'grc '/'gtester '/'ifne ', and moved when
+#   ** that was fixed. Kept because the qsort reasoning is sound in
+#   ** itself and may still explain a residual; it is simply not the
+#   ** cause that was being observed.
 #   'getconf '   NOT a zshrs bug: macOS libc `qsort`'s permutation of TIED
 #                keys (compcore.c:3301, matchcmp returns 0 for two non-disp
 #                matches with equal str; insertion sort below n=7, quicksort
