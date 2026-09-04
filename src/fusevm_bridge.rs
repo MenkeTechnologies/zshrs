@@ -1950,6 +1950,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `builtin foo` MUST bypass function shadow — that's the whole
         // point of the prefix. Use the _raw helper, not the shadow-aware
         // one. Without this, `cd () { builtin cd "$@"; }` recurses.
+        // c:Src/exec.c:3484 — BINF_BUILTIN suppresses the shfunctab probe.
+        // `bin_compadd` runs that probe itself, so publish the modifier across
+        // the call (see `ForcedBuiltinGuard`).
+        let _forced = crate::ported::zle::complete::ForcedBuiltinGuard::enter();
         Value::Status(dispatch_builtin_raw(name, rest.to_vec()))
     });
 
@@ -2129,6 +2133,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .iter()
                 .any(|b| b.node.nam == n.as_str())
         {
+            // c:Src/exec.c:3484 — BINF_COMMAND suppresses it too.
+            let _forced = crate::ported::zle::complete::ForcedBuiltinGuard::enter();
             return Value::Status(dispatch_builtin_raw(&n, r));
         }
         // c:Src/exec.c:3275-3278 — `command NAME` asks for the thing on
