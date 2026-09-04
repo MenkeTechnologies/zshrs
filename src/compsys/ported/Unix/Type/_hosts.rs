@@ -134,6 +134,22 @@ pub fn _hosts(args: &[String]) -> i32 {
 /// ssh `known_hosts` files, cached in `$_cache_hosts`.
 pub fn _hosts_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_hosts");
+    // sh:5 — `local expl _hosts tmp useip`.
+    //
+    // Of that line the port materialises two names as real shell
+    // parameters: `_hosts`, which it fills below (sh:74) and then
+    // names to `compadd -a` (sh:77-78), and `expl`, which it hands to
+    // `_wanted` as `$2` for `_description` to fill. `tmp`/`useip` never
+    // leave Rust, so they cannot leak and are not declared. Without this the two
+    // `setaparam`s route through `createparam(name, PM_SCALAR)` with no
+    // PM_LOCAL, are born at level 0, and outlive the completion —
+    // measured through a pty on `ping <TAB>`:
+    //
+    //   zsh  : _hosts=[][0]        zshrs: _hosts=[array][60]
+    //
+    // `_cache_hosts` is upstream's own cross-invocation cache
+    // (sh:10 `typeset -gUa`) and is deliberately global on both sides.
+    crate::compsys::ported::shared::declare_locals(&["expl", "_hosts"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:hosts", curcontext);
 

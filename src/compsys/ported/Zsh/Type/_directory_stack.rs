@@ -42,6 +42,18 @@ use crate::ported::zsh_h::{isset, PUSHDMINUS};
 /// indexing into `$dirstack`.
 pub fn _directory_stack(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_directory_stack");
+    // sh:10 — `local expl list lines revlines disp sep`.
+    //
+    // `lines` is the numbered directory list (sh:22/33) and `list` the
+    // index column derived from it (sh:37/40); both are named to
+    // `_wanted`/`compadd -a` below (sh:44-45), as is `expl`, which
+    // `_wanted` fills through its `$2`. `revlines`/`disp`/`sep` stay
+    // Rust-side.
+    // Measured on `cd +<TAB>`:
+    //
+    //   zsh  : lines=[][0]        list=[][0]
+    //   zshrs: lines=[array][0]   list=[array][0]
+    crate::compsys::ported::shared::declare_locals(&["expl", "list", "lines"], 0);
     // sh:14
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let first_char = prefix.chars().next().unwrap_or(' ');

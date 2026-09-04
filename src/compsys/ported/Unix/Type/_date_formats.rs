@@ -103,6 +103,23 @@ fn exclusion_class(flag: char) -> Option<&'static str> {
 /// `_date_formats [zsh]` — complete strftime-style format specifiers.
 pub fn _date_formats(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_date_formats");
+    // sh:4 — `local -aU specs`.
+    //
+    // `specs` is the format-specifier table this function builds and
+    // then names to `_describe` (sh:108). It is the only name on sh:3-5
+    // the port materialises as a shell parameter (`flag`/`ret` and the
+    // `exclusion` map stay Rust-side), and without the declaration it
+    // outlived `date +<TAB>`:
+    //
+    //   zsh  : specs=[][0]        zshrs: specs=[array][47]
+    //
+    // PM_UNIQUE carries sh:4's `-U`. The port already dedups the vector
+    // itself before assigning, so the bit changes no value here; it is
+    // set because `${(t)specs}` reads `array-unique-local` in zsh.
+    crate::compsys::ported::shared::declare_locals(
+        &["specs"],
+        crate::compsys::ported::shared::PM_ARRAY | crate::compsys::ported::shared::PM_UNIQUE,
+    );
     let is_zsh = args.first().map(|s| s.as_str()) == Some("zsh");
     let ostype = getsparam("OSTYPE").unwrap_or_default();
 

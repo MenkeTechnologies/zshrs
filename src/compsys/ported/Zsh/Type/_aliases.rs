@@ -73,6 +73,20 @@ fn run_zparseopts_aliases(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// upper variants for disabled).
 pub fn _aliases(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_aliases");
+    // sh:3 — `local expl sel args opts`.
+    //
+    // `sel` and `opts` are written as shell parameters below (sh:5's
+    // `zparseopts … s:=sel` and sh:9's `opts=( "$@" )`), and `expl` is
+    // the array `_alternative`'s `_description` fills through its `$2`.
+    // `args` stays Rust-side as `alt_args`. Measured on `unalias <TAB>`:
+    //
+    //   zsh  : opts=[][0]        zshrs: opts=[array][0]
+    //
+    // `__compsys_argv` — this port's own scratch array, with no sh
+    // counterpart — is deliberately NOT in this list: it is already torn
+    // down by hand where it is used (`run_zparseopts_aliases` above,
+    // bug #657), so it never reaches the caller.
+    crate::compsys::ported::shared::declare_locals(&["expl", "sel", "opts"], 0);
     // sh:5-7
     let (opts, sel_arr) = run_zparseopts_aliases(args);
     // `sel_arr` is `[-s, <value>]` when -s given; the value is at index 1.

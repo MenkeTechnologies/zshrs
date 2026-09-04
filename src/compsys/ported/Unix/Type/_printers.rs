@@ -187,6 +187,18 @@ fn add_ypcat_names(cache: &mut Vec<String>) {
 /// `_printers` — complete printer / print-queue names.
 pub fn _printers(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_printers");
+    // sh:3 — `local expl ret=1 list disp sep tmp servopt`.
+    //
+    // `list` is the `zformat -a` display column built at sh:91/102, and
+    // `expl` is the array `_wanted` fills through its `$2`; both are
+    // written as shell parameters below. `ret`/`disp`/`sep`/`tmp`/
+    // `servopt` stay Rust-side. `_lp_cache` / `_lp_alias_cache` are NOT
+    // on this line — upstream creates them at global scope (sh:45-46) as
+    // its cross-invocation cache — so they are left global here too.
+    // Measured on `lpr -P<TAB>`:
+    //
+    //   zsh  : list=[][0]        zshrs: list=[array][1]
+    crate::compsys::ported::shared::declare_locals(&["expl", "list"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let pctx = format!(":completion:{}:printers", curcontext);
 
