@@ -915,6 +915,35 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {
 // CCS_* match-engine, Cmatcher chain ops) marked DEFERRED until the
 // underlying infrastructure lands.
 // =====================================================================
+// !!! WARNING: RUST-ONLY HELPER !!!
+// C models this as `execcmd_exec`'s `cflags` local: the shfunctab probe at
+// c:Src/exec.c:3484-3485 is guarded by
+// `!(cflags & (BINF_BUILTIN | BINF_COMMAND))`, so a `builtin`/`command`
+// precommand modifier skips the function lookup outright. zshrs runs that
+// probe inside `bin_compadd` instead (see the comment there), which is past
+// the point where the modifier is known — so the bridge's BINF_BUILTIN and
+// BINF_COMMAND handlers publish it through this flag.
+thread_local! {
+    pub static FORCED_BUILTIN_COMPADD: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// RAII setter for [`FORCED_BUILTIN_COMPADD`] — restores the previous value so
+/// a nested dispatch cannot leave the flag latched.
+pub struct ForcedBuiltinGuard(bool);
+
+impl ForcedBuiltinGuard {
+    pub fn enter() -> Self {
+        Self(FORCED_BUILTIN_COMPADD.with(|f| f.replace(true)))
+    }
+}
+
+impl Drop for ForcedBuiltinGuard {
+    fn drop(&mut self) {
+        FORCED_BUILTIN_COMPADD.with(|f| f.set(self.0));
+    }
+}
+
 
 /// Direct port of `bin_compadd(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/complete.c:603`.
 /// 251 lines — the main `compadd` builtin entry. Parses ~30 single-
@@ -972,7 +1001,25 @@ pub fn bin_compadd(
     thread_local! {
         static IN_COMPADD_OVERRIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
-    if !IN_COMPADD_OVERRIDE.with(|g| g.get())
+    // c:Src/exec.c:3483-3486 —
+    //     cmdarg = (char *) peekfirst(args);
+    //     if (!(cflags & (BINF_BUILTIN | BINF_COMMAND)) &&
+    //         (hn = shfunctab->getnode(shfunctab, cmdarg))) { is_shfunc = 1; break; }
+    // C runs the function-before-builtin probe in the DISPATCHER, gated on the
+    // precommand modifier. zshrs runs it HERE, inside `bin_compadd` (the Rust
+    // compsys ports call the builtin directly and would otherwise never see a
+    // `compadd` shell function) — which is downstream of where the modifier is
+    // known, so `builtin compadd` had no way to opt out and re-entered the
+    // override.
+    //
+    // `Completion/Base/Completer/_approximate` sh:95 adds the UNCORRECTED
+    // original with `builtin compadd "$expl[@]" -U -Q -`; re-entering its own
+    // sh:57 override prepended `$_correct_expl`, and since compadd takes the
+    // FIRST `-X`, the `original` group printed the `corrections` text.
+    // Still reachable on any `compadd` override that calls `builtin compadd`:
+    // `_shadow`-generated `compadd@SUFFIX` bodies, `_complete_help`, fzf-tab.
+    if !FORCED_BUILTIN_COMPADD.with(|f| f.get())
+        && !IN_COMPADD_OVERRIDE.with(|g| g.get())
         && crate::ported::utils::getshfunc("compadd").is_some()
     {
         IN_COMPADD_OVERRIDE.with(|g| g.set(true));
