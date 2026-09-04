@@ -5581,6 +5581,99 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // ── Compiled-arithmetic runtime ops ───────────────────────────────
+    //
+    // c:Src/math.c:1156 `op(int what)` — the arms `Op::Div` / `Op::Mod` /
+    // `Op::Pow` cannot express, plus the two write-back / finish helpers
+    // the compiled `(( … ))` path needs. Each pops its operands in C's
+    // order: for `a OP b` the stack holds \[a, b\], so `b` pops first.
+
+    vm.register_builtin(BUILTIN_ARITH_DIV, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        arith_push(arith_div(a, b)) // c:1237-1257
+    });
+
+    vm.register_builtin(BUILTIN_ARITH_MOD, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        arith_push(arith_mod(a, b)) // c:1258-1272
+    });
+
+    vm.register_builtin(BUILTIN_ARITH_POW, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        arith_push(arith_pow(a, b)) // c:1335-1358
+    });
+
+    // c:Src/math.c:1200 — the `BOOL` operators yield an INTEGER 1/0
+    // whatever their operands were.
+    vm.register_builtin(BUILTIN_ARITH_LOGAND, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        Value::Int(i64::from(mn_is_true(a) && mn_is_true(b)))
+    });
+    vm.register_builtin(BUILTIN_ARITH_LOGOR, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        Value::Int(i64::from(mn_is_true(a) || mn_is_true(b)))
+    });
+    vm.register_builtin(BUILTIN_ARITH_LOGXOR, |vm, _argc| {
+        let b = arith_pop_mnumber(vm);
+        let a = arith_pop_mnumber(vm);
+        Value::Int(i64::from(mn_is_true(a) != mn_is_true(b)))
+    });
+
+    // c:Src/math.c:972 setmathvar — stack is \[name, value\].
+    vm.register_builtin(BUILTIN_SET_MATH_VAR, |vm, _argc| {
+        let value = arith_pop_mnumber(vm);
+        let name = vm.pop().to_str();
+        // c:Src/math.c:395 `xstack = stack` / c:455 `stack = xstack` —
+        // `setmathvar` also memoises the value in the math-local read
+        // cache (`mptr->pval`, c:340-343), which in C belongs to the
+        // evaluation FRAME and dies with it. The compiled path has no
+        // such frame, so without this save/restore the entry outlives
+        // the expression: a later `sum=0` would update the parameter
+        // while `getmathparam` kept answering from the cache, and the
+        // next `(( sum += n ))` would resume from the stale total.
+        // Every setmathvar write goes through to the parameter table
+        // (`setnparam`, c:1005), so dropping the memo loses nothing but
+        // one paramtab read. Saving rather than clearing keeps the
+        // entries of an enclosing `matheval` frame intact, which is
+        // what c:455 restores.
+        let saved = crate::ported::math::m_variables_clone();
+        crate::ported::math::setmathvar(&name, value);
+        crate::ported::math::m_variables_set(saved);
+        Value::Status(0)
+    });
+
+    // c:Src/exec.c:5267 execarith tail + c:Src/math.c:1500 lastmathval.
+    vm.register_builtin(BUILTIN_ARITH_CMD_FINISH_VAL, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let val = arith_pop_mnumber(vm);
+        // c:1500 `lastmathval = z` — recorded even when the value is
+        // only used for the exit status, because a `functions -M` math
+        // function returns whatever its last `(( … ))` left here
+        // (c:1115).
+        crate::ported::math::M_LASTMATHVAL.with(|c| c.set(val));
+        let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+        if live & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+            // Same split as BUILTIN_ARITH_CMD_FINISH: a HARD error
+            // (`${v:?msg}`) must keep aborting the script, a soft math
+            // error is consumed here so the next statement still runs.
+            if live & crate::ported::zsh_h::ERRFLAG_HARD == 0 {
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            }
+            vm.last_status = 2;
+            return Value::Status(2);
+        }
+        // c:5267 — `(( 0 ))` is false, anything else is true.
+        let status = i32::from(!mn_is_true(val));
+        vm.last_status = status;
+        Value::Status(status)
+    });
+
     // c:Src/subst.c:822/830 `if (glbsub) shtokenize(dest)` for the
     // `${~spec}` / `$~spec` FLAG, where the compiler emits no
     // GLOB_SUBST guard because the metas are meant to be active. Only
@@ -7909,70 +8002,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // [n], updates `$LINENO` in the variable table.
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
-        // c:Src/exec.c:1355 — `/* In evaluated traps, don't modify the
-        // line number. */  if (!IN_EVAL_TRAP() && !ineval && code)
-        // lineno = code - 1;` (same gate at c:1451 and c:2056).
-        // `ineval` is set by `eval()` to `!isset(EVALLINENO)`
-        // (Src/builtin.c:6155), so under NO_EVAL_LINENO the eval body
-        // must NOT renumber $LINENO — the caller's line stands.
-        //
-        // c:1354 — `/* In evaluated traps, don't modify the line number. */`
-        // The `IN_EVAL_TRAP()` half of the same gate was missing, so an
-        // eval-form trap body (`trap 'print $LINENO' DEBUG`) renumbered
-        // $LINENO to its own line 1 and — because nothing restores
-        // `lineno` on the way out (C does, via execlist's oldlineno
-        // save/restore at c:1429/1696) — every later statement in the
-        // trapped scope reported line 1 as well.
-        if crate::ported::zsh_h::IN_EVAL_TRAP()
-            || crate::ported::builtin::ineval.load(std::sync::atomic::Ordering::Relaxed) != 0
-        {
-            return Value::Status(0);
-        }
-        // Provenance: mirror the line into the lineage ledger's own
-        // counter. The param-write hooks run inside the parameter
-        // table's lock, so they cannot read `$LINENO` back out of it.
-        if crate::provenance::active() {
-            crate::provenance::note_line(n.max(0) as usize);
-        }
-        // c:Src/exec.c:lineno = N — direct write to the param's
-        // u_val. Cannot go through setsparam because LINENO carries
-        // PM_READONLY (so `(t)LINENO` reads `integer-readonly-special`
-        // per zsh); setsparam → assignstrvalue's PM_READONLY guard
-        // would reject the internal write. C zsh handles this via the
-        // PM_SPECIAL GSU vtable's setfn callback which bypasses the
-        // generic readonly check; the Rust port writes the canonical
-        // field directly instead.
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("LINENO") {
-                // c:Src/utils.c:121 `zlong lineno` — the value lives in the C
-                // GLOBAL, reached through LINENO's GSU. A `typeset -h +g LINENO`
-                // local shadow has no PM_SPECIAL and no GSU, so C's `lineno = N`
-                // never touches it; skip the paramtab mirror for the same reason.
-                if (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0 {
-                    pm.u_val = n;
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-                }
-            }
-        }
-        // Mirror to the file-static `lineno` (utils.c:121) that
-        // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
-        crate::ported::utils::set_lineno(n as i32);
-        // Also drive lex::LEX_LINENO — zerrmsg (utils.rs:376) reads
-        // THAT counter for the `name:N:` prefix. C zsh interleaves
-        // parse and execute per top-level list, so its single
-        // `lineno` global serves both; zshrs compiles the whole
-        // script before running, leaving LEX_LINENO parked at EOF.
-        // Without this write, every runtime zwarn/zerr reported the
-        // script's LAST line instead of the failing statement's.
-        crate::ported::lex::set_lineno(n as u64);
-        // DAP hook — checks breakpoints / step mode / pause-request
-        // for the line we just landed on. O(1) no-op when DAP is off
-        // (single atomic load on a OnceLock). Inside `--dap` mode
-        // this is the call that blocks the executor on a Condvar
-        // until the IDE sends `continue`. Mirrors strykelang's
-        // `debugger.should_stop(line) → debugger.prompt(...)` flow.
-        crate::extensions::dap::check_line(n as u32);
-        Value::Status(0)
+        set_lineno_impl(n)
     });
 
     // Direct port of Src/prompt.c:1623 cmdpush. Token is a `CS_*`
@@ -9270,35 +9300,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(0)
     });
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
-        // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
-        // Reset before each top-level statement so the next
-        // sublist's ERREXIT_CHECK fires the ZERR trap on its FIRST
-        // non-zero command. Carries the "already fired" state
-        // across function-call returns within the SAME outer
-        // sublist (per C semantics — donetrap is process-global).
-        // Bug #303 in docs/BUGS.md.
-        crate::ported::exec::DONETRAP.store(0, std::sync::atomic::Ordering::Relaxed);
-        // `${~spec}` carrier: C's `globsubst` is a paramsubst-LOCAL
-        // int (c:Src/subst.c:1671 `int globsubst = isset(GLOBSUBST);`,
-        // set to 2 by `${~}` at c:2597-2603) whose only effect is the
-        // `shtokenize()` of THAT substitution's own result
-        // (c:4419-4420). It can therefore never be observed by a later
-        // statement. zshrs carries the flag on the global option table
-        // (subst.rs:5125-5136) so the compile-emitted glob ops in the
-        // same word pipeline can see it, and restores it at
-        // command-dispatch boundaries — but a `${~}` sitting in a word
-        // that dispatches NO command (a `for`/`select` word list, a
-        // loop/`case` header) had no such boundary before the NEXT
-        // statement's words were expanded, so GLOB_SUBST leaked into
-        // them. This op is emitted exactly once per sublist, in
-        // compile_list's prologue (compile_zsh.rs:557) — i.e. BEFORE
-        // the sublist's words expand — which is the same "state is
-        // gone by the next statement" guarantee C gets for free.
-        // Without it, `_parameters`' `for i in ${…:#${~pfilt}*}` loop
-        // globbed its `ary+=($i:"$val")` body word and died with
-        // "bad pattern: HISTCHARS:!^#", killing `-<TAB>` completion.
-        consume_tilde_globsubst_carrier();
-        Value::Status(0)
+        donetrap_reset_impl()
+    });
+
+    // c:Src/exec.c:1451/1455/1476/1390 — see BUILTIN_STMT_PROLOGUE_FAST.
+    vm.register_builtin(BUILTIN_STMT_PROLOGUE_FAST, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let line = vm.pop().to_int();
+        if line >= 0 {
+            set_lineno_impl(line); // c:1451
+        }
+        donetrap_reset_impl(); // c:1455
+        // c:1390 — `set -n`, and execlist's own `!errflag` list gate.
+        if opt_state_get("noexec").unwrap_or(false)
+            || (crate::ported::utils::errflag.load(Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR)
+                != 0
+        {
+            return Value::Bool(false);
+        }
+        // c:1423 `sigtrapped[SIGDEBUG]` — checked through both
+        // registries because `settrap` and `bin_trap` populate
+        // different ones (signals.rs:1481-1511 dotrap).
+        let sig_debug = crate::ported::signals_h::SIGDEBUG as usize;
+        let debug_trapped = crate::ported::signals::sigtrapped
+            .lock()
+            .map(|v| v.get(sig_debug).copied().unwrap_or(0))
+            .unwrap_or(0);
+        if debug_trapped != 0 {
+            return Value::Bool(false);
+        }
+        let debug_in_table = crate::ported::builtin::traps_table()
+            .lock()
+            .map(|t| t.contains_key("DEBUG"))
+            .unwrap_or(false);
+        Value::Bool(!debug_in_table)
     });
 
     vm.register_builtin(BUILTIN_SUBLIST_FINISH, |vm, _argc| {
@@ -14384,6 +14420,94 @@ pub const BUILTIN_LOOP_ERRFLAG_STATUS: u16 = 667;
 /// runs, and a residual `$? == 0` means it NEVER terminates.
 pub const BUILTIN_LOOP_ERRFLAG_BREAK: u16 = 671;
 
+// ───────────────────────────────────────────────────────────────────────
+// Compiled-arithmetic runtime ops.
+//
+// `ArithCompiler` lowers `(( … ))` and `$(( … ))` straight to fusevm ops.
+// Six operators have no faithful fusevm op, so they lower to these
+// instead — one indirect call per OCCURRENCE of the operator, against
+// the whole-expression re-lex `BUILTIN_ARITH_EVAL` pays on EVERY
+// evaluation.
+// ───────────────────────────────────────────────────────────────────────
+
+/// `a / b` — c:Src/math.c:1237-1257. Integer division when both operands
+/// are integers (`Op::Div` is unconditionally float), `notzero`'s
+/// "division by zero" on an integer zero divisor, and the c:1252
+/// `b == -1` special case that avoids the `INT_MIN / -1` trap. argc = 2.
+pub const BUILTIN_ARITH_DIV: u16 = 672;
+
+/// `a % b` — c:Src/math.c:1258-1272. Same zero-divisor diagnostic as
+/// DIV (`Op::Mod` silently yields 0), `fmod` on floats, and c:1269's
+/// `b == -1 → 0`. argc = 2.
+pub const BUILTIN_ARITH_MOD: u16 = 673;
+
+/// `a ** b` — c:Src/math.c:1335-1358. Integer power by repeated
+/// multiplication when both operands are integers (`Op::Pow` is
+/// `powf`, which returns a float and loses precision above 2^53),
+/// float promotion on a negative exponent (c:1337-1342), and the
+/// c:1352 "imaginary power" error. argc = 2.
+pub const BUILTIN_ARITH_POW: u16 = 674;
+
+/// `a && b` in its NON-short-circuiting form — the `&&=` compound
+/// assignment (c:Src/math.c:40 DANDEQ), where both sides are already on
+/// the stack. Result is integer 1/0, c:1200's `BOOL` type. argc = 2.
+pub const BUILTIN_ARITH_LOGAND: u16 = 675;
+
+/// `a || b` for `||=` — c:Src/math.c:41 DOREQ. argc = 2.
+pub const BUILTIN_ARITH_LOGOR: u16 = 676;
+
+/// `a ^^ b` — c:Src/math.c:26 DXOR, logical xor. No C equivalent and no
+/// fusevm op; both operands always evaluate. argc = 2.
+pub const BUILTIN_ARITH_LOGXOR: u16 = 677;
+
+/// Write one arithmetic result back to a parameter — c:Src/math.c:972
+/// `setmathvar`, reached from c:1364-1372 when the operator was
+/// `OP_E2`/`OP_E2IO`. Pops \[name, value\].
+///
+/// Distinct from `BUILTIN_SET_VAR`, which stores a shell scalar: only
+/// `setmathvar` applies the PM_INTEGER / FORCEFLOAT coercions and the
+/// `lastbase` display base that make `typeset -i x; (( x = 3.7 ))`
+/// store 3 rather than "3.7". argc = 2.
+pub const BUILTIN_SET_MATH_VAR: u16 = 678;
+
+/// Finish a compiled `(( … ))` math command. Pops the numeric result,
+/// records it as `lastmathval` (c:Src/math.c:1500, which
+/// `callmathfunc`'s MFF_USERFUNC branch returns at c:1115), and sets
+/// the command status from it: c:Src/exec.c:5267 `val == 0`, i.e. 0
+/// when the expression is non-zero and 1 when it is zero — or 2, with
+/// `errflag` cleared, when the expression raised a math error.
+///
+/// Replaces the `LoadConst("0") / StrEq / …six status ops… /
+/// BUILTIN_ARITH_CMD_FINISH` tail the string-evaluator path emits, and
+/// keeps the numeric result numeric instead of round-tripping it
+/// through its printed form. argc = 1.
+pub const BUILTIN_ARITH_CMD_FINISH_VAL: u16 = 679;
+
+/// The whole quiet-case statement prologue in one call.
+///
+/// c:Src/exec.c:1451-1502 runs four things before every sublist: the
+/// `lineno` write (c:1451), `donetrap = 0` (c:1455), the
+/// DEBUG_BEFORE_CMD block (c:1476-1502) and the `noexec` gate (c:1390).
+/// In C those are inline field writes and flag tests inside `execlist`;
+/// zshrs emitted them as four separate `CallBuiltin`s plus the constant
+/// load for `$ZSH_DEBUG_CMD`'s text, on EVERY statement, whether or not
+/// a DEBUG trap existed to read any of it.
+///
+/// This op does the two unconditional writes and then reports whether
+/// the other two blocks can be skipped entirely: `Bool(true)` when no
+/// DEBUG trap is installed in EITHER registry (`sigtrapped[SIGDEBUG]`
+/// or `traps_table["DEBUG"]` — the same pair `BUILTIN_DEBUG_TRAP`
+/// consults), `noexec` is unset, and `errflag` is clear. Those are
+/// exactly the conditions under which `BUILTIN_DEBUG_TRAP` returns
+/// `Int(0)` and `BUILTIN_NOEXEC_CHECK` returns `Int(0)`, so a `true`
+/// answer means the skipped ops were provably no-ops. On `false` the
+/// compiler's slow path runs both blocks unchanged.
+///
+/// argc = 1: the line number, or -1 for a construct that records none
+/// (c:Src/parse.c:2112's braceless short-function body), which C
+/// signals with `code == 0`.
+pub const BUILTIN_STMT_PROLOGUE_FAST: u16 = 680;
+
 thread_local! {
     /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local
     /// automatic, so the save/restore pairs nest with the C call stack.
@@ -17875,4 +17999,291 @@ mod word_assemble_tests {
             "plan9 empty array still deletes the word"
         );
     }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Compiled-arithmetic value plumbing.
+//
+// !!! WARNING: RUST-ONLY HELPERS !!!
+//
+// C has no equivalent of these: `Src/math.c` keeps every operand in an
+// `mnumber` on its own value stack, so an operator arm reads `a.u.l` /
+// `b.u.d` directly and never converts anything. zshrs's compiled path
+// keeps operands as `fusevm::Value` on the VM stack instead, so the two
+// representations have to meet at each builtin boundary. `arith_div` /
+// `arith_mod` / `arith_pow` below ARE line-by-line ports of their C
+// arms; only the `Value` ↔ `mnumber` conversion is Rust-only.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Pop one VM value as an `mnumber`.
+///
+/// `Bool` appears because the comparison ops (`Op::NumLt` and friends)
+/// push one; c:Src/math.c:1200 gives those operators integer 1/0, so
+/// that is what a `Bool` becomes here. A `Str` reaching this point is a
+/// value the compiler could not prove numeric; c:Src/math.c:337
+/// `getmathparam` coerces such a string through the math evaluator,
+/// which `matheval_str_operand` mirrors.
+pub(crate) fn arith_pop_mnumber(vm: &mut fusevm::VM) -> crate::ported::zsh_h::mnumber {
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT, MN_INTEGER};
+    match vm.pop() {
+        fusevm::Value::Int(n) => mnumber { l: n, d: 0.0, type_: MN_INTEGER },
+        fusevm::Value::Float(f) => mnumber { l: 0, d: f, type_: MN_FLOAT },
+        fusevm::Value::Bool(b) => mnumber { l: i64::from(b), d: 0.0, type_: MN_INTEGER },
+        other => {
+            let s = other.to_str();
+            if s.is_empty() {
+                // c:Src/math.c:345 — an unset/empty parameter is 0.
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+            } else {
+                // c:Src/params.c:2646-2647 `matheval(getstrvalue(v))` —
+                // the default arm of getnumvalue, which re-lexes a
+                // scalar's string form. A math error reads as 0, as C's
+                // does after `zerr`.
+                crate::ported::math::matheval(&s).unwrap_or(mnumber {
+                    l: 0,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                })
+            }
+        }
+    }
+}
+
+/// The inverse: an `mnumber` back onto the VM stack.
+pub(crate) fn arith_push(n: crate::ported::zsh_h::mnumber) -> fusevm::Value {
+    if n.type_ == crate::ported::zsh_h::MN_FLOAT {
+        fusevm::Value::Float(n.d)
+    } else {
+        fusevm::Value::Int(n.l)
+    }
+}
+
+/// c:Src/math.c:1144 `notzero` — an INTEGER zero is a math error; a
+/// float zero is not (it divides to an infinity).
+pub(crate) fn mn_notzero(a: crate::ported::zsh_h::mnumber) -> bool {
+    if a.type_ & crate::ported::zsh_h::MN_INTEGER != 0 && a.l == 0 {
+        crate::ported::utils::zerr("division by zero"); // c:1147
+        return false; // c:1148
+    }
+    true // c:1150
+}
+
+/// Truthiness of an `mnumber` — c:Src/math.c:1200's `BOOL` reading,
+/// where the operand is compared against zero in its own type.
+pub(crate) fn mn_is_true(a: crate::ported::zsh_h::mnumber) -> bool {
+    if a.type_ == crate::ported::zsh_h::MN_FLOAT {
+        a.d != 0.0
+    } else {
+        a.l != 0
+    }
+}
+
+/// c:Src/math.c:1178-1183 — the two operands of an `OP_A2` operator are
+/// promoted to float if EITHER is float; the result carries that type.
+pub(crate) fn mn_promote(
+    a: crate::ported::zsh_h::mnumber,
+    b: crate::ported::zsh_h::mnumber,
+) -> (crate::ported::zsh_h::mnumber, crate::ported::zsh_h::mnumber, u32) {
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT};
+    if a.type_ == MN_FLOAT || b.type_ == MN_FLOAT {
+        let af = if a.type_ == MN_FLOAT { a.d } else { a.l as f64 };
+        let bf = if b.type_ == MN_FLOAT { b.d } else { b.l as f64 };
+        (
+            mnumber { l: 0, d: af, type_: MN_FLOAT },
+            mnumber { l: 0, d: bf, type_: MN_FLOAT },
+            MN_FLOAT,
+        )
+    } else {
+        (a, b, a.type_)
+    }
+}
+
+/// Port of the `DIV` / `DIVEQ` arm, c:Src/math.c:1237-1257.
+pub(crate) fn arith_div(
+    a: crate::ported::zsh_h::mnumber,
+    b: crate::ported::zsh_h::mnumber,
+) -> crate::ported::zsh_h::mnumber {
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT};
+    let (a, b, ctype) = mn_promote(a, b);
+    let mut c = mnumber { l: 0, d: 0.0, type_: ctype };
+    if !mn_notzero(b) {
+        return c; // c:1240
+    }
+    if ctype == MN_FLOAT {
+        c.d = a.d / b.d; // c:1242
+    } else if b.l == -1 {
+        // c:1244-1251 — avoid the INT_MIN / -1 trap by treating it as
+        // multiplication, exactly as C does.
+        c.l = a.l.wrapping_neg(); // c:1253
+    } else {
+        c.l = a.l / b.l; // c:1255
+    }
+    c
+}
+
+/// Port of the `MOD` / `MODEQ` arm, c:Src/math.c:1258-1272.
+pub(crate) fn arith_mod(
+    a: crate::ported::zsh_h::mnumber,
+    b: crate::ported::zsh_h::mnumber,
+) -> crate::ported::zsh_h::mnumber {
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT};
+    let (a, b, ctype) = mn_promote(a, b);
+    let mut c = mnumber { l: 0, d: 0.0, type_: ctype };
+    if !mn_notzero(b) {
+        return c; // c:1261
+    }
+    if ctype == MN_FLOAT {
+        c.d = a.d % b.d; // c:1268 fmod
+    } else if b.l == -1 {
+        c.l = 0; // c:1270
+    } else {
+        c.l = a.l % b.l; // c:1272
+    }
+    c
+}
+
+/// Port of the `POWER` / `POWEREQ` arm, c:Src/math.c:1335-1358.
+pub(crate) fn arith_pow(
+    a: crate::ported::zsh_h::mnumber,
+    b: crate::ported::zsh_h::mnumber,
+) -> crate::ported::zsh_h::mnumber {
+    use crate::ported::zsh_h::{mnumber, MN_FLOAT, MN_INTEGER};
+    let (mut a, mut b, mut ctype) = mn_promote(a, b);
+    if ctype == MN_INTEGER && b.l < 0 {
+        // c:1337-1342 — a negative integer exponent produces a real
+        // result, so both operands are cast to real first.
+        a = mnumber { l: 0, d: a.l as f64, type_: MN_FLOAT };
+        b = mnumber { l: 0, d: b.l as f64, type_: MN_FLOAT };
+        ctype = MN_FLOAT;
+    }
+    let mut c = mnumber { l: 0, d: 0.0, type_: ctype };
+    if ctype == MN_INTEGER {
+        // c:1344 `for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l);`
+        c.l = 1;
+        let mut n = b.l;
+        while n > 0 {
+            c.l = c.l.wrapping_mul(a.l);
+            n -= 1;
+        }
+    } else {
+        if b.d <= 0.0 && !mn_notzero(a) {
+            return c; // c:1346-1347
+        }
+        if a.d < 0.0 {
+            // c:1348-1355 — a negative base to a non-integer power is
+            // imaginary.
+            let tst = b.d as i64 as f64;
+            if tst != b.d {
+                crate::ported::utils::zerr("bad math expression: imaginary power"); // c:1352
+                return c; // c:1353
+            }
+        }
+        c.d = a.d.powf(b.d); // c:1356
+    }
+    c
+}
+
+/// Body of `BUILTIN_SET_LINENO`, factored out so
+/// `BUILTIN_STMT_PROLOGUE_FAST` can perform the same write without a
+/// second indirect call. c:Src/exec.c:1355/1451/2056 `lineno = code - 1`.
+pub(crate) fn set_lineno_impl(n: i64) -> fusevm::Value {
+        // c:Src/exec.c:1355 — `/* In evaluated traps, don't modify the
+        // line number. */  if (!IN_EVAL_TRAP() && !ineval && code)
+        // lineno = code - 1;` (same gate at c:1451 and c:2056).
+        // `ineval` is set by `eval()` to `!isset(EVALLINENO)`
+        // (Src/builtin.c:6155), so under NO_EVAL_LINENO the eval body
+        // must NOT renumber $LINENO — the caller's line stands.
+        //
+        // c:1354 — `/* In evaluated traps, don't modify the line number. */`
+        // The `IN_EVAL_TRAP()` half of the same gate was missing, so an
+        // eval-form trap body (`trap 'print $LINENO' DEBUG`) renumbered
+        // $LINENO to its own line 1 and — because nothing restores
+        // `lineno` on the way out (C does, via execlist's oldlineno
+        // save/restore at c:1429/1696) — every later statement in the
+        // trapped scope reported line 1 as well.
+        if crate::ported::zsh_h::IN_EVAL_TRAP()
+            || crate::ported::builtin::ineval.load(std::sync::atomic::Ordering::Relaxed) != 0
+        {
+            return Value::Status(0);
+        }
+        // Provenance: mirror the line into the lineage ledger's own
+        // counter. The param-write hooks run inside the parameter
+        // table's lock, so they cannot read `$LINENO` back out of it.
+        if crate::provenance::active() {
+            crate::provenance::note_line(n.max(0) as usize);
+        }
+        // c:Src/exec.c:lineno = N — direct write to the param's
+        // u_val. Cannot go through setsparam because LINENO carries
+        // PM_READONLY (so `(t)LINENO` reads `integer-readonly-special`
+        // per zsh); setsparam → assignstrvalue's PM_READONLY guard
+        // would reject the internal write. C zsh handles this via the
+        // PM_SPECIAL GSU vtable's setfn callback which bypasses the
+        // generic readonly check; the Rust port writes the canonical
+        // field directly instead.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("LINENO") {
+                // c:Src/utils.c:121 `zlong lineno` — the value lives in the C
+                // GLOBAL, reached through LINENO's GSU. A `typeset -h +g LINENO`
+                // local shadow has no PM_SPECIAL and no GSU, so C's `lineno = N`
+                // never touches it; skip the paramtab mirror for the same reason.
+                if (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0 {
+                    pm.u_val = n;
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        }
+        // Mirror to the file-static `lineno` (utils.c:121) that
+        // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
+        crate::ported::utils::set_lineno(n as i32);
+        // Also drive lex::LEX_LINENO — zerrmsg (utils.rs:376) reads
+        // THAT counter for the `name:N:` prefix. C zsh interleaves
+        // parse and execute per top-level list, so its single
+        // `lineno` global serves both; zshrs compiles the whole
+        // script before running, leaving LEX_LINENO parked at EOF.
+        // Without this write, every runtime zwarn/zerr reported the
+        // script's LAST line instead of the failing statement's.
+        crate::ported::lex::set_lineno(n as u64);
+        // DAP hook — checks breakpoints / step mode / pause-request
+        // for the line we just landed on. O(1) no-op when DAP is off
+        // (single atomic load on a OnceLock). Inside `--dap` mode
+        // this is the call that blocks the executor on a Condvar
+        // until the IDE sends `continue`. Mirrors strykelang's
+        // `debugger.should_stop(line) → debugger.prompt(...)` flow.
+        crate::extensions::dap::check_line(n as u32);
+    fusevm::Value::Status(0)
+}
+
+/// Body of `BUILTIN_DONETRAP_RESET`, factored out for the same reason.
+/// c:Src/exec.c:1455 `donetrap = 0`.
+pub(crate) fn donetrap_reset_impl() -> fusevm::Value {
+        // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
+        // Reset before each top-level statement so the next
+        // sublist's ERREXIT_CHECK fires the ZERR trap on its FIRST
+        // non-zero command. Carries the "already fired" state
+        // across function-call returns within the SAME outer
+        // sublist (per C semantics — donetrap is process-global).
+        // Bug #303 in docs/BUGS.md.
+        crate::ported::exec::DONETRAP.store(0, std::sync::atomic::Ordering::Relaxed);
+        // `${~spec}` carrier: C's `globsubst` is a paramsubst-LOCAL
+        // int (c:Src/subst.c:1671 `int globsubst = isset(GLOBSUBST);`,
+        // set to 2 by `${~}` at c:2597-2603) whose only effect is the
+        // `shtokenize()` of THAT substitution's own result
+        // (c:4419-4420). It can therefore never be observed by a later
+        // statement. zshrs carries the flag on the global option table
+        // (subst.rs:5125-5136) so the compile-emitted glob ops in the
+        // same word pipeline can see it, and restores it at
+        // command-dispatch boundaries — but a `${~}` sitting in a word
+        // that dispatches NO command (a `for`/`select` word list, a
+        // loop/`case` header) had no such boundary before the NEXT
+        // statement's words were expanded, so GLOB_SUBST leaked into
+        // them. This op is emitted exactly once per sublist, in
+        // compile_list's prologue (compile_zsh.rs:557) — i.e. BEFORE
+        // the sublist's words expand — which is the same "state is
+        // gone by the next statement" guarantee C gets for free.
+        // Without it, `_parameters`' `for i in ${…:#${~pfilt}*}` loop
+        // globbed its `ary+=($i:"$val")` body word and died with
+        // "bad pattern: HISTCHARS:!^#", killing `-<TAB>` completion.
+    consume_tilde_globsubst_carrier();
+    fusevm::Value::Status(0)
 }
