@@ -504,11 +504,69 @@ pub fn u9_wcwidth(ucs: char) -> i32 {
         .unwrap_or(if ucs.is_control() { -1 } else { 1 })
 }
 
+/// `wcwidth9_nonprint` from `Src/wcwidth9.h:18-32` — the intervals for which
+/// `wcwidth9()` returns -1 (c:1294-1296), and therefore the intervals for
+/// which `u9_iswprint()` is false.
+///
+/// `{0x0000,0x001f}` and `{0x007f,0x009f}` are exactly Rust's `Cc` category,
+/// which is why the old `!ucs.is_control()` test looked right; the other
+/// eleven are what it missed.
+const WCWIDTH9_NONPRINT: &[(u32, u32)] = &[
+    (0x0000, 0x001f), // c:19
+    (0x007f, 0x009f), // c:20
+    (0x00ad, 0x00ad), // c:21
+    (0x070f, 0x070f), // c:22
+    (0x180b, 0x180e), // c:23
+    (0x200b, 0x200f), // c:24
+    (0x2028, 0x2029), // c:25
+    (0x202a, 0x202e), // c:26
+    (0x206a, 0x206f), // c:27
+    // c:28 — `{0xd800, 0xdfff}`: a surrogate cannot be a Rust `char`, so the
+    // interval is unreachable here and is carried as a comment for parity.
+    (0xfeff, 0xfeff), // c:29
+    (0xfff9, 0xfffb), // c:30
+    (0xfffe, 0xffff), // c:31
+];
+
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint(wint_t ucs)` from Src/compat.c:770.
+///
+/// Reached through `WC_ISPRINT` (`Src/ztype.h:77`) in any build configured
+/// `--enable-unicode9`, which the reference build is
+/// (homebrew-core Formula/z/zsh.rb:67). It is a TABLE lookup, not
+/// `iswprint(3)`: it answers the same in every locale, and the locale only
+/// decides which scalars the decoder hands it.
+///
+/// The previous test — `!ucs.is_control() && u9_wcwidth(ucs) >= 0` — was
+/// wrong twice over. Rust's `Cc` is exactly the table's first TWO intervals
+/// and none of the other eleven, and the `unicode-width` crate maps C's -1
+/// (nonprint) onto `Some(0)` (zero-width), so the second conjunct never
+/// rejected anything either. Result, measured, and independent of locale:
+///
+///     ${(q)} of U+00AD / U+200B / U+FEFF
+///       zsh  : $'\302\255'  $'\342\200\213'  $'\357\273\277'
+///       zshrs: the raw bytes
+///
+/// !!! WARNING: RUST-ONLY GAP !!!
+/// C's `wcwidth9` also returns -1 for the 636 intervals of
+/// `wcwidth9_not_assigned` (`Src/wcwidth9.h:620-1258`, tested at
+/// c:1302-1304), so zsh escapes unassigned codepoints — `${(q)$'\u0378'}`
+/// is `$'\315\270'` there and stays raw here. That table is a separate
+/// mechanical addition and is NOT covered yet.
 pub fn u9_iswprint(ucs: char) -> bool {
-    // ucs:770
-    !ucs.is_control() && u9_wcwidth(ucs) >= 0
+    // c:772-773 — `if (ucs == 0) return 0;`. Subsumed by the {0,0x1f}
+    // interval below; kept explicit because C keeps it explicit.
+    if ucs == '\0' {
+        return false;
+    }
+    // c:774 — `return wcwidth9(ucs) != -1;`. The only -1 arms reachable for a
+    // Rust `char` are c:1294-1296 (nonprint) and c:1302-1304 (not_assigned,
+    // see the WARNING). Combining returns 0 (c:1299), private -3 (c:1307) and
+    // ambiguous -2 (c:1311) are all printable to C's `!= -1`.
+    let cp = ucs as u32;
+    !WCWIDTH9_NONPRINT
+        .iter()
+        .any(|&(lo, hi)| cp >= lo && cp <= hi)
 }
 
 // `convbase` moved out — canonical port lives at
