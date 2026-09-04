@@ -792,22 +792,28 @@ impl ZshCompiler {
         // CALL SITE's line — pinned by E02xtrace's `functions -t` chunks.
         if raw_line != 0 {
             self.current_sublist_line = rel_line as i64;
-            self.builder.emit(Op::LoadInt(rel_line as i64), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
-            self.builder.emit(Op::Pop, 0);
         }
-        // c:Src/exec.c:1455 — reset DONETRAP=0 at every sublist start
-        // so the next sublist's ERREXIT_CHECK fires the ZERR trap
-        // on its first non-zero command. The "already fired" state
-        // persists across function-call returns within the same
-        // outer sublist — preventing the double-ZERR-fire on
-        // `f() { false; }; f`. Bug #303 in docs/BUGS.md.
+        // c:Src/exec.c:1451/1455/1476/1390 — the four things that run
+        // before every sublist, fused into one op. It performs the two
+        // unconditional writes (`lineno`, `donetrap = 0`) and answers
+        // whether the DEBUG_BEFORE_CMD and `noexec` blocks below can be
+        // skipped; see BUILTIN_STMT_PROLOGUE_FAST for why a `true`
+        // answer means they were no-ops. `-1` is the line argument for a
+        // construct that records none (C's `code == 0`).
         self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_DONETRAP_RESET, 0),
+            Op::LoadInt(if raw_line != 0 { rel_line as i64 } else { -1 }),
             0,
         );
-        self.builder.emit(Op::Pop, 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_STMT_PROLOGUE_FAST, 1),
+            0,
+        );
+        let prologue_fast = self.builder.emit(Op::JumpIfTrue(0), 0);
+        // Slow path — reached only when BUILTIN_STMT_PROLOGUE_FAST
+        // reported that a DEBUG trap is installed, `noexec` is set, or
+        // `errflag` is live. `lineno` and `donetrap` were already
+        // written by that op, in both paths.
+        //
         // c:Src/exec.c:1357-1500 DEBUGBEFORECMD — fire the DEBUG
         // trap before each statement. Routes through canonical
         // `dotrap(SIGDEBUG)` which checks the traps_table for a
@@ -863,6 +869,9 @@ impl ZshCompiler {
             0,
         );
         let noexec_skip = self.builder.emit(Op::JumpIfTrue(0), 0);
+        // Both paths rejoin here, in front of the statement body.
+        let prologue_fast_at = self.builder.current_pos();
+        self.builder.patch_jump(prologue_fast, prologue_fast_at);
 
         // ZshList = sublist + flags (async / disown).
         if list.flags.async_ {
@@ -11593,107 +11602,21 @@ impl ZshCompiler {
             self.emit_cmd_pop();
             return;
         }
-        // ArithCompiler emits float-only Op::Div, doesn't recognize
-        // `|=` / `&=` / `^=` / `<<=` / `>>=` as compound assigns, and
-        // doesn't write back the result. Route through MathEval (via
-        // BUILTIN_ARITH_EVAL) when any of those appear OR the expr
-        // contains `/`. MathEval has full operator support and writes
-        // variable values back through extract_string_variables.
-        let needs_eval = inner_arith.contains('/')
-            // c:Src/math.c — `%` zero-divisor is a math error like
-            // `/`. fusevm's Op::Mod returns 0 silently; route
-            // through matheval so the zerr+status=2 path fires.
-            || inner_arith.contains('%')
-            || inner_arith.contains("|=")
-            || inner_arith.contains("&=")
-            || inner_arith.contains("^=")
-            || inner_arith.contains("<<=")
-            || inner_arith.contains(">>=")
-            // Power-assign `**=`. ArithCompiler doesn't recognize
-            // this as compound-assign; it emits MULEQ semantics on
-            // a `**`, producing `2*=3` = 6 for `a=2; (( a **= 3 ))`
-            // instead of the correct 8 (2^3). MathEval has POWEREQ
-            // wired (math.rs:1409, 2471) and writes back through
-            // setmathvar. Verified before fix: `(( a **= 3 ))` → 6.
-            || inner_arith.contains("**=")
-            // Float literals and exponents — ArithCompiler's lexer
-            // can't parse them. Route through MathEval which has
-            // full float support including int→float promotion on
-            // mixed-mode compound assigns (`((a *= 1.5))`).
-            || inner_arith.contains('.')
-            // A bare `contains('e')` / `contains('E')` fired on any
-            // IDENTIFIER carrying the letter — `len`, `ret`, `sel`,
-            // `expl`, `nmatches` — none of which is a float. c:Src/math.c
-            // lexconstant only reads `e`/`E` as an exponent marker after
-            // it has already consumed mantissa digits, so require a digit
-            // immediately before the letter. Over-matching is harmless
-            // (it just routes to the same evaluator), under-matching is
-            // not, so `1e3` / `1.5E+3` / `.5e3` all still trigger.
-            || inner_arith
-                .as_bytes()
-                .windows(2)
-                .any(|w| w[0].is_ascii_digit() && (w[1] | 0x20) == b'e')
-            // Comma operator — ArithCompiler's compound-assign emit
-            // path only handles a single `op=` and drops subsequent
-            // expressions in `a+=5, b*=2`. MathEval evaluates the
-            // entire comma-list in order.
-            || inner_arith.contains(',')
-            // Parameter expansion (`${…}`, `${+name}`, `${#x}`) —
-            // ArithCompiler's lexer treats `$` as an unknown char and
-            // either fails or computes the wrong thing. MathEval
-            // routes through `evaluate_arithmetic` → `expand_string`
-            // first, so the expansion produces a numeric string before
-            // arith evaluation.
-            || inner_arith.contains('$')
-            // Array subscripts on the RHS (`((i=a[2]))`,
-            // `((sum=a[1]+a[2]))`). ArithCompiler doesn't pre-resolve
-            // `name[idx]` so the LHS gets the array's joined-scalar
-            // form. MathEval's path runs pre_resolve_array_subscripts.
-            || inner_arith.contains('[')
-            // Ternary operator. ArithCompiler's emit path doesn't
-            // implement `?:` and silently drops the expression,
-            // leaving the LHS unset. MathEval handles ternary fully.
-            || inner_arith.contains('?')
-            // c:Src/math.c — quoted identifiers in arith
-            // (`(( "abc" == "abc" ))`) are stripped of quotes and
-            // resolved as variable names. ArithCompiler's lexer
-            // doesn't handle quote-stripping; route to MathEval
-            // which already treats `"`/`\u{9e}` (Dnull) as
-            // whitespace at math.rs:1365. Bug #49 in docs/BUGS.md.
-            || inner_arith.contains('"')
-            || inner_arith.contains('\u{9e}')
-            // c:Src/math.c lexconstant — base-tagged literals
-            // (`0xFF`, `0b1010`, `2#1010`, etc.) set `lastbase` so
-            // PM_INTEGER assignment can inherit it for display
-            // formatting. ArithCompiler evaluates literals at compile
-            // time and emits `LoadInt(N)` — the runtime SET_VAR sees
-            // a bare int with no base context, so the param.base
-            // stays 0 and `typeset -p x` shows decimal. Routing
-            // through MathEval keeps the literal lexing on the
-            // runtime path where `lastbase` is set right before the
-            // assignment fires. Bug #175 in docs/BUGS.md.
-            || inner_arith.contains("0x")
-            || inner_arith.contains("0X")
-            || inner_arith.contains("0b")
-            || inner_arith.contains("0B")
-            || inner_arith.contains('#')
-            // c:Src/math.c — zsh's operator precedence for the bitwise,
-            // shift, power and comparison operators differs from the C
-            // precedence ArithCompiler bakes in (e.g.
-            // `4 - -3*7 << 1 & 7 ^ 1 | 16 ** 2` → zsh 1591, ArithCompiler
-            // 259). Route any expression using them through MathEval, which
-            // is the faithful math.c precedence. `+ - *` alone share C/zsh
-            // precedence, so the ArithCompiler fast path still serves the
-            // common `(( i = i + 1 ))` / `(( i++ ))` case. `<`/`>` cover the
-            // shift operators and the relational comparisons in one check.
-            || inner_arith.contains('&')
-            || inner_arith.contains('|')
-            || inner_arith.contains('^')
-            || inner_arith.contains('<')
-            || inner_arith.contains('>')
-            || inner_arith.contains("**")
-            || inner_arith.contains('~')
-            || inner_arith.contains('!');
+        // Which expressions the compiled path cannot serve. This used
+        // to be a 60-line `contains()` list that grew one entry per
+        // discovered divergence — `/`, `%`, `**=`, `|=`, every bitwise
+        // and comparison operator, the ternary, the comma — until it
+        // covered essentially all arithmetic and the compiler was dead
+        // code. Each of those was a real bug, but the cause was one bug
+        // repeated: the compiler used C's operator precedence and C's
+        // float division, neither of which is what `Src/math.c` does.
+        //
+        // With `Z_PREC` and the `DIV`/`MOD`/`POWER` arms ported, the
+        // list collapses to the forms that need runtime state the
+        // compiled path genuinely does not carry (subscripts, base
+        // literals, math functions, word expansion) — see
+        // `arith_uncompilable_reason`.
+        let needs_eval = crate::arith_compiler::arith_uncompilable_reason(inner_arith).is_some();
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
@@ -11788,28 +11711,19 @@ impl ZshCompiler {
         // this also keeps the soft-error → status 2 recovery uniform
         // (#154). (C-style `for ((;;))` uses compile_for_arith, NOT this
         // path, so loop-counter perf is unaffected.)
-        let idx_const = self.builder.add_constant(Value::str(inner_arith));
-        self.builder.emit(Op::LoadConst(idx_const), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-        // result string → status: 0 if non-zero, 1 if "0".
-        let zero_const = self.builder.add_constant(Value::str("0"));
-        self.builder.emit(Op::LoadConst(zero_const), 0);
-        self.builder.emit(Op::StrEq, 0);
-        let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-        self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::SetStatus, 0);
-        let end_jump = self.builder.emit(Op::Jump(0), 0);
-        let true_target = self.builder.current_pos();
-        self.builder.patch_jump(true_jump, true_target);
-        self.builder.emit(Op::LoadInt(1), 0);
-        self.builder.emit(Op::SetStatus, 0);
-        let end = self.builder.current_pos();
-        self.builder.patch_jump(end_jump, end);
-        // c:Src/exec.c:5262-5265 — soft-error recovery: clear
-        // ERRFLAG_ERROR + status 2 so the next statement runs (#154).
+        //
+        // Compiled path: the expression is lowered to arithmetic ops
+        // ONCE, here, instead of being handed to `matheval` as text to
+        // re-lex on every evaluation. `BUILTIN_ARITH_CMD_FINISH_VAL`
+        // takes the numeric result and does what c:Src/exec.c:5262-5267
+        // does with `matheval`'s: record `lastmathval` (c:Src/math.c:1500,
+        // which a `functions -M` math function returns at c:1115), derive
+        // the `(( ))` status from `val == 0`, and convert a soft math
+        // error into status 2 with `errflag` cleared so the next
+        // statement still runs (#154).
+        self.compile_arith_str(inner_arith);
         self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH_VAL, 1),
             0,
         );
         self.builder.emit(Op::Pop, 0);
@@ -11880,6 +11794,7 @@ impl ZshCompiler {
         ac.expr();
         let new_slots = ac.slots.clone();
         let new_next = ac.next_slot;
+        let assigned_names = ac.assigned.clone();
         let chunk = ac.builder.build();
 
         // Inline ArithCompiler's emitted ops into ours, remapping const
@@ -11921,22 +11836,37 @@ impl ZshCompiler {
         self.slots = new_slots.clone();
         self.next_slot = new_next;
 
-        // Post-sync: write each pre-loaded slot back to executor.variables
-        // via BUILTIN_SET_VAR. This makes `(( i++ ))` visible to subsequent
-        // `echo $i` and to the loop's own conditional check.
+        // Post-sync: write the assigned slots back to the parameter
+        // table. This makes `(( i++ ))` visible to a subsequent `echo $i`
+        // and to the loop's own conditional check.
         // The arith result is on top of stack — capture into a temp slot,
         // sync, then restore.
         let result_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(result_slot), 0);
 
-        for name in &pre_load_names {
+        // c:Src/math.c:1364-1372 — only an `OP_E2`/`OP_E2IO` operator
+        // reaches `setmathvar`. Writing back every identifier the
+        // expression MENTIONS would assign to names it only read.
+        //
+        // The write goes through `setmathvar` (c:972), not the generic
+        // scalar store: `typeset -i x; (( x = 3.7 ))` must land 3, and
+        // `typeset -F f; (( f = 1 ))` must land 1.000000000 — the
+        // PM_INTEGER / FORCEFLOAT coercions live in setmathvar and
+        // nowhere else.
+        let mut assigned: Vec<&String> = pre_load_names
+            .iter()
+            .filter(|n| assigned_names.contains(*n))
+            .collect();
+        // Deterministic emission order — `assigned` is a HashSet.
+        assigned.sort();
+        for name in assigned {
             if let Some(&slot) = new_slots.get(name) {
                 let name_const = self.builder.add_constant(Value::str(name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::GetSlot(slot), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2), 0);
                 self.builder.emit(Op::Pop, 0); // discard Status(0)
             }
         }

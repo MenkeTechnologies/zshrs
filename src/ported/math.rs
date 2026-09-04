@@ -1402,7 +1402,7 @@ thread_local! {
     /// top-level `matheval`. Read by callmathfunc's MFF_USERFUNC branch
     /// (math.c:1115 `return lastmathval`): a `functions -M` math function
     /// communicates its result via the last `(( ))` in its body.
-    static M_LASTMATHVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
+    pub(crate) static M_LASTMATHVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
     /// `static char *ptr` — current input cursor. Owned String in Rust
     /// (vs C's caller-owned char*) so the thread_local isn't a borrow.
     static M_INPUT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -1986,14 +1986,14 @@ fn m_variables_insert(k: String, v: mnumber) {
 /// `save_state` so a nested evaluation cannot see the outer frame's cached
 /// reads — C gets the same from `stack` being swapped (Src/math.c:374).
 #[inline]
-fn m_variables_clone() -> HashMap<String, mnumber> {
+pub(crate) fn m_variables_clone() -> HashMap<String, mnumber> {
     M_VARIABLES.with(|c| c.borrow().clone())
 }
 /// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
 /// Restore of the `mptr->pval` stand-in cache (Src/math.c:340-343); the
 /// counterpart of `m_variables_clone`.
 #[inline]
-fn m_variables_set(map: HashMap<String, mnumber>) {
+pub(crate) fn m_variables_set(map: HashMap<String, mnumber>) {
     M_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
 
