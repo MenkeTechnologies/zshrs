@@ -673,12 +673,24 @@ gawkbug -
 #   artefact.
 #
 # ──────────────────────────────────────────────────────────────────────────
-# OPEN — under separate triage, entries to follow
-#   'fortune '    fp bc83e06c2b   insert-vs-list on `_files -W <glob matching
-#                                 nothing>`; /usr/share/games/fortune absent
-#   'gawkbug -'   fp d5ba91f04f   zsh lists 25 rows, 23 of them belonging to
-#                                 _email-sleuth; which shell is right is the
-#                                 open question
-#   'hyperfine -' fp 7673c931bd   count crosses LISTMAX (104 vs <=100); may be
-#                                 the b29792c9a7 family
+# 'fortune ' / 'gawkbug -' / 'hyperfine -' — SUPERSEDED.  See the
+# "TRIAGED 2026-09-04 (LATE)" section above for the real verdicts: none is a
+# default-backend bug, all three were mined from a pre-3dcb8a9755 build, and
+# my guesses here were wrong on all three counts.  `fortune ` was NOT `-W`
+# (it was ${(P)} on the literal `-g`, fixed 5118b92096); `gawkbug -` is a host
+# artefact and zsh is correct; `hyperfine -` is NOT the b29792c9a7 family.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# PATTERN WORTH NAMING: fetchvalue's name parse produced THREE separate bugs
+# on 2026-09-04, all in c:Src/params.c:2210-2236, all reached through ${(P)}:
+#   c9baddda10  no name at all before the bracket — `${(P)}` on `[a b c]`
+#               split at `[` and math-evaluated the text (c:2233-2234 returns
+#               NULL; every other leading byte is not a name)
+#   715f568cf1  a NONZERO positional — c:2238-2247 returns before getindex
+#               (c:2281) is ever reached, so `1[1]` is the whole of `$1`
+#   5118b92096  a one-char special with trailing text — c:2218-2232 takes the
+#               `-` and c:2235-2236 discards the `g`, so `-g` resolves to `$-`
+# The C parses the NAME first and only then considers a subscript; the port
+# had approximated that in three different places.  Any further ${(P)} report
+# should be checked against c:2210-2236 before anything else.
 # ══════════════════════════════════════════════════════════════════════════
