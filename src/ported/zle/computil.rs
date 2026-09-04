@@ -4958,6 +4958,40 @@ pub fn bin_comparguments(
         zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
+    // c:Src/Zle/complete.c:1259/1261 — `{ "words", PM_ARRAY, VAL(compwords) }`
+    // and `{ "CURRENT", PM_INTEGER, VAL(compcurrent) }`. `addcompparams`
+    // (c:1307-1336) installs these with `pm->u.data = cp->var`, so the shell
+    // parameter and the C global are ONE STORAGE: a completer's
+    // `words=( … )` / `(( CURRENT++ ))` IS the write that `ca_parse_line`
+    // reads back at c:2070-2092.
+    //
+    // zshrs's compparams carry `var: 0, gsu: 0` (complete.rs), i.e. two
+    // separate storages. Every ENGINE write mirrors global->param, but nothing
+    // mirrors param->global, so a shell-level assignment was invisible here.
+    // `Completion/Unix/Command/_ansible:293-295` does exactly that —
+    // `words=( role "$words[@]" ); (( CURRENT++ ))` before a nested
+    // `_arguments` — and the parse still saw the PRE-shift words, so
+    // `ansible-galaxy <TAB>` offered 2 matches where zsh offers 11.
+    // Minimal witness: a completer doing that shift then
+    // `_arguments : '1:one:(AAA)' '2:two:(BBB)'` inserts `BBB` in zsh
+    // (positional 2, shifted) and inserted `AAA` here.
+    //
+    // Same shape and the same INCOMPFUNC gate as the established precedent for
+    // PREFIX/SUFFIX/IPREFIX/ISUFFIX at compcore.rs (`refresh the globals from
+    // the params so comp_match filters against the prefix the completer
+    // actually set`).
+    if let Some(w) = crate::ported::params::getaparam("words") {
+        if let Ok(mut g) = COMPWORDS
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *g = w;
+        }
+    }
+    COMPCURRENT.store(
+        crate::ported::params::getiparam("CURRENT") as i32,
+        Ordering::Relaxed,
+    );
     if args.is_empty() {
         return 1;
     }
