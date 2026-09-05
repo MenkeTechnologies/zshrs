@@ -3447,3 +3447,85 @@ tor-resolve
 # — so the stub is installed, absorbed and restored identically.  No commit
 # is claimed for it; it joins the RE-VERIFICATION list above as another
 # recorded-OPEN entry that went stale.  Re-measure before chasing.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# RANGE TOTALS, cells 7365-8234 (870 cells, computed from this sweep's own
+# --jsonl, 870 records — chunks part_00..part_02 taken from their PIN 2
+# re-runs so every record in the total shares one binary):
+#
+#   PASS=861  FAIL=8  TIMEOUT=1  REF-CRASHED=0  SKIP=0  TEST-CRASHED=0
+#
+# Across all 861 PASSes: 0 cursor diffs, 0 one-sided diagnostics, and ZERO
+# asymmetric key-phase pairs — every PASS is either `quiet`/`quiet` (815) or
+# `no-output`/`no-output` (46).  Unlike the 6301-7400 sweep there is no weak
+# PASS to name.
+#
+# Dump re-hashed before and after every chunk: 10ebe0a033… / 2122607 bytes
+# throughout, so no cell sits inside a dump-rewrite window.  The BINARY did
+# change once, mid-sweep, and the affected chunks were re-run — see the PIN
+# LOST MID-SWEEP block above.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# ALL 8 FAILs RE-CONFIRMED SERIALLY AND ALONE — `--jobs 1 --confirm 0
+# --key-budget 30 --silence-recheck 3`, three separate runs.  SEVEN ARE
+# FAIL 3/3.  ONE IS FLAKY:
+#
+#   NEW, ROOT-CAUSED   'w3m '                  fp 4606d00f05   3/3
+#   NEW, ROOT-CAUSED   'ykman ' 'ykman -'      fp 34f292f81c / 1f1d9cc38e   3/3
+#   NEW, ROOT-CAUSED   'upmendex -'            fp b36c77debd   3/3
+#   NEW, ROOT-CAUSED   'write '                ONE-SIDED SILENCE 3/3 (was the TIMEOUT)
+#   KNOWN CLASS        'uvicorn ' 'uvicorn -'  fp 8af74e4fc9 / a9a62db0a1   3/3
+#   KNOWN CLASS        'watch '                fp b29792c9a7   3/3
+#   HOST ARTEFACT      'wait '                 FLAKY 2/3 — live-`ps` class
+#
+# 'ykman -' changes fingerprint between runs (1f1d9cc38e / 7ef9a4f2fc /
+# 1f1d9cc38e) because the surviving row is `--full-help --diagnose -h`
+# vs `--full-help --diagnose --help`; the DEFECT is identical in all three
+# and is the one root-caused below.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# THE ONE TIMEOUT WAS A REAL DEFECT — taxonomy cause 4 again.
+#
+#   'write '   ONE-SIDED SILENCE 3/3.  zsh draws a screen (it inserts the
+#              user name `wizard`); zshrs emits NOTHING after the key at
+#              30.0s AND again at 90.0s (`--silence-recheck 3`), so it is
+#              silent, not slow.  The harness init sets `no_beep`, so a
+#              zero-match completion is zero bytes.  ROOT-CAUSED below.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# 'wait ' — LIVE-`ps` ARTEFACT, do NOT file.  Read by the numbers, not by
+# the fingerprint (which masks digits):
+#     run 1  zsh 110 (110 lines)   zshrs 109 (109)   -1
+#     run 2  zsh 109 (109)         zshrs 108 (108)   -1   ** PASS ** …
+#     run 3  zsh 110 (110)         zshrs 108 (108)   -2
+# (run 2 is scored PASS: both sides happened to land on the same screen.)
+# `_wait` completes jobs and PIDs, the counts are ~110 not ~52k, and both
+# sides wander downward as sessions come and go.  Same class as `kill `,
+# `gcore `, `ps `, `taskinfo `.  Discard.
+#
+# 'watch ' — the b29792c9a7 ask-prompt COUNT class, ALSO verified by the
+# numbers rather than by the fingerprint:
+#     run 1  zsh 52820 (26312)   zshrs 52836 (26316)   +16
+#     run 2  zsh 52824 (26313)   zshrs 52836 (26316)   +12
+#     run 3  zsh 52824 (26313)   zshrs 52836 (26316)   +12
+# Same ~52.8k command-name universe as the 6301-7400 members, same
+# reference-side ±4 wander.  NOTE HONESTLY: the delta here is +12..+16, NOT
+# the +28..+36 the ssh-agent/termshot/texfot group carries, so it is the same
+# BAND but not numerically the same residual; the resolution section's
+# "20 bundled `_z*` + HELPDIR/INFOPATH" accounting does not fully explain
+# +12..+16 and this sweep did not cross-feed the arrays to close the gap.
+# Recorded as class-consistent, not as class-proven.
+#
+# 'uvicorn ' / 'uvicorn -' — KNOWN CLASS, additional reproducer only, NOT
+# filed as new and NOT added to the corpus (the `typer ` precedent).  It is
+# the 8e5553753d colon-bearing-`_arguments`-MESSAGE class from a new trigger,
+# and again THE DIAGNOSTIC IS ON THE REFERENCE SIDE:
+#     zsh    $ uvicorn _arguments:465: command not found: a
+#     zshrs  $ uvicorn                    (quiet)
+# The completer is a user-fpath one,
+# ~/.zinit/plugins/MenkeTechnologies---zsh-more-completions/more_src6/_uvicorn,
+# whose positional spec at sh:260 is
+#     '1:ASGI app import path (e.g. mymodule:app or factory:fn; env: UVICORN_APP):'
+# — a MESSAGE carrying four unescaped `:`.  zsh splits on them and runs one
+# of the fragments as an action in command form; zshrs splits elsewhere and
+# stays quiet.  Whoever takes 'tor-resolve -' should take this too.
