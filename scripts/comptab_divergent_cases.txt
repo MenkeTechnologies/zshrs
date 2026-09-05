@@ -2411,3 +2411,28 @@ read
 #   FAIL   tab1               'thefuck '  (1 row(s) differ)
 #     b29792c9a7  x1   smallest: --case 'thefuck ' --keys tab
 #        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
+#
+# chunk part_09  cells 7201-7300  'tiffdump ' .. 'transfer '
+#   # 89 passed, 6 failed, 100 cell(s)
+#   # categories: PASS=89 FAIL=6 TIMEOUT=5 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 514.7s (5.1s/cell)
+#   # 5 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   TIMEOUT tab1               'tmux -'  (budget exhausted; serial re-run: PASS — still NOT scored as a pass, the first measurement was never valid)
+#   TIMEOUT tab1               'tor-resolve '  (budget exhausted; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
+#   TIMEOUT tab1               'traceroute -'  (budget exhausted; serial re-run: PASS)
+#   TIMEOUT tab1               'traceroute6 '  (budget exhausted; serial re-run: PASS)
+#   TIMEOUT tab1               'traceroute6 -'  (budget exhausted; serial re-run: PASS)
+#   FAIL   tab1               'tig '  (8 row(s) differ)
+#     6da99e167b  x1   smallest: --case 'tig ' --keys tab
+#        cell/row0/col0 | ref/$ tig | test/$ tig <path>:#: command not found: __git_complete
+#   FAIL   tab1               'tig -'  (2 row(s) differ)
+#     292e010414  x1   smallest: --case 'tig -' --keys tab
+#        cell/row0/col1 | ref/$ tig -/ | test/$ tig -<path>:#: command not found: __git_complete
+#   FAIL   tab1               'time '  (1 row(s) differ)       fp b29792c9a7
+#   FAIL   tab1               'torify '  (1 row(s) differ)     fp b29792c9a7
+#   FAIL   tab1               'torsocks '  (1 row(s) differ)   fp b29792c9a7
+#   FAIL   tab1               'tor-resolve -'  (12 row(s) differ)
+#     8e5553753d  x1   smallest: --case 'tor-resolve -' --keys tab
+#        cell/row0/col1 | ref/$ tor-resolve -_arguments:#: command not found: port]: | test/$ tor-resolve -
+#        NOTE the diagnostic is on the REFERENCE side here — zsh is the shell
+#        that errors, zshrs is the quiet one.
