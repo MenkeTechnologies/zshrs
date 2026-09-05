@@ -948,7 +948,29 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
     while i < args.len() {
         let a = &args[i];
         let b = a.as_bytes();
-        // Guard matches the glob `-([AMO]*|[0CRSWnsw])`.
+        // Accepts the same SET of words the glob `-([AMO]*|[0CRSWnsw])` at
+        // sh:14 accepts. It is NOT equivalent to evaluating that glob, and the
+        // difference is observable: `[[ "$1" = PATTERN ]]` also FAILS when the
+        // pattern will not COMPILE, and under SH_GLOB it does not compile.
+        //
+        // The user's completion chain runs under `emulate ksh`, where
+        // `patcompcharsset` masks ZPC_INPAR but deliberately leaves ZPC_OUTPAR
+        // live (c:Src/pattern.c:500-510, comment at c:506-507). The `(` is then
+        // an ordinary character and the trailing `)` is structural, so
+        // `patcompbranch` stops on it, c:913-917's `!paren` termination check
+        // fires, `patcompile` returns NULL and `c:Src/cond.c:314` prints
+        //     _arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])
+        // Measured: `zsh -fc 'f(){ [[ "-s" = -([AMO]*|[0CRSWnsw]) ]]; }; setopt
+        // shglob; f'` errors, zshrs returns 1 silently.
+        //
+        // So `git-cvsserver <TAB>` diverges on a diagnostic this guard cannot
+        // produce, and closing it needs BOTH the pattern-compile gap
+        // (src/ported/pattern.rs:1366-1395, a documented KNOWN GAP requiring a
+        // lexer that models `sub` AND a cond path that stops re-tokenizing
+        // substituted content) and a decision about whether native compsys
+        // ports should reproduce shell-level pattern-COMPILE failures at all.
+        // Until then this guard is deliberately a set test, and this comment
+        // records what it does not cover rather than claiming parity.
         let matches_flag = b.len() >= 2
             && b[0] == b'-'
             && (matches!(b[1], b'A' | b'M' | b'O')
