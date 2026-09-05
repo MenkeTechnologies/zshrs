@@ -1302,6 +1302,6 @@ perldoc
 # same bug as 'mc ' and is kept because it exercises the described-option
 # path as well as the file path.
 ktrace -
-ldapsearch 
-mc 
-mc -
+# ('ldapsearch ', 'mc ', 'mc -' are already in this file above — a peer
+# sweep of the same range landed them in a2967ed1a1 while this one ran.
+# Independent confirmation, same three verdicts; not re-listed here.)
