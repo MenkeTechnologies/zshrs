@@ -209,45 +209,15 @@ fn dispatch_action(
     }
     let cmd = full.remove(0);
 
-    // `lineno` is what `zerrmsg` prints after the function name
-    // (`Src/utils.c:301-305`), and `FnScope` zeroed it on entry to this
-    // body, so publish the upstream line before anything can diagnose.
-    crate::compsys::ported::shared::set_sh_lineno(line);
-
-    // The shell evaluates the resulting word list as a command — it could
-    // be a builtin (compadd / compgen / etc.) or a shell function. We
-    // route compadd to the real builtin in `src/ported/zle/complete`;
-    // everything else goes through the exec-hook dispatch.
-    if cmd == "compadd" {
-        return bin_compadd("compadd", &full, &make_ops(), 0);
-    }
-    if let Some(rc) = dispatch_function_call(&cmd, &full) {
-        return rc;
-    }
-
-    // Neither a shell function nor a registered port. zsh looks for a
-    // builtin and then for an executable on `$PATH`; only when both miss
-    // does it report the command as not found.
-    if crate::ported::builtin::createbuiltintable().contains_key(cmd.as_str())
-        || crate::ported::exec::findcmd(&cmd, 0, 0).is_some()
-    {
-        // The word names something real that this dispatch has no path to.
-        // Keep the pre-existing "action did not succeed" answer rather than
-        // inventing an execution route here.
-        return 1;
-    }
-
-    // c:Src/exec.c:903 — `zerr("command not found: %s", arg0);`
-    //
-    // `zwarn`, NOT `zerr`: c:903 runs in the FORKED child of `execcmd`,
-    // which `_exit(127)`s two lines later at c:908, so the parent shell's
-    // `errflag` is never raised. `zerr` in this port runs in the live shell
-    // and would set ERRFLAG_ERROR (`src/ported/utils.rs:236`), abandoning
-    // the rest of the completion. The rendered text is identical — both
-    // reach `zwarning` (`Src/utils.c:147-155`), which prints
-    // `scriptname:lineno: msg`.
-    crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
-    127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
+    // The shell evaluates the resulting word list as a command — it could be
+    // a builtin (compadd / compgen / …), a shell function, an executable on
+    // `$PATH`, or nothing at all, and each of those four outcomes is
+    // distinguishable in the output zsh produces. The three arms and the
+    // `command not found` diagnostic that used to be written out here now
+    // live in `shared::dispatch_action_command`, because the two action
+    // call sites in `_arguments` (upstream lines 455 and 465) need exactly
+    // the same behaviour and had grown their own (silent) version of it.
+    crate::compsys::ported::shared::dispatch_action_command(&cmd, &full, line)
 }
 
 /// Reach `_all_labels` as a BARE COMMAND WORD, the way every upstream caller
