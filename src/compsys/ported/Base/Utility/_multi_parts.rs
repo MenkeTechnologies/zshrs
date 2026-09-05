@@ -89,6 +89,27 @@ fn dedup(v: Vec<String>) -> Vec<String> {
     out
 }
 
+/// sh:12 `typeset -U tmp1 matches` — declare each name an array (creating it
+/// empty when it does not exist yet, which is what `typeset` does) and stamp
+/// `PM_UNIQUE` on the node.
+///
+/// The attribute-only update mirrors compinit.rs's `declare_global`
+/// (c:Src/builtin.c:2575), inlined because that helper is private to
+/// compinit. `setaparam` creates the node without the bit, so the stamp has
+/// to follow the assignment.
+fn stamp_unique(names: &[&str]) {
+    for name in names {
+        if crate::ported::params::getaparam(name).is_none() {
+            setaparam(name, Vec::new());
+        }
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut(*name) {
+                pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+            }
+        }
+    }
+}
+
 /// `${(q)word}` approximation (see `_sep_parts::q_quote`). Used only
 /// for the `"$orig" != "${orig:q}"` menu test — equality holds when
 /// `orig` contains no shell-special characters.
@@ -375,6 +396,19 @@ pub fn _multi_parts_impl(args: &[String]) -> i32 {
 
     // sh:62  compadd -O matches -M "$matchspec" -a tmp1
     setaparam("tmp1", tmp1.clone());
+    // sh:12  typeset -U tmp1 matches
+    //
+    // `typeset` with no `-g` inside a function is local, so upstream's two
+    // by-name scratch arrays are local AND unique. The port hand-implements
+    // the VALUE half — every assignment to either goes through `dedup()` —
+    // so this stamp only restores the ATTRIBUTE, which is what makes
+    // `compadd -O matches` (just below, and again at sh:94) dedup on its own
+    // rather than depending on the caller remembering the `dedup()` wrapper.
+    // `matches` is stamped before the `compadd -O` that first fills it.
+    // Stamped after `setaparam`, which creates the node and does not carry
+    // the bit; mirrors compinit.rs's private `declare_global`
+    // (c:Src/builtin.c:2575).
+    stamp_unique(&["tmp1", "matches"]);
     {
         let argv = vec![
             "-O".to_string(),

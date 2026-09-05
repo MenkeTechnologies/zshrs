@@ -57,6 +57,9 @@ pub fn _file_systems(args: &[String]) -> i32 {
     //   zsh  : fss=[][0]  expl=[][0]
     //   zshrs: fss=[array][19]  expl=[array][2]
     crate::compsys::ported::shared::declare_locals(&["expl", "fss"], 0);
+    // sh:9 `typeset -aU fss` — the flag is set only by the OSTYPE arm that
+    // re-types the array; see there.
+    let mut linux_unique = false;
     // sh:5 — dispatch on $OSTYPE (runtime, like the shell case).
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let fss: Vec<String> = if ostype.starts_with("aix") {
@@ -123,6 +126,12 @@ pub fn _file_systems(args: &[String]) -> i32 {
         v.extend(darwin_mount_helpers());
         v
     } else if ostype.starts_with("linux") {
+        // sh:9 `typeset -aU fss` — the `-U`, and note it is scoped to THIS
+        // arm only: upstream re-types `fss` inside `linux*)` and nowhere
+        // else, because this is the one arm that GROWS the array (sh:13 and
+        // sh:15 `fss+=(…)` from /proc/filesystems and /etc/filesystems,
+        // which routinely repeat entries of the sh:10-11 literal list).
+        linux_unique = true;
         let mut v = fixed(&[
             "adfs", "bfs", "cramfs", "ext2", "ext3", "hfs", "hpfs", "iso9660", "minix", "ntfs",
             "qnx4", "reiserfs", "romfs", "swap", "udf", "ufs", "vxfs", "xfs", "xiafs",
@@ -161,6 +170,19 @@ pub fn _file_systems(args: &[String]) -> i32 {
     // `_wanted fstypes expl … -a "$@" - fss` reads it BY NAME, so it has to
     // exist as a parameter before that call, not just as a Rust vector.
     setaparam("fss", fss);
+    // sh:9 — stamped AFTER the assignment: `setaparam` creates the node and
+    // would not carry the bit. The `retain()` in the linux arm already makes
+    // THIS value unique, so nothing changes today; the flag is what
+    // `${(t)fss}` reports (`array-local-unique` in zsh, plain `array` here)
+    // and what would dedup a later append. Mirrors compinit.rs's private
+    // `declare_global` (c:Src/builtin.c:2575).
+    if linux_unique {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("fss") {
+                pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+            }
+        }
+    }
     let mut w: Vec<String> = vec![
         "fstypes".to_string(),
         "expl".to_string(),

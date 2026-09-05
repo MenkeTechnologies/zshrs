@@ -149,6 +149,22 @@ pub fn _extensions() -> i32 {
 
     // sh:30  compadd -O mfiles "$expl[@]" -a files
     let expl = getaparam("expl").unwrap_or_default();
+    // sh:10  local -aU files
+    //
+    // `compadd -a files` reads the array BY NAME (sh:30, sh:32), so it has to
+    // be a real parameter — a LOCAL one, and a unique one. `files` is the
+    // set of extensions seen in the directory, and sh:13's glob yields one
+    // element per FILE, so `.c` recurs once per `.c` file present; sh:14-15
+    // then truncate multi-dot names down to their first extension, folding
+    // even more of them together. Without `-U` every duplicate becomes a
+    // duplicate match. The Rust scan above already suppresses repeats as it
+    // collects, so this closes the ATTRIBUTE half — `${(t)files}` read plain
+    // `array` where zsh reads `array-local-unique` — and stops the name
+    // leaking over a caller's `files`.
+    crate::compsys::ported::shared::declare_locals(
+        &["files"],
+        crate::compsys::ported::shared::PM_ARRAY | crate::compsys::ported::shared::PM_UNIQUE,
+    );
     setaparam("files", files.clone());
     let mut probe: Vec<String> = vec!["-O".to_string(), "mfiles".to_string()];
     probe.extend(expl.iter().cloned());
