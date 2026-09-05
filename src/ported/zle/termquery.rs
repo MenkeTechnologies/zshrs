@@ -724,7 +724,8 @@ pub fn collate_seq(sindex: usize, dir: i32) {
         // zshrs mode keeps the marker.
         if enabled
             && key == "integration-prompt"
-            && !crate::extensions::emulation_startup::emits_integration_prompt()
+            && (crate::extensions::emulation_startup::emulating()
+                || !crate::extensions::emulation_startup::emits_integration_prompt())
         {
             enabled = false;
         }
@@ -877,6 +878,14 @@ pub fn mark_output(start: bool) {
     // c:759
     const START: &[u8] = b"\x1b]133;C\x1b\\"; // c:761
     const END: &[u8] = b"\x1b]133;D\x1b\\"; // c:762
+    // ZSHRS-ONLY. The OSC 133 markers are a shell-integration feature no
+    // emulated shell emits — bash writes none, and neither does zsh 5.9
+    // with its default `.term.extensions`. `--bash` was still putting
+    // `\e]133;C` / `\e]133;D` around every command's output. The prompt
+    // marker (133;B) is gated in `collate_seq`; these are the output pair.
+    if crate::extensions::emulation_startup::emulating() {
+        return;
+    }
     if extension_enabled("integration", "output", true) {
         // c:763
         let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);

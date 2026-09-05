@@ -134,6 +134,17 @@ impl Personality {
 /// Personality as a `u8`, so it can live in an atomic.
 static PERSONALITY: AtomicU8 = AtomicU8::new(Personality::Zsh as u8);
 
+/// True when ANY parity / drop-in mode was selected — every `--MODE`
+/// flag and every `argv[0]` inference, `--zsh` included.
+///
+/// Distinct from [`PERSONALITY_SET`]: `--zsh` and native zshrs share
+/// `Personality::Zsh`, so the personality alone cannot tell "the user
+/// asked for a zsh drop-in" from "this is zshrs being itself". The
+/// zshrs-original line-editor engines key off this, because a parity
+/// mode has to look like the shell it stands in for and none of those
+/// shells have ghost text or input highlighting.
+static EMULATING: AtomicBool = AtomicBool::new(false);
+
 /// True once the binary has explicitly selected a personality. Until then
 /// `parseopts_setemulate` keeps its faithful `argv[0]` behavior.
 static PERSONALITY_SET: AtomicBool = AtomicBool::new(false);
@@ -143,6 +154,21 @@ static PERSONALITY_SET: AtomicBool = AtomicBool::new(false);
 pub fn set_personality(p: Personality) {
     PERSONALITY.store(p as u8, Ordering::Relaxed);
     PERSONALITY_SET.store(true, Ordering::Relaxed);
+}
+
+/// Record that a parity / drop-in mode was selected. Called once from
+/// the binary's CLI mode application, for every `--MODE` and every
+/// `argv[0]` inference.
+#[inline]
+pub fn set_emulating(on: bool) {
+    EMULATING.store(on, Ordering::Relaxed);
+}
+
+/// True when this process is standing in for another shell — any
+/// `--MODE` flag or `argv[0]` inference, `--zsh` included.
+#[inline]
+pub fn emulating() -> bool {
+    EMULATING.load(Ordering::Relaxed)
 }
 
 /// The selected drop-in, defaulting to [`Personality::Zsh`].
