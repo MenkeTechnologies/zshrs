@@ -654,6 +654,36 @@ pub fn try_flush_pending() {
     }
 }
 
+/// libc `atexit` hook: flush whatever `put_one` buffered.
+///
+/// `preprompt()` covers an interactive shell and `zexit` covers a shell that
+/// unwinds normally, but NEITHER runs on the paths that actually end a
+/// one-shot: `zshrs -c SCRIPT` leaves through `std::process::exit` in
+/// `bins/zshrs.rs`, and the `exit` builtin terminates the process directly.
+/// `std::process::exit` runs no Rust destructors, so without this every
+/// `zshrs -c` recompiled its autoloads and wrote nothing back — the cache was
+/// dead for scripts.
+///
+/// libc atexit runs AFTER the Rust runtime begins tearing down thread-locals,
+/// and `tracing::*` touches TLS, so the body is wrapped in `catch_unwind`: an
+/// unwinding panic out of an `extern "C"` function aborts the process. Same
+/// hazard and same mitigation as `recorder::atexit_finalize`.
+extern "C" fn atexit_flush_pending() {
+    let _ = std::panic::catch_unwind(try_flush_pending);
+}
+
+/// Register [`atexit_flush_pending`]. Idempotent; call once from `main`.
+pub fn install_atexit_flush() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: `atexit_flush_pending` is a plain `extern "C"` fn with the
+        // signature libc requires.
+        unsafe {
+            libc::atexit(atexit_flush_pending);
+        }
+    });
+}
+
 /// Drop a proven-wrong entry. See [`AutoloadCache::remove`].
 pub fn try_remove(name: &str) {
     if let Some(cache) = CACHE.as_ref() {

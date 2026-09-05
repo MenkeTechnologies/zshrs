@@ -1145,6 +1145,16 @@ fn main() {
     // any dispatch path forks off — covers `-c`, script and interactive
     // alike. Must stay the first statement so shell init cannot skew it.
     let _ = zsh::ported::params::shtimer_lock(); // c:1121
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Register the autoload-cache flush as a libc atexit hook. `preprompt()`
+    // covers the interactive loop and `zexit` covers a normal unwind, but
+    // NEITHER runs on the paths that end a one-shot: `-c` leaves through
+    // `std::process::exit` below, and the `exit` builtin terminates the
+    // process directly. `std::process::exit` runs no Rust destructors, so
+    // every `zshrs -c` was recompiling its autoloads and writing nothing
+    // back. Registered here, at the process entry point before any dispatch
+    // path forks off, for the same reason the stamp above is.
+    zsh::autoload_cache::install_atexit_flush();
                                                  // c:Src/params.c:893 createparamtable reads `environ` exactly as
                                                  // it was at process entry. Snapshot it as the first statement so
                                                  // nothing later in shell init (setenv from builtins, lazy crate
