@@ -66,11 +66,17 @@ pub fn _python_modules(args: &[String]) -> i32 {
         && _retrieve_cache(&[cache_id.clone()]) != 0
     {
         // sh:32 — set -A $array_name $(python -c $script)
+        // sh:34 `_call_program modules $python -c ${(q)script}` — the SCRIPT
+        // is (q)-quoted, the interpreter is not. `_call_program` sh:33 evals
+        // `"$argv[2,-1]"`, joining its words with spaces BEFORE parsing, so
+        // handing SCRIPT over raw let eval re-split it on its own spaces and
+        // embedded newline: ``(eval):2: parse error near `importer,'``.
+        // Same defect as `_perl_modules` sh:86 (fixed in a18f8e671f).
         let _ = call_program_capture(&[
             "modules".to_string(),
             python.clone(),
             "-c".to_string(),
-            SCRIPT.to_string(),
+            crate::ported::utils::quotestring(SCRIPT, crate::ported::zsh_h::QT_BACKSLASH),
         ]);
         let mods: Vec<String> = getsparam("REPLY")
             .unwrap_or_default()
@@ -113,9 +119,44 @@ mod tests {
     fn returns_one_without_completion_context() {
         let _g = crate::test_util::global_state_lock();
         INCOMPFUNC.store(1, Ordering::Relaxed);
-        setaparam("words", vec!["python3".to_string()]);
+        // The interpreter is taken from `words[0]`. Name one that does not
+        // exist, so the enumeration genuinely yields nothing.
+        //
+        // This used to say `python3`, and passed only BECAUSE the port handed
+        // `_call_program` an unquoted SCRIPT: eval re-split it and python died
+        // on ``parse error near `importer,'``, so no modules were ever found.
+        // Quoting the script (as sh:34's `${(q)script}` does) makes python
+        // really run and return ~2952 bytes of names, and the function then
+        // correctly returns 0 — matches were added. The assertion below is
+        // about the NO-CANDIDATES path, so force that condition honestly
+        // instead of relying on a bug to produce it.
+        setaparam("words", vec!["python3-no-such-interpreter-zzz".to_string()]);
         let r = _python_modules(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
         assert_eq!(r, 1);
+    }
+
+    /// sh:34 — the script reaches `_call_program` (q)-quoted.
+    ///
+    /// `_call_program` evals `"$argv[2,-1]"`, which JOINS its words with
+    /// spaces before parsing, so a word containing raw whitespace is re-split
+    /// by eval. SCRIPT holds both spaces and a newline; unquoted it produced
+    /// ``(eval):2: parse error near `importer,'`` and the completer returned
+    /// nothing. Pin the property that makes it survive: no unescaped
+    /// whitespace remains in the word handed over.
+    #[test]
+    fn script_is_quoted_so_eval_cannot_resplit_it() {
+        let quoted = crate::ported::utils::quotestring(
+            SCRIPT,
+            crate::ported::zsh_h::QT_BACKSLASH,
+        );
+        assert!(SCRIPT.contains(' ') && SCRIPT.contains('\n'), "fixture assumption");
+        let mut prev = '\0';
+        for c in quoted.chars() {
+            if c.is_whitespace() {
+                assert_eq!(prev, '\\', "unescaped whitespace in {quoted:?}");
+            }
+            prev = c;
+        }
     }
 }
