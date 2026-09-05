@@ -1390,7 +1390,15 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                     } else if action.starts_with(' ') {
                         // sh:453 — `eval "action=( $action )"; "$action[@]"`.
                         // Quote-respecting split (see eval_action_words).
-                        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+                        // When the eval FAILS the assignment never happens and
+                        // `action` stays a SCALAR, whose `[@]` is the whole
+                        // string as ONE word — so the command word is the
+                        // entire action text.
+                        let parts: Vec<String> =
+                            match crate::compsys::ported::eval_action_words_status(&action) {
+                                Ok(words) => words,
+                                Err(scalar) => vec![scalar],
+                            };
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
@@ -1419,7 +1427,19 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                         // sh:463 — `eval "action=( $action )"`, then call
                         // action[1] with subopts, expl, rest. The split MUST
                         // respect quotes (see eval_action_words).
-                        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+                        //
+                        // When the eval FAILS — an action text that is not a
+                        // parseable word list is a PARSE ERROR — the
+                        // assignment never happens and `action` stays a
+                        // SCALAR, so sh:465's `$action[1]` is its first
+                        // CHARACTER and `${(@)action[2,-1]}` the rest. That is
+                        // how `uvicorn <TAB>` reaches
+                        // `_arguments:465: command not found: a`.
+                        let parts: Vec<String> =
+                            match crate::compsys::ported::eval_action_words_status(&action) {
+                                Ok(words) => words,
+                                Err(scalar) => crate::compsys::ported::scalar_action_call(&scalar),
+                            };
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
