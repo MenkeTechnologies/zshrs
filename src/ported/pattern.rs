@@ -1393,6 +1393,24 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
     // `case`). Over-rejecting is the worse failure, so the check stays
     // out until the lexer models `sub`; then it can be restored here
     // verbatim from c:913-917.
+    //
+    // SECOND SUBSTRATE, measured 2026-09-05 — the lexer is not the only
+    // thing missing. A SCOPED restore (error only on a leftover `)`) was
+    // built and measured green on 13 targeted probes, 781 unit tests,
+    // `--test emulation_parity` 47/47, and a 1250-case zsh-vs-zshrs
+    // differential paren sweep with ZERO diffs. It still had to be reverted,
+    // because it over-rejects a pattern that arrives as a RUNTIME STRING:
+    //     emulate ksh; p='-([AMO]*|[0CRSWnsw])'; [[ "-s" = $~p ]]
+    //     zsh -> no match (rc 1)        zshrs+restore -> `bad pattern`
+    // c:Src/glob.c:3624-3627 — `zshtokenize` SKIPS `(`, `|` and `)` under
+    // ZSHTOK_SHGLOB, so a runtime-string pattern never carries `Outpar`
+    // under SH_GLOB at all. zshrs re-tokenizes the whole cond RHS AFTER
+    // substitution, with flags 0, at `src/ported/cond.rs:487-489`, which
+    // undoes that suppression and makes the two indistinguishable again.
+    // So restoring c:913-917 needs BOTH: a lexer that models `sub`, and a
+    // cond path that stops re-tokenizing substituted content. Visible
+    // symptom while it stays out: `git-cvsserver <TAB>`, where zsh prints
+    // `_arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])` and zshrs does not.
     let _ = first_branch;
     // c:919-929 — C emits the closing P_GFLAGS restore right here, using
     // this local `gfchanged`. The Rust port emits it from patcomppiece's
