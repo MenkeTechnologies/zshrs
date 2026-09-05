@@ -3135,10 +3135,44 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         return atom; // c:1616-1617
     }
 
-    // c:1621-1622 — kshchar with hash is a parse error (too much at once).
-    if kshchar != 0 && has_hash {
-        return -1;
+    // c:1626-1627 — `if (kshchar && (hash || count)) return 0;`
+    //   /* too much at once doesn't currently work */
+    //
+    // `case Star:` (c:1440) sets `kshchar = -1` — per C's own comment there,
+    // "kshchar is used as a sign that we can't have #'s" — so a closure may
+    // not follow a `*`. This port's `kshchar` is a u8 trigger byte and cannot
+    // hold C's sentinel, so the atom's head opcode expresses it instead: a
+    // Star atom is a P_STAR node (c:1441).
+    //
+    // The `count` half of this same C condition WAS ported, in patcompbranch
+    // (pattern.rs:1587-1600, which rejects `*(#c2,3)`); only the `hash` half
+    // was missing, so the two arms of one C test disagreed. Measured, `zsh -f`
+    // 5.9 vs this port: `*#`, `*##` and `a*#b` are `bad pattern` in zsh and
+    // were all accepted here, while `*(#c2,3)` was already rejected by both.
+    let atom_is_star = {
+        let buf = patout.lock().unwrap();
+        buf.get(atom as usize + I_OP).copied().unwrap_or(0) == P_STAR // c:1440-1441
+    };
+    if (kshchar != 0 || atom_is_star) && has_hash {
+        return -1; // c:1627 `return 0;`
     }
+
+    // c:1710 / c:1723 — `flags`, the ATOM's own flag word. C keeps it in a
+    // local for the whole of patcomppiece and only publishes it through
+    // `*flagp` at c:1621 (the no-quantifier return); the dispatch below
+    // OVERWRITES `*flagp` with P_HSTART (c:1631-1648) before either
+    // optimisation reads its operand's flags. This port merged the two into
+    // `*flagp`, so `*flagp & P_SIMPLE` was necessarily 0 by the time the
+    // c:1710 and c:1723 tests ran and BOTH simple paths were dead: every
+    // `x#` compiled to the c:1730 P_WBRANCH form instead.
+    //
+    // That is what kept the leading-dot rule off closures. C's `?#` becomes
+    // a bare P_STAR (c:1721) and `[a]#` a P_ONEHASH whose operand is the
+    // P_ANYOF (c:1725) — both P_NOTDOT-visible, at c:2731 and c:3322
+    // respectively. A P_WBRANCH (0x21) is neither. Measured with `.hidden`
+    // present and GLOB_DOTS off, `zsh -f` 5.9 lists nothing for `?#.hidden`
+    // and `[a]#.hidden`; this port listed `.hidden` for both.
+    let flags = *flagp; // c:1710 `flags`
 
     // c:1624-1644 — pick the operator + post-atom flags.
     let op: u8;
@@ -3186,7 +3220,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         }
     };
 
-    if ((*flagp & P_SIMPLE) != 0) && (op == P_ONEHASH || op == P_TWOHASH) && atom_op == P_ANY {
+    if ((flags & P_SIMPLE) != 0) && (op == P_ONEHASH || op == P_TWOHASH) && atom_op == P_ANY {
         // c:1705-1717 — `?#` becomes `*`; `?##` becomes `?*`. The atom
         // is P_ANY at offset `atom`; rewrite or pad as needed.
         let mut buf = patout.lock().unwrap();
@@ -3203,7 +3237,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             *tail_out = atom as usize;
         }
         *flagp &= !P_PURESTR;
-    } else if ((*flagp & P_SIMPLE) != 0)
+    } else if (flags & P_SIMPLE) != 0
         && op != 0
         && (patglobflags.load(Ordering::Relaxed) & 0xff) == 0
     {
@@ -5933,8 +5967,11 @@ pub fn patmatch(
         // whole subject to every recursive patmatch and moves the offset.
         //
         // C's second gate at c:3322 tests P_OPERAND of a P_ONEHASH /
-        // P_TWOHASH; here the closure arm recurses into that operand
-        // through this same loop head, so the operand is checked on entry.
+        // P_TWOHASH and is a SEPARATE site, ported in that arm below. It is
+        // not redundant with this one: reaching it through the arm's
+        // recursion only fails the operand, and a P_ONEHASH with min = 0
+        // (c:3328) treats that as zero repetitions and carries on. C returns
+        // 0 for the whole match.
         // Conjunct order differs from C's only to keep the atomic load off
         // the hot path: `s_off == 0` is false for every node after the first
         // character is consumed, and C's `globdots` is a plain int. No
@@ -6273,6 +6310,30 @@ pub fn patmatch(
                 // 5-byte header). The repeated atom occupies the
                 // bytes from there until `next`.
                 let operand = scan + I_BODY;
+                // c:3322-3325 — `if (!globdots && P_NOTDOT(P_OPERAND(scan)) &&
+                //                    patinput == patinstart && patinput < patinend &&
+                //                    CHARREF(patinput, patinend) == ZWC('.')) return 0;`
+                //
+                // This is NOT covered by the c:2731 gate at the loop head, even
+                // though the repeat below recurses into `operand` and trips it
+                // there. C ABORTS THE WHOLE MATCH; the loop head only fails the
+                // operand, which for P_ONEHASH (min = 0, c:3328) is an ordinary
+                // "zero repetitions" outcome that then hands a still-dot-leading
+                // subject to the continuation. Measured with `.hidden` present
+                // and GLOB_DOTS off: `[a]#.hidden` and `?#.hidden` list nothing
+                // in `zsh -f` 5.9 and listed `.hidden` here. `(x)#.hidden` DOES
+                // match in both — P_BRANCH (0x20) is not P_NOTDOT — which is
+                // what pins this to the operand's opcode rather than to closures.
+                if s_off == 0
+                    && code
+                        .get(operand + I_OP)
+                        .is_some_and(|o| (o & 0x40) != 0)
+                    && s_off < string.len()
+                    && string.as_bytes()[s_off] == b'.'
+                    && globdots.load(Ordering::Relaxed) == 0
+                {
+                    return None; // c:3325
+                }
                 let min = if op == P_TWOHASH { 1 } else { 0 };
                 // Greedy: match operand repeatedly until it fails,
                 // then walk back trying continuations.
@@ -7407,6 +7468,47 @@ mod tests {
         assert_eq!(refs[1], (3, 6));
     }
 
+    /// c:1626-1627 — `if (kshchar && (hash || count)) return 0;`, where
+    /// `case Star:` supplies the `kshchar = -1` sentinel (c:1440, "kshchar is
+    /// used as a sign that we can't have #'s"). Both halves of that one C
+    /// test have to reject: this port had ported only the `count` half (in
+    /// patcompbranch), so `*(#c2,3)` was already a bad pattern here while
+    /// `*#` / `*##` / `a*#b` compiled and matched. `zsh -f` 5.9 answers
+    /// `bad pattern: *#` for all three.
+    #[test]
+    fn a_closure_may_not_follow_a_star() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
+        let try_compile = |p: &str| {
+            let _t = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            patcompile(
+                &{
+                    let mut tok = p.to_string();
+                    crate::ported::glob::tokenize(&mut tok);
+                    tok
+                },
+                PAT_HEAPDUP as i32,
+                None,
+            )
+        };
+        for bad in ["*#", "*##", "a*#b"] {
+            assert!(
+                try_compile(bad).is_none(),
+                "c:1627 — `{bad}` is a bad pattern: a closure cannot follow `*`"
+            );
+        }
+        // The neighbouring forms still compile: a closure on a non-Star atom,
+        // and a `*` with no closure after it.
+        for good in ["a#", "[a]#", "?#", "a*b", "(a*)#"] {
+            assert!(
+                try_compile(good).is_some(),
+                "c:1620 — `{good}` has no kshchar/Star + hash pair and must compile"
+            );
+        }
+        crate::ported::options::opt_state_set("extendedglob", saved);
+    }
+
     #[test]
     fn hash_zero_or_more() {
         let _g = crate::test_util::global_state_lock();
@@ -7716,6 +7818,30 @@ mod tests {
         assert!(pattry(&file_prog("*hidden"), "xhidden"));
         assert!(pattry(&file_prog("x?idden"), "xhidden"));
         assert!(pattry(&file_prog("x*"), "x.hidden"));
+
+        // c:3322-3325 — the SECOND gate, on the operand of a P_ONEHASH /
+        // P_TWOHASH. Reaching the c:2731 gate through the closure's own
+        // recursion is not the same thing: it fails only the operand, and
+        // P_ONEHASH's `min` of 0 (c:3328) treats that as zero repetitions and
+        // lets the continuation match the dot anyway. Needs EXTENDED_GLOB for
+        // `#` to be a closure at all (c:480-483 rewrites zpc_special[ZPC_HASH]
+        // to Marker when it is off).
+        let had_xglob = opt_state_get("extendedglob").unwrap_or(false);
+        opt_state_set("extendedglob", true);
+        for pat in ["[a]#.hidden", "?#.hidden"] {
+            assert!(
+                !pattry(&file_prog(pat), ".hidden"),
+                "c:3325 — `{pat}`'s closure operand is P_NOTDOT, so the whole \
+                 match fails; zero repetitions must not let the dot through"
+            );
+        }
+        // A P_BRANCH operand (0x20) is not P_NOTDOT, so this one DOES match —
+        // both here and in `zsh -f`. It is what pins the rule to the operand's
+        // opcode rather than to "there is a closure".
+        assert!(pattry(&file_prog("(x)#.hidden"), ".hidden"));
+        // P_TWOHASH needs one real repetition anyway (c:3328 `min = 1`).
+        assert!(!pattry(&file_prog("[a]##.hidden"), ".hidden"));
+        opt_state_set("extendedglob", had_xglob);
     }
 
     /// `<a-b>` numeric range: digits matching n where lo ≤ n ≤ hi.
