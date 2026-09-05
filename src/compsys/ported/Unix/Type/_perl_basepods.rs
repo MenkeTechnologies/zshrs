@@ -28,6 +28,24 @@ use crate::ported::params::{getaparam, getsparam, setaparam};
 
 /// sh:25 — `${podpath}/*.pod(:r:t)`: basenames (`:t`) with the `.pod`
 /// extension stripped (`:r`) of every pod file under `podpath`.
+/// sh:12 `typeset -agU _perl_basepods` — the `-U`.
+///
+/// Stamped AFTER the assignment because `setaparam` creates the node and
+/// would not carry the bit through. `pods_in` already sorts and dedups, so
+/// the flag changes no value today; it matters because `_perl_basepods` is a
+/// cross-invocation GLOBAL cache, so a later append by anything else must
+/// dedup too — and because `${(t)_perl_basepods}` reads `array-unique` in
+/// zsh. Mirrors the attribute-only update in compinit.rs's `declare_global`
+/// (c:Src/builtin.c:2575), inlined because that helper is private to
+/// compinit.
+fn mark_unique(name: &str) {
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+        }
+    }
+}
+
 fn pods_in(podpath: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(podpath) {
@@ -49,6 +67,41 @@ pub fn _perl_basepods(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_perl_basepods");
     // sh:11  (( ! $+_perl_basepods ))
     if getaparam("_perl_basepods").is_none() {
+        // sh:14-16 — `if (( ${+commands[basepods]} )); then
+        //              _perl_basepods=( ${$(basepods):t:r} )`.
+        // Was never ported: the body jumped straight from sh:11 to sh:19, so
+        // a host WITH `basepods` installed silently took the perl-Config
+        // probe instead of the tool upstream prefers. `${…:t:r}` is tail then
+        // root, i.e. basename with the extension stripped, applied to each
+        // word of the command substitution.
+        //
+        // Upstream spells it as a bare `$(basepods)`, not `_call_program`;
+        // routing it through `_call_program` matches how this file already
+        // treats sh:19's equally-bare `$(perl -MConfig …)`, and so picks up
+        // the `command` zstyle for both. Deliberate, and consistent within
+        // the file rather than literal to upstream.
+        if crate::ported::exec::findcmd("basepods", 0, 0).is_some() {
+            let (out, _) = call_program_capture(&[
+                "perl-basepods".to_string(),
+                "basepods".to_string(),
+            ]);
+            let _ = out;
+            let pods: Vec<String> = getsparam("REPLY")
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(|w| {
+                    // `:t` — strip everything through the last `/`.
+                    let tail = w.rsplit('/').next().unwrap_or(w);
+                    // `:r` — strip the last `.` and what follows.
+                    match tail.rfind('.') {
+                        Some(i) if i > 0 => tail[..i].to_string(),
+                        _ => tail.to_string(),
+                    }
+                })
+                .collect();
+            setaparam("_perl_basepods", pods);
+            mark_unique("_perl_basepods");
+        } else {
         // sh:19  podpath=$(perl -MConfig -e 'print "$Config{installprivlib}/pod"')
         let _ = call_program_capture(&[
             "perl-basepods".to_string(),
@@ -66,6 +119,8 @@ pub fn _perl_basepods(args: &[String]) -> i32 {
         }
         // sh:25
         setaparam("_perl_basepods", pods_in(&podpath));
+        mark_unique("_perl_basepods");
+        }
     }
 
     // sh:32  _wanted pods expl 'perl base pod' compadd -a "$@" - _perl_basepods
