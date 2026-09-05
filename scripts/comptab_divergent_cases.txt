@@ -3529,3 +3529,86 @@ tor-resolve
 # — a MESSAGE carrying four unescaped `:`.  zsh splits on them and runs one
 # of the fragments as an action in command form; zshrs splits elsewhere and
 # stays quiet.  Whoever takes 'tor-resolve -' should take this too.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — A `(@f)` SPLIT IS SILENTLY DROPPED WHEN THE COMMAND
+# SUBSTITUTION IT WRAPS CONTAINS THE THREE CHARACTERS `${`.
+# fp 34f292f81c ('ykman ') / 1f1d9cc38e ('ykman -').  CORE bug, not compsys.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#     zsh    $ ykman     info     -- show general information
+#                        list     -- list connected YubiKeys
+#                        script   -- run a python script
+#                        config   -- configure the YubiKey, enable or disable
+#                        fido     -- manage the FIDO applications
+#                        hsmauth  -- manage the YubiHSM Auth application
+#                        oath / openpgp / otp / piv …          (10 rows)
+#     zshrs  $ ykman     hsmauth  fido  -- manage
+#                        info           -- show                 (2 rows)
+#
+# SMALLEST REPRODUCER — no completion, no fpath, no compinit, two lines:
+#
+#     v=X
+#     zsh   -f -c 'v=X; r=("${(@f)$(printf "%s\n" one "two ${v} three" four)}"); print $#r'   ->  3
+#     zshrs -f -c 'v=X; r=("${(@f)$(printf "%s\n" one "two ${v} three" four)}"); print $#r'   ->  5
+#
+# zshrs returns 5 because it threw the `(f)` newline split away and IFS-split
+# the command output on WHITESPACE instead: `one` `two` `X` `three` `four`.
+#
+# BOUNDED BY MEASUREMENT — the trigger is the literal text `${` anywhere in
+# the command substitution, and the `@` flag on the outer expansion:
+#
+#     "${(@f)$(printf … one "two three" four)}"          n=3  n=3   AGREE
+#     "${(@f)$(printf … one "two $v three" four)}"        n=3  n=3   AGREE  (unbraced)
+#     "${(@f)$(printf … one "two ${v} three" four)}"      n=3  n=5   DIVERGE
+#     "${(@f)$(printf … one "two ${v:-y} three" four)}"   n=3  n=5   DIVERGE
+#     "${(@f)$(printf … one two\ ${v}\ three four)}"      n=3  n=5   DIVERGE
+#     "${(@f)$(printf … one "two $(echo z) three" four)}" n=3  n=3   AGREE  (nested $() is fine)
+#     "${(f)$(printf …  one "two ${v} three" four)}"      n=3  n=3   AGREE  (no `@`)
+#     "${(@s.:.)$(printf … one:"two ${v} three":four)}"   n=3  n=5   DIVERGE  (any split flag)
+#
+# AND THE TWO CASES THAT PROVE IT IS A TEXTUAL SCAN, NOT A PARSE — a `${`
+# that is SINGLE-QUOTED or BACKSLASH-ESCAPED inside the substitution, i.e.
+# one that can never be an expansion at all, breaks it just the same:
+#
+#     "${(@f)$(printf … one 'two ${v} three' four)}"      n=3  n=5   DIVERGE
+#     "${(@f)$(printf … one "two \${v} three" four)}"     n=3  n=5   DIVERGE
+#
+# THE SITE.  `src/extensions/compile_zsh.rs:7821`
+#
+#     let need_array = (flag_chain.contains('@') && after_flags.contains("${"))
+#         || has_at_filter || has_filter_with_match_flag || at_with_index_subscript;
+#
+# `after_flags` is everything after the outer `${(flags)`; for this word it is
+# the whole `$(printf … ${v} …)` command substitution, so `contains("${")`
+# is true and the word is routed to BRIDGE_BRACE_ARRAY (the "triple-nested
+# `${(@)…${…}…}`" fast path, trigger condition 1 in the comment above the
+# line).  That bridge is built for a nested PARAMETER expansion; handed a
+# command substitution it evaluates the body and IFS-splits it, and the
+# outer `(f)`/`(s.:.)` never runs.  The guard immediately above it
+# (`braced_expansion_spans_word`, compile_zsh.rs:7783) was added for exactly
+# this shape of over-trigger — two adjacent expansions — and the same
+# reasoning applies here: `contains("${")` cannot tell an expansion the
+# bridge should handle from three characters sitting inside a nested
+# command substitution, a single-quoted string, or a backslash escape.
+#
+# WHY IT MATTERS BEYOND ykman: `"${(@f)$(cmd --opt="${var}")}"` is the
+# canonical shape emitted by Click- and Cobra-generated zsh completions, and
+# `_ykman` (the Homebrew site-functions one, from Click) is one instance:
+#     response=("${(@f)$(env COMP_WORDS="${words[*]}" COMP_CWORD=$((CURRENT-1)) \
+#                        _YKMAN_COMPLETE=zsh_complete ykman)}")
+#     for type key descr in ${response}; do …
+# With the split degraded to whitespace, the 3-at-a-time loop re-phases
+# against the wrong words, which is EXACTLY the observed output: the tool
+# prints 30 lines, the whitespace split yields 44 words, and only the triples
+# that happen to start with `plain` survive — `(plain,info,show)`,
+# `(plain,fido,manage)`, `(plain,hsmauth,manage)`.  Predicted before it was
+# measured, and it is what the screen shows.
+#
+# Verified byte-identical on both shells OUTSIDE completion, so none of these
+# is the mechanism: the tool's own output, `${(@f)$(…)}` with a literal
+# COMP_WORDS, the `for t k d in ${arr}` 3-variable loop, `$options[shwordsplit]`
+# inside the completion context (`off` on both), and `_describe` with
+# space-bearing descriptions.
+ykman 
+ykman -
