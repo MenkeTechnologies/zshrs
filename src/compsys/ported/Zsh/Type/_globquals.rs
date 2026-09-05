@@ -381,7 +381,7 @@ pub fn _globquals() -> i32 {
             // sh:148  (L)
             'L' => {
                 if compset(&["-P", "([kKmMgGtTpP]|)([-+]|)<->"]) != 0 {
-                    // sh:151  alts=()
+                    // sh:152  alts=()
                     let mut alts: Vec<String> = Vec::new();
                     // sh:153
                     if compset(&["-P", "[kKmMgGtTpP]"]) != 0
