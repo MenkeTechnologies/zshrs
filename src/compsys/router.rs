@@ -382,6 +382,13 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_list_files" => Some(_list_files::_list_files),
         "_locales" => Some(_locales::_locales),
         "_mailboxes" => Some(_mailboxes::_mailboxes),
+        // `_mailboxes` sh:50 passes the bare name `_mua_mailboxes` to
+        // `_requested`, which forwards it to `_all_labels` to be RUN. Without
+        // this arm the lookup failed and the whole mailboxes tag produced
+        // `_all_labels:39: command not found: _mua_mailboxes`. Same shape as
+        // `_perl_modules_caching_policy` below: a helper defined in the same
+        // upstream file that a sibling reaches by name.
+        "_mua_mailboxes" => Some(_mailboxes::_mua_mailboxes),
         "_mime_types" => Some(_mime_types::_mime_types),
         "_net_interfaces" => Some(_net_interfaces::_net_interfaces),
         "_newsgroups" => Some(_newsgroups::_newsgroups),
