@@ -5,6 +5,7 @@
 //! large `_regex_arguments _bpf …` completion state machine and runs it:
 //! ```text
 //! sh:  6  networks=( … )   subtypes=( mgt … )   flags=( len … tcp … icmp … )
+//! sh:  8  local suf=']'
 //! sh: 33  case $OSTYPE in solaris*|*bsd*) fields/protos/dirs/relop … esac
 //! sh: 58  compquote suf
 //! sh: 70  _regex_arguments _bpf /$'[^\0]#\0'/ \( … full spec … \) \#
@@ -21,7 +22,10 @@
 //! `\#` grouping tokens become the words `(`/`)`/`|`/`#`.
 
 use crate::compsys::ported::_regex_arguments::{_regex_arguments, dispatch_registered};
-use crate::ported::params::{getsparam, setaparam};
+use crate::compsys::ported::shared::LocalScope;
+use crate::ported::params::{getsparam, setaparam, setsparam};
+use crate::ported::zle::computil::bin_compquote;
+use crate::ported::zsh_h::{options, MAX_OPS};
 
 /// The OS-dependent BPF word tables (sh:33-61).
 pub struct BpfTables {
@@ -465,19 +469,64 @@ fn build_bpf_spec(t: &BpfTables) -> Vec<String> {
     s
 }
 
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// sh:8 + sh:58 — `local suf=']'` followed by `compquote suf`.
+///
+/// Three of the spec's action strings interpolate `$suf`
+/// (`compadd -S "$suf" 1 2 4`, `compadd -S "$suf " tcpflags`, and the icmp
+/// twin) and they are eval'd BY NAME while `_bpf_filters`' frame is still
+/// live, so `suf` has to exist as a real parameter.
+///
+/// compquote quotes for the CURRENT quoting context — `comp_quote` quotes with
+/// `*compqstack` (`Src/Zle/computil.c:3691-3705`) — so the bracket cannot be
+/// baked into the spec. Measured in real zsh, `tcpdump tcp\[<TAB>` completes
+/// an unquoted word and inserts `tcpflags\] `, while `tcpdump 'tcp[<TAB>` is
+/// already inside single quotes and inserts `tcpflags] `. With `suf` never set
+/// at all the port inserted a bare `tcpflags ` in both.
+fn publish_suffix() {
+    setsparam("suf", "]");
+    let _ = bin_compquote("compquote", &["suf".to_string()], &make_ops(), 0);
+}
+
 /// `_bpf_filters` — complete a pcap/tcpdump filter expression.
 pub fn _bpf_filters(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_bpf_filters");
+
+    // sh:8 — `local suf=']'`, gone again when `_bpf_filters` returns.
+    let mut _locals = LocalScope::declare(&["suf"], 0);
+
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let tables = bpf_tables(&ostype);
 
-    // sh:70-216 — register the `_bpf` matcher with the full spec.
+    // sh:8 + sh:58 — see `publish_suffix`.
+    publish_suffix();
+    tracing::debug!(
+        target: "compsys::_bpf_filters",
+        suf = %getsparam("suf").unwrap_or_default(),
+        quote = %crate::ported::zle::compcore::get_compstate_str("quote")
+            .unwrap_or_default(),
+        "sh:58 bracket suffix for this quoting context",
+    );
+
+    // sh:70-216 — register the `_bpf` matcher with the full spec. The spec's
+    // `$suf` references are left verbatim: the regex engine expands them at
+    // action time, so they pick up whatever compquote just produced.
     let spec = build_bpf_spec(&tables);
     let _ = _regex_arguments(&spec);
 
     // sh:217 — `_bpf "$@"`.
     setaparam("_bpf_argv", args.to_vec());
-    dispatch_registered("_bpf")
+    let ret = dispatch_registered("_bpf");
+    drop(_locals);
+    ret
 }
 
 #[cfg(test)]
@@ -538,5 +587,55 @@ mod tests {
     fn returns_without_panic_outside_context() {
         let _g = crate::test_util::global_state_lock();
         let _ = _bpf_filters(&[]);
+    }
+
+    /// sh:8 + sh:58 — the bracket the three `compadd -S "$suf"` actions read
+    /// has to be PUBLISHED and then quoted for the live context.
+    ///
+    /// Oracle, measured under a pty against real zsh with the stock
+    /// `Completion/` tree on `$fpath`:
+    ///
+    /// ```text
+    ///   tcpdump tcp\[<TAB>    ->  tcpdump tcp\[tcpflags\]       (suf = \])
+    ///   tcpdump 'tcp[<TAB>    ->  tcpdump 'tcp[tcpflags]        (suf = ])
+    /// ```
+    ///
+    /// The port used to reference sh:58 in a header comment and never call it,
+    /// and never set `suf` either, so both contexts inserted `tcpflags `.
+    #[test]
+    fn publish_suffix_quotes_the_bracket_for_the_live_context() {
+        use crate::ported::params::{getsparam, unsetparam};
+        use crate::ported::zle::complete::{COMPQSTACK, INCOMPFUNC};
+        use crate::ported::zsh_h::QT_BACKSLASH;
+        use std::sync::atomic::Ordering;
+
+        let _g = crate::test_util::global_state_lock();
+        let saved = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+
+        // Unquoted word: `Src/Zle/complete.c` pushes QT_BACKSLASH for it, and
+        // `]` comes back backslash-quoted.
+        if let Ok(mut q) = COMPQSTACK
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *q = (QT_BACKSLASH as u8 as char).to_string();
+        }
+        publish_suffix();
+        let unquoted = getsparam("suf");
+
+        // Inside quotes there is nothing on the stack to quote FOR, and
+        // `bin_compquote` short-circuits at c:3691 leaving `]` alone.
+        if let Ok(mut q) = COMPQSTACK.get().unwrap().lock() {
+            q.clear();
+        }
+        publish_suffix();
+        let quoted = getsparam("suf");
+
+        INCOMPFUNC.store(saved, Ordering::Relaxed);
+        unsetparam("suf");
+
+        assert_eq!(unquoted.as_deref(), Some("\\]"), "unquoted word");
+        assert_eq!(quoted.as_deref(), Some("]"), "already inside quotes");
     }
 }
