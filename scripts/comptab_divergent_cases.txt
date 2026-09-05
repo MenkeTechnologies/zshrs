@@ -2349,3 +2349,15 @@ read
 #   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 187.2s (1.9s/cell)
 #   # 2 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#
+# chunk part_03  cells 6601-6700  'soffice -' .. 'ssimulacra2 '
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 201.5s (2.0s/cell)
+#   # 1 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'ssh-agent '  (1 row(s) differ)
+#     b29792c9a7  x1   smallest: --case 'ssh-agent ' --keys tab
+#        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
+#   FAIL   tab1               'ssh-agent -'  (1 row(s) differ)
+#     4356dd07a7  x1   smallest: --case 'ssh-agent -' --keys tab
+#        cell/rowlist/col0 | ref/-/ | test/-
