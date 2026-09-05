@@ -11709,6 +11709,19 @@ pub fn bin_print(
             // c:5569-5574 — push captured output as a history entry.
             let event_id = crate::ported::hist::prepnexthistent();
             crate::ported::hashtable::addhistnode(&out, event_id as i32);
+            // c:hist.c:1399-1410 — C's `prepnexthistent` ALLOCATES the entry
+            // and links it into `hist_ring` itself. zshrs's only evicts and
+            // bumps `curhist`, so every caller has to do the link — which
+            // `hist.rs:2282` and the non-fmt `-s` arm below both do, and this
+            // arm did not. `addhistnode` alone populates `histtab` but leaves
+            // the ring empty, and `fc` reads the RING, so `print -f '%s\n' -s X`
+            // stored an entry that `fc -ln -1` could not see. It is the same
+            // omission the non-fmt arm's own comment describes.
+            let ent = crate::ported::hist::make_histent(event_id, out.clone());
+            if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
+                ring.insert(0, ent);
+                crate::ported::hist::histlinect.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             return 0;
         }
         if let Some(ref v) = dest_var {
@@ -12173,25 +12186,7 @@ pub fn bin_print(
                                                                        // ring here so the gethistent lookup in fc/history sees it.
                                                                        // Without this, `print -s X; fc -l` reported "no such event: 1"
                                                                        // even though the histtab had the entry.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let ent = crate::ported::zsh_h::histent {
-            node: crate::ported::zsh_h::hashnode {
-                next: None,
-                nam: body.clone(),
-                flags: 0,
-            },
-            up: None,
-            down: None,
-            zle_text: None,
-            stim: now,
-            ftim: now,
-            words: Vec::new(),
-            nwords: 0,
-            histnum: event_id,
-        };
+        let ent = crate::ported::hist::make_histent(event_id, body.clone());
         if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
             ring.insert(0, ent);
             crate::ported::hist::histlinect.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -21204,6 +21199,44 @@ mod tests {
             buf.last().map(|s| s.as_str()),
             Some("echo hello"),
             "c:4854-4856 — printf -z must push formatted output to bufstack"
+        );
+    }
+
+    /// `Src/builtin.c:5529-5559` — `printf -s` / `print -f … -s` captures the
+    /// FORMATTED output and stores it as a history entry.
+    ///
+    /// This asserts the RING, not `histtab`, and that is the whole point.
+    /// C's `prepnexthistent` (`Src/hist.c:1399-1410`) allocates the entry and
+    /// links it into `hist_ring` itself; zshrs's only evicts and bumps
+    /// `curhist`, so every caller has to do the link. `addhistnode` alone
+    /// populates `histtab`, and `fc` does not read `histtab` — it reads the
+    /// ring. `bin_print_minus_s_pushes_to_history` above checks only
+    /// `histtab`, which is why the fmt arm could omit the link and still pass
+    /// every existing test while `print -f '%s\n' -s X; fc -ln -1` printed
+    /// nothing at all.
+    #[test]
+    fn bin_print_printf_with_minus_s_links_into_hist_ring() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b's' as usize] = 1;
+        // -f set to "echo %s" (positional), same shape as the -z test above.
+        ops.ind[b'f' as usize] = 1 | (1 << 2);
+        ops.args = vec!["echo %s".to_string()];
+        ops.argscount = 1;
+        crate::ported::hist::hist_ring.lock().unwrap().clear();
+        let r = bin_print("printf", &["hello".to_string()], &ops, BIN_PRINTF);
+        assert_eq!(r, 0);
+        let ring = crate::ported::hist::hist_ring.lock().unwrap();
+        assert!(
+            ring.iter().any(|h| h.node.nam == "echo hello"),
+            "c:5553-5558 — printf -s must LINK the entry into hist_ring (what fc reads), \
+             not only into histtab; ring held {:?}",
+            ring.iter().map(|h| h.node.nam.clone()).collect::<Vec<_>>()
         );
     }
 
