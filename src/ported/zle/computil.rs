@@ -8251,16 +8251,27 @@ pub fn cf_pats(
         return out;
     }
 
-    // c:4838 — when dirs is set, force the `*(-/)` directory glob.
-    let dir_pats = vec!["*(-/)".to_string()];
-    let active_pats: Vec<String> = if dirs != 0 {
-        dir_pats
-    } else if noopt == 0 {
-        // c:4843 — optimization pass.
-        cfp_opt_pats(pats, matcher)
+    // c:4867-4871 — `if (dirs) { dpats[0] = "*(-/)"; dpats[1] = NULL;
+    //                            pats = dpats; }`
+    let mut active_pats: Vec<String> = if dirs != 0 {
+        vec!["*(-/)".to_string()]
     } else {
         pats.to_vec()
     };
+    // c:4872-4873 — `if (!noopt) cfp_opt_pats(pats, matcher);`
+    //
+    // This is a SEPARATE, SEQUENTIAL statement in C, and it runs on whichever
+    // `pats` the block above selected — INCLUDING the dirs glob. The port had
+    // fused the two into an if / else-if chain, so `dirs != 0` short-circuited
+    // past the optimisation entirely and zshrs globbed `/*(-/)` where zsh
+    // globs `/u*(-/)`: `cfp_opt_pats` is what prepends `$compprefix`.
+    //
+    // Same end result after the `-D` filter, so this is a PERF fix, not a
+    // correctness one — it is the difference between stat-ing every entry of
+    // `/` and stat-ing the one that can match.
+    if noopt == 0 {
+        active_pats = cfp_opt_pats(&active_pats, matcher);
+    }
 
     // c:4846 — build the glob array.
     let mut out = cfp_bld_pats(dirs, names, skipped, &active_pats);
@@ -10021,6 +10032,34 @@ mod tests {
             out.contains(&"d.*.x".to_string()),
             "dot-variant must be emitted: {:?}",
             out
+        );
+    }
+
+    /// c:4867-4873 — `if (dirs) { pats = dpats; }` and
+    /// `if (!noopt) cfp_opt_pats(pats, matcher);` are two SEQUENTIAL
+    /// statements, so the dirs glob is optimised too.
+    ///
+    /// The port had fused them into an if / else-if chain, so `dirs != 0`
+    /// short-circuited past `cfp_opt_pats` and the `$compprefix` prefix was
+    /// never applied: zshrs globbed `*(-/)` where zsh globs `u*(-/)`. Same
+    /// matches after the `-D` filter, but it stats every entry of the
+    /// directory instead of the ones that can match.
+    ///
+    /// This test fails on the pre-fix chain, where the emitted pattern is the
+    /// bare `*(-/)`.
+    #[test]
+    fn cf_pats_optimises_the_dirs_glob_with_compprefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = "u".to_string();
+        // dirs = 1 forces the `*(-/)` glob; noopt = 0 must still optimise it.
+        let out = cf_pats(1, 0, &["d".to_string()], &[], "", "", "", &[], &[]);
+        *m.lock().unwrap() = String::new();
+        assert!(
+            out.iter().any(|p| p.contains("u*(-/)")),
+            "dirs glob was not prefixed with $compprefix — cfp_opt_pats was \
+             skipped: {out:?}"
         );
     }
 
