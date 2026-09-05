@@ -3014,3 +3014,42 @@ tor-resolve -
 #   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 159.6s (1.6s/cell)
 #   # 6 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+
+# ============================================================================
+# 'ktrace -' — NOT A DEFECT. libc qsort tie order. DO NOT CHASE.
+# ============================================================================
+# Filed by an earlier sweep as "a file match colliding with a same-spelled
+# OPTION match loses its file type":
+#     mkdir -p /tmp/t/- /tmp/t/-w ; cd /tmp/t ; buffer 'ktrace -' key tab
+#     zsh   row: '-/   -w/'          zshrs row: '-    -w/'
+#
+# That diagnosis is WRONG. The colliding `-` is not an option, it is the `-`
+# BUILTIN (`whence -w -- -` -> `-: builtin` on BOTH shells), added by
+# `_command_names`' `compadd -J -default- -Qk builtins` through the
+# `*:: : _normal -p ktrace` rest-arg of `_ktrace`. Three matches spelled `-`
+# land in the one `-default-` group: the builtin (flags 0x0), a `_describe`
+# entry (0x40, has disp), and the DIRECTORY (0x1, modec='/').
+#
+# `add_match_data` computes modec='/' CORRECTLY (compcore.rs:5419-5439, port
+# of c:compcore.c:2952-2970). The loss is in `makearray`'s dedup: `matcheq`
+# (c:3206-3214) compares only ipre/pre/ppre/psuf/suf/str — NOT flags, NOT
+# modec — so builtin-`-` and directory-`-` are EQUAL, and one is dropped by
+# `*cp++ = *ap` (c:3269-3272), keeping whoever the preceding qsort
+# (c:3259-3260) placed first. `matchcmp` returns 0 for that pair, so the
+# survivor is UNSPECIFIED. zsh gets BSD qsort (unstable); zshrs gets
+# `qsort_tolerant` (src/tolerant_sort.rs), a STABLE merge sort.
+#
+# Decisive control: hold the match set, compadd order and group flags
+# IDENTICAL, change only the description TEXT of 9 unrelated option matches —
+# zsh's surviving `-` FLIPS ('-/' with real _ktrace descriptions, '-' with
+# desc0..desc8). Sweeping option count K: divergence only at K=4,5 (n=8,9),
+# sign-flips with insertion order, gone at K=6-9. That is an unstable
+# partition, not a semantic rule. `nosuchcmd12345 -` PASSes because no
+# builtin match is added there.
+#
+# No test written, deliberately: pinning either side encodes an Apple libc
+# permutation, and "fixing" it means emulating BSD qsort or making the dedup
+# prefer CMF_FILE — neither licensed by the C source. On glibc <=2.38
+# (merge-sort qsort) zsh would print zshrs's answer.
+#
+# Same class as the pinned 'getconf ' finding. Second confirmed instance.
