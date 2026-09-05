@@ -720,6 +720,91 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
     None
 }
 
+// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+//
+// C has no analogue of this struct because C never needs one: `$words`
+// and `$CURRENT` exist ONLY as compparams, created inside the
+// `startparamscope()` / `endparamscope()` pair that brackets the
+// completion-function call —
+//
+//     c:Src/Zle/compcore.c:815-816  startparamscope(); makecompparams();
+//     c:Src/Zle/compcore.c:838      endparamscope();
+//
+// with the table rows at `c:Src/Zle/complete.c:1259/1261`
+// (`{ "words", PM_ARRAY, VAL(compwords) }`,
+//  `{ "CURRENT", PM_INTEGER, VAL(compcurrent) }`). Their values live in
+// the C globals `compwords`/`compcurrent` behind a gsu vtable, so the
+// params are pure scope handles and vanish with the scope.
+//
+// zshrs has no gsu binding for those two (`var:0, gsu:0`), so
+// `get_comp_string` publishes them into paramtab DIRECTLY
+// (`setaparam("words", …)` / `setiparam("CURRENT", …)` below) — without
+// that publish `_normal` reads `$CURRENT` unset and treats every
+// position as the command word, so every command completes only command
+// names. That publish happens at `docomplete` c:664, which is OUTSIDE
+// c:815-838, so nothing tears it down.
+//
+// It only showed as a leak when the completion function never ran at
+// all. With TAB on its default `expand-or-complete` binding a GLOBBED
+// word is consumed by `doexpansion` (c:826): the buffer changes, the
+// c:847 `!strcmp(ol, zlemetaline)` guard fails, `docompletion` — and
+// therefore `callcompfunc` — is skipped, and the level-0 publish
+// survives into the interactive shell. Measured under a pty
+// (`-f -i`, `compinit`, one TAB, `^U`):
+//
+//     ls *<TAB>    zsh: words=[][0] CURRENT=[]   zshrs: words=[ls *][2]  CURRENT=[2]
+//     ls **<TAB>   zsh: words=[][0] CURRENT=[]   zshrs: words=[ls **][2] CURRENT=[2]
+//     ls /tm<TAB>  zsh: words=[][0] CURRENT=[]   zshrs: words=[][0]      CURRENT=[]
+//
+// The non-globbed case tore down only because `callcompfunc`
+// (compcore.rs) re-stamps the already-published nodes with
+// `level = locallevel + 1` and `PM_SPECIAL|PM_REMOVABLE`, so
+// `doshfunc`'s `endparamscope` deletes them.
+//
+// This guard supplies the missing half: it brackets the publish for the
+// whole completion attempt, the way c:815-838 brackets it for the
+// function call, and — like `endparamscope` — restores whatever the
+// names shadowed instead of just deleting them. The C globals
+// (`CLWORDS`/`COMPWORDS`/`COMPCURRENT`) are deliberately untouched:
+// `compwords`/`compcurrent` are plain C globals that persist between
+// completions; only the PARAMS are scoped.
+struct CompWordParamScope {
+    /// The paramtab nodes `words` / `CURRENT` held when the completion
+    /// began, moved out so the publish creates fresh ones — the
+    /// equivalent of the shadow `startparamscope()` establishes.
+    saved: Vec<(&'static str, Option<crate::ported::zsh_h::Param>)>,
+}
+
+impl CompWordParamScope {
+    fn new() -> Self {
+        let mut saved = Vec::new();
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for name in ["words", "CURRENT"] {
+                saved.push((name, tab.removehashnode(name)));
+            }
+        }
+        Self { saved }
+    }
+}
+
+impl Drop for CompWordParamScope {
+    fn drop(&mut self) {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for (name, prev) in self.saved.drain(..) {
+                // c:838 `endparamscope()` — the completion's own node goes
+                // away unconditionally (`makecompparams` marks these
+                // PM_REMOVABLE, so params.c:5905's scanendscope deletes
+                // rather than restores them).
+                tab.removehashnode(name);
+                // …and the value it shadowed comes back.
+                if let Some(pm) = prev {
+                    tab.insert(name.to_string(), pm);
+                }
+            }
+        }
+    }
+}
+
 // The main entry point for completion.                                     // c:599
 /// Direct port of `int docomplete(int lst)` from
 /// `Src/Zle/zle_tricky.c:599`. Drives the completion engine: runs the
@@ -906,6 +991,14 @@ pub fn docomplete(lst: i32) -> i32 {
     // extractor declines to handle (command position inside `$(`, an
     // unterminated compound, …) completed the whole buffer instead of nothing:
     // `echo $(gr<TAB>` offered 47315 matches where zsh offers none.
+
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Opened here, one line before the `get_comp_string` that publishes
+    // `$words`/`$CURRENT` into paramtab, and closed by `Drop` on every
+    // exit path below (there is exactly one exit after this point, plus
+    // panics). See `CompWordParamScope` for why the c:815-838 scope in
+    // compcore.c is not enough on its own.
+    let _comp_word_scope = CompWordParamScope::new();
     let s = get_comp_string(); // c:664
     let s_word: String = s.clone().unwrap_or_default();
     tracing::debug!(target: "compsys_args", ?s, wb = WB.load(Ordering::SeqCst), we = WE.load(Ordering::SeqCst), lincmd = LINCMD.load(Ordering::SeqCst), inwhat = crate::ported::zle::compcore::INWHAT.load(Ordering::SeqCst), "get_comp_string result");
@@ -6389,5 +6482,101 @@ mod tests {
             !isset(NULLGLOB),
             "the c:2288 restore must return NULLGLOB to its pre-expansion state"
         );
+    }
+
+    /// c:Src/Zle/compcore.c:815-816/838 — `$words` and `$CURRENT` are
+    /// compparams (`c:Src/Zle/complete.c:1259/1261`) that exist only
+    /// between `startparamscope(); makecompparams();` and
+    /// `endparamscope();`. zshrs publishes them from a SECOND place —
+    /// `get_comp_string` writes them into paramtab directly, because the
+    /// compparams here have no gsu binding to `COMPWORDS`/`COMPCURRENT`
+    /// and without the direct publish `_normal` reads `$CURRENT` unset
+    /// and completes only command names. That publish sits OUTSIDE
+    /// c:815-838, so `CompWordParamScope` has to close it.
+    ///
+    /// Measured leak this pins (pty, both shells `-f -i` + `compinit`,
+    /// one TAB, then `^U`):
+    ///
+    ///     ls *<TAB>    zsh: words=[][0]  zshrs before: words=[ls *][2] CURRENT=[2]
+    ///     ls /tm<TAB>  zsh: words=[][0]  zshrs before: words=[][0]     CURRENT=[]
+    ///
+    /// Only the GLOBBED word leaked: with TAB on `expand-or-complete`,
+    /// `doexpansion` (c:826) consumes the glob, the buffer changes, the
+    /// c:847 `!strcmp(ol, zlemetaline)` guard fails and `docompletion` —
+    /// hence `callcompfunc`, whose own scope stamp used to be the only
+    /// thing tearing these down — never runs. Confirmed with a
+    /// `compsys_args` trace: the glob case logs `get_comp_string publish
+    /// words` and NO `callcompfunc ENTER`.
+    ///
+    /// Both halves are pinned:
+    ///   * no pre-existing value → the names must be GONE after the
+    ///     scope (what zsh shows at a bare prompt);
+    ///   * a pre-existing value  → it must be BACK, not deleted, which
+    ///     is what `endparamscope` does for a shadowed param.
+    #[test]
+    fn docomplete_comp_word_scope_tears_down_words_and_current() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let present = |name: &str| -> bool {
+            crate::ported::params::paramtab()
+                .read()
+                .map(|t| t.gethashnode2(name).is_some())
+                .unwrap_or(false)
+        };
+
+        // ---- arm 1: nothing shadowed — the publish must not survive.
+        let _ = crate::ported::params::unsetparam("words");
+        let _ = crate::ported::params::unsetparam("CURRENT");
+        {
+            let _scope = CompWordParamScope::new();
+            crate::ported::params::setaparam("words", vec!["ls".into(), "*".into()]);
+            let _ = crate::ported::params::setiparam("CURRENT", 2);
+            assert_eq!(
+                crate::ported::params::getaparam("words").as_deref(),
+                Some(&["ls".to_string(), "*".to_string()][..]),
+                "the get_comp_string publish must be VISIBLE inside the scope — \
+                 without it `_normal` sees $CURRENT unset and every position \
+                 completes as the command word"
+            );
+            assert_eq!(crate::ported::params::getiparam("CURRENT"), 2);
+        }
+        assert!(
+            !present("words"),
+            "$words outlived the completion — c:838 endparamscope leaves the \
+             name unset, and `ls *<TAB>` must not publish it to the shell"
+        );
+        assert!(
+            !present("CURRENT"),
+            "$CURRENT outlived the completion — c:838 endparamscope leaves the \
+             name unset"
+        );
+
+        // ---- arm 2: a shadowed value must come BACK, not be deleted.
+        crate::ported::params::setaparam("words", vec!["user".into()]);
+        let _ = crate::ported::params::setiparam("CURRENT", 99);
+        {
+            let _scope = CompWordParamScope::new();
+            assert!(
+                !present("words"),
+                "the scope shadows the caller's $words the way c:815 \
+                 startparamscope does — the completion must not read it"
+            );
+            crate::ported::params::setaparam("words", vec!["ls".into(), "*".into()]);
+            let _ = crate::ported::params::setiparam("CURRENT", 2);
+        }
+        assert_eq!(
+            crate::ported::params::getaparam("words").as_deref(),
+            Some(&["user".to_string()][..]),
+            "a user's own $words must be RESTORED on scope exit, not clobbered \
+             by the completion's publish"
+        );
+        assert_eq!(
+            crate::ported::params::getiparam("CURRENT"),
+            99,
+            "a user's own $CURRENT must be RESTORED on scope exit"
+        );
+        let _ = crate::ported::params::unsetparam("words");
+        let _ = crate::ported::params::unsetparam("CURRENT");
     }
 }
