@@ -1751,3 +1751,10 @@ ldapsearch
 #   --keys tab,tab,tab  -> PASS           3/3
 #   --keys ctrl-d       FAIL -> PASS      3/3
 #   'ldapsearch -'      PASS -> PASS      3/3
+#
+# chunk part_04  cells 5601-5700  'ppmtoneo -' .. 'procsystime '
+#   # 99 passed, 1 failed, 100 cell(s)
+#   # categories: PASS=99 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 377.9s (3.8s/cell)
+#   # 6 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'printenv '  (11 row(s) differ)
