@@ -471,7 +471,17 @@ pub fn subscript_bound_classify(t: &str, arr: &[String]) -> SubscriptBound {
         }
         return SubscriptBound::Math(t.to_string());
     }
-    if flags.chars().next().is_some_and(|c| {
+    // c:Src/params.c:1412 — `for (s++; *s != ')' && *s != Outpar && s != *str;
+    // s++)`. An EMPTY group never enters the loop body, so it never reaches
+    // `flagerr`; c:1506-1507 `if (s != *str) s++;` then steps past the `)` and
+    // c:1618 `mathevalarg(s, &s)` reads the text AFTER it. So `()` parses and
+    // is stripped exactly like `(e)` or `(s.X.)` — `a=(x y z); ${a[1,()2]}` is
+    // `x y` in zsh, not a math error over `()2`. The scalar char-slice arm
+    // (subst.rs `bound_idx`) already gates on a group that PARSED and so
+    // already accepted the empty one; this copy tested only the FIRST char and
+    // `None` failed that test, which was invisible while a failed
+    // `mathevali` fell back to a default bound and merely widened the slice.
+    if flags.chars().next().is_none_or(|c| {
         // c:Src/params.c:1392-1476 — the flag switch's cases, verbatim.
         matches!(
             c,

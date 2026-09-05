@@ -58898,3 +58898,341 @@ The second `argv` sibling also survives. It lives in `bin_unset`
 $ set -- x y; unset argv; print -r -- "[$@]"
   zsh  : []              zshrs: [x y]
 ```
+
+**Fourth round — both `argv` siblings closed** 2026-09-05, in
+`src/ported/params.rs` only. Neither was in `bin_unset` or in the compiler;
+both were in the two `vararray_gsu` callbacks the `argv` row shares with `*`
+and `@`.
+
+```console
+$ set -- x y; v=${argv:-n};  print -r -- "[$v]"
+  zsh  : [x y]            zshrs: [n]              # before
+$ set -- x y; v=${argv:+Y};  print -r -- "[$v]"
+  zsh  : [Y]              zshrs: [x y]            # before
+$ set -- x y; v=${argv:?};   print -r -- "[$v]"
+  zsh  : [x y]            zshrs: argv: parameter not set   # before
+$ set -- x y; cat <<< ${argv:-n}
+  zsh  : x y              zshrs: n                # before
+$ set -- x y; unset argv;    print -r -- "[$@]" $#
+  zsh  : [] 0             zshrs: [x y] 2          # before
+$ set -- x y; unset argv; shift
+  zsh  : shift count must be <= $#   zshrs: (silently shifts)   # before
+```
+
+**Root cause 1 — the READ side: `getsparam("argv")` answered `""`.**
+c:`Src/params.c:2350-2358` `getstrvalue` takes the PM_ARRAY case for all three
+IPDEF9 rows and returns `sepjoin(getvaluearr(v), NULL, 1)`, and
+`getvaluearr` (c:724-732) reads `pm->gsu.a->getfn(pm)` — `arrvargetfn`
+(c:189-190 `vararray_gsu`), i.e. the GLOBAL `pparams`, not the node's own
+`u.arr`. zshrs's port of that getfn (`lookup_special_var`, the GSU-dispatch
+step `getsparam` runs first) knew the `*` and `@` spellings and not the third.
+`argv` therefore fell through to the paramtab read, found the seeded PM_ARRAY
+node whose `u_arr` is empty — the positionals live in `builtin::PPARAMS`, the
+same split `assignaparam` mirrors for `argv=(…)` (params.rs:9548) and
+`printparamnode` for `typeset -p argv` (params.rs:13874) — and answered
+`Some("")`.
+
+Only the operators that decide on the VALUE could see it.
+c:`Src/subst.c:3188-3189`:
+
+```c
+	if (colf && !vunset) {
+	    vunset = (isarr) ? !*aval : !*val || (*val == Nularg && !val[1]);
+```
+
+so every COLON form took the null branch while the non-colon `${argv-n}` /
+`${argv+Y}` / `${argv?}` — which test set-ness alone, and set-ness already
+resolved `argv` — were right. That is also why only the four `ssub` /
+`singsub` contexts showed it: command position reaches
+`BUILTIN_PARAM_DEFAULT_FAMILY`, which normalises the spelling to `*` before
+rebuilding the body (`src/fusevm_bridge.rs`, third round above); the
+PREFORK_SINGLE routes reach `paramsubst` directly.
+
+**Root cause 2 — the UNSET side: `stdunsetfn` cleared the wrong storage.**
+c:`Src/params.c:3917-3920` — the PM_ARRAY arm of `stdunsetfn` is
+`pm->gsu.a->setfn(pm, NULL)`, which for a `vararray_gsu` row is `arrvarsetfn`:
+
+```c
+    char ***dptr = (char ***)pm->u.data;
+    …
+    if ((pm->node.flags & PM_SPECIAL) && !x)
+	*dptr = mkarray(NULL);
+```
+
+c:4248 + c:4259-4260 — it never touches `pm->u.arr`; it replaces the GLOBAL
+vector with an EMPTY array (not a NULL — the row carries PM_SPECIAL from
+IPDEF9, which is why `set -- a b` works straight afterwards). The Rust port
+cleared `pm.u_arr`, which nothing reads. `argv` is the only spelling that gets
+here: c:392-393 give `*` and `@` PM_READONLY_SPECIAL so `unsetparam_pm`
+rejects them at c:3850, and `unset '*'` fails `isident` first
+(c:`Src/builtin.c:3878`); c:430's `argv` has a flag word of 0.
+
+**Fix** — `src/ported/params.rs` only.
+
+* `lookup_special_var`'s `"*" | "@"` arm — the port of `arrvargetfn` — takes
+  the third IPDEF9 spelling, so `getsparam("argv")` is `sepjoin(pparams)`.
+* `stdunsetfn`'s PM_ARRAY arm mirrors c:4259-4260 for the three pparams rows,
+  clearing `builtin::PPARAMS`.
+
+**Still open in this family, unchanged by the round.** c:`Src/params.c:3921`
+`pm->node.flags |= PM_UNSET` stays on the node forever — `set --` writes
+`pparams` directly and never clears it — so in zsh `${+argv}` is 0 and
+`${argv-n}` takes the default for the rest of the shell's life, even after
+`set -- a b` refills the vector. zshrs's set-ness probe answers from the name
+(`arrays_contains`, `src/ported/subst.rs`), not from the node flag:
+
+```console
+$ set -- x y; unset argv; print -r -- "[${argv-n}] ${+argv}"
+  zsh  : [n] 0           zshrs: [] 1
+```
+
+Both cells were divergent before this round as well (`[x y] 1`), so the round
+changed the wrong answer, not the verdict.
+
+**Measurement.**
+
+* The 1260-cell IFS sweep this entry's second and third rounds used:
+  **0 divergent before, 0 after** — the round is inert there, as expected.
+* A 2610-cell positional sweep built for it (3 IFS settings x SH_WORD_SPLIT
+  on/off x 6 `set --` shapes x 29 spellings of `$argv` / `$*` / `$@` and their
+  operator forms x 5 contexts — command word, scalar-assignment RHS, function
+  argument, here-string, `case` word): **448 divergent before, 234 after —
+  214 fixed, 0 new.** Diffed as SETS of failing cells, not as counts.
+* Both sides `-f`; both binaries pinned copies with `codesign -f -s -`
+  applied; build output grepped case-insensitively for `error`.
+* The two new `tests/bugs_md_regression.rs` tests were run against the pinned
+  PRE-fix binary and BOTH FAILED there, while the five older `bug1132_*` tests
+  in the same file passed on it — so neither is vacuous and neither restates
+  an older round.
+
+## #1133 — a range bound whose math evaluation FAILED silently substituted the arm's default bound, so a bad subscript returned the whole value instead of erroring — fixed
+
+**Status:** `fixed` 2026-09-05. The residual `f416a06520` left behind and named:
+that entry fixed the `(w)` word bound (a word COUNT that returns a CHARACTER
+POSITION) and, with the word bound no longer masking them, four sibling arms;
+its own measurement note recorded that "every one that remains is a range bound
+whose math evaluation fails — `bound_idx` and `eval_idx` end in
+`mathevali(...).unwrap_or(default)` where C zerrs and raises errflag".
+
+```console
+$ a=(x y z); print -r -- ${a[1,(zz)2]}; print AFTER
+  zsh  : zsh:1: bad math expression: operator expected at `2'      (rc 1, no AFTER)
+  zshrs: x y z / AFTER                                             # before (rc 0)
+
+$ s='alpha beta'; print -r -- ${s[1,(W)2]}
+  zsh  : zsh:1: bad math expression: operator expected at `2'
+  zshrs: alpha beta                                                # before
+
+$ s='a b c'; print -r -- ${s[(w)qq*,2]}
+  zsh  : zsh:1: bad math expression: operand expected at end of string
+  zshrs: 'a '                                                      # before
+```
+
+**Root cause** — C evaluates a range bound with `mathevalarg`
+(c:`Src/params.c:1618` `r = mathevalarg(s, &s)`), which is
+`mathevall(s, MPREC_ARG, ss)` (c:`Src/math.c:1541`). A parse failure inside it
+`zerr`s — c:`Src/math.c:1589`/`1592`,
+`zerr("bad math expression: %s expected at ...")` — and then c:1546 hands the
+ZERO value back to getarg. `zerr` raises `ERRFLAG_ERROR`
+(c:`Src/utils.c:184`), and c:`Src/exec.c:1443`
+(`while (wc_code(code) == WC_LIST && ... && !errflag)`) ends the list, so the
+command never runs and nothing is printed. The port's bound evaluators ended in
+`mathevali(...).unwrap_or(default)`, turning a fatal math error into "use the
+whole array / the whole string".
+
+Both spellings above reach the same place by different roads. `(zz)` and `(W)`
+are not flags: the c:1409-1504 switch has cases for `r R k K i I w f e n b p s`
+and nothing else, so an unknown letter takes the c:1498-1503 `flagerr` rewind
+(`s = *str - 1`) and the WHOLE group is the math text. `(w)qq*` is the c:1618
+call itself — the number after a word flag is a math expression.
+
+Fixed at all five `mathevalarg` sites, which are three bound evaluators in
+`src/ported/subst.rs`:
+
+| evaluator | shape |
+| --- | --- |
+| `eval_idx` | array slice `${a[lo,hi]}` |
+| `bound_idx` | scalar char slice `${s[lo,hi]}` — three call sites: the plain math bound, the `(w)` word bound's number, and the parsed-but-no-search group's trailing text |
+| `eval_bound` | the `(@)` splat path's copy of `eval_idx` |
+
+The `default` parameter each closure took is gone: there is no default any more,
+which is the point.
+
+**One more, uncovered by the first:** an EMPTY flag group `()` was classified as
+an UNKNOWN group and handed whole to the math evaluator. C's flag loop is
+`for (s++; *s != ')' && *s != Outpar && s != *str; s++)` (c:1412) — an empty
+group never enters the body, so it never reaches `flagerr`, and c:1506-1507
+`if (s != *str) s++;` steps past the `)`. So `()` PARSES and is stripped exactly
+like `(e)` or `(s.X.)`. `subscript_escape::subscript_bound_classify` tested only
+the group's FIRST character, and `None` failed that test. This was invisible
+while a failed `mathevali` fell back to a default bound — it merely widened the
+slice — and became a spurious `bad math expression` the moment the error was
+propagated:
+
+```console
+$ a=(x y z); print -r -- ${a[1,()2]}
+  zsh  : x y
+  zshrs: x y z                                                     # before
+$ a=(x y z); print -r -- ${a[()2,3]}
+  zsh  : y z
+  zshrs: x y z            (the start bound defaulted to 1)         # before
+```
+
+An UNKNOWN letter is still different — c:1498-1503 rewinds — so `${a[1,(q)2]}`
+must keep erroring, and does.
+
+**Measurement.** The 3600-case subscript matrix `f416a06520` used (6 value
+shapes x 24 subscript spellings, single index and BOTH range positions:
+6 x (24 + 24x24)), differentially against `zsh -f`, comparing stdout+stderr per
+cell with the shell-identity prefix normalised away, against a control built
+from this same tree with ONLY the two changed files reverted:
+
+* **603 divergent before, 24 after.** Diffed as SETS of failing cell ids:
+  **579 fixed, 0 new, 24 still.** Of the 603, 528 were the target class (zsh
+  errors, zshrs silently answered) and 75 were the `()` group.
+* The 24 that remain are one cosmetic residual, described below.
+* Each case runs in its own `( … )` subshell so one cell's errflag does not
+  abort the rest of the batch — verified that both shells isolate it.
+
+**Still open — the DOUBLE message when BOTH bounds fail.** All 24 survivors are
+the same shape: zsh prints the diagnostic once per failing bound, zshrs prints
+it once in total.
+
+```console
+$ s='alpha beta'; print -r -- ${s[(W)2,(qq)3]}
+  zsh  : bad math expression: operator expected at `2'
+         bad math expression: operator expected at `3'
+  zshrs: bad math expression: operator expected at `2'
+```
+
+zsh's own `zerr` suppresses a second message while errflag is set
+(c:`Src/utils.c:179-183`), and it does so everywhere else — `${s[(W)2]}${s[(qq)3]}`
+in one command prints ONE message, and an earlier `$(( (aa)1 ))` suppresses both
+of the subscript's. The clear is c:`Src/parse.c:354`,
+`errflag &= ~ERRFLAG_ERROR;` at the end of `parse_context_restore`: getarg
+routes a bound whose text contains a special character through
+c:`Src/params.c:1585-1593` (`if (needtok) { … parsestr(&s); … singsub(&s); }`),
+and `parsestr`'s teardown wipes the flag the FIRST bound raised. `(` and `)` are
+`ispecial`, so any parenthesised bound takes that road. zshrs's bound evaluators
+call `singsub` directly and never enter `parsestr`, so the flag survives and the
+second `zerr` is (correctly, by its own rule) silent. Closing it means routing
+the bound through the ported `parsestr` — the port of
+`parse_context_restore` already clears `ERRFLAG_ERROR` at parse.rs's `// c:354`
+— which is a change to `getarg`'s Rust equivalent, not to the propagation this
+entry adds. Left open deliberately.
+
+**Also still open, found by the same matrix, NOT this defect:** a chained
+subscript's SECOND operand does not go through `subscript_bound_classify`, so an
+empty group there still takes a default:
+
+```console
+$ a=(A b C d); print -r -- ${a[1,3][()2]}
+  zsh  : b
+  zshrs: A
+```
+
+That arm (`s2.starts_with('(')` gated on `i`/`I`/`r`/`R`) predates this change
+and is untouched by it.
+
+## #1132 residual — the colon NULL test in the default family was gated on the `(@)` FLAG, not on C's `isarr`, so any array of EMPTY elements read as null — fixed
+
+**Status:** `fixed` 2026-09-05. c:`Src/subst.c:3188-3191`:
+
+```c
+	if (colf && !vunset) {
+	    vunset = (isarr) ? !*aval : !*val || (*val == Nularg && !val[1]);
+	    vunset *= -1;	/* Record that vunset was originally false */
+	}
+```
+
+With a colon the NULL test is SHAPE-dependent: an array is null only when it
+has NO ELEMENTS, a scalar when its string is empty. The port gated the array
+half on `nojoin == 2` — the `(@)` FLAG — so it only ever fired for
+`${(@)a:-x}`. Every other array-shaped value fell through to the SCALAR test
+and answered "null" whenever it happened to join to an empty string:
+
+```console
+$ v=(''); w=${v:-N}; print -r -- "[$w]"
+  zsh  : []           zshrs: [N]              # before
+$ v=(''); w=${v:+Y}; print -r -- "[$w]"
+  zsh  : [Y]          zshrs: []               # before
+$ v=(''); w=${v:?E}; print -r -- "[$w]"
+  zsh  : []           zshrs: v: E   (rc 1)    # before
+$ set -- ''; w=${@:-N}; print -r -- "[$w]"
+  zsh  : []           zshrs: [N]              # before
+```
+
+Fixed at all three colon arms (`:-`, `:+`, `:?`) in `src/ported/subst.rs`. C's
+`aval` is the arm's `split_parts` when one was produced (a slice, a splat, an
+assoc enumeration), else the parameter's own array; an assoc has no
+`arrays_get` row, so its map is read before falling back to the scalar test.
+
+One more C line was needed to keep it honest: c:`Src/params.c:2175-2179`
+(`if (v->scanflags && !com && …) v->scanflags = 0;`) clears the Value's
+scanflags — SCANPM_ISVAR_AT with them — for a SINGLE-index subscript, so
+c:`Src/subst.c:2916` gives `isarr = 0` there and the SCALAR test applies. Only
+the `@` / `*` / `argv` names reach the colon arms with a live `isarr = -1` from
+the name itself, and without that gate `set -- ''; ${@[1]:-N}` read the
+one-element array as non-null where zsh sees an empty element and takes `N`.
+
+**Not the same thing as the `${argv:-nope}` item #1132 left open**, though the
+two share that C line. That one — positionals SET, spelled `argv`, in the four
+`ssub` / `singsub` contexts — was closed separately and first, by teaching the
+SCALAR getter the third `IPDEF9(&pparams)` spelling
+(c:`Src/params.c:392,393,430`); see
+`tests/bugs_md_regression.rs::bug1132_argv_is_pparams_for_the_colon_default_family`.
+The measurement below is taken against a control binary that already carries
+that fix, so none of its 8 cells is credited here.
+
+**Measurement.** A 1045-cell differential sweep (13 value shapes — unset /
+empty / non-empty scalar, array with no / one empty / two empty / two real
+elements, empty and populated assoc, and the three `set --` shapes — x the
+names `v` / `@` / `*` / `argv` x 11 default-family spellings including
+`[@]`, `[*]`, `[1]`, `[1,2]`, `[5,6]` subscripts x 5 contexts: command word,
+scalar-assign RHS, `[[ … ]]`, `case`, here-string), each cell run in its own
+`( … )` subshell so one cell's errflag cannot abort the batch:
+
+* Against a control built from this tree with ONLY the two changed files
+  reverted: **78 divergent before, 10 after.** Diffed as SETS of failing cell
+  ids: **68 fixed, 0 new, 10 still.** The 68 are 17 cells each under `v`, `@`,
+  `*` and `argv` — the array-of-empty-elements shapes, which the getter fix
+  above does not reach.
+* A first attempt (the `isarr` gate without the c:2175 single-index half)
+  measured 3 NEW — all three `set -- ''; ${@[1]:-N}` contexts — which is how
+  the missing C line was found. The number quoted above is the second attempt.
+
+**Still open in that sweep, NOT this defect:** 9 of the 10 are a here-string
+whose word ERRORS — `cat <<< ${v:?E}` — emitting one newline more than zsh
+after the command is aborted. The 10th is the compiler's own name lowering
+naming `*` where zsh names `argv` in the `:?` diagnostic
+(`set --; print -r -- ${argv:?E}` → `zsh: *: E`), which lives in
+`BUILTIN_PARAM_DEFAULT_FAMILY`, not in `paramsubst`.
+
+**`unset argv` (the other `argv` sibling #1132 recorded as open) is also
+closed** — `set -- x y; unset argv; print -r -- "[$@]"` answers `[]` on both
+shells and
+`tests/bugs_md_regression.rs::bug1132_unset_argv_clears_the_positional_vector`
+covers it.
+
+
+### Suite state for #1133 + the #1132 residual
+
+Both changes measured together on one pinned, `codesign -f -s -`'d copy of
+`target/debug/zshrs` (macOS SIGKILLs an unsigned copy, which a harness reads as
+a boot hang), with every build's output grepped case-INsensitively for `error`
+so a peer's transient `error[E0277]` could not leave a stale binary in place.
+
+* `--test subst_bound_parity` (new file): 3 passed, 0 failed. All three were
+  run against a binary built from this same tree with ONLY the two changed
+  source files reverted, and ALL THREE FAILED there, so none is vacuous. They
+  live in their own file rather than in `tests/bugs_md_regression.rs` because
+  that file is being extended concurrently for a different fix.
+* `--test bugs_md_regression`: 88 passed, 0 failed.
+* `--lib subst` 424 passed, `--lib compile_zsh` 37 passed.
+* `--lib params` 520 passed / 1 failed —
+  `compsys::ported::_parameters::tests::enumerate_params_returns_some_entries`
+  ("paramtab unexpectedly empty"), which fails identically with both changed
+  files reverted to HEAD and lives in `src/compsys/ported/`.
+* `--test parity`: 47270 passed / 30 failed. All 30 were re-run individually
+  against the pinned PRE-fix binary and ALL 30 FAILED there too, so the
+  after-set is the before-set and this change adds no member.

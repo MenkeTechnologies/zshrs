@@ -9586,7 +9586,6 @@ pub fn paramsubst(
                     // Clone arr first to release the borrow, since
                     // singsub needs &mut state.
                     let arr_clone = arr.clone();
-                    let len = arr_clone.len() as i64;
                     let start_str = start_s.to_string();
                     let end_str = end_s.to_string();
                     // c:Src/params.c:2120-2125 getindex — when the START
@@ -9636,7 +9635,7 @@ pub fn paramsubst(
                     // shared with the CHAINED-subscript arm below, so it lives
                     // once in `subscript_escape::subscript_bound_classify`
                     // rather than being written out at both call sites.
-                    let eval_idx = |expr: &str, default: i64| -> i64 {
+                    let eval_idx = |expr: &str| -> i64 {
                         // c:Src/params.c:1729-1760 — a bound whose flag group
                         // ran a pattern search resolves to the match INDEX.
                         let effective = match crate::subscript_escape::subscript_bound_classify(
@@ -9656,10 +9655,45 @@ pub fn paramsubst(
                         if let Ok(n) = expanded.trim().parse::<i64>() {
                             return n;
                         }
-                        crate::ported::math::mathevali(expanded.trim()).unwrap_or(default)
+                        // c:Src/math.c:1541 — a range bound is evaluated by
+                        // `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, and a
+                        // parse failure inside that call `zerr`s (c:1589/1592,
+                        // "bad math expression: %s expected at …") before
+                        // c:1546 hands the ZERO value back to getarg. `zerr`
+                        // raises ERRFLAG_ERROR (c:Src/utils.c:184), which ends
+                        // the enclosing list at c:Src/exec.c:1443, so the
+                        // command never runs and nothing is printed. Falling
+                        // back to this arm's DEFAULT bound instead — i.e. the
+                        // whole array — was the residual f416a06520 left:
+                        // `a=(x y z); ${a[1,(zz)2]}` printed `x y z` where zsh
+                        // says `bad math expression: operator expected at `2'`
+                        // and aborts. The `(W)` spelling reaches the same place
+                        // by a different road: c:1498-1503 `flagerr` rewinds
+                        // past the `(`, so the WHOLE `(W)2` is the math text.
+                        match crate::ported::math::mathevali(expanded.trim()) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                // mathevali errors already carry the
+                                // "bad math expression:" prefix when the
+                                // failure came from the parser; the value
+                                // errors ("division by zero") do not, and C
+                                // zerrs those bare too. Same shape as the
+                                // single-subscript arms at subst.rs:9463 and
+                                // subst.rs:10592.
+                                if e.starts_with("bad math expression") {
+                                    crate::ported::utils::zerr(&e);
+                                } else {
+                                    crate::ported::utils::zerr(&format!(
+                                        "bad math expression: {}",
+                                        e
+                                    ));
+                                }
+                                0 // c:Src/math.c:1546 — the zero mnumber
+                            }
+                        }
                     };
-                    let start: i64 = eval_idx(&start_str, 1);
-                    let end: i64 = eval_idx(&end_str, len);
+                    let start: i64 = eval_idx(&start_str);
+                    let end: i64 = eval_idx(&end_str);
                     // c:Src/params.c — KSH_ARRAYS flips array slice
                     // bounds from 1-based to 0-based inclusive. `a[0,1]`
                     // under KSH_ARRAYS = elements at positions 0 and 1.
@@ -10688,7 +10722,40 @@ pub fn paramsubst(
                         // index — the prefix length whose tail matches pat. So
                         // `${s[(r)d?,(r)h?]}` on "abcdefghi" → bounds 4 and 9 →
                         // "defghi". A non-search bound stays a math expression.
-                        let bound_idx = |expr: &str, is_second: bool, default: i64| -> i64 {
+                        //
+                        // c:Src/math.c:1541 — every math bound below is C's
+                        // `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, and a
+                        // parse failure there `zerr`s (c:1589/1592) before
+                        // c:1546 returns the ZERO value. `zerr` raises
+                        // ERRFLAG_ERROR (c:Src/utils.c:184) and the list ends at
+                        // c:Src/exec.c:1443, so the command never runs.
+                        // Substituting this arm's DEFAULT bound instead — i.e.
+                        // the whole string — was the residual f416a06520 left:
+                        // `s='alpha beta'; ${s[1,(zz)2]}` printed `alpha beta`
+                        // where zsh errors and aborts. `(W)` gets there by the
+                        // other road: c:1498-1503 `flagerr` rewinds past the
+                        // `(`, so the whole `(W)2` is the math text.
+                        //
+                        // !!! WARNING: RUST-ONLY HELPER !!! — no C counterpart.
+                        // C has no such closure because `zerr` IS the reporting
+                        // path inside `mathevalarg`; the Rust `mathevali`
+                        // returns the message in `Err` instead, so each of the
+                        // three `mathevalarg` sites below has to hand it to
+                        // `zerr` itself. One closure rather than three copies of
+                        // the five-line match already written out at
+                        // subst.rs:9463 and subst.rs:10592.
+                        let zerr_math = |e: &str| {
+                            // A parser failure already carries the
+                            // "bad math expression:" prefix; a VALUE failure
+                            // ("division by zero") does not, and C zerrs those
+                            // bare too (c:Src/math.c:1592 vs c:1147).
+                            if e.starts_with("bad math expression") {
+                                crate::ported::utils::zerr(e);
+                            } else {
+                                crate::ported::utils::zerr(&format!("bad math expression: {}", e));
+                            }
+                        };
+                        let bound_idx = |expr: &str, is_second: bool| -> i64 {
                             let e = expr.trim();
                             if let Some(rest) = e.strip_prefix('(') {
                                 if let Some(close) = rest.find(')') {
@@ -10827,13 +10894,20 @@ pub fn paramsubst(
                                                 }
                                             }
                                             // c:1618 — the numeric part still goes
-                                            // through mathevalarg.
+                                            // through mathevalarg, so a failure
+                                            // there zerrs (`${s[(w)zz*,2]}`)
+                                            // rather than taking a default.
                                             let mut r = match pat_raw.trim().parse::<i64>() {
                                                 Ok(v) => v,
-                                                Err(_) => crate::ported::math::mathevali(&singsub(
-                                                    pat_raw.trim(),
-                                                ))
-                                                .unwrap_or(default),
+                                                Err(_) => match crate::ported::math::mathevali(
+                                                    &singsub(pat_raw.trim()),
+                                                ) {
+                                                    Ok(v) => v,
+                                                    Err(e) => {
+                                                        zerr_math(&e);
+                                                        0 // c:Src/math.c:1546
+                                                    }
+                                                },
                                             };
                                             let iw = words.len() as i64; // c:1624
                                             if iw == 0 {
@@ -11058,8 +11132,13 @@ pub fn paramsubst(
                                         if let Ok(nv) = t.parse::<i64>() {
                                             return nv;
                                         }
-                                        return crate::ported::math::mathevali(&singsub(t))
-                                            .unwrap_or(default);
+                                        return match crate::ported::math::mathevali(&singsub(t)) {
+                                            Ok(nv) => nv,
+                                            Err(e) => {
+                                                zerr_math(&e);
+                                                0 // c:Src/math.c:1546
+                                            }
+                                        };
                                     }
                                 }
                             }
@@ -11070,7 +11149,13 @@ pub fn paramsubst(
                                 return nv;
                             }
                             let expanded = singsub(e);
-                            crate::ported::math::mathevali(&expanded).unwrap_or(default)
+                            match crate::ported::math::mathevali(&expanded) {
+                                Ok(nv) => nv,
+                                Err(err) => {
+                                    zerr_math(&err);
+                                    0 // c:Src/math.c:1546
+                                }
+                            }
                         };
                         // c:Src/params.c:2099-2104 — getindex rejects a range
                         // whose START bound is an INVERSE subscript. The array
@@ -11086,8 +11171,8 @@ pub fn paramsubst(
                             );
                             return (String::new(), 0, Vec::new()); // c:2103
                         }
-                        let lo: i64 = bound_idx(&lo, false, 1);
-                        let hi: i64 = bound_idx(&hi, true, s_chars.len() as i64);
+                        let lo: i64 = bound_idx(&lo, false);
+                        let hi: i64 = bound_idx(&hi, true);
                         // c:Src/params.c — KSH_ARRAYS shifts scalar slice
                         // bounds from 1-based to 0-based inclusive. `a[0,2]`
                         // under KSH_ARRAYS = chars at positions 0,1,2.
@@ -11686,6 +11771,23 @@ pub fn paramsubst(
                 || assoc_contains(&var_name)
                 || positional_set
         };
+
+        // c:Src/params.c:2175-2179 — `if (v->scanflags && !com && …)
+        // v->scanflags = 0;`. A SINGLE-index subscript leaves `com` 0, so
+        // getindex clears the Value's scanflags — SCANPM_ISVAR_AT included —
+        // and c:Src/subst.c:2916 then yields `isarr = 0`. The colon NULL test
+        // in the default family (c:3189) keys off that shape, so it needs the
+        // same discriminator the shape block below uses; bound here because
+        // that one is scoped to its own block and this is the first point
+        // where `subscript` is final.
+        let single_index_sub_c2175 = subscript.as_deref().map_or(false, |s| {
+            if matches!(s, "@" | "*") {
+                return false; // c:2048-2053 — the `[@]`/`[*]` splat keeps shape
+            }
+            // c:Src/params.c:1533-1536 — a RANGE keeps array shape, and only a
+            // comma in the UNEXPANDED subscript makes one.
+            crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_none()
+        });
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
         // Subscripted form `${+arr[i]}` checks whether THAT element is
@@ -13252,14 +13354,52 @@ pub fn paramsubst(
                 //   the gate, raw_value (which joins the array to a
                 //   scalar) was "" and `raw_value.is_empty()` fired
                 //   the default. Bug #186 in docs/BUGS.md.
-                let is_at_array = nojoin == 2 && arrays_contains(&var_name);
-                let array_is_empty =
-                    is_at_array && arrays_get(&var_name).map(|a| a.is_empty()).unwrap_or(true);
-                let vunset = if is_at_array {
-                    !is_set || array_is_empty
-                } else {
-                    !is_set || raw_value.is_empty()
+                // c:Src/subst.c:3188-3191 —
+                //     if (colf && !vunset) {
+                //         vunset = (isarr) ? !*aval
+                //                          : !*val || (*val == Nularg && !val[1]);
+                //         vunset *= -1;
+                //     }
+                // With a colon the NULL test is SHAPE-dependent: an array is
+                // null only when it has NO ELEMENTS, a scalar when its string
+                // is empty. This gate asked for the `(@)` FLAG (`nojoin == 2`)
+                // instead of C's `isarr`, so every array-shaped value that
+                // JOINS to an empty scalar answered "null":
+                //   `v=(''); ${v:-N}`  zsh keeps the empty element, this took N
+                //   `v=(''); ${v:+Y}`  zsh gives Y,            this gave empty
+                //   `v=(''); ${v:?E}`  zsh is silent,          this errored
+                // and `set -- x y; w=${argv:-nope}` took the default too:
+                // c:Src/params.c:428-430 makes `argv`, `*` and `@` one
+                // IPDEF9(&pparams) parameter, but only the `@`/`*` spellings
+                // leave a non-empty `raw_value` here, so the `argv` spelling
+                // read as null in each of the four ssub/singsub contexts
+                // (scalar-assign RHS, `[[ … ]]`, `case`, here-string) that
+                // bypass the compiler's own `BUILTIN_PARAM_DEFAULT_FAMILY`
+                // name lowering and reach paramsubst directly. (BUGS.md #1132.)
+                // C's `aval` is this arm's `split_parts` when one was produced
+                // (a slice, a splat, an assoc enumeration), else the parameter's
+                // own array; an assoc has no `arrays_get` row, so its map is the
+                // fallback before the scalar test.
+                let array_is_empty = match split_parts.as_ref() {
+                    Some(p) => p.is_empty(),
+                    None => arrays_get(&var_name)
+                        .map(|a| a.is_empty())
+                        .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
+                        .unwrap_or_else(|| raw_value.is_empty()),
                 };
+                // c:Src/params.c:2175-2179 — a SINGLE-index subscript clears
+                // `v->scanflags` (`com` is 0), taking SCANPM_ISVAR_AT with it,
+                // so c:Src/subst.c:2916 gives `isarr = 0` and the NULL test is
+                // the SCALAR one. Only the `@`/`*`/`argv` names reach here with
+                // a live `isarr = -1` from the name itself, so without this
+                // `set -- ''; ${@[1]:-N}` read the one-element array as
+                // non-null where zsh sees an empty element and takes `N`.
+                let vunset = !is_set
+                    || if isarr != 0 && !single_index_sub_c2175 {
+                        array_is_empty // c:3189 `!*aval`
+                    } else {
+                        raw_value.is_empty() // c:3189 `!*val`
+                    };
                 if vunset {
                     // c:3207-3228 — the default word goes through
                     // multsub(&val, split_flags, &aval, &isarr, …), NOT a
@@ -13681,7 +13821,22 @@ pub fn paramsubst(
                     alt
                 };
                 // c:3296
-                if is_set && !raw_value.is_empty() {
+                // c:Src/subst.c:3188-3191 — same colon NULL test as the `:-`
+                // arm above: shape-dependent, `!*aval` for an array and `!*val`
+                // for a scalar. See that arm's note.
+                let array_is_empty = match split_parts.as_ref() {
+                    Some(p) => p.is_empty(),
+                    None => arrays_get(&var_name)
+                        .map(|a| a.is_empty())
+                        .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
+                        .unwrap_or_else(|| raw_value.is_empty()),
+                };
+                let colon_null = if isarr != 0 && !single_index_sub_c2175 {
+                    array_is_empty // c:3189 `!*aval`
+                } else {
+                    raw_value.is_empty() // c:3189 `!*val`
+                };
+                if is_set && !colon_null {
                     // c:3300-3313 — the alternate word also goes through
                     // multsub: `${str+${(z)v}}` / `${str+$arr}` yield arrays.
                     let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, PREFORK_NOSHWORDSPLIT);
@@ -13768,7 +13923,21 @@ pub fn paramsubst(
                 }
             } else if let Some(msg) = r.strip_prefix(":?") {
                 // c:3193 (:?msg)
-                if !is_set || raw_value.is_empty() {
+                // c:Src/subst.c:3188-3191 — same colon NULL test as the `:-`
+                // and `:+` arms above. See the `:-` arm's note.
+                let array_is_empty = match split_parts.as_ref() {
+                    Some(p) => p.is_empty(),
+                    None => arrays_get(&var_name)
+                        .map(|a| a.is_empty())
+                        .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
+                        .unwrap_or_else(|| raw_value.is_empty()),
+                };
+                let colon_null = if isarr != 0 && !single_index_sub_c2175 {
+                    array_is_empty // c:3189 `!*aval`
+                } else {
+                    raw_value.is_empty() // c:3189 `!*val`
+                };
+                if !is_set || colon_null {
                     let m = if msg.is_empty() {
                         // c:Src/subst.c:3337 — `zerr("%s: %s", idbeg,
                         // "parameter not set")`. zsh uses the same
@@ -21768,7 +21937,6 @@ pub fn paramsubst(
                     // singsub then mathevali, so variable / arithmetic
                     // bounds resolve (`${(@)b[1,R]}`, `${(@)b[1,-1*R-1]}`).
                     let arr_clone = arrays_get(&var_name).unwrap_or_default();
-                    let arr_len = arr_clone.len() as i64;
                     // c:Src/params.c getindex — a slice bound with a
                     // search-flag subscript (`(r)pat`/`(i)pat`) yields the
                     // INDEX of the match (r→i forward, R→I reverse, so the
@@ -21780,7 +21948,7 @@ pub fn paramsubst(
                     // the raw `(r)b` → default 1/len → whole array, so
                     // unquoted `${a[(r)b,(r)c]}` splatted every element
                     // instead of the slice between matched positions.
-                    let eval_bound = |expr: &str, default: i64| -> i64 {
+                    let eval_bound = |expr: &str| -> i64 {
                         let t = expr.trim();
                         let mut effective = t;
                         if let Some(close) = t.find(')') {
@@ -21862,13 +22030,31 @@ pub fn paramsubst(
                         if let Ok(n) = expanded.trim().parse::<i64>() {
                             return n;
                         }
-                        crate::ported::math::mathevali(expanded.trim()).unwrap_or(default)
+                        // c:Src/math.c:1541/1546 — same `mathevalarg` contract as
+                        // the live `eval_idx`: a failed parse zerrs and yields
+                        // the zero value, it does not fall back to a default
+                        // bound. Kept in step with that copy for the reason the
+                        // note above gives.
+                        match crate::ported::math::mathevali(expanded.trim()) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                if e.starts_with("bad math expression") {
+                                    crate::ported::utils::zerr(&e);
+                                } else {
+                                    crate::ported::utils::zerr(&format!(
+                                        "bad math expression: {}",
+                                        e
+                                    ));
+                                }
+                                0 // c:Src/math.c:1546
+                            }
+                        }
                     };
-                    let lo: i64 = eval_bound(&lo, 1); // c:3950
-                    let hi: i64 = eval_bound(&hi, arr_len); // c:3950
-                                                            // c:Src/params.c — KSH_ARRAYS shifts positive
-                                                            // 0-based slice bounds to 1-based for getarrvalue.
-                                                            // Sibling of #610-#613 in the splat path. Bug #614.
+                    let lo: i64 = eval_bound(&lo); // c:3950
+                    let hi: i64 = eval_bound(&hi); // c:3950
+                    // c:Src/params.c — KSH_ARRAYS shifts positive
+                    // 0-based slice bounds to 1-based for getarrvalue.
+                    // Sibling of #610-#613 in the splat path. Bug #614.
                     let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
                     let (lo, hi) = if ksh_arrays {
                         let new_lo = if lo >= 0 { lo + 1 } else { lo };
