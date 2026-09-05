@@ -2187,3 +2187,98 @@ rsync
 # a live completion rather than guess from the source.  The test side's own
 # ±4 wander says the set is not even constant between runs.
 read 
+
+# ══════════════════════════════════════════════════════════════════════════
+# compquote, third and fourth instances: `_sequence`:24 and `_bpf_filters`:58
+#
+# Same class as e843894cf4 (`_ldap_filters`): the port skipped `compquote`, so
+# a value that zsh spells DIFFERENTLY depending on where the cursor sits was
+# treated as a constant.  `comp_quote` quotes with `*compqstack`
+# (Src/Zle/computil.c:3691-3705).  Measured directly, with a completer that
+# sets `suf=']' brack='[' paren='(' spc=' ' amp='&' qsep=,` and then calls
+# `compquote suf brack paren spc amp` / `compquote -p qsep`:
+#
+#     unquoted   suf=\]   brack=\[   paren=\(   spc=\    amp=\&   qsep=,
+#     inside "   suf=]    brack=[    paren=(    spc=     amp=&    qsep=,
+#     inside '   suf=]    brack=[    paren=(    spc=     amp=&    qsep=,
+#
+# ── `_bpf_filters`:58 `compquote suf` ────────────────────────────────────
+# The port referenced sh:58 in a header comment and never called it, and never
+# set `suf` at all — so the three actions that read it
+# (`compadd -S "$suf" 1 2 4`, `compadd -S "$suf " tcpflags`, and the icmp twin)
+# expanded an EMPTY parameter and the closing bracket was simply never
+# inserted.  Reproduced on a real command, both quoting contexts:
+#
+#     tcpdump 'tcp[<TAB>    zsh  tcpdump 'tcp[tcpflags]
+#                           was  tcpdump 'tcp[tcpflags
+#     tcpdump tcp\[<TAB>    zsh  tcpdump tcp\[tcpflags\]
+#                           was  tcpdump tcp\[tcpflags
+#
+# Both byte-identical to zsh after the fix, 3 serial runs.
+#
+# ── `_sequence`:23-24 `qsep="${sep[2]}"` / `compquote -p qsep` ────────────
+# Higher value: `_sequence` is a Base/Utility that ~40 upstream completers
+# reach.  The port assigned the raw separator and every later use read that.
+# The failure is not cosmetic, because sh:35 is `compset -S ${(q)qsep}\*` and
+# `|` is a pattern ALTERNATION character:
+#
+#     compset -S '|*'    -> 0      (matches the EMPTY suffix)   both shells
+#     compset -S '\|*'   -> 1                                   both shells
+#
+# So on every unquoted word the port took that branch, cleared `suf`, and
+# passed neither `-S` nor `-r` to the element completer.  Logged from the
+# element completer itself (`_elems () { print -r -- "ARGS=${(j. .)${(qq)@}}" }`)
+# against `_sequence -s '|' _elems -`:
+#
+#     unquoted  zsh  ARGS='-F' 'dedup' '-S' '\|' '-r' '\\ \t\n\-'
+#               was  ARGS='-F' 'dedup'
+#     inside '  zsh  ARGS='-F' 'dedup' '-S' '|'  '-r' '\| \t\n\-'
+#               was  ARGS='-F' 'dedup'
+#
+#     seqcmd al<TAB>          zsh  seqcmd alpha\|      was  seqcmd al
+#     seqcmd al<TAB><TAB>be   zsh  ran `alpha|be`      was  ran `alalphabe`
+#
+# Two more defects in the same lines, both only reachable once the separator
+# was right:
+#
+#   * sh:34's `-r` is written `"$end[1]${(q)qsep[1]} \t\n\-"` in DOUBLE quotes,
+#     where zsh leaves `\t` / `\n` / `\-` as two-character sequences.  They are
+#     not decoration: `compadd -r` runs the string through
+#     `getkeystring(s, &i, GETKEYS_SUFFIX, &z)` (Src/Zle/zle_misc.c:1672), and
+#     the `\-` is what sets `z` → `suffixnoinsrem`, "remove the suffix on an
+#     uninsertable character".  The port emitted a REAL tab and newline and a
+#     bare `-`, silently dropping that flag — visible on the DEFAULT comma
+#     separator, with no `-s` in sight:
+#
+#         seqcmd al<TAB><RETURN>     zsh ran `alpha`      was ran `alpha,`
+#
+#   * sh:31 is `compset -P $(( num[2] - 1 )) \*${(q)qsep}` — count and pattern
+#     are two SEPARATE words.  The port concatenated them, so the pattern began
+#     with a digit and the test never fired.  With `_sequence -n 2 -s : _elems -`
+#     the second TAB now passes `-F dedup` alone, as zsh does.
+#
+# ── third defect, unrelated to quoting: `compadd` is a BUILTIN ────────────
+# sh:40 runs the element completer as a COMMAND, and ten upstream callers write
+# `compadd` there (`_abcde`:5, `_cu`:44, `_gem`:106, `_ipfw`:168,
+# `_luarocks`:40, `_rsync`:192 …).  The port dispatched it through
+# `dispatch_function_call`, which finds no shell function — the same omission
+# 9caf16845d fixed on `_alternative`:61 and `_arguments`:453.  It added nothing
+# at all, with no diagnostic:
+#
+#     _sequence compadd - alpha beta gamma
+#     seqcmd al<TAB><RETURN>     zsh  RET=0 nm=1 ran `alpha`
+#                                was  RET=1 nm=0 ran `al`
+#
+# One difference is left, and it is NOT in these completers: a widget bound to
+# a key and invoked right after the TAB reads `$BUFFER` WITHOUT the auto-
+# removable suffix in zshrs and WITH it in zsh, i.e. zshrs runs the `\-`
+# removal before the widget rather than after.  Every path a user actually
+# takes agrees byte-for-byte — self-insert, a second TAB, a separator, and
+# accept-line — so this is a suffix-removal ORDERING nuance in ZLE, filed here
+# rather than chased.
+#
+# Measurement: `zsh -f -i` and a pinned codesigned `target/debug/zshrs` under a
+# pty, `fpath=( /usr/share/zsh/5.9/functions )` and `compinit -u` on both sides
+# (the host `FPATH` leaks into `zsh -f` and makes `compinit` scan 16k files, so
+# it has to be overridden), `ZSHRS_NATIVE_ZLE_FX=0`, `setopt no_beep`, values
+# read back through a FILE redirect.  3 serial runs each.
