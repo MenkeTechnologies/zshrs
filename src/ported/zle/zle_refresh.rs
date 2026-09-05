@@ -1667,6 +1667,17 @@ pub fn zrefresh() {
         let mut prompt_attr: zattr = 0;
         let mut esc_params = String::new();
         let mut in_esc = false;
+        // ECMA-48 5.6 "control string": OSC / DCS / SOS / PM / APC carry a
+        // free-form payload and end at BEL (0x07) or ST (`ESC \`) — NOT at
+        // the first letter the way a CSI ends at its final byte. Without
+        // this the scanner left `%{…%}`-hidden control strings half-parsed
+        // and the remainder was laid into the video model as real cells:
+        // `%{\e]133;A\a%}` (OSC 133 semantic marks — iTerm2/kitty/VSCode
+        // shell integration, and p10k) ended the escape at the `A` and
+        // emitted the BEL as one cell, so every keystroke came back as
+        // `BS SP <char>`; `%{\e]7;file://host/path\a%}` (OSC 7 cwd) ended
+        // at the `f` of `file` and emitted the rest of the URL.
+        let mut in_esc_string = false;
         // prompt.c:1183-1186 (countprompt) — `Inpar..Outpar` (`%{...%}`,
         // expanded to \x01..\x02) is a ZERO-WIDTH region: nothing inside
         // occupies a cell. In particular p10k's `%{\n%}` gap-line
@@ -1685,7 +1696,19 @@ pub fn zrefresh() {
         let mut just_wrapped = false;
         for c in prompt.chars() {
             if in_esc {
-                if c == '[' {
+                if in_esc_string {
+                    // Control-string payload: consume to BEL or ST (`ESC \`).
+                    if c == '\u{7}' || (c == '\\' && esc_params.ends_with('\u{1b}')) {
+                        in_esc = false;
+                        in_esc_string = false;
+                        esc_params.clear();
+                    } else {
+                        esc_params.push(c);
+                    }
+                } else if esc_params.is_empty() && matches!(c, ']' | 'P' | 'X' | '^' | '_') {
+                    // OSC / DCS / SOS / PM / APC introducer.
+                    in_esc_string = true;
+                } else if c == '[' {
                     // CSI introducer — not a param.
                 } else if c == 'm' {
                     prompt_attr = apply_sgr(prompt_attr, &esc_params); // SGR
@@ -1699,6 +1722,7 @@ pub fn zrefresh() {
                 }
             } else if c == '\x1b' {
                 in_esc = true;
+                in_esc_string = false;
                 esc_params.clear();
             } else if c == '\u{1}' {
                 in_invisible = true; // Inpar — %{ begins zero-width span
@@ -5141,32 +5165,34 @@ pub fn partial_refresh() -> io::Result<()> {
 }
 
 /// Calculate visible width of a prompt string — port of `countprompt()`
-/// from Src/prompt.c:1140. The C function counts cells while skipping
-/// the `Inpar..Outpar` (zsh's `%{...%}`) invisible-region tokens; this
-/// Rust port skips ANSI escape sequences instead, which is what the
-/// expanded prompt buffer contains by the time the refresh path uses it.
-/// The C variant outputs width AND height via out-pointers; this port
-/// returns width only (the only field the refresh path consumes here).
+/// from `Src/prompt.c:1140`, arity-reduced to the one out-param the
+/// refresh path here consumes (`*wp`); `overf` is pinned to `-1`
+/// ("allow overflow", c:1158/c:1255) because every caller below does its
+/// own `/ winw` wrapping.
+///
+/// The body is a DELEGATION to the canonical port
+/// (`ported::prompt::countprompt`) — it used to be a private copy that
+/// skipped ANSI CSI sequences (`ESC [ … <letter>`) instead of the
+/// `Inpar..Outpar` invisible-region markers C keys on (c:1179-1182).
+/// `promptexpand`/`expand_prompt` (prompt.rs:4750-4770) writes those
+/// markers into `lpromptbuf` as the readline bytes 0x01/0x02, so the
+/// copy was matching on the wrong thing and only got CSI-coloured
+/// prompts right by coincidence. Any other escape inside `%{…%}` —
+/// an OSC (`ESC ] … BEL`: terminal title, OSC 133 semantic marks,
+/// OSC 7 cwd, OSC 8 hyperlinks), a DCS, a charset select — had only its
+/// ESC byte skipped and every remaining payload byte counted as visible
+/// width:
+///
+///     PROMPT=$'%{\e]133;A\a%}> '   zsh: lpromptw 2   zshrs: 8  (`]133;A` = 6)
+///
+/// which shifted the whole edit line right by the payload length and
+/// overwrote it (`> echo hi` painted as `>    hi`).
 fn countprompt(s: &str) -> usize {
-    let mut chars = s.chars().peekable();
-    let mut width: usize = 0;
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // ANSI escape: skip until terminating letter.
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                while let Some(&nxt) = chars.peek() {
-                    chars.next();
-                    if nxt.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-    }
-    width
+    // c:1140
+    let mut w = 0i32;
+    let mut h = 0i32;
+    crate::ported::prompt::countprompt(s, &mut w, &mut h, -1); // c:1140, overf = -1
+    w.max(0) as usize
 }
 
 /// Parse a highlight attribute spec (the part after the `category:` prefix)
@@ -7186,7 +7212,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         assert_eq!(countprompt("hello"), 5);
-        assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
+        // prompt.c:1229-1233 — "If the character isn't printable, WCWIDTH()
+        // returns -1.  We assume width 1." A RAW escape sequence in the
+        // prompt is therefore VISIBLE width to zsh; hiding it is what
+        // `%{…%}` is FOR. This assertion used to read `5`, pinning the
+        // private ANSI-skipping copy of countprompt that this function
+        // no longer is.
+        assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 14);
+        // prompt.c:1179-1182 — `Inpar..Outpar` is the zero-width region.
+        // `expand_prompt` (prompt.rs:4757-4766) writes those markers into
+        // `lpromptbuf` as the readline bytes 0x01/0x02, so this is the
+        // shape the live refresh path actually measures: same escapes as
+        // above, now hidden, so only `hello` counts.
+        assert_eq!(countprompt("\x01\x1b[31m\x02hello\x01\x1b[0m\x02"), 5);
+        // An OSC inside `%{…%}` — the case the private copy got wrong,
+        // because it skipped only `ESC [ … <letter>` and then counted
+        // `]133;A` as six visible cells (measured: lpromptw 8 vs zsh's 2).
+        assert_eq!(countprompt("\x01\x1b]133;A\x07\x02> "), 2);
         assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
     }
 
