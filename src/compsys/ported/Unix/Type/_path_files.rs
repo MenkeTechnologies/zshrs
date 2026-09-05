@@ -1407,9 +1407,48 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         tsuf = suf.clone();
         let anchor = format!("{}{}{}", prepath, realpath, testpath);
         if !anchor.is_empty() {
+            // sh:619-623 — the strip is CASE-INSENSITIVE under NO_CASE_GLOB:
+            // `tmp1=( "${(@)tmp1#(#i)${prepath}${realpath}${testpath}}" )`.
+            // The anchor is built from `donepath`, i.e. the components as the
+            // user TYPED them, while `tmp1` holds what globbing returned, i.e.
+            // the components as they are spelled on disk. Those differ in case
+            // exactly when `nocaseglob` (or a case-insensitive filesystem) let
+            // an unmatched-case component through, and a case-sensitive strip
+            // then leaves the whole absolute path in the match: with
+            // `accept-exact-dirs` set, `ls /tmp/probeci/abcdir/<TAB>` inserted
+            // `/tmp/probeci/abcdir//tmp/probeci/AbcDir/` where zsh lists the
+            // directory's files.
+            let ignore_case = !isset(CASEGLOB); // sh:619
             tmp1 = tmp1
                 .iter()
-                .map(|s| s.strip_prefix(&anchor).unwrap_or(s).to_string())
+                .map(|s| {
+                    if let Some(rest) = s.strip_prefix(&anchor) {
+                        return rest.to_string(); // sh:623
+                    }
+                    if ignore_case {
+                        // sh:621 — `(#i)` over a literal anchor: fold both
+                        // sides per character so a multibyte anchor can never
+                        // split `s` on a non-char boundary.
+                        let mut it = s.char_indices();
+                        let mut end = 0usize;
+                        let mut ok = true;
+                        for ac in anchor.chars() {
+                            match it.next() {
+                                Some((i, sc)) if sc.to_lowercase().eq(ac.to_lowercase()) => {
+                                    end = i + sc.len_utf8();
+                                }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ok {
+                            return s[end..].to_string();
+                        }
+                    }
+                    s.clone()
+                })
                 .collect();
         }
 
