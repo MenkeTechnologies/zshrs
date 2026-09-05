@@ -5599,7 +5599,7 @@ fn ring_latest() -> Option<histent> {
 /// plus field-by-field assignment (hist.c:1614/2098/...) so there
 /// is no C function to mirror. Justified in
 /// `tests/data/fake_fn_allowlist.txt:676`.
-fn make_histent(num: i64, text: String) -> histent {
+pub(crate) fn make_histent(num: i64, text: String) -> histent {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
