@@ -13901,6 +13901,28 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             return;
         }
     }
+    // dash quotes the value in its `export -p` / `readonly -p` listings
+    // (`export FOO='bar'`); ksh and mksh print it bare.
+    if crate::extensions::emulation_output::alias_always_quotes()
+        && (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) != 0
+    {
+        let f = hn.node.flags as u32;
+        let (want, kw) = if (printflags & PRINT_POSIX_EXPORT) != 0 {
+            (PM_EXPORTED, "export")
+        } else {
+            (PM_READONLY, "readonly")
+        };
+        if (f & want) == 0 {
+            return;
+        }
+        let val = hn.u_str.clone().unwrap_or_default();
+        println!(
+            "{kw} {}={}",
+            hn.node.nam,
+            crate::extensions::emulation_startup::single_quote(&val)
+        );
+        return;
+    }
     if crate::dash_mode::bash_mode() && ((printflags & PRINT_TYPESET) != 0 || bash_posix_listing) {
         let fl = hn.node.flags as u32;
         let nm = hn.node.nam.clone();

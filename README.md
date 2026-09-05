@@ -716,6 +716,10 @@ resolving to its builtin, whereas inventing one shadows a real command.
 | `export -p` / `readonly -p` | `declare -x NAME="v"` / `declare -r` | `export NAME=v` | `export NAME=v` | `export NAME='v'` | zsh's own |
 | `times` fraction | milliseconds | milliseconds, seconds zero-padded | centiseconds, seconds zero-padded | microseconds | centiseconds |
 | `times` seconds field | `% 60` | `% 60` | `% 60` | `% 60` | `% clock-tick` (zsh's own arithmetic) |
+| `kill -l` | `%2d) SIG%s`, five per row | one bare name per line (`IOT` for 6) | two columns with the `strsignal` text | signal `0`, then one name per line | one space-separated line |
+| `hash` | `hits`/`command` table | `name=path` | `name=path` (reached via its own `hash` alias → `alias -t`) | the bare path | `name=path` |
+| `set -o` | 27 names, `name<TAB>state` | 38 names under "Current option settings", POSITIVE sense (`clobber on`) | 35 names in four column-major columns | 17 names under "Current option settings" | zsh's ~180 |
+| `set +o` | `set -o NAME` per line | zsh's form (ksh's compact one-line `--long` form not modelled) | zsh's form (mksh's `-o .reset` form not modelled) | `set -o NAME` per line | zsh's form |
 
 A privileged shell (effective uid ≠ real uid) reads no user file at all; the
 Korn and Bourne drop-ins take `/etc/suid_profile` in place of the profile pair.

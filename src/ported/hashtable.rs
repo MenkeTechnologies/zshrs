@@ -1559,6 +1559,27 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
 
     // c:786-798 — common tail. HASHED uses u.cmd, !HASHED splices first
     // u.name PATH segment + '/' + nam.
+    // ZSHRS-ONLY: bash prints `hits<TAB>path` rows under a header and
+    // dash prints the bare path; only the Korn shells and zsh use the
+    // `name=path` form below. See `emulation_output::hash_entry`.
+    {
+        let resolved = if (hn.node.flags & HASHED as i32) != 0 {
+            hn.cmd.clone().unwrap_or_default()
+        } else {
+            let dir = hn
+                .name
+                .as_ref()
+                .and_then(|a| a.first().cloned())
+                .unwrap_or_default();
+            format!("{dir}/{}", hn.node.nam)
+        };
+        if let Some(row) =
+            crate::extensions::emulation_output::hash_entry(&hn.node.nam, &resolved)
+        {
+            println!("{row}");
+            return;
+        }
+    }
     if (hn.node.flags & HASHED as i32) != 0 {
         // c:786
         print!("{}", quotedzputs(&hn.node.nam)); // c:787
@@ -2943,6 +2964,17 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     if crate::extensions::dash_mode::bash_mode() {
         println!(
             "alias {}={}",
+            hn.node.nam,
+            crate::extensions::emulation_startup::single_quote(&hn.text)
+        );
+        return;
+    }
+    // dash single-quotes the value ALWAYS (`alias yy=1` lists as
+    // `yy='1'`), where ksh, mksh and zsh quote only when the value needs
+    // it. No `alias ` prefix, unlike bash.
+    if crate::extensions::emulation_output::alias_always_quotes() {
+        println!(
+            "{}={}",
             hn.node.nam,
             crate::extensions::emulation_startup::single_quote(&hn.text)
         );
