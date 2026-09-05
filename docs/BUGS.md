@@ -58386,11 +58386,14 @@ shapes, every expectation captured from `/bin/zsh -f`; 30 of them fail against
 the pre-fix binary and 16 are must-not-regress pins for the array contexts that
 still sort and for the cond pattern machinery).
 
-## #1132 — `${a[@]}` and `$@` joined on a hardcoded space instead of `IFS[0]` in every `PREFORK_SINGLE` context, and the here-string word was never `singsub`ed at all — fixed
+## #1132 — the `PREFORK_SINGLE` (`ssub`) family: `${a[@]}` / `$@` joined on a hardcoded space, the here-string word was never `singsub`ed, a RANGE subscript had no `ssub` gate, `$argv` was unrecognised anywhere `$@` / `$*` are, and `${a[*]}` joined-then-split where zsh does neither — fixed
 
-**Status:** `fixed` 2026-09-05. The sibling of #1131: that entry moved the
-`ssub` gate inside the PORTED `paramsubst`, this one covers the three compiler
-FAST paths that never reach it.
+**Status:** `fixed` 2026-09-05, in two rounds. The sibling of #1131: that
+entry moved the `ssub` gate inside the PORTED `paramsubst`, this one covers the
+compiler FAST paths that never reach it. The first round took the `${NAME[@]}`
+splice, the bare `$@` / `$*` read and the here-string word; the second (below,
+same day) took the RANGE subscript, `$argv`, and the unconditional
+join-then-split in `BUILTIN_ARRAY_JOIN_STAR`.
 
 ```console
 $ a=(x y); IFS=:; v=${a[@]};   print -r -- "$v"
@@ -58505,21 +58508,186 @@ typeset-family argument, and only a `NAME=value` one is an assignment
 local -a ${a[@]}` names the arrays to declare and must stay a splat; joining it
 handed `typeset` the single name `p:q`.
 
-**Still open, same family, NOT fixed here** — `BUILTIN_ARRAY_INDEX`
-(`src/extensions/compile_zsh.rs`, the `braced_subscript_ref` fast path) returns
-an array for a RANGE subscript and has no `ssub` gate of its own:
+**Second round — the three gaps the first round left, all fixed** 2026-09-05.
 
 ```console
 $ a=(x y z); IFS=:; [[ ${a[1,2]} == x:y ]] && echo HIT || echo MISS
   zsh  : HIT
-  zshrs: MISS
+  zshrs: MISS                   # before
+
+$ a=(x y z); IFS=:; case ${a[1,2]} in x:y) echo HIT;; *) echo MISS;; esac
+  zsh  : HIT
+  zshrs: MISS                   # before
 
 $ a=(x y z); IFS=:; cat <<< ${a[1,2]}
   zsh  : x:y
-  zshrs: x y
+  zshrs: x y                    # before
+
+$ set -- x y; print -rl -- ${argv}
+  zsh  : x
+         y
+  zshrs: (nothing)              # before
+
+$ set -- x y; IFS=:; v=$argv; print -r -- "$v"
+  zsh  : x:y
+  zshrs: x y                    # before
+
+$ a=(x y); IFS=; print -rl -- ${a[*]}
+  zsh  : x
+         y
+  zshrs: xy                     # before
+
+$ a=('p:q' r); IFS=:; print -rl -- ${a[*]}
+  zsh  : p:q
+         r
+  zshrs: p                      # before
+         q
+         r
+
+$ a=('p q' r); print -rl -- ${a[*]}          # DEFAULT IFS
+  zsh  : p q
+         r
+  zshrs: p                      # before
+         q
+         r
+
+$ a=('p q' r); IFS=:; print -rl -- ${=a[*]}
+  zsh  : p q
+         r
+  zshrs: p q r                  # before (one word)
 ```
 
-`v=${a[1,2]}` and `typeset v=${a[1,2]}` are correct; only the `singsub`
-callers diverge. Also still open and unrelated to `IFS`: bare `$argv` is not
-recognised where `$@` / `$*` are, so `set -- x y; v=$argv` joins on a space and
-`v=${argv}` comes back EMPTY.
+**Root cause 1 — `BUILTIN_ARRAY_INDEX` had no `ssub` channel.** The
+`${NAME[KEY]}` fast paths (`braced_subscript_ref` and its dynamic-key twin in
+`src/extensions/compile_zsh.rs`) call `array_index_lookup`
+(`src/fusevm_bridge.rs`), which rebuilds the body and hands it to the ported
+`paramsubst` with `pf_flags == 0`. #1131's `ssub` gate was already inside that
+`paramsubst`; the fast path simply had no way to say it. A RANGE subscript is
+array-shaped, so c:`Src/subst.c:4226`'s `if (isarr && ssub) { val =
+sepjoin(aval, NULL, 1); }` applies to it — and without the flag the range came
+back as an array that later stringified with a hardcoded space. Only the three
+`singsub` callers diverged: a scalar assignment RHS and a `typeset NAME=…`
+argument take a different route and were already right.
+
+`BUILTIN_ARRAY_INDEX` also serves the single-element, assoc-key, scalar-slice
+and `(r)`/`(R)`/`(i)`/`(I)` search shapes. All of those are scalars, so
+c:4226's join is a no-op for them — measured over the full shape sweep (17
+shapes x 5 IFS settings x the 5 caller contexts) with zshrs byte-identical to
+`zsh -f` before and after.
+
+**Root cause 2 — `$argv` was never routed at the `$*` fast path.**
+c:`Src/params.c:428-430` — `IPDEF9("*", &pparams, …)` and
+`IPDEF9("argv", &pparams, …)` are ONE parameter, and the only shape
+discriminator in the read path is c:`Src/params.c:2251`
+`isvarat = (t[0] == '@' && !t[1])`, which sets `SCANPM_ISVAR_AT` (c:2272) and
+hence `isarr = -1` (c:`Src/subst.c:2917`) for the literal name `@` alone. So
+`$argv` expands exactly like `$*` — `"$argv"` is ONE word where `"$@"` is N.
+Verified over 44 cells (11 shapes x 4 IFS settings): `$argv` and `$*` are
+byte-identical in `zsh -f`, and `${argv}` and `${*}` likewise.
+
+The compiler's `bare_target` matched `$@` / `$*` / `${@}` / `${*}` and nothing
+else. `$argv` fell through to the bare-`$NAME` path, which emits
+`BUILTIN_ARRAY_ALL` — the right splat shape, but no c:4226 join. `${argv}` fell
+through to the `${NAME}` path, which emits a plain `BUILTIN_GET_VAR`, and
+`get_var_impl`'s positional arm tests only `"@"`/`"*"` — the name missed, the
+ordinary parameter lookup found nothing, and the expansion came back EMPTY.
+
+**Root cause 3 — `BUILTIN_ARRAY_JOIN_STAR` joined and split unconditionally.**
+c:`Src/subst.c:3912`:
+
+```c
+    if (ssub || spbreak || spsep || sep || quoted_array_with_offset) {
+	int force_split = !ssub && (spbreak || spsep);
+	if (isarr || quoted_array_with_offset) {
+	    if (nojoin == 0 || sep) {
+		val = sepjoin(aval, sep, 1);
+		isarr = 0;
+```
+
+The whole join/split block is GATED. `sep` / `spsep` are the `(j:…:)` /
+`(s:…:)` separators, which never reach this fast path; `ssub` and the quoted
+arm return earlier. So the only door in is `spbreak`, c:`Src/subst.c:1707`
+`(pf_flags & PREFORK_SHWORDSPLIT) && !(pf_flags & PREFORK_SINGLE) && !qt` —
+SH_WORD_SPLIT, or the explicit `${=…}` which sets `spbreak = 2` (c:2567).
+Without one of those the block does not run AT ALL: no join, no split, the
+element vector survives untouched, and an unquoted `${a[*]}` is the same splat
+as `${a[@]}`.
+
+The handler ran the round trip unconditionally. It was invisible whenever the
+join-then-split happened to be lossless, and wrong whenever it was not — an
+element carrying an IFS byte came apart (including under the DEFAULT IFS, where
+that byte is a space), and an EMPTY `IFS` joined with `""` and then had no
+separator left to split on, collapsing the array into one word.
+
+The framing that led here was "the join is right and the SPLIT is what
+differs". That is refuted: in command position zsh performs NEITHER.
+`a=('p:q' r); IFS=:; print -rl -- ${a[*]}` is `p:q` `r` in zsh, so the two
+words are the ORIGINAL elements, not a re-split of the joined `p:q:r`.
+
+**Fix**
+
+* `array_index_lookup` takes an `ssub` flag and passes `PREFORK_SINGLE` to
+  `paramsubst_to_value_pf`. `BUILTIN_ARRAY_INDEX` gains an argc contract:
+  `3` = ssub, `2` = every other caller. The stack shape is unchanged (name,
+  key) — the VM hands `argc` to the handler untouched and zshrs never sets
+  `Chunk::builtin_argc_is_arity`, so argc is a free channel, the same one
+  `BUILTIN_ARRAY_JOIN_STAR` uses.
+* `ssub` is now one helper, `ZshCompiler::ssub_c1761`, instead of three inline
+  copies of `scalar_assign_depth > 0 || (assign_builtin_arg_depth > 0 &&
+  assign_context_depth > 0) || singsub_depth > 0`.
+* `bare_target` matches `$argv` and `${argv}` and yields the name `*`, so both
+  spellings reuse every already-correct `$*` arm rather than adding a third
+  name to each of them.
+* `BUILTIN_ARRAY_JOIN_STAR` keeps the ELEMENT vector alongside the joined
+  scalar. Unquoted and not `ssub`, it returns the elements (with c:184-187's
+  empty-word removal, which the split used to supply as a side effect of its
+  `filter`) unless SH_WORD_SPLIT is set, in which case the old join-then-split
+  runs unchanged.
+* `${=NAME[*]}` opens the c:3912 block through `spbreak = 2`, so it needs the
+  JOIN but not the split — `BUILTIN_FORCE_SPLIT` is c:3932's `sepsplit` and
+  runs right after. The forced-split fast path therefore passes argc `1` for
+  `${=NAME[*]}` and for the `ssub` case, and argc `0` for `${==NAME[*]}`,
+  which clears `spbreak` (c:2563) and leaves the block shut.
+
+**Measurement.** A 1260-cell sweep (5 IFS settings x SH_WORD_SPLIT on/off x 6
+array shapes x 7 expansion spellings x 3 contexts) against `zsh -f`: 244
+divergent cells before, 132 after, and ZERO cells that diverge only after —
+verified by rebuilding the reverted tree into a pinned binary and diffing the
+two failure sets, not by inspection.
+
+**Still open, adjacent, NOT touched here** — every one of the remaining 132
+cells is under `setopt shwordsplit`, and they predate this change:
+
+```console
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[@]}
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${a[*]}
+  zsh  : x / '' / y       zshrs: x / y
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${==a[*]}
+  zsh  : p:q / r          zshrs: p / q / r
+$ a=('p q' r); IFS=:; print -rl -- ${=a[@]}
+  zsh  : 'p q' / r        zshrs: 'p q r'
+$ a=(x y); IFS=; print -rl -- ${=a[*]}
+  zsh  : x / y            zshrs: xy
+```
+
+Three separate things: `${NAME[@]}` takes `BUILTIN_ARRAY_ALL`, which has no
+SH_WORD_SPLIT join-then-split at all (c:1819 `nojoin` is 0 for a non-empty
+`IFS`, so c:3916 joins `[@]` exactly like `[*]`); `${==NAME[*]}` clears
+`spbreak` but the SH_WORD_SPLIT arm here does not consult that; and the
+SH_WORD_SPLIT split drops the empty fields that c:`Src/utils.c:3733`'s
+`nulstring` keeps for a NON-whitespace separator.
+
+Two `argv`-recognition siblings also survive, in paths this entry did not
+touch — both measured identical on the pre-change and post-change binaries:
+
+```console
+$ set -- x y; print -r -- ${argv:-nope}
+  zsh  : x y             zshrs: nope     # ${*:-nope} / ${@:-nope} are correct
+$ set -- x y; unset argv; print -r -- "[$@]"
+  zsh  : []              zshrs: [x y]
+```
+
+The first is the `:-` operator path failing to resolve `argv` to `pparams`
+(c:`Src/params.c:430` IPDEF9); the second is `unset` not routing the `argv`
+spelling at the positional list.
