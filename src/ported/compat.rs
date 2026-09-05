@@ -1200,9 +1200,11 @@ const WCWIDTH9_NOT_ASSIGNED: &[(u32, u32)] = &[
 /// (nonprint) onto `Some(0)` (zero-width), so the second conjunct never
 /// rejected anything either. Result, measured, and independent of locale:
 ///
-///     ${(q)} of U+00AD / U+200B / U+FEFF
-///       zsh  : $'\302\255'  $'\342\200\213'  $'\357\273\277'
-///       zshrs: the raw bytes
+/// ```text
+/// ${(q)} of U+00AD / U+200B / U+FEFF
+///   zsh  : $'\302\255'  $'\342\200\213'  $'\357\273\277'
+///   zshrs: the raw bytes
+/// ```
 pub fn u9_iswprint(ucs: char) -> bool {
     // c:772-773 — `if (ucs == 0) return 0;`. Subsumed by the {0,0x1f}
     // interval below; kept explicit because C keeps it explicit.
