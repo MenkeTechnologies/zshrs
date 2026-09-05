@@ -1616,36 +1616,72 @@ pub fn handleundo() {
 /// describing the diff. Port of `mkundoent` (zle_utils.c:1532).
 pub fn mkundoent() {
     // c:1532
-    if LASTLL.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst)
-        && LASTLINE.lock().unwrap()[..LASTLL.load(Ordering::SeqCst)]
-            == ZLELINE.lock().unwrap()[..ZLELL.load(Ordering::SeqCst)]
-    {
+    // Snapshot BOTH buffers and BOTH lengths once, under a single fixed
+    // lock order, and clamp each length to the buffer that backs it.
+    //
+    // Two bugs lived in the previous shape, which re-locked and re-loaded
+    // at every use:
+    //
+    //   * `ZLELL` was trusted as an index into `ZLELINE` without checking
+    //     the buffer's actual length. When the two got out of step the
+    //     shell ABORTED mid-edit — reported from Fedora on 0.12.58 as
+    //     "range end index 25 out of range for slice of length 0" at the
+    //     `ZLELINE[..ZLELL]` compare below, typing a 25-character line.
+    //     In C these are one structure and cannot disagree; the port has
+    //     them as separate globals, so the length is now derived from the
+    //     buffer rather than believed.
+    //   * The lock order was INVERTED between uses — the equality test
+    //     took LASTLINE then ZLELINE, the prefix scan took ZLELINE then
+    //     LASTLINE — which is a deadlock with two threads in the editor.
+    //
+    // Taking one snapshot also makes the diff self-consistent: every
+    // index below refers to the same bytes the comparison saw.
+    let (zle, last, zlell, lastll) = {
+        let zle_g = ZLELINE.lock().unwrap();
+        let last_g = LASTLINE.lock().unwrap();
+        let zlell = ZLELL.load(Ordering::SeqCst).min(zle_g.len());
+        let lastll = LASTLL.load(Ordering::SeqCst).min(last_g.len());
+        if zlell != ZLELL.load(Ordering::SeqCst) || lastll != LASTLL.load(Ordering::SeqCst) {
+            // The desync is the real defect; record it where the no-stdout
+            // rule allows (the log), never on the terminal.
+            tracing::debug!(
+                zlell = ZLELL.load(Ordering::SeqCst),
+                zleline_len = zle_g.len(),
+                lastll = LASTLL.load(Ordering::SeqCst),
+                lastline_len = last_g.len(),
+                "mkundoent: line length out of step with its buffer; clamping"
+            );
+        }
+        (
+            zle_g[..zlell].to_vec(),
+            last_g[..lastll].to_vec(),
+            zlell,
+            lastll,
+        )
+    };
+
+    if lastll == zlell && last[..] == zle[..] {
         LASTCS.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst);
         return;
     }
-    let sh = LASTLL
-        .load(Ordering::SeqCst)
-        .min(ZLELL.load(Ordering::SeqCst));
+    let sh = lastll.min(zlell);
     let mut pre = 0usize;
-    while pre < sh && ZLELINE.lock().unwrap()[pre] == LASTLINE.lock().unwrap()[pre] {
+    while pre < sh && zle[pre] == last[pre] {
         pre += 1;
     }
     let mut suf = 0usize;
-    while suf < sh - pre
-        && ZLELINE.lock().unwrap()[ZLELL.load(Ordering::SeqCst) - 1 - suf]
-            == LASTLINE.lock().unwrap()[LASTLL.load(Ordering::SeqCst) - 1 - suf]
-    {
+    while suf < sh - pre && zle[zlell - 1 - suf] == last[lastll - 1 - suf] {
         suf += 1;
     }
-    let del: Vec<char> = if suf + pre == LASTLL.load(Ordering::SeqCst) {
+    let del: Vec<char> = if suf + pre == lastll {
         Vec::new()
     } else {
-        LASTLINE.lock().unwrap()[pre..LASTLL.load(Ordering::SeqCst) - suf].to_vec()
+        last[pre..lastll - suf].to_vec()
     };
-    let ins: Vec<char> = if suf + pre == ZLELL.load(Ordering::SeqCst) {
+    let ins: Vec<char> = if suf + pre == zlell {
         Vec::new()
     } else {
-        ZLELINE.lock().unwrap()[pre..ZLELL.load(Ordering::SeqCst) - suf].to_vec()
+        zle[pre..zlell - suf].to_vec()
     };
     UNDO_CHANGENO.fetch_add(1, Ordering::SeqCst);
     // Canonical `change.del`/`ins` are `ZLE_STRING_T = String`
@@ -3510,5 +3546,51 @@ mod findbol_findeol_tests {
             "showmsg should end with a newline; got {:?}",
             s
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_mkundoent_desync {
+    use super::*;
+
+    /// `mkundoent` must not abort when the line LENGTH counter is out of
+    /// step with the buffer that backs it.
+    ///
+    /// Reported from Fedora on zshrs 0.12.58: typing a 25-character line
+    /// aborted the shell with
+    /// `range end index 25 out of range for slice of length 0` at the
+    /// `ZLELINE[..ZLELL]` comparison. `ZLELL` had kept the length of a
+    /// line whose buffer was already emptied — in C these are one
+    /// structure and cannot disagree, but the port holds them as separate
+    /// globals. The lengths are now derived from the buffers, so a
+    /// desynced counter degrades to a shorter diff instead of killing an
+    /// interactive shell.
+    #[test]
+    fn desynced_line_length_does_not_abort() {
+        let _g = crate::test_util::global_state_lock();
+        // Exactly the reported shape: a 25-long counter over an empty buffer.
+        ZLELINE.lock().unwrap().clear();
+        ZLELL.store(25, Ordering::SeqCst);
+        LASTLINE.lock().unwrap().clear();
+        LASTLL.store(0, Ordering::SeqCst);
+        ZLECS.store(0, Ordering::SeqCst);
+        mkundoent();
+
+        // The mirror case: the counter overruns a NON-empty buffer, which
+        // is what the prefix/suffix scans and the `del`/`ins` slices would
+        // have indexed past.
+        *ZLELINE.lock().unwrap() = "echo hi".chars().collect();
+        ZLELL.store(99, Ordering::SeqCst);
+        *LASTLINE.lock().unwrap() = "echo".chars().collect();
+        LASTLL.store(64, Ordering::SeqCst);
+        mkundoent();
+
+        // And the equal-but-overrunning case, which takes the early-return
+        // comparison rather than the diff path.
+        *ZLELINE.lock().unwrap() = "ab".chars().collect();
+        ZLELL.store(25, Ordering::SeqCst);
+        *LASTLINE.lock().unwrap() = "ab".chars().collect();
+        LASTLL.store(25, Ordering::SeqCst);
+        mkundoent();
     }
 }
