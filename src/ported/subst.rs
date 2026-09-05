@@ -19179,7 +19179,48 @@ pub fn paramsubst(
                 isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
             }
         }
-        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
+        // c:Src/subst.c:4226-4231 — the LAST array→scalar collapse before the
+        // sort/unique block, and the one that decides this case:
+        //
+        //     if (isarr && ssub) {
+        //         /* prefork() wants a scalar, so join no matter what else */
+        //         val = sepjoin(aval, NULL, 1);
+        //         isarr = 0;
+        //         l->list.flags &= ~LF_ARRAY;
+        //     }
+        //
+        // `ssub` is c:1761 `(pf_flags & PREFORK_SINGLE)`, set for a SCALAR
+        // assignment RHS (c:Src/exec.c:2603 `prefork(vl, isstr ?
+        // (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN, …)`) and for every
+        // singsub caller (c:520 prefork, c:Src/glob.c:2161 redirection
+        // filename under NO_MULTIOS, `case`/`[[` word expansion). It sits at
+        // c:4226, i.e. BEFORE `if (isarr)` at c:4256 — and the (u) unique fold
+        // (c:4264) and the (o)/(O)/(a)/(n)/(i) sort (c:4301-4326) are both
+        // INSIDE that gate. So in scalar-substitution context zsh never sorts
+        // and never uniques: it joins and stops. Verified against zsh 5.9 -f:
+        //     a=(c a b); v=${(o)a}     -> c a b   (not `a b c`)
+        //     a=(b a b c a); v=${(u)a} -> b a b c a
+        //     a=(3 10 2); v=${(n)a}    -> 3 10 2
+        //     a=(c a b); IFS=:; v=${(o)a} -> c:a:b
+        //     a=(c a b); [[ ${(o)a} == "c a b" ]] -> true
+        // The double-quoted form `v="${(o)a}"` already agreed because C's
+        // qt-sepjoin at c:3032 had cleared isarr earlier by a different route,
+        // which is why the divergence looked flag-specific rather than
+        // context-specific.
+        //
+        // c:4226 is UNCONDITIONAL on `nojoin`, unlike the earlier ssub join at
+        // c:3916 (`if (nojoin == 0 || sep)`). That is what makes `(@)` a
+        // non-exception here: `a=(bb a ccc); v=${(@o)a}` is `bb a ccc` in zsh,
+        // even though nojoin==2 lets the array survive c:3916. Gate on ssub
+        // alone, never on nojoin.
+        //
+        // The port keeps `isarr` non-zero past this point (the ssub scalar
+        // shape is produced downstream instead — see `ssub_join_c3903` in the
+        // quoting block), so the c:4226 collapse is expressed here as a guard
+        // on the sort/unique block rather than as an `isarr = 0` store, which
+        // would also re-shape the splat and quoting arms below.
+        let ssub_c4226 = (pf_flags & PREFORK_SINGLE) != 0; // c:1761
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() && !ssub_c4226 {
             // c:4245 + c:4290
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or

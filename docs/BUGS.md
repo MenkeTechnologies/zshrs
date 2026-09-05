@@ -58054,12 +58054,9 @@ Still divergent, pre-existing and NOT touched by this fix:
 * `PRE"${a[@]}"POST` drops the quoted array's empty element
   (`BUILTIN_ARRAY_DROP_EMPTY` is unconditional), where zsh keeps it as its own
   word.
-* `(o)` / `(O)` sort in scalar-substitution context, where zsh does not:
-  `a=(c a b); v=PRE${(o)a}POST` is `PREa b cPOST` in zshrs, `PREc a bPOST` in
-  zsh. C's sort block is at c:4301-4324, INSIDE the `if (isarr)` array emit
-  block, and `ssub` (a scalar-assignment RHS) has already zeroed `isarr` at
-  c:3901-3905, so the sort never runs. The DQ form `v="PRE${(O)a}POST"`
-  already agrees.
+* `(o)` / `(O)` sort in scalar-substitution context, where zsh does not.
+  **Fixed by #1131**, which also corrects the C citation this entry guessed at:
+  the collapse that matters is c:4226, not c:3901-3905.
 
 ---
 
@@ -58171,26 +58168,115 @@ Still divergent, pre-existing and NOT touched by this fix:
   `Pa::bS` in zshrs where zsh gives `Pa` / (empty) / `bS`. A separate defect
   from this one — the split never happens, so there is nothing to elide.
 * `(o)` / `(O)` / `(n)` / `(u)` still run in scalar-substitution context,
-  where zsh does not run them at all:
+  where zsh does not run them at all. **Fixed by #1131**, which also corrects
+  the c:3916-3918 citation this entry gave: that is the join C takes when
+  `nojoin == 0 || sep`, but the collapse that actually gates the sort is the
+  unconditional c:4226 `if (isarr && ssub)` — which is why `(@)` is not an
+  exception either.
+
+---
+
+## #1131 — the `(o)` / `(O)` / `(n)` / `(u)` flags sorted in scalar-substitution context, where zsh never sorts at all — fixed
+
+**Status:** `fixed` 2026-09-04. Recorded as an untouched divergence under both
+#1129 and #1130; broken out here because the gate it moves decides array-vs-
+scalar shape for every `${…}` in an assignment RHS.
 
 ```console
+$ a=(c a b); v=${(o)a}; print -r -- "$v"
+  zsh  : c a b
+  zshrs: a b c                  # before
+
 $ a=(c a b); v=PRE${(o)a}POST; print -r -- "$v"
   zsh  : PREc a bPOST
-  zshrs: PREa b cPOST
+  zshrs: PREa b cPOST           # before
 
-$ a=(c a b); v=${(o)a}; print -r -- "$v"
+$ a=(b a b c a); v=${(u)a}; print -r -- "$v"
+  zsh  : b a b c a
+  zshrs: b a c                  # before
+
+$ a=(3 10 2); v=${(n)a}; print -r -- "$v"
+  zsh  : 3 10 2
+  zshrs: 2 3 10                 # before
+
+$ a=(bb a ccc); v=${(@o)a}; print -r -- "$v"
+  zsh  : bb a ccc
+  zshrs: a bb ccc               # before
+
+$ a=(c a b); IFS=- ; v=${(o)a}; print -r -- "$v"
+  zsh  : c-a-b
+  zshrs: a-b-c                  # before
+```
+
+Not reversal-specific, not `(O)`-specific, and not affix-related: the whole
+sort/unique block is skipped. The double-quoted spelling `v="${(o)a}"` already
+agreed, which is what made the bug look flag-specific rather than
+context-specific.
+
+**Root cause** — `Src/subst.c:4226-4231`:
+
+```c
+    if (isarr && ssub) {
+	/* prefork() wants a scalar, so join no matter what else */
+	val = sepjoin(aval, NULL, 1);
+	isarr = 0;
+	l->list.flags &= ~LF_ARRAY;
+    }
+```
+
+`ssub` is c:1761 `(pf_flags & PREFORK_SINGLE)`. It is set for a scalar
+assignment RHS — c:`Src/exec.c:2603`, `prefork(vl, (isstr ?
+(PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN), &prefork_ret)` — and for
+every `singsub` caller (c:520, c:`Src/glob.c:2161` for a redirection filename
+under `NO_MULTIOS`, `case` and `[[ ]]` word expansion).
+
+c:4226 sits immediately BEFORE the array emit block `if (isarr)` at c:4256, and
+the `(u)` unique fold (c:4264) and the `(o)`/`(O)`/`(a)`/`(n)`/`(i)` sort
+(c:4301-4326) are both INSIDE that block. So in scalar-substitution context zsh
+joins with `sepjoin(aval, NULL, 1)` — separator `NULL`, i.e. `IFS[0]` — and
+stops. It never sorts and never uniques.
+
+The Rust gate in `src/ported/subst.rs` was
+`isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none()`, and
+nothing on the `ssub` path cleared `isarr` before it.
+
+**Two earlier citations for this bug were wrong** and are corrected here:
+
+* c:3901-3905 is the one-element-array collapse, unrelated.
+* c:3916-3918 is a real `ssub` join, but it is guarded by
+  `if (nojoin == 0 || sep)`. `(@)` sets `nojoin = 2` (c:2167) and the sibling
+  branch at c:3919 needs `force_split`, which is `!ssub && …` (c:3913) and so
+  always 0 here — meaning c:3916 alone leaves `(@)`'s array intact. It is
+  c:4226, unconditional on `nojoin`, that catches it: `v=${(@o)a}` is
+  `bb a ccc` in zsh, not the sorted `a bb ccc`.
+
+**Fix** — the sort/unique gate in `src/ported/subst.rs` gains `&& !ssub_c4226`,
+where `ssub_c4226` is `(pf_flags & PREFORK_SINGLE) != 0`. The port is expressed
+as a guard on the block rather than as an `isarr = 0` store because the port
+carries `isarr` past this point to shape the splat and quoting arms below
+(which already reach the correct scalar result on the `ssub` path via
+`ssub_join_c3903`); storing 0 here would re-shape those too.
+
+Double quotes reach `isarr = 0` by a different route — the qt-sepjoin at
+c:3032 — which also precedes c:4256, so the DQ forms were already correct in
+both shells and are pinned unchanged.
+
+Verified against `/bin/zsh -f` (5.9) on a 120-case differential sweep: 67 → 116
+matching, zero regressions. The four still divergent are a separate, narrower
+defect — zshrs does not mark `case`/`[[ ]]` word expansion or a subscripted
+assignment target (`v[1]=…`, `m[k]=…`) as `PREFORK_SINGLE` at all, so those
+words never reach this gate:
+
+```console
+$ a=(c a b); [[ ${(o)a} == "c a b" ]] && print yes || print no
+  zsh  : yes
+  zshrs: no
+
+$ a=(c a b); v[1]=${(o)a}; print -r -- "$v"
   zsh  : c a b
   zshrs: a b c
 ```
 
-  Not reversal-specific, not `(O)`-specific, and not affix-related — the whole
-  sort should be skipped. C's sort block is c:4301-4326, INSIDE the
-  `if (isarr)` array emit block at c:4256, and a scalar-assignment RHS is
-  `ssub`, which already collapsed the array with `sepjoin` and zeroed `isarr`
-  at c:3916-3918. The Rust port's gate is `isarr != 0 && (sortit !=
-  SORTIT_ANYOLDHOW || unique) && sep.is_none()` in `src/ported/subst.rs`, and
-  nothing there zeroes `isarr` for `ssub`. The DQ form
-  `v="PRE${(O)a}POST"` already agrees, which is what makes the bug look
-  flag-specific. Left alone deliberately: the fix is in the c:3912-3944 block,
-  which decides array-vs-scalar shape for every `${…}` in an assignment RHS,
-  and is a much wider blast radius than this entry's ordering change.
+Pinned by
+`tests/zshrs_shell.rs::sort_and_unique_flags_do_not_run_in_scalar_substitution_context`
+(65 shapes, every expectation captured from `/bin/zsh -f`).
