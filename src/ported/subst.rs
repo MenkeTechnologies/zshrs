@@ -9181,27 +9181,57 @@ pub fn paramsubst(
                         None => String::new(),
                     }
                 } else if let Some((flag_body, num_str)) = (|s: &str| -> Option<(String, String)> {
-                    // c:Src/params.c:1437 (w)/(W)/(s.X.) — word-split
-                    // subscript: treat array as scalar joined by space
-                    // then split by the flag's separator, return Nth
-                    // word. For arrays the join+split round-trip
-                    // typically yields the original elements when (w)
-                    // / (W) uses whitespace, so the result is
-                    // equivalent to a plain numeric subscript. Match
-                    // here so `${arr[(w)1]}` works in array context.
+                    // c:Src/params.c:1440-1443 `case 'w':` sets `word`, but
+                    // c:1622's word branch is gated on `word && !v->scanflags`
+                    // and c:Src/params.c:2276-2277 gives EVERY array-or-hash
+                    // Value a non-zero `scanflags` (`if (!v->scanflags)
+                    // v->scanflags = SCANPM_ARRONLY;`). So on an array the word
+                    // flag is dead by construction and the subscript is the
+                    // plain element index of c:1618 — always, not "typically"
+                    // as this comment used to claim on the strength of a
+                    // join/split round-trip that only holds for elements with
+                    // no separator in them.
+                    //
+                    // c:Src/params.c:2131-2136 — a TOP-LEVEL range comma makes
+                    // getindex call `getarg` twice, one flag group per bound,
+                    // so this whole-subscript arm must stand down and let the
+                    // array-slice arm below take it. Without the gate
+                    // `${a[(w)1,2]}` and `${a[(w)1,(w)2]}` reached here, failed
+                    // the integer parse and answered "" where zsh answers the
+                    // slice. The array SEARCH arm 250 lines up (the `(r)`/`(i)`
+                    // family) already carried the same gate.
+                    if crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
+                    {
+                        return None;
+                    }
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
                     let f = rest[..close].to_string();
                     let n = rest[close + 1..].to_string();
-                    if !f.chars().all(|c| matches!(c, 'w' | 'W' | 'p')) {
+                    // c:Src/params.c:1409-1504 — the flag switch has cases for
+                    // r R k K i I w f e n b p s and NOTHING else; there is no
+                    // `case 'W'`. `W` therefore hits `default: flagerr:`
+                    // (c:1498-1503), which rewinds to before the `(` so the whole
+                    // group is re-read as MATH — `zsh -f -c 'a=(x y z); print
+                    // ${a[(W)2]}'` answers `bad math expression: operator expected
+                    // at `2''`. This port accepted `W` as a synonym for `w` and
+                    // silently answered element 2 instead.
+                    if !f.chars().all(|c| matches!(c, 'w' | 'p')) {
                         return None;
                     }
                     Some((f, n))
                 })(sub)
                 {
                     let _ = flag_body;
-                    if let Ok(idx_n) = num_str.parse::<i64>() {
+                    // c:Src/params.c:1618 — `r = mathevalarg(s, &s);`. The index
+                    // is a math expression, so `n=2; ${a[(w)n]}` is element 2;
+                    // a bare digit-literal parse made it empty.
+                    if let Ok(idx_n) = num_str
+                        .trim()
+                        .parse::<i64>()
+                        .or_else(|_| crate::ported::math::mathevali(&singsub(num_str.trim())))
+                    {
                         let len = arr.len() as i64;
                         let i = if idx_n == 0 {
                             if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
@@ -9264,6 +9294,20 @@ pub fn paramsubst(
                         // scalar path. Without this `${a[(b:1:)l]}` fell
                         // through to the full-sub mathevali → "bad math
                         // expression" error; zsh evaluates "l" = 0.
+                        //
+                        // c:Src/params.c:2131-2136 — the flag group belongs to
+                        // ONE bound, so a top-level range comma means this
+                        // whole-subscript arm must stand down and let the slice
+                        // arm below classify each bound on its own (which it
+                        // does, via `subscript_bound_classify`'s c:1477-1483
+                        // flag strip). Left ungated, `${a[(w)1,2]}` math-eval'd
+                        // "1,2" through the comma OPERATOR and answered element
+                        // 2, and `${a[(w)1,(w)2]}` raised "bad math expression".
+                        if crate::subscript_escape::subscript_range_bounds(sub, &subscript_split)
+                            .is_some()
+                        {
+                            return None;
+                        }
                         let s = sub.trim();
                         let rest = s.strip_prefix('(')?;
                         let close = rest.find(')')?;
@@ -9989,8 +10033,24 @@ pub fn paramsubst(
                     // /opt/homebrew/bin/zsh — `${a[(s/::/)2]}` returns
                     // char[2], not split[2]). Only fall into the word arm
                     // when one of w/W/p/f is present.
-                    if let Some((word_flags, num_str, sep)) =
+                    if let Some((_word_flags, num_str, sep)) =
                         (|s: &str| -> Option<(String, String, String)> {
+                            // c:Src/params.c:2131-2136 — a TOP-LEVEL range comma
+                            // makes getindex call `getarg` TWICE, once per bound,
+                            // and each call parses its OWN flag group, so a word
+                            // flag scopes to a single bound. This arm answers the
+                            // whole subscript with one word and therefore must
+                            // stand down for a range, leaving the c:2054-2136
+                            // two-bound path (the `bound_idx` word branch below)
+                            // to run. Without the gate `${s[(w)1,(w)2]}` reached
+                            // here, failed to read "1,(w)2" as an integer and
+                            // answered the empty string where zsh answers
+                            // `alpha beta`.
+                            if crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                                .is_some()
+                            {
+                                return None;
+                            }
                             let s = s.trim_start();
                             let rest = s.strip_prefix('(')?;
                             let close = rest.find(')')?;
@@ -10006,7 +10066,12 @@ pub fn paramsubst(
                             let mut chars = f.chars().peekable();
                             while let Some(c) = chars.next() {
                                 match c {
-                                    'w' | 'W' => has_word = true,
+                                    // c:Src/params.c:1440 — `case 'w':` only.
+                                    // There is no `case 'W'` anywhere in the flag
+                                    // switch (c:1409-1504), so `W` takes the
+                                    // c:1498-1503 `flagerr` rewind and the group
+                                    // becomes part of the math expression.
+                                    'w' => has_word = true,
                                     'p' => escapes = true, // c:1477
                                     'f' => {
                                         has_word = true;
@@ -10051,14 +10116,22 @@ pub fn paramsubst(
                             ))
                         })(sub)
                     {
-                        // c:Src/params.c/utils.c findword — lowercase `(w)`
-                        // (and `(f)`/`(p)`) count WORDS, skipping empty
-                        // fields between adjacent separators; uppercase
-                        // `(W)` keeps empty fields. zshrs's custom-sep split
-                        // kept empties for both, so `s="a::b"; ${s[(ws.:.)2]}`
-                        // gave "" (the empty middle) instead of zsh's "b".
-                        let keep_empty = word_flags.contains('W');
-                        if let Ok(idx_n) = num_str.parse::<i64>() {
+                        // c:Src/params.c/utils.c findword — `(w)` (and
+                        // `(f)`/`(s.X.)`) count WORDS, skipping empty fields
+                        // between adjacent separators. zshrs's custom-sep split
+                        // kept the empties, so `s="a::b"; ${s[(ws.:.)2]}` gave ""
+                        // (the empty middle) instead of zsh's "b".
+                        // c:Src/params.c:1618 — `r = mathevalarg(s, &s);` runs
+                        // BEFORE the c:1622 word branch, so the number after a
+                        // word flag is a math expression like any other
+                        // subscript, not a digit literal. A bare `parse::<i64>()`
+                        // here made `n=2; ${s[(w)n]}` empty where zsh gives the
+                        // second word — and disagreed with the range spelling
+                        // `${s[(w)n,(w)n+1]}`, whose bounds go through
+                        // `bound_idx`'s mathevali below.
+                        if let Ok(idx_n) = num_str.trim().parse::<i64>().or_else(|_| {
+                            crate::ported::math::mathevali(&singsub(num_str.trim()))
+                        }) {
                             // Split scalar by sep. For default whitespace
                             // sep, split on any whitespace char (matches
                             // zsh IFS behavior).
@@ -10068,7 +10141,7 @@ pub fn paramsubst(
                                 scalar
                                     .split(sep.as_str())
                                     .map(|s| s.to_string())
-                                    .filter(|w| keep_empty || !w.is_empty())
+                                    .filter(|w| !w.is_empty())
                                     .collect()
                             };
                             let len = words.len() as i64;
@@ -10404,6 +10477,21 @@ pub fn paramsubst(
                             // index: just strip the flag block and parse the
                             // remainder. Verified vs /opt/homebrew/bin/zsh:
                             //   `a=hello; ${a[(s/l/)1]}` → "h" (char[1]).
+                            //
+                            // c:Src/params.c:2131-2136 — the flag group belongs to
+                            // ONE bound, so a top-level range comma means this
+                            // whole-subscript arm must stand down and let the range
+                            // arm classify each bound. Ungated, `${a[()2,3]}` had
+                            // its flag group stripped and then math-evaluated
+                            // "2,3" through the comma OPERATOR, so the start bound
+                            // vanished: `a='alpha beta'` gave `p` where zsh gives
+                            // `lp`. The mathevali sibling immediately below already
+                            // carried this gate, and so does the array arm's.
+                            if crate::subscript_escape::subscript_range_bounds(sub, &subscript_split)
+                                .is_some()
+                            {
+                                return None;
+                            }
                             let s = sub.trim();
                             let rest = s.strip_prefix('(')?;
                             let close = rest.find(')')?;
@@ -10606,6 +10694,166 @@ pub fn paramsubst(
                                 if let Some(close) = rest.find(')') {
                                     let body = &rest[..close];
                                     let pat_raw = &rest[close + 1..];
+                                    // c:Src/params.c:1622-1640 — getarg's `word`
+                                    // branch. A `(w)`/`(f)`/`(s.X.)` bound counts
+                                    // WORDS, but what it RETURNS is a character
+                                    // position: `return (a2 ? s : d + 1) - t;`
+                                    // (c:1640), the offset of the word's first
+                                    // char for the start bound and the offset one
+                                    // past its last char for the end bound. That
+                                    // is what lets a word flag sit on either side
+                                    // of a range comma (`${s[(w)1,(w)2]}`) and mix
+                                    // with a plain numeric bound (`${s[1,(w)2]}`).
+                                    // The single-index spelling `${s[(w)2]}` is the
+                                    // SAME C code — c:2135 `end = we ? we : start`
+                                    // reuses the word-end offset getarg stashed at
+                                    // c:1637 — so the two spellings must agree.
+                                    // Before this branch existed they did not: the
+                                    // word arm above owns the no-comma form and the
+                                    // range form fell through to a bound parse that
+                                    // cannot read `(w)N`, so every range spelling
+                                    // (`(w)1,(w)2`, `(w)2,-1`, `1,(w)2`,
+                                    // `(ws.:.)2,(ws.:.)3`, `(f)2,(f)3`) answered
+                                    // empty or the whole string.
+                                    let word_flags_parsed = {
+                                        let mut w_sep: Option<String> = None;
+                                        let mut w_word = false;
+                                        let mut w_escapes = false; // c:1476-1477 (p)
+                                        let mut w_ok = true;
+                                        let mut wit = body.chars();
+                                        while let Some(c) = wit.next() {
+                                            match c {
+                                                'w' => w_word = true, // c:1440-1443
+                                                'p' => w_escapes = true, // c:1476-1477
+                                                'f' => {
+                                                    // c:1445-1448
+                                                    w_word = true;
+                                                    w_sep = Some("\n".to_string());
+                                                }
+                                                's' => {
+                                                    // c:1479-1497
+                                                    let d = match wit.next() {
+                                                        Some(d) => d,
+                                                        None => {
+                                                            w_ok = false;
+                                                            break;
+                                                        }
+                                                    };
+                                                    let mut b = String::new();
+                                                    for cc in wit.by_ref() {
+                                                        if cc == d {
+                                                            break;
+                                                        }
+                                                        b.push(cc);
+                                                    }
+                                                    if w_escapes {
+                                                        // c:1488-1492
+                                                        b = crate::ported::utils::getkeystring_with(
+                                                            &b,
+                                                            (crate::ported::zsh_h::GETKEY_OCTAL_ESC
+                                                                | crate::ported::zsh_h::GETKEY_EMACS)
+                                                                as u32,
+                                                            None,
+                                                        )
+                                                        .0;
+                                                    }
+                                                    w_sep = Some(b);
+                                                }
+                                                _ => {
+                                                    w_ok = false;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if w_ok && w_word {
+                                            // c:1623-1624 — `s = t = getstrvalue(v);
+                                            // i = wordcount(s, sep, 0);`. Split in
+                                            // the SAME character units this arm
+                                            // slices in, with the same empty-field
+                                            // rule as the single-index word arm.
+                                            let n_units = s_chars.len();
+                                            let mut words: Vec<(usize, usize)> = Vec::new();
+                                            match w_sep.as_deref() {
+                                                None => {
+                                                    // Default `$IFS` whitespace.
+                                                    let mut k = 0usize;
+                                                    while k < n_units {
+                                                        let is_sep = |u: &String| {
+                                                            u.chars().all(char::is_whitespace)
+                                                        };
+                                                        if is_sep(&s_chars[k]) {
+                                                            k += 1;
+                                                            continue;
+                                                        }
+                                                        let st = k;
+                                                        while k < n_units && !is_sep(&s_chars[k]) {
+                                                            k += 1;
+                                                        }
+                                                        words.push((st, k));
+                                                    }
+                                                }
+                                                Some(sp) if sp.is_empty() => {
+                                                    // c:Src/utils.c:3825-3834 — an
+                                                    // empty separator advances one
+                                                    // character at a time.
+                                                    for k in 0..n_units {
+                                                        words.push((k, k + 1));
+                                                    }
+                                                }
+                                                Some(sp) => {
+                                                    let su: Vec<char> = sp.chars().collect();
+                                                    let mut k = 0usize;
+                                                    let mut st = 0usize;
+                                                    while k < n_units {
+                                                        let hit = k + su.len() <= n_units
+                                                            && (0..su.len()).all(|m| {
+                                                                s_chars[k + m].chars().eq(
+                                                                    std::iter::once(su[m]),
+                                                                )
+                                                            });
+                                                        if hit {
+                                                            if k > st {
+                                                                words.push((st, k));
+                                                            }
+                                                            k += su.len();
+                                                            st = k;
+                                                        } else {
+                                                            k += 1;
+                                                        }
+                                                    }
+                                                    if n_units > st {
+                                                        words.push((st, n_units));
+                                                    }
+                                                }
+                                            }
+                                            // c:1618 — the numeric part still goes
+                                            // through mathevalarg.
+                                            let mut r = match pat_raw.trim().parse::<i64>() {
+                                                Ok(v) => v,
+                                                Err(_) => crate::ported::math::mathevali(&singsub(
+                                                    pat_raw.trim(),
+                                                ))
+                                                .unwrap_or(default),
+                                            };
+                                            let iw = words.len() as i64; // c:1624
+                                            if iw == 0 {
+                                                return 0; // c:1631-1632
+                                            }
+                                            if r < 0 {
+                                                r += iw + 1; // c:1625-1626
+                                            }
+                                            if r < 1 {
+                                                r = 1; // c:1627-1628
+                                            }
+                                            if r > iw {
+                                                r = iw; // c:1629-1630
+                                            }
+                                            let (a, b) = words[(r - 1) as usize];
+                                            // c:1640
+                                            return if is_second { b as i64 } else { (a + 1) as i64 };
+                                        }
+                                        w_ok
+                                    };
                                     let mut flags = String::new();
                                     let mut nth: i64 = 1; // c:1432 (n.N.)
                                     let mut beg: Option<i64> = None; // c:1443 (b.N.)
@@ -10742,7 +10990,22 @@ pub fn paramsubst(
                                                     }
                                                 }
                                             }
-                                            return default;
+                                            // c:2001 — `return down ? 0 : slen + 1;`
+                                            // is the ONLY miss return for a scalar
+                                            // search bound: 0 for a reverse
+                                            // (`R`/`I`/`K`) scan, one past the end
+                                            // for a forward one. Both put the slice
+                                            // outside the string, which is how a
+                                            // failed search yields "". Falling back
+                                            // to the arm's DEFAULT bound instead
+                                            // silently turned a miss into "the
+                                            // whole string" — `a='a:b:c';
+                                            // ${a[(w)1,(R)y]}` printed `a:b:c`
+                                            // where zsh prints nothing. `slen` is
+                                            // C's byte length; this arm indexes in
+                                            // the character units of `s_chars`, so
+                                            // its one-past-the-end is `n + 1`.
+                                            return if want_last { 0 } else { n as i64 + 1 };
                                         } else {
                                             // c:1896-1912 — arg2 returns END index:
                                             // the smallest (R/I: largest) prefix
@@ -10768,8 +11031,35 @@ pub fn paramsubst(
                                                     }
                                                 }
                                             }
-                                            return default;
+                                            // c:2001 — same miss return for the END
+                                            // bound.
+                                            return if want_last { 0 } else { n as i64 + 1 };
                                         }
+                                    }
+                                    // c:Src/params.c:1618 — a flag group that PARSED
+                                    // but ran no search (`(e)`, `(p)`, `(n:N:)`,
+                                    // `(b:N:)`, a bare `(s.X.)`, even an empty `()`)
+                                    // leaves getarg at `r = mathevalarg(s, &s)`,
+                                    // where `s` is the text AFTER the group —
+                                    // c:1506-1507 `if (s != *str) s++;` is what steps
+                                    // past the `)`. Handing the whole `(flags)rest`
+                                    // to mathevali instead made it a math error and
+                                    // the bound fell back to this arm's default:
+                                    // `a='alpha beta gamma'; ${a[1,(e)1]}` printed
+                                    // the whole string where zsh prints `a`, and
+                                    // `${a[()2,3]}` lost its start bound. An UNKNOWN
+                                    // flag letter is different — c:1498-1503 rewinds
+                                    // to before the `(` and the group is re-read as
+                                    // math — so it must keep falling through to the
+                                    // whole-`e` evaluation below, which is why this
+                                    // is gated on a group that actually parsed.
+                                    if word_flags_parsed || ok {
+                                        let t = pat_raw.trim();
+                                        if let Ok(nv) = t.parse::<i64>() {
+                                            return nv;
+                                        }
+                                        return crate::ported::math::mathevali(&singsub(t))
+                                            .unwrap_or(default);
                                     }
                                 }
                             }
