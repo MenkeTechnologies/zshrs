@@ -1851,3 +1851,174 @@ ldapsearch
 #   # 6 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
 #   FLAKY  tab1               'sample '  (1 row(s) differ (passed on re-run — nondeterministic))
 #   FAIL   tab1               'sc_usage '  (1 row(s) differ)
+#
+# ──────────────────────────────────────────────────────────────────────────
+# RANGE TOTAL, cells 5201-6300 (1100 cells, one `tab1` cell per case):
+#   PASS=1081  FAIL=14  FLAKY=1  TIMEOUT=4  SKIP=0  REF-CRASHED=0
+#   TEST-CRASHED=0
+# (part_00 and part_01 were run by hand before the chunk driver existed;
+#  their verbatim summaries are the two blocks at the head of this sweep.)
+#
+# HOST CONTAMINATION FOUND AFTER THE SWEEP, recorded because it bounds what
+# the TIMEOUT count means: TWELVE ORPHANED CPU BUSY-LOOPS were spinning for
+# the whole run.  `ps -o pid,ppid,state,etime,time` showed 12 processes,
+# ALL with PPID=1, each with ~172 minutes of CPU over 4h07m elapsed, all
+# `RN`.  Their command line is another agent's `'R '` load experiment —
+# `for i in $(seq 1 12); do (while :; do :; done) & done` … `kill $HOGS` —
+# and PPID=1 proves the `kill $HOGS` never landed.  They were niced and
+# produced no output, so killing them lost nothing, but every elapsed time
+# and every budget-boundary verdict in this sweep was measured under them.
+# Even after the kill this host showed load averages 64.72/62.22/63.93 on
+# 18 logical cores with a peer process at 419% CPU, so "serially and ALONE"
+# is not literally achievable here; the re-confirmations below are serial
+# and at a 30s budget, but they are not on a quiet machine and are not
+# claimed to be.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# HOW THE 14 FAILs + 1 FLAKY DISPOSED — every one re-run SERIALLY AND ALONE,
+# 3x, `--jobs 1 --confirm 0 --key-budget 30 --no-timeout-recheck`, same
+# pinned binary and dump (dump sha256 verified identical before AND after
+# the whole batch).
+#
+#   deterministic 3/3, SAME numbers every pass
+#     'printenv '  'rsync '
+#   deterministic 3/3, reference STABLE but test side wanders
+#     'read '
+#   deterministic 3/3, BOTH sides wander (never an exact-equality test)
+#     'prterun '  'reattach-to-user-namespace '  'sample '  'sc_usage '
+#   FLAKY — verdict changed across the three passes
+#     'ponysay '(FAIL/FAIL/FAIL but 8, 31 and 10 rows)  'ponysay -'(P/F/F)
+#     'ponythink '(P/F/F)  'ponythink -'(F/P/P)  'ps '(P/F/F)
+#     'pstree '(F/F/P)
+#   PASS 3/3 — did not reproduce at all
+#     'qdbus -'  'r '
+#
+# ──────────────────────────────────────────────────────────────────────────
+# ARTEFACTS AND KNOWN CLASSES — do NOT file as new
+#
+# 'ponysay ' 'ponysay -' 'ponythink ' 'ponythink -'
+#   fp 66f9ca4587 / 22f0784dfe / 5d81c93ce7 / b226bae6de.  NOT a divergence.
+#   The `_ponysay` that wins on this $fpath is
+#   /opt/homebrew/share/zsh/site-functions/_ponysay, whose `_opts` array
+#   embeds SIX `$( ponysay … )` command substitutions; each fork emits a
+#   Python `SyntaxWarning` from balloon.py:46 straight to the TTY, 13 lines
+#   per completion, MID-COMPLETION.  Everything structural about the cell is
+#   at parity and each ingredient was isolated separately against the same
+#   pin, one cell each, all PASS byte-identical:
+#     * `+`-prefixed options (`+h/++help-colour/+l/++list`)      PASS
+#     * the real 46-element `_opts`, FROZEN to a literal spec    PASS, and
+#       zshrs's 18 listed rows are byte-identical to the rows the failing
+#       cell was missing
+#     * `print -u2` 13 lines then `_arguments` (shell dirties tty) PASS
+#     * three `$( noisy.sh )` in the spec, 9 stderr lines from CHILD
+#       processes                                                 PASS
+#     * `$(( $( ( stty size <&2 | cut -d ' ' -f 2 ) ) - 10 ))`, a spec
+#       action that READS the tty                                 PASS
+#   The array itself is identical outside completion on both shells
+#   (n=46, md5 9ff1deeffe2b5db358ce383a5d5ee9b1, 13 stderr lines each), and
+#   the spec build costs the same on both (zsh real 0.96/0.77/0.81, zshrs
+#   0.90/0.78/0.79).  What is left is the redraw race against 13 lines of
+#   foreign tty output, and the re-confirmation proves it is a race: the
+#   same cell gave 8, 31 and 10 differing rows on three serial passes, and
+#   its siblings flipped PASS/FAIL.  Same family as the 'R ' entry below.
+#   NOT added as corpus entries — a cell whose verdict is a redraw race
+#   would only ever land as noise.
+#
+# 'printenv '  fp ad1eaa3ff8  deterministic 3/3, identical every pass.
+#   zshrs's own published environment, the class already recorded for
+#   'gpg-agent '.  Measured directly rather than inferred:
+#     diff <(zsh -f -c 'printenv|cut -d= -f1|sort') \
+#          <(zshrs -f -c 'printenv|cut -d= -f1|sort')
+#       > FPATH  > HELPDIR  > INFOPATH  > MANPATH   < SHLVL  < _
+#   The three extra ROWS in the cell are exactly HELPDIR, INFOPATH and
+#   MANPATH; every other row is identical and in the same order.
+#   src/extensions/bundled_docs.rs:145-157,192 publishes them.  MANPATH is
+#   the third name and was not previously written down.
+#
+# 'prterun ' / 'reattach-to-user-namespace '   fp b29792c9a7.
+#   The ~52.8k ask-prompt band already documented for 'ktrace ', 'mispipe ',
+#   'mpirun ', 'nice ', 'nohup ', 'oshrun ', 'palloc ', 'parallel '.  Numbers
+#   compared rather than trusting the digit-masking fingerprint:
+#     prterun    zsh 52818/52818/52818   zshrs 52830/52826/52830   +8..+12
+#     reattach   zsh 52814/52818/52818   zshrs 52826/52830/52830   +12
+#   Both inside the documented +12..+16 band.  Two more reproducers, not a
+#   new bug.
+#
+# 'ps ' 'pstree ' 'sample ' 'sc_usage '   the live-`ps` artefact, four more
+#   members ('kill '/'gcore '/'gstack '/'pgrep '/'pidof ' are the existing
+#   ones).  All four complete a PROCESS NAME and all four have BOTH sides
+#   wandering across serial passes, with the SIGN OF THE DELTA FLIPPING —
+#   which is the discriminator, not the magnitude:
+#     ps        zsh 176/175   zshrs 174/174    (and PASS on pass 1)
+#     pstree    zsh 241/259   zshrs 240/264    sign flips -1 -> +5, PASS on 3
+#     sample    zsh 142/141/127  zshrs 140/138/126
+#     sc_usage  zsh 718/709/716  zshrs 714/710/712   sign flips -4 -> +1
+#   Note 'pstree ' has NO completer file on this $fpath at all ($_comps
+#   names `_pstree`, no fpath dir holds it), so its counts are a
+#   fall-through into a cwd that ~16 agents are mutating — the
+#   shared-worktree churn class on top of the process churn.  Discarded.
+#
+# 'qdbus -'   fp 76185f5094.  PASS 3/3 on re-confirmation.  The sweep diff
+#   was one row, ref '-' vs test '<absent>' — the `-` DIRECTORY LITTER class
+#   already recorded for 'node -' and 'ktrace -' (fp 4356dd07a7, the
+#   makearray/qsort tie).  The trigger is still present in the repo root
+#   (`drwxr-xr-x 2 wizard staff 64 Sep 4 19:23 -`).  Per the standing rule
+#   for that class, NOT added as a corpus entry: the trigger is transient
+#   litter and the line would rot the moment someone removes the directory.
+#
+# 'r '   fp 862d1a4e04.  PASS 3/3.  Byte-for-byte the shape the ledger
+#   already records for 'R ' — ref row 1 = '1', test row 1 = <absent> — and
+#   the same fingerprint, reached from the lowercase command name.  That
+#   entry's diagnosis (a cold-run settle-window miss, the user's own `_R`
+#   piping through `stryke -e`) predicted exactly this: it passes whenever
+#   the run is warm.  Do not re-file.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# MEASUREMENT-INTEGRITY FINDING — the harness CANNOT pin both shells to the
+# same completer tree, and no `fpath=( … )` in the init will make it.
+#
+# zshrs rewrites a shell-level `fpath` assignment.  Reproducible with no
+# completion, no pty and no dump — source a five-line probe under `-f -c`:
+#
+#   fpath=( /usr/local/share/zsh/site-functions \
+#           /opt/homebrew/share/zsh/site-functions \
+#           /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions )
+#   print -r -- ${(j:|:)fpath}
+#
+#     zsh   -> …/site-functions | …/site-functions | /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions
+#     zshrs -> …/site-functions | …/site-functions | /Users/wizard/.zshrs/functions
+#
+# It happens AT THE ASSIGNMENT, not at compinit (an `AFTER-COMPINIT` print
+# is unchanged on both).  Two branches, both measured:
+#   host tree present -> REPLACED IN PLACE at its index
+#       fpath=( /tmp <hosttree> /usr/local/… )
+#         -> /tmp | ~/.zshrs/functions | /usr/local/…
+#   host tree absent  -> bundle APPENDED
+#       fpath=( /tmp /var ) -> /tmp | /var | ~/.zshrs/functions
+#
+# This is DELIBERATE and documented in-source, so it is not a defect:
+#   src/vm_helper.rs:8374  `is_host_zsh_function_tree` — rejects
+#     `<prefix>/share/zsh[/<ver>]/functions`, keeps `share/zsh/site-functions`
+#   src/vm_helper.rs:8340-8364  the enforcement, run on EVERY shell-level
+#     assignment: `arr.insert(idx, dir)` at the host tree's index, else push
+#   src/vm_helper.rs:8250-8272  the reason — a host tree is "a second,
+#     differently-versioned copy of the same compinit, _git and _describe",
+#     so a Homebrew zsh upgrade would otherwise change how zshrs completes
+#
+# What makes the corpus still trustworthy is that the substituted tree is a
+# near-exact SUPERSET.  Measured file-by-file:
+#     /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions   1235 files
+#     /Users/wizard/.zshrs/functions                       1284 files
+#     in Cellar but NOT bundled                               0
+#     common files differing in content                       1  add-zsh-hook
+#     bundled-only                                           49
+# The 49 are `_shadow`, `_zd`, `_zls` and 46 `_z*` completers for zshrs's own
+# extension builtins — the ON-DISK form of the "+20 `_z*`" residual the
+# b29792c9a7 resolution section documents (that figure counted `$functions`
+# at compadd time, a subset).  The one content difference is deliberate and
+# self-documenting: zshrs's `add-zsh-hook` adds `async_precmd` to the
+# accepted hook list (+21,29, citing src/extensions/async_precmd.rs),
+# because upstream's list would reject the name and make the hook
+# unreachable through its documented interface.
+# `_ps` and `_printenv` are byte-identical between the two trees, so neither
+# negative-delta cell above is a completer-version artefact.
