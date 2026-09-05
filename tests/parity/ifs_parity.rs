@@ -212,3 +212,144 @@ mod ifs_multi_char {
         assert_parity(r#"IFS=':|'; f() { echo $#; }; f $=$"$(echo 'a:b|c:d')""#);
     }
 }
+
+/// c:`Src/subst.c:3912-3939` — the join-then-split block, for the `${a[*]}` /
+/// `${a[@]}` / `${=a[…]}` / `${==a[…]}` splices that the compiler serves from
+/// its own fast paths rather than through `paramsubst`. docs/BUGS.md #1132.
+///
+/// The block is GATED on `spbreak`, and inside it the ANSWER turns on two
+/// things and only two:
+///
+/// * `nojoin` (c:1819 / :2569) — `!(ifs && *ifs)`, so 1 for an IFS that is
+///   unset OR empty. c:3030-3032 then forces `isarr = -1`, which is why
+///   `[@]` and `[*]` behave IDENTICALLY here and every case below pairs them.
+/// * whether IFS is UNSET or merely EMPTY — c:3919's second join arm is
+///   `(!ifs && isarr < 0)`, which an empty-but-set IFS fails.
+///
+/// So a non-empty IFS joins on `IFS[0]` and splits; an UNSET IFS joins on
+/// `sepjoin`'s default `" "` and splits; an EMPTY IFS does NEITHER and the
+/// original elements survive.
+///
+/// Every expectation is `zsh -f`, and each `assert_parity` below was verified
+/// RED against a pinned build of the pre-fix tree (132 divergent cells in a
+/// 1260-cell IFS x SH_WORD_SPLIT x shape x spelling x context sweep).
+mod splice_join_split_c3912 {
+    use super::*;
+
+    /// c:3916 — SH_WORD_SPLIT with a non-empty IFS joins the splice on
+    /// `IFS[0]` and re-splits, so an element that CONTAINS the separator
+    /// comes apart. `${a[@]}` had no SH_WORD_SPLIT arm at all.
+    #[test]
+    fn shwordsplit_joins_and_splits_the_splice() {
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[@]}"#,
+        );
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[*]}"#,
+        );
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; f(){print -r -- $#}; f ${a[@]}"#,
+        );
+    }
+
+    /// c:3919 `(!ifs && isarr < 0)` — an UNSET IFS still joins, on
+    /// `sepjoin`'s default `" "` (c:Src/utils.c:3941-3945), then splits on
+    /// the default IFS.
+    #[test]
+    fn shwordsplit_unset_ifs_joins_on_space_then_splits() {
+        assert_parity(
+            r#"setopt shwordsplit; a=('p q' r); unset IFS; print -rl -- ${a[@]}"#,
+        );
+        assert_parity(
+            r#"setopt shwordsplit; a=('p q' r); unset IFS; print -rl -- ${a[*]}"#,
+        );
+    }
+
+    /// c:3916/:3919 both decline for `nojoin == 1` with IFS set to the EMPTY
+    /// string, so c:3931's `!isarr` keeps the split off too — the elements
+    /// survive untouched. The handler used to join them on `""` and then have
+    /// no separator left to split on, collapsing the array into one word.
+    #[test]
+    fn shwordsplit_empty_ifs_leaves_the_elements_alone() {
+        assert_parity(r#"setopt shwordsplit; a=(x y); IFS=; print -rl -- ${a[*]}"#);
+        assert_parity(r#"setopt shwordsplit; a=(x y); IFS=; print -rl -- ${a[@]}"#);
+        assert_parity(
+            r#"setopt shwordsplit; a=(x y); IFS=; f(){print -r -- $#}; f ${a[*]}"#,
+        );
+    }
+
+    /// c:Src/utils.c:3732 / :3752 — `spacesplit` marks an empty field
+    /// delimited by IFS-NON-whitespace with `nulstring`
+    /// (c:Src/subst.c:36 `{Nularg,'\0'}`), which prefork's `uremnode` (c:186)
+    /// KEEPS and `remnulargs` turns into `""`. A field left by a skipped run
+    /// of IFS-WHITESPACE is a real `""` and c:186 deletes it. A naive
+    /// `split().filter(non-empty)` cannot tell them apart and dropped the
+    /// middle word.
+    #[test]
+    fn nulstring_empty_fields_survive_a_non_whitespace_ifs() {
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${a[@]}"#);
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${a[*]}"#);
+        assert_parity(
+            r#"setopt shwordsplit; a=(x '' y); IFS=:; f(){print -r -- $#}; f ${a[@]}"#,
+        );
+        // The same array under a WHITESPACE IFS keeps only two words.
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=' '; print -rl -- ${a[@]}"#);
+        // Leading / trailing non-whitespace separators each keep their field.
+        assert_parity(r#"setopt shwordsplit; a=('' x ''); IFS=:; f(){print -r -- $#}; f ${a[@]}"#);
+    }
+
+    /// c:2563 — `${==NAME[…]}` clears `spbreak`, so c:3912's gate never opens
+    /// however SH_WORD_SPLIT is set and the elements survive whole.
+    #[test]
+    fn double_equals_suppresses_the_split_under_shwordsplit() {
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${==a[*]}"#);
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${==a[*]}"#);
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; f(){print -r -- $#}; f ${==a[*]}"#,
+        );
+    }
+
+    /// c:2567 — `${=NAME[…]}` forces `spbreak = 2`, which opens the block
+    /// without SH_WORD_SPLIT. It runs the SAME `nojoin` arms, so an empty IFS
+    /// still leaves the elements alone and an unset one still joins on `" "`.
+    #[test]
+    fn equals_flag_runs_the_same_nojoin_arms() {
+        assert_parity(r#"a=('p q' r); IFS=:; print -rl -- ${=a[@]}"#);
+        assert_parity(r#"a=('p q' r); IFS=:; print -rl -- ${=a[*]}"#);
+        assert_parity(r#"a=(x y); IFS=; print -rl -- ${=a[*]}"#);
+        assert_parity(r#"a=(x y); IFS=; print -rl -- ${=a[@]}"#);
+        assert_parity(r#"a=('p q' r); unset IFS; print -rl -- ${=a[@]}"#);
+        assert_parity(r#"a=(x '' y); IFS=:; f(){print -r -- $#}; f ${=a[@]}"#);
+    }
+
+    /// c:4226 `if (isarr && ssub) { val = sepjoin(aval, NULL, 1); }` — a
+    /// PREFORK_SINGLE context joins and STOPS, `${=…}` or not. The `[@]`
+    /// spelling under `=` used to reach the assignment as an array and
+    /// stringify with a hardcoded space.
+    #[test]
+    fn scalar_assignment_joins_the_splice_on_ifs0() {
+        assert_parity(r#"a=(x y); IFS=:; v=${=a[@]}; print -r -- "[$v]""#);
+        assert_parity(r#"a=('p:q' r); IFS=:; v=${=a[@]}; print -r -- "[$v]""#);
+        assert_parity(r#"a=(x y); IFS=:; v=${a[@]}; print -r -- "[$v]""#);
+    }
+
+    /// c:Src/params.c:428-430 — `IPDEF9("*", &pparams)` and
+    /// `IPDEF9("argv", &pparams)` are ONE parameter, and c:Src/params.c:2251
+    /// `isvarat = (t[0] == '@' && !t[1])` is the only shape discriminator, so
+    /// `${argv:-…}` IS `${*:-…}`. The default-family rebuild kept the `argv`
+    /// spelling, whose "is it set" probe tests only `@`/`*` — the expansion
+    /// looked UNSET and took the default.
+    #[test]
+    fn argv_resolves_to_the_positional_list_in_the_default_family() {
+        assert_parity(r#"set -- x y; print -r -- ${argv:-nope}"#);
+        assert_parity(r#"set -- x y; print -r -- ${argv:+yes}"#);
+        assert_parity(r#"set -- x y; print -r -- ${argv:?msg}"#);
+        assert_parity(r#"set -- x y; print -r -- ${argv-nope}"#);
+        assert_parity(r#"set -- x y; print -r -- ${argv+yes}"#);
+        // The ASSIGNING ops keep the literal name: zsh rejects `${*=…}`
+        // ("not an identifier: *") but accepts `${argv=…}`.
+        assert_parity(r#"set -- x y; print -r -- ${argv=dflt}"#);
+        assert_parity(r#"set -- x y; print -r -- ${argv:=dflt}"#);
+        assert_parity(r#"set -- x y; print -r -- ${+argv}"#);
+    }
+}

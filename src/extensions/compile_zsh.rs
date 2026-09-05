@@ -6879,7 +6879,26 @@ impl ZshCompiler {
             if let Some((force_split, name, splice)) = parse_forced_split_brace(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
+                // c:Src/subst.c:3901-3920 — `ssub` (scalar-substitution)
+                // suppresses the forced split for BOTH bare `v=…` and the
+                // typeset-family `NAME=…` arg form. `typeset v="$*"` is as
+                // much a scalar assignment as `v="$*"`, so the join must
+                // fire for assign_builtin_arg_depth too (otherwise `$*`/`$@`
+                // expanded as an array and only the first element survived
+                // the scalar coercion — qrcode plugin `local input="$*"`).
+                // c:Src/subst.c:3913 `force_split = !ssub && (spbreak || spsep)`
+                // — `ssub` is PREFORK_SINGLE from ANY of its three callers, so
+                // singsub (c:520) suppresses `${=…}` exactly as an assignment
+                // RHS does.
+                let in_scalar_assign = self.scalar_assign_depth > 0
+                    || self.assign_builtin_arg_depth > 0
+                    || self.singsub_depth > 0;
                 let load_bid = match splice {
+                    // c:Src/subst.c:4226 — an `ssub` caller joins the splice on
+                    // IFS[0] and stops. BUILTIN_ARRAY_ALL has no join, so take
+                    // the joiner for `${=NAME[@]}` in that context, exactly as
+                    // the plain `${NAME[@]}` fast path below already does.
+                    '@' if in_scalar_assign => crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR,
                     '@' => crate::vm_helper::BUILTIN_ARRAY_ALL,
                     '*' => crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR,
                     // c:Src/subst.c:1705 / :2558-2569 — `spbreak` is ONE flag:
@@ -6896,34 +6915,34 @@ impl ZshCompiler {
                     // `val = sepjoin(aval, sep, 1)` before the c:3921 split.
                     _ => crate::vm_helper::BUILTIN_GET_VAR_DQ,
                 };
-                // c:Src/subst.c:3901-3920 — `ssub` (scalar-substitution)
-                // suppresses the forced split for BOTH bare `v=…` and the
-                // typeset-family `NAME=…` arg form. `typeset v="$*"` is as
-                // much a scalar assignment as `v="$*"`, so the join must
-                // fire for assign_builtin_arg_depth too (otherwise `$*`/`$@`
-                // expanded as an array and only the first element survived
-                // the scalar coercion — qrcode plugin `local input="$*"`).
-                // c:Src/subst.c:3913 `force_split = !ssub && (spbreak || spsep)`
-                // — `ssub` is PREFORK_SINGLE from ANY of its three callers, so
-                // singsub (c:520) suppresses `${=…}` exactly as an assignment
-                // RHS does.
-                let in_scalar_assign = self.scalar_assign_depth > 0
-                    || self.assign_builtin_arg_depth > 0
-                    || self.singsub_depth > 0;
-                // c:Src/subst.c:3912-3932 — for `[*]` the whole join/split
-                // block is gated, and BOTH arms here open it:
-                //   `${=NAME[*]}` sets `spbreak = 2` (c:2567), so c:3917
-                //   `sepjoin` runs and c:3932 `sepsplit` runs after it — the
-                //   split being BUILTIN_FORCE_SPLIT below, so JOIN_STAR must
-                //   hand it the JOINED scalar and not split on its own;
-                //   an `ssub` caller joins at c:3917 and stops there.
-                // `${==NAME[*]}` clears `spbreak` (c:2563) and is neither, so
-                // the block never runs and the ELEMENTS survive untouched —
-                // argc 0, the same no-join answer a plain `${NAME[*]}` gets.
-                let argc = if splice == ' ' || (splice == '*' && (force_split || in_scalar_assign))
-                {
+                // c:Src/subst.c:3912-3939 — for a SPLICE the whole join/split
+                // block is gated on `spbreak`, so tell the handler which one
+                // this spelling implies (see the builtins' argc contracts):
+                //   `${=NAME[*]}` / `${=NAME[@]}` set `spbreak = 2` (c:2567),
+                //   so c:3916 or c:3919 joins and c:3932 `sepsplit` runs after
+                //   it — the split being BUILTIN_FORCE_SPLIT below, so the
+                //   handler must stop at the join and not split on its own.
+                //   Which of the two join arms fires (or neither, leaving the
+                //   elements alone) depends on `nojoin` and on IFS being UNSET
+                //   vs merely EMPTY, which is why this cannot be an
+                //   unconditional join — argc 3.
+                //   `${==NAME[*]}` / `${==NAME[@]}` clear `spbreak` (c:2563),
+                //   so the block never runs and the ELEMENTS survive untouched
+                //   whatever SH_WORD_SPLIT says — argc 2.
+                //   An `ssub` caller joins at c:4226 and stops there — argc 1.
+                // c:3030-3032 `if (isarr) { if (nojoin) isarr = -1; }` makes
+                // `[@]` and `[*]` indistinguishable inside the block, so the
+                // two splices take the same argc.
+                let argc: u8 = if splice == ' ' || in_scalar_assign {
                     1
+                } else if force_split {
+                    3
+                } else if splice == '*' {
+                    2
                 } else {
+                    // `${==NAME[@]}`: BUILTIN_ARRAY_ALL's legacy "splat as
+                    // read"; the block is shut and the c:184-187 empty removal
+                    // is the BUILTIN_ARRAY_DROP_EMPTY emitted below.
                     0
                 };
                 self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
@@ -6943,7 +6962,11 @@ impl ZshCompiler {
                     // BUILTIN_FORCE_SPLIT's argc contract.
                     let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
                     let keep_empties = in_dq || self.word_seg_depth > 0;
-                    let argc = if keep_empties { 1 } else { 0 };
+                    // Bit 1 says the operand is a `[@]`/`[*]` splice, whose
+                    // c:3914-3927 join arm can leave the value ARRAY-shaped and
+                    // so make c:3931's `!isarr` gate close the split. A scalar
+                    // read (`${=v}`, `$=@`) has no such gate.
+                    let argc = u8::from(keep_empties) | if splice == ' ' { 0 } else { 2 };
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_FORCE_SPLIT, argc),
                         0,
@@ -7040,21 +7063,31 @@ impl ZshCompiler {
                     } else {
                         crate::vm_helper::BUILTIN_ARRAY_ALL
                     };
-                    let join_argc = u8::from(ssub);
+                    // c:Src/subst.c:3912-3939 — an UNQUOTED, non-`ssub` splice
+                    // is exactly the `spbreak == SH_WORD_SPLIT` caller of the
+                    // join/split block, and the option is a RUN-time fact
+                    // (`setopt shwordsplit` can precede this statement in the
+                    // same compiled unit), so it is the handler that decides.
+                    // c:3030-3032 makes `[@]` and `[*]` identical inside the
+                    // block, hence the same argc for both. See the two
+                    // builtins' argc contracts.
+                    //
+                    // c:Src/subst.c:184-188's empty-word removal (`uremnode`)
+                    // rides along inside argc 2. It HAS to: an UNQUOTED splat
+                    // drops empty words (`arr=(a '' b); print -l -- ${arr[@]}`
+                    // is 2 lines), but the SH_WORD_SPLIT arm's `nulstring`
+                    // empties (c:Src/utils.c:3732 / :3752) must SURVIVE it, and
+                    // the separate BUILTIN_ARRAY_DROP_EMPTY this site used to
+                    // append cannot tell the two apart. A QUOTED
+                    // `"${arr[@]}"` takes argc 0 and keeps its empties.
+                    let join_argc: u8 = if ssub {
+                        1
+                    } else if is_star || dq_for_splice {
+                        0
+                    } else {
+                        2
+                    };
                     self.builder.emit(Op::CallBuiltin(bid, join_argc), 0);
-                    // c:Src/subst.c:184-188 — an UNQUOTED array splat drops
-                    // empty words (`uremnode`). The `[@]` subscript only sets
-                    // splat-vs-join shape (SCANPM_ISVAR_AT), not empty removal,
-                    // so `arr=(a '' b); print -l -- ${arr[@]}` → 2 lines. This
-                    // fast-path emitted ARRAY_ALL but skipped the drop that the
-                    // $@/$*/$argv splat path appends; mirror it here. Quoted
-                    // `"${arr[@]}"` (dq_for_splice) keeps empties via nulstring.
-                    if bid == crate::vm_helper::BUILTIN_ARRAY_ALL && !dq_for_splice {
-                        self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
-                            0,
-                        );
-                    }
                     return;
                 }
             }

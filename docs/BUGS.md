@@ -58388,12 +58388,15 @@ still sort and for the cond pattern machinery).
 
 ## #1132 — the `PREFORK_SINGLE` (`ssub`) family: `${a[@]}` / `$@` joined on a hardcoded space, the here-string word was never `singsub`ed, a RANGE subscript had no `ssub` gate, `$argv` was unrecognised anywhere `$@` / `$*` are, and `${a[*]}` joined-then-split where zsh does neither — fixed
 
-**Status:** `fixed` 2026-09-05, in two rounds. The sibling of #1131: that
+**Status:** `fixed` 2026-09-05, in three rounds. The sibling of #1131: that
 entry moved the `ssub` gate inside the PORTED `paramsubst`, this one covers the
 compiler FAST paths that never reach it. The first round took the `${NAME[@]}`
 splice, the bare `$@` / `$*` read and the here-string word; the second (below,
 same day) took the RANGE subscript, `$argv`, and the unconditional
-join-then-split in `BUILTIN_ARRAY_JOIN_STAR`.
+join-then-split in `BUILTIN_ARRAY_JOIN_STAR`; the third (below, same day)
+closed the 132 cells the second round left, which turned out to be ONE
+mechanism and not the three it had guessed — the whole of c:3912-3939 for the
+splice fast paths, plus `${argv:-…}` in the default family.
 
 ```console
 $ a=(x y); IFS=:; v=${a[@]};   print -r -- "$v"
@@ -58691,3 +58694,207 @@ $ set -- x y; unset argv; print -r -- "[$@]"
 The first is the `:-` operator path failing to resolve `argv` to `pparams`
 (c:`Src/params.c:430` IPDEF9); the second is `unset` not routing the `argv`
 spelling at the positional list.
+
+**Third round — the 132 residual cells, all closed** 2026-09-05. The second
+round's three-item framing above is only two-thirds right, and the correction
+is the whole fix:
+
+```console
+$ setopt shwordsplit; a=('p:q' r); IFS=:;      print -rl -- ${a[@]}
+  zsh  : p / q / r        zshrs: p:q / r          # before
+$ setopt shwordsplit; a=('p q' r); unset IFS;  print -rl -- ${a[@]}
+  zsh  : p / q / r        zshrs: p q / r          # before
+$ setopt shwordsplit; a=(x y);     IFS=;       print -rl -- ${a[*]}
+  zsh  : x / y            zshrs: xy               # before
+$ setopt shwordsplit; a=(x '' y);  IFS=:;      print -rl -- ${a[@]}
+  zsh  : x / '' / y       zshrs: x / y            # before
+$ setopt shwordsplit; a=('p:q' r); IFS=:;      print -rl -- ${==a[*]}
+  zsh  : p:q / r          zshrs: p / q / r        # before
+$ a=('p q' r); IFS=:;                          print -rl -- ${=a[@]}
+  zsh  : 'p q' / r        zshrs: 'p q r'          # before
+$ a=(x y);     IFS=;                           print -rl -- ${=a[*]}
+  zsh  : x / y            zshrs: xy               # before
+$ a=(x y);     IFS=:; v=${=a[@]};              print -r -- "[$v]"
+  zsh  : [x:y]            zshrs: [x y]            # before
+```
+
+**Refuted: `${NAME[@]}` and `${NAME[*]}` are NOT two separate things here.**
+c:`Src/subst.c:3030-3032` runs before the block:
+
+```c
+    if (isarr) {
+	if (nojoin)
+	    isarr = -1;
+```
+
+so the moment `nojoin` is set BOTH spellings are `isarr < 0`, and when it is
+clear c:3916 joins BOTH. The `[@]`-vs-`[*]` distinction (`SCANPM_ISVAR_AT`,
+c:`Src/params.c:2272`) only survives into the QUOTED arm at c:3033, which an
+unquoted splice never reaches. One code path serves both.
+
+**The actual rule**, measured exhaustively rather than derived: with `spbreak`
+non-zero and the expansion unquoted and not `ssub`, the answer turns on
+`nojoin` (c:1819 / c:2569 — `!(ifs && *ifs)`, so 1 for an IFS that is unset OR
+empty) and on whether IFS is UNSET or merely EMPTY, because c:3919's second
+join arm is `(!ifs && isarr < 0)` and an empty-but-set IFS fails `!ifs`:
+
+| IFS            | `nojoin` | c:3916 | c:3919 | result                          |
+| -------------- | -------- | ------ | ------ | ------------------------------- |
+| non-empty      | 0        | joins on `IFS[0]` | —   | join, then c:3932 `sepsplit`    |
+| UNSET          | 1        | —      | joins on `sepjoin`'s default `" "` | join, then `sepsplit` |
+| `""` (set)     | 1        | —      | —      | NO join; c:3931's `!isarr` also kills the split — the ELEMENTS survive |
+
+`spbreak` itself is: SH_WORD_SPLIT for a plain splice (c:1707), forced to 2 by
+`${=…}` (c:2567), forced to 0 by `${==…}` (c:2563). A model of exactly those
+three lines plus `spacesplit` was checked against `zsh -f` over 360 cells
+(5 IFS settings x SH_WORD_SPLIT on/off x 6 array shapes x 6 spellings) and
+matched on all 360 before a line of Rust was written.
+
+`nulstring` is the third item and it IS what the second round described.
+c:`Src/utils.c:3711` `spacesplit(s, allownull=0, …)` emits `nulstring`
+(c:`Src/subst.c:36` `{Nularg,'\0'}`) for an empty field delimited by
+IFS-NON-whitespace (c:3732 / c:3752) and a real `""` for one left by a skipped
+run of IFS-WHITESPACE (c:3734 / c:3757). The first is one byte long, so
+prefork's `uremnode` at c:186 KEEPS it and `remnulargs` at c:169 turns it into
+`""`; the second is deleted. `IFS=:; a=(x '' y)` therefore splits `x::y` back
+to three words while `IFS=' '` gives two.
+
+**Fix** — `src/extensions/compile_zsh.rs` + `src/fusevm_bridge.rs` only.
+
+* Three free helpers in the bridge carry the C: `join_c3914` (the c:3914-3927
+  join arms, returning `Joined(scalar)` or `Elements(vec)` for the `isarr`
+  the C leaves behind), `sepsplit_c3932` (c:3932's `sepsplit` plus c:184-187's
+  empty-word removal, `nulstring` rule included — it is the body
+  `BUILTIN_FORCE_SPLIT` already had, lifted so both callers share it), and
+  `splice_words_value` (c:3933-3938's 0/1/N result shape).
+* `BUILTIN_ARRAY_JOIN_STAR`'s argc contract now names the caller's `spbreak`
+  instead of just "join or not": `0` plain `${NAME[*]}` (spbreak read from
+  SH_WORD_SPLIT at RUN time — the option can be set earlier in the same
+  compiled unit), `1` `ssub` join-and-stop (c:4226, unchanged), `2`
+  `${==NAME[*]}` (gate shut), `3` `${=NAME[*]}` / `${=NAME[@]}` (spbreak 2,
+  stop at the join because `BUILTIN_FORCE_SPLIT` is c:3932 at the compile
+  site).
+* `BUILTIN_ARRAY_ALL` gains `2` and `3`, mirroring JOIN_STAR's `0` and `3`, so
+  the `[@]` splice gets the same block without leaving the opcode that resolves
+  the magic array/assoc specials. `2` also absorbs the c:184-187 removal the
+  compile site used to append as a separate `BUILTIN_ARRAY_DROP_EMPTY` — it has
+  to, because that opcode cannot tell a `nulstring` empty from a deletable one.
+* `BUILTIN_FORCE_SPLIT`'s argc becomes two bits: bit 0 is the old
+  `keep_empties`, bit 1 says the operand is a splice and therefore that
+  c:3931's `!isarr` gate is live, so an ARRAY arrives unsplit. Gating on the
+  BIT and not on the value's Rust type is load-bearing: `$=@` reads through
+  `BUILTIN_GET_VAR_DQ`, which also hands over a `Value::Array`, and
+  `set -- 'a b' 'c d'; print -l $=@` must still be four words. (Caught by
+  `subst_split_join_parity::bare_split_flag_special_names::at_splits_each_positional`
+  on the first attempt, which type-sniffed.)
+* `${=NAME[@]}` in an `ssub` context now takes the joiner rather than
+  `BUILTIN_ARRAY_ALL`, which has no join — `v=${=a[@]}` was reaching the
+  assignment as an array and stringifying with a hardcoded space.
+
+**`${argv:-nope}` — closed in the contexts that route through the compiler's
+own modifier lowering, NOT everywhere.** c:`Src/params.c:428-430` makes `argv`
+and `*` one parameter, so `BUILTIN_PARAM_DEFAULT_FAMILY` normalises the name
+before rebuilding the body, the same trick `bare_target` already uses for
+`$argv` / `${argv}`. NOT for the assigning ops: c:3690-3697 routes
+`${name:=…}` / `${name=…}` through `setsparam` on the NAME and zsh rejects the
+`*` spelling there ("not an identifier: *") while accepting `${argv=…}`;
+`${+*}` is likewise "bad substitution" where `${+argv}` is 0/1. Those three
+keep the literal name. Every other modifier family (`#`, `%`, `/`, `:off:len`,
+`${#argv}`) already resolved `argv` and was left alone — the gap was only in
+the default family.
+
+Measured over eight contexts, four fixed and four still divergent:
+
+| context | `set -- x y; … ${argv:-nope}` | before | after |
+| --- | --- | --- | --- |
+| command word     | `print -r --`                    | `nope` | `x y` |
+| `typeset` arg    | `typeset w=`                     | `nope` | `x y` |
+| function arg     | `f(){print -r -- $#}; f`         | `1`    | `2`   |
+| array literal    | `w=( … ); print -r -- $#w`       | `1`    | `2`   |
+| scalar assign RHS| `v=`                             | `nope` | `nope` |
+| `[[ … ]]` operand| `[[ … == "x y" ]]`               | MISS   | MISS  |
+| `case` word      | `case … in "x y")`               | MISS   | MISS  |
+| here-string      | `cat <<<`                        | `nope` | `nope` |
+
+The four that remain are exactly the `ssub` / `singsub` (PREFORK_SINGLE)
+routes, which bypass `emit_param_modifier` and reach `paramsubst`
+(`src/ported/subst.rs`) directly; the "is this parameter set" probe for the
+`:-` family there tests only the literal `@` / `*` names. That file was held
+by another agent this round, so it was left alone.
+
+**Measurement.**
+
+* The same 1260-cell sweep this entry's second round used (5 IFS settings x
+  SH_WORD_SPLIT on/off x 6 array shapes x 7 spellings x 3 contexts):
+  **132 divergent cells before, 0 after**, hence trivially zero that diverge
+  only after.
+* A wider 3240-cell sweep built to catch collateral damage in the spellings
+  the fix does NOT target (3 IFS x SH_WORD_SPLIT on/off x 4 array shapes or 4
+  `set --` shapes x 20 array spellings / 25 positional spellings x 3 contexts,
+  including `$a`, `${a}`, `${=a}`, `${==a}`, `${^a}`, `${a[1,2]}`, the quoted
+  forms, `p${…}q` segments, `$=@`, `${=*}`, `${argv:-…}`): **604 divergent
+  before, 364 after — 240 fixed, 0 new.** Diffed as SETS of failing cells, not
+  as counts.
+* `cargo test --test parity`: 47264 passed / 34 failed, versus a 31-failure
+  baseline taken on the same tree mid-round. The delta is
+  `subst_split_join_parity::bare_split_flag_special_names::at_splits_each_positional`
+  going GREEN (it was red on the first attempt at this fix, see the
+  BUILTIN_FORCE_SPLIT bit above), plus four entries re-run individually and
+  found to pass or to be load-dependent: `coproc_parity::second_coproc_replaces_first`,
+  `completion_suffix_parity::compsys_with_zstyles_keeps_the_slash_before_a_letter`
+  (a PTY test that timed out under a loaded box; passes at 83s), and
+  `zsh_compat_parity_gaps::corpus_dash_fc_bulk_hs::bulk_hs_fc_row_011` / `_012`
+  (both `[[ … -nt/-ot … ]]` against `/tmp`, whose mtime other work on the box
+  was changing).
+* Both sides `-f`. Both binaries pinned copies, `codesign -f -s -` applied (or
+  macOS SIGKILLs the copy and the harness reads it as a boot hang), and the
+  build output grepped case-insensitively for `error` so a peer's transient
+  `error[E0277]` could not leave a stale binary in place.
+* The eight new `tests/parity/ifs_parity.rs::splice_join_split_c3912` tests
+  were run against the pinned PRE-fix binary (`CARGO_BIN_EXE_zshrs=<pinned>`)
+  and ALL EIGHT FAILED there, so none of them is vacuous.
+
+**Still open, same family, NOT touched** — measured on BOTH pinned binaries, so
+these predate this change and survive it unchanged. Almost all are
+`setopt shwordsplit` over a spelling that is NOT a `[@]`/`[*]` splice, i.e. the
+same c:3912 block reached through a different opcode (`BUILTIN_GET_VAR` /
+`GET_VAR_DQ` / `ARRAY_INDEX`), which this round did not touch:
+
+```console
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- $a
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a}
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; a=(x y);     IFS=:; print -rl -- ${==a}
+  zsh  : x / y            zshrs: x:y
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${^a}
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[1,2]}
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; set -- 'p:q' 'r s'; unset IFS; print -rl -- $@
+  zsh  : p:q / r / s      zshrs: p:q / r s
+```
+
+The only splice cells left in the 3240-cell sweep — 8 of the 364 — are the
+word-SEGMENT form, where the empty field the split produces has neighbouring
+text to attach to and must therefore survive c:186. This handler passes
+`keep_empties = false` unconditionally, where the `${=…}` scalar path already
+takes it from the compile site (`in_dq || word_seg_depth > 0`). The same
+`word_seg_depth` gate is missing from the splice's EMPTY-ELEMENT removal, which
+`${^a}` does have (c:4327-4373 cross-products the prefix, so an empty element
+still yields a non-empty word). Both were wrong before this round too:
+
+```console
+$ setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- p${a[@]}q
+  zsh  : px / '' / yq    zshrs: px / yq
+$ setopt rcexpandparam; a=('' x);        print -rl -- p${a[@]}q
+  zsh  : pq / pxq        zshrs: pxq        # `p${^a}q` is correct in both
+```
+
+The second `argv` sibling also survives. It lives in `bin_unset`
+(`src/ported/builtin.rs`), outside the two files this round was scoped to:
+
+```console
+$ set -- x y; unset argv; print -r -- "[$@]"
+  zsh  : []              zshrs: [x y]
+```
