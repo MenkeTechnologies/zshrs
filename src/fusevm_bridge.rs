@@ -5766,7 +5766,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::str(out)
     });
 
-    vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
+    // argc contract: `1` means the caller is a PREFORK_SINGLE
+    // (`ssub`) context — a scalar assignment RHS (c:Src/exec.c:2603), a
+    // `typeset NAME=…` argument, a `case` word (c:Src/loop.c:611) or a
+    // `[[ … ]]` operand (c:Src/cond.c:53). c:Src/subst.c:4226
+    //   if (isarr && ssub) { val = sepjoin(aval, NULL, 1); isarr = 0; }
+    // "prefork() wants a scalar, so join no matter what else" — the join
+    // is the LAST thing that happens to the value, and `singsub`
+    // (c:Src/subst.c:514-525) never reaches `globlist`, so the post-join
+    // IFS word-split below must not run. `0` is the ordinary
+    // command-argument caller, which does split.
+    vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, argc| {
+        let ssub = argc != 0;
         let name = vm.pop().to_str();
         let (joined, ifs_full, in_dq) = with_executor(|exec| {
             // c:Src/params.c — `"$*"` joins by IFS[0]. zsh
@@ -5822,7 +5833,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         //
         // In QUOTED (`"${name[*]}"`) context, the result IS a
         // single scalar — return it as Str without splitting.
-        if in_dq {
+        // c:Src/subst.c:4226 — `ssub` joins and stops; there is no
+        // `globlist` behind `singsub` to split the result again.
+        if in_dq || ssub {
             return Value::str(joined);
         }
         if joined.is_empty() {

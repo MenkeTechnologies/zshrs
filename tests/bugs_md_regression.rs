@@ -1768,3 +1768,116 @@ fn completion_lexer_finds_the_cursor_word_after_an_alias_expands() {
          completion saw an empty $PREFIX and every candidate matched"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1132 — `${a[@]}` / `$@` joined on a hardcoded space instead
+// of `IFS[0]` in every `PREFORK_SINGLE` context
+// Fix: src/extensions/compile_zsh.rs (the bare `$@`/`$*` emit and the
+//      `${NAME[@]}` splice fast path) + src/fusevm_bridge.rs
+//      (BUILTIN_ARRAY_JOIN_STAR's no-split argc)
+// ════════════════════════════════════════════════════════════════════
+
+/// c:Src/subst.c:4226 `if (isarr && ssub) { val = sepjoin(aval, NULL, 1); }`
+/// — every `PREFORK_SINGLE` caller collapses an array-shaped expansion to one
+/// `IFS[0]`-joined scalar, `[@]` and `$@` included, quoted or not.
+///
+/// Both fast paths reached `BUILTIN_ARRAY_JOIN_STAR` (or, for the bare `$@`,
+/// `BUILTIN_GET_VAR_DQ`) with no way to say "joined, do not split", so the
+/// joined string was immediately re-split on `IFS` and handed back as an
+/// array — which then stringified with a hardcoded space. Only a non-empty,
+/// non-space `IFS` exposed it: `IFS=` joins with `""` and has nothing to
+/// split, and an unset `IFS` joins with `" "` and re-splits to the same
+/// bytes, so both were accidentally right.
+#[test]
+fn bug1132_prefork_single_joins_at_sign_arrays_on_ifs_first_char() {
+    // (script, expected stdout) — every line is `zsh -f -c` verified.
+    let cases: &[(&str, &str)] = &[
+        // Scalar-assignment RHS — c:Src/exec.c:2603 PREFORK_SINGLE.
+        ("a=(x y); IFS=:; v=${a[@]}; print -r -- \"$v\"", "x:y\n"),
+        ("a=(x y); IFS=:; v=\"${a[@]}\"; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; IFS=:; v=$@; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; IFS=:; v=\"$@\"; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; IFS=:; v=$*; print -r -- \"$v\"", "x:y\n"),
+        // `typeset NAME=…` argument — the same c:2603 call site.
+        ("a=(x y); IFS=:; typeset v=${a[@]}; print -r -- \"$v\"", "x:y\n"),
+        // `[[ … ]]` operand — c:Src/cond.c:53 via singsub, c:Src/subst.c:520.
+        ("a=(x y); IFS=:; [[ ${a[@]} == x:y ]] && echo HIT", "HIT\n"),
+        ("set -- x y; IFS=:; [[ $@ == x:y ]] && echo HIT", "HIT\n"),
+        // `case` word — c:Src/loop.c:611, likewise singsub.
+        ("a=(x y); IFS=:; case ${a[@]} in x:y) echo HIT;; esac", "HIT\n"),
+        ("set -- x y; IFS=:; case $@ in x:y) echo HIT;; esac", "HIT\n"),
+        // A multi-char IFS still joins on IFS[0] only.
+        ("a=(x y); IFS=::; v=${a[@]}; print -r -- \"$v\"", "x:y\n"),
+        // c:Src/utils.c:3936-3945 sepjoin — a set-but-EMPTY IFS joins with "".
+        ("a=(x y); IFS=; v=${a[@]}; print -r -- \"$v\"", "xy\n"),
+        // …and an UNSET IFS joins with " ".
+        ("a=(x y); unset IFS; v=${a[@]}; print -r -- \"$v\"", "x y\n"),
+        // The join is the LAST step: `singsub` never reaches `globlist`, so
+        // the joined value is not word-split even when it is full of IFS.
+        ("a=('p q' r); IFS=:; v=${a[@]}; print -r -- \"$v\"", "p q:r\n"),
+        // Command position is NOT PREFORK_SINGLE and must still splat.
+        ("a=(x y); IFS=:; print -rl -- ${a[@]}", "x\ny\n"),
+        ("a=(x y); IFS=:; print -rl -- \"${a[@]}\"", "x\ny\n"),
+        ("set -- x y; IFS=:; print -rl -- \"$@\"", "x\ny\n"),
+        ("f(){ print $#; }; a=(x y z); IFS=:; f \"${a[@]}\"", "3\n"),
+        // …including prefork's unquoted empty-word removal (c:184-187).
+        ("a=(x '' y); IFS=:; print -rl -- ${a[@]}", "x\ny\n"),
+        // A typeset-family argument is PREFORK_SINGLE only when it is an
+        // ASSIGNMENT. `local -a ${a[@]}` names the arrays to declare, so it
+        // stays a splat — joining it declared the single name `p:q`.
+        (
+            "f(){ a=(p q); IFS=:; local -a ${a[@]}; typeset -p p q; }; f",
+            "typeset -a p=(  )\ntypeset -a q=(  )\n",
+        ),
+        (
+            "f(){ IFS=:; local -a $@; typeset -p p q; }; f p q",
+            "typeset -a p=(  )\ntypeset -a q=(  )\n",
+        ),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
+
+/// c:Src/exec.c:4711-4718 `getherestr` is `singsub(&t); untokenize(t);` — the
+/// fourth `PREFORK_SINGLE` caller. The here-string word compiled as an
+/// ordinary argv word instead, so it globbed, brace-expanded, ran the
+/// array-only `(o)` sort and joined on a space.
+#[test]
+fn bug1132_here_string_word_is_singsub_not_an_argv_word() {
+    let cases: &[(&str, &str)] = &[
+        // `untokenize` discards the glob and brace tokens rather than acting
+        // on them, so both stay literal.
+        ("cd /tmp && cat <<< /tmp/*(N[1])", "/tmp/*(N[1])\n"),
+        ("cat <<< {a,b}", "{a,b}\n"),
+        // PREFORK_SINGLE joins on IFS[0] and does not split afterwards.
+        ("a=(x y); IFS=:; cat <<< ${a[@]}", "x:y\n"),
+        ("a=(x y); IFS=:; cat <<< ${a[*]}", "x:y\n"),
+        ("set -- x y; IFS=:; cat <<< $@", "x:y\n"),
+        ("set -- x y; IFS=:; cat <<< \"$@\"", "x:y\n"),
+        ("a=(x y); IFS=:; cat <<< pre${a[@]}post", "prex:ypost\n"),
+        // c:Src/subst.c:4226 takes the `(o)` sort off the table entirely —
+        // the sort block at c:4301-4326 sits inside `if (isarr)` below it.
+        ("a=(c a b); IFS=:; cat <<< ${(o)a}", "c:a:b\n"),
+        // Unaffected shapes: `~` still file-substitutes, quoting still holds,
+        // and an explicit fd / varid target keeps working.
+        ("v='a b'; cat <<< \"$v\"", "a b\n"),
+        ("cat <<< 'lit *  {a,b}'", "lit *  {a,b}\n"),
+        ("exec 3<<< line3; cat <&3", "line3\n"),
+        ("exec {f}<<<hello; cat <&$f", "hello\n"),
+        ("cat <<< $nope; print END", "\nEND\n"),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
