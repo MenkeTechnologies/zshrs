@@ -2916,3 +2916,41 @@ tor-resolve -
 #   FAIL   tab1               'wait '  (1 row(s) differ)
 #     e8e0447836  x1   smallest: --case 'wait ' --keys tab
 #        cell/rowtop/col2 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
+
+# ============================================================================
+# CLOSED 3ef4449107 — the `(literal list)` action arm split without unescaping
+# ============================================================================
+# Upstream `_alternative` sh:46 and `_values` sh:124 are both
+#     eval ws\=\( "${action[2,-2]}" \)
+# an array-literal eval: it SPLITS on unescaped whitespace AND STRIPS the
+# escapes. Both ports used `str::split_whitespace()`, which only splits.
+#
+# Signature that found it: ARMS DISAGREE. Each file already had the correct
+# code seventeen lines away — `_alternative` sh:39 / `_values` sh:116 are the
+# same construct for `((...))` and both call `eval_action_words`. `_arguments`
+# sh:435 and `_describe` sh:79-82 were also already right. Two arms out of six.
+#
+# 'tcpdump '   FAIL -> PASS   (demonstrated: this fix)
+#   `_bpf_filters` sh:66 action is  ':operators:operator:(not \()'  — the
+#   second word is a backslash-escaped `(`. Unstripped it stayed the
+#   TWO-character `\(`, and compadd then quoted BOTH characters:
+#     zsh  : \(          ah          esp         host        iso ...
+#     zshrs: \\\(        ah          esp         host        iso ...
+#   Every other entry already matched, which is why the damage was exactly
+#   one column wide. This is the remainder c4351e6139 explicitly left open
+#   ("that remainder is not this bug ... left open rather than guessed at").
+#
+# 'rsync '        now PASS — but attributed to the compadd-as-a-builtin arm
+#                 (_alternative sh:61), already in HEAD, per the 229-vs-230
+#                 measurement. NOT claimed for this fix.
+# 'ldapsearch '   now PASS — previously one-sided `bad pattern: (` (NEW #3,
+#                 line 1271). Could be this fix, the compadd-builtin fix, or
+#                 both; no reverted A/B was run, so attribution is UNSEPARATED.
+#
+# Verification: pinned+codesigned binary
+#   55202107a55f32f006616bbb76e74ce57d4bc4078600671ede3f59cf1febcf84
+#   against the live dump (.zcompdump-zpwr, comps=51739), --jobs 1:
+#   # 3 passed, 0 failed, 3 cell(s)
+# cargo test --lib compsys::ported: 887 passed, 2 failed — both failures are
+# the pre-existing _options / _path_commands order-dependent flakes, and both
+# pass in isolation (verified, not assumed).
