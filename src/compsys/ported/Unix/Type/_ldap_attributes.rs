@@ -5,6 +5,7 @@
 //! sh: 1  #autoload
 //! sh: 3  local -a expl attrs
 //! sh: 9  attrs=( associatedDomain authenticationMethod … userSMIMECertificate )
+//!        (note: the `;` in `cACertificate;binary` separates words — see ATTRS)
 //! sh:25  _description ldap-attributes expl "ldap attribute"
 //! sh:26  compadd "${@:/-X/-x}" "${expl[@]:/-X/-x}" \
 //! sh:27      -M 'm:{a-zA-Z}={A-Za-z} r:[^A-Z]||[A-Z]=* r:|=*' -a attrs
@@ -28,7 +29,17 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:9-25 — combined OpenLDAP + FreeIPA attribute names.
+/// sh:9-23 — combined OpenLDAP + FreeIPA attribute names.
+///
+/// sh:11 and sh:21 read `cACertificate;binary` / `userCertificate;binary`, but
+/// the `;` is unquoted inside an array literal and zsh's lexer separates words
+/// there: `zsh -f -c 'a=( x cACertificate;binary cn ); print -l $#a $a'` prints
+/// `4 / x / cACertificate / binary / cn`. So upstream's array holds
+/// `cACertificate`, `binary`, `userCertificate`, `binary` as four elements, the
+/// duplicate `binary` collapses in compadd, and the offered set is 66 names —
+/// which with the three filter operators is the 69 matches real zsh reports for
+/// `ldapsearch <TAB>`. Keeping `cACertificate;binary` as ONE element instead
+/// offered 67 and listed a name zsh never lists.
 const ATTRS: &[&str] = &[
     "associatedDomain",
     "authenticationMethod",
@@ -36,7 +47,8 @@ const ATTRS: &[&str] = &[
     "automountKey",
     "automountMapName",
     "bindTimeLimit",
-    "cACertificate;binary",
+    "cACertificate",
+    "binary", // sh:11 — `;` separates words in an array literal
     "cn",
     "dc",
     "defaultSearchBase",
@@ -92,7 +104,8 @@ const ATTRS: &[&str] = &[
     "telephoneNumber",
     "uid",
     "uidNumber",
-    "userCertificate;binary",
+    "userCertificate",
+    "binary", // sh:21 — duplicate; compadd collapses it
     "userPKCS12",
     "userSMIMECertificate",
 ];
@@ -142,6 +155,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         INCOMPFUNC.store(0, Ordering::Relaxed);
         assert_eq!(_ldap_attributes(&[]), 1);
+    }
+
+    /// The `;` in upstream's array literal is a word separator, not part of a
+    /// name — measured in real zsh (see the ATTRS doc comment). A `;binary`
+    /// element here is a name zsh never offers, and it also costs a match:
+    /// 66 unique names, not 65.
+    #[test]
+    fn semicolon_names_are_separate_elements() {
+        assert!(!ATTRS.iter().any(|a| a.contains(';')));
+        assert_eq!(ATTRS.iter().filter(|a| **a == "binary").count(), 2);
+        let unique: std::collections::HashSet<&&str> = ATTRS.iter().collect();
+        assert_eq!(unique.len(), 66);
     }
 
     #[test]

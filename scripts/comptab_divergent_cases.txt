@@ -1693,3 +1693,61 @@ ldapsearch
 #   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 334.7s (3.3s/cell)
 #   # 8 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+
+# ══════════════════════════════════════════════════════════════════════════
+# 'ldapsearch '  --keys tab,tab   TIMEOUT -> PASS
+#
+# The FIRST tab was fixed by f063d82fdf; that unmasked the SECOND one, which
+# had never been reachable before.  zsh lists 69 matches; zshrs printed NOTHING
+# — so the harness could only score it TIMEOUT ("zshrs: nothing at all after
+# key 'tab' within 10.0s"), which is indistinguishable from machine load.  It
+# was not load and it was not a hang: under a pty the shell answered ^C and
+# `exit` immediately, so this was a SILENT ZERO-MATCH.  With `setopt no_beep`
+# in the harness init, zero matches produce zero bytes.  That is a third entry
+# for the TIMEOUT taxonomy already in this file (slow cell / reference-side
+# silence / zero-match-with-no-beep), and the discriminator is the same one:
+# drive it by hand under a pty before believing the label.
+#
+# Two things were WRONG in the framing this was chased under, both refuted by
+# measurement rather than argument:
+#
+#   * "the second tab may just be AUTO_LIST re-displaying the first tab's
+#     matches, without re-running the completer" — no.  A wrapper on
+#     `_ldap_filters` logs TWO entries, and `_regex_arguments` is re-run each
+#     time.  (The wrapper on `_regex_arguments` logs only ONE, which looks like
+#     confirmation of the wrong story: `_regex_arguments`'s file ends with
+#     `_regex_arguments "$@"`, so loading it REDEFINES the name and eats any
+#     wrapper on the first call.  Wrap `_ldap_attributes` instead — zsh's
+#     dynamic scoping lets it read `_ldap_filters`' locals.)
+#
+#   * "the fault is in _ldap_attributes" — no.  It is entered with the right
+#     arguments on both tabs in zsh and was never entered at all on the second
+#     tab in zshrs.
+#
+# Root cause: the two tabs run in DIFFERENT QUOTING CONTEXTS, because the first
+# one inserts `"(`:
+#
+#     tab 1   compstate[quote]=      PREFIX=      _ra_line = ldapsearch\0
+#     tab 2   compstate[quote]="     PREFIX=(     _ra_line = ldapsearch\0(
+#
+# `_ldap_filters`:43 `compquote open close andop orop` quotes for the CURRENT
+# context, so the bracket text is not a constant.  Measured in real zsh:
+#
+#     unquoted    open=\\\(   close=\\\)   andop=\&   orop=\|
+#     inside "    open=\(     close=\)     andop=&    orop=|
+#
+# The port had the unquoted values hardcoded, and the spec's PATTERN elements
+# interpolate them, so on the second tab every pattern demanded a literal
+# backslash the word does not contain.  Fixed by calling the real
+# `bin_compquote`.
+#
+# Second defect, only visible once the second tab produced a list at all:
+# `_ldap_attributes`:11/21 write `cACertificate;binary`, but `;` is unquoted in
+# an array literal and zsh's lexer separates words there, so upstream offers
+# `binary` and `cACertificate` as two names.  67 matches vs zsh's 69.
+#
+#   --keys tab          PASS -> PASS      3/3   --jobs 1, dump+binary pinned
+#   --keys tab,tab      TIMEOUT -> PASS   3/3
+#   --keys tab,tab,tab  -> PASS           3/3
+#   --keys ctrl-d       FAIL -> PASS      3/3
+#   'ldapsearch -'      PASS -> PASS      3/3
