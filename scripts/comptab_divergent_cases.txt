@@ -3181,7 +3181,9 @@ tor-resolve -
 # fingerprint masks digits, so it shows in the row diff, not the hash.
 
 # ============================================================================
-# 'upmendex -' — OPEN. zshrs drops a multibyte description; NOT localized.
+# 'upmendex -' — FIXED 2026-09-05. zshrs dropped a multibyte description at
+# the screen edge.  The "NOT localized" heading this block used to carry was
+# wrong; the site is named under ROOT CAUSE at the end of the block.
 # ============================================================================
 #   row 4: zsh  = '-g  -- make Japanese index head <あかさたなはま<partial>'
 #          zshrs= '-g  -- make Japanese index head <'
@@ -3225,9 +3227,63 @@ tor-resolve -
 # with it set the ad-hoc rig still would not reproduce the option listing at
 # all. Use scripts/comptab_parity.py.
 #
-# NEXT STEP: find where the description is cut before reaching the terminal.
-# It is upstream of clnicezputs — compare what compdescribe/_description build
-# as the display string on each side, not what complist prints.
+# The "NEXT STEP" this block used to carry — "it is upstream of clnicezputs,
+# compare what compdescribe/_description build" — pointed at the right half of
+# the pipeline but at the wrong half of the question.  `cd_get` DOES build a
+# different string on each side, and that difference is FORCED and CORRECT;
+# what was broken is the printer that had to undo it.  See below.
+#
+# ROOT CAUSE (measured, fixed in 51cf18f4d2):
+#   src/ported/zle/zle_tricky.rs, `printfmt`'s character arm.  C un-metafies as
+#   it emits — Src/Zle/zle_tricky.c:2560-2567
+#       while (clen--) {
+#           if (*p == Meta) { p++; clen--; putc(*p++ ^ 32, shout); }
+#           else putc(*p++, shout);
+#       }
+#   and again in the `%{ … %}` literal at c:2519-2523.  The port copied
+#   `bytes[i..i + clen]` verbatim and carried a comment asserting "C emits its
+#   bytes verbatim", which is not what those lines do.  zshrs metafies at the
+#   CHARACTER level (U+0083 + `char::from(byte ^ 32)`, the encoding
+#   `unmetafy_str` decodes, utils.rs:16906), so the escape's own UTF-8 is FOUR
+#   bytes and all four reached the terminal where zsh writes one.
+#
+#   The printer is `printfmt`, NOT `mb_niceformat`: `cd_get` sets `opts[0] =
+#   "-l"` (computil.c:722) so every described row carries CMF_DISPLINE, and
+#   `iprintm` takes the `printfmt(m->disp, 0, 1, 0)` branch at
+#   compresult.c:2247-2249, never the `mb_niceformat` branch at c:2252.
+#   Verified by backtrace from the write itself:
+#       write_loop <- shout::write <- zle_tricky::printfmt
+#                  <- compresult::iprintm <- printlist <- ilistmatches
+#
+# RAW PTY BYTES, minimal repro at --cols 40, LC_ALL=C (CODESET=US-ASCII,
+# MB_CUR_MAX=1 measured on this host):
+#     before   zsh  … 68 65 61 64 20 3c e3          1b 5b 4b   ("head <" + E3)
+#              zshrs … 68 65 61 64 20 3c c2 83 c3 83 1b 5b 4b
+#     after    the two 125-byte streams are byte-identical, E3 included.
+#     LC_ALL=en_US.UTF-8: byte-identical before and after (127 bytes, the whole
+#     `e3 81 82` survives) — the fix does not disturb the UTF-8 branch.
+#
+# THIRD WRONG TURN, recorded with the other two: computil.rs:1336-1366
+# (`cd_get`'s `copy_desc`) was named as the site because its truncating arm
+# unmetafies and RE-metafies each byte while the fits-whole arm at :1342 does
+# not.  The asymmetry is real, but it is neither a divergence from C nor the
+# cause here:
+#   * C's own two arms are just as asymmetric.  `strcpy(p, d)` (c:697-698)
+#     cannot cut mid-character; `memcpy(pp, d, l)` one MB_METACHARLEN unit at a
+#     time (c:699-715) can, and in a single-byte locale that unit is ONE BYTE.
+#     C's string then holds a lone 0xe3 — imeta() is false for 0xe3/0x81/0x82,
+#     so C never metafies the kana in the first place and never has to.
+#   * A Rust `String` cannot hold a lone 0xe3 at all, so the U+0083 escape is
+#     the only representation of C's result.  "Stop re-metafying" is not
+#     implementable: `char::from(0xe3)` is U+00E3 and writes DIFFERENT bytes.
+#   * Both shells cut at the IDENTICAL source position — zsh stopped after the
+#     same single byte.  The streams differed only in that byte's ENCODING.
+#   * Decisive: computil.rs was never touched.  Fixing `printfmt` alone made
+#     the minimal repro and the real `upmendex -` cell byte-identical.
+#   There is also no SECOND layer of metafication anywhere on this path (the
+#   wire showed exactly one, `c2 83 c3 83`), and `mb_niceformat` — which does
+#   call `unmetafy_str` — is not on this path at all, so nothing was "stripping
+#   one layer of two".
 
 # ============================================================================
 # THE THREE CELLS THE 6301-7400 SWEEP LEFT OPEN: 'tac -', 'tig '/'tig -',
@@ -3704,7 +3760,21 @@ w3m
 # So the trigger is exactly: the description is TRUNCATED **and** the locale
 # is not UTF-8.  Untruncated, or under UTF-8, the two shells are identical.
 #
-# THE SITE.  `src/ported/zle/computil.rs:1336-1366`, `cd_get`'s `copy_desc`.
+# THE SITE — SUPERSEDED 2026-09-05, see the 'upmendex -' block earlier in this
+# file.  The observations below (metafied on the wire, only when TRUNCATED, only
+# when the locale is not UTF-8) all reproduce; the attribution does not.  The
+# real site is `printfmt`'s character arm, src/ported/zle/zle_tricky.rs, which
+# failed to un-metafy on output where C does (zle_tricky.c:2560-2567); fixed in
+# 51cf18f4d2, after which both locales are byte-identical.  Two specific claims
+# below are measured to be FALSE: there is no SECOND metafication layer (the
+# wire carried exactly one, `c2 83 c3 83`), and `mb_niceformat` is not on this
+# path (the row is CMF_DISPLINE — computil.c:722 sets `opts[0] = "-l"` — so
+# `iprintm` takes `printfmt` at compresult.c:2247-2249, not c:2252).  The
+# computil.rs asymmetry named below is real but is FORCED: C's own truncating
+# arm cuts one byte at a time in a single-byte locale, and a Rust `String`
+# cannot hold the resulting lone 0xe3 except as the U+0083 escape.
+#
+# THE SITE (as originally filed).  `src/ported/zle/computil.rs:1336-1366`, `cd_get`'s `copy_desc`.
 # The fits-whole arm keeps the text as it is:
 #     computil.rs:1342   out.push_str(d);            // c:697-698 / c:797-800
 # the truncating arm unmetafies to raw bytes and then RE-METAFIES every byte
@@ -3731,6 +3801,10 @@ w3m
 # already-recorded 'fc-list '/'fc-match ' cells.  It is filed because it is a
 # concrete, located, one-arm asymmetry in a ported function, not because the
 # cell must go green.
+#
+# CLOSED 2026-09-05 in 51cf18f4d2 — but at `printfmt`, not here; the truncation
+# reach IS locale-gated, the emission defect it exposed is not.  Kept in the
+# corpus as a regression guard.
 upmendex -
 #
 # ══════════════════════════════════════════════════════════════════════════
@@ -3909,3 +3983,23 @@ xsetroot -solid
 # "SHORT multibyte description PASSES" observation in that block is the same
 # fact seen from the other side: a short description is not truncated, so the
 # fits-whole arm at computil.rs:1342 runs and keeps the text as it is.
+#
+# SECOND CORRECTION, 2026-09-05 — the attribution above is wrong, the
+# measurements are right.  "It lands on `cd_get`'s `copy_desc`" does not
+# follow: `copy_desc` produces exactly what C produces (C's own truncating arm
+# cuts one BYTE at a time in a single-byte locale, leaving a lone 0xe3 that a
+# Rust `String` can only carry as the U+0083 escape), and both shells were
+# measured cutting at the IDENTICAL source position.  The defect was that the
+# PRINTER never undid the escape: `printfmt`'s character arm
+# (src/ported/zle/zle_tricky.rs) copied the format's bytes verbatim where C
+# un-metafies at Src/Zle/zle_tricky.c:2560-2567 (and at c:2519-2523 for the
+# `%{ … %}` literal).  Fixed in 51cf18f4d2 with computil.rs untouched, after
+# which the raw pty streams are byte-identical under BOTH locales.
+#
+# The `clnicezputs` note above is confirmed and worth keeping: with no
+# `zmodload zsh/complist` the cell goes through `ilistmatches`/`printlist`.
+# The next step it does not take is the one that mattered — `printlist` calls
+# `iprintm`, and because `cd_get` sets `opts[0] = "-l"` (computil.c:722) every
+# described row is CMF_DISPLINE, so `iprintm` prints it with `printfmt`
+# (compresult.c:2247-2249) and NOT with `mb_niceformat` (c:2252).  That is why
+# the one `unmetafy_str` on the `mb_niceformat` path never ran for this cell.
