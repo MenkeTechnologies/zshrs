@@ -864,3 +864,271 @@ gawkbug -
 #   # 103 passed, 0 failed, 103 cell(s)
 #   # categories: PASS=103 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 172.5s (1.7s/cell)
+
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP — 2026-09-04/05, DISCOVER CELLS 3126-5200 (2075 cells)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Range mined in full: cells 3126 ('kafka-acls -') through 5200 ('pinky '),
+# `--sequences tab1`, sweep at `--jobs 2`, every FAIL re-confirmed serially
+# and alone at `--jobs 1 --confirm 0`, three passes.  The discover list is
+# stable at 8270 cases on this host, so those indices are reproducible.
+#
+# MEASURED IN TWO HALVES AGAINST TWO DIFFERENT BINARIES.  A host restart
+# destroyed the first half's logs and jsonl mid-run; the summary lines below
+# for cells 3126-4785 are transcribed from that run's output as it was read,
+# and CANNOT be re-verified from an artefact.  The second half and every
+# re-confirmation in this block were measured against the second pin.
+#   cells 3126-4785  zshrs.pin sha256 0e02607b423e3bc3e72695feda6e9cce9a7
+#                    423827e8008c48602f0880c3cfaf7, tree at 3f8e926148
+#   cells 4786-5200  zshrs.pin sha256 5e1a237e925dd1dce06a5d53c5977951a0
+#                    5366dce4b00a87bf1cb0f97042be5a, tree at 365a17e11f
+#   dump (both)      sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633
+#                    932103da0ff0d801df5d  (pinned copy of the zpwr dump)
+# Pinning REQUIRES `codesign -f -s - <pin>` after the `cp`, as the host-gotcha
+# note above records; without it macOS SIGKILLs the copy and the harness
+# reports a fake boot hang.
+#
+# WHOLE-RANGE TOTALS, 2075 cells:
+#   PASS=2039  FAIL=18  TIMEOUT=8  REF-CRASHED=10  SKIP=0  TEST-CRASHED=0
+#
+# Verbatim per-chunk summary lines (83 cells each, in cell order):
+#   3126-3208  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=2 TEST-CRASHED=0
+#   3209-3291  # 81 passed, 2 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   3292-3374  # 82 passed, 1 failed, 83 cell(s)
+#              # categories: PASS=82 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   3375-3457  # 83 passed, 0 failed, 83 cell(s)
+#   3458-3540  # 83 passed, 0 failed, 83 cell(s)
+#   3541-3623  # 83 passed, 0 failed, 83 cell(s)
+#   3624-3706  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=2 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   3707-3789  # 81 passed, 2 failed, 83 cell(s)
+#   3790-3872  # 82 passed, 1 failed, 83 cell(s)
+#   3873-3955  # 83 passed, 0 failed, 83 cell(s)
+#   3956-4038  # 83 passed, 0 failed, 83 cell(s)
+#   4039-4121  # 79 passed, 2 failed, 83 cell(s)
+#              # categories: PASS=79 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=2 TEST-CRASHED=0
+#   4122-4204  # 83 passed, 0 failed, 83 cell(s)
+#   4205-4287  # 82 passed, 1 failed, 83 cell(s)
+#   4288-4370  # 76 passed, 3 failed, 83 cell(s)
+#              # categories: PASS=76 FAIL=3 TIMEOUT=4 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   4371-4453  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=1 SKIP=0 REF-CRASHED=1 TEST-CRASHED=0
+#   4454-4536  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=2 TEST-CRASHED=0
+#   4537-4619  # 81 passed, 2 failed, 83 cell(s)
+#   4620-4702  # 83 passed, 0 failed, 83 cell(s)
+#   4703-4785  # 82 passed, 1 failed, 83 cell(s)
+#   4786-4868  # 83 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=83 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   4869-4951  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=2 TEST-CRASHED=0
+#   4952-5034  # 82 passed, 1 failed, 83 cell(s)
+#              # categories: PASS=82 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   5035-5117  # 81 passed, 0 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=0 TIMEOUT=1 SKIP=0 REF-CRASHED=1 TEST-CRASHED=0
+#   5118-5200  # 81 passed, 2 failed, 83 cell(s)
+#              # categories: PASS=81 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#
+# ──────────────────────────────────────────────────────────────────────────
+# HOW THE 18 FAILs DISPOSED, after 3 serial passes (--jobs 1 --confirm 0)
+#
+#   deterministic 3/3   'ktrace -' 'ldapsearch ' 'mc ' 'mc -' 'node -'
+#                       'perldoc ' 'pgrep ' 'pidof '
+#   PASS 3/3            'mpicalc '  — discarded, see below
+#   budget-boundary     nine cells flipped FAIL<->TIMEOUT at the default 10s
+#                       key budget.  Re-run at `--key-budget 30`, three serial
+#                       passes: FAIL 9/9 every pass.  They are SLOW, not
+#                       silent, and TIMEOUT was never the right label for
+#                       them.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# KNOWN-OPEN, additional reproducers only — do NOT file as new
+#
+# b29792c9a7 ask-prompt count, NINE more cells:
+#   'ktrace ' 'mispipe ' 'mpirun ' 'mysqltest_safe_process ' 'nice '
+#   'nohup ' 'oshrun ' 'palloc ' 'parallel '
+#   All nine are ~52.8k-possibility command-argument completions and all nine
+#   FAIL 9/9 at a 30s budget.  NEW FACT, and it bounds what this class can
+#   ever be asserted to: at this scale BOTH SIDES WANDER, in steps of exactly
+#   4 matches (= 1 line).  Across three serial passes the reference gave
+#   52814 / 52818 / 52822 and zshrs gave 52826 / 52830 / 52834 on the same
+#   cells.  So the delta here is +12..+16, which is NOT the +28 residual that
+#   the b29792c9a7 resolution section above documents for 'command ' (20 `_z*`
+#   completers + HELPDIR/INFOPATH).  Same fingerprint — the fingerprint masks
+#   digits — but the numbers do not match that residual and the mechanism is
+#   NOT established here.  Do not assume it is the same +28.
+#
+# live-`ps` artefact — NOT divergences, discarded:
+#   'pgrep ' 'pidof '.  Both complete a process name.  Three serial passes:
+#   pgrep ref 558/561/559 vs test 562/560/556, pidof ref 559/560/556 vs test
+#   560/558/559 — both sides wander AND the sign of the delta flips
+#   (pgrep +4, -1, -3).  Same class as 'kill '/'gcore '/'gstack '.
+#
+# shared-worktree churn — NOT a divergence, discarded:
+#   'mpicalc '.  Mined FLAKY (6 rows differ, cwd listing: one shell saw
+#   `target/`, the other did not), PASS 3/3 on re-confirmation.  ~16 agents
+#   mutate this worktree, so any cell that falls through to cwd file
+#   completion carries this noise.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW — 'mc ' / 'mc -'   deterministic 3/3   ROOT-CAUSED
+#
+# zshrs floods the screen with `created globally` warnings where zsh
+# completes normally (29 and 40 rows differ).  Observed rows:
+#   row 1  zsh  : '-/            daemon/       examples/     scripts/ …'
+#          zshrs: '_requested: array parameter __compsys_argv created globally in function _requested'
+#   row 3  zshrs: '_arguments:411: scalar parameter _cs_split_src created globally in function _arguments'
+#   row 4  zshrs: '(eval):1: array parameter _cs_split_dst created globally in function _arguments'
+#
+# Cause is not `_mc` and not `_arguments` spec parsing.  `_mc` sh:36 is
+#   setopt localoptions warncreateglobal typesetsilent
+# and under WARN_CREATE_GLOBAL every scratch parameter a compsys port creates
+# at global scope becomes visible output.  zsh has none to show because its
+# helpers declare them (`_requested` sh:3 is `local __gopt`).  zshrs's ports
+# create theirs through the parameter table with no scope:
+#   src/compsys/ported/Base/Core/_requested.rs:51    setaparam("__compsys_argv", …)
+#   src/compsys/ported/mod.rs:28-32                  setsparam("_cs_split_src", …)
+#                                                    then eval into `_cs_split_dst`
+# `__compsys_argv` is the zparseopts bridge and appears in at least
+# _requested, _description, _next_label, _wanted, _all_labels, _message,
+# _parameters, _completers, _widgets, _aliases, _deb_files,
+# _canonical_paths, _email_addresses — so the leak is the SHAPE of the
+# zparseopts bridge, not one file.  `_cs_split_src`/`_cs_split_dst` are
+# `eval_action_words`, reached by every `_arguments`/`_alternative`/`_values`
+# action split.
+#
+# This is the same defect FAMILY as the `_arguments` SCRATCH_PARAMS level-0
+# leak fixed in 0b1902d2fa and as the local-leak class recorded above, but a
+# different symptom: there the names leaked into `_parameters`' candidate
+# list, here they are announced on the terminal.  Blast radius on this host's
+# $fpath, measured by grepping every fpath dir for the option: TEN completer
+# files set warncreateglobal — `_alsa-utils _mc _rzsh _zi _zsh5 _zsh-5.4.2-dev-0
+# _zsh-5.6.2 _zsh-5.7.1 _zsh-5.8 _zsh-5.8.1`.  `_zi` is zinit's, so this is a
+# daily-driver path, not a curiosity.
+mc 
+mc -
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW — 'ldapsearch '   deterministic 3/3   ROOT-CAUSED to _regex_arguments
+#
+#   row  0  zsh  : '@CT@ ldapsearch "('
+#           zshrs: '@CT@ ldapsearch'
+#   row  1  zshrs: '(eval):1: bad pattern: ('
+#   row  2  zshrs: '(eval):1: bad pattern: ('
+#   row  3  zshrs: '@CT@ ldapsearch -S'
+#   one-sided diagnostics — only zshrs: bad pattern: (
+#
+# NOT a completer-resolution divergence: both shells resolve
+# `$_comps[ldapsearch]` to `_openldap`, verified directly under the pinned
+# dump.  `_openldap`:135 sends the first operand to `_ldap_filters`, which
+# builds `open='('`, quotes it, sets `pre='"('` when the word is empty — that
+# is exactly the `"(` zsh inserts — and ends with
+#   _regex_arguments _ldap_search_filters "$query[@]"
+#
+# `${(q)}` is byte-identical on both shells (`\(`), and `compquote`
+# early-returns on an empty qstack on both (computil.rs:6735-6740, c:3691),
+# so neither is the divergence.  The divergence is that zshrs's
+# `_regex_arguments` NEVER DEFINES THE FUNCTION.  Smallest reproducer, no
+# completion context needed, deterministic:
+#
+#   zsh   -f -c 'autoload -Uz _regex_arguments; _regex_arguments _t \( "/\(!/" \)
+#                print "rc=$? defined=${+functions[_t]} len=${#functions[_t]}"'
+#     zsh   -> rc=0 defined=1 len=708
+#     zshrs -> rc=0 defined=0 len=0
+#
+# It returns SUCCESS and defines nothing.  This is by construction and the
+# port says so: src/compsys/ported/Base/Utility/_regex_arguments.rs:158-169
+# is a "WIRING GAP" note recording that upstream `eval`-defines a real shell
+# function while the port stores `funcname` in a private registry, reached
+# through `dispatch_if_registered`.  So anything that observes the generated
+# function AS a function — `${+functions[…]}`, `functions[…]`, `whence`, or a
+# consumer that re-evals it — sees nothing in zshrs.
+# NOT PROVEN: that the missing definition is what produces the two
+# `bad pattern: (` diagnostics in the live cell.  The registry dispatch path
+# exists, so the pattern compile may fail inside it for a separate reason.
+# Anyone fixing this should start from the reproducer above, which needs no
+# PTY and no completion context.
+ldapsearch 
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW — 'perldoc '   deterministic 3/3   NOT root-caused
+#
+#   row  1  zsh  : 'zsh: do you wish to see all 1146 possibilities (1146 lines)?'
+#           zshrs: '-/            daemon/       examples/     scripts/ …'
+#   rows 2-4 are the rest of the cwd listing; zsh draws none of them.
+#
+# The whole `_perldoc` chain yields nothing in zshrs and the chain falls
+# through to plain cwd file completion.  Same SHAPE as the 10-cell
+# "`_arguments`-based completer yields NOTHING" family above (a2x, aac-enc,
+# Zzz, aalib-config, aclocal, alacritty, ab, R, VBoxManage), and the largest
+# instance of it found so far.  Both shells resolve `$_comps[perldoc]` to
+# `_perldoc`.  `_perldoc` offers four groups — perl built-in functions
+# (sh:43), `_perl_modules` (sh:21/30/53), basepods, and `*.(pod|pm)` files
+# (sh:50/55) — and BOTH `_perl_modules` and `_perl_basepods` are native ports
+# (src/compsys/ported/Unix/Type/).  `--fn-list` has no coverage for either,
+# so neither could be exercised in isolation from the harness; that is the
+# next step, not a conclusion.
+perldoc 
+#
+# ──────────────────────────────────────────────────────────────────────────
+# 'ktrace -' / 'node -'   deterministic 3/3   HOST-TRIGGERED, real behaviour
+#
+# Both diverge on ONE match, and it is the same match in both:
+#   'node -'    zsh lists 202 possibilities, zshrs 201; the missing row is
+#               `-/`, dumped in full with LISTMAX=0 and rows=230 — the 201
+#               described options are byte-identical and only the trailing
+#               `-/` is absent in zshrs.
+#   'ktrace -'  the described option list agrees; the last row is `-/` in zsh
+#               and `-` in zshrs — present, but without the directory suffix.
+#
+# The trigger is worktree litter, not the corpus: an untracked empty
+# directory named literally `-` sits in the repo root (created 2026-09-04
+# 19:23 by a concurrent agent), and the cwd is the repo, so `-` is a real
+# file-completion candidate for a word that is `-`.  These two cells would
+# very likely PASS on a clean tree.
+# The behaviour difference is nevertheless real and it is NOT a blanket
+# inability to see that directory — the vacuous-pass audit below caught
+# 'pdftops -', 'pdfimages -' and 'patcheck -' inserting `-/` identically on
+# BOTH shells.  So it is specific to these two option-completion contexts:
+# zsh offers the `-` directory alongside the options and zshrs drops it
+# ('node -') or drops its type suffix ('ktrace -').
+# Not added as corpus entries: the trigger is transient litter and a corpus
+# line that depends on it would rot the moment someone removes the directory.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# ONE-SIDED SILENCE — three new members, confirmed NOT budget
+#
+#   'nfs-cat '  'nfs-cat -'  'node '
+# Re-measured serially with `--silence-recheck 3`: zshrs produced NOTHING at
+# all after TAB at 10.0s AND again at 30.0s while zsh drew a screen.  The
+# harness labels them `ONE-SIDED SILENCE, not budget`.  Machine load is not
+# the explanation and TIMEOUT here is not a load artefact.
+#
+# The other five TIMEOUTs in this range were measurement failures, not this:
+# 'mailutil ' and 'mailutil -' re-ran PASS (zshrs boot budget), 'ngrok '
+# re-ran PASS, and 'numpy-config ' / 'pfb2pfa -' both re-ran REF-CRASHED.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# REF-CRASHED — 10 cells, upstream zsh SIGSEGV, never a finding
+#
+#   'kanji-config-updmap ' 'kanji-config-updmap -' 'msxlint ' 'msxlint -'
+#   'numpy-config -' 'omfonts ' 'omfonts -' 'pbmtopi3 ' 'pbmtopi3 -'
+#   'pfb2pfa '
+# Discarded; no comparison happened on any of them.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# VACUOUS-PASS AUDIT
+#
+# 30 PASSes replayed with `-v --jobs 1`, stratified and deliberately
+# over-weighting thin grids: 20 drawn from the 69 PASSes whose reference grid
+# is <=2 rows, 6 from 3-8 rows, 4 from >8 rows.  All 30 passed again.
+#   VACUOUS: 2 of 30 — 'pg_top ' and 'pbmreduce ', both 1-row grids, both
+#   shells silent at 10.0s.  Their agreement proves nothing.
+#   SUBSTANTIVE: 28 of 30, including 18 of the 20 thin ones — a thin grid is
+#   usually a real unique-match insertion ('pcre-config ' -> `--`,
+#   'pdftops -' -> `-/`, 'pbmpscale -' -> a described option), not silence.
+# The sample was drawn from the 408 PASSes in cells 4786-5200, the half whose
+# jsonl survived the host restart.
