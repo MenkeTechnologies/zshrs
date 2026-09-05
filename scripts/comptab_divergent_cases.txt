@@ -2022,3 +2022,168 @@ ldapsearch
 # unreachable through its documented interface.
 # `_ps` and `_printenv` are byte-identical between the two trees, so neither
 # negative-delta cell above is a completer-version artefact.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# HOW THE 4 TIMEOUTs DISPOSED — re-run serially, 3x,
+# `--jobs 1 --confirm 0 --key-budget 30 --silence-recheck 3`.
+# TWO OF THE FOUR WERE HIDING REAL FAILs, which is the whole point of the
+# recheck; the other two were merely SLOW.
+#
+#   'pnx '            FAIL 3/3   11.1s / 9.9s / 9.8s   fp b29792c9a7
+#   'proxychains4 '   FAIL 3/3    9.9s / 9.8s / 9.9s   fp b29792c9a7
+#       Both sat right ON the 10.0s default key budget, which is why the
+#       sweep called them TIMEOUT.  At 30s both give a clean verdict, and
+#       both are the ~52.8k ask-prompt band:
+#           zsh 52818 (26311 lines)   zshrs 52826 (26313)   +8
+#       Neither has a completer FILE on this $fpath ($_comps names `_pnx`
+#       and `_proxychains-ng`, no fpath dir holds either), so both fall
+#       through to the same command-argument universe as 'prterun '.
+#   'podman '         PASS 3/3   8.3s / 8.8s / 8.4s
+#   'proxychains4 -'  PASS 3/3   7.1s / 7.3s / 7.1s
+#       SLOW CELLS, nothing more.  Note `podman __complete ""` itself costs
+#       `real 0.16`, so the subprocess is NOT what made it slow.
+#
+# RULED OUT for this cluster, by direct probe, so nobody re-runs it:
+#   * the missing definition FILE is at parity in every form — outside
+#     completion (`zsh:1: _pnx: function definition file not found` /
+#     `zshrs.pin:1: …`, rc=1 both), under `autoload +X` (defined=1 len=20 on
+#     both, for both names), and inside a live completion with a non-empty
+#     word AND with an empty word (a synthetic `autoload -Uz _zz03…missing;
+#     compdef _zz03…missing zz03` PASSes, identical 3-row grid);
+#   * `_podman`'s bash-shaped core is at parity — `words[-1]`,
+#     `${lastParam[-1]}`, `"${words[1]} __complete ${words[2,-1]}"`, the
+#     `eval`, `${(f)out}` and `[-1]` all give byte-identical results
+#     (`req=[podman __complete ] outlines=60 lastLine=[:4]`) on both shells.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# VACUOUS-PASS AUDIT
+#
+# Whole-population, computed from this sweep's own --jsonl phase records: of
+# the 1081 PASSes, 58 (5.4%) had the `key 'tab'` phase come back `no-output`
+# on BOTH sides — neither shell drew anything, so the agreement proves
+# nothing.  (The 3126-4200 sweep measured 5.6% the same way; the two agree.)
+#
+# Stratified replay to CONFIRM that classification, seed 20260905: 30 PASSes
+# re-run `-v --jobs 1 --key-budget 15`, 18 drawn from the 177 PASSes whose
+# reference grid is <=2 rows and 12 from the 904 fatter ones.  30 passed, 0
+# failed.  SIX were vacuous and ALL SIX are members of the predicted 58-cell
+# set — 'ristsrppasswd -', 'pnmrotate ', 'psa_hash -', 'ppmrainbow ',
+# 'png-fix-itxt -', 'req_app -' — still silent on both sides at a 15s budget,
+# i.e. not a budget artefact.  No cell OUTSIDE the predicted set was vacuous,
+# so the jsonl-derived figure is sound in both directions.
+# Across all 1081 PASSes: 0 cursor diffs, 0 attribute-only row diffs, 0
+# one-sided diagnostics (all 9 cursor diffs in the range belong to failing
+# cells).
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW — an `_alternative` / `_arguments` ACTION that is a COMMAND LINE adds
+# NOTHING when the command is the `compadd` BUILTIN.  fp 7be07f62c4.
+# ROOT-CAUSED, with a two-line reproducer and the exact missing branch.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Found as 'rsync ' (fp e8e0447836), the one cell in this range that is
+# deterministic AND stable to the digit: 230 possibilities (116 lines) vs
+# 229 (115), the SAME numbers on all three serial passes.  Dumped in full
+# with LISTMAX=0 at --rows 140 --cols 200, the missing match is the FIRST
+# row and it is a single literal:
+#     zsh   row 1: 'rsync://'
+#     zshrs row 1: <absent>          (every later row shifted up by one)
+#
+# It comes from Completion/Unix/Command/_rsync sh:16-20 — `_rsync_user_or_host`:
+#     [[ $words[CURRENT] = rsync://* ]] || rsync='rsync:rsync: compadd -S "" rsync://'
+#     _alternative 'users:user:_users -S @' "hosts:host:_hosts -S '$suf'" $rsync
+# i.e. an `_alternative` spec whose ACTION STARTS WITH A SPACE, which zsh
+# documents as "execute the rest as a command line".
+#
+# SELF-CONTAINED REPRODUCER — no rsync, no dump, no fpath, four lines:
+#     _zzf() { _alternative 'l:l:(alpha)' "f:f: compadd FFF" }
+#     compdef _zzf zzf
+#   buffer 'zzf ' (the trailing space is load-bearing), key tab
+#     zsh   lists two matches:   'FFF'  and  'alpha'
+#     zshrs inserts 'alpha' as a UNIQUE match — the whole alternative is gone
+#
+# FOUR CONTROLS bound it exactly, same init, one cell each:
+#     "g:g:compadd GGG"          no leading space (cmd+args form)   PASS
+#     'h:h:(HHH)'                literal list                        PASS
+#     "j:j: _myadd"              leading space, but a FUNCTION       PASS
+#     _arguments '1:one: compadd III'                                zshrs
+#         emits NOTHING AT ALL (TIMEOUT at 30s, zero bytes — the harness
+#         init sets no_beep, so zero matches are zero bytes)
+# So it is not the leading-space arm in general, and not `_alternative` in
+# general: it is that arm reached with the `compadd` BUILTIN as the command.
+# `-S ""`, `-S ''`, `-S x`, `--` and no option at all all behave the same,
+# so the empty-suffix argument is NOT involved.
+#
+# THE MISSING BRANCH, and the port that proves it is an omission rather than
+# a decision — `_values` is the control, it has the case in BOTH arms:
+#
+#   src/compsys/ported/Base/Utility/_alternative.rs:272-289   sh:61 arm
+#       let _ = dispatch_function_call(cmd, &rest);          <-- no compadd case
+#   src/compsys/ported/Base/Utility/_alternative.rs:290-313   sh:69 arm
+#       let _ = if cmd == "compadd" { bin_compadd(…) } else { dispatch_… };
+#
+#   src/compsys/ported/Base/Utility/_arguments.rs:1390-1405   sh:453 arm
+#       if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 { ret = 0; }
+#                                                            <-- no compadd case
+#   src/compsys/ported/Base/Utility/_arguments.rs:1410-1432   sh:463 arm
+#       let rc = if cmd == "compadd" { bin_compadd(…) } else { dispatch_… };
+#
+#   src/compsys/ported/Base/Utility/_values.rs:495-508        sh:138 arm  HAS IT
+#   src/compsys/ported/Base/Utility/_values.rs:509-528        sh:146 arm  HAS IT
+#
+# `dispatch_function_call` resolves SHELL FUNCTIONS.  `compadd` is a builtin,
+# so in the two arms above it resolves to nothing and the action silently
+# adds no matches — which is exactly why " _myadd" (a function wrapping the
+# same compadd) works and " compadd" does not.
+# In `_arguments` there is a second-order effect: the same call's return
+# value gates `ret` and therefore `alwopt`, so the failure also changes the
+# option-completion decision, not just the match set.
+#
+# BLAST RADIUS on this host, measured by scanning every completer file in the
+# harness $fpath and the bundled tree for the `: compadd` action form —
+# THREE stock completers, and no third-party one:
+#     Completion/Unix/Command/_rsync:16
+#         'rsync:rsync: compadd -S "" rsync://'          via _alternative
+#     Completion/Debian/Command/_module-assistant:36
+#         '*:package: compadd /usr/src/modass/…(N:t:r) …'  via _arguments
+#         (not measurable here — module-assistant is not installed)
+#     Completion/Open_ldap/Type/_ldap_filters:84
+#         \( // -'(( --nest ))' \| '//' -'((!nest))' '/[]/' ': compadd ""' \)
+#         — inside a `_regex_arguments` spec, a DIFFERENT execution path.
+#         NOT claimed as an instance: it was not tested, and the ledger's
+#         'ldapsearch ' entry above already records an OPEN second-TAB
+#         zero-match fall-through in that same completer.  Anyone fixing
+#         this branch should re-measure `ldapsearch ` with --keys tab,tab
+#         afterwards; if it moves, that open item was this bug.
+rsync 
+#
+# ══════════════════════════════════════════════════════════════════════════
+# OPEN — 'read ' offers 12-16 parameter names zsh does not.  fp e8e0447836.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Deterministic FAIL 3/3 and, unusually for an ask-prompt count, the
+# REFERENCE IS STABLE while the test side wanders — the opposite of the
+# b29792c9a7 band, where both sides move:
+#     zsh    516 possibilities (516 lines) / 516 / 516
+#     zshrs  528 (528)                     / 532 / 528       +12 .. +16
+# `read ` completes PARAMETER NAMES, which makes it the most direct probe of
+# the scratch-parameter leak family that any cell in this corpus offers.
+# Dumped in full with LISTMAX=0 at --rows 560, the grid is one name per row
+# and the divergence is pure INSERTION — `HELPDIR` appears at row 11 and
+# `INFOPATH` at row 17, shifting every later row down; no name is missing.
+#
+# NOT the startup environment, measured rather than assumed.  With the
+# harness init sourced and `zsh/parameter` loaded, `${(k)parameters}` is
+# 150 names in zsh and 151 in zshrs, differing by only:
+#     only zshrs: HELPDIR INFOPATH        only zsh: zle_bracketed_paste
+# Net +1, not +12.  So the extra candidates are created DURING the
+# completion, not present at init — the signature of the ports' scratch
+# globals reaching `_parameters`' `${(k)parameters[(R)…~*local*]}` filter,
+# the same family as the `_arguments` SCRATCH_PARAMS level-0 leak fixed in
+# 0b1902d2fa and as the `mc `/warncreateglobal screen-flood entry above.
+# NOT PROVEN: which names leak.  There are 261 distinct literal
+# `setaparam`/`setsparam` names under src/compsys/ported/, many of them
+# legitimate upstream globals, so the next step is to read the names out of
+# a live completion rather than guess from the source.  The test side's own
+# ±4 wander says the set is not even constant between runs.
+read 
