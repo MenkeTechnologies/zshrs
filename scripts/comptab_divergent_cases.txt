@@ -2373,3 +2373,16 @@ read
 #   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 218.7s (2.2s/cell)
 #   # 8 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#
+# chunk part_06  cells 6901-7000  'swipl-ld -' .. 'tcamgr -'
+#   # 97 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=97 FAIL=2 TIMEOUT=1 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 275.1s (2.8s/cell)
+#   # 10 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   TIMEOUT tab1               'task -'  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: PASS — still NOT scored as a pass, the first measurement was never valid)
+#   FAIL   tab1               'tac -'  (7 row(s) differ)
+#     5378f5ae30  x1   smallest: --case 'tac -' --keys tab
+#        cell/row0/col1 | ref/$ tac - | test/$ tac -/
+#   FAIL   tab1               'taskinfo '  (1 row(s) differ)
+#     b29792c9a7  x1   smallest: --case 'taskinfo ' --keys tab
+#        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
