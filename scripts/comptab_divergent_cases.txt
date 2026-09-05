@@ -2436,3 +2436,15 @@ read
 #        cell/row0/col1 | ref/$ tor-resolve -_arguments:#: command not found: port]: | test/$ tor-resolve -
 #        NOTE the diagnostic is on the REFERENCE side here — zsh is the shell
 #        that errors, zshrs is the quiet one.
+#
+# chunk part_10  cells 7301-7400  'transfer -' .. 'unbound '
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 365.4s (3.7s/cell)
+#   # 7 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'typer '  (13 row(s) differ)
+#     b152fb251a  x1   smallest: --case 'typer ' --keys tab
+#        cell/rowtop/col0 | ref/_describe:#: bad option: -d | test/- -J -d _a_# _tmpm subcommand
+#   FAIL   tab1               'typer -'  (14 row(s) differ)
+#     c751b46d2e  x1   smallest: --case 'typer -' --keys tab
+#        cell/rowtop/col0 | ref/_describe:#: bad option: -d | test/- -# -D -J -O -a -d -default- -o
