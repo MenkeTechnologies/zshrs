@@ -283,7 +283,21 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         // records as its caller line (`$functrace` reads
                         // `_alternative:63`).
                         crate::compsys::ported::shared::set_sh_lineno(63);
-                        let _ = dispatch_function_call(cmd, &rest);
+                        // `compadd` is a BUILTIN, so `dispatch_function_call`
+                        // finds no shell function and the action adds NOTHING.
+                        // The sh:69 arm 40 lines below already handles this;
+                        // this arm did not, and `_values` has it on BOTH of
+                        // its arms — so the omission is here, not the pattern.
+                        //
+                        // Live cost: `_rsync:16` is
+                        // `rsync='rsync:rsync: compadd -S "" rsync://'`, so
+                        // `rsync <TAB>` offered 229 matches where zsh offers
+                        // 230 — the missing one is the literal `rsync://`.
+                        let _ = if cmd == "compadd" {
+                            Some(bin_compadd("compadd", &rest, &make_ops(), 0))
+                        } else {
+                            dispatch_function_call(cmd, &rest)
+                        };
                     }
                 }
             } else {
