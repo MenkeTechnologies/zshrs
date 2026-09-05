@@ -3634,34 +3634,90 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // match that HAS a display string.
                 .filter(|m| m.disp.is_none() || (m.flags & (CMF_DISPLINE | CMF_HIDE)) == 0)
                 .collect();
-            let n = visible.len();
-            if n > 0 {
-                let cols = g.cols.max(1);
-                let lins = g.lins.max(1);
-                let rows_major = (g.flags & CGF_ROWS) != 0;
-                for row in 0..lins {
-                    for col in 0..cols {
-                        let idx = if rows_major {
-                            row * cols + col
-                        } else {
-                            row + col * lins
-                        };
-                        let lastc = if col == cols - 1 { 1 } else { 0 };
-                        let wid = if g.widths.is_empty() {
-                            g.width
-                        } else {
-                            g.widths.get(col as usize).copied().unwrap_or(g.width)
-                        };
-                        if idx >= 0 && (idx as usize) < n {
-                            let _ =
-                                iprintm(Some(g), Some(visible[idx as usize]), col, ml, lastc, wid);
+            // The row loop is bounded by the MATCH COUNT as well as by
+            // `g->lins`, and only the match count decides the inter-row
+            // newline: c:2116 `for (…; n && nl--;)` and c:2141 `if (n)`, with
+            // `n` starting at `g->dcount` (c:2083) and decrementing once per
+            // printed match (c:2130).
+            //
+            // The two bounds are NOT the same number. When the widest match is
+            // wider than the terminal, `zterm_columns / g->width` is 0 and
+            // calclist takes c:1692-1707: it forces `cols = 1` and builds
+            // `glines` by summing `1 + ((len - 1) / zterm_columns)` per match —
+            // WRAPPED DISPLAY LINES — then stores that in `g->lins` (c:1709).
+            // So a group holding one over-wide match has `lins` one (or more)
+            // greater than its number of match ROWS. Looping `0..lins` and
+            // emitting a newline for every row but the last therefore wrote one
+            // newline too many, the always-last-prompt cursor-up
+            // (`nlines + nlnct - 1`, c:2164) landed one row below the command
+            // line, and the next zrefresh repainted the buffer text on top of
+            // the first list row: `w3m <TAB>` in this repo drew `-/   w3m`
+            // where zsh draws `-/`.
+            let mut n: i32 = g.dcount; // c:2083 `int n = g->dcount`
+            let nc: i32 = g.lins; // c:2086 `nl = nc = g->lins`
+            let mut nl: i32 = g.lins; // c:2086
+            let cols = g.cols.max(1);
+            let rows_major = (g.flags & CGF_ROWS) != 0;
+            let mut row: i32 = 0;
+            while n > 0 && nl > 0 {
+                // c:2116
+                nl -= 1;
+                let mut i = cols; // c:2117 `i = g->cols`
+                let mut mc = 0; // c:2118
+                while n > 0 && i > 0 {
+                    // c:2120 `while (n && i--)`
+                    i -= 1;
+                    let idx = if rows_major {
+                        row * cols + mc
+                    } else {
+                        row + mc * nc
+                    };
+                    let wid = if g.widths.is_empty() {
+                        g.width
+                    } else {
+                        g.widths.get(mc as usize).copied().unwrap_or(g.width)
+                    };
+                    if idx < 0 || (idx as usize) >= visible.len() {
+                        // c:2122-2124 — `if (!*q) { printm(g, NULL, …); break; }`.
+                        // `iprintm` returns immediately for a NULL match
+                        // (c:2240-2241), so the call emits nothing.
+                        break;
+                    }
+                    // c:2126
+                    let _ = iprintm(
+                        Some(g),
+                        Some(visible[idx as usize]),
+                        mc,
+                        ml,
+                        i32::from(i == 0),
+                        wid,
+                    );
+                    n -= 1; // c:2128-2130
+                    mc += 1; // c:2134
+                }
+                // c:2136-2140 — the trailing cells of a short row are passed to
+                // `printm` as NULL, which `iprintm` ignores; nothing is written.
+                if n > 0 {
+                    // c:2141
+                    let _ = write_loop(out_fd, b"\n"); // c:2142
+                    ml += 1; // c:2143
+                    if cl >= 0 {
+                        // c:2144
+                        cl -= 1;
+                        if cl <= 1 {
+                            cl = -1;
+                            // c:2146-2147 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                            if crate::ported::init::tclen.lock().unwrap()
+                                [crate::ported::zsh_h::TCCLEAREOD as usize]
+                                != 0
+                            {
+                                tcout(crate::ported::zsh_h::TCCLEAREOD);
+                            }
                         }
                     }
-                    ml += 1;
-                    if row < lins - 1 {
-                        let _ = write_loop(out_fd, b"\n");
-                    }
                 }
+                // c:2149-2152 — advance `p` to the next row's first match.
+                row += 1;
             }
         }
         // c:2157-2158 — `if (g->lcount || (showall && g->mcount)) pnl = 1;`.
