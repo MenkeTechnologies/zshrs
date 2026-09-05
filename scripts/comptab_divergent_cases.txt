@@ -2954,3 +2954,44 @@ tor-resolve -
 # cargo test --lib compsys::ported: 887 passed, 2 failed — both failures are
 # the pre-existing _options / _path_commands order-dependent flakes, and both
 # pass in isolation (verified, not assumed).
+#
+# ──────────────────────────────────────────────────────────────────────────
+# PIN LOST MID-SWEEP — the binary pin changed here, and it is recorded rather
+# than papered over.  At 18:17 something purged LARGE files out of
+# /private/tmp (the root volume's free space jumped 17Gi -> 40Gi in the same
+# window); the 104MB `zshrs.pin` was deleted while chunk part_03 was running,
+# every small file in the same directory survived, and the harness reported
+# the 97 resulting cells as `zshrs never reached a prompt (boot budget)` —
+# the fake-boot-hang signature.  THE FIRST part_03 RUN IS VOID:
+#
+#   # 3 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=3 FAIL=0 TIMEOUT=97 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 492.0s (4.9s/cell)
+#
+# `target/debug/zshrs` had ALSO been rebuilt by a peer at 18:23, so the
+# original pin cannot be reconstructed.  From part_03 onward the sweep runs
+# on a SECOND pin, and the pin now lives OUTSIDE /tmp so no reaper can reach
+# it (`~/Library/Caches/comptab_pin_<pid>`, mode 555):
+#
+#   PIN 1  zshrs sha256 5acbc7284f5e… , zshrs 0.12.58, repo HEAD 1e549c1dec
+#          cells 7365-7664 (chunks part_00, part_01, part_02)
+#   PIN 2  zshrs sha256 f94fa154d04b… , zshrs 0.12.59, repo HEAD 3ae6abe9d2
+#          cells 7665-8234 (chunks part_03 .. part_08)
+#
+# The two are three peer commits apart, one of which — 3ef4449107,
+# `fix(compsys): the (literal list) action arm split without unescaping` — is
+# a completion fix, so the pins are NOT interchangeable.  Chunks part_00 ..
+# part_02 are therefore RE-RUN on PIN 2 at the end of this block, and the
+# range totals are computed from those re-runs, not from the PIN 1 pass.
+# The DUMP is byte-identical across both pins (10ebe0a033… , 2122607 bytes,
+# hashed before and after every chunk), so no cell sits in a dump-rewrite
+# window.
+#
+# chunk part_03  cells 7665-7764  'wait -' .. 'wopl2ofm '   [PIN 2]
+#   # 99 passed, 1 failed, 100 cell(s)
+#   # categories: PASS=99 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 188.1s (1.9s/cell)
+#   # 9 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'watch '  (1 row(s) differ)
+#     b29792c9a7  x1   smallest: --case 'watch ' --keys tab
+#        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
