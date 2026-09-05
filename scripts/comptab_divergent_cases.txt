@@ -3799,3 +3799,86 @@ upmendex -
 # and it exercises a different one of the three sites.
 write 
 xsetroot -solid 
+#
+# ──────────────────────────────────────────────────────────────────────────
+# VACUOUS-PASS AUDIT
+#
+# Whole-population, computed from this sweep's own --jsonl phase records
+# (870 records, chunks part_00..part_02 taken from their PIN 2 re-runs): of
+# the 861 PASSes, 46 (5.3%) had the `key 'tab'` phase come back `no-output`
+# on BOTH sides — neither shell drew anything, so the agreement proves
+# nothing.  The 3126-4200 sweep measured 5.6%, 5201-6300 5.4% and 6301-7400
+# 5.8% the same way; the four agree.  The remaining 815 are all
+# `quiet`/`quiet`, and there are ZERO asymmetric pairs in this range.
+#
+# Every one of the 46 sits in the thin-grid stratum (reference grid <= 2
+# rows), which is 188 of the 861 PASSes; no PASS with a fatter grid was
+# vacuous.
+#
+# Stratified replay to CONFIRM that classification, seed 20260905: 30 PASSes
+# re-run `--jobs 1 --key-budget 15`, 18 drawn from the 188 thin-grid PASSes
+# and 12 from the 673 fatter ones.  30 passed, 0 failed.  FOUR were vacuous —
+# 'xzfgrep ', 'xsetmode ', 'vterm-ctrl -', 'vm_stat ' — which is exactly the
+# number of predicted-vacuous cells the sample contained, ALL FOUR are
+# members of the predicted 46-cell set, and NO cell outside that set was
+# vacuous.  Still silent on both sides at a 15s budget, so not a budget
+# artefact.  The jsonl-derived figure is sound in both directions.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# WHOLE-CORPUS COVERAGE — THE `tab1` CORPUS IS NOW FULLY MINED.
+#
+#   discover_cases(None, False) on this host today:  8234 cases
+#   cells 1-7364      mined by earlier sweeps (their own numbering 1-7400;
+#                     the same CONTENT, ending at 'unbound ')
+#   cells 7365-8234   mined here, 870 cells
+#   ------------------------------------------------------------------
+#   8234 / 8234 = 100% of the discovered set, one `tab1` cell per case.
+#
+# The 36-case shrink documented at the head of this block does not open a
+# hole: every deletion sits before index 6264, i.e. inside territory earlier
+# sweeps had already measured, and this sweep starts from the first cell the
+# 6301-7400 sweep did not reach rather than from an index.  What the shrink
+# DOES mean is that the corpus is a live property of this host — a completer
+# appearing or disappearing renumbers everything after it — so any future
+# sweep must slice by CONTENT BOUNDARY, never by a remembered index.
+#
+# COVERAGE IS NOT THE SAME AS EXHAUSTION.  What 100% means here is precisely:
+# every discovered command has had `<cmd><TAB>` and `<cmd> -<TAB>` measured
+# once against real zsh.  It says nothing about deeper key sequences,
+# non-empty prefixes, sub-commands, `--opt=<TAB>`, menu navigation, or any
+# zstyle configuration other than the empty one — and this sweep found a core
+# ZLE bug ('w3m ') that only shows when a match exceeds the terminal width
+# and a core substitution bug ('ykman ') that needs `${` inside a command
+# substitution, neither of which the corpus was designed to reach.
+#
+# HOST LOAD DURING THIS SWEEP — recorded because "measured alone" would be a
+# false claim.  `uptime` load average ran 8.6-20.6, far below the 30-138 the
+# 6301-7400 sweep ran under, and the per-cell cost shows it (1.4-2.0s/cell
+# against that sweep's 4.8s/cell).  Peer agents were compiling in this tree
+# throughout — one of them landed 3ef4449107/3ae6abe9d2 mid-sweep, which is
+# why the pins matter.  Two stuck `target/debug/deps/zsh-9a7d0b10a72dd1d1
+# utils` test processes (pids 40196, 83238) were present the whole time at
+# 0:00.22 CPU each — parked, not spinning, so they were left alone; no
+# runaway of the 6301-7400 sweep's kind was found.
+#
+# EXACT COMMANDS, for reproduction:
+#
+#   # slice (content boundary, not index)
+#   python3.14 -c "import sys; sys.path.insert(0,'scripts');
+#                  from parity_corpus import discover_cases;
+#                  print(len(discover_cases(None, False)[7364:]))"
+#
+#   # per 100-cell chunk
+#   PYTHONPATH=/Users/wizard/Library/Python/3.14/lib/python/site-packages \
+#   /opt/homebrew/bin/python3.14 scripts/comptab_parity.py \
+#     --zshrs <pin>/zshrs.pin --dump <pin>/dump.pin --mode native \
+#     --corpus <pin>/part_NN.txt --sequences tab1 \
+#     --jobs 4 --confirm 1 --jsonl <pin>/part_NN.jsonl
+#
+#   # FAIL/TIMEOUT re-confirmation, three times
+#   … --corpus <pin>/confirm.txt --sequences tab1 \
+#     --jobs 1 --confirm 0 --key-budget 30 --silence-recheck 3
+#
+#   # stratified vacuous-pass replay
+#   … --corpus <pin>/replay.txt --sequences tab1 --jobs 1 --confirm 0 \
+#     --key-budget 15 --jsonl <pin>/replay.jsonl
