@@ -2892,3 +2892,15 @@ tor-resolve -
 #   FAIL   tab1               'upmendex -'  (1 row(s) differ)
 #     b36c77debd  x1   smallest: --case 'upmendex -' --keys tab
 #        cell/rowlist/col3 | ref/-g -- make Japanese index head <あかさたなはま� | test/-g -- make Japanese index head <
+#
+# chunk part_01  cells 7465-7564  'uppltotf -' .. 'vbox-img '
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 203.3s (2.0s/cell)
+#   # 7 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'uvicorn '  (2 row(s) differ)
+#     8af74e4fc9  x1   smallest: --case 'uvicorn ' --keys tab
+#        cell/rowtop/col0 | ref/_arguments:#: command not found: a | test/$ uvicorn
+#   FAIL   tab1               'uvicorn -'  (3 row(s) differ)
+#     a9a62db0a1  x1   smallest: --case 'uvicorn -' --keys tab
+#        cell/rowtop/col0 | ref/_arguments:#: command not found: a | test/$ uvicorn -
