@@ -4858,7 +4858,28 @@ impl ShellExecutor {
                     .or_else(|| t.get(display_name.as_str()))
                     .map(|s| s.node.flags)
             })
-            .unwrap_or(0);
+            .unwrap_or(0)
+            // PM_LOADDIR is the ONE flag that must not ride along, because it
+            // describes the `filename` FIELD and `synth_filename` above is not
+            // that field — it is already `getshfuncfile`'s ANSWER.
+            // c:Src/hashtable.c:1061 `zhtricat(shf->filename, "/", shf->node.nam)`
+            // says PM_LOADDIR means "filename holds the fpath DIRECTORY, append
+            // the name"; doshfunc re-applies exactly that when it builds the
+            // funcstack frame (exec.rs c:6019, the PM_LOADDIR arm). Carrying
+            // the flag onto a node whose filename is the resolved FILE appended
+            // `/name` a SECOND time, so an autoloaded completer's
+            // `$funcsourcetrace[1]` read `<dir>/_git/_git:0` where zsh reads
+            // `<dir>/_git:0`. That is not cosmetic: `_git` (git's own zsh
+            // wrapper) locates git-completion.bash with
+            // `"$(dirname ${funcsourcetrace[1]%:*})"/git-completion.bash`, so
+            // the doubled component sent it to a directory that does not exist,
+            // left `$script` empty, and `. "$script"` failed with
+            // `_git:.:48: no such file or directory:`. This silently undid
+            // 8d8adf9c48, whose whole purpose was to make that search succeed.
+            // `functions_source` / `whence -v` were unaffected — they call
+            // `getshfuncfile` against the REAL shfunctab node, which is
+            // correct; only the synthesized frame doubled.
+            & !(crate::ported::zsh_h::PM_LOADDIR as i32);
         // c:Src/exec.c:5978 — `if (sticky_emulation_differs(shfunc->sticky))`
         // reads the STORED per-function sticky snapshot that
         // `shfunc_set_sticky` (c:5402) stamped at definition time. The
