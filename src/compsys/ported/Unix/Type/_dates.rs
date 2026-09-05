@@ -30,7 +30,7 @@
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, getsparam, setaparam, setiparam, setsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use chrono::{Local, TimeZone};
@@ -235,8 +235,19 @@ pub fn _dates(args: &[String]) -> i32 {
         } else {
             1
         };
-        let _ = setsparam("_next_tags_date", &next_date.to_string());
-        let _ = setsparam("_next_tags_line", &histno.to_string());
+        // sh:46  typeset -g -i _next_tags_line
+        // sh:47  typeset -g -i _next_tags_date=$(( … ))
+        // sh:48  _next_tags_line=HISTNO
+        //
+        // `-i`, not a scalar: both survive between completions (they are the
+        // only state that makes a repeated `_next_tags` page FORWARD instead
+        // of restarting at 1), and sh:47's own right-hand side reads
+        // `_next_tags_date` back arithmetically. `setsparam` created them as
+        // PM_SCALAR, so `${(t)_next_tags_date}` read `scalar` where zsh reads
+        // `integer`. `setiparam` is the port of `setiparam`
+        // (`Src/params.c`), which creates the node with PM_INTEGER.
+        let _ = setiparam("_next_tags_date", next_date);
+        let _ = setiparam("_next_tags_line", histno);
         offset = next_date * rows * (columns as i64);
     }
 
