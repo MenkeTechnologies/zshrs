@@ -793,3 +793,24 @@ gawkbug -
 # "zshrs never reached a prompt (boot budget)" — indistinguishable from a real
 # boot hang.  Re-sign the copy (`codesign -f -s - <scratch>/zshrs.pin`) and it
 # runs.  Pinning is still right; it just needs the second step.
+
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP — 2026-09-05, discover CELLS 3126-4200 (`--sequences tab1`)
+#
+# Range: discover_cases() index 3126..4200 inclusive of 8270 total on this
+# host, i.e. 1075 cells, one per case.  First cell 'kafka-acls -', last cell
+# 'mysqlshow '.  Slice reproduced with parity_corpus.discover_cases(None,
+# False)[3125:4200] — the same deterministic sorted set --discover N takes its
+# prefix from, so cells 1-3125 (already mined) are exactly the complement.
+#
+# Measurement pins:
+#   zshrs   sha256 404bc382f187941b15f02c12bd6845fccbfec68cef22f674be25a31ad9e62395
+#           (a copy of target/debug/zshrs at 492af340bb, re-`codesign -f -s -`d
+#           — an unsigned copy is SIGKILLed on exec and the harness reports it
+#           as a boot hang)
+#   dump    sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#           (~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies, copied+touched)
+#   mode native, geom 40x110, settle 300ms, --jobs 8 --confirm 1 for the
+#   sweep; every FAIL re-confirmed --jobs 1, alone, 3x.
+#
+# RESULTS PER CHUNK follow, appended as each lands.
