@@ -502,11 +502,10 @@ fn values_impl(args: &[String]) -> i32 {
                 break;
             }
             if let Some((cmd, rest)) = parts.split_first() {
-                if cmd == "compadd" {
-                    bin_compadd("compadd", rest, &make_ops(), 0);
-                } else {
-                    let _ = dispatch_function_call(cmd, rest);
-                }
+                // sh:140 — `"$action[@]"`. Same silent-dispatch gap the
+                // `_alternative` arms had: a builtin, a `$PATH` executable and a
+                // nonexistent name were indistinguishable and none was reported.
+                let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, rest, 140);
             }
         }
     } else {
@@ -521,11 +520,9 @@ fn values_impl(args: &[String]) -> i32 {
                 let mut call = subopts.clone();
                 call.extend(expl_now);
                 call.extend(rest.iter().cloned());
-                if cmd == "compadd" {
-                    bin_compadd("compadd", &call, &make_ops(), 0);
-                } else {
-                    let _ = dispatch_function_call(cmd, &call);
-                }
+                // sh:148 — `"$action[1]" "$subopts[@]" "$expl[@]"
+                // "${(@)action[2,-1]}"`.
+                let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, &call, 148);
             }
         }
     }

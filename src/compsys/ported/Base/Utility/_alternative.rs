@@ -290,7 +290,15 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         // sh:63 — `"$action[@]"`, the line the callee's frame
                         // records as its caller line (`$functrace` reads
                         // `_alternative:63`).
-                        crate::compsys::ported::shared::set_sh_lineno(63);
+                        // A bare `dispatch_function_call` resolves SHELL FUNCTIONS and native
+                        // ports only (`src/vm_helper.rs:4706` ends in
+                        // `functions_compiled.get(name).cloned()?`), so a builtin, a
+                        // `$PATH` executable and a NONEXISTENT name all came back
+                        // `None` and were flattened to "non-zero" with NO diagnostic.
+                        // zsh prints `_alternative:NN: command not found: …` for the
+                        // last of those. `dispatch_action_command` publishes the line,
+                        // routes `compadd` to the builtin, then falls back to the
+                        // builtin table and `findcmd` before reporting.
                         // `compadd` is a BUILTIN, so `dispatch_function_call`
                         // finds no shell function and the action adds NOTHING.
                         // The sh:69 arm 40 lines below already handles this;
@@ -301,11 +309,7 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         // `rsync='rsync:rsync: compadd -S "" rsync://'`, so
                         // `rsync <TAB>` offered 229 matches where zsh offers
                         // 230 — the missing one is the literal `rsync://`.
-                        let _ = if cmd == "compadd" {
-                            Some(bin_compadd("compadd", &rest, &make_ops(), 0))
-                        } else {
-                            dispatch_function_call(cmd, &rest)
-                        };
+                        let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, &rest, 63);
                     }
                 }
             } else {
@@ -324,12 +328,8 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         // sh:71 — `"$action[1]" "$subopts[@]" "$expl[@]"
                         // "${(@)action[2,-1]}"`, the line the callee's frame
                         // records as its caller line.
-                        crate::compsys::ported::shared::set_sh_lineno(71);
-                        let _ = if cmd == "compadd" {
-                            bin_compadd("compadd", &call_argv, &make_ops(), 0)
-                        } else {
-                            dispatch_function_call(cmd, &call_argv).unwrap_or(1)
-                        };
+                        // Same silent-dispatch gap as the sh:63 arm above.
+                        let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, &call_argv, 71);
                     }
                 }
             }
