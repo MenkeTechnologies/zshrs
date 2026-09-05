@@ -2904,3 +2904,15 @@ tor-resolve -
 #   FAIL   tab1               'uvicorn -'  (3 row(s) differ)
 #     a9a62db0a1  x1   smallest: --case 'uvicorn -' --keys tab
 #        cell/rowtop/col0 | ref/_arguments:#: command not found: a | test/$ uvicorn -
+#
+# chunk part_02  cells 7565-7664  'vbox-img -' .. 'wait '
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 155.2s (1.6s/cell)
+#   # 4 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'w3m '  (1 row(s) differ)
+#     4606d00f05  x1   smallest: --case 'w3m ' --keys tab
+#        cell/rowtop/col0 | ref/-/ | test/-/ w#m
+#   FAIL   tab1               'wait '  (1 row(s) differ)
+#     e8e0447836  x1   smallest: --case 'wait ' --keys tab
+#        cell/rowtop/col2 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
