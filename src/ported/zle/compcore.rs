@@ -4445,6 +4445,9 @@ pub fn addmatches(
     // else strip literally. Without this every `cmd /a/b/pre<TAB>` produced
     // no matches — the resolved candidate never matched the full-path lpre.
     let mut bcp: i32 = 0;
+    let mut bcs: i32 = 0;
+    // c:2339 / c:2366 — either the ppre or the psuf probe can conclude that
+    // NO candidate can match (`*argv = NULL`), which skips the whole add.
     let mut ppre_nomatch = false;
     if (dat.aflags & CAF_MATCH) != 0 {
         // ppre is quoted below (c:2288) in C before this block; do the same
@@ -4492,6 +4495,67 @@ pub fn addmatches(
                 } else {
                     // c:2339 — `*argv = NULL`: no candidate can match.
                     ppre_nomatch = true;
+                    bcp = lpl as i32; // c:2341
+                }
+                crate::ported::zle::compmatch::start_match();
+            }
+        }
+
+        // c:2344-2368 — the SUFFIX twin of the block above, and it was
+        // missing outright. `compadd -s PSUF` puts PSUF on the command line
+        // AFTER the match, so `lsuf` (a copy of `$SUFFIX`) has to have PSUF
+        // taken off it before per-candidate matching, exactly as `lpre` has
+        // PPRE taken off above. Without it comp_match was handed the FULL
+        // `$SUFFIX` and matched it against a word tail that no longer
+        // contained PSUF, so every candidate was rejected: `_path_files`
+        // sh:698-702 fires `compadd -Qf -p "$linepath$testpath" -s
+        // "/${tmp3#*/}"` for an ambiguous INTERMEDIATE path component, which
+        // made `ls /u/l/b<TAB>`, `ls /u/s/b<TAB>` and `ls /u/l/<TAB>` add
+        // ZERO matches where zsh adds two or three.
+        let psuf_q: Option<String> = dat.psuf.as_deref().map(|existing| {
+            multiquote(existing, if (dat.aflags & CAF_QUOTE) != 0 { 1 } else { 0 })
+        });
+        if let Some(psuf) = psuf_q.as_deref() {
+            if !psuf.is_empty() {
+                let lsl = psuf.len();
+                // c:2345 — `ml = match_str(lsuf, s, &bsl, 0, NULL, 1, 0, 1)`
+                // — sfx=1, test=1. Bracket it with start_match() for the same
+                // reason as the ppre probe above: this is a PROBE, its match
+                // accumulators must not leak into the per-candidate
+                // comp_match that follows.
+                crate::ported::zle::compmatch::start_match();
+                let ml = crate::ported::zle::compmatch::match_str(
+                    lsuf.as_bytes(),
+                    psuf.as_bytes(),
+                    None,
+                    0,
+                    None,
+                    1,
+                    0,
+                    1,
+                );
+                if ml >= 0 {
+                    // c:2357-2359 — `lsuf[llsl - ml] = '\0'; llsl -= ml;
+                    //                bcs = ml;`. `ml` is a byte count, so cut
+                    // the bytes rather than the &str.
+                    let keep = lsuf.len().saturating_sub(ml.max(0) as usize);
+                    let lb = lsuf.as_bytes();
+                    lsuf = String::from_utf8_lossy(lb.get(..keep).unwrap_or(lb)).into_owned();
+                    bcs = ml;
+                } else {
+                    if lsuf.len() <= lsl && psuf.ends_with(lsuf.as_str()) {
+                        // c:2362 — lsuf is a suffix of psuf → nothing left.
+                        lsuf.clear();
+                    } else if lsuf.len() > lsl && lsuf.ends_with(psuf) {
+                        // c:2364 — psuf is a literal suffix of lsuf → strip it.
+                        let keep = lsuf.len() - lsl;
+                        let lb = lsuf.as_bytes();
+                        lsuf = String::from_utf8_lossy(lb.get(..keep).unwrap_or(lb)).into_owned();
+                    } else {
+                        // c:2366 — `*argv = NULL`: no candidate can match.
+                        ppre_nomatch = true;
+                    }
+                    bcs = lsl as i32; // c:2368
                 }
                 crate::ported::zle::compmatch::start_match();
             }
@@ -4793,7 +4857,7 @@ pub fn addmatches(
                 None,
                 bcp, // c:2535 — brace-count base advanced by the ppre strip
                 None,
-                0,
+                bcs, // c:2535 — and by the psuf strip (c:2359/c:2368)
                 &mut isexact_out,
             ) {
                 Some(matched) => {

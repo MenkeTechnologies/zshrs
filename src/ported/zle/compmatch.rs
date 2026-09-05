@@ -29,7 +29,7 @@ use crate::ported::pattern::pattry;
 use crate::ported::utils::set_noerrs;
 use crate::ported::zle::comp_h::{
     Cline, Cmatcher, Cmlist, Cpattern, CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_MISS,
-    CLF_NEW, CLF_SKIP, CLF_SUF, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
+    CLF_MID, CLF_NEW, CLF_SKIP, CLF_SUF, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
     CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::compcore::{mstack, multiquote, tildequote, useqbr};
@@ -2094,9 +2094,77 @@ pub fn comp_match(
     if !sfx.is_empty() {
         // c:1181
         // c:1182-1232 — also match suffix; combine prefix+suffix Cline.
-        // c:1189 — `match_str(sfx, w + mpl, ...)`. `mpl` is a byte count
-        // returned by match_str, so it can land inside a multibyte
-        // character; index the bytes rather than the `&str`.
+        //
+        // `match_str` opens with `start_match()` (c:523-524), which WIPES
+        // MATCHBUF / MATCHBUFADDED / MATCHPARTS / MATCHLASTPART / MATCHSUBS.
+        // Everything the prefix match just produced therefore has to be saved
+        // across the suffix call and re-added afterwards — that is exactly
+        // what C's `wpfx` / `pli` / `plil` locals are for (c:1182-1197,
+        // c:1220-1231). The previous port ran only the suffix `match_str` and
+        // then handed back a bare `bld_parts()` of the middle: MATCHBUF —
+        // which becomes the returned match string at c:1241 — kept nothing
+        // but the suffix matcher's own contribution, and the prefix's cline
+        // parts were dropped on the floor. Every candidate reached through a
+        // non-empty `$SUFFIX` together with a match spec came back truncated
+        // or was rejected outright, so `ls /u/l/b<TAB>` (which reaches
+        // `compadd -p /usr/ -s /b -M 'r:|/=*'` from `_path_files` sh:698-702)
+        // produced ZERO matches where zsh produces two.
+        // c:1182 — `int wpl = matchbufadded;`
+        let wpl = MATCHBUFADDED.load(Ordering::Relaxed);
+        // c:1187 — `memcpy(wpfx, matchbuf, wpl);`
+        let wpfx = MATCHBUF
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
+        // c:1188-1195 — a still-pending sub-match run closes the PREFIX chain:
+        // `tmp->prefix = matchsubs`, appended after `matchlastpart` (or, when
+        // there is no part yet, becoming `matchparts` itself).
+        {
+            let subs = MATCHSUBS
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|mut g| g.take());
+            if subs.is_some() {
+                let mut tmp = get_cline(None, 0, None, 0, None, 0, 0); // c:1189
+                tmp.prefix = subs; // c:1191
+                if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
+                    // c:1192-1194 — `matchlastpart` is by construction the tail
+                    // of `matchparts`, so C's pointer write is "append"; walk
+                    // the owned chain the way add_match_part (c:434-438) does.
+                    let mut tail_ref: *mut Option<Box<Cline>> = &mut *head;
+                    unsafe {
+                        while let Some(n) = (*tail_ref).as_mut() {
+                            if n.next.is_none() {
+                                break;
+                            }
+                            tail_ref = &mut n.next as *mut _;
+                        }
+                        if let Some(n) = (*tail_ref).as_mut() {
+                            n.next = Some(tmp);
+                        } else {
+                            *tail_ref = Some(tmp);
+                        }
+                    }
+                }
+            }
+        }
+
+        // c:1196-1197 — `pli = matchparts; plil = matchlastpart;`. Taking the
+        // chain out is what keeps it alive across the `start_match()` below;
+        // `plil` is only ever tested for NULL (c:1229), and it is non-NULL
+        // exactly when `matchparts` is, so `pli.is_some()` stands in for it.
+        let mut pli = MATCHPARTS
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take());
+
+        // c:1201 — `match_str(sfx, w + mpl, bsl, bcs, &rsl, 1, 0, 0)`. `mpl`
+        // is a byte count returned by match_str, so it can land inside a
+        // multibyte character; index the bytes rather than the `&str`.
         let mut rsl: i32 = 0;
         let suffix_part = w_quoted
             .as_bytes()
@@ -2113,28 +2181,106 @@ pub fn comp_match(
             0,
         );
         if msl < 0 {
-            return None; // c:1204
+            // c:1202-1205 — `free_cline(pli); return NULL;`. `pli` is owned
+            // here, so dropping it at the return IS the free_cline.
+            return None;
         }
-        // c:1220 — add_match_str for the middle and saved prefix.
+
+        // c:1209-1217 — the SUFFIX's own pending sub-match run, this time as
+        // `tmp->suffix` with CLF_SUF.
+        {
+            let subs = MATCHSUBS
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|mut g| g.take());
+            if subs.is_some() {
+                let mut tmp = get_cline(None, 0, None, 0, None, 0, CLF_SUF); // c:1210
+                tmp.suffix = subs; // c:1212
+                if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
+                    // c:1213-1216 — same append as above.
+                    let mut tail_ref: *mut Option<Box<Cline>> = &mut *head;
+                    unsafe {
+                        while let Some(n) = (*tail_ref).as_mut() {
+                            if n.next.is_none() {
+                                break;
+                            }
+                            tail_ref = &mut n.next as *mut _;
+                        }
+                        if let Some(n) = (*tail_ref).as_mut() {
+                            n.next = Some(tmp);
+                        } else {
+                            *tail_ref = Some(tmp);
+                        }
+                    }
+                }
+            }
+        }
+
+        // c:1220-1221 — `add_match_str(NULL, NULL, w + rpl, wl - rpl - rsl, 1);
+        //                add_match_str(NULL, NULL, wpfx, wpl, 1);`
+        // Both use sfx=1, i.e. PREPEND, so MATCHBUF ends up as
+        // wpfx ++ middle ++ <what the suffix matcher already put there>.
         let mid_tail = w_quoted
             .as_bytes()
             .get(rpl.max(0) as usize..)
             .unwrap_or(&[]);
+        let mid_len = (wl - rpl - rsl).max(0);
         let middle = String::from_utf8_lossy(
             mid_tail
-                .get(..(wl - rpl - rsl).max(0) as usize)
+                .get(..mid_len as usize)
                 .unwrap_or(mid_tail),
+        )
+        .into_owned();
+        add_match_str(None, "", &middle, mid_len, 1); // c:1220
+        add_match_str(None, "", &wpfx, wpl, 1); // c:1221
+
+        // c:1223-1224 — `mli = bld_parts(w + rpl, wl - rpl - rsl,
+        //                                (mpl - rpl) + (msl - rsl), &mlil, NULL);`
+        let mut mli = bld_parts(&middle, mid_len, (mpl - rpl) + (msl - rsl), None, None);
+        // c:1227 — `mlil->next = revert_cline(matchparts)`; take the suffix's
+        // chain now that both matchsubs merges above are folded into it.
+        let sfx_parts = revert_cline(
+            MATCHPARTS
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .ok()
+                .and_then(|mut g| g.take()),
         );
-        // c:1223 — bld_parts on the middle portion.
-        let mid_lc = bld_parts(
-            &middle,
-            (wl - rpl - rsl).max(0),
-            (mpl - rpl) + (msl - rsl),
-            None,
-            None,
-        );
+        // c:1225-1227 — `mlil` is the LAST node of `mli`, mutated in place.
+        if let Some(head) = mli.as_mut() {
+            let mut tail: *mut Cline = &mut **head;
+            unsafe {
+                while let Some(n) = (*tail).next.as_mut() {
+                    tail = &mut **n as *mut _;
+                }
+                (*tail).flags |= CLF_MID; // c:1225
+                (*tail).slen = msl - rsl; // c:1226
+                (*tail).next = sfx_parts; // c:1227
+            }
+        }
+
+        // c:1229-1232 — `if (plil) plil->next = mli; else pli = mli;`
+        if pli.is_some() {
+            let mut tail_ref: *mut Option<Box<Cline>> = &mut pli;
+            unsafe {
+                while let Some(n) = (*tail_ref).as_mut() {
+                    if n.next.is_none() {
+                        break;
+                    }
+                    tail_ref = &mut n.next as *mut _;
+                }
+                if let Some(n) = (*tail_ref).as_mut() {
+                    n.next = mli; // c:1230
+                }
+            }
+        } else {
+            pli = mli; // c:1232
+        }
+
+        // c:1243 — `*clp = pli;`
         if let Some(out) = clp {
-            *out = mid_lc;
+            *out = pli;
         }
 
         // c:1246-1249 — `*exact = (!strncmp(pfx, w, pl) && !strcmp(sfx, w + pl));`
@@ -5577,6 +5723,81 @@ mod tests {
             r.as_deref(),
             Some("Apple"),
             "'a' + m:{{a}}={{A}} must reconstruct 'Apple'"
+        );
+    }
+
+    /// Regression for abbreviated in-path completion (`ls /u/l/b<TAB>`).
+    ///
+    /// `comp_match`'s SUFFIX branch (`Src/Zle/compmatch.c:1182-1231`) has to
+    /// rebuild the WHOLE word, not just what the suffix matcher itself
+    /// contributed. `match_str` opens with `start_match()` (c:523-524), which
+    /// clears `MATCHBUF`/`MATCHPARTS`, so C saves the prefix match's
+    /// contribution into `wpfx` (c:1187) and re-adds it after the suffix match
+    /// with `add_match_str(..., sfx=1)` (c:1220-1221), then splices the
+    /// prefix/middle/suffix Cline chains together via CLF_MID + revert_cline
+    /// (c:1223-1231).
+    ///
+    /// The port ran only the suffix `match_str` and returned a bare
+    /// `bld_parts()` of the middle, so `r = matchbuf` (c:1241) came back as
+    /// just the suffix ("/c1") instead of the full "/a1x/c1". Downstream that
+    /// made `compadd` collapse or reject every candidate reached through a
+    /// non-empty `$SUFFIX` together with a match spec: with the two candidates
+    /// below zsh adds 2 and this port added 1, which is what left
+    /// `ls /u/l/b<TAB>` (an ambiguous INTERMEDIATE path component, routed
+    /// through `_path_files` sh:698-702) with zero matches.
+    #[test]
+    fn comp_match_suffix_branch_reconstructs_whole_word() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=*");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "r:|/=*".to_string(),
+            }));
+        }
+        update_bmatchers();
+
+        // Two candidates that differ ONLY in the component the matcher has to
+        // expand. Each must come back as its own full word; before the fix
+        // both lost their prefix half and were indistinguishable.
+        let mut got: Vec<String> = Vec::new();
+        for w in ["/a1x/c1", "/a1y/c1"] {
+            let mut clp: Option<Box<Cline>> = None;
+            let mut exact = 99i32;
+            let r = comp_match(
+                "/a1",
+                "/c1",
+                w,
+                None,
+                Some(&mut clp),
+                1,
+                None,
+                0,
+                None,
+                0,
+                &mut exact,
+            );
+            assert_eq!(
+                exact, 0,
+                "{} is not literally PREFIX+SUFFIX, so it is not an exact match",
+                w
+            );
+            got.push(r.unwrap_or_default());
+        }
+
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        update_bmatchers();
+
+        assert_eq!(
+            got,
+            vec!["/a1x/c1".to_string(), "/a1y/c1".to_string()],
+            "PREFIX=/a1 SUFFIX=/c1 with r:|/=* must rebuild each whole word; \
+             dropping the prefix half (c:1220-1221) yielded just the suffix"
         );
     }
 
