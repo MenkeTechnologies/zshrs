@@ -448,6 +448,15 @@ pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf
     cmd.arg(&stub).arg(&obj).arg(&runtime_lib);
     // zsh's terminfo/termcap modules need the system terminal library.
     cmd.arg("-lncurses");
+    if !cfg!(target_os = "macos") {
+        // glibc keeps the math functions in a separate `libm`, and rustc only
+        // passes `-lm` for the crates IT links. Linking the AOT object by hand
+        // has to say so: `zsh/mathfunc` (`callmathfunc` — `acos`, `yn`, `j0`,
+        // `lgamma`, …) and p10k's `humanize_bytes` (`log`) are undefined
+        // references without it, and the Linux link failed on a page of them.
+        // macOS carries the same symbols in libSystem, which `cc` always links.
+        cmd.arg("-lm");
+    }
     if cfg!(target_os = "macos") {
         // Frameworks pulled by zsh's transitive deps: chrono/iana-time-zone
         // (CoreFoundation), notify/FSEvents (CoreServices), and TLS/keychain
