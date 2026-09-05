@@ -1132,3 +1132,21 @@ perldoc
 #   'pdftops -' -> `-/`, 'pbmpscale -' -> a described option), not silence.
 # The sample was drawn from the 408 PASSes in cells 4786-5200, the half whose
 # jsonl survived the host restart.
+#
+# RANGE TOTAL, cells 3126-4200 (1075 cells, one `tab1` cell per case):
+#   PASS=1062  FAIL=4  TIMEOUT=7  SKIP=0  REF-CRASHED=2  TEST-CRASHED=0
+#
+# The 2 REF-CRASHED are 'kanji-config-updmap ' and 'kanji-config-updmap -',
+# both `zsh died on signal 11 (SIGSEGV)`.  Upstream zsh, not a zshrs
+# divergence; discarded, per the standing rule.
+#
+# EVERY ONE of the 7 sweep TIMEOUTs was the SAME shape: `zshrs: nothing at all
+# after key 'tab' within 10.0s` — the TEST side silent, never the reference.
+# Re-measured serially at a 30s key budget (`--key-budget 30
+# --silence-recheck 3`), four of them stopped being timeouts and became real
+# verdicts, which is the point of the recheck:
+#   'ktrace '   -> FAIL      (it was just slow: the ask-prompt count diverges)
+#   'mispipe '  -> FAIL      (same, ask-prompt count)
+#   'kubectl -' -> PASS      (slow, agrees)
+#   'look '     -> ONE-SIDED SILENCE at 30.0s AND again at 90.0s: zshrs draws
+#                  NOTHING while zsh draws a screen.  Not load.
