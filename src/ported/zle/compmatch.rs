@@ -2292,9 +2292,28 @@ pub fn comp_match(
             .map(|g| g.clone())
             .unwrap_or_default();
 
-        // c:1188-1195 — a still-pending sub-match run closes the PREFIX chain:
+        // c:1193 — `if (matchlastpart)`. Read BEFORE the block below, which
+        // (like C) appends to `matchparts` without updating `matchlastpart`.
+        // `matchlastpart` is by construction the TAIL of `matchparts`: it is
+        // only ever assigned the last node of a chain that was just linked in
+        // (c:438, and c:476 after `p->next = 0` cuts `lp` off), and
+        // `start_match` clears both together (c:305). So on entry here
+        // `matchparts != NULL` and `matchlastpart != NULL` still agree, and
+        // the append below is exactly C's `matchlastpart->next = tmp` /
+        // `matchparts = tmp` pair.
+        let plil_present = MATCHLASTPART
+            .get()
+            .and_then(|c| c.lock().ok().map(|g| g.is_some()))
+            .unwrap_or(false);
+
+        // c:1189-1197 — a still-pending sub-match run closes the PREFIX chain:
         // `tmp->prefix = matchsubs`, appended after `matchlastpart` (or, when
         // there is no part yet, becoming `matchparts` itself).
+        //
+        // `tmp_appended` records that c:1194 (rather than c:1196) fired, i.e.
+        // that `tmp` now sits one past the node C calls `plil`. c:1230 needs
+        // that to find `plil` again — see there.
+        let mut tmp_appended = false;
         {
             let subs = MATCHSUBS
                 .get_or_init(|| Mutex::new(None))
@@ -2302,10 +2321,11 @@ pub fn comp_match(
                 .ok()
                 .and_then(|mut g| g.take());
             if subs.is_some() {
-                let mut tmp = get_cline(None, 0, None, 0, None, 0, 0); // c:1189
-                tmp.prefix = subs; // c:1191
+                tmp_appended = plil_present; // c:1194 vs c:1196
+                let mut tmp = get_cline(None, 0, None, 0, None, 0, 0); // c:1190
+                tmp.prefix = subs; // c:1192
                 if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
-                    // c:1192-1194 — `matchlastpart` is by construction the tail
+                    // c:1193-1196 — `matchlastpart` is by construction the tail
                     // of `matchparts`, so C's pointer write is "append"; walk
                     // the owned chain the way add_match_part (c:434-438) does.
                     let mut tail_ref: *mut Option<Box<Cline>> = &mut *head;
@@ -2326,10 +2346,19 @@ pub fn comp_match(
             }
         }
 
-        // c:1196-1197 — `pli = matchparts; plil = matchlastpart;`. Taking the
-        // chain out is what keeps it alive across the `start_match()` below;
-        // `plil` is only ever tested for NULL (c:1229), and it is non-NULL
-        // exactly when `matchparts` is, so `pli.is_some()` stands in for it.
+        // c:1198-1199 — `pli = matchparts; plil = matchlastpart;`. Taking the
+        // chain out is what keeps it alive across the `start_match()` below.
+        //
+        // `plil` is NOT "matchparts is non-NULL" — the port used to claim it
+        // was and tested `pli.is_some()` at c:1229. c:1196 four lines up is
+        // precisely the case where the two disagree: it sets `matchparts` to
+        // `tmp` and leaves `matchlastpart` NULL, so C takes the `else` at
+        // c:1232 and DISCARDS the prefix chain, while the port appended to it.
+        // `PREFIX=a SUFFIX=c -M 'm:{a-z}={A-Z}'` against `AxC` reaches exactly
+        // that state — a non-anchored matcher records only sub-clines, so the
+        // prefix `match_str` leaves `matchsubs` set and `matchlastpart` NULL —
+        // and gave `$compstate[unambiguous]` as `AxC` where zsh gives `xC`.
+        // `plil_present` above is the real `plil != NULL`.
         let mut pli = MATCHPARTS
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -2435,18 +2464,31 @@ pub fn comp_match(
         }
 
         // c:1229-1232 — `if (plil) plil->next = mli; else pli = mli;`
-        if pli.is_some() {
-            let mut tail_ref: *mut Option<Box<Cline>> = &mut pli;
-            unsafe {
-                while let Some(n) = (*tail_ref).as_mut() {
-                    if n.next.is_none() {
-                        break;
-                    }
-                    tail_ref = &mut n.next as *mut _;
-                }
-                if let Some(n) = (*tail_ref).as_mut() {
-                    n.next = mli; // c:1230
-                }
+        //
+        // The test is on `plil` (c:1199), not on `pli`; see the note there for
+        // the case that separates them.
+        if plil_present {
+            // `plil` is the node that was the TAIL of `matchparts` when c:1199
+            // ran. That is the last node of `pli` — unless c:1194 pushed `tmp`
+            // one past it, in which case it is the node before the last.
+            //
+            // C overwrites `plil->next` outright, so when `tmp` was appended
+            // it is unlinked here and never reaches the caller (it is
+            // heap-arena memory in C, so nothing frees it either). Assigning
+            // over `n.next` does the same thing, dropping the `Box`.
+            let mut len = 0usize;
+            let mut cur = pli.as_deref();
+            while let Some(n) = cur {
+                len += 1;
+                cur = n.next.as_deref();
+            }
+            let plil_idx = len.saturating_sub(1 + usize::from(tmp_appended));
+            let mut node = pli.as_deref_mut();
+            for _ in 0..plil_idx {
+                node = node.and_then(|n| n.next.as_deref_mut());
+            }
+            if let Some(n) = node {
+                n.next = mli; // c:1230
             }
         } else {
             pli = mli; // c:1232
@@ -6211,6 +6253,102 @@ mod tests {
             "the suffix's `/` anchor must render BEFORE the `c` it anchors; \
              without the c:1058-1080 shift it lands one cline late and the \
              unambiguous string comes out `/a/bc/`"
+        );
+    }
+
+    /// `plil` (`compmatch.c:1199`, `plil = matchlastpart`) is NOT the same
+    /// predicate as "the prefix cline chain is non-empty", and c:1229 tests
+    /// `plil`, not `pli`.
+    ///
+    /// c:1196 is the one place the two come apart: when the prefix
+    /// `match_str` left a pending `matchsubs` run but never called
+    /// `add_match_part`, `matchlastpart` is still NULL, so c:1196 assigns
+    /// `matchparts = tmp` WITHOUT setting `matchlastpart`. At c:1229 C then
+    /// takes the `else` and overwrites `pli` with `mli`, discarding the whole
+    /// prefix chain. This port had asserted the two predicates were the same
+    /// and tested `pli.is_some()`, so it appended instead and kept a prefix
+    /// cline C throws away.
+    ///
+    /// A non-anchored matcher such as `m:{a-z}={A-Z}` reaches exactly that
+    /// state: it only ever runs `add_match_sub` (c:966), never
+    /// `add_match_part`, so `matchlastpart` stays NULL for the whole prefix
+    /// pass.
+    ///
+    /// Measured, `zsh -f -i` 5.9.2 vs this binary, synthetic `compadd`
+    /// (`PREFIX=a`, `SUFFIX=c`, `-M 'm:{a-z}={A-Z}'`, candidate `AxC`, no
+    /// filesystem): zsh `N=1 U=xC`, this port `N=1 U=AxC` before / `N=1 U=xC`
+    /// after. The COUNT was never wrong — only the reconstructed string, and
+    /// only by the leading `A` that C drops.
+    #[test]
+    fn comp_match_drops_prefix_chain_when_matchlastpart_is_null() {
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL, WB, WE};
+        use crate::ported::zle::compresult::cline_str;
+        use std::sync::atomic::Ordering;
+
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a-z}={A-Z}");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "m:{a-z}={A-Z}".to_string(),
+            }));
+        }
+        update_bmatchers();
+
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match(
+            "a",
+            "c",
+            "AxC",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
+
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        update_bmatchers();
+
+        // Same `cline_str` setup as the c:1058-1080 test above: an empty
+        // metafied line at position 0.
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            g.clear();
+        }
+        ZLEMETACS.store(0, Ordering::Relaxed);
+        ZLEMETALL.store(0, Ordering::Relaxed);
+        WB.store(0, Ordering::Relaxed);
+        WE.store(0, Ordering::Relaxed);
+        crate::ported::zle::compcore::hasmatched.store(0, Ordering::Relaxed);
+        let rendered = cline_str(clp, 0, None, None);
+
+        assert_eq!(
+            r,
+            Some("AxC".to_string()),
+            "the match string is assembled in MATCHBUF (c:1220-1221, c:1241) \
+             and was never affected — only the cline chain at c:1229"
+        );
+        assert_eq!(
+            exact, 0,
+            "`AxC` is not literally PREFIX ++ SUFFIX (c:1249)"
+        );
+        assert_eq!(
+            rendered,
+            Some("xC".to_string()),
+            "c:1229 tests `plil`, which c:1196 leaves NULL here, so the \
+             prefix chain is DISCARDED at c:1232; keeping it renders `AxC`"
         );
     }
 
