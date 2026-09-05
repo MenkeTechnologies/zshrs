@@ -3088,7 +3088,28 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> {
 /// (Snull at 0x9d follows Bang at 0x9c).
 pub fn has_token(s: &str) -> bool {
     // c:2282
-    s.bytes().any(itok) // c:2285
+    // C scans BYTES (c:2284-2285), which is safe THERE only because zsh
+    // metafies: a raw byte >= 0x80 is stored escaped (Meta, then byte ^ 32),
+    // so a bare 0x84..=0xA1 in a metafied string is always a real token.
+    // zshrs does not metafy — it keeps UTF-8 `str` and stores tokens as
+    // CHARS in U+0084..=U+00A1, which is the representation `untokenize`
+    // (lex.rs:5990) and `untokenize_preserve_quotes` (lex.rs:5650) both test
+    // with `c as u32`. Scanning bytes here therefore mistakes a UTF-8
+    // CONTINUATION byte for a token: `—` U+2014 encodes as E2 80 94 and
+    // `→` U+2192 as E2 86 92 — 0x94, 0x86 and 0x92 all answer `itok`, so
+    // every em-dash, smart quote and arrow reported "has tokens".
+    //
+    // `lex.rs:6165` already carries this fix (it was made there because the
+    // false positive never clears `execcmd_exec`'s
+    // `while has_token(&args[0]) { zglob(..) }` sweep, c:3315-3318, and the
+    // shell spins at 100% CPU); the copy here — the one at C's own home for
+    // this function, and the one `cond.rs:856`/`cond.rs:893`/`text.rs:1272`
+    // import — never inherited it.
+    s.chars().any(|c| {
+        // c:2285 itok(*s++)
+        let u = c as u32;
+        u <= 0xff && itok(u as u8)
+    })
 }
 
 // Delete a character in a string                                           // c:2294
@@ -13707,6 +13728,36 @@ mod tests {
             !has_token(&s),
             "c:2285 — Meta (0x83) is NOT itok; previous hardcoded 0x83 list misfired"
         );
+    }
+
+    /// `Src/utils.c:2284-2285` — C scans BYTES because its input is
+    /// METAFIED (a raw >= 0x80 byte is stored as Meta + `byte ^ 32`), so a
+    /// bare 0x84..=0xA1 there is always a token. zshrs keeps UTF-8 `str`
+    /// and stores tokens as CHARS in U+0084..=U+00A1 — the representation
+    /// `untokenize` (lex.rs:5990) tests with `c as u32` — so the byte walk
+    /// mistook a UTF-8 CONTINUATION byte for a token. `—` U+2014 is E2 80
+    /// 94, `→` U+2192 is E2 86 92, `“` U+201C is E2 80 9C: 0x94, 0x86,
+    /// 0x92 and 0x9C all answer `itok`. This asserted-false set is what
+    /// `s.bytes().any(itok)` got wrong; `lex.rs:6165` already scanned
+    /// chars, this copy did not.
+    #[test]
+    fn has_token_ignores_utf8_continuation_bytes_in_itok_range() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        for s in ["a—b", "a→b", "a“b”c", "—", "→"] {
+            assert!(
+                s.bytes().any(itok),
+                "{s:?} must actually contain an ITOK-range BYTE, else this pins nothing"
+            );
+            assert!(
+                !has_token(s),
+                "c:2285 — {s:?} holds no token CHAR (U+0084..=U+00A1); only \
+                 UTF-8 continuation bytes that happen to land in the ITOK range"
+            );
+        }
+        // Still true for a genuine token char, so the fix isn't a blanket
+        // "non-ASCII is never a token".
+        assert!(has_token("plain\u{9c}"), "c:2285 — Bang (U+009C) is a token");
     }
 
     /// `Src/utils.c:6082-6124` — `addunprintable(c)`. Renders bytes
