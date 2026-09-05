@@ -1398,7 +1398,17 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 {
                                     break;
                                 }
-                                if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
+                                // `compadd` is a BUILTIN — `dispatch_function_call`
+                                // finds no shell function and the action adds
+                                // nothing. The sh:463 arm below already has this
+                                // branch; this one did not. See the twin fix in
+                                // `_alternative` sh:61.
+                                let rc = if cmd == "compadd" {
+                                    bin_compadd("compadd", rest, &make_ops(), 0)
+                                } else {
+                                    dispatch_function_call(cmd, rest).unwrap_or(1)
+                                };
+                                if rc == 0 {
                                     ret = 0;
                                 }
                             }
