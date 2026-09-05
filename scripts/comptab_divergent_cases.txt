@@ -3065,3 +3065,9 @@ tor-resolve -
 #   FAIL   tab1               'ykman -'  (11 row(s) differ)
 #     1f1d9cc38e  x1   smallest: --case 'ykman -' --keys tab
 #        cell/rowtop/col0 | ref/--device -d -- specify which YubiKey to interact with by serial number | test/--full-help --diagnose -h -- show
+#
+# chunk part_08  cells 8165-8234  'zipcmp -' .. 'zunit -'   [PIN 2]  (70 cells, the tail)
+#   # 70 passed, 0 failed, 70 cell(s)
+#   # categories: PASS=70 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 128.3s (1.8s/cell)
+#   # 5 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
