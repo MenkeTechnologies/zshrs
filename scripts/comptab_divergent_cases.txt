@@ -3071,3 +3071,45 @@ tor-resolve -
 #   # categories: PASS=70 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 128.3s (1.8s/cell)
 #   # 5 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+
+# ============================================================================
+# RE-VERIFICATION of every recorded FAIL buffer (2026-09-05)
+# ============================================================================
+# Extracted all 39 unique case buffers from this file's own `#   FAIL` lines
+# and re-ran them against a pinned+codesigned build of current main, live dump
+# (.zcompdump-zpwr, comps=51739), --sequences tab1 --jobs 3.
+#
+#   39 recorded FAIL -> 28 still FAIL, 11 now PASS
+#
+# NOW PASSING (11): ponysay , ponysay -, ponythink , ponythink -, ps ,
+#                   qdbus -, r , rsync , scselect , tcpdump , tcpdump -
+#   tcpdump /tcpdump -  = 3ef4449107 (the (literal list) unescape fix)
+#   rsync               = the compadd-as-a-builtin arm (_alternative sh:61)
+#   the ponysay/ponythink/ps/qdbus/r/scselect group were previously
+#   classified flaky-or-artifact and are consistent with that classification
+#   rather than with a fix; not claimed as anyone's.
+#
+# The lesson generalises beyond this file: recorded-OPEN entries go stale. A
+# parallel sweep of the OPEN project memories the same day found FIVE of seven
+# already fixed (command-position completion, the quoted empty-array splat,
+# chained subscript in a scalar assign, subscript search begin-offset, and the
+# rc-expand nested-DQ segment incl. `man <TAB>`). Re-measure before chasing.
+#
+# ---------------------------------------------------------------------------
+# CLOSED a95c513732 — 'typer ' and 'typer -'
+# ---------------------------------------------------------------------------
+#   before  zsh  : _describe:21: bad option: -d   (then -e -f -a -u -l)
+#           zshrs: - -J -d _a_# _tmpm subcommand     <- internal argv listed
+#                                                       AS MATCHES
+# `_describe` sh:21 is `while getopts "oOt:12JVx" _opt; do`. The port matched
+# whole option TOKENS; getopts walks CHARACTERS. `_typer` calls
+# `_describe -default- …`, so zsh sees `d e f a u l` (six invalid options,
+# each reported) and then `t`, which takes an argument and swallows the
+# trailing `-`. The port also did `_ => break` on an unknown token, making the
+# bad flag the first POSITIONAL — but the optstring has no leading `:`, so
+# getopts reports and CONTINUES. Both halves were load-bearing: a version
+# fixing only the recovery emitted one diagnostic where zsh emits six.
+#
+# Now byte-identical incl. the full six-line diagnostic sequence and the
+# listing after it. A synthetic `_describe -d 'subcommand' subs` cell was
+# added to isolate recovery from clustering and also passes.
