@@ -165,6 +165,36 @@ fn get_cache(name: &str) -> Vec<String> {
     getaparam(name).unwrap_or_default()
 }
 
+/// `arrunique` — `-U`, keeping the FIRST occurrence of each element
+/// (`Src/params.c`'s `uniqarray`, reached from `assignaparam` when the
+/// parameter carries `PM_UNIQUE`).
+fn uniq(mut v: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|s| seen.insert(s.clone()));
+    v
+}
+
+/// sh:67-68 `typeset -aU -g NAME` — assign, then stamp the `-U`.
+///
+/// The stamp has to come AFTER `setaparam`, which creates the node and does
+/// not carry the bit through; the value is uniq'd here rather than left to
+/// the assignment for the same reason. Mirrors the attribute-only update in
+/// compinit.rs's `declare_global` (c:Src/builtin.c:2575), inlined because
+/// that helper is private to compinit.
+///
+/// `-U` is not cosmetic on these six: they are deliberate cross-invocation
+/// GLOBALS (sh:10-12 rebuilds them only when `_mailbox_cache` is unset), and
+/// sh:91-104 grow four of them with the `x=( "${x[@]}" more )` append idiom,
+/// which dedups only because the parameter is unique.
+fn set_unique_global(name: &str, val: Vec<String>) {
+    setaparam(name, uniq(val));
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+        }
+    }
+}
+
 /// sh:63-105 — populate the `-U` caches by globbing `$maildirectory` and
 /// parsing the muttrc `mailboxes` directive.
 fn mailbox_cache() {
@@ -248,12 +278,15 @@ fn mailbox_cache() {
         mailbox_cache.push(mail);
     }
 
-    setaparam("_mbox_cache", mbox_cache);
-    setaparam("_maildir_cache", maildir_cache);
-    setaparam("_mh_cache", mh_cache);
-    setaparam("_pine_cache", pine_cache);
-    setaparam("_mutt_cache", mutt_cache);
-    setaparam("_mailbox_cache", mailbox_cache);
+    // sh:67  typeset -aU -g _mailbox_cache
+    // sh:68  typeset -aU -g _maildir_cache _mbox_cache _mh_cache _mutt_cache
+    //        _pine_cache
+    set_unique_global("_mbox_cache", mbox_cache);
+    set_unique_global("_maildir_cache", maildir_cache);
+    set_unique_global("_mh_cache", mh_cache);
+    set_unique_global("_pine_cache", pine_cache);
+    set_unique_global("_mutt_cache", mutt_cache);
+    set_unique_global("_mailbox_cache", mailbox_cache);
 }
 
 /// sh:130 `$(mhpath)` — the current MH folder path (empty when unavailable).
@@ -263,7 +296,32 @@ fn mhpath() -> String {
 }
 
 /// sh:107-196 — MUA-specific mailbox-name completion.
-fn mua_mailboxes(args: &[String]) -> i32 {
+///
+/// Upstream reaches this as a COMMAND WORD, not as a call: sh:50 hands the
+/// bare name `_mua_mailboxes` to `_requested`, which forwards it to
+/// `_all_labels` (`Completion/Base/Core/_requested`:9-10), and `_all_labels`
+/// runs it once per label with `$expl[@]` appended. So the name has to be resolvable
+/// by `dispatch_function_call`, which is why `compsys::router` registers it
+/// alongside `_mailboxes` — the same shape as
+/// `_perl_modules_caching_policy`. Registered names are dispatched by
+/// `_all_labels` (Base/Core/_all_labels.rs:224), so this body must NOT be
+/// invoked a second time from `_mailboxes`.
+pub fn _mua_mailboxes(args: &[String]) -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mua_mailboxes");
+    // sh:109  local -aU mbox_names
+    //
+    // `_multi_parts` reads the array BY NAME at sh:193, so it has to be a
+    // real parameter — but a LOCAL one, and a unique one. Every arm below
+    // concatenates two to seven of the caches, and several of them overlap
+    // (a muttrc `mailboxes` entry that is also `$MAIL`, `$mailpath` naming a
+    // file already in `$_mbox_cache`), so without `-U` the same mailbox is
+    // offered as two identical matches. The value is uniq'd at the
+    // assignment below as well, because `declare_locals` is a documented
+    // no-op at `locallevel == 0` (unit tests, `--doctor`).
+    crate::compsys::ported::shared::declare_locals(
+        &["mbox_names"],
+        crate::compsys::ported::shared::PM_ARRAY | crate::compsys::ported::shared::PM_UNIQUE,
+    );
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
     let maildirectory = tilde(
@@ -407,7 +465,8 @@ fn mua_mailboxes(args: &[String]) -> i32 {
     let mut ret = 1;
     // sh:193 — (( $#mbox_names )) && _multi_parts "$@" / mbox_names
     if !mbox_names.is_empty() {
-        setaparam("mbox_names", mbox_names);
+        // sh:109's `-U` — see the declaration at the top of this function.
+        setaparam("mbox_names", uniq(mbox_names));
         let mut mp: Vec<String> = args.to_vec();
         mp.push("/".to_string());
         mp.push("mbox_names".to_string());
@@ -468,13 +527,22 @@ pub fn _mailboxes(args: &[String]) -> i32 {
         if _tags(&[]) != 0 {
             break;
         }
+        // sh:50 `_requested mailboxes expl 'mailbox specification'
+        // _mua_mailboxes && ret=0` — the 4th word is the COMMAND
+        // `_all_labels` runs, once per label, with `$expl[@]` appended. The
+        // port used to ALSO call the body directly (`&& mua_mailboxes(args)`),
+        // which was wrong twice over: `_all_labels` already runs it, and the
+        // direct call passed `_mailboxes`' own `"$@"` instead of `$expl[@]`.
+        // In practice neither ran — the name resolved to nothing, so the
+        // shell reported `_all_labels:39: command not found: _mua_mailboxes`
+        // and `_requested` returned 1, taking the `&&` with it. See
+        // `_mua_mailboxes` below for the registration that fixes the lookup.
         if _requested(&[
             "mailboxes".to_string(),
             "expl".to_string(),
             "mailbox specification".to_string(),
             "_mua_mailboxes".to_string(),
         ]) == 0
-            && mua_mailboxes(args) == 0
         {
             ret = 0;
         }
