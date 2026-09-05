@@ -1803,3 +1803,13 @@ ldapsearch
 # lets it read the caller's locals. Any autoload file whose last line calls
 # itself has this property; check before trusting a wrapper count.
 # ══════════════════════════════════════════════════════════════════════════
+#
+# chunk part_05  cells 5701-5800  'procsystime -' .. 'pstops -'
+#   # 96 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=96 FAIL=2 TIMEOUT=2 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 388.8s (3.9s/cell)
+#   # 4 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   TIMEOUT tab1               'proxychains4 '  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
+#   TIMEOUT tab1               'proxychains4 -'  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
+#   FAIL   tab1               'prterun '  (1 row(s) differ (first attempt was budget-exhausted; this is the serial re-run, which diverged cleanly))
+#   FAIL   tab1               'ps '  (1 row(s) differ)
