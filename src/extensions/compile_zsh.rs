@@ -118,6 +118,41 @@ pub struct ZshCompiler {
     /// True while compiling a `[[ … ]]` cond operand. Process substitution is
     /// rejected there (c:Src/exec.c:4918 — a cond runs with `thisjob == -1`).
     pub in_cond_operand: bool,
+    /// Depth tracker for "this word is being expanded by C's `singsub`", i.e.
+    /// `prefork(&foo, PREFORK_SINGLE, NULL)` (c:Src/subst.c:514-520).
+    ///
+    /// Three C call sites feed it:
+    ///   * the `case` WORD              — c:Src/loop.c:611 `singsub(&word);`
+    ///   * every `[[ … ]]` operand      — c:Src/cond.c:53 `singsub(strp);`,
+    ///     reached from `cond_subst` at c:Src/cond.c:198 (left) and c:205
+    ///     (right), plus c:308 for the `==`/`!=` pattern and c:530/544/556
+    ///     (`cond_str` / `cond_val` / `cond_match`) for module conditions.
+    ///   * NOT the glob-qualifier branch of `cond_subst` (c:Src/cond.c:43-51),
+    ///     which preforks with flags 0 and then runs `zglob` — those two sites
+    ///     zero the counter for the duration of the operand.
+    ///
+    /// `PREFORK_SINGLE` is paramsubst's `ssub` (c:Src/subst.c:1761). It gates
+    /// the c:Src/subst.c:4226 `if (isarr && ssub)` collapse that joins an array
+    /// result with `IFS[0]` BEFORE the `if (isarr)` emit block at c:4256 — so
+    /// the `(u)` fold (c:4264) and the `(o)`/`(O)`/`(n)`/`(a)`/`(i)` sort
+    /// (c:4301-4326) never run in these contexts — and it suppresses
+    /// `xpandbraces` (c:Src/subst.c:170) and c:3913's `force_split`.
+    ///
+    /// Distinct from `scalar_assign_depth`, which is the OTHER `PREFORK_SINGLE`
+    /// site (c:Src/exec.c:2603) and additionally carries `PREFORK_ASSIGN`.
+    pub singsub_depth: i32,
+    /// How much of the current `dq_context_depth` is the `[[ … ]]` operand
+    /// glob-suppression bump rather than a real `"…"`.
+    ///
+    /// c:Src/cond.c:53 — a cond operand is `singsub`'d: substitution happens,
+    /// filename generation does NOT (`globlist` is never reached). This
+    /// compiler has always spelled "no filename generation" as
+    /// `dq_context_depth`, which ALSO means "this expansion is inside double
+    /// quotes" — paramsubst's `qt` (c:Src/subst.c:1625). The two are different
+    /// bits in C (`qt` vs `ssub`, c:1761) and an unquoted cond operand has only
+    /// the second, so the sites that decide DQ-ness subtract this counter while
+    /// every glob-suppression site keeps reading the raw depth.
+    pub cond_glob_suppress_depth: i32,
     /// Depth tracker for "compiling a scalar assignment RHS" (NOT array
     /// init). When >0, `"${a[@]}"` joins via JOIN_STAR instead of
     /// splicing — scalar RHS forces single-string output. Array init
@@ -324,6 +359,8 @@ impl ZshCompiler {
             dq_context_depth: 0,
             assign_context_depth: 0,
             in_cond_operand: false,
+            singsub_depth: 0,
+            cond_glob_suppress_depth: 0,
             scalar_assign_depth: 0,
             synthetic_dq_wrap_depth: 0,
             array_whole_assign: false,
@@ -4063,9 +4100,7 @@ impl ZshCompiler {
                         // "a b" as one element), then store the one value
                         // via the assoc-guarded SET_ARRAY_AT (`=`) /
                         // APPEND_ARRAY_AT (`+=`).
-                        self.assign_context_depth += 1;
-                        self.compile_word_str(s);
-                        self.assign_context_depth -= 1;
+                        self.compile_scalar_assign_value(s);
                         let nc = self.builder.add_constant(Value::str(base));
                         self.builder.emit(Op::LoadConst(nc), 0);
                         let bid = if assign.append {
@@ -4186,12 +4221,12 @@ impl ZshCompiler {
                         self.builder.emit(Op::LoadConst(key_const), 0);
                         self.builder
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                        self.compile_word_str(s);
+                        self.compile_scalar_assign_value(s);
                         self.builder.emit(Op::Concat, 0);
                     } else {
                         // Stack order matches the Array RHS path at line
                         // 1879+: [elem0, name, key], argc = 1 + 2 = 3.
-                        self.compile_word_str(s);
+                        self.compile_scalar_assign_value(s);
                     }
                     let name_const = self.builder.add_constant(Value::str(base));
                     self.builder.emit(Op::LoadConst(name_const), 0);
@@ -4297,10 +4332,10 @@ impl ZshCompiler {
                     }
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                    self.compile_word_str(s);
+                    self.compile_scalar_assign_value(s);
                     self.builder.emit(Op::Concat, 0);
                 } else {
-                    self.compile_word_str(s);
+                    self.compile_scalar_assign_value(s);
                 }
                 // xtrace: emit `name[key]=value ` before SET_ASSOC
                 // consumes the stack. Direct port of C zsh's
@@ -4425,34 +4460,11 @@ impl ZshCompiler {
 
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                // Bare-assignment values (`i=5*3`) are NOT glob-
-                // expanded by zsh — the `*` stays literal. If the
-                // value contains glob metas but isn't already DQ-
-                // wrapped, wrap with DNULLs so compile_word_str's
-                // mode 1 (DoubleQuoted) bridge skips brace+glob
-                // expansion. `$var` / `$(cmd)` / `$((expr))` still
-                // expand inside DQ context.
-                // Check for glob metas in BOTH the META-encoded form
-                // (lexer's `\u{87}` for `*`, `\u{86}` for `?`, etc.)
-                // AND the literal char (some lex paths leave them
-                // bare). Either form means "glob in value, must
-                // suppress" because zsh doesn't glob-expand assignment
-                // RHS by default.
-                // c:Src/zsh.h — token TOKEN constants:
-                //   Star = \u{87}, Quest = \u{97}, Inbrack = \u{91},
-                //   Inbrace = \u{8f}. The previous check used \u{86}
-                //   (Hat ^) where it meant Quest, so tokenized `?`
-                //   (\u{97}) in `a=he?l` was not detected and the
-                //   DQ-wrap path didn't fire → the runtime saw a
-                //   bare `?` glob and emitted "no matches found".
-                //   Bug #603.
-                let needs_dq_wrap = !s.starts_with('\u{9e}')
-                    && !s.starts_with('\u{9d}')
-                    && (s.contains('*') || s.contains('\u{87}')   // Star
-                        || s.contains('?') || s.contains('\u{97}') // Quest
-                        || s.contains('[') || s.contains('\u{91}') // Inbrack
-                        || s.contains('{') || s.contains('\u{8f}')); // Inbrace
-                                                                     // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
+                // The glob-meta DQ-wrap that used to live here (bug #603) moved
+                // into `compile_scalar_assign_value`, which the subscripted-LHS
+                // paths call as well.
+                //
+                // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
                                                                      // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
                                                                      // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
                                                                      // token byte unambiguously means "unquoted glob pattern". This
@@ -4553,22 +4565,7 @@ impl ZshCompiler {
                     }
                     found
                 };
-                self.assign_context_depth += 1;
-                self.scalar_assign_depth += 1;
-                if needs_dq_wrap {
-                    let wrapped = format!("\u{9e}{}\u{9e}", s);
-                    // The Dnull pair below is SYNTHETIC — it stands in for C's
-                    // PREFORK_SINGLE (c:Src/exec.c:2546), not for a user's
-                    // `"…"`. Flag it so the qt-deriving emit sites don't read
-                    // it as `qt=1` (c:Src/subst.c:1625).
-                    self.synthetic_dq_wrap_depth += 1;
-                    self.compile_word_str(&wrapped);
-                    self.synthetic_dq_wrap_depth -= 1;
-                } else {
-                    self.compile_word_str(s);
-                }
-                self.scalar_assign_depth -= 1;
-                self.assign_context_depth -= 1;
+                self.compile_scalar_assign_value(s);
                 // xtrace: per-assignment trace before SET_VAR consumes
                 // [name, value]. BUILTIN_XTRACE_ASSIGN PEEKS the top
                 // two stack slots — name + post-expansion value — so
@@ -5810,7 +5807,12 @@ impl ZshCompiler {
         // braces are literal inside `"…"` (`print -r -- "{a,b}"` → `{a,b}`), and
         // the `=~` arm wraps its RHS in those markers precisely to reach
         // singsub semantics. Same spelling as `has_quote_markers` (line 4118).
-        let in_prefork_single = self.dq_context_depth > 0 || word_is_single_dq_span(s);
+        // c:Src/subst.c:520 — `singsub_depth` is the direct spelling of the
+        // same PREFORK_SINGLE state for the `case` word (c:Src/loop.c:611),
+        // which has no `dq_context_depth` bump of its own.
+        let in_prefork_single = self.dq_context_depth > 0
+            || word_is_single_dq_span(s)
+            || self.singsub_depth > 0;
         let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
@@ -6047,8 +6049,14 @@ impl ZshCompiler {
             // route it through the DQ (no-split) variant when it is a scalar
             // assignment value: `setopt shwordsplit; v=' a:b '; w=$v` kept the
             // surrounding spaces in zsh but zshrs trimmed them.
-            let no_split =
-                in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+            // c:Src/subst.c:520 — `singsub` is PREFORK_SINGLE as well, so a
+            // `case` word (c:Src/loop.c:611) and a `[[ … ]]` operand
+            // (c:Src/cond.c:53) are not split either, and their array result is
+            // sepjoin-ed with IFS[0] by GET_VAR_DQ's array arm — c:4226.
+            let no_split = in_dq
+                || self.scalar_assign_depth > 0
+                || self.assign_builtin_arg_depth > 0
+                || self.singsub_depth > 0;
             let getvar = if no_split {
                 crate::vm_helper::BUILTIN_GET_VAR_DQ
             } else {
@@ -6176,7 +6184,14 @@ impl ZshCompiler {
             let mode = if self.dq_context_depth > 0 {
                 1
             } else {
-                expand_text_mode(s, &preserved)
+                let base = expand_text_mode(s, &preserved);
+                // c:Src/subst.c:520 — a singsub word (case word / cond operand)
+                // is preforked with PREFORK_SINGLE; mode 9 carries that bit.
+                if base == 0 && self.singsub_depth > 0 {
+                    9
+                } else {
+                    base
+                }
             };
             let idx = self.builder.add_constant(Value::str(preserved.as_str()));
             self.builder.emit(Op::LoadConst(idx), 0);
@@ -6229,7 +6244,12 @@ impl ZshCompiler {
                 // the spaces in zsh but zshrs trimmed them.
                 let opcode = if matches!(name, "argv" | "@" | "*") {
                     crate::vm_helper::BUILTIN_ARRAY_ALL
-                } else if in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0
+                } else if in_dq
+                    || self.scalar_assign_depth > 0
+                    || self.assign_builtin_arg_depth > 0
+                    // c:Src/subst.c:520 — singsub (case word c:Src/loop.c:611,
+                    // cond operand c:Src/cond.c:53) is PREFORK_SINGLE too.
+                    || self.singsub_depth > 0
                 {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
@@ -6594,8 +6614,15 @@ impl ZshCompiler {
                 // `$@`/`$*` arm does: the recursive dq-depth OR the raw
                 // token wrapped in DQ markers (`\u{9e}…\u{9e}`) — the
                 // brace form arrives 9e-wrapped with dq_depth==0.
+                // c:Src/subst.c:4226 — under `ssub` an array result is joined
+                // with `sepjoin(aval, NULL, 1)` (IFS[0]) and never split.
+                // GET_VAR_DQ is that read; GET_VAR applies the split (and then
+                // rejoins on a space) and adds the c:183 empty-word elision that
+                // `!(flags & PREFORK_SINGLE)` gates off. Without the singsub
+                // term, `a=(c a b); IFS=-; case ${a} in (c-a-b)` did not match
+                // where `case $a` (a different fast path) already did.
                 let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
-                let bid = if in_dq {
+                let bid = if in_dq || self.singsub_depth > 0 {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
                     crate::vm_helper::BUILTIN_GET_VAR
@@ -6811,8 +6838,13 @@ impl ZshCompiler {
                 // fire for assign_builtin_arg_depth too (otherwise `$*`/`$@`
                 // expanded as an array and only the first element survived
                 // the scalar coercion — qrcode plugin `local input="$*"`).
-                let in_scalar_assign =
-                    self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+                // c:Src/subst.c:3913 `force_split = !ssub && (spbreak || spsep)`
+                // — `ssub` is PREFORK_SINGLE from ANY of its three callers, so
+                // singsub (c:520) suppresses `${=…}` exactly as an assignment
+                // RHS does.
+                let in_scalar_assign = self.scalar_assign_depth > 0
+                    || self.assign_builtin_arg_depth > 0
+                    || self.singsub_depth > 0;
                 if force_split && !in_scalar_assign {
                     // c:Src/subst.c:3921 `sepsplit(val, spsep, 0, 1)` →
                     // Src/utils.c:3711 spacesplit. BUILTIN_FORCE_SPLIT is the
@@ -7018,7 +7050,13 @@ impl ZshCompiler {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
                 // DQ-wrapped parent (tracked via dq_context_depth).
-                let dq_wrapped = (word_is_single_dq_span(s)) || self.dq_context_depth > 0;
+                // c:Src/subst.c:1625 vs :1761 — `qt` (inside `"…"`) and `ssub`
+                // (PREFORK_SINGLE) are separate bits. A `[[ … ]]` operand has
+                // only the second, so its glob-suppression bump must not read
+                // as DQ here or the `${(flags)NAME}` fast path is skipped and
+                // the sort/unique block runs unguarded.
+                let dq_wrapped = (word_is_single_dq_span(s))
+                    || (self.dq_context_depth - self.cond_glob_suppress_depth) > 0;
                 if dq_wrapped {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
@@ -7070,8 +7108,16 @@ impl ZshCompiler {
                     // qualifies: a name-only arg is preforked with
                     // PREFORK_TYPESET (c:4197) and an array-valued one with
                     // plain PREFORK_ASSIGN (c:4265), neither of which is ssub.
+                    // c:Src/subst.c:514-520 — `singsub` preforks with
+                    // PREFORK_SINGLE too, for the `case` word (c:Src/loop.c:611)
+                    // and every `[[ … ]]` operand (c:Src/cond.c:53). Without it
+                    // this fast path ran the c:4301-4326 sort and the c:4264
+                    // unique fold that c:4226's `if (isarr && ssub)` collapse
+                    // takes off the table: `a=(c a b); [[ ${(o)a} == 'c a b' ]]`
+                    // was false, `case ${(o)a}` matched the SORTED spelling.
                     let ssub = self.scalar_assign_depth > 0
-                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0);
+                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
+                        || self.singsub_depth > 0;
                     self.builder.emit(Op::LoadInt(ssub as i64), 0);
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 3), 0);
@@ -8758,7 +8804,10 @@ impl ZshCompiler {
         // If we're recursing inside a DQ-wrapped parent (tracked via
         // `dq_context_depth`), force mode 1 so child expansions
         // suppress array-only flags like the outer DQ does.
-        let base_mode = if self.dq_context_depth > 0 {
+        // c:Src/subst.c:1625 — `qt` is "inside double quotes". The cond
+        // operand's glob-suppression bump is `ssub` (c:1761), not `qt`, so it
+        // must not force DoubleQuoted mode; mode 9 below carries its real flag.
+        let base_mode = if (self.dq_context_depth - self.cond_glob_suppress_depth) > 0 {
             1
         } else {
             expand_text_mode(s, &preserved)
@@ -8802,6 +8851,14 @@ impl ZshCompiler {
         // preforked with PREFORK_TYPESET (c:4197) and an array-valued one
         // with plain PREFORK_ASSIGN (c:4265), and both must keep splatting
         // one word per element (`local ${(k)assoc}`, `local -a a=(${(s::)x})`).
+        // Mode 9: "singsub word" — mode 0 plus PREFORK_SINGLE and nothing else.
+        // c:Src/subst.c:514-520 `singsub` is `prefork(&foo, PREFORK_SINGLE,
+        // NULL)`, the flag set for the `case` WORD (c:Src/loop.c:611
+        // `singsub(&word)`) and for every `[[ … ]]` operand (c:Src/cond.c:53
+        // `singsub(strp)`, reached from `cond_subst` at c:198 / c:205 / c:308 /
+        // c:530 / c:544 / c:556). Unlike mode 8 it carries NO PREFORK_ASSIGN —
+        // `filesub`'s colon-walk is an assignment-only rule (c:Src/subst.c:689),
+        // so `case /usr/bin:~/bin in` keeps the literal `~/bin` as zsh does.
         let scalar_assign_ctx = self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
         let ssub_assign_value = scalar_assign_ctx && self.assign_context_depth > 0;
         let mode = if base_mode == 1 && scalar_assign_ctx {
@@ -8810,6 +8867,8 @@ impl ZshCompiler {
             8
         } else if base_mode == 0 && scalar_assign_ctx {
             6
+        } else if base_mode == 0 && self.singsub_depth > 0 {
+            9
         } else if base_mode == 0 && self.redir_word_depth > 0 {
             7
         } else {
@@ -9813,9 +9872,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(c), 0);
                 return;
             }
-            self.dq_context_depth += 1;
-            self.compile_word_str(word);
-            self.dq_context_depth -= 1;
+            self.compile_singsub_word_noglob(word);
             if !Self::seg_forces_glob_subst(word) {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
@@ -9836,9 +9893,7 @@ impl ZshCompiler {
         for (idx, seg) in segments.iter().enumerate() {
             match seg {
                 PatSeg::Subst(text) => {
-                    self.dq_context_depth += 1;
-                    self.compile_word_str(text);
-                    self.dq_context_depth -= 1;
+                    self.compile_singsub_word_noglob(text);
                     if !Self::seg_forces_glob_subst(text) {
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
@@ -9877,7 +9932,14 @@ impl ZshCompiler {
         // see the prior command's status. The reset to 0 happens AFTER
         // (c:705 `if (!anypatok) lastval = 0`), so capture the word
         // first, THEN reset.
+        // c:Src/loop.c:611 `singsub(&word);` — the case WORD is preforked with
+        // PREFORK_SINGLE (c:Src/subst.c:520), so it is never word-split, never
+        // brace-expanded (c:Src/subst.c:170), and an array result is joined with
+        // IFS[0] at c:Src/subst.c:4226 BEFORE the c:4256 emit block that holds
+        // the (u) fold and the (o)/(O)/(n) sort.
+        self.singsub_depth += 1;
         self.compile_word_str(&c.word);
+        self.singsub_depth -= 1;
         let word_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(word_slot), 0);
@@ -10521,7 +10583,17 @@ impl ZshCompiler {
         // runs with thisjob == -1, so `=()`/`<()`/`>()` "cannot be used here").
         let saved_cond = self.in_cond_operand;
         self.in_cond_operand = true;
+        // c:Src/cond.c:53 `singsub(strp);` inside `cond_subst`, which
+        // `evalcond` runs over the left operand (c:198) and the right (c:205),
+        // plus c:308 for the `==` / `!=` pattern and c:530 / c:544 / c:556
+        // (`cond_str` / `cond_val` / `cond_match`) for module conditions. Every
+        // one of those is `prefork(PREFORK_SINGLE)` (c:Src/subst.c:520). The one
+        // operand shape that is NOT is the glob-qualifier branch of `cond_subst`
+        // (c:Src/cond.c:43-51 `prefork(args, 0, NULL)` then `zglob`); the two
+        // `cond_operand_has_globqual` arms below zero the counter for it.
+        self.singsub_depth += 1;
         self.compile_cond_expr(c);
+        self.singsub_depth -= 1;
         self.in_cond_operand = saved_cond;
         self.emit_cmd_pop();
         // Convert bool → status. c:Src/cond.c — true→0, false→1,
@@ -10766,9 +10838,7 @@ impl ZshCompiler {
                     // the runtime the raw text `$n` → "bad substitution".
                     let has_dollar = arg.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
                     if has_dollar {
-                        self.dq_context_depth += 1;
-                        self.compile_word_str(arg);
-                        self.dq_context_depth -= 1;
+                        self.compile_singsub_word_noglob(arg);
                     } else {
                         let arg_clean = crate::lex::untokenize(arg);
                         let idx = self.builder.add_constant(Value::str(arg_clean.as_str()));
@@ -10791,11 +10861,14 @@ impl ZshCompiler {
                     // `[[ -z z*(#qN) ]]` is "did the (N) glob produce
                     // nothing?", not "is the literal text empty?".
                     if Self::cond_operand_has_globqual(arg) {
+                        // c:Src/cond.c:43-51 — glob-qualifier operands take the
+                        // `prefork(args, 0, NULL)` + `zglob` branch, not singsub.
+                        let saved = self.singsub_depth;
+                        self.singsub_depth = 0;
                         self.compile_word_str(arg);
+                        self.singsub_depth = saved;
                     } else {
-                        self.dq_context_depth += 1;
-                        self.compile_word_str(arg);
-                        self.dq_context_depth -= 1;
+                        self.compile_singsub_word_noglob(arg);
                     }
                 }
                 self.emit_file_test(&op_clean);
@@ -10855,9 +10928,7 @@ impl ZshCompiler {
                         // variable named by $n, not the literal text $n.
                         let has_dollar = op.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
                         if has_dollar {
-                            self.dq_context_depth += 1;
-                            self.compile_word_str(op);
-                            self.dq_context_depth -= 1;
+                            self.compile_singsub_word_noglob(op);
                         } else {
                             let op_clean_arg = crate::lex::untokenize(op);
                             let idx = self.builder.add_constant(Value::str(op_clean_arg.as_str()));
@@ -10872,11 +10943,15 @@ impl ZshCompiler {
                         // when the word ends in a glob QUALIFIER, which
                         // `cond_subst` DOES filename-generate.
                         if Self::cond_operand_has_globqual(op) {
+                            // c:Src/cond.c:43-51 — the glob-qualifier branch of
+                            // `cond_subst` preforks with flags 0, NOT
+                            // PREFORK_SINGLE, then runs `zglob` and sepjoins.
+                            let saved = self.singsub_depth;
+                            self.singsub_depth = 0;
                             self.compile_word_str(op);
+                            self.singsub_depth = saved;
                         } else {
-                            self.dq_context_depth += 1;
-                            self.compile_word_str(op);
-                            self.dq_context_depth -= 1;
+                            self.compile_singsub_word_noglob(op);
                         }
                     }
                     self.emit_file_test(&left_clean);
@@ -10901,9 +10976,7 @@ impl ZshCompiler {
                 // 'a{2,3}' ]]` compared `a2 a3` against `a{2,3}` → 1.
                 let left_has_unquoted_glob = Self::cond_operand_suppresses_glob(left);
                 if left_has_unquoted_glob {
-                    self.dq_context_depth += 1;
-                    self.compile_word_str(left);
-                    self.dq_context_depth -= 1;
+                    self.compile_singsub_word_noglob(left);
                 } else {
                     self.compile_word_str(left);
                 }
@@ -11098,9 +11171,7 @@ impl ZshCompiler {
                     // completer reported "added nothing" and the
                     // `_main_complete` chain re-ran it for the next
                     // matcher-list entry.
-                    self.dq_context_depth += 1;
-                    self.compile_word_str(right);
-                    self.dq_context_depth -= 1;
+                    self.compile_singsub_word_noglob(right);
                 } else {
                     self.compile_word_str(right);
                 }
@@ -12982,8 +13053,91 @@ impl ZshCompiler {
     /// c:4041 quote block. The two depths here are the compiler's record of
     /// the same two C call sites; `${=…}` (`parse_forced_split_brace`) already
     /// consults them.
+    ///
+    /// c:Src/subst.c:514-520 `singsub` is the THIRD `PREFORK_SINGLE` caller
+    /// (the `case` word, c:Src/loop.c:611, and every `[[ … ]]` operand,
+    /// c:Src/cond.c:53). It sets the same `ssub` bit, so it owes the same
+    /// suppressions.
     fn brace_array_ssub(&self) -> bool {
-        self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0
+        self.scalar_assign_depth > 0
+            || self.assign_builtin_arg_depth > 0
+            || self.singsub_depth > 0
+    }
+
+    /// Compile one word that C expands with `singsub` and does NOT
+    /// filename-generate: every `[[ … ]]` operand (c:Src/cond.c:53, reached
+    /// from `cond_subst` at c:198 / c:205, plus c:308 for the `==` / `!=`
+    /// pattern) and every `case` PATTERN (c:Src/loop.c:643 / c:661
+    /// `if (htok) singsub(&pat);`). `singsub` is c:Src/subst.c:514-525 —
+    /// `prefork(&foo, PREFORK_SINGLE, NULL)` and nothing else, so `globlist` is
+    /// never reached.
+    ///
+    /// `dq_context_depth` is this compiler's glob-suppression switch, so it is
+    /// still bumped — but `cond_glob_suppress_depth` records that the bump is
+    /// synthetic, so the two sites that ask "is this word double-quoted?"
+    /// (paramsubst's `qt`, c:Src/subst.c:1625) do not mistake it for a real
+    /// `"…"`. Without that split, `${(o)a}` skipped the `${(flags)NAME}` fast
+    /// path — the only one that carries `ssub` — and the c:4301-4326 sort ran
+    /// where c:4226's `if (isarr && ssub)` collapse takes it off the table.
+    fn compile_singsub_word_noglob(&mut self, w: &str) {
+        self.singsub_depth += 1;
+        self.dq_context_depth += 1;
+        self.cond_glob_suppress_depth += 1;
+        self.compile_word_str(w);
+        self.cond_glob_suppress_depth -= 1;
+        self.dq_context_depth -= 1;
+        self.singsub_depth -= 1;
+    }
+
+    /// Compile the VALUE of a scalar assignment (`NAME=v`, `NAME[k]=v`,
+    /// `NAME[lo,hi]=v`, `NAME[@]=v`), leaving one word on the stack.
+    ///
+    /// c:Src/exec.c:2590-2604 `addvars` — every one of those spellings is a
+    /// `WC_ASSIGN_SCALAR`, whose name still carries its subscript
+    /// (`untokenize(name)` at c:2589 happens after), so they all reach the same
+    /// `prefork(vl, (isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN),
+    /// &prefork_ret)` at c:2603. The two depths are the compiler's record of
+    /// that call: `scalar_assign_depth` is the `PREFORK_SINGLE` half (`ssub`,
+    /// c:Src/subst.c:1761) and `assign_context_depth` the `PREFORK_ASSIGN` half
+    /// (`filesub`'s colon-walk, c:Src/subst.c:689).
+    ///
+    /// The subscripted spellings used to call `compile_word_str` bare, so their
+    /// RHS was expanded as a plain argv word: `v[1]=${(o)a}` sorted (the c:4226
+    /// collapse never fired), `v[1]=${a}` joined with a space instead of
+    /// `IFS[0]`, `v[1]=/tmp/*` filename-generated and `v[1]={p,q}`
+    /// brace-expanded where zsh keeps both literal.
+    fn compile_scalar_assign_value(&mut self, s: &str) {
+        // Bare-assignment values (`i=5*3`) are NOT glob-expanded by zsh — the
+        // `*` stays literal (c:Src/exec.c:2611 only globs an assignment value
+        // under GLOB_ASSIGN). If the value contains glob metas but isn't already
+        // quoted, wrap with DNULLs so the bridge picks the DoubleQuoted mode and
+        // skips brace + glob expansion. `$var` / `$(cmd)` / `$((expr))` still
+        // expand inside DQ context.
+        //
+        // c:Src/zsh.h token constants: Star = \u{87}, Quest = \u{97},
+        // Inbrack = \u{91}, Inbrace = \u{8f}.
+        let needs_dq_wrap = !s.starts_with('\u{9e}')
+            && !s.starts_with('\u{9d}')
+            && (s.contains('*') || s.contains('\u{87}')      // Star
+                || s.contains('?') || s.contains('\u{97}')   // Quest
+                || s.contains('[') || s.contains('\u{91}')   // Inbrack
+                || s.contains('{') || s.contains('\u{8f}')); // Inbrace
+        self.assign_context_depth += 1;
+        self.scalar_assign_depth += 1;
+        if needs_dq_wrap {
+            let wrapped = format!("\u{9e}{}\u{9e}", s);
+            // The Dnull pair is SYNTHETIC — it stands in for C's PREFORK_SINGLE
+            // (c:Src/exec.c:2603), not for a user's `"…"`. Flag it so the
+            // qt-deriving emit sites don't read it as `qt=1`
+            // (c:Src/subst.c:1625).
+            self.synthetic_dq_wrap_depth += 1;
+            self.compile_word_str(&wrapped);
+            self.synthetic_dq_wrap_depth -= 1;
+        } else {
+            self.compile_word_str(s);
+        }
+        self.scalar_assign_depth -= 1;
+        self.assign_context_depth -= 1;
     }
 
     fn brace_array_body(&self, word: &str, inner: &str) -> String {
