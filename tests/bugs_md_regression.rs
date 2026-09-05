@@ -2083,3 +2083,187 @@ fn bug1132_unquoted_star_splice_keeps_its_elements_without_shwordsplit() {
         );
     }
 }
+
+/// c:Src/params.c:1622-1640 — getarg's `word` branch counts WORDS but returns
+/// a CHARACTER position: `return (a2 ? s : d + 1) - t;` (c:1640). That is the
+/// whole reason a `(w)`/`(f)`/`(s.X.)` flag can appear on either side of a
+/// range comma and can share a subscript with an ordinary numeric bound —
+/// getindex calls `getarg` once per bound (c:2058 / c:2133) and both calls
+/// hand back offsets into the same string.
+///
+/// The single-index spelling `${s[(w)2]}` is the SAME C code: c:2135
+/// `end = we ? we : start` reuses the word-end offset getarg stashed at
+/// c:1637-1638 (which it only stashes when the subscript is NOT a range,
+/// `*tt != ','`). So the two spellings must agree — and in this port they did
+/// not. The scalar word arm owned the whole subscript, could not read
+/// `1,(w)2` as an integer, and answered the empty string; the mirror-image
+/// spelling `${s[1,(w)2]}` never reached a word bound at all and defaulted to
+/// the end of the string.
+///
+/// Second half of the same defect: c:1618 `r = mathevalarg(s, &s)` runs before
+/// the word branch, so the number after a word flag is a math expression. The
+/// single-index arm parsed it as a digit literal only, so `${s[(w)n]}` was
+/// empty where the range spelling `${s[(w)n,(w)n+1]}` resolved `n` fine.
+///
+/// Every expectation below is `/bin/zsh -f` output.
+#[test]
+fn word_flag_subscript_bounds_return_character_positions() {
+    let cases: &[(&str, &str)] = &[
+        // Both bounds word-flagged — the shape that returned "".
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)1,(w)2]}\"",
+            "alpha beta\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)2,(w)3]}\"",
+            "beta gamma\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)2,(w)2]}\"",
+            "beta\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)1,(w)4]}\"",
+            "alpha beta gamma delta\n",
+        ),
+        // c:1625-1626 — a negative word index counts from the end.
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)3,(w)-1]}\"",
+            "gamma delta\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)-2,(w)-1]}\"",
+            "gamma delta\n",
+        ),
+        // c:1627-1630 — both clamps.
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)0,(w)9]}\"",
+            "alpha beta gamma delta\n",
+        ),
+        // Mixed word bound + numeric bound, each direction.
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[1,(w)2]}\"",
+            "alpha beta\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)2,-1]}\"",
+            "beta gamma delta\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[(w)1,3]}\"",
+            "alp\n",
+        ),
+        (
+            "s='alpha beta gamma delta'; print -r -- \"${s[3,(w)1]}\"",
+            "pha\n",
+        ),
+        // c:1479-1497 — an explicit `(s.X.)` separator, and c:1445-1448 `(f)`.
+        (
+            "t='a:b:c:d'; print -r -- \"${t[(ws.:.)2,(ws.:.)3]}\"",
+            "b:c\n",
+        ),
+        ("t='a::b::c'; print -r -- \"${t[(ws.::.)1,(ws.::.)2]}\"", "a::b\n"),
+        ("u=$'l1\\nl2\\nl3'; print -r -- \"${u[(f)2,(f)3]}\"", "l2\nl3\n"),
+        // c:1476-1477 — `(p)` print-decodes the `(s…)` argument, it is not a
+        // word flag on its own.
+        ("p=$'a\\tb\\tc'; print -r -- \"${p[(pws.\\t.)1,(pws.\\t.)2]}\"", "a\tb\n"),
+        // c:1618 — the index after a word flag is a math expression, in BOTH
+        // the single-index and the range spelling.
+        ("s='alpha beta gamma delta'; n=2; print -r -- \"${s[(w)n]}\"", "beta\n"),
+        (
+            "s='alpha beta gamma delta'; n=2; print -r -- \"${s[(w)n,(w)n+1]}\"",
+            "beta gamma\n",
+        ),
+        // c:1631-1632 — nothing to find.
+        ("e=''; print -r -- \"[${e[(w)1,(w)2]}]\"", "[]\n"),
+        ("ws='   '; print -r -- \"[${ws[(w)1,(w)2]}]\"", "[]\n"),
+        // The single-index spelling this shares its C code with must not move.
+        ("s='alpha beta gamma delta'; print -r -- \"${s[(w)2]}\"", "beta\n"),
+        ("s='alpha beta gamma delta'; print -r -- \"${s[(w)-1]}\"", "delta\n"),
+        ("t='a::b'; print -r -- \"${t[(ws.:.)2]}\"", "b\n"),
+        // …and neither must the plain character range that shares the arm.
+        ("s='alpha beta gamma delta'; print -r -- \"${s[2,5]}\"", "lpha\n"),
+        ("s='alpha beta gamma delta'; print -r -- \"${s[-3,-1]}\"", "lta\n"),
+        // A pattern-search bound is still a pattern-search bound.
+        ("s='alpha beta gamma delta'; print -r -- \"${s[(r)b*,(r)g*]}\"", "beta g\n"),
+        // ── ARRAY side. c:Src/params.c:2276-2277 makes `v->scanflags`
+        // non-zero for every array, so c:1622's word branch is dead there and
+        // the subscript is the plain element index of c:1618. Same two
+        // defects, same fix: the whole-subscript arm has to stand down for a
+        // range, and the index is a math expression.
+        ("a=(x y z); n=2; print -r -- \"${a[(w)n]}\"", "y\n"),
+        ("a=(x y z); n=2; print -r -- \"${a[(p)n]}\"", "y\n"),
+        ("a=(x y z); print -r -- \"${a[(w)1,2]}\"", "x y\n"),
+        ("a=(x y z); print -r -- \"${a[(w)1,(w)2]}\"", "x y\n"),
+        ("a=(x y z); n=2; print -r -- \"${a[(w)n,n+1]}\"", "y z\n"),
+        // An element holding the separator proves the word flag really is
+        // inert on an array — no join/split round trip happens.
+        ("b=('p q' r s); print -r -- \"${b[(w)1,(w)2]}\"", "p q r\n"),
+        ("b=('p q' r s); print -r -- \"${b[(ws.:.)1]}\"", "p q\n"),
+        // The neighbouring array subscript forms that share these arms.
+        ("a=(x y z); print -r -- \"${a[(e)1,2]}\"", "x y\n"),
+        ("a=(x y z); print -r -- \"${a[(b:1:)1,3]}\"", "x y z\n"),
+        ("a=(x y z); print -r -- \"${a[(n:1:)2]}\"", "y\n"),
+        ("a=(x y z); print -r -- \"${a[1,2]}\"", "x y\n"),
+        ("a=(x y z); print -r -- \"${a[(r)y,(r)z]}\"", "y z\n"),
+        // ── c:Src/params.c:2001 `return down ? 0 : slen + 1;` — the miss
+        // return for a SCALAR search bound. Both values put the slice outside
+        // the string; the arm used to fall back to its DEFAULT bound instead,
+        // turning a failed search into "the whole string". Only visible once
+        // the word bound above resolved correctly, which is how it surfaced.
+        ("a='a:b:c'; print -r -- \"[${a[(w)1,(R)y]}]\"", "[]\n"),
+        ("a='a:b:c'; print -r -- \"[${a[1,(R)y]}]\"", "[]\n"),
+        ("a='a:b:c'; print -r -- \"[${a[(ws.:.)1,(I)y]}]\"", "[]\n"),
+        ("a='a:b:c'; print -r -- \"[${a[(f)1,(K)y]}]\"", "[]\n"),
+        // A search bound that DOES match still resolves, in both directions.
+        ("a=abcabc; print -r -- \"[${a[(r)b,(R)c]}]\"", "[bcabc]\n"),
+        ("a=abcabc; print -r -- \"[${a[1,(r)c]}]\"", "[abc]\n"),
+        // ── c:Src/params.c:1618 — a flag group that PARSED but ran no
+        // search leaves getarg at `r = mathevalarg(s, &s)` over the text
+        // AFTER the group. Both the range-bound evaluator and the
+        // whole-subscript flag-strip arm got this wrong, the latter by
+        // math-evaluating the range comma as the comma OPERATOR.
+        ("a='alpha beta gamma'; print -r -- \"[${a[1,(e)1]}]\"", "[a]\n"),
+        ("a='alpha beta gamma'; print -r -- \"[${a[1,(p)1]}]\"", "[a]\n"),
+        ("a='alpha beta gamma'; print -r -- \"[${a[1,(n:1:)1]}]\"", "[a]\n"),
+        ("a='alpha beta gamma'; print -r -- \"[${a[1,(b:1:)2]}]\"", "[al]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[1,(s.:.)2]}]\"", "[al]\n"),
+        ("a='alpha beta gamma'; print -r -- \"[${a[(w)1,(e)3]}]\"", "[alp]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[()2,3]}]\"", "[lp]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[(e)2,3]}]\"", "[lp]\n"),
+        // c:1498-1503 — an UNKNOWN flag letter rewinds instead, so the group
+        // stays part of the math expression and the whole-subscript forms
+        // that already worked must keep working.
+        ("a=hello; print -r -- \"[${a[(s/l/)1]}]\"", "[h]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[(3, 2)]}]\"", "[l]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[(s.:.)2]}]\"", "[l]\n"),
+        ("a='alpha beta'; print -r -- \"[${a[()2]}]\"", "[l]\n"),
+        // ── c:Src/params.c:1409-1504 — the flag switch has cases for
+        // r R k K i I w f e n b p s and NOTHING else. There is no `case
+        // 'W'`, so `W` takes the c:1498-1503 `flagerr` rewind and the group
+        // is re-read as MATH. This port had accepted `W` as a synonym for
+        // `w` in three separate arms.
+        // Run inside a subshell so the math error's errflag does not take the
+        // whole `-c` script down; `done` proves the expansion produced no word
+        // and the diagnostic went to stderr, exactly as `zsh -f` does.
+        (
+            "a=(x y z); ( print -r -- \"${a[(W)2]}\" ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        (
+            "a='alpha beta'; ( print -r -- \"${a[(W)2]}\" ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        // Lower-case `(w)` and an explicit separator still skip empty fields
+        // (c:Src/utils.c:3857-3863 findword collapses runs of `sep`).
+        ("a='a::b'; print -r -- \"[${a[(ws.:.)2]}]\"", "[b]\n"),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
