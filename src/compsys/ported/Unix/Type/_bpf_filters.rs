@@ -23,7 +23,7 @@
 
 use crate::compsys::ported::_regex_arguments::{_regex_arguments, dispatch_registered};
 use crate::compsys::ported::shared::LocalScope;
-use crate::ported::params::{getsparam, setaparam, setsparam};
+use crate::ported::params::{getsparam, setaparam, sethparam, setsparam};
 use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -505,6 +505,48 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
 
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let tables = bpf_tables(&ostype);
+
+    // sh:22-31 — `subtypes` and `flags`, the two associative arrays declared
+    // at sh:6 `local -A subtypes flags`.
+    //
+    // The spec below references them BY NAME and they are eval'd while this
+    // frame is live: `${(j.|.)${=flags}}` (rs), `${=flags[$packet]}` and
+    // `${=subtypes[$wlantype]:-$subtypes}`. The port emitted all three
+    // verbatim but never DEFINED either parameter, so the subscript resolved
+    // against an unset name and reached `mathevalarg`
+    // (`src/ported/math.rs`, c:Src/math.c:1525-1533) with an empty string:
+    //
+    //     tcpdump <TAB>   zsh: the filter keywords
+    //                     was: `bad math expression: empty string`
+    //
+    // Both shells produce that identical error given an unset `flags`, and
+    // neither does with `local -A flags` — so this is a port omission, not a
+    // core divergence in the arithmetic evaluator.
+    sethparam(
+        "subtypes",
+        vec![
+            "mgt".into(),
+            "assoc-req assoc-resp reassoc-req reassoc-resp probe-req probe-resp              beacon atim disassoc auth deauth"
+                .into(),
+            "ctl".into(),
+            "ps-poll rts cts ack cf-end cf-end-ack".into(),
+            "data".into(),
+            "data data-cf-ack data-cf-poll data-cf-ack-poll null cf-ack cf-poll              cf-ack-poll qos-data qos-data-cf-ack qos-data-cf-poll              qos-data-cf-ack-poll qos qos-cf-poll and qos-cf-ack-poll"
+                .into(),
+        ],
+    );
+    sethparam(
+        "flags",
+        vec![
+            "len".into(),
+            "len".into(),
+            "tcp".into(),
+            "tcp-fin tcp-syn tcp-rst tcp-push tcp-ack tcp-urg".into(),
+            "icmp".into(),
+            "icmp-echoreply icmp-unreach icmp-sourcequench icmp-redirect              icmp-echo icmp-routeradvert icmp-routersolicit icmp-timxceed              icmp-paramprob icmp-tstamp icmp-tstampreply icmp-ireq              icmp-ireqreply icmp-maskreq icmp-maskreply"
+                .into(),
+        ],
+    );
 
     // sh:8 + sh:58 — see `publish_suffix`.
     publish_suffix();
