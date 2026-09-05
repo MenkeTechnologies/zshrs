@@ -15384,3 +15384,206 @@ fn read_capital_e_echoes_each_field() {
         run_zshrs_parity("read a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
     assert_eq!(out, "a=[one] b=[two three]\n");
 }
+
+/// c:Src/subst.c:4226-4231 — `if (isarr && ssub) { val = sepjoin(aval, NULL, 1);
+/// isarr = 0; l->list.flags &= ~LF_ARRAY; }` ("prefork() wants a scalar, so join
+/// no matter what else"). That collapse sits at c:4226, immediately BEFORE the
+/// array emit block at c:4256, and the `(u)` unique fold (c:4264) and the
+/// `(o)`/`(O)`/`(a)`/`(n)`/`(i)` sort (c:4301-4326) are both INSIDE it. So in
+/// scalar-substitution context — `ssub` is c:1761 `(pf_flags & PREFORK_SINGLE)`,
+/// set for a scalar assignment RHS by c:Src/exec.c:2603 and for every singsub
+/// caller — zsh joins and stops: it never sorts and never uniques.
+///
+/// zshrs sorted anyway, because its gate only tested
+/// `isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none()` and
+/// nothing on the `ssub` path cleared `isarr` before it.
+///
+/// c:4226 is unconditional on `nojoin`, unlike the earlier `ssub` join at
+/// c:3916 (`if (nojoin == 0 || sep)`), which is why `(@)` is NOT an exception
+/// here even though it keeps the array alive past c:3916.
+///
+/// Every expectation below is the verbatim output of `/bin/zsh -f -c '<case>'`
+/// (5.9), captured line-by-line so a word-boundary difference cannot hide
+/// inside `print`'s space-joining.
+#[test]
+fn sort_and_unique_flags_do_not_run_in_scalar_substitution_context() {
+    // The core divergence, bare and with surrounding literals. `(O)` is not
+    // special: the whole sort is skipped, so `(o)` and `(O)` agree.
+    for (script, want) in [
+        ("a=(c a b); v=${(o)a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(O)a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(oO)a}; print -rl -- \"$v\"", "c a b\n"),
+        (
+            "a=(c a b); v=PRE${(o)a}POST; print -rl -- \"$v\"",
+            "PREc a bPOST\n",
+        ),
+        (
+            "a=(c a b); v=PRE${(O)a}POST; print -rl -- \"$v\"",
+            "PREc a bPOST\n",
+        ),
+        // Not sort-specific: (n) numeric, (u) unique and (Oa) index-order
+        // reversal are all inside the same c:4256 gate.
+        ("a=(3 10 2); v=${(n)a}; print -rl -- \"$v\"", "3 10 2\n"),
+        (
+            "a=(b a b c a); v=${(u)a}; print -rl -- \"$v\"",
+            "b a b c a\n",
+        ),
+        ("a=(c a b); v=${(Oa)a}; print -rl -- \"$v\"", "c a b\n"),
+        (
+            "a=(X2 x10 X1); v=${(oi)a}; print -rl -- \"$v\"",
+            "X2 x10 X1\n",
+        ),
+        // c:4226 ignores nojoin, so (@) does not rescue the sort.
+        (
+            "a=(bb a ccc); v=${(@o)a}; print -rl -- \"$v\"",
+            "bb a ccc\n",
+        ),
+        ("a=(c a b); v=${(@O)a}; print -rl -- \"$v\"", "c a b\n"),
+        // Reached through other shapes of the same ssub word.
+        ("a=(c a b); v=${(o)a[@]}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(o)a[1,2]}; print -rl -- \"$v\"", "c a\n"),
+        ("set -- c a b; v=${(o)@}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(o)=a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(s: :o)a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(cc aa bb); v=${(o)a#?}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(zz aa); v=${(o)a/aa/QQ}; print -rl -- \"$v\"", "zz QQ\n"),
+        ("a=(c a b); v=${(oq)a}; print -rl -- \"$v\"", "c\\ a\\ b\n"),
+        (
+            "a=(c a b); v=${(o)a:-fallback}; print -rl -- \"$v\"",
+            "c a b\n",
+        ),
+        // The join that runs INSTEAD is c:4228 `sepjoin(aval, NULL, 1)`, so it
+        // takes IFS[0] — set, multi-char, empty and unset all have to follow.
+        (
+            "a=(c a b); IFS=- ; v=${(o)a}; print -rl -- \"$v\"",
+            "c-a-b\n",
+        ),
+        (
+            "a=(c a b); IFS=xy; v=${(o)a}; print -rl -- \"$v\"",
+            "cxaxb\n",
+        ),
+        (
+            "a=(c a b); IFS= ; v=${(o)a}; print -rl -- \"[$v]\"",
+            "[cab]\n",
+        ),
+        (
+            "a=(c a b); unset IFS; v=${(o)a}; print -rl -- \"[$v]\"",
+            "[c a b]\n",
+        ),
+        // Elements with embedded spaces must survive the join intact.
+        ("a=(\"x y\" b); v=${(o)a}; print -rl -- \"$v\"", "x y b\n"),
+        // Every scalar-assignment spelling is c:Src/exec.c:2603 ssub.
+        (
+            "a=(c a b); typeset v=${(o)a}; print -rl -- \"$v\"",
+            "c a b\n",
+        ),
+        ("a=(c a b); local v=${(o)a}; print -rl -- \"$v\"", "c a b\n"),
+        (
+            "a=(c a b); export v=${(o)a}; print -rl -- \"$v\"",
+            "c a b\n",
+        ),
+        (
+            "a=(c a b); readonly v=${(o)a}; print -rl -- \"$v\"",
+            "c a b\n",
+        ),
+        (
+            "a=(c a b); v=x; v+=${(o)a}; print -rl -- \"$v\"",
+            "xc a b\n",
+        ),
+        (
+            "a=(c a b); v=${(o)a}${(o)a}; print -rl -- \"$v\"",
+            "c a bc a b\n",
+        ),
+        (
+            "a=(c a b); h=${(o)a}; b=($h); print -rl -- \"${b[@]}\"",
+            "c a b\n",
+        ),
+        // Assoc values go through the same gate.
+        (
+            "typeset -A h=(k1 z k2 a); v=${(o)h}; print -rl -- \"$v\"",
+            "z a\n",
+        ),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(script);
+        assert_eq!(out, want, "{script}");
+    }
+
+    // NOT ssub: the sort must still run everywhere else. These are the cases
+    // c:4226 leaves alone because `ssub` is 0.
+    for (script, want) in [
+        // Command position — the array is emitted as separate words, sorted.
+        ("a=(c a b); print -rl -- ${(o)a}", "a\nb\nc\n"),
+        ("a=(3 10 2); print -rl -- ${(n)a}", "2\n3\n10\n"),
+        ("a=(b a b c a); print -rl -- ${(u)a}", "b\na\nc\n"),
+        ("a=(c a b); print -rl -- ${(@O)a}", "c\nb\na\n"),
+        // ARRAY assignment RHS is PREFORK_ASSIGN without PREFORK_SINGLE.
+        (
+            "a=(c a b); b=(${(o)a}); print -rl -- \"${b[@]}\"",
+            "a\nb\nc\n",
+        ),
+        (
+            "a=(c a b); b=(\"${(@o)a}\"); print -rl -- \"${b[@]}\"",
+            "a\nb\nc\n",
+        ),
+        (
+            "a=(c a b); local -a b=(${(o)a}); print -rl -- \"${b[@]}\"",
+            "a\nb\nc\n",
+        ),
+        (
+            "a=(c a b); b=(pre ${(o)a} post); print -rl -- \"${b[@]}\"",
+            "pre\na\nb\nc\npost\n",
+        ),
+        // A nested expansion's inner substitution is not ssub either.
+        ("a=(c a b); v=${${(o)a}}; print -rl -- \"$v\"", "a b c\n"),
+        ("a=(c a b); print -rl -- ${${(o)a}}", "a\nb\nc\n"),
+        // A command substitution runs its own list; ssub does not cross in.
+        (
+            "a=(c a b); v=$(print -r -- ${(o)a}); print -rl -- \"$v\"",
+            "a b c\n",
+        ),
+        // Word splitting in command position still sees sorted words.
+        ("a=(c a b); f() { print -rl -- \"$1\"; }; f ${(o)a}", "a\n"),
+        (
+            "a=(c a b); setopt shwordsplit; print -rl -- ${(o)a}",
+            "a\nb\nc\n",
+        ),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(script);
+        assert_eq!(out, want, "{script}");
+    }
+
+    // Unaffected neighbours of the gate: a (j)/(F) separator already collapsed
+    // the array at c:3916 (`nojoin == 0 || sep`), so the sort was ALREADY a
+    // no-op there and must stay one; and a plain array read in ssub keeps the
+    // shape it had before this change.
+    for (script, want) in [
+        ("a=(c a b); v=${(oj:-:)a}; print -rl -- \"$v\"", "c-a-b\n"),
+        ("a=(c a b); v=${(j:-:)a}; print -rl -- \"$v\"", "c-a-b\n"),
+        ("a=(c a b); v=${(oF)a}; print -rl -- \"$v\"", "c\na\nb\n"),
+        ("a=(c a b); v=${(oj::)a}; print -rl -- \"$v\"", "cab\n"),
+        ("a=(c a b); v=${a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=\"${a}\"; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${a[@]}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=\"${a[@]}\"; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(); v=${(o)a}; print -rl -- \"[$v]\"", "[]\n"),
+        ("a=(only); v=${(o)a}; print -rl -- \"$v\"", "only\n"),
+        // Double quotes reach isarr = 0 by a DIFFERENT route — the qt-sepjoin
+        // at c:3032 (`if (qt && !getlen && isarr > 0) { val = sepjoin(...);
+        // isarr = 0; }`), which also precedes c:4256. So the DQ form never
+        // sorted in either shell, in ssub context or out of it. That is exactly
+        // what made this bug look flag-specific instead of context-specific.
+        ("a=(c a b); v=\"${(o)a}\"; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); print -rl -- \"${(o)a}\"", "c a b\n"),
+        ("a=(b a b c a); print -rl -- \"${(u)a}\"", "b a b c a\n"),
+        ("a=(c a b); v=${(A)a}; print -rl -- \"$v\"", "c a b\n"),
+        ("a=(c a b); v=${(o)a}; print -rl -- ${#v}", "5\n"),
+        ("a=(c a b); print -rl -- ${#${(o)a}}", "3\n"),
+        // (s) on a SCALAR source never had an array to sort in ssub anyway.
+        ("s=\"c:a:b\"; v=${(os.:.)s}; print -rl -- \"$v\"", "c:a:b\n"),
+        ("s=\"b:a:b\"; v=${(us.:.)s}; print -rl -- \"$v\"", "b:a:b\n"),
+        ("s=\"c:a:b\"; print -rl -- ${(os.:.)s}", "a\nb\nc\n"),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(script);
+        assert_eq!(out, want, "{script}");
+    }
+}
