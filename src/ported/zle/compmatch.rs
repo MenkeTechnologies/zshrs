@@ -1192,7 +1192,16 @@ pub fn match_str(
     let mut l_pos: i32 = if sfx != 0 { ll } else { 0 };
     let mut w_pos: i32 = if sfx != 0 { lw } else { 0 };
     let mut ow_pos: i32 = w_pos;
-    let mut lm: Option<Box<Cmatcher>> = None;
+    // c:514 — `Cmatcher mp, lm = NULL;`. C's `lm` is a POINTER into the live
+    // mstack chain and c:595 compares it by identity (`lm == mp`) to refuse
+    // re-applying the matcher that just made no progress. The port cannot
+    // compare addresses here because `mstack_snapshot` below holds CLONES, so
+    // `lm` carries that snapshot's INDEX instead — the snapshot is built once
+    // per call and never reordered, so an index is exactly as stable as C's
+    // pointer. It used to hold a freshly-allocated `Box<Cmatcher>` clone whose
+    // address could never equal the snapshot entry's, which made c:595 dead
+    // code and let a zero-progress matcher spin forever.
+    let mut lm: Option<usize> = None;
     let mut he = 0i32;
 
     // Snapshot the mstack chain into a Vec for stable iteration.
@@ -1257,11 +1266,9 @@ pub fn match_str(
         // c:591 retry: walk the snapshotted matcher chain looking for
         // a non-* matcher we can apply at the current cursor.
         let mut matched: Option<Box<Cmatcher>> = None;
-        for mp in mstack_snapshot.iter() {
-            if let Some(ref lm_box) = lm {
-                if std::ptr::addr_eq(lm_box.as_ref() as *const _, mp.as_ref() as *const _) {
-                    continue; // c:595
-                }
+        for (mp_idx, mp) in mstack_snapshot.iter().enumerate() {
+            if lm == Some(mp_idx) {
+                continue; // c:595 — `lm && lm == mp`
             }
             // c:592-597 — anti-recursion guard: in a recursive (test) call,
             // don't apply a `*` (wlen<0) matcher at the very start of the line
@@ -1334,11 +1341,35 @@ pub fn match_str(
                     }
                 }
 
-                // c:717 — pattern_match(mp.line, l + loff).
+                // c:717 — `if (!pattern_match(mp->line, l + loff, NULL, NULL))
+                //              continue;`
+                //
+                // `l + loff` may legitimately address the terminating NUL, and
+                // C treats that as a MATCH, not a miss: every loop in
+                // pattern_match is guarded on `*s` (c:1552, c:1601, c:1609),
+                // so an empty line string falls straight through to
+                // `return 1`. The bounds check that used to stand here turned
+                // exactly that case into a `continue`.
+                //
+                // That is not a corner case, it is the ONLY way an
+                // end-anchored insertion can fire. For `r:|=*` the parser
+                // leaves line=NULL/llen=0 AND right=NULL/ralen=0
+                // (complete.c:341-358, c:360-371), so in SUFFIX mode
+                // (c:710-711) `loff = -(llen + alen) = 0` while `l` still
+                // sits at the end of the line string — `l + loff` IS the NUL.
+                // The matcher was therefore skipped outright on every
+                // candidate, and `r:|=*` (the "insert anything at the end"
+                // half of the standard `r:|/=* r:|=*` path spec) never
+                // matched a non-empty `$SUFFIX`: `PREFIX=/a/b SUFFIX=/c`
+                // against `/ax/bx/cx` added 0 where zsh adds 1.
+                //
+                // `r:|/=*` was unaffected because its anchor makes alen 1, so
+                // `loff` is -1 and the index stayed inside the buffer — which
+                // is why the gap survived the c:1182-1231 suffix-branch fix.
+                // Nothing else needs the guard: c:698 above already bounds
+                // `l + loff` from below (`ll >= llen + alen`), and `get(..)`
+                // yields an empty slice at the end rather than panicking.
                 let l_off_idx = (l_pos + loff).max(0) as usize;
-                if l_off_idx >= l_bytes.len() {
-                    continue;
-                }
                 let line_slice = l_bytes.get(l_off_idx..).unwrap_or(&[]);
                 if pattern_match(mp.line.as_deref(), line_slice, None, b"") == 0 {
                     continue;
@@ -1667,17 +1698,41 @@ pub fn match_str(
                 exact = 0;
                 ow_pos = w_pos;
 
+                // c:856-866
+                // ```c
+                //     if (!llen && !alen) {
+                //         lm = mp;
+                //         if (he) { mp = NULL; }   /* continue the ms loop */
+                //         else      he = 1;
+                //     } else { lm = NULL; he = 0; }
+                //     break;
+                // ```
+                // The matcher made no progress at all (`r:|=*` matching an
+                // empty insertion at the very end is the canonical case). C
+                // then relies on TWO escapes, and this port had neither
+                // working, which is why enabling `r:|=*` on the suffix side
+                // exposed a live hang: `PREFIX=/a/b SUFFIX=/cx` against
+                // `/ax/bx/cx` with `-M 'r:|/=* r:|=*'` spun inside compadd
+                // until the harness killed it.
+                //   1. `lm = mp` + c:595 stops THIS matcher being re-applied
+                //      on the next pass — see the `lm` declaration above.
+                //   2. `mp = NULL` on a SECOND zero-progress hit drops out of
+                //      the matcher scan with nothing selected, so c:993's
+                //      `if (mp) continue;` is false and control reaches the
+                //      exact-char code at c:998 (which either advances the
+                //      cursors or fails the match). The port set `matched` —
+                //      the flattened stand-in for `mp` — to Some here, i.e.
+                //      the exact opposite, and looped instead.
                 if llen_new == 0 && alen_new == 0 {
-                    // c:856
-                    lm = Some(Box::new((**mp).clone()));
+                    lm = Some(mp_idx); // c:857
                     if he == 0 {
-                        he = 1;
+                        he = 1; // c:863
                     } else {
-                        // signal outer loop continue
-                        matched = Some(mp.clone());
+                        matched = None; // c:860 `mp = NULL`
                         break;
                     }
                 } else {
+                    // c:865
                     lm = None;
                     he = 0;
                 }
@@ -5798,6 +5853,160 @@ mod tests {
             vec!["/a1x/c1".to_string(), "/a1y/c1".to_string()],
             "PREFIX=/a1 SUFFIX=/c1 with r:|/=* must rebuild each whole word; \
              dropping the prefix half (c:1220-1221) yielded just the suffix"
+        );
+    }
+
+    /// `r:|=*` — the END-ANCHORED insertion half of the standard path spec
+    /// `r:|/=* r:|=*` — has to fire on the SUFFIX side of `comp_match`.
+    ///
+    /// The parser leaves that spec with line=NULL/llen=0 AND right=NULL/ralen=0
+    /// (`Src/Zle/complete.c:341-358`, c:360-371). In suffix mode `match_str`
+    /// therefore computes `loff = -(llen + alen) = 0` (`compmatch.c:710-711`)
+    /// while `l` still sits at the END of the line string, so C's
+    /// `pattern_match(mp->line, l + loff, ...)` (c:717) is handed the
+    /// terminating NUL — and returns 1, because all three of its loops are
+    /// guarded on `*s` (c:1552, c:1601, c:1609). This port had a bounds check
+    /// there that turned "cursor at end of buffer" into a `continue`, which
+    /// skipped the matcher on every candidate. `r:|/=*` was unaffected (its
+    /// anchor makes alen 1, so the index stayed inside the buffer), which is
+    /// why the gap outlived the c:1182-1231 suffix-branch fix.
+    ///
+    /// Measured, `zsh -f -i` 5.9.2 vs this binary, same synthetic compadd
+    /// (`PREFIX=a SUFFIX=c`, `-M 'r:|=*'`, candidate `axcx`):
+    /// zsh `nmatches=1`, this port `nmatches=0` before / `1` after.
+    #[test]
+    fn match_str_end_anchored_insertion_fires_on_suffix_side() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|=*");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "r:|=*".to_string(),
+            }));
+        }
+        update_bmatchers();
+
+        // (1) The c:717 site itself. Suffix "c" against word tail "cx": the
+        // `*` consumes the trailing "x", then 'c' matches 'c' exactly, so
+        // c:1084 returns iw == 2. The skipped matcher left 'c' facing 'x'
+        // with nothing to bridge them, i.e. -1 from c:1041.
+        let msl = match_str(b"c", b"cx", None, 0, None, /* sfx */ 1, 0, 0);
+
+        // (2) The same thing through comp_match, and (3) two candidates that
+        // differ only inside the region the matcher expands must each come
+        // back as their own whole word.
+        let mut got: Vec<Option<String>> = Vec::new();
+        for w in ["axcx", "aycx"] {
+            let mut clp: Option<Box<Cline>> = None;
+            let mut exact = 99i32;
+            got.push(comp_match(
+                "a",
+                "c",
+                w,
+                None,
+                Some(&mut clp),
+                1,
+                None,
+                0,
+                None,
+                0,
+                &mut exact,
+            ));
+            assert_eq!(exact, 0, "{} is not literally PREFIX+SUFFIX", w);
+        }
+
+        // (4) Control: the empty anchor must NOT fire in PREFIX mode. C
+        // reaches c:728 with `both == 0` there (c:712-714) and unconditionally
+        // continues, so "a" cannot match "xa" by inserting at the front.
+        let mpl = match_str(b"a", b"xa", None, 0, None, /* sfx */ 0, 0, 0);
+
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        update_bmatchers();
+
+        assert_eq!(
+            msl, 2,
+            "r:|=* must consume the trailing insertion on the suffix side \
+             (c:717 is handed the terminating NUL and C treats that as a match)"
+        );
+        assert_eq!(
+            got,
+            vec![Some("axcx".to_string()), Some("aycx".to_string())],
+            "PREFIX=a SUFFIX=c with r:|=* must match both candidates and \
+             rebuild each whole word; the skipped matcher rejected both"
+        );
+        assert_eq!(
+            mpl, -1,
+            "r:|=* is suffix-only: c:728 rejects it in prefix mode because \
+             `both` is 0 there"
+        );
+    }
+
+    /// A `*` matcher that consumes NOTHING must not be re-applied forever.
+    ///
+    /// `r:|=*` matching an empty insertion leaves `llen` and `alen` both 0 at
+    /// `compmatch.c:835`, so none of the cursors move. C survives that with
+    /// `lm = mp` + the `lm == mp` skip at c:595, and — on a second
+    /// zero-progress hit from a different matcher — with `mp = NULL` at
+    /// c:860, which drops out of the matcher scan so c:993 falls through to
+    /// the exact-char code at c:998 instead of looping.
+    ///
+    /// This port had neither: `lm` held a fresh `Box` clone whose address
+    /// could never equal the snapshot entry's, so c:595 was dead code, and the
+    /// c:860 branch set `matched` to `Some` — the opposite of `mp = NULL`.
+    /// Both were unreachable only because the c:717 bounds check kept `r:|=*`
+    /// from ever firing; with that removed, `PREFIX=/a/b SUFFIX=/cx` against
+    /// `/ax/bx/cx` with `-M 'r:|/=* r:|=*'` spun inside `compadd` until the
+    /// pty harness killed the shell at 7s (zsh answers `nmatches=1`).
+    ///
+    /// A regression here is an infinite loop, not a wrong value, so the call
+    /// runs on a helper thread with a deadline.
+    #[test]
+    fn match_str_zero_progress_star_matcher_terminates() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=* r:|=*");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "r:|/=* r:|=*".to_string(),
+            }));
+        }
+        update_bmatchers();
+
+        // The suffix half of that case: `$SUFFIX` is "/cx" and the word tail
+        // left by the prefix match is also "/cx", so `r:|=*` matches an EMPTY
+        // insertion at the end (ct == 0) before the three characters are
+        // consumed exactly. iw == 3.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(match_str(b"/cx", b"/cx", None, 0, None, /* sfx */ 1, 0, 0));
+        });
+        let msl = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "match_str spun on a zero-progress `r:|=*` match: the \
+                     c:595 `lm == mp` skip and/or the c:860 `mp = NULL` escape \
+                     is not reproducing C"
+                )
+            });
+
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        update_bmatchers();
+
+        assert_eq!(
+            msl, 3,
+            "the whole word tail is consumed once the empty insertion is \
+             accepted and skipped"
         );
     }
 
