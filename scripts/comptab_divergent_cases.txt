@@ -3179,3 +3179,52 @@ tor-resolve -
 # message. Three sub-divergences: name attribution, token untokenization,
 # error count. Needed for byte parity even after blockers 1 and 2; the
 # fingerprint masks digits, so it shows in the row diff, not the hash.
+
+# ============================================================================
+# 'upmendex -' — OPEN. zshrs drops a multibyte description; NOT localized.
+# ============================================================================
+#   row 4: zsh  = '-g  -- make Japanese index head <あかさたなはま<partial>'
+#          zshrs= '-g  -- make Japanese index head <'
+# Every other column matches. Source is a plain, valid-UTF-8 `_arguments`
+# spec, .zinit/…/zsh-more-completions/src/_upmendex:13
+#     '-g[make Japanese index head <あかさたなはまやらわ>.]'
+# od confirms clean 3-byte UTF-8 kana, no metafication in the file.
+#
+# MINIMAL REPRO (the real completer is not needed):
+#   _zzmb() { _arguments '-g[make Japanese index head <あかさたなはまやらわ>.]' \
+#                        '-h[plain ascii description here]' }
+#   compdef _zzmb true
+#   scripts/comptab_parity.py --case 'true -' --keys tab --cols 40 --init-extra <that>
+# At --cols 40 the divergence is one row, first differing column 33. A SHORT
+# multibyte description (`<あかさ>`) PASSES at the default width, so this is
+# not decoding — it only appears once the string reaches the screen edge.
+#
+# TWO WRONG TURNS, recorded so they are not repeated:
+#
+#  1. "zsh truncates by BYTES and emits a partial character." FALSE. The `?`
+#     in the row diff is pyte rendering a wide character at the screen edge,
+#     not a partial write. A direct PTY capture of REAL zsh shows the full
+#     three bytes: b'Japanese index head <\xe3\x81\x82'.
+#
+#  2. Following from (1), c:complist.c:795-817 was read as the cut site,
+#     because the screen-full test at c:799 genuinely does sit inside the
+#     per-BYTE loop while c:813-814 defers only the COLUMN update to the last
+#     byte — so C *can* emit a partial character when the screen fills
+#     mid-character, and the port (`clnicezputs`, complist.rs:1379) iterates
+#     `rep.chars()` and tests once per CHARACTER instead. That IS a real
+#     divergence from the C, but it is NOT this bug: at 40 columns `col` is
+#     33 when the kana is reached, never `zterm_columns - 1`, so the check
+#     never fires. A port of the byte-level check was written, built, and
+#     REVERTED because it changed nothing measurable here and no case
+#     demonstrating it could be constructed. Left unported and undemonstrated
+#     rather than landed on faith.
+#
+# Also do NOT hand-roll a PTY for this. Two ad-hoc captures were wasted: the
+# first showed zshrs's native ZLE autosuggestion/highlight output (the knob is
+# ZSHRS_NATIVE_ZLE_FX=0, scripts/comptab_parity.py:483, not `ZLE_FX`), and
+# with it set the ad-hoc rig still would not reproduce the option listing at
+# all. Use scripts/comptab_parity.py.
+#
+# NEXT STEP: find where the description is cut before reaching the terminal.
+# It is upstream of clnicezputs — compare what compdescribe/_description build
+# as the display string on each side, not what complist prints.
