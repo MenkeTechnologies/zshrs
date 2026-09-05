@@ -166,6 +166,26 @@ fn dates_fmt(timespec: &str) -> String {
 /// `_globquals` — complete glob qualifiers inside `(...)`.
 pub fn _globquals() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globquals");
+    // sh:5 — `local -a alts tdisp sdisp tmatch smatch`.
+    //
+    // `alts` is the sort-specifier catalogue this function hands to
+    // `_describe` (sh:170-181); it is the only name on sh:5 the port
+    // materialises as a shell parameter, so `tdisp`/`sdisp`/`tmatch`/
+    // `smatch` are deliberately left out — they stay Rust-side and a
+    // declaration for them would only create and unwind a shadow with no
+    // counterpart in the port's execution.
+    //
+    // `quals` (sh:224) is declared here rather than at its own site: the
+    // upstream `local -a quals` sits inside the `(qual)` case arm, but a
+    // `local` in a case arm is still FUNCTION scope, and nothing reads the
+    // name before that point. Without it, `ls *(<TAB>` left the full
+    // qualifier table standing in the user's shell:
+    //
+    //   zsh  : quals=[][0]        zshrs: quals=[array][47]
+    crate::compsys::ported::shared::declare_locals(
+        &["alts", "quals"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:8  while [[ -n $PREFIX ]]; do
     loop {
         // sh:8 loop guard.

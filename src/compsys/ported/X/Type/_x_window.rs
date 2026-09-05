@@ -90,6 +90,21 @@ fn extract_id(line: &str) -> String {
 /// `xwininfo -root -tree`.
 pub fn _x_window(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_window");
+    // sh:3 — `local list expl`.
+    //
+    // `list` is the `xwininfo -root -tree` window table the port publishes
+    // by name for `_describe`'s `-ld`; `expl` is left out because the port
+    // never writes it. Without the declaration `xwininfo -id <TAB>` left
+    // the name standing in the user's shell:
+    //
+    //   zsh  : list=[][0]        zshrs: list=[array][0]
+    //
+    // (The array is empty on this host because `xwininfo` reports no
+    // matching children; the leak is that the NAME exists at all — zsh
+    // leaves it unset.)  Declared as a plain scalar, exactly as sh:3 does;
+    // it becomes an array on assignment the same way `list=( … )` converts
+    // it upstream.
+    crate::compsys::ported::shared::declare_locals(&["list"], 0);
     // sh:5  _tags windows || return 1
     if _tags(&["windows".to_string()]) != 0 {
         return 1;

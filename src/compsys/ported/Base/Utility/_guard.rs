@@ -76,6 +76,19 @@ fn run_zparseopts_guard(args: &[String]) -> Vec<String> {
 /// supplied pattern; returns 0 only when something is typed.
 pub fn _guard(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_guard");
+    // sh:3 — `local garbage`.
+    //
+    // `garbage` is the `zparseopts -a garbage` sink (sh:5) — the whole
+    // point of the name is that the parsed options are thrown away — and
+    // the port creates it as a shell parameter so zparseopts has a target.
+    // Without the declaration every `_guard`-using spec left it behind;
+    // measured on `jq -<TAB>`:
+    //
+    //   zsh  : garbage=[][0]        zshrs: garbage=[array][2]
+    //
+    // Declared as a plain scalar, exactly as sh:3 does; `zparseopts -a`
+    // converts it to an array the same way it does upstream.
+    crate::compsys::ported::shared::declare_locals(&["garbage"], 0);
     // sh:5
     let mut argv = run_zparseopts_guard(args);
 

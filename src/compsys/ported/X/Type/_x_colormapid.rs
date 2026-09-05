@@ -87,6 +87,19 @@ fn strip_after_first_space(s: &str) -> String {
 /// `RGB_COLOR_MAP`-typed root-window properties.
 pub fn _x_colormapid(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_colormapid");
+    // sh:3 — `local expl list desc`.
+    //
+    // `list` is the `xprop -root -f RGB_COLOR_MAP` table the port publishes
+    // by name for `_describe`'s `-ld` (sh:9-13). `expl`/`desc` stay
+    // Rust-side. Without the declaration `xwit -colormap <TAB>` left the
+    // name standing:
+    //
+    //   zsh  : list=[][0]        zshrs: list=[array][0]
+    //
+    // Declared as a plain scalar, exactly as sh:3 does; it becomes an array
+    // on assignment the same way `list=(${(f)"$(xprop …)"})` converts it
+    // upstream.
+    crate::compsys::ported::shared::declare_locals(&["list"], 0);
     // sh:5
     if _tags(&["colormapids".to_string()]) != 0 {
         return 1;

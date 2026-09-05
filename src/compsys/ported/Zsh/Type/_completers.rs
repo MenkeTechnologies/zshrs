@@ -67,6 +67,24 @@ fn run_zparseopts_p(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// chain). `-p` flag prepends `_` to each name (autoload-style).
 pub fn _completers(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_completers");
+    // sh:4 — `local us`; sh:5 — `local -a disp list expl`.
+    //
+    // Both names are published as shell parameters: `us` is the
+    // `zparseopts 'p=us'` target (sh:9) and `list` is the completer-name
+    // table `_wanted` reads by name (sh:12-14). `disp`/`expl` are left out
+    // — the port never writes them. Without the declaration
+    // `zstyle ':completion:*' completer <TAB>` left both standing:
+    //
+    //   zsh  : list=[][0]         us=[][0]
+    //   zshrs: list=[array][11]   us=[array][1]
+    //
+    // `us` is declared as a plain scalar, exactly as sh:4 does; zparseopts
+    // converts it to an array the same way it does upstream.
+    crate::compsys::ported::shared::declare_locals(&["us"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["list"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:7-8
     let list: Vec<&str> = vec![
         "complete",
