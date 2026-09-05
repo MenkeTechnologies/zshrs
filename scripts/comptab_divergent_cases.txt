@@ -3002,3 +3002,9 @@ tor-resolve -
 #   # elapsed: 173.6s (1.7s/cell)
 #   # 2 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
 #   TIMEOUT tab1               'write '  (zshrs: nothing at all after key 'tab' within 10.0s)
+#
+# chunk part_05  cells 7865-7964  'xdvipdfmx -' .. 'xmodmap '   [PIN 2]
+#   # 100 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 140.8s (1.4s/cell)
+#   # 3 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
