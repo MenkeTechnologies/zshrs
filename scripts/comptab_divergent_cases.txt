@@ -2386,3 +2386,19 @@ read
 #   FAIL   tab1               'taskinfo '  (1 row(s) differ)
 #     b29792c9a7  x1   smallest: --case 'taskinfo ' --keys tab
 #        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
+#
+# chunk part_07  cells 7001-7100  'tcamttest ' .. 'texfot -'
+#   # 95 passed, 5 failed, 100 cell(s)
+#   # categories: PASS=95 FAIL=5 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 233.7s (2.3s/cell)
+#   # 5 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'tcpdump '  (8 row(s) differ)
+#     303d418be1  x1   smallest: --case 'tcpdump ' --keys tab
+#        cell/rowtop/col0 | ref/\( ah esp host iso mpls port ra tcp | test/(eval):#: bad math expression: empty string
+#   FAIL   tab1               'tcpdump -'  (3 row(s) differ)
+#     208a5b04e4  x1   smallest: --case 'tcpdump -' --keys tab
+#        cell/rowtop/col0 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/(eval):#: bad math expression: empty string
+#   FAIL   tab1               'termshot '  (1 row(s) differ)   fp b29792c9a7
+#   FAIL   tab1               'texfot '  (1 row(s) differ)     fp b29792c9a7
+#   FAIL   tab1               'texfot -'  (1 row(s) differ)    fp 4356dd07a7
+#        cell/rowlist/col0 | ref/-/ | test/-
