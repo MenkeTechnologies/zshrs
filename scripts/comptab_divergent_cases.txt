@@ -1687,3 +1687,9 @@ ldapsearch
 #   FAIL   tab1               'ponysay -'  (23 row(s) differ)
 #   FAIL   tab1               'ponythink '  (23 row(s) differ)
 #   FAIL   tab1               'ponythink -'  (19 row(s) differ)
+#
+# chunk part_03  cells 5501-5600  'ppdi -' .. 'ppmtoneo '
+#   # 100 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 334.7s (3.3s/cell)
+#   # 8 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
