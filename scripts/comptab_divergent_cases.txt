@@ -3228,3 +3228,222 @@ tor-resolve -
 # NEXT STEP: find where the description is cut before reaching the terminal.
 # It is upstream of clnicezputs — compare what compdescribe/_description build
 # as the display string on each side, not what complist prints.
+
+# ============================================================================
+# THE THREE CELLS THE 6301-7400 SWEEP LEFT OPEN: 'tac -', 'tig '/'tig -',
+# 'tor-resolve ' — root-caused 2026-09-05
+# ============================================================================
+# Measured with a pinned+codesigned debug build in a PRIVATE scratch dir, a
+# pre-warmed shared .zcompdump (zsh 5.9.2, comps=51705, md5 51299627d431…
+# before AND after every run) and 40x110.  The isolation probes ran from a
+# cwd with NO `-` directory, which is what makes 'tac -' show as silence
+# rather than as the `-`-directory class; the 50-cell regression corpus ran
+# from the repo root the way a sweep does, where 'tac -' shows 7 rows.
+# `tac --version` really is GNU coreutils 9.11 on this host, so the reference
+# side is not in question in any of the three.
+#
+# ---------------------------------------------------------------------------
+# CLOSED — 'tor-resolve ' and 'tor-resolve -': an `_arguments` action that is
+# NOT a shell function was dispatched as if it could only ever be one.
+# fp 655a09ca28 / 8e5553753d.  The DIAGNOSTIC is now byte-identical; a ZLE
+# framing divergence survives and is filed separately below.
+# ---------------------------------------------------------------------------
+#
+#     before   zsh    $ tor-resolve _arguments:465: command not found: port]:
+#              zshrs  $ tor-resolve                       (nothing at all)
+#     after    both   _arguments:465: command not found: port]:
+#
+# The completer is the user-fpath
+# .../zsh-more-completions/more_src6/_tor-resolve, whose rest spec is
+#     '*:hostname or IP and SOCKS host[:port]:'
+# — a MESSAGE carrying an unescaped `:`.  `parse_caarg` with `mult == 0`
+# (Src/Zle/computil.c:1137-1138) takes the description up to the FIRST colon
+# and EVERYTHING after it as the action, so the action is the word `port]:`
+# and `_arguments` sh:465 runs it as a command.  zshrs's `parse_caarg`
+# (src/ported/zle/computil.rs:2107) already split it exactly that way — the
+# spec parse was never the bug.
+#
+# The bug was one level up.  Both action arms of the `_arguments` port ran
+#     dispatch_function_call(cmd, argv).unwrap_or(1)
+# and `dispatch_function_call` resolves SHELL FUNCTIONS and the native ports
+# standing in for them and nothing else — src/vm_helper.rs ends that path in
+# `functions_compiled.get(name).cloned()?`.  A builtin, an executable on
+# `$PATH`, and a name that exists NOWHERE all come back `None`, and the call
+# site turned all three into a plain non-zero status.  A command word the
+# shell would have DIAGNOSED therefore vanished without a byte, which is the
+# taxonomy's cause-4 "zero matches, zero bytes" disguise.
+#
+# Isolated to three synthetic one-line completers, sourced by BOTH shells from
+# the harness init (`--init-extra`-style), so the finding does not depend on
+# the tor-resolve file at all:
+#
+#     _arguments '*:m:nosuchcmd_zz'   zsh  _arguments:465: command not found: …
+#                                     rs   (silent)                  <- FIXED
+#     _arguments '*:m: nosuchcmd_zz'  zsh  _arguments:455: command not found: …
+#                                     rs   (silent)                  <- FIXED
+#     _arguments '*:m:/bin/echo'      zsh  runs it, prints `-J -default-`
+#                                     rs   (silent)                  <- OPEN
+#
+# Fix: `shared::dispatch_action_command(cmd, argv, line)` — the extraction of
+# the tail `_all_labels`' private `dispatch_action` already had, now the one
+# implementation both ports call.  Four outcomes, matching what `execcmd`
+# does with a command word: `compadd` goes to the real builtin; a shell
+# function or port runs; a name that IS a builtin or IS on `$PATH` keeps the
+# pre-existing "action did not succeed" answer (no execution route exists from
+# here — this is the `/bin/echo` line above, still divergent but SILENT on
+# both sides of the fence); and only a name resolving to nothing reaches
+# `Src/exec.c:903`'s `zerr("command not found: %s", arg0)`, emitted through
+# `zwarn` (not `zerr`: c:903 runs in the forked child that `_exit(127)`s at
+# c:908, so the parent's errflag is never raised, and raising it here would
+# abandon the rest of the completion).  The upstream line is published through
+# `set_sh_lineno` so the prefix reads `_arguments:465:` exactly as zsh's does.
+#
+# Not a `_tor-resolve`-only fix: the silent arm was on EVERY `_arguments`
+# command-form action in the shell.  The sibling sites in `_alternative`,
+# `_values` and `_describe` have the same shape and were NOT converted here —
+# they are the obvious next batch and each needs its own upstream line
+# number: `_alternative` sh:71 (src/compsys/ported/Base/Utility/_alternative.rs:331)
+# and the two `_values` sites (src/compsys/ported/Base/Utility/_values.rs:508
+# and :527, which additionally DISCARD the status).
+#
+#
+# REGRESSION EVIDENCE for the fix: the same 50-cell corpus was run against the
+# pinned PRE-fix and POST-fix binaries back to back, same dump (md5
+# 51299627d431… unchanged before and after both runs), same geometry,
+# --sequences tab1 --jobs 3.  The failing SET is identical:
+#     pre    44 PASS  5 FAIL  1 TIMEOUT   (tac -, env -, nice -, tor-resolve -,
+#                                          xargs -; TIMEOUT 'tor-resolve ')
+#     post   44 PASS  6 FAIL  0 TIMEOUT   (the same six buffers)
+# — no cell that passed before fails now, and the only movement is
+# `'tor-resolve '` going from an unscoreable ONE-SIDED SILENCE to a real,
+# comparable divergence.  Neither tor-resolve cell turns green, because of the
+# framing gap below; the honest summary is that the CONTENT gap closed and a
+# PRESENTATION gap was uncovered underneath it.
+#
+# ---------------------------------------------------------------------------
+# OPEN, NEW, SEPARATE SUBSYSTEM — a diagnostic raised DURING completion is
+# framed differently: zshrs newlines before it and redraws the prompt after.
+# ---------------------------------------------------------------------------
+# Exposed by the fix above, not caused by it: before, zshrs emitted no
+# diagnostic at all on this path, so the framing had nothing to frame.  Raw
+# pty bytes after the Tab, same cell, same init:
+#
+#     zsh    _arguments:465: command not found: port]:\r\n
+#     zshrs  \r\r\n_arguments:465: command not found: port]:\r\n
+#            \e[0m\e[27m\e[24m\e[J@CT@ tor-resolve\e[K\e[1C
+#
+# so the message TEXT and the `_arguments:465:` prefix agree to the byte and
+# the difference is entirely (a) a leading `\r\r\n` and (b) a prompt redraw
+# afterwards.  That is the `zwarning` -> `zleentry(ZLE_CMD_TRASH)` ->
+# `trashzle` path (Src/utils.c:144-145, Src/Zle/zle_main.c:2069-2098;
+# src/ported/utils.rs:141-166, src/ported/zle/zle_main.rs:2438).  C's
+# `trashzle` emits nothing here — no `\r`, no newline — and does not repaint
+# inside the settle window; zshrs's does both.  A plain `print -u2` from
+# inside a completer is framed IDENTICALLY on both shells, so this is
+# specific to the trash/`resetneeded` path and not to writing during
+# completion in general.
+#
+# It costs these two cells their PASS (`'tor-resolve '` 3 rows, `'tor-resolve -'`
+# 13 rows, FAIL 3/3 each) and will cost every future cell where a completer
+# legitimately warns.  Not taken here: it is `src/ported/zle/**`, a different
+# subsystem from the compsys ports, and `trashzle` itself reads as a faithful
+# port — the divergence is in what `zrefresh()`/`moveto(NLNCT, 0)` emit ahead
+# of it, which is a zle_refresh question.
+tor-resolve 
+# tor-resolve -   (already a corpus entry at line 2777; not duplicated here)
+#
+# ---------------------------------------------------------------------------
+# NOT A COMPLETION BUG — 'tac -' is zshrs's own `tac` BUILTIN answering the
+# variant probe.  A CLASS, but a smaller one than it looks: 31 candidate
+# completers, 3 actually divergent on this host.
+# fp 5378f5ae30.  The fix is a policy call in `src/extensions/**`, not here.
+# ---------------------------------------------------------------------------
+# Instrumented by re-defining `_tac` from the harness init with the upstream
+# body plus prints (it has no native port, so a shell definition wins — the
+# `_default` probe recorded above failed only because `_default` DOES have
+# one).  Byte-for-byte, same init, same cwd, same key:
+#
+#     zsh    PB:callprog len=320 head=[tac (GNU coreutils) 9.11 …]
+#            PB:patmatch YES   PB:pv rc=0   -> _arguments  -> 5 options
+#     zshrs  PB:callprog len=37  head=[tac: unrecognized option: '--version']
+#            PB:patmatch NO    PB:pv rc=1   -> _default -> _files -> 0 matches
+#
+# `_tac` sh:4 is `_pick_variant gnu='(Free Soft|uutils)' unix --version || {
+# _default; return }`, and sh:36 runs `$opts[-c] --version` as an ordinary
+# command word with an EMPTY `$pre`.  zsh has no `tac` builtin so that is
+# /opt/homebrew/bin/tac (GNU coreutils 9.11).  zshrs ships `tac` as one of its
+# in-process coreutils shadows (`src/extensions/ext_builtins.rs:7205`
+# `builtin_tac`, listed in `EXT_BUILTIN_NAMES` and dispatched by fusevm), and
+# that builtin rejects `--version` at ext_builtins.rs:7227.  So the port is
+# FAITHFUL and the divergence is in the shell's command table.
+# `ZSHRS_HIDE_EXT_BUILTINS=1` does not help: it hides the names from
+# `$builtins` but, by its own design note, leaves DISPATCH untouched — with
+# the flag set `whence -w tac` says `command` and `tac --version` still errors.
+#
+# BLAST RADIUS — and the first count was WRONG, which is the useful part.
+# `${(ok)builtins}` differs by 118 names between the two shells; for each, the
+# first `_NAME` on this host's fpath was checked for a `_pick_variant` call.
+# THIRTY-ONE hit:
+#   base64 basename cat cksum comm cut date env find fold head hostname id
+#   mkfifo mktemp nice nl paste pmap seq sort tac tail tee touch tr tty uname
+#   unexpand uniq wc
+# and it is tempting to call all 31 broken, because `--version` fails on the
+# builtin for nearly all of them.  RUN THEM AND EXACTLY THREE DIVERGE.  A
+# 50-cell corpus (the 31 above as `NAME -`, plus the three assigned cells and
+# 16 `_arguments`-heavy commands) scores 44 PASS / 5 FAIL / 1 TIMEOUT, and the
+# coreutils failures are only `tac -`, `env -` and `nice -`.
+#
+# The reason the other 28 pass is worth writing down: this is macOS, so the
+# `$PATH` `cat`/`head`/`cut`/`date`/`sort`/… are BSD, and zsh's probe fails
+# its `gnu=` pattern too.  Both shells therefore take the non-GNU arm and
+# agree BY COINCIDENCE.  The three that fail are the three where the two
+# shells' probes disagree:
+#     tac    zsh `tac (GNU coreutils) 9.11`   (/opt/homebrew/bin/tac)
+#            rs  `tac: unrecognized option: '--version'`
+#     env    zsh `env: illegal option -- e`   (/usr/bin/env)
+#            rs  `env: invalid option: --version`
+#     nice   zsh `nice: -version: invalid nice value`  (/usr/bin/nice)
+#            rs  `nice: unrecognized option: '--version'`
+# So the trigger is not "zshrs shadows the name" but "zshrs shadows the name
+# AND its builtin answers `--version` differently from the host's binary".
+# That makes the count HOST-DEPENDENT: install GNU coreutils unprefixed and
+# every one of the 31 moves into the failing set.
+#
+# Two candidate fixes, and choosing between them is a decision about the
+# shadow builtins rather than about compsys:
+#   (1) in `_pick_variant`, force `$pre=command` (sh:18's own value) when the
+#       probed name is a zshrs shadow builtin AND an external of that name
+#       exists — the probe then runs the same binary zsh's does and all 31
+#       recover at once.  One branch, entirely in
+#       src/compsys/ported/Base/Utility/_pick_variant.rs.  It is a DELIBERATE
+#       divergence from the sh body, which is why it was not taken
+#       unilaterally.
+#   (2) at the builtin layer: have the coreutils shadows answer `--version`.
+#       Honest output (`tac (zshrs …)`) does NOT match `(Free Soft|uutils)`,
+#       so on its own this fixes nothing; claiming a GNU version string would
+#       be a lie about provenance.  Which makes (1) the only one that
+#       actually restores parity — but it belongs to whoever owns the
+#       shadow-builtin policy.
+#
+# What the `-` directory had to do with it: nothing.  In the repo root
+# `_default` -> `_files` matched the litter DIRECTORY and inserted `-/`,
+# which made the cell look like the 4356dd07a7 class.  From a clean cwd
+# `_files` matches nothing and the cell is ONE-SIDED SILENCE.  The litter was
+# hiding a zero-match, not causing one.
+# tac -           (already a corpus entry at line 2712; not duplicated here)
+#
+# ---------------------------------------------------------------------------
+# CLOSED BY SOMEONE ELSE / STALE — 'tig ' and 'tig -' now PASS 3/3.
+# fp 6da99e167b / 292e010414.
+# ---------------------------------------------------------------------------
+# The recorded failure was `<path>:103: command not found: __git_complete`,
+# i.e. `functions[__git_complete]=:` not taking effect before `_tig` sources
+# tig-completion.bash.  Against current main it does not reproduce: the cell
+# PASSes 3/3 serially, and running `_tig`'s exact body (stub install, source,
+# restore) inside a real completion context on both shells prints the same
+# six probe lines to the byte —
+#     TG:old_len=0 / TG:stub_set defined=1 body=[\t:] /
+#     TG:sourced rc=0 tigmain=1 / TG:restored defined=1
+# — so the stub is installed, absorbed and restored identically.  No commit
+# is claimed for it; it joins the RE-VERIFICATION list above as another
+# recorded-OPEN entry that went stale.  Re-measure before chasing.
