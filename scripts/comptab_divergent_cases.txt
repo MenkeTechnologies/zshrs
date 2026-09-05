@@ -2514,3 +2514,132 @@ read
 # `_taskinfo` is one line — `_arguments -s -S '*:process or pid:_pids'` — so
 # this is the live-`ps` artefact class (`kill `, `gcore `, `ps `, …) reached
 # from a new command name.  Discard; do not file, do not add to the corpus.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — `[[:ascii:]]` MATCHES NOTHING.  fp 1479a74662.
+# Found as 'scselect '; the cause is in the CORE pattern compiler, not in
+# compsys, and it is the only POSIX class of the thirteen that diverges.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# The cell's one differing row is the inserted match:
+#     zsh    $ scselect Automatic
+#     zshrs  $ scselect EBD48FD4-3E2B-4F7B-9449-EDE1D70DD401
+# i.e. zshrs inserts the location UUID where zsh inserts its name.
+#
+# `Completion/Darwin/Command/_scselect` sh:25 is the branch that decides:
+#     if [[ $l == [[:ascii:]]## ]]; then loc2+=( $l ); else loc2+=( $u ); fi
+# The comment above it says the UUID is the deliberate FALLBACK for a name
+# that is not representable in Mac OS Roman, so taking the else-arm for a
+# plain ASCII name is a silent wrong answer, not a cosmetic one.
+#
+# The whole `_scselect` pipeline was replayed line by line off a captured
+# `scselect` transcript under both shells (`setopt extendedglob`, which
+# `_main_complete` sets).  Every intermediate is byte-identical — the `(f)`
+# split, the `##[*[:space:]]##` strip, the `//:/\\:` escape, the
+# `/[[:space:]]##\(/$'\0'` NUL substitution, the `%\)` strip and the
+# `"${(@0)tmp}"` two-name loop all agree.  Exactly one thing differs:
+#     zsh    [[ Automatic == [[:ascii:]]## ]]  ->  true
+#     zshrs                                    ->  false
+#
+# SMALLEST REPRODUCER — no completion, no fpath, no extendedglob:
+#     zsh   -f -c '[[ a == [[:ascii:]] ]] && echo Y || echo N'   ->  Y
+#     zshrs -f -c '[[ a == [[:ascii:]] ]] && echo Y || echo N'   ->  N
+#
+# BOUNDED BY MEASUREMENT, all thirteen POSIX classes plus zsh's six
+# extensions, tested both as a bare `[[:c:]]` against `a` and as `[[:c:]]##`
+# against `Automatic`: alpha alnum blank cntrl digit graph lower print punct
+# space upper xdigit word IDENT IFS IFSSPACE INCOMPLETE INVALID all AGREE.
+# `ascii` is the ONLY divergence, in every pattern context:
+#     [[ a == [[:ascii:]] ]]        zsh Y   zshrs N
+#     [[ a == [^[:ascii:]] ]]       zsh N   zshrs Y     (negation inverts)
+#     [[ a == [[:ascii:]0-9] ]]     zsh Y   zshrs N     (the `0-9` member
+#                                                       still works, so the
+#                                                       class contributes an
+#                                                       EMPTY member set)
+#     case a in ([[:ascii:]]) …     zsh Y   zshrs N
+#
+# THE MISSING ARM.  `patcomppiece` (src/ported/pattern.rs:2137) compiles a
+# bracket expression by EXPANDING each POSIX class inline into an ASCII byte
+# set plus a wide-character `mb_classmask`:
+#     src/ported/pattern.rs:2303-2406   the `match class_name` byte-set arms
+#         alpha upper lower digit xdigit alnum space blank punct cntrl print
+#         graph, then `IDENT | IFS | IFSSPACE | WORD | INCOMPLETE | INVALID`
+#         as deliberate no-ops (they are resolved at MATCH time), then
+#         pattern.rs:2406  `_ => {}`          <-- `ascii` lands here
+#     src/ported/pattern.rs:2413-2434   the `mb_classmask |= match class_name`
+#         arms, ending pattern.rs:2433  `_ => 0`   <-- and here
+# So `[:ascii:]` compiles to zero members and zero mask bits, and the
+# bracket matches nothing at all.
+#
+# It is an OMISSION rather than a decision, and the file itself proves that:
+# PP_ASCII is ported everywhere else.  `range_type` (pattern.rs:2050) maps
+# the name through `POSIX_CLASS_NAMES` (pattern.rs:5132 `"ascii"`), the match
+# side implements it twice — pattern.rs:4399 `PP_ASCII => (c & !0x7f) == 0`
+# citing c:3894 and pattern.rs:4506 `t if t == PP_ASCII => (ch as u32) < 128`
+# — and pattern.rs:7647-7649 is a unit test asserting `range_type("ascii")`
+# resolves, captioned "PP_ASCII (c:colon_stuffs[2]) — was missing pre-fix".
+# The second, simpler compile path in `patcomppiece` was never updated with
+# it.  C has one table (`Src/pattern.c:3650, 3799, 3894, 4035`), not two.
+#
+# BLAST RADIUS in the completer corpus is small and was measured, not
+# guessed: `[[:ascii:]]` appears in exactly ONE file across the harness
+# $fpath and the bundled tree — `_scselect` (and its bundled twin, and
+# src/compsys/ported/Darwin/Command/_scselect:25).  The core gap is general,
+# though: any user pattern using the class silently matches nothing.
+scselect 
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — `_bpf_filters` PORT NEVER DEFINES `$flags` / `$subtypes`,
+# so `tcpdump <TAB>` prints a math error instead of completing.
+# fp 303d418be1 ('tcpdump ') and 208a5b04e4 ('tcpdump -').
+# ══════════════════════════════════════════════════════════════════════════
+#
+#   'tcpdump '   zsh   row 1: '\( ah esp host iso mpls port ra tcp …'
+#                zshrs row 1: '(eval):1: bad math expression: empty string'
+#                8 rows differ, FAIL 3/3
+#   'tcpdump -'  zsh   'zsh: do you wish to see all 177 possibilities (59 lines)?'
+#                zshrs same error line, 3 rows differ, FAIL 3/3, and the
+#                reference count 177/59 is STABLE across all three runs
+#
+# The diagnostic is `mathevalarg`'s, not `matheval`'s: C guards the
+# ARRAY-SUBSCRIPT entry point separately and says so in the comment at
+# Src/math.c:1525-1533 — "we don't allow an empty expression, whereas we do
+# with matheval() … e.g. $array[$ind] where ind hasn't been set produces an
+# error".  The Rust port carries the same guard verbatim at
+# src/ported/math.rs:4599-4602.  So the error means a subscript expanded to
+# the EMPTY STRING on a parameter that is not an association.
+#
+# `Completion/Unix/Type/_bpf_filters` sh:6 declares `local -A subtypes flags`
+# and sh:22-31 populates them; `$packet` (sh:7) is EMPTY until the `tcp[` /
+# `icmp[` guards at sh:76-79 set it.  With `flags` an ASSOCIATION, sh:70's
+#     ":expressions:expression:compadd ${=flags[$packet]}"
+# is a string-key lookup on the empty key and yields nothing, quietly.
+#
+# The port keeps the text but not the parameter.  `src/compsys/ported/Unix/
+# Type/_bpf_filters.rs` builds only `networks` (rs:141-158, `setaparam` at
+# rs:526 is `_bpf_argv`), and emits the other two interpolations VERBATIM
+# into the `_regex_arguments` spec:
+#     rs:180   "/(0x[0-9a-f]##|[0-9]##|${(j.|.)${=flags}}){sp}#/"
+#     rs:183   ":expressions:expression:compadd ${=flags[$packet]}"
+#     rs:283   ":subtypes:subtype:compadd ${=subtypes[$wlantype]:-$subtypes}"
+# `flags` and `subtypes` are never created, so at action time the subscript
+# is taken on an UNSET parameter — an ordinary array as far as the subscript
+# code is concerned — and the empty key is math-evaluated.
+#
+# BOTH SHELLS AGREE ON THE ERROR ITSELF, which is what makes it a port
+# omission and not a core divergence.  Two-line control, identical output on
+# zsh and on the pinned zshrs:
+#     g() { local packet; unset flags; print -r "[${=flags[$packet]}]" }; g
+#         zsh    g:3: bad math expression: empty string
+#         zshrs  g:3: bad math expression: empty string
+# and with `local -A flags` in scope BOTH print `[]` and no error.
+#
+# rs:180 is the second, quieter half: the pattern that should offer the flag
+# NAMES as an alternation keeps the literal `${(j.|.)${=flags}}` text, so the
+# expression head cannot match any of them either.
+#
+# NOT claimed: whether the `_regex_arguments` spec text is meant to be
+# expanded at BUILD time (as upstream's double quotes do) or deferred.  The
+# defect is the same either way — the parameters do not exist.
+tcpdump 
+tcpdump -
