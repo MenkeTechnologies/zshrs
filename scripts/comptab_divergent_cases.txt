@@ -1584,3 +1584,42 @@ ldapsearch
 # settled by making the cell MOVE (or provably not move) under a change, not
 # by pattern-matching the symptom.
 # ══════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP — 2026-09-05, discover CELLS 5201-6300 (`--sequences tab1`)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Range: discover_cases() indices 5201..6300 (1-based) of the 8270 cases this
+# host contributes, i.e. 1100 cells, one `tab1` cell per case.  First cell
+# 'pinky -', last cell 'scp '.  Slice reproduced exactly with
+# parity_corpus.discover_cases(None, False)[5200:6300] — the same
+# deterministic sorted set `--discover N` takes its prefix from, so cells
+# 1-5200 (mined by earlier sweeps) are the complement.
+#
+# MEASUREMENT PINS (private scratch dir, not shared with the peer agents that
+# were editing .rs files concurrently):
+#   zshrs  sha256 f248cb8e259762ccb2c8a859630a2636fda6a51a833ac32b34a7c2cfd2b371c8
+#          (copy of target/debug/zshrs at 1194d96100, `codesign -f -s -`d —
+#          an unsigned copy is SIGKILLed on exec and the harness reports it
+#          as a fake boot hang)
+#   dump   sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#          2122607 bytes (private copy of the zpwr dump).  Hashed BEFORE and
+#          AFTER every chunk; unchanged across the whole sweep, so no cell in
+#          this block sits inside a dump-rewrite window.
+#   mode native, geom 40x110, settle 300ms, `--jobs 4 --confirm 1` for the
+#   sweep; every FAIL re-confirmed serially and alone at `--jobs 1`, 3x.
+#
+# Exact sweep command, per 100-cell chunk:
+#   PYTHONPATH=/Users/wizard/Library/Python/3.14/lib/python/site-packages \
+#   /opt/homebrew/bin/python3.14 scripts/comptab_parity.py \
+#     --zshrs <pin>/zshrs.pin --dump <pin>/dump.pin --mode native \
+#     --corpus <pin>/part_NN.txt --sequences tab1 \
+#     --jobs 4 --confirm 1 --jsonl <pin>/part_NN.jsonl
+#
+# VERBATIM PER-CHUNK SUMMARY LINES, appended as each chunk landed:
+#
+# chunk part_00  cells 5201-5300  'pinky -' .. 'pnmcat '
+#   # 100 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 270.5s (2.7s/cell)
+#   # 4 pass(es) captured under a truncated or empty settle window
