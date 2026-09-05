@@ -1150,3 +1150,158 @@ perldoc
 #   'kubectl -' -> PASS      (slow, agrees)
 #   'look '     -> ONE-SIDED SILENCE at 30.0s AND again at 90.0s: zshrs draws
 #                  NOTHING while zsh draws a screen.  Not load.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# RE-CONFIRMATION — every FAIL and every TIMEOUT re-run SERIALLY AND ALONE,
+# 3x, `--jobs 1 --key-budget 30 --silence-recheck 3`, same pinned binary and
+# dump.  11 cells, 3 runs:
+#
+#   'ktrace -'      FAIL 3/3   deterministic   fp 4356dd07a7   NEW
+#   'ldapsearch '   FAIL 3/3   deterministic   fp f55dfe46e0   NEW
+#   'mc '           FAIL 3/3   deterministic   fp e9ade9e1b9   NEW
+#   'mc -'          FAIL 3/3   deterministic   fp 071b9a9b09   NEW (same bug)
+#   'ktrace '       FAIL 3/3   deterministic   fp b29792c9a7   known class
+#   'mispipe '      FAIL 3/3   deterministic   fp b29792c9a7   known class
+#   'mpirun '       FAIL 3/3   deterministic   fp b29792c9a7   known class
+#   'look '         FLAKY      1 silence / 1 PASS / 1 slow-then-PASS
+#   'kubectl '      FLAKY      1 FLAKY(slow) / 2 PASS
+#   'kubectl -'     PASS 3/3
+#   'mpirun -'      PASS 3/3
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW #1 — `warncreateglobal` turns the ports' scratch globals into a SCREEN
+# FULL OF WARNINGS.  'mc ' (29 rows differ) and 'mc -' (40 rows differ).
+#
+#   /Users/wizard/.zinit/completions/_mc:36
+#       setopt localoptions warncreateglobal typesetsilent
+#
+# That line is the zsh-completions house style.  With it set, every scratch
+# parameter the native compsys ports create at global scope prints a
+# WARN_CREATE_GLOBAL diagnostic INTO THE COMPLETION DISPLAY.  zsh renders the
+# match list; zshrs renders 29-40 rows of:
+#
+#   _requested: array parameter __compsys_argv created globally in function _requested
+#   _description: array parameter __compsys_argv created globally in function _description
+#   _arguments:411: scalar parameter _cs_split_src created globally in function _arguments
+#   (eval):1: array parameter _cs_split_dst created globally in function _arguments
+#   _describe: array parameter _a_11 created globally in function _describe
+#   _describe:114: array parameter _a_15 created globally in function _describe
+#   _next_label / _wanted / _all_labels: … __compsys_argv …
+#
+# Three distinct Rust-only scratch names, three creation sites:
+#   src/compsys/ported/mod.rs:28-32   `eval_action_words` — `setsparam(
+#       "_cs_split_src", …)` then `eval "_cs_split_dst=( $_cs_split_src )"`.
+#       The shell equivalent (`_arguments` sh:453/463, `_alternative` sh:61/69)
+#       evaluates into the function-LOCAL `action`; the port uses two globals
+#       and unsets them afterwards, which restores the namespace but does NOT
+#       stop the creation warning.
+#   src/compsys/ported/Base/Utility/_describe.rs:397,413  `setaparam(
+#       "_a_<try><i>", …)`.  The shell source is `eval local "_a_$_try$_i;…"`
+#       (sh:80/82) — the `local` is dropped by the port.
+#   `__compsys_argv`, the zparseopts bridge, in ~20 ported files
+#       (e.g. src/compsys/ported/Base/Core/_requested.rs:51).
+#
+# Same defect family as the `_arguments` SCRATCH_PARAMS bug fixed in
+# 0b1902d2fa (params created at level 0 instead of `locallevel`), but the
+# symptom here is not a count skew — it is total destruction of the completion
+# display for any completer that sets the option.  Measured blast radius on
+# this host: 11 of 48957 completer files in the live `zsh -f` $fpath carry
+# `warncreateglobal`.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW #2 — a file match that COLLIDES with an option match spelled the same
+# loses its file type.  'ktrace -'  fp 4356dd07a7.
+#
+# Minimal reproducer (the trailing dash is load-bearing; there is no trailing
+# space):
+#
+#   mkdir -p /tmp/t/- /tmp/t/-w ; cd /tmp/t
+#   buffer: 'ktrace -'   key: tab
+#     zsh   listing row: '-/   -w/'
+#     zshrs listing row: '-    -w/'
+#
+# `ktrace` is used only because `_ktrace`'s `_arguments` spec contains a BARE
+# `-` option (it lists as `-  -- 569BGPXZfims`), so the string `-` is added
+# twice: once as an option, once as the directory.  Two controls bound it:
+#   * 'nosuchcmd12345 -' in the SAME directory (no option group at all)
+#     lists '-/   -w/' on both shells — zshrs gets the slash right.
+#   * '-w' keeps its slash in the failing listing; only the colliding '-'
+#     loses it.
+# So this is not "zshrs cannot type-mark a directory named -"; it is the
+# cross-group collision on the exact string `-` that drops the file match's
+# type.  `permmatches`/`makearray`'s dedup (src/ported/zle/compcore.rs:6120-
+# 6200) is per-group and faithful, so the flag loss is upstream of it; the
+# stat block that sets `cm.modec` is at compcore.rs:5417-5439 (c:2952-2970)
+# and looks faithful.  Not root-caused further.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW #3 — one-sided `bad pattern: (` from a `case` arm.  'ldapsearch '
+# fp f55dfe46e0.
+#
+#   zsh    row0: '$ ldapsearch "('
+#   zshrs  row0: '$ ldapsearch'
+#          row1: '(eval):1: bad pattern: ('
+#          row2: '(eval):1: bad pattern: ('
+#          row3: '$ ldapsearch -S'
+#
+# The pinned dump maps `ldapsearch` to `_openldap`, whose first positional is
+# `_ldap_filters` (zsh 5.9.2's own), which drives `_regex_arguments` over a
+# large zregexparse query built from a `compquote`d `open='('`.  zsh completes
+# the filter's opening `"(`; zshrs emits the diagnostic TWICE and then falls
+# through the completer chain and inserts the unrelated option `-S`.
+#
+# The emitter is src/fusevm_bridge.rs:15243-15258 — the `case`-ARM pattern
+# dispatch, a port of Src/loop.c:663-667.  It `tokenize()`s the arm pattern
+# and `zerr`s when `patcompile` returns None.  Which generated `case` carries
+# the lone `(` was NOT isolated; two things were ruled out by direct probe:
+#   * `compquote` is at parity — a completer doing `local open='('; compquote
+#     open; compadd -Q -- "OPEN<$open>"` inserts `OPEN<\(>` on BOTH shells.
+#   * plain quoted-paren case arms are at parity — `case "(" in \()`,
+#     `${~p}` with p='\(', and `$p` with p='(' all print `yes` on both.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# KNOWN CLASSES — additional reproducers only, do NOT file as new
+#
+# 'ktrace ' / 'mispipe ' / 'mpirun '   fp b29792c9a7, the ask-prompt count
+#   class.  Numbers compared rather than trusting the digit-masking
+#   fingerprint, per the warning already in this file.  All three are the same
+#   prompt and, as the class demands, BOTH sides are non-deterministic across
+#   serial runs:
+#       zsh   52814 (26310 lines) / 52818 (26311)
+#       zshrs 52830 (26314)       / 52826 (26313)
+#   Delta +12..+16 — the same shape as the documented residual (the 20
+#   bundled `_z*` completers plus HELPDIR/INFOPATH), not the `_arguments`
+#   scratch-param bug that 0b1902d2fa fixed.  Never an exact-equality test.
+#
+# 'look ' / 'kubectl '   NOT a divergence in the match set: both are zshrs
+#   LATENCY.  Each drew nothing inside the sweep's 10s key budget, and each
+#   passed cleanly on some serial re-runs at 30s/90s.  'look ' was silent at
+#   BOTH 30.0s and 90.0s once out of three, so its tail is long; it is
+#   recorded as flaky-slow, not as a zero-match fall-through.
+#
+# 'kanji-config-updmap ' / 'kanji-config-updmap -'   REF-CRASHED, upstream
+#   zsh SIGSEGV.  Discarded.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# VACUOUS-PASS AUDIT
+#
+# Whole-population, not a sample: of the 1062 PASSes, 59 (5.6%) had the
+# `key 'tab'` phase come back `no-output` on BOTH sides — neither shell drew
+# anything, so the agreement proves nothing.  Computed from the sweep's own
+# --jsonl phase records.
+#
+# Stratified replay to confirm that classification: 26 PASSes re-run with
+# `-v --jobs 1`, 16 of them from the <=2-row grids (thin pool 199, fat pool
+# 863).  26 passed, 0 failed; 6 of 26 vacuous, and all 6 are members of the
+# 59-cell both-silent set — 'mktextfm ', 'libftdi1-config ',
+# 'kafka-metadata-shell ', 'mdfind ', 'log -', 'listsuites -'.  The other 20
+# were substantive (grids of 1-40 rows).  Across all 1062 PASSes: 0 cursor
+# diffs, 0 attribute-only row diffs.
+#
+# The three NEW cells are added below as regression guards.  'mc -' is the
+# same bug as 'mc ' and is kept because it exercises the described-option
+# path as well as the file path.
+ktrace -
+ldapsearch 
+mc 
+mc -
