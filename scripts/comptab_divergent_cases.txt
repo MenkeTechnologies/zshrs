@@ -1486,3 +1486,65 @@ ktrace -
 # here would otherwise read as machine load.
 ldapsearch 
 # ══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────
+# fp 4356dd07a7 ('ktrace -') — ROOT-CAUSE UPDATE.  No longer "not root-caused
+# further"; it now has a self-contained THREE-compadd reproducer with no
+# fpath, no dump, no completer and no `_arguments` involved.
+#
+#   mkdir -p /tmp/t/- /tmp/t/-w
+#   _zp() {
+#     local -a _tmpd _tmpm tmp1
+#     compadd -J -default- -Qk builtins            # zsh's `-` BUILTIN, str '-'
+#     tmp1=( - -w ); compadd -Qf -J -default- -a tmp1
+#     _tmpm=( -a -c -C -d -f -g -i -p -t - )
+#     _tmpd=( '-a  -- ...' ... '-t  -- ...' '-  -- 569BGPXZfims' )
+#     compadd -l -J -default- -d _tmpd -a _tmpm
+#   }
+#   zle -C _zp list-choices _zp ; bindkey '^X^P' _zp ; setopt listtypes
+#   cd /tmp/t ; buffer 'x -' ; key ^X^P
+#     zsh   last row: '-/   -w/'
+#     zshrs last row: '-    -w/'
+#
+# What was measured, both shells `-f -i` under a pty, pinned+codesigned
+# binary, ZSHRS_NATIVE_ZLE_FX=0, ZSHRS_HISTORY=0:
+#
+#  * The compadd ARGV is byte-identical.  A `compadd` shell-function wrapper
+#    logging `${(q-)@}` over the real run produced the same 14 calls in the
+#    same order on both shells.
+#  * The match COUNT is identical.  The same wrapper logging
+#    `${compstate[nmatches]}` after each call gives the same trajectory on
+#    both — 0,0,0,0,1,1,1,1,1,2,2,2,2,12 — and `_main_complete` ends at
+#    `N=12 L=11` on both.  So zshrs is not adding or losing a match.
+#  * The `cm.modec` stat block is exonerated.  Instrumenting
+#    compcore.rs:5417-5439 in the real run logs
+#    `str="-" orig=- flags=1 cmf_file=true prpre=<none>` then
+#    `modec='/' fmodec='/' mode=16877` — the file `-` IS typed correctly when
+#    it is created.  `-w` gets the same.
+#
+# The loss happens in `makearray` (compcore.c:3269-3281).  Instrumenting its
+# in/out lists shows the `-default-` group reaching it with THREE matches
+# spelled `-`:
+#     str="-" ipre=None pre=None ppre=None psuf=None suf=None modec='\0' flags=0   disp=None                       (the BUILTIN)
+#     str="-" ipre=None pre=None ppre=None psuf=None suf=None modec='\0' flags=64  disp="-  -- 569BGPXZfims"        (the DESCRIBED option)
+#     str="-" ipre=None pre=None ppre=None psuf=None suf=None modec='/'  flags=1   disp=None                       (the FILE)
+# `matcheq` (c:3206-3214) compares only ipre/pre/ppre/psuf/suf/str, so the
+# builtin and the file `-` ARE duplicates, and `matchcmp` (c:3172-3197)
+# returns 0 for them: both lack `disp`, so it compares `str` against `str`.
+# The dedup at c:3269-3272 keeps `*ap`, the FIRST of the run.  zsh keeps the
+# FILE one, zshrs keeps the BUILTIN one, and 12 matches come out either way.
+#
+# It is the SORT's treatment of that tie, and it is insertion-order
+# sensitive in zsh but not in zshrs.  Same three compadds with the DESCRIBED
+# block added BEFORE the file add (same 13 matches, different insertion
+# order) gives '-    -w/' on BOTH shells — zsh flips its answer with the
+# order, zshrs does not.  compcore.rs:6051 sorts a PERMUTATION with
+# `tolerant_sort::qsort_tolerant`; C `qsort`s the pointer array with libc's
+# qsort.  Two different algorithms cannot be expected to agree on equal
+# elements, and here the disagreement is user-visible (a lost type marker),
+# unlike the `getconf` tie-order case already recorded as a non-bug.
+#
+# NOT fixed here, deliberately: making this match zsh means reproducing
+# libc `qsort`'s permutation of equal elements, which is platform-specific.
+# Anyone picking it up should start from the three-compadd reproducer above
+# and from compcore.rs:6042-6076, not from the modec stat or from `_ktrace`.
+# ══════════════════════════════════════════════════════════════════════════
