@@ -2402,3 +2402,12 @@ read
 #   FAIL   tab1               'texfot '  (1 row(s) differ)     fp b29792c9a7
 #   FAIL   tab1               'texfot -'  (1 row(s) differ)    fp 4356dd07a7
 #        cell/rowlist/col0 | ref/-/ | test/-
+#
+# chunk part_08  cells 7101-7200  'texhash ' .. 'tiffdither -'
+#   # 99 passed, 1 failed, 100 cell(s)
+#   # categories: PASS=99 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 193.8s (1.9s/cell)
+#   # 1 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'thefuck '  (1 row(s) differ)
+#     b29792c9a7  x1   smallest: --case 'thefuck ' --keys tab
+#        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
