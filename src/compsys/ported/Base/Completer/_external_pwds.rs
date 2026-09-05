@@ -125,6 +125,21 @@ pub fn _external_pwds() -> i32 {
     // sh:41
     set_compstate_str("pattern_match", "*");
 
+    // sh:8 `local -au dirs` — the lowercase `-u` is PM_UPPER (uppercase
+    // conversion), not PM_UNIQUE, and it is NOT replicated here.
+    //
+    // Measured in zsh 5.9.2, which is the whole argument:
+    //   f(){ local -u s; s=abc; local -au a; a=(abc def)
+    //        print "$s ${(t)s} | ${(j:,:)a} ${(t)a}" }
+    //   → ABC scalar-local-upper | abc,def array-local-upper
+    // `-u` uppercases a SCALAR's value and is inert on an array's, so the
+    // only thing sh:8 buys upstream is the type string. The elements here
+    // are absolute directory paths on a case-sensitive filesystem, compared
+    // against $PWD and then added as literal path matches, so an
+    // implementation that DID uppercase them would break the completer
+    // outright. Stamping PM_UPPER would therefore be replicating what reads
+    // as an upstream typo (`-au` for `-aU`) at the risk of a real
+    // regression, for no gain beyond `${(t)dirs}`.
     setaparam("dirs", dirs);
 
     // sh:42
