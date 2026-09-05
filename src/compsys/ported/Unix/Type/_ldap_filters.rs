@@ -29,17 +29,24 @@
 //! generation pattern (`bad pattern: (` on zsh and zshrs alike).
 //!
 //! `compquote` (sh:43) re-quotes the `( ) & |` operator variables for the
-//! CURRENT quoting context (`$compstate[quote]`). This port applies the
-//! unquoted-context result — backslash-quoting — plus the subsequent `${(q)…}`
-//! pass (sh:44) directly. `print -v disp` (sh:49) builds the operator display
-//! array directly.
+//! CURRENT quoting context, and the PATTERN elements of the spec interpolate
+//! the result, so the spec is NOT the same on every call. `ldapsearch <TAB>`
+//! completes an unquoted word and gets `open`=`\\\(`; the tab after that
+//! completes the `"(` the first one inserted, which is a word inside double
+//! quotes, where `(` needs no quoting and `open` is `\(`. Baking the
+//! unquoted-context text in made every pattern demand a literal backslash the
+//! second word does not have, so nothing matched and the second TAB completed
+//! in silence where zsh lists 69 matches. `print -v disp` (sh:49) builds the
+//! operator display array directly.
 
 use crate::compsys::ported::_regex_arguments::_regex_arguments;
 use crate::compsys::ported::shared::LocalScope;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam, setsparam};
+use crate::ported::utils::quotestring;
 use crate::ported::zle::compcore::get_compstate_str;
-use crate::ported::zsh_h::PM_ARRAY;
+use crate::ported::zle::computil::bin_compquote;
+use crate::ported::zsh_h::{options, MAX_OPS, PM_ARRAY, QT_BACKSLASH};
 
 /// sh:9-20 — RFC4517 matching-rule names (referenced by an action string).
 const MATCHING_RULES: &[&str] = &[
@@ -158,6 +165,19 @@ const CLASSES: &[&str] = &[
     "top",
 ];
 
+/// sh:43 — the parameters `compquote` re-quotes, in source order.
+const OPERATOR_PARAMS: [&str; 4] = ["open", "close", "andop", "orop"];
+
+/// `compquote` takes no options here (sh:43 passes none).
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
 /// `_ldap_filters` — complete RFC4515 LDAP search filter expressions.
 pub fn _ldap_filters(_args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_filters");
@@ -197,18 +217,39 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     );
     setaparam("classes", CLASSES.iter().map(|s| s.to_string()).collect());
 
-    // sh:43-44 — `compquote open close andop orop` then
-    // `open=${(q)open} close=${(q)close}`. In the unquoted context compquote
-    // backslash-quotes, so `open` becomes `\(` and the `${(q)…}` pass makes it
-    // `\\\(`; the action strings undo one level with `${(Q)open}`. Both values
-    // are set as parameters rather than baked into the action text, because
-    // baking them turns a SUBSTITUTED `(` into a SOURCE-LITERAL one, and a
-    // source-literal `(` in `${pre:-(}` is filename generation — `zsh -fc 'p=;
-    // print -r -- ${p:-(}'` is "bad pattern: (" on zsh and zshrs alike.
-    setsparam("open", r"\\\(");
-    setsparam("close", r"\\\)");
-    setsparam("andop", r"\&");
-    setsparam("orop", r"\|");
+    // sh:7  `local open='(' close=')' andop='&' orop='|'`
+    setsparam("open", "(");
+    setsparam("close", ")");
+    setsparam("andop", "&");
+    setsparam("orop", "|");
+    // sh:43 — `compquote open close andop orop`. The result depends on the
+    // CURRENT quoting context (`comp_quote` quotes with `*compqstack`,
+    // Src/Zle/computil.c:3691-3705), so it cannot be precomputed: on an
+    // unquoted word compquote backslash-quotes and `open` becomes `\(`, while
+    // on a word already inside double quotes — which is what the SECOND
+    // `ldapsearch <TAB>` completes, since the first one inserts `"(` — `(`
+    // needs no quoting and `open` stays `(`.
+    let params = OPERATOR_PARAMS.map(String::from);
+    let _ = bin_compquote("compquote", &params, &make_ops(), 0);
+    // sh:44 — `open=${(q)open} close=${(q)close}`.
+    setsparam(
+        "open",
+        &quotestring(&getsparam("open").unwrap_or_default(), QT_BACKSLASH),
+    );
+    setsparam(
+        "close",
+        &quotestring(&getsparam("close").unwrap_or_default(), QT_BACKSLASH),
+    );
+    tracing::debug!(
+        target: "compsys::_ldap_filters",
+        open = %getsparam("open").unwrap_or_default(),
+        close = %getsparam("close").unwrap_or_default(),
+        andop = %getsparam("andop").unwrap_or_default(),
+        orop = %getsparam("orop").unwrap_or_default(),
+        quote = %get_compstate_str("quote").unwrap_or_default(),
+        prefix = %getsparam("PREFIX").unwrap_or_default(),
+        "sh:43-44 bracket text for this quoting context",
+    );
 
     // sh:46 — `[[ -z $compstate[quote] && -z $PREFIX ]] && pre='"('`:
     // default to double rather than backslash quoting. This is what makes the
@@ -240,8 +281,16 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     );
 
     // sh:53-88 — the zregexparse spec (see build_query). sh:79/83 read
-    // `${=query[nest]}` back out of it, so it is a parameter as well.
-    let query = build_query();
+    // `${=query[nest]}` back out of it, so it is a parameter as well. The
+    // PATTERN elements are double-quoted in the shell, so they interpolate
+    // `$open` / `$close` / `$andop` / `${(q)orop}` at spec-BUILD time and
+    // therefore carry whatever compquote just produced for this context.
+    let query = build_query(
+        &getsparam("open").unwrap_or_default(),
+        &getsparam("close").unwrap_or_default(),
+        &getsparam("andop").unwrap_or_default(),
+        &quotestring(&getsparam("orop").unwrap_or_default(), QT_BACKSLASH),
+    );
     setaparam("query", query.clone());
     let mut argv = vec!["_ldap_search_filters".to_string()];
     argv.extend(query);
@@ -259,43 +308,49 @@ fn lookup_sep(curcontext: &str) -> String {
         .unwrap_or_else(|| "--".to_string())
 }
 
-/// sh:47-113 — the `query` array, transcribed. Group/alternation/repeat
-/// markers are literal `(` `)` `|` `#`; pattern elements bake in the resolved
-/// bracket constants; action elements are kept verbatim for runtime eval.
-fn build_query() -> Vec<String> {
+/// sh:53-88 — the `query` array, transcribed. Group/alternation/repeat
+/// markers are literal `(` `)` `|` `#`; action elements are kept verbatim for
+/// runtime eval; PATTERN elements are double-quoted in the shell and so
+/// interpolate the post-`compquote` bracket text HERE, at spec-build time.
+///
+/// `open`/`close` are `${(q)}`-quoted (sh:44), `andop` is used raw (sh:58) and
+/// `orop` is `${(q)}`-quoted at the point of use (sh:57) — hence `qorop`.
+/// Measured against real zsh (both values are what a dump of the argv zsh
+/// passes to `_regex_arguments` contains):
+///
+/// | context                  | open     | close    | andop | qorop    |
+/// |--------------------------|----------|----------|-------|----------|
+/// | unquoted (`ldapsearch `) | `\\\(`   | `\\\)`   | `\&`  | `\\\|`   |
+/// | inside `"` (`… "(`)      | `\(`     | `\)`     | `&`   | `\|`     |
+fn build_query(open: &str, close: &str, andop: &str, qorop: &str) -> Vec<String> {
     // NUL + whitespace class for the leading skip pattern (sh:54).
     let skip = "/*\u{0}[ \t\n]#/".to_string();
     let s = |x: &str| x.to_string();
     // The `${…}` in the ACTION elements is deliberate: zregexparse eval's each
     // action at completion time, when `$open`/`$close`/`$pre`/`$query` are the
-    // live parameters set above. The PATTERN elements are built at spec-build
-    // time in the shell (they are double-quoted), so they carry the resolved
-    // `${open}`==`\\\(` / `${close}`==`\\\)` / `${(q)orop}`==`\\\|` /
-    // `${andop}`==`\&` text instead. Both halves were read off a real zsh run:
-    // `_regex_arguments` was wrapped in a completion of `ldapsearch <TAB>` and
-    // its argv dumped, so every element below is what zsh actually passes.
+    // live parameters set above.
     vec![
         s("("), skip, s(")"),
         s("("),
-        s("("), s(r"/\\\(!/"), s("-optype[++nest]=1;pre=\"\""),          // sh:56
-        s("|"), s(r"/\\\(\\\|/"), s("-optype[++nest]=2;pre=\"\""),       // sh:57
-        s("|"), s(r"/\\\(\&/"), s("-optype[++nest]=3;pre=\"\""),         // sh:58
+        s("("), format!("/{open}!/"), s("-optype[++nest]=1;pre=\"\""),   // sh:56
+        s("|"), format!("/{open}{qorop}/"), s("-optype[++nest]=2;pre=\"\""), // sh:57
+        s("|"), format!("/{open}{andop}/"), s("-optype[++nest]=3;pre=\"\""), // sh:58
         s("|"), s("/[]/"),                                               // sh:59
         s(r#":operators:operator:compadd -F "( ${(q)excl[optype[nest]]} )" -d disp -P ${pre:-${(Q)open}} -S ${(Q)open} \| \& \!"#),
         s(")"),
         s("|"),
-        s("("), s(r"/\\\([^\)]##/"), s(r"%\\\)%"),                       // sh:61
-        s("|"), s(r"/\\\((#i)homeDirectory=/"), s("/[]/"),               // sh:62
+        s("("), format!(r"/{open}[^\)]##/"), format!("%{close}%"),       // sh:61
+        s("|"), format!("/{open}(#i)homeDirectory=/"), s("/[]/"),        // sh:62
         s(r#":directories:directory:_directories -P / -W / -r ") \t\n\-""#),
-        s("|"), s(r"/\\\((#i)loginShell=/"), s("/[]/"),                  // sh:63
+        s("|"), format!("/{open}(#i)loginShell=/"), s("/[]/"),           // sh:63
         s(r#":shells:shell:compadd -S ${(Q)close} ${(f)^"$(</etc/shells)"}(N)"#),
-        s("|"), s(r"/\\\((#i)mail=/"), s("/[]/"),                        // sh:64
+        s("|"), format!("/{open}(#i)mail=/"), s("/[]/"),                 // sh:64
         s(":email-addresses:mail:_email_addresses -S ${(Q)close}"),
-        s("|"), s(r"/\\\((#i)objectClass=/"), s("/[]/"),                 // sh:65
+        s("|"), format!("/{open}(#i)objectClass=/"), s("/[]/"),          // sh:65
         s(r#":object-classes:class:compadd -S ${(Q)close} -M "m:{a-zA-Z}={A-Za-z} r:[^A-Z]||[A-Z]=* r:|=*" -a classes"#),
-        s("|"), s(r"/\\\((#i)(automountKey|(member|)uid)=/"), s("/[]/"), // sh:66
+        s("|"), format!("/{open}(#i)(automountKey|(member|)uid)=/"), s("/[]/"), // sh:66
         s(":users:username:_users -S ${(Q)close}"),
-        s("|"), s(r"/\\\((#i)cn=/"), s("/[]/"),                          // sh:67
+        s("|"), format!("/{open}(#i)cn=/"), s("/[]/"),                   // sh:67
         s(r#":cn:cn: _alternative "users:user:_users -S ${close}" "groups:group:_groups -S ${close}" "hosts:host:_hosts -S ${close}""#),
         s("|"),
         s("/[^:=<>~]##/"), s("%[=:<>~]%"), s("-pre=\"\""),               // sh:69
@@ -308,13 +363,13 @@ fn build_query() -> Vec<String> {
         s("/([~<>]|)=/"),                                                // sh:75
         s(r#":operators:operator:compadd -S "" "<=" \>= \~="#),
         s(")"),
-        s(r"/[^\\)]##/"), s(r"%\\\)%"),                                  // sh:77
+        s(r"/[^\\)]##/"), format!("%{close}%"),                          // sh:77
         s(r#": _message -e object-values "object value (* for presence check)""#),
         s(")"),
-        s(r"/\\\)/"), s("-(( nest ))"),                                  // sh:79
+        format!("/{close}/"), s("-(( nest ))"),                          // sh:79
         s(r#":brackets:bracket:compadd ${=query[nest]:+-S ""} \)"#),
         s("("),
-        s(r"/\\\)/"),                                                    // sh:83
+        format!("/{close}/"),                                            // sh:83
         s(r#":operators:operator:compadd ${=query[nest-1]:+-S ""} -d end -P ${(Q)close} """#),
         s("("), s("//"), s("-(( --nest ))"), s("|"), s("//"), s("-((!nest))"), s("/[]/"), s(": compadd \"\""), s(")"), // sh:84
         s(")"), s("#"),                                                  // sh:85
@@ -338,9 +393,30 @@ mod tests {
     #[test]
     fn query_is_balanced() {
         // The zregexparse spec must have balanced group markers.
-        let q = build_query();
+        let q = build_query(r"\\\(", r"\\\)", r"\&", r"\\\|");
         let opens = q.iter().filter(|e| *e == "(").count();
         let closes = q.iter().filter(|e| *e == ")").count();
         assert_eq!(opens, closes, "query groups must balance");
+    }
+
+    /// The whole point of parameterising the spec: inside double quotes
+    /// `compquote` adds no backslash, so every bracket pattern loses one
+    /// escape level. Measured in real zsh on the second `ldapsearch <TAB>`
+    /// (`open`=`\(`, `close`=`\)`, `andop`=`&`, `${(q)orop}`=`\|`); with the
+    /// unquoted-context text baked in, these patterns demand a literal
+    /// backslash that the word `"(` does not contain and nothing matches.
+    #[test]
+    fn quoted_context_spec_drops_an_escape_level() {
+        let unq = build_query(r"\\\(", r"\\\)", r"\&", r"\\\|");
+        let dq = build_query(r"\(", r"\)", "&", r"\|");
+        assert!(unq.contains(&r"/\\\(!/".to_string())); // sh:56
+        assert!(dq.contains(&r"/\(!/".to_string()));
+        assert!(unq.contains(&r"/\\\(\&/".to_string())); // sh:58
+        assert!(dq.contains(&r"/\(&/".to_string()));
+        assert!(unq.contains(&r"/\\\(\\\|/".to_string())); // sh:57
+        assert!(dq.contains(&r"/\(\|/".to_string()));
+        assert!(unq.contains(&r"/\\\)/".to_string())); // sh:79
+        assert!(dq.contains(&r"/\)/".to_string()));
+        assert_eq!(unq.len(), dq.len());
     }
 }
