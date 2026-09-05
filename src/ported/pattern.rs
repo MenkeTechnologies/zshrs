@@ -2377,6 +2377,29 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                                     chars.push(c);
                                 }
                             }
+                            // c:Src/pattern.c:3894 — `PP_ASCII: return !(c & ~0x7f)`.
+                            // A FIXED, locale-independent set, so unlike the
+                            // PP_IDENT/PP_IFS/PP_WORD family below it belongs in
+                            // the compile-time `chars` set rather than a
+                            // match-time classmask bit.
+                            //
+                            // It had NO arm here and NO bit in the classmask
+                            // match below, so it fell to both `_` catch-alls and
+                            // contributed nothing: `[[ a == [[:ascii:]] ]]` was
+                            // FALSE where zsh is true, and the negation inverted.
+                            // `[[:ascii:]0-9]` still matched `0-9`, which is what
+                            // made the class look present. Every other POSIX
+                            // class was already correct.
+                            //
+                            // A byte >= 0x80 leads a UTF-8 sequence and is
+                            // handled by the multibyte path below, which
+                            // correctly reports no match for this class — so the
+                            // ASCII-only member set is complete, not partial.
+                            "ascii" => {
+                                for c in 0u8..=127 {
+                                    chars.push(c);
+                                }
+                            }
                             // c:Src/pattern.c:3693-3700 + Src/ztype.h
                             // IIDENT — `[[:IDENT:]]` is zsh's
                             // identifier-character class (alnum + `_`,
@@ -10199,6 +10222,38 @@ mod tests {
             ext_glob_match("[[:alpha:][:punct:]]#[[:digit:]][^[:lower:]]", "a%1X"),
             "ztst:111 — alpha-punct-digit-notlower chain",
         );
+    }
+
+    /// `c:Src/pattern.c:3894` — `PP_ASCII: return !(c & ~0x7f)`.
+    ///
+    /// `patcomppiece`'s inline class expansion had no `ascii` arm and no
+    /// classmask bit, so the class fell to BOTH `_` catch-alls and contributed
+    /// no members: `[[ a == [[:ascii:]] ]]` was false where zsh is true, and
+    /// the negation inverted. Every other POSIX class was already correct.
+    ///
+    /// Note `range_type_lookup` above already asserted
+    /// `range_type("ascii") == Some(3)` and PASSED throughout — the lookup was
+    /// fine; nothing exercised the MATCH. That is presumably why a class that
+    /// matched nothing went unnoticed. This test goes through `ext_glob_match`,
+    /// the path a user's pattern actually takes.
+    #[test]
+    fn posix_ascii_class_has_members() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("[[:ascii:]]", "a"), "ASCII char must match");
+        assert!(ext_glob_match("[[:ascii:]]", "5"), "ASCII digit must match");
+        assert!(
+            !ext_glob_match("[^[:ascii:]]", "a"),
+            "negation must reject an ASCII char",
+        );
+        // A byte >= 0x80 leads a UTF-8 sequence; the multibyte path reports no
+        // match for this class, so the ASCII-only member set is complete.
+        assert!(
+            !ext_glob_match("[[:ascii:]]", "\u{e9}"),
+            "non-ASCII must not match",
+        );
+        // The tell that made the class look present: the sibling range does
+        // the work while the class contributes nothing.
+        assert!(ext_glob_match("[[:ascii:]0-9]", "5"), "sibling range still matches");
     }
 
     /// `Test/D02glob.ztst:112` — same pattern, "a%1" lacks the
