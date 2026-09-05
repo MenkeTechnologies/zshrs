@@ -3113,3 +3113,69 @@ tor-resolve -
 # Now byte-identical incl. the full six-line diagnostic sequence and the
 # listing after it. A synthetic `_describe -d 'subcommand' subs` cell was
 # added to isolate recovery from clustering and also passes.
+
+# ============================================================================
+# 'git-cvsserver ' / 'git-cvsserver -' — ROOT-CAUSED, NOT FIXED. Two blockers.
+# ============================================================================
+# Fingerprint has DRIFTED from the recorded 53f75c7bd7 to faf779bbfa, and the
+# recorded `_git:.:#: no such file or directory:` no longer occurs. Current:
+#   only zsh  : _arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])
+#   only zshrs: _arguments:1: _files: function not defined by file
+#   only zshrs: _arguments:36: parse error: condition expected: glob
+#   only zshrs: _arguments:50: parse error: condition expected: glob
+#
+# Dispatch is NOT divergent: both shells reach
+# .zinit/plugins/…zsh-more-completions/more_src2/_git-cvsserver -> _arguments,
+# and a diff of the two shells' resolved `_arguments` files is EMPTY.
+#
+# BLOCKER 1 — zsh's `bad pattern` is real and zshrs under-rejects.
+# The chain runs under `emulate ksh` (measured: SH_GLOB and KSH_GLOB both ON).
+# Under SH_GLOB, `patcompcharsset` masks ZPC_INPAR but deliberately leaves
+# ZPC_OUTPAR live (c:Src/pattern.c:500-510, comment at c:506-507), so
+# `_arguments:14`'s `[[ "$1" = -([AMO]*|[0CRSWnsw]) ]]` compiles with `(`
+# ordinary and the trailing `)` structural; patcompbranch stops on `)`,
+# c:913-917's `!paren` termination check fires, patcompile returns NULL and
+# c:cond.c:314 prints `bad pattern`.
+#   zsh -fc 'f(){ [[ "-s" = -([AMO]*|[0CRSWnsw]) ]] && print M || print "no $?"; }; setopt shglob; f'
+#     zsh   -> f: bad pattern: -([AMO]*|[0CRSWnsw])
+#     zshrs -> no 1
+# Minimal shape: `-(x|[s])` errors, `-(x|s)` does not (the `s)` literal run
+# absorbs the paren, c:pattern.c:1294-1300).
+#
+# This is the KNOWN GAP already documented at src/ported/pattern.rs:1366-1395
+# (40 cells fixed / 170 newly over-rejected when the check is enforced).
+# NEW MECHANISM DETAIL, not previously recorded: a scoped restore was built
+# and measured GREEN on 13 targeted probes, 781 unit tests, --test
+# emulation_parity 47/47, and a 1250-case differential paren sweep with 0
+# diffs — then failed on a RUNTIME-STRING pattern:
+#     emulate ksh; p='-([AMO]*|[0CRSWnsw])'; [[ "-s" = $~p ]]
+#     zsh -> no 1        zshrs+fix -> bad pattern   (OVER-REJECTION)
+# Cause: c:Src/glob.c:3624-3627 — `zshtokenize` SKIPS `(`, `|`, `)` under
+# ZSHTOK_SHGLOB, so a runtime-string pattern never carries Outpar under
+# SH_GLOB. zshrs re-tokenizes the whole cond RHS AFTER substitution with
+# flags 0 at src/ported/cond.rs:487-489, undoing that suppression. Telling
+# the two apart needs parse-time tokenization — the exact substrate the
+# KNOWN GAP comment names. Over-rejecting is the worse failure; REVERTED,
+# nothing committed.
+#
+# BLOCKER 2 — survives a pattern fix, and is a FALSE-EQUIVALENCE COMMENT.
+# zshrs never runs the shell `_arguments` body: src/compsys/router.rs:292
+# routes to the native port, whose getopt loop HAND-CODES the glob at
+# src/compsys/ported/Base/Utility/_arguments.rs:952-956
+# (`matches!(b[1], b'A' | b'M' | b'O') || …`). The comment at :951 says
+# "Guard matches the glob `-([AMO]*|[0CRSWnsw])`" — FALSE: a `[[ ]]` cond
+# also fails when the pattern will not COMPILE, and the hand-coded guard
+# cannot. Verified: with patcompile fixed, a fresh autoload of that exact
+# line inside the real completion DOES emit `bad pattern` in zshrs, while
+# `_arguments -s '--foo[bar]'` returns rc=0 silently.
+#   -> The comment needs correcting to say what the guard does and does not
+#      do. NOT done here: _arguments.rs was uncommitted in a peer agent's
+#      worktree at the time and staging it would have swept in their work.
+#
+# BLOCKER 3 — error attribution. The `_arguments:36/50` lines are
+# MIS-ATTRIBUTED: they originate at `_files:36`/`_files:40`
+# (`[[ "$glob" = … ]]`) and are reported under the CALLER's name. zsh emits
+# ONE error there, zshrs TWO, and zshrs untokenizes raw token bytes into the
+# message. Three sub-divergences: name attribution, token untokenization,
+# error count. Needed for byte parity even after blockers 1 and 2; the
+# fingerprint masks digits, so it shows in the row diff, not the hash.
