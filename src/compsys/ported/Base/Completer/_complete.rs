@@ -40,9 +40,11 @@
 //! delegation since most live invocations skip that branch.
 
 use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_normal::_normal;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::params::{getaparam, getsparam, setsparam};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -191,10 +193,100 @@ pub fn _complete_impl() -> i32 {
             if action.trim().is_empty() {
                 return _message(&["-e".to_string(), tag, descr]);
             }
-            // Fall through to the generic dispatch via _alternative-
-            //   style action: treat `action` as a command.
-            // C _complete sh:61/72 `eval ws=( "$action" )` — quote-respecting split.
+            // sh:40-44 `\(\(*\)\))` — `eval ws=( "${action[3,-3]}" )` then
+            // `_describe -t "$tag" "$descr" ws`. Was missing entirely.
+            if action.starts_with("((") && action.ends_with("))") && action.len() >= 4 {
+                let body = &action[2..action.len() - 2];
+                setaparam("ws", crate::compsys::ported::eval_action_words(body));
+                crate::compsys::ported::shared::set_sh_lineno(44);
+                return dispatch_function_call(
+                    "_describe",
+                    &["-t".to_string(), tag, descr, "ws".to_string()],
+                )
+                .unwrap_or(1);
+            }
+            // sh:46-49 `\(*\))` — `_wanted "$tag" expl "$descr" compadd -a - ws`.
+            // Was missing entirely.
+            if action.starts_with('(') && action.ends_with(')') && action.len() >= 2 {
+                let body = &action[1..action.len() - 1];
+                setaparam("ws", crate::compsys::ported::eval_action_words(body));
+                crate::compsys::ported::shared::set_sh_lineno(49);
+                return dispatch_function_call(
+                    "_wanted",
+                    &[
+                        tag,
+                        "expl".to_string(),
+                        descr,
+                        "compadd".to_string(),
+                        "-a".to_string(),
+                        "-".to_string(),
+                        "ws".to_string(),
+                    ],
+                )
+                .unwrap_or(1);
+            }
+            // sh:51-58 `\{*\})` — `_tags "$tag"`, then per label
+            // `eval "$action[2,-2]" && ret=0`. Was missing entirely.
+            if action.starts_with('{') && action.ends_with('}') && action.len() >= 2 {
+                let body = action[1..action.len() - 1].to_string();
+                let mut ret = 1;
+                let _ = _tags(&[tag.clone()]);
+                while _tags(&[]) == 0 {
+                    while _next_label(&[tag.clone(), "expl".to_string(), descr.clone()]) == 0 {
+                        if crate::ported::exec::execute_script(&body).is_ok() {
+                            ret = 0; // sh:55 `&& ret=0`
+                        }
+                    }
+                    if ret == 0 {
+                        break; // sh:57 `(( ret )) || break`
+                    }
+                }
+                return ret;
+            }
+            // sh:60-80 — the two command-line arms. They differ ONLY in
+            // whether `$expl[@]` is spliced in after the command word:
+            //   sh:66  `\ *)`  leading space -> `"$ws[@]"`, verbatim
+            //   sh:77  `*)`     otherwise     -> `"$ws[1]" "$expl[@]" "${(@)ws[2,-1]}"`
+            // The port collapsed both into one bare dispatch, so the default
+            // arm never passed the description flags `_next_label` builds and
+            // the match was added with no group or description. Both arms also
+            // run inside the `_tags`/`_next_label` loop, which was absent too.
+            let splice_expl = !action.starts_with(' '); // sh:61 vs sh:73
             let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+            if let Some((cmd, rest)) = parts.split_first() {
+                let mut ret = 1;
+                let _ = _tags(&[tag.clone()]);
+                while _tags(&[]) == 0 {
+                    while _next_label(&[tag.clone(), "expl".to_string(), descr.clone()]) == 0 {
+                        let mut argv: Vec<String> = Vec::new();
+                        if splice_expl {
+                            argv.extend(getaparam("expl").unwrap_or_default()); // sh:77
+                        }
+                        argv.extend(rest.iter().cloned());
+                        crate::compsys::ported::shared::set_sh_lineno(
+                            if splice_expl { 77 } else { 66 },
+                        );
+                        let rc = if cmd == "compadd" {
+                            crate::ported::zle::complete::bin_compadd(
+                                "compadd",
+                                &argv,
+                                &make_ops(),
+                                0,
+                            )
+                        } else {
+                            dispatch_function_call(cmd, &argv).unwrap_or(1)
+                        };
+                        if rc == 0 {
+                            ret = 0;
+                        }
+                    }
+                    if ret == 0 {
+                        break; // sh:69 / sh:80 `(( ret )) || break`
+                    }
+                }
+                return ret;
+            }
+            #[allow(unreachable_code)]
             if let Some((cmd, rest)) = parts.split_first() {
                 // `compadd` is a BUILTIN, so `dispatch_function_call` finds no
                 // shell function and the action adds NOTHING, silently. Fourth
