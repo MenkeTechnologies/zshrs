@@ -470,7 +470,10 @@ fn values_impl(args: &[String]) -> i32 {
     } else if action.starts_with('(') && action.ends_with(')') {
         // sh:120-126 — (val …) added directly.
         let body = &action[1..action.len() - 1];
-        let ws: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
+        // sh:124 `eval ws\=\( "${action[2,-2]}" \)` — an array-literal eval,
+        // which strips escapes as well as splitting; the sh:116 `((…))` arm
+        // above is the same construct. Same defect as `_alternative` sh:46.
+        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
         let _ = setaparam("ws", ws);
         let mut a = vec![
             "arguments".to_string(),
