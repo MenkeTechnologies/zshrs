@@ -3507,6 +3507,21 @@ pub fn bin_kill(
                 }
                 return returnval; // c:2868
             }
+            // ZSHRS-ONLY. Each drop-in lists signals in its own shape —
+            // bash numbers them five to a row with a `SIG` prefix, dash
+            // prepends signal 0, mksh prints two columns with the
+            // strsignal text — so zsh's single space-separated line is
+            // only right for `--zsh`. The signal SET still comes from the
+            // running system.
+            {
+                let sigs: Vec<(i32, String)> = (1..=crate::ported::signals_h::SIGCOUNT)
+                    .filter_map(|s| sigs_name(s).map(|n| (s, n.to_string())))
+                    .collect();
+                if let Some(rendered) = crate::extensions::emulation_output::kill_list(&sigs) {
+                    print!("{rendered}");
+                    return 0;
+                }
+            }
             // c:2869-2876 — bare `-l`: print every signal name.
             print!("{}", sigs_name(1).unwrap_or("HUP"));
             for s in 2..=crate::ported::signals_h::SIGCOUNT {

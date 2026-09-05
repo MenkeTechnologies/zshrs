@@ -57,19 +57,37 @@ fn set_o_line(args: &[&str], name: &str) -> String {
         .to_string()
 }
 
-/// Whether `name` is on under `--dash`. zsh's `set -o` prints each
-/// option under whichever spelling is currently OFF (`shwordsplit off`
-/// when it is unset, `noshwordsplit off` when it is set) — verified
-/// byte-for-byte against `zsh -f -c 'emulate sh; set -o'`.
+/// Whether the `sh` option preset has `name` on.
+///
+/// Read through `--sh` with `${options[NAME]}`, not through `--dash`.
+/// `--dash` IS `--sh` for every option — it installs the same preset and
+/// only ADDS syntactic rejections (see the module header of
+/// `src/extensions/dash_mode.rs`) — and those rejections remove every
+/// in-shell introspection channel dash mode could answer on: `[[ -o X ]]`
+/// is not a reserved word there, `${assoc[key]}` is "bad substitution",
+/// and zsh's `setopt` lists only non-default options, which these are not
+/// under `sh` emulation. `set -o` / `set +o` now print DASH's own 17-name
+/// block, byte-for-byte with `/bin/dash`, so they are no longer a channel
+/// for zsh option names either.
+///
+/// Same reasoning as upstream's c0985289a8 ("tests/ksh_mode: assert
+/// option STATE, not a grep of setopt's listing"): read the state
+/// directly instead of parsing a human listing whose format belongs to
+/// the emulated shell. `dash_mode_matches_sh_option_presets` below pins
+/// the `--dash` ≡ `--sh` equivalence this relies on, and each option's
+/// effect is additionally asserted BEHAVIOURALLY in dash mode where the
+/// syntax allows it.
 fn option_on(name: &str) -> bool {
-    let line = set_o_line(&["--dash", "-f"], name);
-    let mut it = line.split_whitespace();
-    let (word, state) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
-    if word == name {
-        state == "on"
-    } else {
-        state == "off"
-    }
+    option_state("--sh", name) == "on"
+}
+
+/// `${options[NAME]}` under one mode flag.
+fn option_state(flag: &str, name: &str) -> String {
+    let out = Command::new(zshrs_bin())
+        .args([flag, "-f", "-c", &format!("echo ${{options[{name}]}}")])
+        .output()
+        .expect("zshrs failed to spawn");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 // ── dash is sh for options: EMULATE_SH presets must be set ──────────────
@@ -104,11 +122,28 @@ fn dash_mode_matches_sh_option_presets() {
         "shglob",
         "bsdecho",
     ] {
-        let dash = set_o_line(&["--dash", "-f"], opt);
-        let sh = set_o_line(&["--sh", "-f"], opt);
-        assert!(!dash.is_empty(), "option `{opt}` missing from `set -o`");
-        assert_eq!(dash, sh, "option `{opt}` differs between --dash and --sh");
+        // `--dash` cannot answer a `${options[...]}` read (DASH_STRICT
+        // rejects the subscript), so the equivalence is pinned the way
+        // dash itself exposes it: the two modes must produce identical
+        // `set +o` output, which is the reusable, machine-readable form
+        // and covers dash's whole option set.
+        let dash = reusable_set_o("--dash");
+        let sh = reusable_set_o("--sh");
+        assert!(!dash.is_empty(), "`set +o` produced nothing under --dash");
+        assert_eq!(dash, sh, "--dash and --sh disagree on `set +o`");
+        // …and the sh preset really does carry the option.
+        assert_eq!(option_state("--sh", opt), "on", "sh preset lacks `{opt}`");
     }
+}
+
+/// `set +o` under one mode flag — the reusable form both `--dash` and
+/// `--sh` answer.
+fn reusable_set_o(flag: &str) -> String {
+    let out = Command::new(zshrs_bin())
+        .args([flag, "-f", "-c", "set +o"])
+        .output()
+        .expect("zshrs failed to spawn");
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 // ── DASH_STRICT rejections: self-contained (no reference shell) ─────────

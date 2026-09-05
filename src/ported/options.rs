@@ -1088,6 +1088,20 @@ pub fn printoptionstates(hadplus: bool) {
     // the reusable `set -o name` / `set +o name` form). Each maps to the zshrs
     // option state; a few bash-only names with no zsh option resolve to off.
     // --zsh keeps the full zsh listing below.
+    // ZSHRS-ONLY. The Korn and Bourne drop-ins each list their OWN fixed
+    // option set under a "Current option settings" header — dash 17 names,
+    // ksh93u+m 38 (in the positive sense: `clobber on`, not `noclobber
+    // off`), mksh 35 in four column-major columns — not zsh's ~180.
+    // `set +o`'s reusable form stays zsh's below.
+    let dropin_listing = if hadplus {
+        crate::extensions::emulation_output::set_plus_o_listing()
+    } else {
+        crate::extensions::emulation_output::set_o_listing()
+    };
+    if let Some(listing) = dropin_listing {
+        print!("{listing}");
+        return;
+    }
     if crate::dash_mode::bash_mode() {
         // The (bash name, zshrs option name) table lives in
         // `extensions::dash_mode` so `set -o NAME`, this listing and

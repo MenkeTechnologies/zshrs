@@ -4177,7 +4177,19 @@ pub fn bin_typeset(
     // TYPESET, plus optional -p N for line-style.
     if OPT_ISSET(&ops, b'p') {
         // c:2748
-        if posix && !EMULATION(EMULATE_KSH) {
+        // c:2750 — C excludes ksh emulation from the POSIX form, which is
+        // right for zsh's own `emulate ksh`. But the real Korn shells DO
+        // print it: `ksh93u+m -c 'readonly RR=1; readonly -p'` answers
+        // `readonly RR=1`, not zsh's `typeset -r RR=1`, and so does mksh.
+        // So the DROP-INS take the POSIX branch; `--ksh --zsh` (zsh-style
+        // emulation) keeps C's behaviour.
+        let korn_dropin = matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Ksh93
+                | crate::extensions::emulation_startup::Personality::Mksh
+                | crate::extensions::emulation_startup::Personality::Pdksh
+        );
+        if posix && (!EMULATION(EMULATE_KSH) || korn_dropin) {
             // c:2750
             printflags |= match func {
                 BIN_EXPORT => PRINT_POSIX_EXPORT,     // c:2752
@@ -10532,6 +10544,14 @@ pub fn bin_hash(
             if let Ok(t) = cmdnamtab_lock().read() {
                 let mut entries: Vec<_> = t.iter().collect();
                 entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:4270 sorted=1
+                // ZSHRS-ONLY: bash heads its `hash` listing with a
+                // `hits<TAB>command` column header. No other shell here
+                // prints one, and zsh's port has no concept of it.
+                if !entries.is_empty() {
+                    if let Some(h) = crate::extensions::emulation_output::hash_header() {
+                        println!("{h}");
+                    }
+                }
                 for (_n, cn) in entries {
                     // c:4270 — `scanhashtable(cmdnamtab, ..., printcmdnamnode, ...)`
                     printcmdnamnode(cn, printflags);
@@ -10971,6 +10991,45 @@ pub fn bin_alias(
     let mut flags2 = DISABLED as u32; // c:4456
     let mut printflags = 0i32; // c:4457
     let mut use_suffix = false; // tracks ht switch
+
+    // ZSHRS-ONLY. `alias -t` lists the Korn shells' TRACKED aliases,
+    // which are the command hash table — mksh defines its `hash` alias as
+    // `\builtin alias -t`, so without this `hash` in `--mksh` failed with
+    // "bad option: -t". zsh has no `-t`, so every other personality keeps
+    // rejecting it exactly as before.
+    if OPT_ISSET(ops, b't') {
+        use crate::extensions::emulation_startup::{personality, Personality};
+        if !matches!(
+            personality(),
+            Personality::Ksh93 | Personality::Mksh | Personality::Pdksh
+        ) {
+            zwarnnam(name, "bad option: -t");
+            return 1;
+        }
+        // With NAME operands `alias -t` tracks those commands, which is
+        // exactly `hash NAME` — mksh's `hash` alias relies on both halves
+        // (`hash ls` becomes `alias -t ls`, bare `hash` becomes
+        // `alias -t`). Delegate rather than re-implement the PATH search.
+        if !argv.is_empty() {
+            let hash_ops = crate::ported::zsh_h::options {
+                ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+                args: Vec::new(),
+                argscount: 0,
+                argsalloc: 0,
+            };
+            return bin_hash(name, argv, &hash_ops, 0);
+        }
+        queue_signals();
+        if let Ok(t) = cmdnamtab_lock().read() {
+            let mut entries: Vec<_> = t.iter().collect();
+            entries.sort_by(|a, b| hnamcmp(a.0, b.0));
+            for (_n, cn) in entries {
+                printcmdnamnode(cn, 0);
+            }
+        }
+        unqueue_signals();
+        return 0;
+    }
 
     // c:4461-4485 — type-flag parsing.
     let type_opts = (OPT_ISSET(ops, b'r') as i32)                            // c:4461
@@ -16746,7 +16805,11 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("Lgmrs"),
+            // `t` is ZSHRS-ONLY: the Korn shells' tracked-alias listing
+            // (`alias -t`), which is how mksh's own `hash` alias is
+            // defined. zsh has no such option, so bin_alias rejects it
+            // outside the Korn drop-ins with zsh's own diagnostic.
+            Some("Lgmrst"),
             None,
         ),
         BUILTIN(
