@@ -135,6 +135,22 @@ fn build_flags(flag_descs: &[(&str, &str)]) -> Vec<String> {
 /// form of each flag from its counterpart.
 pub fn _file_flags(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_flags");
+    // sh:6 — `local -a context line state state_descr copts=( "${@}" ) flags
+    // flag_descs`.
+    //
+    // `copts` is this function's saved `"$@"`, which the port publishes as
+    // a shell parameter so `_values` can splat it by name. It is the only
+    // name on sh:6 the port materialises: `flags`/`flag_descs` stay
+    // Rust-side, and `context`/`line`/`state`/`state_descr` are already
+    // declared local by `_main_complete` (sh:27-30), so a write to those
+    // lands in THAT shadow and `endparamscope` unwinds it. Without the
+    // declaration `chflags <TAB>` left `copts` standing:
+    //
+    //   zsh  : copts=[][0]        zshrs: copts=[array][2]
+    crate::compsys::ported::shared::declare_locals(
+        &["copts"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:5 — `local curcontext=$curcontext` is a self-assign purely to
     // shadow the caller's binding; the port has no local-param scope so
     // there is nothing to do here (curcontext is read as-is by `_values`).

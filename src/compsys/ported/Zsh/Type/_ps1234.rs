@@ -94,6 +94,24 @@ fn terminfo_colors() -> Option<i64> {
 /// `_ps1234` — complete a `%X` prompt-escape spec.
 pub fn _ps1234() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ps1234");
+    // sh:3 — `local -a specs ccol suf`.
+    //
+    // `specs` is the prompt-escape catalogue this function builds and then
+    // names to `_describe` (sh:315/sh:423 in the port). It is the only name
+    // on sh:3-5 the port materialises as a shell parameter — `ccol`, `suf`,
+    // `expl`, `grp`, `cols`, `bs`, `pre`, `changed`, `ret` and the `ansi`
+    // map all stay Rust-side (the `let mut` block right below). Without the
+    // declaration `PS1=%<TAB>` left the whole table standing:
+    //
+    //   zsh  : specs=[][0]        zshrs: specs=[array][21]
+    //
+    // `_comp_colors`, also written by this port, is deliberately NOT here:
+    // `_main_complete` sh:54 already declares it (`typeset -U _comp_colors`)
+    // and it is meant to be visible to the rest of the completion.
+    crate::compsys::ported::shared::declare_locals(
+        &["specs"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh: 3-5  locals (`expl`, `grp`, `cols` are scalars in the
     //   source; `_description` fills `expl` as an array).
     let mut specs: Vec<String>;

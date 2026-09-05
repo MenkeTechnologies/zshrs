@@ -29,6 +29,22 @@ use crate::ported::zle::compcore::get_compstate_str;
 /// `_history` — complete from `$historywords` array.
 pub fn _history() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history");
+    // sh:54 — `local -a hslice`.
+    //
+    // `hslice` is the window of `$historywords` this loop hands to
+    // `_wanted` by name (sh:60-63). The port writes it as a shell
+    // parameter, so without the declaration a completion that fell through
+    // to `_history` left the slice standing in the user's shell:
+    //
+    //   zsh  : hslice=[][0]        zshrs: hslice=[array][3]
+    //
+    // `historywords`, also written here, is deliberately NOT declared: it
+    // is the zsh/parameter special the completion widget publishes, not a
+    // scratch name of this function.
+    crate::compsys::ported::shared::declare_locals(
+        &["hslice"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let historywords = getaparam("historywords").unwrap_or_default();
     let hmax = historywords.len();
     let mut beg = 2usize;

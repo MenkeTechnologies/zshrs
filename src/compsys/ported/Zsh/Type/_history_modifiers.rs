@@ -84,6 +84,18 @@ pub fn _history_modifiers(args: &[String]) -> i32 {
 /// `p`=parameter).
 pub fn _history_modifiers_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_history_modifiers");
+    // sh:10 — `local -a list`.
+    //
+    // `list` is the modifier catalogue the port publishes by name for
+    // `_describe`. `type`/`delim` stay Rust-side and `expl` (sh:12) is
+    // never written by the port, so neither is declared. Without this,
+    // `echo !!:<TAB>` left the table standing in the user's shell:
+    //
+    //   zsh  : list=[][0]        zshrs: list=[array][17]
+    crate::compsys::ported::shared::declare_locals(
+        &["list"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh: 8-11  locals. `type` is a Rust keyword → raw identifier
     //   keeps the source name verbatim.
     let mut list: Vec<String> = Vec::new();

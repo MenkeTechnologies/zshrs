@@ -74,6 +74,19 @@ fn run_zparseopts_widgets(
 /// filters by widget value-string (e.g. `user:*` for user widgets).
 pub fn _widgets(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_widgets");
+    // sh:3 — `local expl pattern`.
+    //
+    // `pattern` is the `-g` seed the port hands to `zparseopts` by name
+    // (sh:5-6), so it becomes a real shell parameter; `expl` is left out
+    // because the port never writes it. Without the declaration `zle <TAB>`
+    // left the seed standing in the user's shell:
+    //
+    //   zsh  : pattern=[][0]        zshrs: pattern=[array][2]
+    //
+    // Declared as a plain scalar, exactly as sh:3 does — it becomes an
+    // array on assignment the same way `pattern=( -g \* )` converts it
+    // upstream.
+    crate::compsys::ported::shared::declare_locals(&["pattern"], 0);
     // sh:5
     let seed = vec!["-g".to_string(), "*".to_string()];
     // sh:6

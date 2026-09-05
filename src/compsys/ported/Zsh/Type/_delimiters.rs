@@ -50,6 +50,18 @@ pub fn _delimiters(args: &[String]) -> i32 {
 /// (arg 0); falls back to `: + / - %`.
 pub fn _delimiters_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_delimiters");
+    // sh:7 — `local -a list`.
+    //
+    // `list` is the delimiter set this function offers, and the port
+    // publishes it as a shell parameter (below) so `_describe` can read it
+    // by name. `expl` (sh:6) is left out: the port never writes it.
+    // Without the declaration `ls *(f<TAB>` left it standing:
+    //
+    //   zsh  : list=[][0]        zshrs: list=[array][5]
+    crate::compsys::ported::shared::declare_locals(
+        &["list"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:6-7  locals
     let tag = args.first().cloned().unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();

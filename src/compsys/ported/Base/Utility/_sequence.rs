@@ -106,6 +106,30 @@ fn run_zparseopts_sequence(
 /// separator-delimited list.
 pub fn _sequence(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sequence");
+    // sh:11 — `local -a opts sep num pref suf cont end uniq dedup garbage`.
+    //
+    // Eight of those ten are created as shell parameters by this port:
+    // seven are `zparseopts` targets (sh:13-14, seeded in
+    // `run_zparseopts_sequence`) and `dedup` is published for the
+    // duplicate filter (sh:159 in the port). `end`/`garbage` stay
+    // Rust-side, so they are left out. Measured on a `_sequence`-backed
+    // spec, all eight outlived the completion:
+    //
+    //   zsh  : opts=[][0] sep=[][0] num=[][0] pref=[][0] suf=[][0]
+    //          cont=[][0] uniq=[][0] dedup=[][0]
+    //   zshrs: every one of them [array][0]
+    //
+    // `num` and `curcontext` are on the same upstream lines but are
+    // already declared local by `_main_complete` (sh:27-30); `num` is
+    // listed here anyway because sh:11 declares it in THIS function and
+    // the port writes it here, and the extra shadow is unwound by the same
+    // `endparamscope`.
+    crate::compsys::ported::shared::declare_locals(
+        &[
+            "opts", "sep", "num", "pref", "suf", "cont", "uniq", "dedup",
+        ],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:13
     let (mut argv, opts, sep, num, mut pref, mut suf, uniq) = run_zparseopts_sequence(args);
 

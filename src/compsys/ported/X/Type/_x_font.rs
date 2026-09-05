@@ -56,6 +56,20 @@ pub fn _x_font(args: &[String]) -> i32 {
     // sh:9-13 — populate/reuse the `_font_cache` param.
     if getaparam("_font_cache").is_none() {
         setaparam("_font_cache", build_font_cache());
+        // sh:10 — `typeset -gU _font_cache`. `setaparam` creates the node
+        // through `createparam(name, PM_SCALAR)` and carries no attribute
+        // bits, so the `-U` was lost: `${(t)_font_cache}` read `array`
+        // where zsh reads `array-unique`. Stamp PM_UNIQUE onto the node the
+        // way `bin_typeset`'s attribute-only arm does
+        // (`Src/builtin.c:2575`). It is not cosmetic — `_font_cache` is a
+        // cross-invocation GLOBAL cache (that is what the `-g` is for), so
+        // the flag governs every later append by any completer that touches
+        // the name, not just the build below.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("_font_cache") {
+                pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+            }
+        }
     }
 
     // sh:15-16  _wanted fonts expl font \
