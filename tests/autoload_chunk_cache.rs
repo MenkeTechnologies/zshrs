@@ -263,3 +263,74 @@ fn a_cached_chunk_that_defines_nothing_is_discarded_and_recompiled() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// `$funcsourcetrace[1]` names the fpath FILE, not the file with the
+/// function's own name appended a second time.
+///
+/// The `##*/` in [`BODY`] hides this class outright: `<dir>/f/f:0` and
+/// `<dir>/f:0` both tail-strip to `f:0`, so every existing assertion in
+/// this file passes either way. The whole path is what completers read.
+///
+/// The failure this pins: `dispatch_function_call` builds a synthetic
+/// `shfunc` for `doshfunc`, sets its `filename` to `getshfuncfile`'s
+/// ANSWER (the resolved source file), and used to copy the real node's
+/// flags verbatim — PM_LOADDIR included. PM_LOADDIR means "filename holds
+/// the fpath DIRECTORY" (c:Src/hashtable.c:1061
+/// `zhtricat(shf->filename, "/", shf->node.nam)`), so `doshfunc` appended
+/// `/name` to a path that already ended in it and the funcstack frame read
+/// `<dir>/f/f:0`.
+///
+/// Not cosmetic: git ships its own `_git` completion wrapper that finds
+/// git-completion.bash with
+/// `"$(dirname ${funcsourcetrace[1]%:*})"/git-completion.bash`. The extra
+/// component sent that search into a directory that does not exist, so
+/// `$script` stayed empty and `. "$script"` failed with
+/// `_git:.:48: no such file or directory:` on every `git-cvsserver <TAB>`.
+///
+/// Reference (`zsh -f`, 5.9.2): `trace=<fpath dir>/zt_fsttrace:0`.
+#[test]
+fn funcsourcetrace_names_the_fpath_file_without_doubling_the_function_name() {
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    };
+    let tmp = std::env::temp_dir().join(format!("zshrs-fsttrace-{}", std::process::id()));
+    let home = tmp.join("home");
+    let fpath = tmp.join("fpath");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&fpath).expect("mkdir fpath");
+    std::fs::write(
+        fpath.join("zt_fsttrace"),
+        "print -r -- \"trace=${funcsourcetrace[1]}\"\n\
+         print -r -- \"src=${functions_source[zt_fsttrace]}\"\n",
+    )
+    .expect("write fn");
+
+    let want_file = fpath.join("zt_fsttrace");
+    let want_trace = format!("trace={}:0", want_file.display());
+    let want_src = format!("src={}", want_file.display());
+
+    // Cold (compiles the file) and warm (serves the cached chunk) must
+    // both agree: the cache is not allowed to change the attribution.
+    for pass in ["cold", "warm"] {
+        let out = run(
+            &bin,
+            &home,
+            &fpath,
+            "zmodload zsh/parameter 2>/dev/null; autoload -Uz zt_fsttrace; zt_fsttrace",
+        );
+        assert!(
+            out.contains(&want_trace),
+            "{pass}: funcsourcetrace is not the fpath file: want {want_trace:?}, got {out:?}",
+        );
+        // `functions_source` reads the real shfunctab node through
+        // `getshfuncfile` and was always right; asserting it here keeps a
+        // future "fix" from making the two disagree in the other direction.
+        assert!(
+            out.contains(&want_src),
+            "{pass}: functions_source moved: want {want_src:?}, got {out:?}",
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
