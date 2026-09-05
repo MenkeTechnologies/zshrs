@@ -2337,3 +2337,9 @@ read
 #   FAIL   tab1               'scselect '  (1 row(s) differ)
 #     1479a74662  x1   smallest: --case 'scselect ' --keys tab
 #        cell/row0/col1 | ref/$ scselect Automatic | test/$ scselect <hex>-#E#B-#F#B-#-<hex>
+#
+# chunk part_01  cells 6401-6500  'shar -' .. 'smbutil '
+#   # 100 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 291.1s (2.9s/cell)
+#   # 9 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
