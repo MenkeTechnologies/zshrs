@@ -340,6 +340,11 @@ fn parseopts_insert(optlist: &mut Vec<usize>, base: usize, optno: i32) {
     optlist.push(ptr); // c:348
 }
 
+/// zshrs-only long flags that take a following word as their argument.
+/// They are handled by the binary front-end; `parseopts` only needs to
+/// skip BOTH words so the argument is not mistaken for a script operand.
+const ZSHRS_LONG_FLAGS_WITH_ARG: &[&str] = &["emulate", "rcfile", "init-file", "docs", "out"];
+
 /// Port of `mod_export int parseopts(...)` from Src/init.c:390.
 /// Rust idiom replacement: index-walk over `argv` Vec covers the C
 /// argv pointer-advance; the `emulate_required` / `toplevel` state
@@ -409,6 +414,13 @@ pub fn parseopts(
             *idx += 1;
             continue;
         }
+        // c:Src/init.c:425-429 — the pseudo-option `--` ends option
+        // processing; everything after it is an operand even if it looks
+        // like a flag.
+        if arg == "--" {
+            *idx += 1;
+            break;
+        }
         // c:Src/init.c:432-460 — GNU-style long options. C rewrites `-`
         // to `_` in the name and falls into the shared `longoptions:`
         // label, so `--no-rcs` is exactly `-o no_rcs`.
@@ -438,7 +450,14 @@ pub fn parseopts(
                 // the `-o` arm above already relies on.
                 crate::ported::options::dosetopt(optno, 1, toplevel as i32);
             }
+            // A zshrs-only long flag. Those that take a following word
+            // must consume it too, or the word is mistaken for the
+            // script operand and the shell tries to RUN the user's
+            // `--rcfile` argument.
             *idx += 1;
+            if ZSHRS_LONG_FLAGS_WITH_ARG.contains(&&arg[2..]) {
+                *idx += 1;
+            }
             continue;
         }
         // c:Src/init.c:516-534 — a cluster of single option letters
@@ -1541,6 +1560,20 @@ pub fn run_init_scripts() {
     let interact = isset(INTERACTIVE);
     let privileged = isset(PRIVILEGED);
 
+    // ZSHRS-ONLY, no C counterpart. C models two startup-file sets — zsh's
+    // and one lumped Bourne one — because `emulate sh`/`ksh` is all it
+    // offers. zshrs ships drop-ins for eight shells, and each reads its
+    // own files: `--bash` wants `~/.bashrc` and the `~/.bash_profile`
+    // chain, `--ksh` wants `$ENV` defaulted to `~/.kshrc`, `--mksh`
+    // `~/.mkshrc`, `--csh` `~/.cshrc` + `~/.login`. Routed through
+    // `extensions::emulation_startup`, which owns that table. Only a
+    // selected DROP-IN takes this path; a runtime `emulate sh` keeps the
+    // faithful branches below.
+    if crate::extensions::emulation_startup::overrides_zsh_startup() {
+        crate::extensions::emulation_startup::run_init_scripts();
+        return;
+    }
+
     if is_posix {
         // c:1450-1451 — if (islogin) source("/etc/profile");
         if is_login {
@@ -2595,7 +2628,23 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(bare);
-    crate::ported::options::emulate(basename, true); // c:350
+    // ZSHRS-ONLY. In C, `argv[0]` IS the personality selector, so
+    // re-deriving the emulation from it here is free. zshrs adds `--MODE`
+    // flags C has no equivalent of, and `argv[0]` is always the zshrs
+    // binary — so this call used to reset a `--ksh` / `--sh` / `--dash`
+    // shell back to zsh emulation on the interactive path, which reaches
+    // `zsh_main` (the `-c` and script-file paths in bins/zshrs.rs do not).
+    // `zshrs --sh -i` ran with `shwordsplit` OFF as a result. The
+    // CLI-selected personality wins when there is one.
+    let name = crate::extensions::emulation_startup::selected_emulate_name().unwrap_or(basename);
+    crate::ported::options::emulate(name, true); // c:350
+    // ZSHRS-ONLY. `emulate()` resets the option table wholesale, so the
+    // drop-in's own deltas (bash's brace expansion, `$BASH_REMATCH`, the
+    // prompt options) have to be re-applied on top of the preset. Without
+    // this they survived only on the `-c` / script paths, which do not
+    // reach this function — an interactive `--bash`, i.e. a login shell,
+    // ran without any of them.
+    crate::extensions::emulation_startup::apply_personality_option_deltas();
 
     // c:351 — `opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);`
     const PARSEARGS_LOGIN: i32 = 2;

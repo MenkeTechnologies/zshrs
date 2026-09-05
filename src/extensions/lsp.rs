@@ -5864,11 +5864,11 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--color",         "`--color WHEN` — control coloured output (`auto` / `always` / `never`). Default `auto`: `$NO_COLOR` forces off, `$FORCE_COLOR` / `$CLICOLOR_FORCE` force on, otherwise follow `$TERM` and stdout TTY status."),
     // Parity modes (drop-in shell emulation)
     ("--zsh",       "Identical-behaviour drop-in for `/bin/zsh`. Caches OFF, daemon OFF — every `source` re-runs the file fresh. Used as the compat-test entrypoint."),
-    ("--bash",      "Identical-behaviour drop-in for `/bin/bash`. Caches / daemon OFF; every echo / source re-fires byte-for-byte against reference bash."),
-    ("--ksh",       "Identical-behaviour drop-in for `/bin/ksh` (ksh-93). Caches / daemon OFF."),
-    ("--sh",        "Identical-behaviour drop-in for `/bin/sh` / POSIX (alias of `--posix`). Caches / daemon OFF."),
-    ("--csh",       "Identical-behaviour drop-in for `/bin/csh`. Caches / daemon OFF."),
-    ("--posix",     "Identical-behaviour drop-in for `/bin/sh` / POSIX (Bourne / dash semantics). Caches / daemon OFF."),
+    ("--bash",      "Identical-behaviour drop-in for `/bin/bash`. Caches / daemon OFF; every echo / source re-fires byte-for-byte against reference bash. Reads bash's startup files, not zsh's: `/etc/profile` + the first of `~/.bash_profile` / `~/.bash_login` / `~/.profile` for a login shell, `/etc/bash.bashrc` (where present) + `~/.bashrc` for an interactive non-login shell, `$BASH_ENV` for a non-interactive shell, `~/.bash_logout` on login-shell exit."),
+    ("--ksh",       "Identical-behaviour drop-in for `/bin/ksh` (ksh-93). Caches / daemon OFF. Startup files: `/etc/profile` + `~/.profile` when logging in, `/etc/ksh.kshrc` (where present) + `$ENV` — defaulting to `~/.kshrc` — when interactive."),
+    ("--sh",        "Identical-behaviour drop-in for `/bin/sh` / POSIX (alias of `--posix`). Caches / daemon OFF. Startup files: `/etc/profile` + `~/.profile` when logging in, `$ENV` (no default) when interactive."),
+    ("--csh",       "Identical-behaviour drop-in for `/bin/csh`. Caches / daemon OFF. Startup files: `/etc/csh.cshrc` + `~/.tcshrc` (or `~/.cshrc`) always, plus `/etc/csh.login` + `~/.login` when logging in and `~/.logout` on exit."),
+    ("--posix",     "Identical-behaviour drop-in for `/bin/sh` / POSIX (Bourne / dash semantics). Caches / daemon OFF. Startup files: `/etc/profile` + `~/.profile` when logging in, `$ENV` (no default) when interactive."),
     ("--emulate",   "`--emulate MODE` — generic parity alias for `--MODE` (zsh-compat: matches the `emulate zsh` / `emulate bash` etc. builtin)."),
     ("--zsh-compat","Alias of `--zsh` (legacy spelling — kept for back-compat with older scripts / CI invocations)."),
     // Misc invocation
@@ -5877,6 +5877,11 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--xtrace",   "Print each command and its arguments before executing. Equivalent to short `-x` / `setopt XTRACE` / `set -x`."),
     ("--login",    "Force login-shell mode. Equivalent to short `-l`."),
     ("--interactive", "Force interactive mode. Equivalent to short `-i`."),
+    // bash startup-file flags (`--bash` mode only)
+    ("--norc",      "`--bash` only: do not read `~/.bashrc` for an interactive non-login shell (bash's `--norc`)."),
+    ("--noprofile", "`--bash` only: do not read `/etc/profile` or the `~/.bash_profile` chain for a login shell (bash's `--noprofile`)."),
+    ("--rcfile",    "`--bash` only: `--rcfile FILE` — read FILE instead of `~/.bashrc`. Separate-word form only, as bash requires."),
+    ("--init-file", "`--bash` only: alias of `--rcfile`."),
 ];
 
 const COMPSYS_FN_FLAG_DOCS: &[(&str, &[(&str, &str)])] = &[
@@ -13493,6 +13498,10 @@ foo() { echo second }\n\
             "--xtrace",
             "--login",
             "--interactive",
+            "--norc",
+            "--noprofile",
+            "--rcfile",
+            "--init-file",
         ] {
             assert!(
                 by.contains_key(spec),

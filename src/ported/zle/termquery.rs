@@ -715,6 +715,31 @@ pub fn collate_seq(sindex: usize, dir: i32) {
                 break;
             }
         }
+        // ZSHRS-ONLY. The OSC 133 shell-integration marker is a zsh
+        // feature: bash never writes one, and neither does zsh 5.9 with
+        // its default `.term.extensions`. Emitting it from a drop-in put
+        // a stray `\e]133;B\e\\` on the wire before every prompt, which
+        // is visible as `]133;B\` on a terminal that does not consume it
+        // — so a `zshrs --bash` login shell did not look like bash. Native
+        // zshrs mode keeps the marker.
+        if enabled
+            && key == "integration-prompt"
+            && !crate::extensions::emulation_startup::emits_integration_prompt()
+        {
+            enabled = false;
+        }
+        // ZSHRS-ONLY. Bracketed paste (`\e[?2004h` / `\e[?2004l`) is a
+        // readline/ZLE feature: measured on this machine, bash 5.3 and
+        // zsh 5.9 enable it and ksh93, mksh, dash, /bin/sh and tcsh do
+        // not. Emitting it from a Korn/Bourne/csh drop-in put a pair of
+        // sequences on the wire that the shell it stands in for never
+        // sends. bash keeps it, because bash sends it.
+        if enabled
+            && key == "bracketed-paste"
+            && !crate::extensions::emulation_startup::emits_bracketed_paste()
+        {
+            enabled = false;
+        }
         if enabled {
             // c:703
             if i != 0 {

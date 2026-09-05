@@ -13885,7 +13885,23 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     // …)` for arrays/assocs — not zsh's `typeset` form. Sparse indexed arrays
     // list only their live indices. --zsh keeps zsh output (gate). Covers both
     // the explicit-name and the all-params listing print paths.
-    if crate::dash_mode::bash_mode() && (printflags & PRINT_TYPESET) != 0 {
+    // `export -p` / `readonly -p` use the SAME `declare` form under bash:
+    // `declare -x FOO="bar"` / `declare -r R="1"`, not POSIX's
+    // `export FOO=bar`. Each still filters to the parameters it is about,
+    // which the POSIX branch below does via PRINT_POSIX_EXPORT /
+    // PRINT_POSIX_READONLY.
+    let bash_posix_listing = crate::dash_mode::bash_mode()
+        && (printflags & (PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY)) != 0;
+    if bash_posix_listing {
+        let f = hn.node.flags as u32;
+        if (printflags & PRINT_POSIX_EXPORT) != 0 && (f & PM_EXPORTED) == 0 {
+            return;
+        }
+        if (printflags & PRINT_POSIX_READONLY) != 0 && (f & PM_READONLY) == 0 {
+            return;
+        }
+    }
+    if crate::dash_mode::bash_mode() && ((printflags & PRINT_TYPESET) != 0 || bash_posix_listing) {
         let fl = hn.node.flags as u32;
         let nm = hn.node.nam.clone();
         let mut fstr = String::new();

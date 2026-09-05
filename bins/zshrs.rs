@@ -580,6 +580,28 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
   --zsh-compat alias of --zsh (legacy spelling)
 
+bash startup-file options (`--bash` only; ignored in the other modes):
+  --norc            do not read ~/.bashrc for an interactive non-login shell
+  --noprofile       do not read /etc/profile or the ~/.bash_profile chain
+  --rcfile FILE     read FILE instead of ~/.bashrc
+  --init-file FILE  alias of --rcfile
+Every drop-in reads ITS OWN startup files, not zsh's (skipped by -f /
+--no-rcs, as always):
+  --bash    login: /etc/profile + first of ~/.bash_profile, ~/.bash_login,
+            ~/.profile.  interactive non-login: /etc/bash.bashrc (where
+            present) + ~/.bashrc.  non-interactive: $BASH_ENV.
+            login exit: ~/.bash_logout
+  --ksh     login: /etc/profile + ~/.profile.  interactive: /etc/ksh.kshrc
+            (where present) + $ENV, defaulting to ~/.kshrc
+  --mksh    as --ksh, but $ENV defaults to ~/.mkshrc
+  --pdksh   as --ksh, but $ENV has no default
+  --sh/--posix/--dash/--ash
+            login: /etc/profile + ~/.profile.  interactive: $ENV (no default)
+  --csh     always: /etc/csh.cshrc + ~/.tcshrc, or ~/.cshrc if absent.
+            login also: /etc/csh.login + ~/.login.  login exit: ~/.logout
+An interactive LOGIN shell reads both its profile AND its interactive file
+in every mode except --bash, which reads the profile only.
+
 Argv[0] inference: invoking the binary as `ksh` / `sh` / `csh` / `bash`
 (via symlink or hardlink) selects the matching mode automatically, matching
 C zsh's behaviour at Src/init.c:1869+. Use the explicit `--MODE` flag to
@@ -1308,7 +1330,21 @@ pub fn zshrs_main() {
         // handles clumps natively via its own character loop.
         let raw: Vec<String> = env::args().collect();
         let mut out: Vec<String> = Vec::with_capacity(raw.len());
-        for a in &raw {
+        for (i, a) in raw.iter().enumerate() {
+            // c:Src/init.c:277 — `argv0 = argzero = posixzero = *argv++;`
+            // consumes argv[0] as the shell's NAME before a single option
+            // word is looked at. It is never an option, and a LOGIN shell
+            // is invoked with a leading dash on that name: login(1) and
+            // sshd exec the shell as `-bash` / `-zsh`. Expanding it as a
+            // clump turned `-bash` into `-b -a -s -h`, which set `$0` to
+            // `-b`, silently enabled allexport (`-a`) and the rest, and
+            // left the `argv[0]` personality inference matching `b`
+            // instead of `bash` — so `zshrs` symlinked as the user's
+            // login shell came up in the wrong mode with a corrupt `$0`.
+            if i == 0 {
+                out.push(a.clone());
+                continue;
+            }
             let bytes = a.as_bytes();
             let is_clumped = bytes.len() >= 3
                 && bytes[0] == b'-'
@@ -1599,20 +1635,109 @@ pub fn zshrs_main() {
     // (`printf %s {a,b}` → `a b`, `{1..3}` → `1 2 3`). Re-enable it for
     // `--bash` so it matches /bin/bash.
     if matches!(shell_mode(), ShellMode::Bash) && !zsh_style_requested {
-        zsh::ported::options::opt_state_set("ignorebraces", false);
-        // bash always populates `$BASH_REMATCH` (array: [0]=whole match,
-        // [1..]=capture groups) after `[[ str =~ re ]]`. zsh gates this on
-        // the BASH_REMATCH option; turn it on for --bash.
-        zsh::ported::options::opt_state_set("bashrematch", true);
-        // Enable bash-only param expansion syntax (`${!var}` indirect,
-        // `${v^^}` case-mod) in the subst layer.
-        zsh::extensions::dash_mode::set_bash_mode(true);
-        // bash's `shopt` defaults for the rows backed by a real zsh option.
-        // zsh's default differs for some of them (`histappend` is ON in zsh,
-        // OFF in bash), so `shopt -p` misreported them and the behavior
-        // followed zsh's. Runs before any user code, so a script's own
-        // `shopt`/`setopt` still wins.
-        zsh::extensions::dash_mode::bash_shopt_apply_defaults();
+        // bash's startup-file flags. These are GNU long options with no
+        // zsh option behind them, so the faithful `optlookup` walk below
+        // would reject them ("no such option"); read them off the raw
+        // argv here, the same way the shell-mode scan above reads
+        // `--bash` itself, and record them for emulation_startup.
+        // `--rcfile` / `--init-file` take the NEXT word — bash rejects
+        // the `--rcfile=FILE` form ("invalid option"), so only the
+        // separated form is accepted here too.
+        let mut ai = 1usize;
+        while ai < args.len() {
+            match args[ai].as_str() {
+                "--norc" => zsh::emulation_startup::set_norc(true),
+                "--noprofile" => zsh::emulation_startup::set_noprofile(true),
+                "--rcfile" | "--init-file" => {
+                    let Some(file) = args.get(ai + 1) else {
+                        eprintln!("zshrs: {}: option requires an argument", args[ai]);
+                        std::process::exit(2);
+                    };
+                    zsh::emulation_startup::set_rcfile(file);
+                    ai += 1;
+                }
+                // `--` ends option processing; a later `--norc` is an operand.
+                "--" => break,
+                _ => {}
+            }
+            ai += 1;
+        }
+    }
+
+    // Record which shell this process is standing in for. `ShellMode`
+    // lumps the three Korn lines and the two Almquist spellings together
+    // (they share an option preset), but each reads DIFFERENT startup
+    // files — ksh93 defaults `$ENV` to `~/.kshrc`, mksh falls back to
+    // `~/.mkshrc`, pdksh has no default — so the personality is resolved
+    // from the flag words, not from `ShellMode` alone. It also survives
+    // `zsh_main`'s `parseopts_setemulate`, which re-derives the emulation
+    // bitmap from `argv[0]` and would otherwise reset a drop-in to zsh on
+    // the interactive path.
+    if !zsh_style_requested {
+        use zsh::emulation_startup::Personality;
+        let flag = |name: &str| args.iter().any(|a| a == name);
+        let personality = match shell_mode() {
+            ShellMode::Bash => Some(Personality::Bash),
+            ShellMode::Ksh if flag("--mksh") || argv0_basename == "mksh" => Some(Personality::Mksh),
+            ShellMode::Ksh if flag("--pdksh") || argv0_basename == "pdksh" => {
+                Some(Personality::Pdksh)
+            }
+            ShellMode::Ksh => Some(Personality::Ksh93),
+            ShellMode::Dash => Some(Personality::Dash),
+            ShellMode::Posix => Some(Personality::Sh),
+            // `--csh` routes to `ShellMode::Zsh` (zshrs has no separate
+            // csh bucket), so it is recognised from the flag / argv[0].
+            ShellMode::Zsh | ShellMode::Zshrs
+                if flag("--csh") || argv0_basename == "csh" || argv0_basename == "tcsh" =>
+            {
+                Some(Personality::Csh)
+            }
+            // A bare `--zsh` and the default zshrs mode both keep zsh's
+            // own startup files, which the faithful port already owns.
+            ShellMode::Zsh | ShellMode::Zshrs => None,
+        };
+        if let Some(p) = personality {
+            zsh::emulation_startup::set_personality(p);
+            // The drop-in's option deltas on top of the shared `emulate`
+            // preset. `parseopts_setemulate` re-applies them for the
+            // interactive path, which re-installs the emulation itself.
+            zsh::emulation_startup::apply_personality_option_deltas();
+            // The shell's own default aliases. bash / dash / sh define
+            // none, ksh93 defines 19 and mksh 11; zsh's two (`run-help`,
+            // `which-command`) belong to none of them.
+            zsh::emulation_startup::install_default_aliases();
+        }
+    }
+
+    // c:Src/init.c:268-269 — `if (**argv == '-') flags |= PARSEARGS_LOGIN;`
+    // then c:351 `opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);`.
+    // A leading dash on argv[0] is the ONLY signal that this is a login
+    // shell: login(1) and sshd exec the user's shell as `-bash` / `-zsh`.
+    // `parseargs` applies it on the interactive path, but the `-c` and
+    // script-file dispatch below never reach that function, so without
+    // this a shell started as `-bash -c CMD` reported `shopt -q
+    // login_shell` false and read no `~/.bash_logout`. Applied before the
+    // option words are replayed so an explicit flag still wins.
+    //
+    // `explicit_login` records the OTHER half: whether `-l` / `--login`
+    // was actually typed. bash reads the profile chain for an interactive
+    // login shell or a non-interactive one with `--login`, but NOT for a
+    // non-interactive shell that is login-by-argv[0] alone — see
+    // `emulation_startup::EXPLICIT_LOGIN` for the measured table.
+    {
+        let raw: Vec<String> = std::env::args().collect();
+        if raw.first().is_some_and(|a| a.starts_with('-')) {
+            zsh::ported::options::opt_state_set("loginshell", true);
+        }
+        // Scan only the leading option words, stopping at `--` or the
+        // first operand, so an `-l` that is a command argument is not
+        // mistaken for the flag.
+        let explicit = raw
+            .iter()
+            .skip(1)
+            .take_while(|a| a.starts_with('-') && a.as_str() != "--")
+            .any(|a| a == "-l" || a == "--login");
+        zsh::emulation_startup::set_explicit_login(explicit);
     }
 
     if parity_mode_selected {
@@ -2103,6 +2228,14 @@ pub fn zshrs_main() {
             "posix",
             "disasm",
         ];
+        // bash startup-file flags, already read by the scan at the
+        // `--bash` option-delta site; consumed here so the faithful
+        // `optlookup` below never sees them. Recognised in bash mode
+        // ONLY — a `zshrs --norc` outside it must still fail with zsh's
+        // "no such option: norc", which is what the reference does.
+        const BASH_LONG_FLAGS: &[&str] = &["norc", "noprofile"];
+        // Same, but each takes the following word as its argument.
+        const BASH_LONG_FLAGS_WITH_ARG: &[&str] = &["rcfile", "init-file"];
 
         let mut out: Vec<String> = Vec::new();
         // c:277 — `argv0 = argzero = posixzero = *argv++;`
@@ -2148,6 +2281,18 @@ pub fn zshrs_main() {
                     // c:432 — `++*argv` steps past the second dash.
                     let long: String = chars[p + 1..].iter().collect();
                     if ZSHRS_LONG_FLAGS.contains(&long.as_str()) {
+                        break;
+                    }
+                    if is_bash_mode() && BASH_LONG_FLAGS.contains(&long.as_str()) {
+                        break;
+                    }
+                    if is_bash_mode() && BASH_LONG_FLAGS_WITH_ARG.contains(&long.as_str()) {
+                        // Skip the flag AND its argument. The value was
+                        // already captured by the raw-argv scan above.
+                        i += 1;
+                        if i >= args.len() {
+                            bad_option(format!("--{long}: option requires an argument"));
+                        }
                         break;
                     }
                     // c:447-455 `--version` / c:456-459 `--help` are
@@ -2552,10 +2697,36 @@ pub fn zshrs_main() {
         // C-default `+%N:%i> ` prefix instead of the user's PS4.
         //
         // login + interactive RC files (zprofile / zshrc / zlogin)
-        // are NOT sourced in `-c` mode, matching the C source's
-        // `if (islogin)` / `if (interact)` gates at init.c:1491,
-        // 1499, 1507 — `-c` is non-interactive non-login.
-        source_startup_files(&mut executor, false, false, no_rcs_flag);
+        // are sourced in `-c` mode only when `-i` / `-l` asked for them,
+        // which is exactly the C source's `if (islogin)` / `if (interact)`
+        // gates at init.c:1491, 1499, 1507. A bare `-c` is non-interactive
+        // and non-login and reads neither; `zsh -i -c` DOES read `.zshrc`
+        // and `zsh -l -c` DOES read `.zprofile` (verified against zsh
+        // 5.9). This used to pass `false, false` unconditionally, so every
+        // `zshrs -i -c` / `-l -c` ran with the user's rc files unread —
+        // caught by tests/startup_file_parity.rs.
+        //
+        // A DROP-IN reads a different set and is sensitive to `-l`/`-i`
+        // even under `-c`: bash 5.3.15 sources `~/.bash_profile` for
+        // `bash -l -c true`, `~/.bashrc` for `bash -i -c true`, and
+        // `$BASH_ENV` for a plain `bash -c true`; `ksh -i -c` reads
+        // `~/.kshrc`. Reading zsh's zshenv here instead left every one of
+        // those unread.
+        if zsh::emulation_startup::overrides_zsh_startup() {
+            source_emulation_startup_files(
+                &mut executor,
+                zsh::ported::options::opt_state_get("loginshell").unwrap_or(false),
+                zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
+                no_rcs_flag,
+            );
+        } else {
+            source_startup_files(
+                &mut executor,
+                zsh::ported::options::opt_state_get("loginshell").unwrap_or(false),
+                zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
+                no_rcs_flag,
+            );
+        }
 
         // Skip-configs apply: when the daemon is up + has zshrs
         // canonical state, apply it here so `zshrs -c 'gst'`
@@ -2813,6 +2984,38 @@ pub fn zshrs_main() {
             }
         }
         zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
+        // Drop-in script dispatch. bash reads `$BASH_ENV` before a script
+        // runs ("if [ -n \"$BASH_ENV\" ]; then . \"$BASH_ENV\"; fi",
+        // bash(1) INVOCATION), and additionally the `~/.bash_profile`
+        // chain when `--login` was given — verified against bash 5.3.15,
+        // where `bash -l script.sh` sources `.bash_profile` then
+        // `$BASH_ENV`. `--csh` reads `~/.cshrc` for a script too; the
+        // Korn and Bourne drop-ins read nothing unless `--login`. Runs
+        // after `$0`/`$@` are seeded so the sourced file sees the
+        // script's own identity, as bash's does.
+        if zsh::emulation_startup::overrides_zsh_startup() {
+            source_emulation_startup_files(
+                &mut executor,
+                zsh::ported::options::opt_state_get("loginshell").unwrap_or(false),
+                zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
+                no_rcs_flag,
+            );
+        } else {
+            // c:Src/init.c:1473 + 1489 — `/etc/zshenv` (always) and
+            // `$ZDOTDIR/.zshenv` (RCS, non-PRIVILEGED) are read for EVERY
+            // invocation, a script file included: `zsh script.sh` sources
+            // `~/.zshenv` before the script's first line. This branch
+            // sourced nothing at all, so a script run under zshrs started
+            // without the user's exported environment — caught by
+            // tests/startup_file_parity.rs. The login / interactive files
+            // stay behind their own gates inside `source_startup_files`.
+            source_startup_files(
+                &mut executor,
+                zsh::ported::options::opt_state_get("loginshell").unwrap_or(false),
+                zsh::ported::options::opt_state_get("interactive").unwrap_or(false),
+                no_rcs_flag,
+            );
+        }
         // c:1401 — `scriptfilename = sfname;` — the PATHSCRIPT search may
         // have resolved the name to a $path entry; that resolved path is
         // what SHIN was opened on, while `$0` / ZSH_SCRIPT / scriptname
@@ -3360,6 +3563,38 @@ fn get_zdotdir() -> PathBuf {
 /// `/etc/zsh/…` layout is picked up on those platforms.
 fn global_rc(name: &str) -> PathBuf {
     PathBuf::from(zsh::global_rc::global_rc_path(&format!("/etc/{name}")))
+}
+
+/// Source the selected drop-in's startup files (`--bash`, `--ksh`,
+/// `--mksh`, `--pdksh`, `--sh`, `--dash`, `--csh`).
+///
+/// The ordered list comes from [`zsh::emulation_startup::startup_files`],
+/// the same one the library-side `run_init_scripts` hook drives for an
+/// interactive shell, so the `-c` and script-file dispatch paths in this
+/// binary cannot drift from it. See that module for the per-shell table
+/// and the reference-binary runs each row was verified against.
+fn source_emulation_startup_files(
+    executor: &mut ShellExecutor,
+    is_login: bool,
+    is_interactive: bool,
+    no_rcs: bool,
+) {
+    if no_rcs || !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
+        return;
+    }
+    let privileged = zsh::ported::options::opt_state_get("privileged").unwrap_or(false);
+    for path in zsh::emulation_startup::startup_files(is_login, is_interactive, privileged) {
+        // `source_from_memory`, NOT `source_file_with_zwc`: the latter
+        // walks the file line by line with a brace/paren balance
+        // heuristic, which cannot parse a multi-line `if … fi`. macOS's
+        // own `/etc/profile` is exactly that, so routing the drop-in
+        // files through it made `zshrs` symlinked as a login shell print
+        // four "parse error near `if'" lines before the prompt.
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        source_from_memory(executor, &path, &contents);
+    }
 }
 
 /// Source zsh startup files in correct order per zshall(1) STARTUP/SHUTDOWN FILES

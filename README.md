@@ -641,7 +641,84 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
 - Per-shell emulation drop-ins: `--zsh`, `--bash`, `--ksh`, `--mksh`, `--pdksh`, `--sh`/`--posix`, `--dash`, and `--ash`. `--mksh` (MirBSD ksh) and `--pdksh` (Public Domain ksh) share the `--ksh` base; `--ash` (Almquist shell) is an alias of `--dash`. `--dash` is a strict Debian Almquist Shell mode — it applies the `sh` option presets and additionally rejects the zsh-only syntax dash has never had (`$'...'` ANSI-C quoting, `<<<` here-strings, `+=` compound assignment, `name=(...)` arrays, the `[[ ]]` reserved word, arith `**`/`,`, and `printf %q`) while using XSI `echo` — verified byte-for-byte against `/bin/dash`
+- Startup files follow the emulated shell, not zsh, and every drop-in works as a real login shell (`argv[0]`-dash install, per-shell profile/rc/logout chain, `$ENV` / `$BASH_ENV`, bash's `--norc` / `--noprofile` / `--rcfile`, and bash's `$PS1` backslash escapes with `${var@P}`). Each row is verified against the reference binary — bash 5.3.15, ksh93, mksh, dash, tcsh, zsh 5.9 — not against its manual. See the login-shell coverage matrix below.
 - Drop-in fidelity beyond zsh's own `emulate`: the bare POSIX-family modes match the REAL shell, not zsh's approximation of it. `--sh`/`--dash`/`--ash` use XSI `echo` (backslash escapes interpreted without `-e`, as both `/bin/sh` flavours and `dash` do) where zsh's `emulate sh` sets `BSD_ECHO`, and `--bash` accepts bash's own `set -o` names — including the six zsh has no option for (`posix`, `errtrace`, `functrace`, `history`, `keyword`, `nolog`) — reporting them through `set -o`, `set +o` and `$SHELLOPTS`. Adding `--zsh` (`--sh --zsh`, `--ksh --zsh`) selects zsh-STYLE emulation instead: the option deltas a real zsh installs for `emulate sh` / `emulate ksh`, referenced against zsh itself.
+
+#### Login-shell coverage matrix
+
+Every drop-in is usable as a real login shell — installed by symlinking the
+binary under the target shell's name and letting `login(1)` / `sshd` exec it
+with a leading dash on `argv[0]`:
+
+```sh
+ln -s /path/to/zshrs ~/bin/bash    # the NAME selects the personality
+# add the path to /etc/shells, then
+chsh -s ~/bin/bash
+```
+
+The symlink's NAME is what selects the personality — the same `argv[0]`
+inference C zsh does at `Src/init.c:1869+` — so install one link per shell you
+want to stand in for. Each row names the binary its behaviour was measured
+against:
+
+| drop-in | symlink name | login shell starts it as | verified against |
+|---|---|---|---|
+| `--bash` | `bash` | `-bash` | GNU bash 5.3.15 |
+| `--ksh` | `ksh` | `-ksh` | ksh93 (AT&T; macOS `/bin/ksh`) |
+| `--mksh` | `mksh` | `-mksh` | mksh (MirBSD Korn shell) |
+| `--pdksh` | `pdksh` | `-pdksh` | not installed here — rules taken from OpenBSD `ksh(1)` |
+| `--sh` / `--posix` | `sh` | `-sh` | `/bin/sh` (bash 3.2 in sh mode on macOS, dash on Debian) |
+| `--dash` / `--ash` | `dash` / `ash` | `-dash` / `-ash` | dash |
+| `--csh` | `csh` | `-csh` | tcsh (macOS `/bin/csh`) |
+| `--zsh` | `zsh` | `-zsh` | zsh 5.9 |
+
+The whole table below is re-checked against those binaries by the startup-file
+parity + fuzz harness on every run. `$ENV` is expanded (parameter, command,
+arithmetic and tilde substitution) before use in every shell that reads it.
+
+| drop-in | login shell reads | interactive non-login reads | non-interactive reads | on login exit |
+|---|---|---|---|---|
+| `--bash` | `/etc/profile`, then the first readable of `~/.bash_profile`, `~/.bash_login`, `~/.profile` | `/etc/bash.bashrc` (where shipped), `~/.bashrc` | `$BASH_ENV` | `~/.bash_logout` |
+| `--ksh` | `/etc/profile`, `~/.profile`, then the interactive file | `/etc/ksh.kshrc` (where shipped), `$ENV` — default `~/.kshrc` | — | — |
+| `--mksh` | `/etc/profile`, `~/.profile`, then the interactive file | `$ENV`, or `~/.mkshrc` when `$ENV` is unset | — | — |
+| `--pdksh` | `/etc/profile`, `~/.profile`, then the interactive file | `$ENV` — no default | — | — |
+| `--sh` / `--posix` | `/etc/profile`, `~/.profile`, then the interactive file | `$ENV` — no default | — | — |
+| `--dash` / `--ash` | `/etc/profile`, `~/.profile`, then the interactive file | `$ENV` — no default | — | — |
+| `--csh` | the non-login files, then `/etc/csh.login`, `~/.login` | `/etc/csh.cshrc`, then `~/.tcshrc` or `~/.cshrc` | same as interactive — csh reads its rc file either way | `~/.logout`, `/etc/csh.logout` |
+| `--zsh` | `/etc/zprofile`, `~/.zprofile`, then the interactive files | `/etc/zshrc`, `~/.zshrc` | `/etc/zshenv`, `~/.zshenv` (read on every invocation) | `~/.zlogout`, `/etc/zlogout` |
+
+Rules that differ per shell, each measured rather than assumed:
+
+| behaviour | bash | ksh / mksh / pdksh / sh / dash | csh | zsh |
+|---|---|---|---|---|
+| interactive **login** shell also reads the interactive rc file | no — profile only | yes | yes | yes |
+| login by `argv[0]` dash alone, non-interactive, reads the profile | **no** — needs `-i` or an explicit `--login` | yes | yes | yes |
+| `-f` means | `noglob` | `noglob` | no-rcs | no-rcs |
+| suppress every startup file | `--norc --noprofile`, or `--no-rcs` | `--no-rcs` | `--no-rcs` | `-f` / `--no-rcs` |
+| `$PS1` escapes | backslash (`\u`, `\h`, `\w`, `\$`, …), plus `${var@P}` | literal text | literal text | `%` escapes |
+| bracketed paste (`\e[?2004h`) | yes | no | no | yes |
+| OSC 133 shell-integration marker | no | no | no | yes |
+| zsh partial-line `%` marker (`PROMPT_SP`) | no | no | no | yes |
+
+Startup state beyond the files — also per-shell, also measured:
+
+The Korn column targets the **maintained** ksh93u+m 1.0.10 line, not AT&T
+ksh93u+ 2012 (which macOS still ships as `/bin/ksh`). The two differ in both
+rows below: the 2012 line shipped 19 default aliases and printed a labelled
+`user\t0m0.00s` for `times`, and 93u+m ships neither. Following the
+maintained fork also fails safer — omitting an alias leaves a command
+resolving to its builtin, whereas inventing one shadows a real command.
+
+| behaviour | bash | ksh93 | mksh / pdksh | dash / ash / sh | zsh |
+|---|---|---|---|---|---|
+| default aliases | none | none | 11 (`autoload`, `functions`, `r`, …) | none | 2 (`run-help`, `which-command`) |
+| `alias` listing form | `alias NAME='value'` | `NAME=value` | `NAME=value` | `NAME=value` | `NAME=value` |
+| `export -p` / `readonly -p` | `declare -x NAME="v"` / `declare -r` | `export NAME=v` | `export NAME=v` | `export NAME='v'` | zsh's own |
+| `times` fraction | milliseconds | milliseconds, seconds zero-padded | centiseconds, seconds zero-padded | microseconds | centiseconds |
+| `times` seconds field | `% 60` | `% 60` | `% 60` | `% 60` | `% clock-tick` (zsh's own arithmetic) |
+
+A privileged shell (effective uid ≠ real uid) reads no user file at all; the
+Korn and Bourne drop-ins take `/etc/suid_profile` in place of the profile pair.
 
 ### Test corpus parity
 
