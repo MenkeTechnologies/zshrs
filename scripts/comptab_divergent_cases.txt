@@ -3882,3 +3882,30 @@ xsetroot -solid
 #   # stratified vacuous-pass replay
 #   … --corpus <pin>/replay.txt --sequences tab1 --jobs 1 --confirm 0 \
 #     --key-budget 15 --jsonl <pin>/replay.jsonl
+#
+# ──────────────────────────────────────────────────────────────────────────
+# CROSS-REFERENCE — 'upmendex -' CLOSES THE OPEN QUESTION LEFT BY bd0c7a1c9c.
+#
+# That block ends with "NEXT STEP: find where the description is cut before
+# reaching the terminal.  It is upstream of clnicezputs — compare what
+# compdescribe/_description build as the display string on each side."  That
+# is the right instruction and it lands on `cd_get`'s `copy_desc`, the
+# compdescribe truncation arm rooted at computil.rs:1348 above.  The
+# `clnicezputs` line of enquiry was correctly abandoned there for a second
+# reason worth recording: the harness init issues no `zmodload zsh/complist`,
+# so both shells take the PLAIN `ilistmatches`/`printlist` path
+# (compresult.rs) and `clnicezputs` never runs for this cell at all.
+#
+# ONE CORRECTION to that block, measured rather than argued.  Its heading
+# says "NOT localized".  It is: the harness forces `LC_ALL=C`
+# (comptab_parity.py `child_env`), and the divergence exists ONLY there.
+# Re-measured at the same 110-column pty with the same description, with a
+# description long enough to overflow under UTF-8 too:
+#     LC_ALL=C            zsh raw bytes    zshrs metafied    DIVERGE
+#     LC_ALL=en_US.UTF-8  byte-identical                     AGREE
+# which is what the code predicts — the metafying arm at computil.rs:1352 is
+# gated on `mb_single_byte`, i.e. on `nl_langinfo(CODESET)` not being UTF-8,
+# and the UTF-8 arm at computil.rs:1367 returns the unit as text.  The
+# "SHORT multibyte description PASSES" observation in that block is the same
+# fact seen from the other side: a short description is not truncated, so the
+# fits-whole arm at computil.rs:1342 runs and keeps the text as it is.
