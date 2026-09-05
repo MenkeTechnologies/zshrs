@@ -13,7 +13,7 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════
 # RE-MEASURED 2026-09-04 — 42 PASS / 46, WITH THE NATIVE PORTS ACTUALLY ACTIVE
-# ** SUPERSEDED later the same day: 45 passed / 4 failed / 1 timeout after
+# ** SUPERSEDED later the same day: reported as 45 passed / 4 failed / 1 timeout after
 # ** the `_arguments` SCRATCH_PARAMS fix (0b1902d2fa) moved six cells.
 # ** The 42/46 figures below are the state BEFORE that fix.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -326,8 +326,41 @@ CC
 #   PASS   tab1               'gtk-launch '
 #   PASS   tab1               'gtk-launch -'
 #   PASS   tab1               'gtk4-launch '
-#   PASS   tab1               'git-cvsserver '
-#   PASS   tab1               'git-cvsserver -'
+#   PASS   tab1               'git-cvsserver '     ** NOT TRUE — see below
+#   PASS   tab1               'git-cvsserver -'    ** NOT TRUE — see below
+#
+# ** CORRECTION 2026-09-05. The two `git-cvsserver` lines above are WRONG and
+# ** they cost a full agent dispatch: reading them as a record of a recent
+# ** run, I filed a phantom "regression" and sent someone to bisect it.
+# **
+# ** They are part of a VERBATIM PASTE of the 2026-08-20 sweep's log, carried
+# ** forward into this "FIXED — kept as regression guards" block. They are not
+# ** a measurement of any later run. Both cells were re-measured on 2026-09-05
+# ** against binaries built at THREE separate commits — 3dcb8a9755 (the
+# ** ports-activation commit), 0b1902d2fa (the commit the "45 passed" figure
+# ** was taken at), and 492af340bb — each pinned and codesigned, one cell,
+# ** --jobs 1, same pinned dump. All three FAIL, identically, fingerprint
+# ** 53f75c7bd7. They cannot have been among the 45.
+# **
+# ** So the "45 passed / 4 failed" figure in this file's header is itself
+# ** unreliable for identifying WHICH cells passed; treat it as a count from
+# ** one run, not as a per-cell record.
+# **
+# ** What the cell actually shows (both shells error, differently):
+# **   zsh  : _arguments:#: bad pattern: -([AMO]*|[#CRSWnsw])
+# **   zshrs: _arguments:#: parse error: condition expected: ...
+# ** Root cause is the documented `!!! KNOWN GAP !!!` at
+# ** src/ported/pattern.rs:1347-1377 (c:Src/pattern.c:913-917): zshrs does not
+# ** reject a stray top-level `)` because its lexer does not model C's
+# ** `sub`/`in_brace_param`. Under `emulate ksh`, SH_GLOB masks
+# ** zpc_special[ZPC_INPAR], so zsh's `_arguments` aborts at sh:15 and falls
+# ** through to _default while zshrs sails on into lines zsh never executes.
+# ** That gap's own note records the trade: enforcing it fixes 40 cells and
+# ** over-rejects 170. Not a regression, and not cheap to close.
+# **
+# ** LESSON for this file: a pasted run log is not a per-cell PASS record.
+# ** Anything claiming a cell passes must name the binary and the date, or it
+# ** will be read as current by the next person.
 #   PASS   tab1               'ansible-galaxy '
 #   PASS   tab1               'chflags '
 #
