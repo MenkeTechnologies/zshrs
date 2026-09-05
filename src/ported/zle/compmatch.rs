@@ -2010,6 +2010,125 @@ pub fn match_str(
             };
     }
 
+    // c:1058-1080
+    // ```c
+    //     /* If we matched a suffix, the anchors stored in the top-clines
+    //      * will be in the wrong clines: shifted by one. Adjust this. */
+    //     if (sfx && matchparts) {
+    //         Cline t, tn, s;
+    //
+    //         if (matchparts->prefix || matchparts->suffix) {
+    //             t = get_cline(NULL, 0, NULL, 0, NULL, 0, 0);
+    //             t->next = matchparts;
+    //             if (matchparts->prefix)
+    //                 t->prefix = (Cline) 1;
+    //             else
+    //                 t->suffix = (Cline) 1;
+    //             matchparts = t;
+    //         }
+    //         for (t = matchparts; (tn = t->next); t = tn) {
+    //             s = (tn->prefix ? tn->prefix : tn->suffix);
+    //             if (t->suffix)
+    //                 t->suffix = s;
+    //             else
+    //                 t->prefix = s;
+    //         }
+    //         t->prefix = t->suffix = NULL;
+    //     }
+    // ```
+    // This whole block was ABSENT from the port. Suffix-side matching builds
+    // `matchparts` back-to-front, so each cline ends up holding the anchor
+    // that belongs to the node BEFORE it; C walks the chain once and moves
+    // every `prefix`/`suffix` sub-list one node towards the head. Without it
+    // the reconstructed unambiguous string comes out transposed at exactly
+    // the anchor: `PREFIX=/a/b SUFFIX=/c` against `/a/b/c` rendered
+    // `$compstate[unambiguous]` as `/a/bc/` instead of `/a/b/c`, and against
+    // `/ax/bx/cx` as `/ax/bxc/x` instead of `/ax/bx/cx`. Match COUNTS were
+    // unaffected — only the joined string.
+    //
+    // `(Cline) 1` (c:1067, c:1069) is a SENTINEL, not a cline: it is written
+    // into whichever of the freshly-prepended node's two slots is to receive
+    // the shifted anchor, is read exactly once by the `if (t->suffix)` test
+    // at c:1074 on the very first iteration of the loop below, and is
+    // overwritten by that same iteration — it is never dereferenced and never
+    // escapes. `Option<Box<Cline>>` cannot represent it and must not fake it
+    // with a dangling pointer, so the port carries that one bit explicitly in
+    // `t_has_suffix`, which is exactly what c:1074 reads it for.
+    if sfx != 0 {
+        if let Ok(mut parts) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
+            // c:1060 — `if (sfx && matchparts)`
+            let (head_has_prefix, head_has_suffix) = match parts.as_ref() {
+                Some(h) => (h.prefix.is_some(), h.suffix.is_some()),
+                None => (false, false),
+            };
+            if parts.is_some() {
+                // c:1063-1071 — the head has no earlier node to shift its
+                // anchor into, so give it one.
+                let mut t_has_suffix = head_has_suffix;
+                if head_has_prefix || head_has_suffix {
+                    let mut t = get_cline(None, 0, None, 0, None, 0, 0); // c:1064
+                    t.next = parts.take(); // c:1065
+                    // c:1066-1069 — `(Cline) 1` goes in `prefix` when the old
+                    // head has a prefix, in `suffix` otherwise; see above.
+                    t_has_suffix = !head_has_prefix;
+                    *parts = Some(t); // c:1070
+                }
+
+                // c:1072-1078 — walk the chain moving each node's anchor into
+                // its predecessor. C reads `tn`'s pointer without clearing it
+                // (the field is overwritten one iteration later, when `tn`
+                // becomes `t`), which the port cannot do with owned `Box`es,
+                // so it TAKES the sub-list and carries `tn`'s original
+                // "has a suffix" answer forward in `t_has_suffix` — c:1074
+                // must see the value the field had before this loop touched
+                // it.
+                //
+                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                // A node holding BOTH a prefix and a suffix would, in C, have
+                // its prefix moved into the predecessor while ALSO keeping it
+                // in `tn->prefix` (c:1073 copies a pointer; only one of the
+                // two fields is ever reassigned) — an alias that `free_cline`
+                // would later double-free, so it cannot occur in practice:
+                // `add_match_part` sets at most one of the two (c:392-396,
+                // c:406-416) and the `tmp` nodes built by `comp_match`
+                // (c:1189-1191, c:1210-1212) and `addmatches`
+                // (compcore.c:2321-2323, c:2347-2349) are fresh. The port
+                // moves the sub-list out, leaving `None` behind, rather than
+                // creating an alias Rust has no way to express.
+                if let Some(head) = parts.as_mut() {
+                    let mut t: *mut Cline = &mut **head; // c:1072 `t = matchparts`
+                    unsafe {
+                        loop {
+                            // c:1072 — `(tn = t->next)`
+                            let tn: *mut Cline = match (*t).next.as_mut() {
+                                Some(n) => &mut **n,
+                                None => break,
+                            };
+                            // c:1073 — `s = (tn->prefix ? tn->prefix : tn->suffix)`
+                            let tn_has_suffix = (*tn).suffix.is_some();
+                            let s = if (*tn).prefix.is_some() {
+                                (*tn).prefix.take()
+                            } else {
+                                (*tn).suffix.take()
+                            };
+                            // c:1074-1077
+                            if t_has_suffix {
+                                (*t).suffix = s;
+                            } else {
+                                (*t).prefix = s;
+                            }
+                            t = tn; // c:1072 `t = tn`
+                            t_has_suffix = tn_has_suffix;
+                        }
+                        // c:1079 — `t->prefix = t->suffix = NULL;`
+                        (*t).prefix = None;
+                        (*t).suffix = None;
+                    }
+                }
+            }
+        }
+    }
+
     // c:1083 — `*bpp = bp` (Brinfo writeback) — caller's bp is already
     // unmodified since the deep brace-pos tracking is conservative.
 
@@ -6007,6 +6126,91 @@ mod tests {
             msl, 3,
             "the whole word tail is consumed once the empty insertion is \
              accepted and skipped"
+        );
+    }
+
+    /// `match_str` builds `matchparts` back-to-front when `sfx` is set, so
+    /// every anchor lands one cline too late — `compmatch.c:1058-1080`
+    /// ("the anchors stored in the top-clines will be in the wrong clines:
+    /// shifted by one") walks the chain once and moves each `prefix`/`suffix`
+    /// sub-list into its predecessor. That block was absent from this port.
+    ///
+    /// It is invisible in the match COUNT and only shows up once the clines
+    /// are rendered, so this test runs the chain `comp_match` hands back
+    /// through [`cline_str`] — the same call `do_ambiguous` makes to produce
+    /// `$compstate[unambiguous]`.
+    ///
+    /// Measured, `zsh -f -i` 5.9.2 vs this binary, synthetic `compadd`
+    /// (`PREFIX=/a/b`, `SUFFIX=/c`, `-M 'r:|/=* r:|=*'`, candidate `/a/b/c`,
+    /// no filesystem): zsh `U=/a/b/c`, this port `U=/a/bc/` before / `/a/b/c`
+    /// after. The `/` anchor of the suffix was emitted after the `c` it
+    /// anchors instead of before it.
+    #[test]
+    fn comp_match_suffix_anchors_shift_back_one_cline() {
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL, WB, WE};
+        use crate::ported::zle::compresult::cline_str;
+        use std::sync::atomic::Ordering;
+
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=* r:|=*");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "r:|/=* r:|=*".to_string(),
+            }));
+        }
+        update_bmatchers();
+
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match(
+            "/a/b",
+            "/c",
+            "/a/b/c",
+            None,
+            Some(&mut clp),
+            1,
+            None,
+            0,
+            None,
+            0,
+            &mut exact,
+        );
+
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        update_bmatchers();
+
+        // `cline_str` writes through the metafied line, so give it an empty
+        // one at position 0 — the same setup `compresult`'s own tests use.
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            g.clear();
+        }
+        ZLEMETACS.store(0, Ordering::Relaxed);
+        ZLEMETALL.store(0, Ordering::Relaxed);
+        WB.store(0, Ordering::Relaxed);
+        WE.store(0, Ordering::Relaxed);
+        crate::ported::zle::compcore::hasmatched.store(0, Ordering::Relaxed);
+        let rendered = cline_str(clp, 0, None, None);
+
+        assert_eq!(
+            r,
+            Some("/a/b/c".to_string()),
+            "the match string itself was never wrong — only the clines"
+        );
+        assert_eq!(
+            rendered,
+            Some("/a/b/c".to_string()),
+            "the suffix's `/` anchor must render BEFORE the `c` it anchors; \
+             without the c:1058-1080 shift it lands one cline late and the \
+             unambiguous string comes out `/a/bc/`"
         );
     }
 
