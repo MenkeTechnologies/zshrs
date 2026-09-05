@@ -15971,6 +15971,46 @@ pub fn bin_trap(
         }
     }
 
+    // ZSHRS-ONLY. `trap -l` is bash's spelling of `kill -l` and lists the
+    // signals; the Korn and Bourne shells REJECT it ("trap: -l: unknown
+    // option", exit 2) and zsh silently accepts it as a no-op with exit 0
+    // (verified: `zsh -c 'trap -l'` prints nothing, rc 0). zshrs matched
+    // zsh in every mode, so `--bash` printed nothing where bash prints
+    // the signal table, and the POSIX drop-ins succeeded where they
+    // should fail.
+    if argv.len() == 1 && argv[0] == "-l" {
+        use crate::extensions::emulation_startup::{personality, Personality};
+        match personality() {
+            Personality::Bash => {
+                let sigs: Vec<(i32, String)> = (1..=crate::ported::signals_h::SIGCOUNT)
+                    .filter_map(|sg| {
+                        crate::ported::signals_h::sigs_name(sg).map(|n| (sg, n.to_string()))
+                    })
+                    .collect();
+                if let Some(rendered) = crate::extensions::emulation_output::kill_list(&sigs) {
+                    print!("{rendered}");
+                }
+                return 0;
+            }
+            // Both Korn lines reject it; they differ only in the status
+            // (ksh93u+m exits 2, mksh exits 1).
+            Personality::Ksh93 => {
+                zwarnnam(name, "-l: unknown option");
+                return 2;
+            }
+            Personality::Mksh | Personality::Pdksh => {
+                zwarnnam(name, "-l: unknown option");
+                return 1;
+            }
+            Personality::Dash | Personality::Sh => {
+                zwarnnam(name, "Illegal option -l");
+                return 2;
+            }
+            // zsh and csh keep zsh's silent no-op.
+            _ => {}
+        }
+    }
+
     let mut argv = argv.to_vec();
     // c:7353 — `if (*argv && !strcmp(*argv, "--")) argv++;`
     if !argv.is_empty() && argv[0] == "--" {

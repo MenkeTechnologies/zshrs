@@ -397,8 +397,59 @@ pub fn set_o_listing() -> Option<String> {
 pub fn set_plus_o_listing() -> Option<String> {
     match personality() {
         Personality::Dash | Personality::Sh => set_o_render(true),
+        // ksh93u+m and mksh emit ONE line: a reset word followed by the
+        // options that are on and are NOT part of the shell's built-in
+        // default set — `set --default --braceexpand --multiline
+        // --trackall --viraw`, `set -o .reset -o braceexpand`. Adding
+        // `set -e` adds `--errexit` / `-o errexit` to each, which is how
+        // the default sets below were derived.
+        Personality::Ksh93 => Some(compact_set_plus_o(
+            KSH93_SET_O,
+            KSH93_DEFAULT_ON,
+            "set --default",
+            "--",
+        )),
+        Personality::Mksh | Personality::Pdksh => Some(compact_set_plus_o(
+            MKSH_SET_O,
+            MKSH_DEFAULT_ON,
+            "set -o .reset",
+            "-o ",
+        )),
         _ => None,
     }
+}
+
+/// Options ksh93u+m already has on after `set --default`, so `set +o`
+/// never re-lists them. Derived by diffing a fresh shell's `set -o`
+/// (on: backslashctrl braceexpand clobber exec glob log multiline
+/// trackall unset viraw) against its `set +o` (which names only
+/// braceexpand, multiline, trackall, viraw).
+const KSH93_DEFAULT_ON: &[&str] = &["backslashctrl", "clobber", "exec", "glob", "log", "unset"];
+
+/// The same for mksh, derived the same way: a fresh shell lists only
+/// `braceexpand` after `-o .reset`, so everything else that is on is part
+/// of the reset state.
+const MKSH_DEFAULT_ON: &[&str] = &[
+    "emacs",
+    "inherit-xtrace",
+    "nohup",
+    "trackall",
+    "vi-tabcomplete",
+];
+
+/// Render the Korn shells' one-line `set +o`: a reset word, then each
+/// non-default option that is currently on, in table (alphabetical) order.
+fn compact_set_plus_o(table: &[SetOpt], defaults: &[&str], reset: &str, prefix: &str) -> String {
+    let mut out = String::from(reset);
+    for e in table {
+        if e.state() && !defaults.contains(&e.name) {
+            out.push(' ');
+            out.push_str(prefix);
+            out.push_str(e.name);
+        }
+    }
+    out.push('\n');
+    out
 }
 
 fn set_o_render(reusable: bool) -> Option<String> {
