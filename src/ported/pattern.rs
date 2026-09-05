@@ -230,6 +230,25 @@ pub static patglobflags: AtomicI32 = AtomicI32::new(0); // c:273
 /// much of the input was consumed.
 pub static patinlen: AtomicI32 = AtomicI32::new(0); // c:1877
 
+/// Port of file-static `int globdots` from the `pattrystate` struct at
+/// `Src/pattern.c:1890` ("Glob initial dots?"), reached through
+/// `#define globdots (pattrystate.globdots)` at `Src/pattern.c:1903`.
+/// Set once per top-level match from the program's flags —
+/// `Src/pattern.c:2494` `globdots = !(patflags & PAT_NOGLD);` — and
+/// forced on for the duration of an exclusion operand
+/// (`Src/pattern.c:3116` `globdots = 1; /* OK to match . first */`,
+/// restored at `Src/pattern.c:3192`).
+///
+/// The matcher reads it in exactly two places, both guarded by
+/// `P_NOTDOT` — the "opcode has bit 0x40" test (`Src/pattern.c:202`)
+/// that marks the wildcard opcodes `P_ANY`/`P_ANYOF`/`P_ANYBUT`/
+/// `P_STAR`/`P_NUM*` (`Src/pattern.c:116-124`): `Src/pattern.c:2731`
+/// (top of the node walk) and `Src/pattern.c:3322` (the closure
+/// operand). That is the whole of zsh's "a wildcard does not match a
+/// leading dot" rule; a LITERAL dot in the pattern is unaffected
+/// because `P_EXACTLY` does not carry bit 0x40.
+pub static globdots: AtomicI32 = AtomicI32::new(1); // c:1890
+
 // =====================================================================
 // 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
 // =====================================================================
@@ -3847,6 +3866,13 @@ pub fn pattryrefs(
     // interior chunk of a larger string (PAT_NOTSTART/PAT_NOTEND
     // bits exist on the prog precisely so callers can signal this).
     patflags.store(prog.0.flags, Ordering::Relaxed);
+    // c:2494 — `globdots = !(patflags & PAT_NOGLD);`. The leading-dot rule
+    // is enforced INSIDE the walker (c:2731 / c:3322), on wildcard opcodes
+    // only, so it has to be published before patmatch runs.
+    globdots.store(
+        i32::from((prog.0.flags & PAT_NOGLD as i32) == 0),
+        Ordering::Relaxed,
+    );
     // Pass the prog's GLOB flags (GF_* + `(#aN)` budget byte) to the
     // matcher. C threads `patglobflags` as a per-thread file-static;
     // the Rust port carries it through a fn param. The PAT_* flags
@@ -3871,23 +3897,25 @@ pub fn pattryrefs(
             None => (false, 0),
         }
     };
-    // c:2399-2406 — for files (PAT_NOGLD), a successful match is rejected
-    // when the string starts with '.' (unless glob_dots is set, in which
-    // case parsecomplist omits PAT_NOGLD). Honoring this here lets the
-    // glob scanner rely on the matcher for the leading-dot skip, exactly
-    // as C does, instead of an explicit check in the walker. Inert for
-    // non-file patterns (matchpat / [[ ]] / :# never set PAT_NOGLD).
-    if ok
-        && (prog.0.flags & PAT_NOGLD as i32) != 0
-        && trial.starts_with('.')
-        && prog.0.patstartch != b'.'
+    // c:2404-2410 — `if (ret) { if ((prog->flags & PAT_NOGLD) &&
+    //                *patinstart == '.') ret = 0; else ... }`.
+    //
+    // This rejection sits INSIDE C's `if (prog->flags & (PAT_PURES|PAT_ANY))`
+    // fast path (c:2347), where no bytecode runs and the walker's own
+    // P_NOTDOT gates (c:2731 / c:3322) never get a chance to fire. It is NOT
+    // a blanket rule over every match: for a compiled program C rejects a
+    // leading dot only when a WILDCARD opcode is what would consume it.
+    //
+    // The port used to apply it to every match and compensate with
+    // `prog.patstartch != b'.'`. `patstartch` is recorded only for a program
+    // whose FIRST node is a bare `P_EXACTLY` with no glob flags (c:709-711),
+    // so every other way of writing a literal leading dot lost its dot files:
+    // measured against `zsh -f` 5.9 in a directory holding `.hidden`,
+    // `(.)hidden`, `(.|x)hidden` and `(#i).HIDDEN` each listed `.hidden` in
+    // zsh and NOTHING in this port.
+    if ok && (prog.0.flags & (PAT_PURES | PAT_ANY) as i32) != 0 && trial.starts_with('.') && (prog.0.flags & PAT_NOGLD as i32) != 0
     {
-        // c:Src/pattern.c — NOGLD rejects a leading-dot file UNLESS the
-        // pattern itself explicitly begins with a literal `.` (so `.*`
-        // matches dot files while `*` does not). C bakes this into the
-        // compiled bytecode; the Rust matcher carries the signal on
-        // `patstartch` (c:1610) and applies the exception here.
-        ok = false;
+        ok = false; // c:2410
     }
     if ok {
         // c:2508 — `patinlen = patinput - patinstart;` — record the
@@ -5889,6 +5917,37 @@ pub fn patmatch(
         let next_bytes: [u8; 4] = code[scan + I_NEXT..scan + I_NEXT + 4].try_into().unwrap();
         let next = u32::from_le_bytes(next_bytes) as usize;
 
+        // c:2731-2733 — `if (!globdots && P_NOTDOT(scan) &&
+        //                    patinput == patinstart && patinput < patinend &&
+        //                    *patinput == '.') return 0;`
+        //
+        // `P_NOTDOT(p)` is `p->l & 0x40` (c:202), i.e. the opcode is one of
+        // P_ANY/P_ANYOF/P_ANYBUT/P_STAR/P_NUMRNG/P_NUMFROM/P_NUMTO/P_NUMANY
+        // (c:117-124, "numbered so we can test bit 6 so as not to match
+        // initial '.'"). P_EXACTLY (0x03), P_BRANCH (0x20) and P_GFLAGS
+        // (0x08) do not carry the bit, which is why `.hidden`, `(.)hidden`
+        // and `(#i).HIDDEN` DO match a dot file while `*`, `?` and `[.]`
+        // do not. P_OPEN/P_CLOSE are 0x80/0x90 and are likewise unaffected.
+        //
+        // `patinput == patinstart` is `s_off == 0`: this port passes the
+        // whole subject to every recursive patmatch and moves the offset.
+        //
+        // C's second gate at c:3322 tests P_OPERAND of a P_ONEHASH /
+        // P_TWOHASH; here the closure arm recurses into that operand
+        // through this same loop head, so the operand is checked on entry.
+        // Conjunct order differs from C's only to keep the atomic load off
+        // the hot path: `s_off == 0` is false for every node after the first
+        // character is consumed, and C's `globdots` is a plain int. No
+        // conjunct has a side effect, so the predicate is the same one.
+        if s_off == 0
+            && (op & 0x40) != 0
+            && s_off < string.len()
+            && string.as_bytes()[s_off] == b'.'
+            && globdots.load(Ordering::Relaxed) == 0
+        {
+            return None; // c:2733
+        }
+
         match op {
             P_END => {
                 // c:Src/pattern.c:3451-3454 — `case P_END: if (!(fail =
@@ -6338,6 +6397,13 @@ pub fn patmatch(
                         let span = &string[..span_end];
                         let mut excluded = false;
                         let mut excl = exclude_node;
+                        // c:3113/3116 — `savglobdots = globdots; globdots = 1;
+                        // /* OK to match . first */`, restored at c:3192. The
+                        // asserted branch has already matched at this point;
+                        // the exclusion operand is matched against what it
+                        // produced, so the leading-dot rule must not apply to
+                        // it a second time.
+                        let savglobdots = globdots.swap(1, Ordering::Relaxed);
                         while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
                             let excl_operand = excl + I_BODY + 8; // after 8-byte syncptr
                             let mut e_state = state.clone();
@@ -6366,6 +6432,7 @@ pub fn patmatch(
                             }
                             excl = n;
                         }
+                        globdots.store(savglobdots, Ordering::Relaxed); // c:3192
                         if !excluded {
                             found = Some((matchpt, a_state));
                             break;
@@ -7593,6 +7660,62 @@ mod tests {
         // patmatch with anchored compile: only full-string matches succeed.
         let prog = compile("foo");
         assert!(pattry(&prog, "foo"));
+    }
+
+    /// PAT_NOGLD ("don't glob dots", set by `parsecomplist` at
+    /// `Src/glob.c:715` whenever GLOB_DOTS is off) rejects a leading dot
+    /// only where a WILDCARD opcode would consume it — `P_NOTDOT` is
+    /// `p->l & 0x40` (`Src/pattern.c:202`), the bit shared by
+    /// P_ANY/P_ANYOF/P_ANYBUT/P_STAR/P_NUM* (`Src/pattern.c:116-124`),
+    /// tested at `Src/pattern.c:2731`. A dot written literally in the
+    /// pattern is matched by `P_EXACTLY` (0x03), which does not carry the
+    /// bit, and P_BRANCH (0x20) does not either — so grouping a literal
+    /// dot keeps it literal.
+    ///
+    /// Measured against `zsh -f` 5.9 in a directory holding `.hidden` and
+    /// `xhidden`: `(.)hidden` and `(.|x)hidden` list `.hidden`, while
+    /// `[.]hidden`, `?hidden` and `*hidden` list nothing. This port used to
+    /// gate on `prog.patstartch != '.'`, which is recorded only for a
+    /// program whose first node is a bare `P_EXACTLY` (`Src/pattern.c:709`),
+    /// so every grouped or flag-prefixed literal dot lost its dot files.
+    #[test]
+    fn nogld_rejects_a_leading_dot_only_for_wildcard_opcodes() {
+        let _g = crate::test_util::global_state_lock();
+        let file_prog = |p: &str| {
+            let _t = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            patcompile(
+                &{
+                    let mut tok = p.to_string();
+                    crate::ported::glob::tokenize(&mut tok);
+                    tok
+                },
+                (PAT_FILE | PAT_NOGLD | PAT_HEAPDUP) as i32,
+                None,
+            )
+            .expect("compile failed")
+        };
+
+        // A literal dot still matches, however it is written. `.hidde[n]`
+        // keeps the program off the pure-string path (c:2347) so the walker
+        // is what decides, exactly as during a real glob.
+        for pat in ["(.)hidden", "(.|x)hidden", ".hidde[n]"] {
+            assert!(
+                pattry(&file_prog(pat), ".hidden"),
+                "c:2731 — `{pat}` matches a leading dot with a literal P_EXACTLY dot"
+            );
+        }
+        // A wildcard at the start does not — c:2731's P_NOTDOT gate.
+        for pat in ["*hidden", "?hidden", "[.]hidden", "*"] {
+            assert!(
+                !pattry(&file_prog(pat), ".hidden"),
+                "c:2733 — `{pat}` must not match a dot file with GLOB_DOTS off"
+            );
+        }
+        // The gate is anchored at the start of the subject and off for
+        // non-dot subjects (c:2732 `patinput == patinstart`).
+        assert!(pattry(&file_prog("*hidden"), "xhidden"));
+        assert!(pattry(&file_prog("x?idden"), "xhidden"));
+        assert!(pattry(&file_prog("x*"), "x.hidden"));
     }
 
     /// `<a-b>` numeric range: digits matching n where lo ≤ n ≤ hi.

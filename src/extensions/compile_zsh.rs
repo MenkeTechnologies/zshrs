@@ -6033,12 +6033,34 @@ impl ZshCompiler {
             }
         }
 
+        // c:Src/params.c:428-430 — `IPDEF9("*", &pparams, …)` and
+        // `IPDEF9("argv", &pparams, …)` are the SAME parameter: one storage,
+        // one GSU, and the only shape discriminator in the whole read path is
+        // c:Src/params.c:2251 `isvarat = (t[0] == '@' && !t[1])`, which sets
+        // `SCANPM_ISVAR_AT` (c:2272) and so `isarr = -1` (c:Src/subst.c:2917)
+        // for the literal name `@` and nothing else. `argv` therefore expands
+        // exactly like `*`, down to `"$argv"` being ONE word where `"$@"` is
+        // N — measured over 44 cells (5 shapes x 4 IFS settings x quoted and
+        // unquoted, plus the `case` / `[[ ]]` / here-string / `$#` / callee
+        // `$#` probes) with `$argv` and `$*` byte-identical, and `${argv}`
+        // and `${*}` likewise.
+        //
+        // So canonicalise the spelling here rather than teaching every arm
+        // below a third name. Before this, `$argv` fell through to the bare
+        // `$NAME` path at the bottom (BUILTIN_ARRAY_ALL — right shape, but no
+        // `ssub` join, so `IFS=:; v=$argv` was `x y`), and `${argv}` fell
+        // through to the `${NAME}` path, which emits a plain GET_VAR whose
+        // `get_var_impl` positional arm tests only `"@"`/`"*"` — the name
+        // missed, the ordinary parameter lookup found nothing, and the
+        // expansion came back EMPTY.
         let bare_target = if !has_bnull {
             if untoked == "$@" || untoked == "$*" {
                 Some(&untoked[1..])
             } else if untoked == "${@}" || untoked == "${*}" {
                 // Strip `${` + name + `}` — name is the single char.
                 Some(&untoked[2..untoked.len() - 1])
+            } else if untoked == "$argv" || untoked == "${argv}" {
+                Some("*")
             } else {
                 None
             }
@@ -6078,9 +6100,7 @@ impl ZshCompiler {
             // splice below: the depth covers every typeset-family argument,
             // and only a `NAME=value` one is a scalar assignment. `set -- p q;
             // local $@` declares two parameters.
-            let ssub = self.scalar_assign_depth > 0
-                || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
-                || self.singsub_depth > 0;
+            let ssub = self.ssub_c1761();
             if ssub {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1),
@@ -6876,8 +6896,6 @@ impl ZshCompiler {
                     // `val = sepjoin(aval, sep, 1)` before the c:3921 split.
                     _ => crate::vm_helper::BUILTIN_GET_VAR_DQ,
                 };
-                let argc = if splice == ' ' { 1 } else { 0 };
-                self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
                 // c:Src/subst.c:3901-3920 — `ssub` (scalar-substitution)
                 // suppresses the forced split for BOTH bare `v=…` and the
                 // typeset-family `NAME=…` arg form. `typeset v="$*"` is as
@@ -6892,6 +6910,23 @@ impl ZshCompiler {
                 let in_scalar_assign = self.scalar_assign_depth > 0
                     || self.assign_builtin_arg_depth > 0
                     || self.singsub_depth > 0;
+                // c:Src/subst.c:3912-3932 — for `[*]` the whole join/split
+                // block is gated, and BOTH arms here open it:
+                //   `${=NAME[*]}` sets `spbreak = 2` (c:2567), so c:3917
+                //   `sepjoin` runs and c:3932 `sepsplit` runs after it — the
+                //   split being BUILTIN_FORCE_SPLIT below, so JOIN_STAR must
+                //   hand it the JOINED scalar and not split on its own;
+                //   an `ssub` caller joins at c:3917 and stops there.
+                // `${==NAME[*]}` clears `spbreak` (c:2563) and is neither, so
+                // the block never runs and the ELEMENTS survive untouched —
+                // argc 0, the same no-join answer a plain `${NAME[*]}` gets.
+                let argc = if splice == ' ' || (splice == '*' && (force_split || in_scalar_assign))
+                {
+                    1
+                } else {
+                    0
+                };
+                self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
                 if force_split && !in_scalar_assign {
                     // c:Src/subst.c:3921 `sepsplit(val, spsep, 0, 1)` →
                     // Src/utils.c:3711 spacesplit. BUILTIN_FORCE_SPLIT is the
@@ -6999,9 +7034,7 @@ impl ZshCompiler {
                     // are assignments. A bare `local -a ${a[@]}` names the
                     // arrays to declare, so it stays a splat — joining it
                     // handed `typeset` the single name `p:q`.
-                    let ssub = self.scalar_assign_depth > 0
-                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
-                        || self.singsub_depth > 0;
+                    let ssub = self.ssub_c1761();
                     let bid = if is_star || ssub {
                         crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
                     } else {
@@ -7060,8 +7093,24 @@ impl ZshCompiler {
             let key_const = self.builder.add_constant(Value::str(key.as_ref()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             self.builder.emit(Op::LoadConst(key_const), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+            // c:Src/subst.c:4226 — `if (isarr && ssub) { val = sepjoin(aval,
+            // NULL, 1); isarr = 0; }`. A RANGE subscript (`${a[1,2]}`) and the
+            // multi-valued search shapes (`${h[(I)pat]}`) leave `isarr` set, so
+            // a `PREFORK_SINGLE` caller joins them on `IFS[0]` and stops. This
+            // fast path handed `array_index_lookup` no channel for `ssub`, so
+            // its `paramsubst` ran with `pf_flags == 0` and the range came back
+            // as an array that later stringified with a hardcoded space:
+            // `IFS=:; [[ ${a[1,2]} == x:y ]]` missed. The single-element and
+            // assoc-key shapes are scalars already, so the gate is a no-op for
+            // them. argc is the channel (the VM passes it through opaquely —
+            // zshrs never sets `Chunk::builtin_argc_is_arity`): `3` = ssub.
+            self.builder.emit(
+                Op::CallBuiltin(
+                    crate::vm_helper::BUILTIN_ARRAY_INDEX,
+                    if self.ssub_c1761() { 3 } else { 2 },
+                ),
+                0,
+            );
             return;
         }
 
@@ -7083,8 +7132,17 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                // Same c:Src/subst.c:4226 gate as the static-key path above.
+                // `braced_subscript_dynamic_ref` rejects a `,` in the key, so
+                // no RANGE reaches here today — the gate is carried anyway so
+                // the two spellings of one fast path cannot drift apart.
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::vm_helper::BUILTIN_ARRAY_INDEX,
+                        if self.ssub_c1761() { 3 } else { 2 },
+                    ),
+                    0,
+                );
                 return;
             }
         }
@@ -7189,9 +7247,7 @@ impl ZshCompiler {
                     // unique fold that c:4226's `if (isarr && ssub)` collapse
                     // takes off the table: `a=(c a b); [[ ${(o)a} == 'c a b' ]]`
                     // was false, `case ${(o)a}` matched the SORTED spelling.
-                    let ssub = self.scalar_assign_depth > 0
-                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
-                        || self.singsub_depth > 0;
+                    let ssub = self.ssub_c1761();
                     self.builder.emit(Op::LoadInt(ssub as i64), 0);
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 3), 0);
@@ -13146,6 +13202,29 @@ impl ZshCompiler {
     fn brace_array_ssub(&self) -> bool {
         self.scalar_assign_depth > 0
             || self.assign_builtin_arg_depth > 0
+            || self.singsub_depth > 0
+    }
+
+    /// c:Src/subst.c:1761 — `int ssub = (pf_flags & PREFORK_SINGLE);`, the
+    /// compile-time reconstruction of "this word is being expanded by a
+    /// `PREFORK_SINGLE` caller". Four callers are known:
+    ///
+    ///   1. a scalar assignment RHS         c:Src/exec.c:2603
+    ///   2. a `case` WORD                   c:Src/loop.c:611-612 (via `singsub`)
+    ///   3. every `[[ … ]]` operand         c:Src/cond.c:53/198/205/308 (ditto)
+    ///   4. the here-string word            c:Src/exec.c:4711 `getherestr` (ditto)
+    ///
+    /// `assign_builtin_arg_depth` MUST be paired with `assign_context_depth`:
+    /// the former is bumped for EVERY typeset-family argument, and only a
+    /// `NAME=value` one is a scalar assignment (c:Src/exec.c:4239-4241 vs the
+    /// PREFORK_TYPESET arg at c:4197). `a=(p q); local -a ${a[@]}` names the
+    /// arrays to declare and must stay a splat.
+    ///
+    /// Distinct from `brace_array_ssub` above, which is the older UNPAIRED
+    /// spelling still used by the `BUILTIN_BRIDGE_BRACE_ARRAY` route.
+    fn ssub_c1761(&self) -> bool {
+        self.scalar_assign_depth > 0
+            || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
             || self.singsub_depth > 0
     }
 

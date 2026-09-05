@@ -4242,10 +4242,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (canonical paramsubst flag parser owns dispatch at Src/subst.c:2147+),
     // so BUILTIN_ARRAY_INDEX receives clean name+key with no sentinel
     // prefixes.
-    vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
+    //
+    // argc contract: `3` means the caller is a `PREFORK_SINGLE` (`ssub`)
+    // context — a scalar assignment RHS (c:Src/exec.c:2603), a `case` WORD
+    // (c:Src/loop.c:611-612), a `[[ … ]]` operand (c:Src/cond.c:53) or the
+    // here-string word (c:Src/exec.c:4711). c:Src/subst.c:4226
+    //   if (isarr && ssub) { val = sepjoin(aval, NULL, 1); isarr = 0; }
+    // so a RANGE subscript joins on `IFS[0]` and stops. `2` is every other
+    // caller, unchanged. The stack shape is the same either way (name, key) —
+    // the VM hands `argc` to the handler untouched and zshrs never sets
+    // `Chunk::builtin_argc_is_arity`.
+    vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, argc| {
+        let ssub = argc == 3;
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        array_index_lookup(&name, &idx)
+        array_index_lookup(&name, &idx, ssub)
     });
     // BUILTIN_ARRAY_INDEX_UNBRACED — bare `$name[idx]` (no braces).
     // Same subscript dispatch as BUILTIN_ARRAY_INDEX when KSHARRAYS
@@ -4276,7 +4287,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
         if !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
-            let v = array_index_lookup(&name, &idx);
+            // The bare `$name[idx]` word is not itself a `singsub` caller
+            // shape the compiler tracks — it reaches this builtin from
+            // `compile_word_str`, which the `PREFORK_SINGLE` callers do not
+            // use. Pass `false` until a measured divergence says otherwise.
+            let v = array_index_lookup(&name, &idx, false);
             if suffix.is_empty() {
                 return v;
             }
@@ -5766,20 +5781,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::str(out)
     });
 
-    // argc contract: `1` means the caller is a PREFORK_SINGLE
-    // (`ssub`) context — a scalar assignment RHS (c:Src/exec.c:2603), a
-    // `typeset NAME=…` argument, a `case` word (c:Src/loop.c:611) or a
-    // `[[ … ]]` operand (c:Src/cond.c:53). c:Src/subst.c:4226
-    //   if (isarr && ssub) { val = sepjoin(aval, NULL, 1); isarr = 0; }
-    // "prefork() wants a scalar, so join no matter what else" — the join
-    // is the LAST thing that happens to the value, and `singsub`
-    // (c:Src/subst.c:514-525) never reaches `globlist`, so the post-join
-    // IFS word-split below must not run. `0` is the ordinary
-    // command-argument caller, which does split.
+    // argc contract: `1` means "JOIN and STOP" — return the `IFS[0]`-joined
+    // scalar and do not word-split it. Two callers need that, for the two
+    // different reasons c:Src/subst.c:3912-3932 gives:
+    //
+    //   * a PREFORK_SINGLE (`ssub`) context — a scalar assignment RHS
+    //     (c:Src/exec.c:2603), a `typeset NAME=…` argument, a `case` word
+    //     (c:Src/loop.c:611), a `[[ … ]]` operand (c:Src/cond.c:53) or the
+    //     here-string word (c:Src/exec.c:4711). c:Src/subst.c:4226
+    //       if (isarr && ssub) { val = sepjoin(aval, NULL, 1); isarr = 0; }
+    //     "prefork() wants a scalar, so join no matter what else" — the join
+    //     is the LAST thing that happens to the value, and `singsub`
+    //     (c:Src/subst.c:514-525) never reaches `globlist`, so nothing splits
+    //     it afterwards. c:3913's `force_split = !ssub && …` says the same.
+    //   * `${=NAME[*]}`, which sets `spbreak = 2` (c:2567): c:3917 joins and
+    //     c:3932 `sepsplit` splits, but that split is BUILTIN_FORCE_SPLIT at
+    //     the compile site, so this handler must hand it the joined scalar
+    //     rather than split twice.
+    //
+    // `0` is every other caller — and, per the c:3912 gate, that means NO
+    // join and NO split unless SH_WORD_SPLIT is on (see below).
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, argc| {
-        let ssub = argc != 0;
+        let join_no_split = argc != 0;
         let name = vm.pop().to_str();
-        let (joined, ifs_full, in_dq) = with_executor(|exec| {
+        let (elems, joined, ifs_full, in_dq) = with_executor(|exec| {
             // c:Src/params.c — `"$*"` joins by IFS[0]. zsh
             // distinguishes IFS=unset (→ default `" "`) from
             // IFS="" (→ EMPTY separator → fields concatenate).
@@ -5792,51 +5817,85 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .map(|c| c.to_string())
                 .unwrap_or_default();
             let in_dq = exec.in_dq_context > 0;
-            let joined = if let Some(v) = crate::dash_mode::bash_special_array(&name) {
+            // c:Src/subst.c:3914 — the join at c:3917 is `sepjoin(aval, …)`,
+            // i.e. it runs on the ELEMENT vector, and c:3912's gate can leave
+            // that vector untouched. Keep both shapes: the joined scalar for
+            // the quoted / join-and-stop arms, and the elements for the plain
+            // command-argument arm that must not join at all.
+            let elems: Vec<String> = if let Some(v) = crate::dash_mode::bash_special_array(&name) {
                 // bash `"${PIPESTATUS[*]}"` / `"${FUNCNAME[*]}"` join.
-                v.join(&sep)
+                v
             } else if name == "@" || name == "*" || name == "argv" {
-                exec.pparams().join(&sep)
+                exec.pparams()
             } else if let Some(assoc_map) = exec.assoc(&name) {
                 // c:Src/params.c — assoc-splat values for
                 // `"${h[@]}"` / `"${h[*]}"`. Bug #109 in
                 // docs/BUGS.md.
-                assoc_map.values().cloned().collect::<Vec<_>>().join(&sep)
+                assoc_map.values().cloned().collect::<Vec<_>>()
             } else if let Some(arr) = exec.array(&name) {
                 // bash sparse arrays: `"${a[*]}"` joins only LIVE elements,
                 // dropping hole slots. No-op in --zsh (no holes tracked).
-                crate::bash_arrays::compact(&name, arr).join(&sep)
+                crate::bash_arrays::compact(&name, arr)
             } else if let Some(arr) = crate::ported::subst::arrays_get(&name) {
                 // c:Src/Modules/parameter.c:2239-2291 partab[] — the PM_ARRAY
                 // magic specials (reswords/patchars/dis_*/…) are getfn-backed,
                 // so `getaparam`'s `pm->u.arr` read (behind `exec.array`) comes
                 // back NULL and the join fell through to the scalar fallback,
                 // which is empty. Same omission the `[@]` splat had.
-                arr.join(&sep)
+                arr
             } else if let Some(map) = crate::ported::subst::assoc_get(&name) {
                 // c:Src/Modules/parameter.c:2235-2298 partab[] — the PM_HASHED
                 // magic assocs (aliases/functions/options/…) live behind a
                 // scanfn+getfn pair, not in the executor's assoc storage, so
                 // `exec.assoc` above misses them and `${aliases[*]}` joined an
                 // empty scalar where zsh joins the alias VALUES.
-                map.values().cloned().collect::<Vec<_>>().join(&sep)
+                map.values().cloned().collect::<Vec<_>>()
             } else {
-                exec.get_variable(&name)
+                vec![exec.get_variable(&name)]
             };
-            (joined, ifs_full, in_dq)
+            let joined = elems.join(&sep);
+            (elems, joined, ifs_full, in_dq)
         });
-        // c:Src/subst.c — UNQUOTED `${name[*]}` (or `$*`) goes
-        // through the canonical "join via IFS[0], then word-split
-        // via IFS" pipeline. The fast-path bypassed paramsubst
-        // entirely so it never word-split, producing one joined
-        // string instead of N argv entries. Bug #428.
-        //
-        // In QUOTED (`"${name[*]}"`) context, the result IS a
-        // single scalar — return it as Str without splitting.
-        // c:Src/subst.c:4226 — `ssub` joins and stops; there is no
-        // `globlist` behind `singsub` to split the result again.
-        if in_dq || ssub {
+        // In QUOTED (`"${name[*]}"`) context the result IS a single scalar —
+        // c:Src/subst.c:3033 `if (qt && !getlen && isarr > 0) { val =
+        // sepjoin(aval, sep, 1); isarr = 0; }`. And argc 1 is the caller
+        // saying it wants the join without the split (see the contract above).
+        if in_dq || join_no_split {
             return Value::str(joined);
+        }
+        // c:Src/subst.c:3912 — the join-then-split block is gated:
+        //
+        //     if (ssub || spbreak || spsep || sep || quoted_array_with_offset) {
+        //         int force_split = !ssub && (spbreak || spsep);
+        //
+        // `sep` / `spsep` are the `(j:…:)` / `(s:…:)` separators, which never
+        // reach this fast path (a flagged expansion goes to paramsubst), and
+        // the join-and-stop and quoted arms returned above. So the only way in
+        // left from here is `spbreak`, c:Src/subst.c:1707
+        //     int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
+        //                   && !(pf_flags & PREFORK_SINGLE) && !qt;
+        // i.e. SH_WORD_SPLIT. Without it the block does not run at all and the
+        // expansion keeps its ARRAY shape untouched — `${a[*]}` unquoted is the
+        // same splat as `${a[@]}`, elements intact:
+        //     a=("p:q" r); IFS=:; print -rl -- ${a[*]}     -> `p:q`  `r`
+        //     a=("p q" r);        print -rl -- ${a[*]}     -> `p q`  `r`
+        //     a=(x y);     IFS=;  print -rl -- ${a[*]}     -> `x`    `y`
+        // This handler ran the join and the split unconditionally, so the
+        // first two came back as three words and the third — an EMPTY IFS
+        // joins with "" and then has no separator left to split on — as the
+        // single word `xy`.
+        //
+        // The empty-word removal below is c:Src/subst.c:184-187 `uremnode`,
+        // the same prefork pass the `[@]` splat gets from
+        // BUILTIN_ARRAY_DROP_EMPTY at its compile site; the joined+split path
+        // used to supply it as a side effect of its `filter`.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+            let kept: Vec<String> = elems.into_iter().filter(|e| !e.is_empty()).collect();
+            return match kept.len() {
+                0 => Value::array(Vec::new()),
+                1 => Value::str(kept.into_iter().next().unwrap()),
+                _ => Value::array(kept.into_iter().map(Value::str).collect()),
+            };
         }
         if joined.is_empty() {
             return Value::array(Vec::new());
@@ -12404,7 +12463,12 @@ impl ZshrsHost {
 /// (no outer-flag sentinels, no `(…)` flag prefix on idx, no splat
 /// operator). Other paths (slice, splat, flag-based search,
 /// magic-assoc) still flow through paramsubst.
-fn array_index_lookup(name: &str, idx: &str) -> Value {
+///
+/// `ssub` is c:Src/subst.c:1761 `(pf_flags & PREFORK_SINGLE)` — see the
+/// `BUILTIN_ARRAY_INDEX` argc contract. It only reaches the textual
+/// `paramsubst` rebuild at the bottom: every direct-lookup shortcut above it
+/// resolves a single assoc value, which c:4226's join leaves alone.
+fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
         // assoc_key_hit: single-lock O(1) probe — exec.assoc() clones
@@ -12451,7 +12515,19 @@ fn array_index_lookup(name: &str, idx: &str) -> Value {
         }
     }
     let body = format!("${{{}[{}]}}", name, idx);
-    paramsubst_to_value(&body)
+    // c:Src/subst.c:4226 — `if (isarr && ssub) { val = sepjoin(aval, NULL, 1);
+    // isarr = 0; }`. `PREFORK_SINGLE` is the whole of `ssub` (c:1761), and the
+    // ported `paramsubst` already carries that gate (`ssub_c4226` /
+    // `ssub_join_c3903` in `src/ported/subst.rs`); this fast path just had no
+    // way to say it.
+    paramsubst_to_value_pf(
+        &body,
+        if ssub {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        },
+    )
 }
 
 /// Exact-key read against an assoc-like target WITHOUT the textual

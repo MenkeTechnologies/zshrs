@@ -1881,3 +1881,205 @@ fn bug1132_here_string_word_is_singsub_not_an_argv_word() {
         );
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1132 (second round) — the three gaps the first round left
+// Fix: src/extensions/compile_zsh.rs (the `${NAME[KEY]}` ARRAY_INDEX
+//      fast paths' ssub argc, and `$argv`/`${argv}` routed at the `$*`
+//      fast path) + src/fusevm_bridge.rs (`array_index_lookup`'s
+//      PREFORK_SINGLE, and BUILTIN_ARRAY_JOIN_STAR's SH_WORD_SPLIT gate)
+// ════════════════════════════════════════════════════════════════════
+
+/// c:Src/subst.c:4226 `if (isarr && ssub) { val = sepjoin(aval, NULL, 1); }`
+/// applies to a RANGE subscript too: `${a[1,2]}` is array-shaped, so a
+/// `PREFORK_SINGLE` caller joins it on `IFS[0]` and stops.
+///
+/// The `${NAME[KEY]}` fast path called `array_index_lookup`, which rebuilds
+/// the body and hands it to the ported `paramsubst` with `pf_flags == 0` —
+/// the ssub gate was there, the fast path just had no channel to reach it.
+/// The range therefore came back as an array that later stringified with a
+/// hardcoded space, so only the three `singsub` callers diverged; the scalar
+/// assignment RHS takes a different route and was already right.
+#[test]
+fn bug1132_prefork_single_joins_range_subscripts_on_ifs_first_char() {
+    // (script, expected stdout) — every line is `zsh -f -c` verified.
+    let cases: &[(&str, &str)] = &[
+        // `[[ … ]]` operand — c:Src/cond.c:53 via singsub (c:Src/subst.c:520).
+        ("a=(x y z); IFS=:; [[ ${a[1,2]} == x:y ]] && echo HIT", "HIT\n"),
+        ("a=(x y z); IFS=:; [[ ${a[1,-1]} == x:y:z ]] && echo HIT", "HIT\n"),
+        // `case` word — c:Src/loop.c:611-612, likewise singsub.
+        (
+            "a=(x y z); IFS=:; case ${a[1,2]} in x:y) echo HIT;; esac",
+            "HIT\n",
+        ),
+        // here-string word — c:Src/exec.c:4711 `getherestr`.
+        ("a=(x y z); IFS=:; cat <<< ${a[1,2]}", "x:y\n"),
+        ("a=(x y z); IFS=:; cat <<< ${a[2,3]}", "y:z\n"),
+        // The two assignment callers were already correct; pin them so the
+        // gate cannot regress them in the other direction.
+        ("a=(x y z); IFS=:; v=${a[1,2]}; print -r -- \"$v\"", "x:y\n"),
+        (
+            "a=(x y z); IFS=:; typeset v=${a[1,2]}; print -r -- \"$v\"",
+            "x:y\n",
+        ),
+        // Multi-char IFS joins on IFS[0] only.
+        ("a=(x y z); IFS=::; [[ ${a[1,2]} == x:y ]] && echo HIT", "HIT\n"),
+        // c:Src/utils.c:3936-3945 sepjoin — a set-but-EMPTY IFS joins with
+        // "", an UNSET one with " ". Both were accidentally right before.
+        ("a=(x y z); IFS=; [[ ${a[1,2]} == xy ]] && echo HIT", "HIT\n"),
+        (
+            "a=(x y z); unset IFS; [[ ${a[1,2]} == \"x y\" ]] && echo HIT",
+            "HIT\n",
+        ),
+        // The join is the LAST step — `singsub` never reaches `globlist`, so
+        // an element full of IFS bytes is not split back apart.
+        (
+            "a=('p q' r s); IFS=:; [[ ${a[1,2]} == 'p q:r' ]] && echo HIT",
+            "HIT\n",
+        ),
+        // `@` / `*` as the subscripted BASE take the same fast path.
+        ("set -- p q r; IFS=:; [[ ${@[1,2]} == p:q ]] && echo HIT", "HIT\n"),
+        ("set -- p q r; IFS=:; [[ ${*[2,3]} == q:r ]] && echo HIT", "HIT\n"),
+        // The other shapes `BUILTIN_ARRAY_INDEX` serves are scalars already,
+        // so c:4226's join is a no-op for them — pin that it stays one.
+        ("a=(x y z); IFS=:; [[ ${a[2]} == y ]] && echo HIT", "HIT\n"),
+        (
+            "typeset -A h; h=(k v); IFS=:; [[ ${h[k]} == v ]] && echo HIT",
+            "HIT\n",
+        ),
+        ("a=(x y z); IFS=:; [[ ${a[(r)y]} == y ]] && echo HIT", "HIT\n"),
+        ("a=(x y z); IFS=:; [[ ${a[(i)y]} == 2 ]] && echo HIT", "HIT\n"),
+        ("s=hello; IFS=:; [[ ${s[2,4]} == ell ]] && echo HIT", "HIT\n"),
+        // Command position is NOT PREFORK_SINGLE — the range still splats.
+        ("a=(x y z); IFS=:; print -rl -- ${a[1,2]}", "x\ny\n"),
+        ("a=(x y z); IFS=:; print -rl -- \"${a[1,2]}\"", "x:y\n"),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
+
+/// c:Src/params.c:428-430 — `IPDEF9("*", &pparams, …)` and
+/// `IPDEF9("argv", &pparams, …)` are ONE parameter, and the only shape
+/// discriminator in the read path is c:Src/params.c:2251
+/// `isvarat = (t[0] == '@' && !t[1])`, which sets `SCANPM_ISVAR_AT` (c:2272)
+/// and hence `isarr = -1` (c:Src/subst.c:2917) for the literal name `@`
+/// alone. So `$argv` expands exactly like `$*` — `"$argv"` is ONE word where
+/// `"$@"` is N.
+///
+/// The compiler routed neither spelling at the `$*` fast path: `$argv` fell
+/// through to the bare-`$NAME` path (right splat shape, but no c:4226 ssub
+/// join), and `${argv}` fell through to the `${NAME}` path, whose plain
+/// GET_VAR arm tests only `"@"`/`"*"` — so the name missed, the ordinary
+/// parameter lookup found nothing, and the expansion came back EMPTY.
+#[test]
+fn bug1132_argv_expands_exactly_like_star() {
+    let cases: &[(&str, &str)] = &[
+        // The braced spelling used to expand to nothing at all.
+        ("set -- x y; print -rl -- ${argv}", "x\ny\n"),
+        ("set -- x y; print -rl -- \"${argv}\"", "x y\n"),
+        ("set -- x y; IFS=:; v=${argv}; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; f(){ print -r -- $#; }; f \"${argv}\"", "1\n"),
+        ("set --; print -r -- \"[${argv}]\"", "[]\n"),
+        ("set -- x y; print -rl -- pre${argv}post", "prex\nypost\n"),
+        // The bare spelling splatted correctly but never took c:4226's join.
+        ("set -- x y; IFS=:; v=$argv; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; IFS=:; v=\"$argv\"; print -r -- \"$v\"", "x:y\n"),
+        ("set -- x y; IFS=:; [[ $argv == x:y ]] && echo HIT", "HIT\n"),
+        ("set -- x y; IFS=:; [[ ${argv} == x:y ]] && echo HIT", "HIT\n"),
+        (
+            "set -- x y; IFS=:; case ${argv} in x:y) echo HIT;; esac",
+            "HIT\n",
+        ),
+        ("set -- x y; IFS=:; cat <<< $argv", "x:y\n"),
+        ("set -- x y; IFS=:; cat <<< ${argv}", "x:y\n"),
+        // `argv` is `*`, not `@`: quoted it is ONE word, and the join keeps
+        // an empty positional's slot.
+        ("set -- x y; print -rl -- \"$argv\"", "x y\n"),
+        ("set -- x y; f(){ print -r -- $#; }; f \"$argv\"", "1\n"),
+        (
+            "set -- x '' y; IFS=:; v=\"${argv}\"; print -r -- \"$v\"",
+            "x::y\n",
+        ),
+        // Unquoted it splats, with prefork's empty-word removal (c:184-187).
+        ("set -- x y; print -rl -- $argv", "x\ny\n"),
+        ("set -- x '' y; print -rl -- $argv", "x\ny\n"),
+        ("set -- 'a b' c; IFS=:; print -rl -- $argv", "a b\nc\n"),
+        ("set -- x y; f(){ print -r -- $#; }; f $argv", "2\n"),
+        // The subscripted and length spellings have their own fast paths and
+        // were already right; pin them against the canonicalisation.
+        ("set -- x y; print -r -- ${#argv}", "2\n"),
+        ("set -- x y; print -r -- ${argv[1]}", "x\n"),
+        ("set -- x y; print -rl -- ${argv[@]}", "x\ny\n"),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
+
+/// c:Src/subst.c:3912 — the join-then-split block is gated on
+/// `ssub || spbreak || spsep || sep || quoted_array_with_offset`. For a plain
+/// unquoted `${a[*]}` in command position none of those is set, so the block
+/// does not run AT ALL: no join, no split, the element vector survives
+/// untouched and `${a[*]}` is the same splat as `${a[@]}`. `spbreak`
+/// (c:Src/subst.c:1707) is SH_WORD_SPLIT, and that is the only door in from
+/// here.
+///
+/// `BUILTIN_ARRAY_JOIN_STAR` ran the join and the split unconditionally. The
+/// round trip was invisible whenever it happened to be lossless, and wrong
+/// whenever it was not: an element carrying an IFS byte came apart, and an
+/// EMPTY `IFS` joined with `""` and then had no separator left to split on,
+/// collapsing the whole array into one word.
+#[test]
+fn bug1132_unquoted_star_splice_keeps_its_elements_without_shwordsplit() {
+    let cases: &[(&str, &str)] = &[
+        // An EMPTY IFS has nothing to split the join back apart on.
+        ("a=(x y); IFS=; print -rl -- ${a[*]}", "x\ny\n"),
+        ("a=(x '' y); IFS=; print -rl -- ${a[*]}", "x\ny\n"),
+        ("a=(x y); IFS=; f(){ print -r -- $#; }; f ${a[*]}", "2\n"),
+        // An element carrying an IFS byte must not come apart — including
+        // under the DEFAULT IFS, where the byte is a space.
+        ("a=('p:q' r); IFS=:; print -rl -- ${a[*]}", "p:q\nr\n"),
+        ("a=('p q' r); print -rl -- ${a[*]}", "p q\nr\n"),
+        ("a=('p q' r); f(){ print -r -- $#; }; f ${a[*]}", "2\n"),
+        ("a=('p q' r); print -rl -- pre${a[*]}post", "prep q\nrpost\n"),
+        ("set -- 'p:q' r; IFS=:; print -rl -- ${*}", "p:q\nr\n"),
+        // c:Src/subst.c:184-187 — the unquoted splat still drops empties.
+        ("a=(x '' y); print -rl -- ${a[*]}", "x\ny\n"),
+        // Shapes that were already right and must stay so.
+        ("a=(x y); IFS=:; print -rl -- ${a[*]}", "x\ny\n"),
+        ("a=(x y); IFS=:; print -rl -- \"${a[*]}\"", "x:y\n"),
+        ("a=(x y); IFS=; print -rl -- \"${a[*]}\"", "xy\n"),
+        ("a=(); IFS=:; print -r -- \"[${a[*]}]\"", "[]\n"),
+        ("a=(only); IFS=:; print -rl -- ${a[*]}", "only\n"),
+        ("s=hello; IFS=:; print -rl -- ${s[*]}", "hello\n"),
+        (
+            "typeset -A h; h=(k 'a b'); IFS=:; print -rl -- ${h[*]}",
+            "a b\n",
+        ),
+        // SH_WORD_SPLIT is the one door into c:3912 from here, and it still
+        // joins on IFS[0] and re-splits on IFS.
+        (
+            "a=('p:q' r); IFS=:; setopt shwordsplit; print -rl -- ${a[*]}",
+            "p\nq\nr\n",
+        ),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
