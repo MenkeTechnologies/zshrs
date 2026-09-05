@@ -84,6 +84,8 @@ pub fn _find_net_interfaces(_args: &[String]) -> i32 {
 
     // sh:13 — dispatch on $OSTYPE.
     let ostype = getsparam("OSTYPE").unwrap_or_default();
+    // sh:37 — set only by the linux sysfs fallback below; see there.
+    let mut sysfs_unique = false;
     let list: Vec<String> = if ostype.starts_with("darwin")
         || ostype.starts_with("freebsd")
         || ostype.starts_with("dragonfly")
@@ -111,6 +113,10 @@ pub fn _find_net_interfaces(_args: &[String]) -> i32 {
             );
         }
         if v.is_empty() && std::path::Path::new("/proc/sys/net/ipv4/conf").is_dir() {
+            // sh:37 `typeset -gU net_intf_list` — the `-U`, and note it is
+            // scoped to THIS branch only: upstream declares it just before
+            // the sysfs assignment at sh:38, not for the ip/ifconfig arms.
+            sysfs_unique = true;
             for n in dir_basenames("/proc/sys/net/ipv4/conf") {
                 if n != "all" && n != "default" {
                     v.push(n);
@@ -124,6 +130,20 @@ pub fn _find_net_interfaces(_args: &[String]) -> i32 {
     };
 
     setaparam("net_intf_list", list);
+    // sh:37 — stamped AFTER the assignment: `setaparam` creates the node and
+    // would not carry the bit. The retain() above already dedups THIS value,
+    // so nothing changes today; it matters because the caller's
+    // `net_intf_list` outlives this call (upstream's header says the caller
+    // makes it local and reads it back), so a later append must dedup too,
+    // and because `${(t)net_intf_list}` reads `array-unique` in zsh.
+    // Mirrors compinit.rs's private `declare_global` (c:Src/builtin.c:2575).
+    if sysfs_unique {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("net_intf_list") {
+                pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+            }
+        }
+    }
     0
 }
 
