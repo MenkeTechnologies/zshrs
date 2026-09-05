@@ -230,6 +230,36 @@ fn set_o_listing_matches_each_shell() {
     compare("set -o", "set -o", false, false);
 }
 
+/// `set +o` — the reusable form. bash and dash emit one `set -o NAME` /
+/// `set +o NAME` per line; ksh93u+m and mksh emit a SINGLE line naming a
+/// reset word plus only the options that are on and outside the shell's
+/// built-in default set (`set --default --braceexpand …`,
+/// `set -o .reset -o braceexpand`). Checked in a fresh shell and again
+/// with `set -e`, which is what pins the default sets.
+#[test]
+fn set_plus_o_listing_matches_each_shell() {
+    compare("set +o", "set +o", false, false);
+    compare("set +o after set -e", "set -e; set +o", false, false);
+}
+
+/// `trap -l` is bash's spelling of `kill -l`. The Korn and Bourne shells
+/// REJECT it — ksh93u+m exits 2, mksh 1, dash 2 — and zsh accepts it as a
+/// silent no-op with status 0. Only stdout and the status are compared;
+/// the diagnostic wording is stderr, which this suite does not police.
+///
+/// The call is wrapped in a SUBSHELL on purpose: `trap` is a POSIX
+/// special builtin, so its failure exits a non-interactive shell outright
+/// and the status could not otherwise be observed.
+#[test]
+fn trap_l_matches_each_shell() {
+    compare(
+        "trap -l",
+        r#"( trap -l ) 2>/dev/null; printf 'rc=%s\n' "$?""#,
+        false,
+        false,
+    );
+}
+
 /// `times`: the fraction width and seconds padding differ per shell —
 /// bash milliseconds, dash microseconds, mksh centiseconds with a
 /// zero-padded seconds field, ksh93u+m milliseconds zero-padded. Digits

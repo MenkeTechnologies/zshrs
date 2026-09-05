@@ -719,10 +719,20 @@ resolving to its builtin, whereas inventing one shadows a real command.
 | `kill -l` | `%2d) SIG%s`, five per row | one bare name per line (`IOT` for 6) | two columns with the `strsignal` text | signal `0`, then one name per line | one space-separated line |
 | `hash` | `hits`/`command` table | `name=path` | `name=path` (reached via its own `hash` alias → `alias -t`) | the bare path | `name=path` |
 | `set -o` | 27 names, `name<TAB>state` | 38 names under "Current option settings", POSITIVE sense (`clobber on`) | 35 names in four column-major columns | 17 names under "Current option settings" | zsh's ~180 |
-| `set +o` | `set -o NAME` per line | zsh's form (ksh's compact one-line `--long` form not modelled) | zsh's form (mksh's `-o .reset` form not modelled) | `set -o NAME` per line | zsh's form |
+| `set +o` | `set -o NAME` per line | one line: `set --default` + the non-default ON options | one line: `set -o .reset -o NAME …` | `set -o NAME` per line | zsh's form |
+| `trap -l` | the `kill -l` table | rejected, exit 2 | rejected, exit 1 | rejected, exit 2 | silent no-op, exit 0 |
 
 A privileged shell (effective uid ≠ real uid) reads no user file at all; the
 Korn and Bourne drop-ins take `/etc/suid_profile` in place of the profile pair.
+
+Two known divergences are deliberate rather than pending. `ulimit -a` still
+uses zsh's layout in every mode: the four shells disagree on the resource
+SET as well as the labels (bash 11 rows, ksh93 24, mksh 10, dash 10), and the
+set is platform-dependent, so a faithful table has to be built per platform
+rather than captured from one machine. And `--ksh`'s `echo` interprets
+backslash escapes: ksh93's `echo` deliberately follows the host's
+`/bin/echo`, so it interprets on Linux/SysV and does not on macOS — the
+drop-in follows the XSI convention rather than encoding one platform's.
 
 ### Test corpus parity
 
