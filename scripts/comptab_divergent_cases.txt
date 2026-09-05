@@ -2643,3 +2643,189 @@ scselect
 # defect is the same either way — the parameters do not exist.
 tcpdump 
 tcpdump -
+#
+# ══════════════════════════════════════════════════════════════════════════
+# HOW THE 8 TIMEOUTs DISPOSED — re-run serially, 3x, `--jobs 1 --confirm 0
+# --key-budget 30 --silence-recheck 3`.  ALL THREE RUNS AGREE CELL FOR CELL.
+# TWO OF THE EIGHT WERE HIDING REAL DEFECTS, one in each of the two disguises
+# the TIMEOUT TAXONOMY entry above warns about.
+#
+#   SLOW CELLS (taxonomy cause 1), PASS 3/3 at 30s:
+#     'serialver -'  'task -'  'tmux -'  'traceroute -'  'traceroute6 '
+#     'traceroute6 -'
+#     Six of eight.  At `--jobs 4` under load average 47-138 they simply miss
+#     the 10.0s first-byte budget.
+#
+#   HIDDEN FAIL (taxonomy cause 3):
+#     'screen '   FAIL 3/3 at 30s, fp b29792c9a7, the ask-prompt band
+#                 (zsh 52816/52820/52820, zshrs 52852 x3).  Counted in the
+#                 b29792c9a7 table above.
+#
+#   ZERO MATCHES + ZERO BYTES (taxonomy cause 4):
+#     'tor-resolve '  ONE-SIDED SILENCE 3/3.  zsh draws a screen; zshrs emits
+#                 NOTHING after the key at 30.0s AND again at 90.0s
+#                 (`--silence-recheck 3`), so it is silent, not slow.  The
+#                 harness init sets no_beep, so a zero-match completion is
+#                 zero bytes and there is no bell to see.  OPEN.
+#                 Its sibling 'tor-resolve -' is the separate `_arguments`
+#                 finding below, and the two share a completer, so whoever
+#                 takes one should take both.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# 'tac -' — THE `-` DIRECTORY LITTER WAS MASKING A REAL ZERO-MATCH.
+# fp 5378f5ae30.  This one is worth reading before the next sweep classifies
+# a `-` cell by resemblance.
+#
+# In the repo root the cell FAILs 3/3 with 7 differing rows:
+#     zsh    $ tac -            (lists the option set)
+#     zshrs  $ tac -/           (inserts the litter DIRECTORY as unique)
+# which looks exactly like the 4356dd07a7 `-`-directory class, and the
+# trigger really is present (`drwxr-xr-x 2 wizard staff 64 Sep 4 19:23 -`).
+#
+# Re-run from a cwd with no `-` in it, the two cells that ARE that class go
+# green and this one does not:
+#     'ssh-agent -'   PASS      'texfot -'   PASS
+#     'tac -'         ONE-SIDED SILENCE — zshrs still silent at 90.0s
+# So zshrs finds ZERO matches for `tac -` and only appeared to complete in
+# the repo root because the litter gave it something to insert.  The litter
+# was hiding the bug, not causing it.
+#
+# NOT root-caused; four hypotheses ruled out by measurement, recorded so they
+# are not re-run:
+#   * NOT the `_arguments` spec.  `_tac`'s exact spec (including the bare `:`
+#     separator and the `'(: -)'` exclusions) cloned onto a synthetic command
+#     through `--init-extra` PASSes, as do variants without the `:` and
+#     without the exclusion — three cells, byte-identical 6-row grids.
+#   * NOT `_pick_variant`'s pattern test.  `tac --version` prints 320 bytes
+#     containing "Free Software Foundation" on this host, and
+#     `[[ $output = *$~pat* ]]` with `pat='(Free Soft|uutils)'` is true on
+#     both shells outside completion.
+#   * NOT a completer-file difference.  `_tac` is byte-identical (sha256
+#     11772ca3b0…) in the Cellar tree, the bundled `~/.zshrs/functions` tree
+#     and `src/compsys/ported/Unix/Command/_tac`; `_pick_variant` likewise.
+#   * The obvious probe DOES NOT WORK, and that is itself worth recording:
+#     overriding `_default` from `--init-extra` to `compadd ZZDEFAULTREACHED`
+#     produced no output from zshrs at all.  A run-time shell function cannot
+#     shadow a native port, so an fpath/init override is not a usable
+#     instrument for locating a branch on the native backend.  Instrument on
+#     the C-port side or use a completer that has no port.
+tac -
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, OPEN — 'tig ' / 'tig -' emit `command not found: __git_complete`.
+# fp 6da99e167b / 292e010414.  FAIL 3/3, 8 and 2 rows.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#     zsh    $ tig
+#     zshrs  $ tig <path>:103: command not found: __git_complete
+#
+# `_tig` (the Homebrew site-functions one, byte-identical in
+# /opt/homebrew and /usr/local) installs a stub before sourcing tig's bash
+# completion and restores it after:
+#     local old="$functions[__git_complete]"
+#     functions[__git_complete]=:
+#     . $e                       # $e = <dir of _tig>/tig-completion.bash
+#     functions[__git_complete]="$old"
+# and `tig-completion.bash:103` is the `__git_complete tig __tig_main` call
+# that the stub exists to absorb.
+#
+# Ruled out by direct measurement OUTSIDE the completion, all byte-identical
+# on zsh and the pinned zshrs, so none of these is the mechanism:
+#   * `functions[name]=:` from a string — defined=1, body `\t:`, callable,
+#     and a restore from an EMPTY `$old` leaves it defined on both.
+#   * the `declare -f __git_complete &>/dev/null` guard at
+#     tig-completion.bash:34 — reports DEFINED on both with the stub set.
+#   * sourcing the real tig-completion.bash with the stub installed — rc=0,
+#     no diagnostic, on both.
+#   * `funcsourcetrace[1]`, which is what picks `$e`.  Inside an AUTOLOADED
+#     function BOTH shells report the function's own file (measured with a
+#     two-directory autoload fixture: `/tmp/fstdir1/_zzfst:0` on both), not
+#     the call site, so `$e` resolves the same way.
+#   * calling `_tig` directly after `compinit` — rc=0, `__git_complete` and
+#     `__tig_main` both defined, no diagnostic, on both.
+# So the divergence is COMPLETION-CONTEXT-SPECIFIC and needs an instrument
+# that survives the native backend (see the `_default` note under 'tac -').
+tig 
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, OPEN — an `_arguments` MESSAGE containing COLONS splits differently.
+# 'tor-resolve -', fp 8e5553753d, FAIL 3/3, 12 rows.  THE DIAGNOSTIC IS ON
+# THE REFERENCE SIDE: zsh is the shell that errors here.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#     zsh    $ tor-resolve -_arguments:465: command not found: port]:
+#     zshrs  $ tor-resolve -
+#
+# The completer is a user-fpath one,
+# ~/.zinit/plugins/MenkeTechnologies---zsh-more-completions/more_src6/_tor-resolve,
+# whose last spec is
+#     '*:hostname or IP and SOCKS host[:port]:'
+# i.e. a rest-argument whose MESSAGE contains an unescaped `:`.  zsh splits
+# `*` / `hostname or IP and SOCKS host[` / `port]` / `` and treats `port]:`
+# as an ACTION in command form, so `_arguments`:465 runs it and reports
+# `command not found`.  zshrs splits it some other way and stays quiet.
+#
+# Both shells DO agree on the other diagnostic this completer raises
+# (`_arguments:comparguments:327: invalid rest argument definition`, emitted
+# by each side twice across the range), so the divergence is specifically in
+# where the action boundary falls for a colon-bearing message.
+#
+# NOT claimed: which side a fix should move.  zsh's behaviour follows its own
+# documented `*:MESSAGE:ACTION` split and the completer is arguably malformed;
+# the point for parity is that zshrs does not reproduce it.  Whoever takes it
+# should also take 'tor-resolve ' (the ONE-SIDED SILENCE above) — same file.
+tor-resolve -
+#
+# ──────────────────────────────────────────────────────────────────────────
+# KNOWN CLASS, additional reproducer only — do NOT file as new.
+#
+# 'typer ' fp b152fb251a / 'typer -' fp c751b46d2e — the ec5a44cd3b compadd
+# FLAG-WORD leak, from a new trigger.  FAIL 3/3, 13 and 14 rows.
+#     zsh    _describe:21: bad option: -d      (and -a -e -f -l -u)
+#     zshrs  - -J -d _a_1 _tmpm subcommand     ('typer ')
+#            - -# -D -J -O -a -d -default- -o  ('typer -')
+# The reference's SIX one-letter complaints are `getopts` walking the single
+# clustered word `-default-` (d,e,f,a,u,l — `t` takes an argument and eats
+# the rest), which pins what actually reached `_describe`: `_typer` writes
+#     _alternative 'subcommands:typer subcommand:_describe -t subcommands …'
+# and `_alternative`'s cmd+args arm calls `"$action[1]" "$subopts[@]"
+# "$expl[@]" …`, so `$expl`'s `-J -default- …` lands in `_describe`'s
+# `getopts "oOt:12JVx"` (Completion/Base/Utility/_describe:21).  zsh rejects
+# each letter; zshrs adds the flag words to the MATCH SET instead — the same
+# `-J` / `-default-` / `-k` presentation already filed for 'command -',
+# 'caffeinate -', 'dtruss -' and 'env -'.  Not added to the corpus: the
+# trigger is a third-party completer misusing `_describe`, and the class
+# already has four pinned cells.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# VACUOUS-PASS AUDIT
+#
+# Whole-population, computed from this sweep's own --jsonl phase records: of
+# the 1073 PASSes, 62 (5.8%) had the `key 'tab'` phase come back `no-output`
+# on BOTH sides — neither shell drew anything, so the agreement proves
+# nothing.  The 3126-4200 sweep measured 5.6% and the 5201-6300 sweep 5.4%
+# the same way; the three agree.  The remaining split is 1010 `quiet`/`quiet`
+# and the single asymmetric 'traceroute ' noted in the range totals.
+#
+# Stratified replay to CONFIRM that classification, seed 20260905: 30 PASSes
+# re-run `-v --jobs 1 --key-budget 15`, 18 drawn from the 221 PASSes whose
+# reference grid is <=2 rows and 12 from the 852 fatter ones.  30 passed, 0
+# failed.  FOUR were vacuous — 'swift-demangle ', 'srt-tunnel ', 'svnbench -',
+# 'security -' — which is exactly the number of predicted-vacuous cells the
+# sample contained, ALL FOUR are members of the predicted 62-cell set, and NO
+# cell outside that set was vacuous.  Still silent on both sides at a 15s
+# budget, so not a budget artefact.  The jsonl-derived figure is sound in
+# both directions.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# HOST LOAD DURING THIS SWEEP — recorded because "measured alone" would be a
+# false claim.  `uptime` load average ran 30-138 for the whole session: three
+# peer agents compiling in the same tree (rustc/clang/ld), plus one long-lived
+# runaway — pid 87110, `target/debug/deps/zsh-be4b157eab765309` in another
+# agent's scratchpad, 10h59m elapsed at ~84% CPU, not orphaned (it has a live
+# parent) so it was left alone.  The consequences are visible and bounded:
+# per-cell cost ran 1.9-5.1s against 2.2-3.9s for the same --jobs 4
+# configuration in the 5201-6300 sweep, the 8 TIMEOUTs are an upper bound on
+# real silence (6 of them turned out to be pure budget), and every FAIL and
+# every TIMEOUT was re-measured serially at 3x the budget before being
+# labelled.  No verdict in this block rests on a single parallel measurement.
