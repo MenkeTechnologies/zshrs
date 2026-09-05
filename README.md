@@ -721,11 +721,21 @@ resolving to its builtin, whereas inventing one shadows a real command.
 | `set -o` | 27 names, `name<TAB>state` | 38 names under "Current option settings", POSITIVE sense (`clobber on`) | 35 names in four column-major columns | 17 names under "Current option settings" | zsh's ~180 |
 | `set +o` | `set -o NAME` per line | one line: `set --default` + the non-default ON options | one line: `set -o .reset -o NAME …` | `set -o NAME` per line | zsh's form |
 | `trap -l` | the `kill -l` table | rejected, exit 2 | rejected, exit 1 | rejected, exit 2 | silent no-op, exit 0 |
+| error in a special builtin | continues (exit 2 from the builtin) | aborts the script | aborts | aborts | continues |
 
 A privileged shell (effective uid ≠ real uid) reads no user file at all; the
 Korn and Bourne drop-ins take `/etc/suid_profile` in place of the profile pair.
 
-Two known divergences are deliberate rather than pending. `ulimit -a` still
+POSIX requires that "if there is an error in a special built-in utility …
+the shell shall abort", and ksh93u+m, mksh and dash all do — `readonly -X`,
+`export -X` or `shift 99` end the script. bash only does so under `set -o
+posix`, and zsh never does, so the drop-ins follow their own shell. The
+boundary is an ERROR, not a non-zero status: `eval false`, `trap "" BOGUS`
+and `unset novar` return normally in every one of them, and the harness pins
+those negatives so the rule cannot widen into "any failing special builtin
+kills the script".
+
+Three known divergences are deliberate rather than pending. `ulimit -a` still
 uses zsh's layout in every mode: the four shells disagree on the resource
 SET as well as the labels (bash 11 rows, ksh93 24, mksh 10, dash 10), and the
 set is platform-dependent, so a faithful table has to be built per platform
@@ -733,6 +743,9 @@ rather than captured from one machine. And `--ksh`'s `echo` interprets
 backslash escapes: ksh93's `echo` deliberately follows the host's
 `/bin/echo`, so it interprets on Linux/SysV and does not on macOS — the
 drop-in follows the XSI convention rather than encoding one platform's.
+Finally `set -X` is accepted in every mode: zsh takes `-X` as a valid option
+letter and so does zshrs, where ksh93 and dash reject it — matching that
+needs a per-shell table of valid `set` letters, which is not built.
 
 ### Test corpus parity
 

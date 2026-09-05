@@ -364,6 +364,40 @@ impl SetOpt {
     }
 }
 
+/// True when an ERROR in a POSIX special builtin must abort a
+/// non-interactive shell, as POSIX requires ("If there is an error in a
+/// special built-in utility ... the shell shall abort").
+///
+/// Measured with `{ CMD; } >/dev/null 2>&1; echo AFTER`: ksh93u+m, mksh
+/// and dash all abort for `readonly -X`, `set -X` and `shift 99`; bash
+/// and zsh never do (bash only under `set -o posix`). The boundary is an
+/// ERROR, not a non-zero status — `eval false`, `trap "" BOGUSSIG` and
+/// `unset novar` all continue in every one of them.
+pub fn special_builtin_error_aborts() -> bool {
+    matches!(
+        personality(),
+        Personality::Ksh93
+            | Personality::Mksh
+            | Personality::Pdksh
+            | Personality::Dash
+            | Personality::Sh
+    )
+}
+
+/// The status the shell exits with when [`special_builtin_error_aborts`]
+/// fires. `usage_error` distinguishes a bad option or operand from an
+/// otherwise-failing special builtin, because ksh93 uses 2 for the first
+/// and the builtin's own status for the second (`readonly -X` exits 2,
+/// `shift 99` exits 1). dash uses 2 for both; mksh uses 1.
+pub fn special_builtin_abort_status(usage_error: bool, builtin_status: i32) -> i32 {
+    match personality() {
+        Personality::Dash | Personality::Sh => 2,
+        Personality::Mksh | Personality::Pdksh => 1,
+        Personality::Ksh93 if usage_error => 2,
+        _ => builtin_status,
+    }
+}
+
 /// True for the shells that ALWAYS single-quote a value in their
 /// `alias`, `export -p` and `readonly -p` listings.
 ///
