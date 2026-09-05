@@ -242,7 +242,15 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
             } else if action.starts_with('(') && action.ends_with(')') {
                 // sh:43  (literal list) → compadd direct
                 let body = &action[1..action.len() - 1];
-                let items: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
+                // sh:46 `eval ws\=\( "${action[2,-2]}" \)` — the SAME
+                // array-literal eval as the `((…))` arm 17 lines above, so it
+                // STRIPS escapes as well as splitting on unescaped whitespace.
+                // `split_whitespace()` only split. `_bpf_filters` sh:66 passes
+                // the action `(not \()`, whose second word is a
+                // backslash-escaped `(`; unstripped, the match became the
+                // TWO-character `\(` and compadd then quoted both of them, so
+                // `tcpdump <TAB>` listed `\\\(` where zsh lists `\(`.
+                let items: Vec<String> = crate::compsys::ported::eval_action_words(body);
                 setaparam("ws", items);
                 loop {
                     let mut nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
