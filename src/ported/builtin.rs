@@ -552,6 +552,34 @@ pub fn execbuiltin(
                         badc as char
                     ),
                 ); // c:392
+                // ZSHRS-ONLY. POSIX: "If there is an error in a special
+                // built-in utility ... the shell shall abort." A bad
+                // option IS such an error, and ksh93u+m, mksh and dash
+                // all exit the script on it (`readonly -X; echo AFTER`
+                // never reaches the echo). zsh and bash do not, so this
+                // is gated to the POSIX-family drop-ins. The deferred
+                // EXIT_PENDING pair is the same one the POSIXBUILTINS
+                // path in fusevm_bridge arms.
+                if (flags & BINF_PSPECIAL as i32) != 0
+                    && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+                    && crate::extensions::emulation_output::special_builtin_error_aborts()
+                {
+                    use std::sync::atomic::Ordering;
+                    EXIT_VAL.store(
+                        crate::extensions::emulation_output::special_builtin_abort_status(true, 1),
+                        Ordering::Relaxed,
+                    );
+                    EXIT_PENDING.store(1, Ordering::Relaxed);
+                }
+                // bash reports a builtin usage error with status 2, zsh
+                // with 1 (`readonly -X` → 2 in bash 5.3, 1 in zsh 5.9).
+                // The aborting shells never reach this return; their
+                // status comes from the deferred exit above.
+                if crate::extensions::emulation_startup::personality()
+                    == crate::extensions::emulation_startup::Personality::Bash
+                {
+                    return 2;
+                }
                 return 1; // c:393
             }
             // c:395 — `arg = *++argv;`
@@ -12353,6 +12381,22 @@ pub fn bin_shift(
         if num > l {
             // c:5636
             zwarnnam(name, "shift count must be <= $#"); // c:5637
+            // ZSHRS-ONLY. `shift` is a POSIX special builtin and shifting
+            // past `$#` is an ERROR, so ksh93u+m, mksh and dash all abort
+            // the script on it (`shift 99; echo AFTER` never echoes).
+            // Not a usage error, so ksh93 exits with the builtin's own
+            // status (1) while dash still uses 2 — see
+            // `special_builtin_abort_status`.
+            if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+                && crate::extensions::emulation_output::special_builtin_error_aborts()
+            {
+                use std::sync::atomic::Ordering;
+                EXIT_VAL.store(
+                    crate::extensions::emulation_output::special_builtin_abort_status(false, 1),
+                    Ordering::Relaxed,
+                );
+                EXIT_PENDING.store(1, Ordering::Relaxed);
+            }
             ret = 1; // c:5638
         } else if OPT_ISSET(ops, b'p') {
             // c:5641

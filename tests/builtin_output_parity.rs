@@ -260,6 +260,53 @@ fn trap_l_matches_each_shell() {
     );
 }
 
+/// POSIX: "If there is an error in a special built-in utility ... the
+/// shell shall abort." ksh93u+m, mksh and dash all do; bash only under
+/// `set -o posix`, and zsh never — so this is gated to the POSIX-family
+/// drop-ins.
+///
+/// The boundary is an ERROR, not a non-zero status: `eval false`,
+/// `trap "" BOGUSSIG` and `unset novar` all return without aborting in
+/// every reference, and are asserted here so a future change cannot widen
+/// the rule into "any failing special builtin kills the script" — which
+/// would break `. script` and `eval`.
+#[test]
+fn special_builtin_errors_abort_where_posix_says_they_do() {
+    for probe in [
+        "readonly -X",
+        "export -X",
+        "unset -X",
+        "shift 99",
+        // …and the cases that must NOT abort.
+        "eval false",
+        r#"trap "" BOGUSSIG"#,
+        "unset novar",
+        "export FOO=1",
+    ] {
+        compare(
+            &format!("special-builtin abort: {probe}"),
+            &format!("{{ {probe} ; }} >/dev/null 2>&1; echo AFTER"),
+            false,
+            false,
+        );
+    }
+}
+
+/// The status the shell exits with when a special-builtin error aborts
+/// it: ksh93u+m uses 2 for a usage error and the builtin's own status
+/// otherwise, dash uses 2 for both, mksh uses 1.
+#[test]
+fn special_builtin_abort_status_matches_each_shell() {
+    for probe in ["readonly -X", "export -X", "shift 99"] {
+        compare(
+            &format!("special-builtin abort status: {probe}"),
+            &format!("( {probe} ) >/dev/null 2>&1; printf 'rc=%s\\n' \"$?\""),
+            false,
+            false,
+        );
+    }
+}
+
 /// `times`: the fraction width and seconds padding differ per shell —
 /// bash milliseconds, dash microseconds, mksh centiseconds with a
 /// zero-padded seconds field, ksh93u+m milliseconds zero-padded. Digits
