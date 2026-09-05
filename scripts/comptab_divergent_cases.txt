@@ -3612,3 +3612,123 @@ tor-resolve
 # space-bearing descriptions.
 ykman 
 ykman -
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — THE LISTING EMITS ONE NEWLINE TOO MANY WHENEVER A MATCH
+# IS WIDER THAN THE TERMINAL, so always-last-prompt redraws the command line
+# ON TOP OF THE FIRST LIST ROW.  fp 4606d00f05 ('w3m ').  CORE ZLE bug.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# The cell's one differing row LOOKS like an extra match and is not:
+#     zsh    row 1: `-/`
+#     zshrs  row 1: `-/   w3m`
+# With `group-name ''` + a descriptions `format` the same cell reads
+#     zsh    row 1: `### file`
+#     zshrs  row 1: `### fw3m`
+# i.e. the three characters `w3m` are painted over columns 5-7 of a row that
+# otherwise still says `### file`.  That is the command line being redrawn
+# one row too low, not a match set difference — the two match sets are
+# identical, and the harness's own cursor line says so:
+#     zsh cursor row 0 col 9      zshrs cursor row 1 col 9
+#
+# THE WHOLE DIVERGENCE IS TWO BYTES, and they are at the very end of the
+# stream, between the last match and the cursor-up:
+#     zsh    …znative/          \e[38A\e[0m\e[27m\e[24m\r\e[2Cw3m\e[K\e[1C
+#     zshrs  …znative/  \r\n    \e[38A\e[0m\e[27m\e[24m\r\e[2Cw3m\e[K\e[1C
+# Both move up 38, so both agree on `listdat.nlines`; zshrs simply printed
+# one more physical newline than it counted.
+#
+# SMALLEST REPRODUCER — one `compadd`, no `_alternative`, no fpath, at a
+# 110-column pty.  A match WIDER than the terminal is the whole trigger; its
+# position in the list does not matter, and a match exactly AS WIDE as the
+# terminal does NOT trigger it:
+#     compadd -- aaa bbb "$(printf 'x%.0s' {1..130})"     DIVERGE (+1 \n)
+#     compadd -- "$(printf 'A%.0s' {1..130})" bbb ccc     DIVERGE (+1 \n)
+#     compadd -- aaa bbb "$(printf 'x%.0s' {1..110})"     AGREE
+#     compadd -- aaa bbb ccc                              AGREE
+#
+# THE SITE.  `src/ported/zle/compresult.rs:3661`
+#
+#     ml += 1;
+#     if row < lins - 1 {
+#         let _ = write_loop(out_fd, b"\n");
+#     }
+#
+# C does not guard on the ROW INDEX.  `Src/Zle/compresult.c:2148` guards on
+# `n`, the count of matches still UNPRINTED, which the inner loop decrements
+# as it goes:
+#
+#     if (n) {
+#         putc('\n', shout);
+#         ml++;
+#         …
+#     }
+#
+# The two agree only while `lins` equals the number of match rows.  When a
+# match wraps, `calclist` charges the wrap to `nlines`/`lins` — so `lins`
+# counts the wrapped continuation as a row of its own — and the Rust loop
+# then runs one extra iteration that prints NO match (its `idx` is past the
+# end) yet still satisfies `row < lins - 1` for the row before it, emitting a
+# newline C suppresses.  Three matches, one of them wrapping: C writes 2
+# newlines (n hits 0 after the third match), the port writes 3.
+#
+# BLAST RADIUS: every completion listing that contains a match wider than the
+# terminal — long paths, long URLs, long `_describe` rows.  It is not
+# locale-dependent and not `_w3m`-specific; `_w3m` only surfaces it because
+# `~/.w3m/history` holds a 108-character wikipedia URL.
+w3m 
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — A TRUNCATED DESCRIPTION COMES OUT METAFIED IN A
+# NON-UTF-8 LOCALE.  fp b36c77debd ('upmendex -').
+# ══════════════════════════════════════════════════════════════════════════
+#
+#     zsh    -g  -- make Japanese index head <あかさたなはま…   (raw bytes,
+#                                                              cut at col 110)
+#     zshrs  -g  -- make Japanese index head <                 (mojibake)
+#
+# On the wire, for the source bytes `e3 81 82` (`あ`):
+#     zsh    e3 81 82                     the raw bytes, as C does
+#     zshrs  c2 83 c3 83  c2 83 c2 a1  c2 83 c2 a2
+# which decodes as the characters U+0083 U+00C3, U+0083 U+00A1, U+0083 U+00A2
+# — i.e. `Meta, byte^0x20` for each of `e3 81 82`.  The string reaching the
+# terminal is the METAFIED form of the correct text.
+#
+# SMALLEST REPRODUCER — an `_arguments` description with ten multibyte
+# characters, at a 110-column pty, `LC_ALL=C`:
+#     _arguments -s -S "-g[make Japanese index head <あかさたなはまやらわ>.]" "-q[quiet.]"
+#     cols=110  zsh: raw bytes, cut mid-character   zshrs: metafied  DIVERGE
+#     cols=200  byte-identical                                       AGREE
+#     LC_ALL=en_US.UTF-8, cols=110, a description long enough to
+#     overflow THERE too                                             AGREE
+# So the trigger is exactly: the description is TRUNCATED **and** the locale
+# is not UTF-8.  Untruncated, or under UTF-8, the two shells are identical.
+#
+# THE SITE.  `src/ported/zle/computil.rs:1336-1366`, `cd_get`'s `copy_desc`.
+# The fits-whole arm keeps the text as it is:
+#     computil.rs:1342   out.push_str(d);            // c:697-698 / c:797-800
+# the truncating arm unmetafies to raw bytes and then RE-METAFIES every byte
+# it copies:
+#     computil.rs:1348   let bytes = unmetafy_str(d);
+#     computil.rs:1358-1365   if b < 0x80 { String::from(b as char) }
+#                             else { push(Meta); push(char::from(b ^ 32)) }
+# so a truncated description leaves `cd_get` metafied where an untruncated
+# one does not.  Everything downstream then treats those `Meta` characters as
+# ordinary data and metafies them a SECOND time on the way through the shell
+# parameters `compdescribe` writes; `printmatch`'s `mb_niceformat`
+# (compresult.rs:3906 -> utils.rs:7597 `unmetafy_str`) strips exactly one
+# layer, and the residual layer is what reaches the terminal.
+#
+# The `else` arm at computil.rs:1367-1369 (`mb_metacharlenconv`, taken in a
+# UTF-8 locale) returns the unit as TEXT and is correct — which is why the
+# divergence disappears under `en_US.UTF-8`, and why the comment at
+# computil.rs:1356-1357 claiming the two encodings are "the same" is what
+# needs revisiting.
+#
+# NOT CLAIMED: whether this is worth fixing for its own sake.  The harness
+# forces `LC_ALL=C` (child_env, comptab_parity.py:~480) and this defect
+# cannot fire under a UTF-8 locale, so it belongs to the same family as the
+# already-recorded 'fc-list '/'fc-match ' cells.  It is filed because it is a
+# concrete, located, one-arm asymmetry in a ported function, not because the
+# cell must go green.
+upmendex -
