@@ -3053,3 +3053,15 @@ tor-resolve -
 # (merge-sort qsort) zsh would print zshrs's answer.
 #
 # Same class as the pinned 'getconf ' finding. Second confirmed instance.
+#
+# chunk part_07  cells 8065-8164  'yaa -' .. 'zipcmp '   [PIN 2]
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 189.7s (1.9s/cell)
+#   # 8 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'ykman '  (10 row(s) differ)
+#     34f292f81c  x1   smallest: --case 'ykman ' --keys tab
+#        cell/rowtop/col0 | ref/info -- show general information | test/hsmauth fido -- manage
+#   FAIL   tab1               'ykman -'  (11 row(s) differ)
+#     1f1d9cc38e  x1   smallest: --case 'ykman -' --keys tab
+#        cell/rowtop/col0 | ref/--device -d -- specify which YubiKey to interact with by serial number | test/--full-help --diagnose -h -- show
