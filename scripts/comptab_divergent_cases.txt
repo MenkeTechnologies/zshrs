@@ -3732,3 +3732,70 @@ w3m
 # concrete, located, one-arm asymmetry in a ported function, not because the
 # cell must go green.
 upmendex -
+#
+# ══════════════════════════════════════════════════════════════════════════
+# NEW, ROOT-CAUSED — `getaparam("commands")` RETURNS NOTHING IN A NATIVE
+# PORT, so every `(( $+commands[x] ))` guard in the ported completers takes
+# the wrong branch.  'write ' (ONE-SIDED SILENCE) is one of three sites, and
+# the repo ALREADY DOCUMENTS the cause at the one site that was fixed.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#     'write '   zsh    $ write wizard        (inserts the logged-on user)
+#                zshrs  $ write               (nothing at all, 30s and 90s)
+#
+# `write` maps to `_users_on` on BOTH shells — checked, not assumed:
+#     $_comps[write] = _users_on   on zsh and on the pinned zshrs
+# and `Completion/Unix/Type/_users_on` is eleven lines whose first decision is
+#     sh:5   if (( $+commands[users] )); then … else return 1; fi
+#
+# THE SITE.  `src/compsys/ported/Unix/Type/_users_on.rs:22-28`
+#
+#     fn has_command(name: &str) -> bool {
+#         getaparam("commands").unwrap_or_default()
+#             .chunks(2).any(|kv| kv.first().map(|k| k == name).unwrap_or(false))
+#     }
+#
+# `commands` is a MODULE special (`Src/Modules/parameter.c` `getpmcommand`),
+# not paramtab-hashed storage, so `getaparam("commands")` yields None, the
+# helper is false for every name, and `_users_on` returns 1 before it adds
+# anything.  Zero matches, and with `no_beep` set that is zero bytes — the
+# TIMEOUT disguise the taxonomy entry warns about.
+#
+# THIS IS NOT A HYPOTHESIS: the identical bug was found and fixed at a third
+# site, and the fix's own comment states the mechanism —
+# `src/compsys/ported/Base/Utility/_set_command.rs:104-107`:
+#     // `commands` is NOT paramtab-hashed storage, so the previous
+#     // `getaparam("commands")` returned None and every bare-name lookup
+#     // here yielded "".
+# — and its remedy is to call `getpmcommand` through
+# `mark_module_param_used("commands")` (_set_command.rs:107-113).  The other
+# two call sites were never converted:
+#     src/compsys/ported/Unix/Type/_users_on.rs:24
+#     src/compsys/ported/X/Type/_x_color.rs:57            (its doc-comment even
+#         says "Mirrors the identical `has_command` helper in `_users_on.rs`")
+#     src/compsys/ported/Unix/Type/_absolute_command_paths.rs:63
+#         (not a boolean guard — it iterates the assoc for command DIRS, so
+#          an empty read yields an empty directory list)
+#
+# CONFIRMED ON A SECOND, INDEPENDENT CELL.  `_x_color` sh:22 is
+# `(( $+commands[showrgb] ))`, and `showrgb` IS installed here
+# (/opt/X11/bin/showrgb, with /opt/X11/share/X11/rgb.txt):
+#     $ xsetroot -solid <TAB>
+#     zsh    zsh: do you wish to see all 675 possibilities (135 lines)?
+#     zshrs  black  blue   gray   green  red    white
+# i.e. zshrs falls to the six-name hard-coded fallback because the guard says
+# `showrgb` does not exist.  Same idiom, same wrong branch, a completely
+# different completer and a visible (not silent) symptom.
+#
+# NOTE ON INSTRUMENTATION, since the obvious probe does not work: at the
+# SHELL level both shells agree (`$+commands[users]` is 1 and
+# `$commands[users]` is `/usr/bin/users` on the pinned zshrs), so the defect
+# is only visible from inside the Rust port — and a run-time shell function
+# cannot shadow a native port (see the 'tac -' note).  The two cells above
+# are the instrument.
+#
+# 'xsetroot -solid ' is added to the corpus alongside 'write ': it is the
+# cheaper reproducer of the two (a visible wrong answer rather than silence)
+# and it exercises a different one of the three sites.
+write 
+xsetroot -solid 
