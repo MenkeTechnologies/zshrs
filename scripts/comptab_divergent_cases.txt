@@ -2448,3 +2448,69 @@ read
 #   FAIL   tab1               'typer -'  (14 row(s) differ)
 #     c751b46d2e  x1   smallest: --case 'typer -' --keys tab
 #        cell/rowtop/col0 | ref/_describe:#: bad option: -d | test/- -# -D -J -O -a -d -default- -o
+#
+# ──────────────────────────────────────────────────────────────────────────
+# RANGE TOTALS, cells 6301-7400 (1100 cells, computed from this sweep's own
+# --jsonl, 1100 records):
+#
+#   PASS=1073  FAIL=19  TIMEOUT=8  REF-CRASHED=0  SKIP=0  TEST-CRASHED=0
+#
+# Pins re-hashed after the last chunk and after every re-confirmation run:
+# zshrs 3f5bf06d80… , dump 10ebe0a033… / 2122607 bytes — byte-identical to the
+# values recorded at the top of this block, so NO cell here sits inside a
+# dump-rewrite or binary-swap window.  (target/debug/zshrs itself WAS rebuilt
+# by a peer at 15:19 while this sweep ran; the pin is why that does not
+# matter.)
+#
+# Across all 1073 PASSes: 0 cursor diffs, 0 one-sided diagnostics.  ONE PASS
+# is weak and is named rather than hidden: 'traceroute ' agreed on a 31-row
+# grid but its test-side `key 'tab'` phase came back `no-output` after 10.0s
+# while the reference answered in 0.139s, so the screens matched on content
+# the test shell had already drawn.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# ALL 19 FAILs RE-CONFIRMED SERIALLY AND ALONE — `--jobs 1 --confirm 0
+# --key-budget 30`, three separate runs.  EVERY ONE IS FAIL 3/3.  Zero flaky.
+# Only 'taskinfo ' changes SHAPE between runs (fingerprints 7c5ecd4569 /
+# b29792c9a7 / e8e0447836 across the three), and that is the live-`ps` class.
+#
+#   NEW, ROOT-CAUSED   'scselect '                  fp 1479a74662
+#   NEW, ROOT-CAUSED   'tcpdump ' 'tcpdump -'       fp 303d418be1 / 208a5b04e4
+#   NEW, OPEN          'tig ' 'tig -'               fp 6da99e167b / 292e010414
+#   NEW, OPEN          'tor-resolve -'              fp 8e5553753d
+#   KNOWN CLASS        'typer ' 'typer -'           fp b152fb251a / c751b46d2e
+#   HOST ARTEFACT      'ssh-agent -' 'texfot -'     fp 4356dd07a7
+#   HOST ARTEFACT      'taskinfo '                  live-`_pids`
+#   KNOWN CLASS        'ssh-agent ' 'termshot ' 'texfot ' 'thefuck ' 'time '
+#                      'torify ' 'torsocks '        fp b29792c9a7
+#   REAL, MASKED       'tac -'                      fp 5378f5ae30 — see below
+#
+# ──────────────────────────────────────────────────────────────────────────
+# b29792c9a7 — the fingerprint MASKS DIGITS, so the numbers were read rather
+# than assumed.  Eight of the nine cells that carry it here (seven FAILs plus
+# 'screen ', recovered from a TIMEOUT) sit in the documented ask-prompt band,
+# with BOTH sides wandering run to run:
+#
+#     cell            zsh (3 runs)              zshrs (3 runs)        delta
+#     ssh-agent    52817 / 52813 / 52813     52845 / 52845 / 52849   +28..+36
+#     termshot     52820 / 52820 / 52816     52848 / 52852 / 52852   +28..+36
+#     texfot       52820 / 52820 / 52816     52852 / 52852 / 52852   +32..+36
+#     thefuck      52816 / 52816 / 52816     52852 / 52848 / 52848   +32..+36
+#     torify       52816 / 52816 / 52816     52852 / 52852 / 52852   +36
+#     torsocks     52823 / 52823 / 52819     52855 / 52855 / 52855   +32..+36
+#     time         47321 / 47321 / 47317     47349 / 47353 / 47353   +28..+36
+#     screen       52816 / 52820 / 52820     52852 / 52852 / 52852   +32..+36
+#
+# +28..+36 is exactly the residual the b29792c9a7 resolution section already
+# accounts for (20 bundled `_z*` completers + HELPDIR/INFOPATH through
+# `_parameters`), and the reference's own ±4 wander makes it unmatchable as
+# an exact-equality test.  Same class, established by the numbers.
+#
+# 'taskinfo ' CARRIES THE SAME FINGERPRINT AND IS NOT THE SAME THING — the
+# warning at the head of this file, seen once more.  Its counts are three
+# orders of magnitude smaller and move in BOTH directions:
+#     run 1  zsh 113 (113)  zshrs 111 (111)   -2
+#     run 2  zsh 131 (131)  zshrs 174 (174)  +43
+# `_taskinfo` is one line — `_arguments -s -S '*:process or pid:_pids'` — so
+# this is the live-`ps` artefact class (`kill `, `gcore `, `ps `, …) reached
+# from a new command name.  Discard; do not file, do not add to the corpus.
