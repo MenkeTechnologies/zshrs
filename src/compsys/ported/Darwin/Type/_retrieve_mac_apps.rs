@@ -613,6 +613,21 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
     let mut seen = HashSet::new();
     mac_apps.retain(|p| seen.insert(p.clone()));
     setaparam("_mac_apps", mac_apps);
+    // sh:102 — the `-U` ATTRIBUTE, not just a unique value. Stamped after
+    // the assignment because `setaparam` creates the node and would not
+    // carry the bit through. The retain() above already makes THIS value
+    // unique, so nothing changes today; it matters because `_mac_apps` is a
+    // `-g` cross-invocation cache that upstream APPENDS to (`_mac_apps+=(…)`
+    // at sh:23, sh:46 and sh:57), and under `-U` every one of those appends
+    // dedups. Without the flag a later append would accumulate duplicates.
+    // `${(t)_mac_apps}` also reads `array-unique` in zsh vs plain `array`
+    // here. Mirrors compinit.rs's `declare_global`
+    // (c:Src/builtin.c:2575), inlined because that helper is private.
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = tab.get_mut("_mac_apps") {
+            pm.node.flags |= crate::compsys::ported::shared::PM_UNIQUE as i32;
+        }
+    }
 
     // sh:105
     _store_cache(&["Mac_applications".to_string(), "_mac_apps".to_string()])
