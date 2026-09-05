@@ -1758,3 +1758,48 @@ ldapsearch
 #   # elapsed: 377.9s (3.8s/cell)
 #   # 6 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
 #   FAIL   tab1               'printenv '  (11 row(s) differ)
+
+# ══════════════════════════════════════════════════════════════════════════
+# TIMEOUT TAXONOMY — FOUR distinct causes behind one symptom.
+#
+# A TIMEOUT means only "the screens were never both final". It is NOT a
+# synonym for machine load, and treating it as one has both hidden a real
+# user-facing bug and manufactured a phantom regression in this session.
+# Established causes, each seen for real:
+#
+#  1. SLOW CELL.  'fortune ' takes ~10.3s against the 10.0s default key
+#     budget, so it misses under --jobs 2. Serial at --key-budget 30 it
+#     PASSES in 10.3s. Not a bug at all.
+#
+#  2. REFERENCE-SIDE SILENCE.  'CC -' — zsh emits nothing after the key,
+#     deterministically, at 3x the budget. zshrs draws a screen. The
+#     reference is the one that is quiet.
+#
+#  3. ZERO MATCHES + FALLTHROUGH.  Abbreviated in-path completion
+#     ('ls /u/l/b') found zero matches and burned ~25s falling through the
+#     rest of the completer chain. A REAL user-facing bug that sat
+#     invisible in this ledger because it scored TIMEOUT rather than FAIL.
+#
+#  4. ZERO MATCHES + NO OUTPUT AT ALL.  'ldapsearch ' --keys tab,tab. The
+#     harness init sets `no_beep`, so zero matches produce ZERO BYTES — the
+#     shell is idle and responsive (it answers ^C and exit immediately), but
+#     the harness cannot distinguish "finished with nothing to say" from
+#     "still working". There is no bell to see.
+#
+# DISCRIMINATOR: re-run serially AT A LARGER BUDGET, then check whether one
+# side produced zero matches. Either step alone gives the wrong answer —
+# (1) needs the budget, (3) and (4) need the zero-match check, and (4) will
+# never show you a byte to look at.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# INSTRUMENTATION LANDMINE: you cannot wrap `_regex_arguments`.
+#
+# `Completion/Base/Utility/_regex_arguments` ENDS at sh:86 with
+# `_regex_arguments "$@"`. Autoloading the file therefore REDEFINES the name,
+# and any wrapper you installed is discarded before the first call returns.
+# An agent measured "zsh only calls it once across both TABs" this way and
+# drew the opposite conclusion from the truth.
+# Wrap a CALLEE instead (`_ldap_attributes` worked) — zsh's dynamic scoping
+# lets it read the caller's locals. Any autoload file whose last line calls
+# itself has this property; check before trusting a wrapper count.
+# ══════════════════════════════════════════════════════════════════════════
