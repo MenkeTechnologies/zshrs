@@ -110,6 +110,27 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
     // Filter out `.` per sh:54 `${^~fpath:/.}` substitution
     let fpath: Vec<PathBuf> = fpath.into_iter().filter(|d| d.as_os_str() != ".").collect();
 
+    // sh:42-46 `(( $+_i_check )) || { … local -a -U +h fpath }` and sh:48
+    // `fpath=( $* )` deliberately do NOT apply on this code path, so nothing
+    // below uniques the list. Recorded here because an attribute-fidelity
+    // sweep flags the `-U` and it is not a gap:
+    //
+    //   * sh:42 `(( $+_i_check )) || {` gates the declaration, so it is made
+    //     only by the STANDALONE call. `Completion/compinit`:78
+    //     `typeset`s `_i_check` — local to compinit — so a compaudit reached
+    //     FROM compinit always sees it set and audits the caller's un-uniqued
+    //     `$fpath`. This function has exactly one caller, and it is that one
+    //     (`Completion/compinit`:436 `if ! eval compaudit`, ported at
+    //     `src/extensions/ext_builtins.rs:2568`); a standalone `compaudit`
+    //     typed by the user resolves to the autoload stub registered at
+    //     `ext_builtins.rs:2435`, i.e. the upstream shell function, not here.
+    //   * there is no node to stamp either way: sh:45's `-U` belongs to a
+    //     LOCAL shadow of the real `$fpath` (measured in zsh 5.9.2:
+    //     `f(){ local -a -U +h fpath; fpath=(/a /b /a /b); print ${(t)fpath} }`
+    //     → `array-local-tied-unique-special`, caller's value restored on
+    //     return), and the working list here is a plain Rust vector that
+    //     never reaches the parameter table.
+
     // sh:82-115 — build the trusted-owner set: root (0) + EUID +
     //   the owner of `/proc/$$/exe` (or `object/a.out`) if present
     //   and non-root.
