@@ -1623,3 +1623,49 @@ ldapsearch
 #   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 270.5s (2.7s/cell)
 #   # 4 pass(es) captured under a truncated or empty settle window
+
+# ══════════════════════════════════════════════════════════════════════════
+# LEDGER STATUS 2026-09-05, HEAD 1194d96100 (before that day's last commits).
+#   # 46 passed, 8 failed, 56 cell(s)
+#   # categories: PASS=46 FAIL=8 TIMEOUT=2 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+# Pinned binary sha256 f248cb8e259762cc… (codesigned), pinned dump
+# 10ebe0a03395e167… / 2122607 bytes — HASHED BEFORE AND AFTER the run and
+# byte-identical, so this measurement is not one of the ones voided by the
+# dump-overwrite window recorded above.
+#
+# NOTE the corpus has grown 47 -> 50 -> 54 -> 56 cells during the session as
+# sweeps appended newly-found cases. RAW PASS COUNTS ACROSS RUNS ARE NOT
+# COMPARABLE. Compare the failing SET, not the number.
+#
+# EVERY remaining failure now has a documented cause — there are no
+# unexplained cells in this corpus:
+#
+#   b29792c9a7  x4  'getconf ' 'gpg-agent ' 'fc-list ' 'fc-match '
+#                   ask-prompt count class. NOTE the fingerprint MASKS DIGITS
+#                   so it over-merges; fc-* are a separate +1 mechanism from
+#                   the other two. See the getconf correction near the top.
+#   faf779bbfa  x2  'git-cvsserver ' / '-'  the documented KNOWN GAP at
+#                   pattern.rs:1347-1377 (stray top-level `)`), whose own note
+#                   records the trade: enforcing it fixes 40 cells and
+#                   over-rejects 170.
+#   862d1a4e04  x1  'R '  established ARTEFACT — 6 serial passes incl. one
+#                   under 12x CPU load; the FAIL is a cold-run settle window.
+#   4356dd07a7  x1  'ktrace -'  libc qsort tie order, genuinely unmatchable
+#                   (qsort_tolerant is a STABLE merge sort). Not the same as
+#                   getconf's refuted qsort story — see the two-stories entry.
+#
+#   TIMEOUT 'CC -'      reference-side silence, deterministic at 3x budget.
+#   TIMEOUT 'fortune '  NOT a regression and NOT a hidden bug: the cell takes
+#                       ~10.3s against the 10.0s default key budget, so it
+#                       misses under parallel load. Re-measured serially at
+#                       --jobs 1 --key-budget 30: PASS, 10.3s. This is the
+#                       OTHER half of the TIMEOUT lesson — a timeout can hide
+#                       a real zero-match fallthrough (as the in-path bug did)
+#                       or it can just be a slow cell, and the discriminator
+#                       is a serial re-run at a larger budget.
+#
+# MOVED TO GREEN this session, confirmed PASS rather than merely absent:
+#   'mc ' 'mc -'      377d9fc6ac  (warncreateglobal scratch globals)
+#   'ldapsearch '     f063d82fdf  (${(Q)open} baked into a literal `(`)
+#   'perldoc '        a18f8e671f  (_call_program handed unquoted words)
+# ══════════════════════════════════════════════════════════════════════════
