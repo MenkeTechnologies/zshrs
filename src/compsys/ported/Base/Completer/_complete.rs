@@ -44,6 +44,18 @@ use crate::compsys::ported::_normal::_normal;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+/// `compadd`'s option block — the builtin is normally reached through
+/// `execbuiltin`, which builds this; a direct call has to supply it.
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
 
 /// Helper: flat assoc lookup.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
@@ -184,7 +196,24 @@ pub fn _complete_impl() -> i32 {
             // C _complete sh:61/72 `eval ws=( "$action" )` — quote-respecting split.
             let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
             if let Some((cmd, rest)) = parts.split_first() {
-                return dispatch_function_call(cmd, rest).unwrap_or(1);
+                // `compadd` is a BUILTIN, so `dispatch_function_call` finds no
+                // shell function and the action adds NOTHING, silently. Fourth
+                // site of this class after `_alternative` sh:61 / `_arguments`
+                // sh:453 (9caf16845d) and `_sequence` sh:40 (a3c8ef3edc).
+                //
+                // A `compcontext` of the form `tag:descr: compadd foo` is a
+                // documented user-facing spelling, so this is reachable from a
+                // plain zstyle without any completer involved.
+                return if cmd == "compadd" {
+                    crate::ported::zle::complete::bin_compadd(
+                        "compadd",
+                        rest,
+                        &make_ops(),
+                        0,
+                    )
+                } else {
+                    dispatch_function_call(cmd, rest).unwrap_or(1)
+                };
             }
             return 1;
         }
