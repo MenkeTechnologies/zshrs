@@ -24,7 +24,7 @@
 /// made `compadd`'s matcher parser reject it (`unknown match specification
 /// character '"'`, seen on `df -<TAB>` via `_umountable` → `_canonical_paths`).
 ///
-/// Both scratch names are declared LOCAL first. Upstream has no counterpart
+/// Every scratch name is declared LOCAL first. Upstream has no counterpart
 /// to declare against — the name it evaluates into is its own function-local
 /// `action` — so the requirement is not "match an `sh:NN local` line" but
 /// "do not create a global". Under `WARN_CREATE_GLOBAL` (a completer may set
@@ -37,17 +37,70 @@
 /// re-parses the RESULT, so splicing the text into the eval string instead
 /// would parse it one time too few.
 pub fn eval_action_words(action: &str) -> Vec<String> {
-    crate::compsys::ported::shared::declare_locals(&["_cs_split_src"], 0);
+    eval_action_words_status(action).unwrap_or_default()
+}
+
+/// [`eval_action_words`], but reporting whether the `eval` SUCCEEDED.
+///
+/// Upstream evaluates into `action` ITSELF (`eval "action=( $action )"`), so
+/// the eval's outcome is observable on the very next line. When the action
+/// text is not a parseable word list the eval is a PARSE ERROR, nothing is
+/// assigned, and `action` KEEPS its scalar value — after which `$action[1]`
+/// subscripts a SCALAR and yields its first CHARACTER, and `${(@)action[2,-1]}`
+/// the rest of the string. zsh therefore runs a one-character command name.
+/// Measured, zsh 5.9 and this shell agreeing on the scalar semantics:
+///
+///     action='app or factory:fn; env: UVICORN_APP):'
+///     eval "action=( $action )"   → (eval):1: parse error near `)'  rc=1
+///     $action[1]                  → a
+///     ${(@)action[2,-1]}          → pp or factory:fn; env: UVICORN_APP):
+///
+/// which is how `uvicorn <TAB>` reaches `_arguments:465: command not found: a`
+/// — `_uvicorn`'s last spec is
+/// `1:ASGI app import path (e.g. mymodule:app or factory:fn; env: UVICORN_APP):`
+/// and the unescaped colons in that MESSAGE put `app or factory:fn; env:
+/// UVICORN_APP):` in the ACTION field.
+///
+/// Evaluating into a Rust-side scratch array instead loses that, because a
+/// failed eval and an empty action produce the same empty array. Callers that
+/// subscript `action` after the eval need the distinction, so they get it here:
+///
+///   * `Ok(words)`  — the eval assigned; `action` is now an ARRAY of `words`.
+///   * `Err(text)`  — the eval FAILED; `action` is still the SCALAR `text`.
+pub fn eval_action_words_status(action: &str) -> Result<Vec<String>, String> {
+    crate::compsys::ported::shared::declare_locals(&["_cs_split_src", "_cs_split_rc"], 0);
     crate::compsys::ported::shared::declare_locals(
         &["_cs_split_dst"],
         crate::compsys::ported::shared::PM_ARRAY,
     );
     let _ = crate::ported::params::setsparam("_cs_split_src", action);
-    let _ = crate::ported::exec::execute_script("eval \"_cs_split_dst=( $_cs_split_src )\"");
+    let _ = crate::ported::exec::execute_script(
+        "eval \"_cs_split_dst=( $_cs_split_src )\"\n_cs_split_rc=$?\n",
+    );
     let out = crate::ported::params::getaparam("_cs_split_dst").unwrap_or_default();
+    let rc = crate::ported::params::getsparam("_cs_split_rc").unwrap_or_default();
     let _ = crate::ported::params::unsetparam("_cs_split_src");
     let _ = crate::ported::params::unsetparam("_cs_split_dst");
-    out
+    let _ = crate::ported::params::unsetparam("_cs_split_rc");
+    if rc == "0" {
+        Ok(out)
+    } else {
+        Err(action.to_string())
+    }
+}
+
+/// The `"$action[1]" … "${(@)action[2,-1]}"` of `_arguments` sh:465 applied to
+/// an action whose `eval` FAILED, i.e. to a SCALAR: character 1 is the command
+/// word and characters 2..-1 are the single remaining word. Empty for an empty
+/// scalar, which has no character 1 to run.
+pub fn scalar_action_call(text: &str) -> Vec<String> {
+    let mut it = text.chars();
+    let Some(first) = it.next() else {
+        return Vec::new();
+    };
+    // `"${(@)action[2,-1]}"` on a one-character scalar is one EMPTY word, not
+    // no word — the double quotes keep it.
+    vec![first.to_string(), it.collect()]
 }
 
 // ── Base/Completer/ ───────────────────────────────────────────────────
