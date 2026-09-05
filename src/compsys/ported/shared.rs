@@ -898,6 +898,87 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
     lastval // c:6225
 }
 
+/// Run an already-expanded action word list as a COMMAND, the way the shell
+/// does at `_arguments` sh:455 / sh:465 and `_all_labels` sh:35 / sh:39.
+///
+/// `cmd` is the command word (`$action[1]`), `argv` the rest of the words the
+/// shell would have passed, and `line` the upstream line the command sits on
+/// — it is published through [`set_sh_lineno`] so any diagnostic this raises
+/// carries the same `_arguments:465:` prefix zsh prints.
+///
+/// **Why a helper rather than a bare
+/// [`crate::ported::exec::dispatch_function_call`]:** that entry resolves
+/// SHELL FUNCTIONS and the native ports standing in for them, and nothing
+/// else — `vm_helper.rs:4706` ends in `functions_compiled.get(name).cloned()?`,
+/// so a builtin, an executable on `$PATH`, and a name that exists nowhere all
+/// come back `None`. Call sites turned that `None` into a plain non-zero
+/// status, which means a command word the shell would have DIAGNOSED
+/// disappeared without a byte of output. Measured on
+/// `~/.zinit/plugins/MenkeTechnologies---zsh-more-completions/more_src6/_tor-resolve`,
+/// whose rest spec is
+///
+/// ```text
+/// '*:hostname or IP and SOCKS host[:port]:'
+/// ```
+///
+/// — a MESSAGE carrying an unescaped `:`, so `parse_caarg` (c:1137-1138,
+/// `mult == 0`) takes everything after the first colon as the ACTION and
+/// `_arguments` runs `port]:` as a command. zsh reports
+/// `_arguments:465: command not found: port]:` and zshrs printed nothing at
+/// all, which is the "one-sided silence" shape that reads as a hang.
+///
+/// The three arms mirror what `execcmd` does with a command word: a shell
+/// function (or port) runs; a name that IS a builtin or IS on `$PATH` is real
+/// but has no execution route from here, so it keeps the pre-existing
+/// "action did not succeed" answer rather than having one invented for it;
+/// and only a name that resolves to nothing reaches
+/// `Src/exec.c:903`'s diagnostic.
+///
+/// `zwarn`, NOT `zerr`: c:903 runs in the FORKED child of `execcmd`, which
+/// `_exit(127)`s at c:908, so the parent shell's `errflag` is never raised.
+/// `zerr` here runs in the live shell and would set `ERRFLAG_ERROR`
+/// (`src/ported/utils.rs:236`), abandoning the rest of the completion.
+///
+/// This is the extraction of `_all_labels`' private `dispatch_action` tail,
+/// which had the same three arms; that port now calls this one, so the
+/// behaviour lives in a single place instead of being re-derived per caller.
+pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
+    // The line has to be published BEFORE anything can diagnose: `lineno` is
+    // what `zerrmsg` prints after the function name (`Src/utils.c:301-305`),
+    // and `FnScope` zeroed it on entry to the port's body.
+    set_sh_lineno(line);
+
+    // `compadd` is a BUILTIN, so `dispatch_function_call` finds no shell
+    // function for it and the action would add nothing. Route it to the real
+    // builtin in `src/ported/zle/complete`.
+    if cmd == "compadd" {
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        return crate::ported::zle::complete::bin_compadd("compadd", argv, &ops, 0);
+    }
+
+    if let Some(rc) = crate::ported::exec::dispatch_function_call(cmd, argv) {
+        return rc;
+    }
+
+    // Neither a shell function nor a registered port. zsh looks for a builtin
+    // and then for an executable on `$PATH`; only when both miss does it
+    // report the command as not found.
+    if crate::ported::builtin::createbuiltintable().contains_key(cmd)
+        || crate::ported::exec::findcmd(cmd, 0, 0).is_some()
+    {
+        return 1;
+    }
+
+    // c:Src/exec.c:903 — `zerr("command not found: %s", arg0);`
+    crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
+    127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
+}
+
 #[cfg(test)]
 mod lineno_scope_tests {
     use super::*;

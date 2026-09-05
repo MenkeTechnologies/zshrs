@@ -1398,16 +1398,14 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 {
                                     break;
                                 }
-                                // `compadd` is a BUILTIN — `dispatch_function_call`
-                                // finds no shell function and the action adds
-                                // nothing. The sh:463 arm below already has this
-                                // branch; this one did not. See the twin fix in
-                                // `_alternative` sh:61.
-                                let rc = if cmd == "compadd" {
-                                    bin_compadd("compadd", rest, &make_ops(), 0)
-                                } else {
-                                    dispatch_function_call(cmd, rest).unwrap_or(1)
-                                };
+                                // sh:455 — `"$action[@]"`. The word list is run
+                                // as a COMMAND (builtin, shell function,
+                                // `$PATH` executable, or a name that resolves
+                                // to nothing and is DIAGNOSED); see
+                                // `shared::dispatch_action_command`.
+                                let rc = crate::compsys::ported::shared::dispatch_action_command(
+                                    cmd, rest, 455,
+                                );
                                 if rc == 0 {
                                     ret = 0;
                                 }
@@ -1433,11 +1431,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                                 let mut call_argv: Vec<String> = subopts.clone();
                                 call_argv.extend(expl);
                                 call_argv.extend(rest.iter().cloned());
-                                let rc = if cmd == "compadd" {
-                                    bin_compadd("compadd", &call_argv, &make_ops(), 0)
-                                } else {
-                                    dispatch_function_call(cmd, &call_argv).unwrap_or(1)
-                                };
+                                // sh:465 — `"$action[1]" "$subopts[@]"
+                                // "$expl[@]" "${(@)action[2,-1]}"`, run as a
+                                // COMMAND; see
+                                // `shared::dispatch_action_command`.
+                                let rc = crate::compsys::ported::shared::dispatch_action_command(
+                                    cmd, &call_argv, 465,
+                                );
                                 if rc == 0 {
                                     ret = 0;
                                 }
