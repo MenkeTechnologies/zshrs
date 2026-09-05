@@ -1813,3 +1813,11 @@ ldapsearch
 #   TIMEOUT tab1               'proxychains4 -'  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
 #   FAIL   tab1               'prterun '  (1 row(s) differ (first attempt was budget-exhausted; this is the serial re-run, which diverged cleanly))
 #   FAIL   tab1               'ps '  (1 row(s) differ)
+#
+# chunk part_06  cells 5801-5900  'pstree ' .. 'qdbusxml2cpp -'
+#   # 98 passed, 2 failed, 100 cell(s)
+#   # categories: PASS=98 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 219.1s (2.2s/cell)
+#   # 3 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'pstree '  (1 row(s) differ)
+#   FAIL   tab1               'qdbus -'  (1 row(s) differ)
