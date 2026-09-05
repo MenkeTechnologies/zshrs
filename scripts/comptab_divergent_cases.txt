@@ -1548,3 +1548,39 @@ ldapsearch
 # Anyone picking it up should start from the three-compadd reproducer above
 # and from compcore.rs:6042-6076, not from the modec stat or from `_ktrace`.
 # ══════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════
+# TWO DIFFERENT "libc qsort tie order" STORIES — do not conflate them.
+#
+# The same explanation was applied to two cells on different days. It is
+# WRONG for one and RIGHT for the other, and a reader who finds only one of
+# them will draw the wrong conclusion about the other.
+#
+#   'getconf '  — the qsort attribution is REFUTED (see the correction near
+#                 the top of this file). The real cause was `_arguments`
+#                 creating its SCRATCH_PARAMS at level 0, so `_parameters`'
+#                 `[(R)…~*local*]` filter kept eight names it should have
+#                 dropped. Fixed in 0b1902d2fa, and the cell MOVED with that
+#                 fix — which is the proof. Five sibling cells moved too.
+#
+#   'ktrace -'  fp 4356dd07a7 — the qsort attribution is CORRECT, and is
+#                 established by measurement rather than by resemblance: the
+#                 compadd argv is byte-identical between shells, the
+#                 nmatches trajectory is identical (0,0,0,0,1,1,1,1,1,2,2,2,
+#                 2,12 both, ending N=12 L=11 both), and `cm.modec` was
+#                 instrumented and exonerated. Three matches spell `-`;
+#                 `matchcmp` returns 0 for two of them, so the dedup keeps
+#                 whichever the SORT left first. Reordering the compadd calls
+#                 makes zsh flip to zshrs's answer while zshrs does not move
+#                 — a tie resolved by the sort, not the comparator.
+#
+# Why zshrs cannot simply match it: `tolerant_sort::qsort_tolerant`
+# (compcore.rs:6051) is a STABLE merge sort and cannot reproduce libc
+# qsort's permutation of TIED elements, which is platform-specific. That
+# constraint is real and is the same one recorded for the original getconf
+# theory — the theory was sound, it just was not what was happening there.
+#
+# LESSON: "resembles a known class" is not a diagnosis. Both of these were
+# settled by making the cell MOVE (or provably not move) under a change, not
+# by pattern-matching the symptom.
+# ══════════════════════════════════════════════════════════════════════════
