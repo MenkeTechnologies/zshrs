@@ -186,9 +186,10 @@ pub fn taddnl(no_semicolon: i32) {
 }
 
 /// Port of `getpermtext(Eprog prog, Wordcode c, int start_indent)` from `Src/text.c:279`.
-pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
+pub fn getpermtext(mut prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
     queue_signals();
-    useeprog(&prog);
+    // c:288 — `useeprog(prog);`  /* mark as used */
+    parse::useeprog(&mut prog);
     // c:292 — `s.strs = prog->strs;` — pooled (>3-byte) strings live in
     // the eprog string table; estate must carry it or ecgetstr returns
     // "" for every pooled string.
@@ -212,8 +213,9 @@ pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
         let mut v = tb.borrow_mut();
         String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
     });
-    let p = state.prog;
-    freeeprog(&p);
+    let mut p = state.prog;
+    // c:303 — `freeeprog(prog);`  /* mark as unused */
+    parse::freeeprog(&mut p);
     unqueue_signals();
     // c:304 — `untokenize(tbuf);` — the utils.c untokenize maps EVERY
     // ITOK char through ztokens (Snull → `'`, Dnull → `"`, Qstring →
@@ -232,9 +234,10 @@ pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
 }
 
 /// Port of `getjobtext(Eprog prog, Wordcode c)` from `Src/text.c:315`.
-pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
+pub fn getjobtext(mut prog: Eprog, c: Option<usize>) -> String {
     queue_signals();
-    useeprog(&prog);
+    // c:326 — `useeprog(prog);`  /* mark as used */
+    parse::useeprog(&mut prog);
     // c:329 — `s.strs = prog->strs;` (same fix as getpermtext).
     let strs = prog.strs.clone();
     let mut state = estate {
@@ -259,8 +262,9 @@ pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     if raw.ends_with(Meta as char) {
         raw.pop();
     }
-    let p = state.prog;
-    freeeprog(&p);
+    let mut p = state.prog;
+    // c:341 — `freeeprog(prog);`  /* mark as unused */
+    parse::freeeprog(&mut p);
     unqueue_signals();
     // c:342 — `untokenize(jbuf);` — same print-side mapping as
     // getpermtext (see comment there).
@@ -1371,11 +1375,13 @@ fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
     parse::ecgetstr(st, dup, tok)
 }
 
-#[inline]
-fn useeprog(_p: &Eprog) {}
-
-#[inline]
-fn freeeprog(_p: &Eprog) {}
+// `useeprog` / `freeeprog` are NOT in `text.c` — they are
+// `Src/parse.c:2813` / `Src/parse.c:2823`, ported at parse.rs:3826 /
+// parse.rs:3838. `getpermtext` (c:288/303) and `getjobtext`
+// (c:326/341) call them through `parse::` above rather than through
+// private no-op copies here: an empty local shadow silently skipped
+// the `nref` pin, and could never inherit a fix made to the real
+// bodies.
 
 /// Port of `zoutputtab(FILE *outf)` from `Src/text.c:263`.
 pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
@@ -1407,6 +1413,33 @@ mod tests {
             txt.contains("echo") && txt.contains("hello") && txt.contains("world"),
             "got: {txt:?}"
         );
+    }
+
+    /// `ecstrcode` (parse.rs:346) writes the string pool METAFIED — every
+    /// IMETA byte becomes `Meta` + `b ^ 0x20` — so `bld_eprog` has to flag
+    /// the pool `strs_metafied`, or `ecgetstr` skips the matching
+    /// `unmetafy` and hands `gettext2` a mangled string.
+    ///
+    /// `—` is U+2014 = E2 80 94; 0x94 is `Inang`, inside the IMETA range,
+    /// so it is the byte that gets escaped. With the flag wrong the pool
+    /// round-tripped as E2 80 83 B4 → U+2003 + U+00B4, and
+    /// `${functions[f]}` printed `print "a<U+2003><U+00B4>b"`. `é`
+    /// (C3 A9 — neither byte IMETA) survived either way, which is what
+    /// made the defect look like a locale problem rather than a pool one.
+    #[test]
+    fn getpermtext_round_trips_multibyte_whose_utf8_bytes_are_imeta() {
+        let _g = crate::test_util::global_state_lock();
+        for glyph in ['—', '→', '“', 'é', '字'] {
+            let src = format!("print \"a{glyph}b\"");
+            let prog = crate::ported::exec::parse_string(&src, 0).expect("parse");
+            let txt = getpermtext(Box::new(prog), None, 0);
+            assert!(
+                txt.contains(&format!("a{glyph}b")),
+                "getpermtext mangled {glyph:?} ({:x?}): {txt:?} ({:x?})",
+                glyph.to_string().as_bytes(),
+                txt.as_bytes(),
+            );
+        }
     }
 
     #[test]
