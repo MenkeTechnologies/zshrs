@@ -1338,3 +1338,151 @@ ktrace -
 # ('ldapsearch ', 'mc ', 'mc -' are already in this file above — a peer
 # sweep of the same range landed them in a2967ed1a1 while this one ran.
 # Independent confirmation, same three verdicts; not re-listed here.)
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 'perldoc '  86f4fd659e  ROOT-CAUSED 2026-09-05.  Supersedes the "NEW —
+# 'perldoc '  deterministic 3/3  NOT root-caused" block above, which guessed
+# at _perl_modules/_perl_basepods without exercising either.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# THE BUG: `_call_program` joins its argument words with a plain space and
+# hands the result to `eval`, so a caller that passes an already-quoted
+# command as SEPARATE words has its quoting destroyed.
+#
+#   src/compsys/ported/Unix/Type/_perl_modules.rs:118-123 — `perl_inc` calls
+#     call_program_capture(&["perl-inc", perl, "-e", "print \"@INC\""])
+#   src/compsys/ported/Base/Utility/_call_program.rs:336 — `let text =
+#     cmdline.join(" ");`  (the subprocess arm does the same at :408)
+#   → eval 'perl -e print "@INC"'
+#
+# The shell re-splits that into `perl -e print @INC`: perl's -e script is
+# `print` (which prints an undef $_) and `@INC` becomes $ARGV[0].  Output is
+# EMPTY, so `$REPLY` is empty, `inc` is empty, no libdir is scanned and
+# `_perl_modules` adds zero matches.  The completer chain then falls through
+# to plain cwd file completion — the 4 rows of repo directories in the grid.
+#
+# Upstream passes ONE already-quoted word and never goes through a re-split:
+#   Completion/Unix/Type/_perl_modules sh:86
+#     inc=( $( _call_program perl-inc ${(q)perl}$' -e \'print "@INC"\'' ) )
+#
+# MEASURED, pinned+codesigned binary, pinned dump verified by md5 before AND
+# after every run (2122607 bytes, eeb2e9dc051194f980ce7d75243a1ade):
+#
+#   zsh   : ${#_perl_modules_with_pod} = 1124   ${(t)…} = array-unique
+#   zshrs : ${#_perl_modules_with_pod} = 0      ${(t)…} = array
+#
+#   zshrs + a correctly-quoted command style, which bypasses the join by
+#   giving `command_line` a single word (_call_program.rs:123-133):
+#     zstyle ':completion:*:perl-inc' command 'perl -e "print \"@INC\""'
+#   → ${#_perl_modules_with_pod} = 1124        ← 0 -> 1124, matches zsh
+#
+# zsh offers 1146 possibilities and _perl_modules_with_pod holds 1124 of
+# them; the residual 22 is NOT accounted for — _perl_basepods is empty on
+# this host and the `_files -g "*.(pod|pm)(-.)"` group matches 0 files in
+# the repo cwd.  The 1124-vs-0 gap is the measured defect; the 22 is not
+# explained and may be group headers or a fourth source.  The
+# shell-level enumeration pipeline itself is NOT at fault: sh:99-110's glob,
+# `${(@)…##$libdir/##}` and `${…:r:fs#/#::#}` were run standalone in both
+# shells and are byte-identical (1124 = 1124, same first element App::Cpan).
+#
+# NOT IMPLICATED: a63abcccbc (_perl_basepods).  `$podpath/perl.pod` does not
+# exist on this host, so sh:22-23 `_message`s and returns 1 and the array is
+# EMPTY IN BOTH SHELLS (${#_perl_basepods} = 0 either side) — which is also
+# what that commit's own stub-removed regression check recorded.  It cannot
+# be the source of a 1146-vs-0 difference.
+#
+# SAME DEFECT CLASS, second instance, not covered by any cell in this file:
+#   src/compsys/ported/Unix/Type/_python_modules.rs:69-74 passes
+#   ["modules", python, "-c", SCRIPT] where SCRIPT (:35-36) holds spaces AND
+#   a newline.  The join yields `python -c import pkgutil<NL>for …`, which
+#   the eval rejects outright:
+#     naive join   -> '(eval):2: parse error near `importer,'"'"''   (38 bytes)
+#     quoted       -> 2952 bytes, first module __future__
+#   Every other call_program_capture site was checked and is safe (their
+#   words carry no whitespace): _routing_tables:50, _routing_domains:47,
+#   _jails:113, _find_net_interfaces:28, _users_on:40, _pids:274, _ttys:73,
+#   _services:67/92, _pgids:21, _hosts:166.
+#
+# SECONDARY, same function: _perl_modules.rs:313-317 says "sh:96 typeset
+# -agU — global, unique" but only sorts+dedups the Vec; it never stamps
+# PM_UNIQUE, so ${(t)_perl_modules_with_pod} reads `array` where zsh reads
+# `array-unique`.  _perl_basepods.rs already has the `mark_unique` helper
+# a63abcccbc added for exactly this.
+#
+# NOT FIXED HERE: the root cause is under src/compsys/ported/**, which was
+# declared concurrently held for this session.  Reported, not edited.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# 'R '  862d1a4e04  ARTEFACT, NOT A ZSHRS DEFECT.  Do not re-file.
+#
+# Reported shape: ref row 1 = '1', test row 1 = <absent>.
+#
+# On a verified-intact pin the cell PASSES, and the pass is NOT vacuous —
+# both shells draw the same two rows, the second of which is the match:
+#     0| @CT@ R Undefined subroutine &if at -e line 1.
+#     1| 1
+# 6 serial passes (3x plain, 1x -v, 2x --key-budget 1.5/2.5), 0 failures.
+#
+# zshrs completes this case CORRECTLY — there is no zero-match fall-through
+# hiding behind the cell.  Read out of ZLE with a widget bound to ^X^B:
+#     zsh   BUFFER=[R 1 ] CURSOR=4        zshrs BUFFER=[R 1] CURSOR=3
+# The one-character difference is the auto-removable suffix, and zshrs adds
+# it: on accept-line BOTH shells give preexec `[R 1]`, and `za `/`zb `/`zc `/
+# `ls Cargo.tom`/`ls src` all pass under --compare-attrs with zshrs drawing
+# `ls src/` and `za foo ` exactly as zsh does.  What differs is only whether
+# an ARBITRARY user widget removes the suffix (zsh keeps it, zshrs drops it)
+# — a separate, untested-by-any-cell behaviour, not what this cell reports.
+#
+# The single FAIL was a 27.5s cell against 5.2-5.8s for every warm run, i.e.
+# the settle window closed before zshrs emitted its final redraw on a cold
+# run.  The trigger is the user's own `_R`, which pipes through `stryke -e`;
+# stryke cannot parse the statement modifier `exit if $s eq "/"` and dies
+# with `Undefined subroutine &if at -e line 1.` — IDENTICALLY in both shells
+# — so the completer writes to the tty mid-completion and both shells then
+# redraw over a dirty screen.
+#
+# Two hypotheses were tested and BOTH REFUTED, so the cold-run explanation
+# is inferred from the elapsed-time gap, not proven:
+#   * degraded .zcompdump — with a 973-file dump `_R` is not registered at
+#     all, both shells fall back to file completion, PASS.
+#   * machine load — 12 concurrent spinners, still PASS at 5.2s.
+#
+# OPERATIONAL HAZARD found while measuring this cell, worth more than the
+# cell: a pinned dump WAS silently overwritten mid-session, 2122607 bytes /
+# 51739 comps -> 53952 bytes / 1901 comps, by a compinit that ran against
+# the DEFAULT fpath instead of the init's.  `env -i zsh -f -c 'compinit -u
+# -d …'` reproduces that exact signature (973 files, 49393 bytes).  Neither
+# shell rewrites the dump on the paths that were tested directly, so the
+# trigger is still unidentified.  Any cell measured across that window is
+# void.  md5 the pin BEFORE AND AFTER every run, and give each run its own
+# copy of the dump rather than sharing one.
+
+# ══════════════════════════════════════════════════════════════════════════
+# 'ldapsearch '  f55dfe46e0  FIXED 2026-09-05 by f063d82fdf.
+#
+# The single-TAB cell now PASSES, byte-identical.  Root cause was NOT `case`,
+# NOT `patcompile` and NOT the `)` lexer gap at pattern.rs:1347-1377 — all
+# three were my guesses and all three were wrong.  It was FILENAME GENERATION:
+# `_ldap_filters` resolved `${(Q)open}` at spec-build time, converting a
+# SUBSTITUTED `(` (which is never globbed) into a SOURCE-LITERAL one (which
+# is), so `${pre:-(}` reached globdata_glob (c:Src/glob.c:1852), raised
+# `bad pattern: (`, set errflag and dropped the completer's matches.
+# Upstream _ldap_filters:59 is `${pre:-${(Q)open}}`.  sh:46's
+# `[[ -z $compstate[quote] && -z $PREFIX ]] && pre='"('` was also
+# unimplemented — that is what supplies zsh's leading `"`.
+#
+# The zshrs CORE was at parity throughout:
+#   zsh -fc 'p=; print -r -- ${p:-(}'   ->  bad pattern: (   on BOTH shells.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# NEW, logged on that agent's behalf (it declined to stage a peer's dirty
+# corpus file):
+#
+# 'ldapsearch ' with --keys tab,tab was FAIL (dying on the FIRST tab, same
+# f55dfe46e0).  With the first tab now fixed it is a TIMEOUT: the SECOND tab
+# falls through to zero matches.  zsh lists ~70 LDAP attribute names via
+# `_ldap_attributes`; zshrs emits one byte (a bell).  Confirmed by hand under
+# a pty, NOT inferred from the timeout — which matters, because a TIMEOUT
+# here would otherwise read as machine load.
+ldapsearch 
+# ══════════════════════════════════════════════════════════════════════════
