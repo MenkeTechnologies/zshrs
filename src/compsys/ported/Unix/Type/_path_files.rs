@@ -523,6 +523,55 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     // every name whose `$parameters` type string does NOT contain `local` —
     // then offered all four in the `parameters` group. `ls <TAB>` leaked
     // `accex` the same way. See shared::declare_locals for the general case.
+    //
+    // The list below is CLOSED, and re-measured: the scan that produced
+    // `5bbd9c2e11` (`_groups`) and `ddadab02f3` (nine more) re-flags this file
+    // on every pass because it matches sh:45/48 `local` names against
+    // `set[as]param` call sites and cannot see this declaration. There is
+    // nothing left for it to find. Every name this port hands to
+    // `set[as]param` is either declared here — `tmp1` `tmp2` `tmp4` `i`
+    // `tmpdisp` `ignore` `accex` `fake` `exppaths` `expl`, plus `listfiles`
+    // `listopts` written by the `_list_files` callee and `flags` scoped to the
+    // sh:30 branch above — or deliberately caller-visible: `PREFIX`/`SUFFIX`
+    // (the compsys specials the whole function drives) and `_comp_ignore`,
+    // which sh:141/581 append to on purpose, in `_main_complete`'s scope
+    // (`Base/Core/_main_complete:54 typeset -U … _comp_ignore`). The rest of
+    // sh:44-53 — `linepath` `realpath` `donepath` `prepath` `testpath`
+    // `exppath` `skips` `skipped` `tmp3` `orig` `eorig` `pre` `suf` `tpre`
+    // `tsuf` `opre` `osuf` `cpre` `pats` `haspats` `pfx` `pfxsfx` `sopt`
+    // `gopt` `opt` `sdirs` `ignpar` `cfopt` `listsfx` `nm` `menu` `matcher`
+    // `mopts` `sort` `mid` `origtmp1` `Uopt` `accept_exact_dirs`
+    // `path_completion` `npathcheck` `Mopts` `prepaths` — never reaches
+    // `paramtab` at all, so declaring any of them would only create and unwind
+    // a shadow with no counterpart in this port's execution.
+    //
+    // Measured through a pty, both shells `-f -i` on one generated init
+    // (`fpath=( $fpath )`, `compinit -C -d <pinned zpwr dump>`), snapshotting
+    // `${(ok)parameters}` to a file before and after the completion and
+    // diffing the names each shell GAINED, over 21 shapes: `ls `, `ls /usr/`,
+    // `cat /etc/pas`, `cd /`, `chmod `, `find -`, `cp `, `ls ~/`,
+    // `cat /usr/share/../`, `ls //usr/`, `cd /usr/lo`, `ls /u/l/b`, `ls *(`,
+    // `ls *(-`, `ls **/`, plus five bare wrappers that call `_path_files`
+    // with NO caller locals of their own (`_path_files`, `-W /usr`, `-g '*.h'`,
+    // `-/`, and one under `zstyle … file-list all`). Zero zshrs-only names on
+    // every one. The mirror-image probe — seed all 21 names with a sentinel at
+    // TOP level, complete, read them back — is also 21/21 identical to zsh, so
+    // the declaration restores as well as it hides.
+    //
+    // `LocalScope`, not a bare `declare_locals`, and that is deliberate here
+    // even though `declare_locals` is the default for a port whose only entry
+    // is through `doshfunc`. `_path_files_impl` has a DIRECT Rust caller that
+    // never runs `endparamscope`: the `_path_files` wrapper's own fallback,
+    // taken whenever `dispatch_function_call` finds no executor. That is the
+    // path `empty_line_returns_one` (bottom of this file) takes, at
+    // `locallevel == 0`, where `declare_locals` is a documented no-op — so
+    // with a bare declaration that test would strand `tmp1`/`accex`/`fake`/
+    // `exppaths` in the process-wide `paramtab` for every later test sharing
+    // `test_util::global_state_lock`. `LocalScope`'s unconditional restore is
+    // what covers that, and it is safe to use here for the reason it was NOT
+    // safe in `_description`: nothing this port hands back to a Rust caller is
+    // in this list (matches go out through `compadd`, and `PREFIX`/`SUFFIX`/
+    // `_comp_ignore` are excluded above).
     let mut _locals = crate::compsys::ported::shared::LocalScope::declare(
         // sh:45 `local tmp1 tmp2 tmp3 tmp4 i …`, sh:48 `local … tmpdisp …`.
         // Declared PM_ARRAY rather than as bare scalars because the paramtab
