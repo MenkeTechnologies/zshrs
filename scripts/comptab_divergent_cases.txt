@@ -2829,3 +2829,66 @@ tor-resolve -
 # real silence (6 of them turned out to be pure budget), and every FAIL and
 # every TIMEOUT was re-measured serially at 3x the budget before being
 # labelled.  No verdict in this block rests on a single parallel measurement.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP — 2026-09-05 (LATE), the FINAL range: 'unbound -' .. 'zunit -'
+# (`--sequences tab1`).  THIS CLOSES THE CORPUS.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# THE CORPUS SHRANK BY 36 CASES SINCE THE 6301-7400 SWEEP, AND THE INDICES
+# MOVED WITH IT.  `parity_corpus.discover_cases(None, False)` returns 8234
+# cases on this host today, not the 8270 recorded yesterday, and the deletions
+# all sit BEFORE index 6264 — every later cell shifted down by exactly 36:
+#
+#     cell buffer      yesterday's cell #     today's cell #
+#     'scp -'                6301                 6265
+#     'unbound '             7400                 7364
+#
+# So a naive "indices 7401..end" slice would have STARTED at 'unlz4 -' and
+# silently skipped the 35 cells between 'unbound -' and 'unlz4 ' — content
+# that no sweep has ever measured.  This sweep is therefore sliced by CONTENT
+# BOUNDARY, not by index: it begins at the first cell the 6301-7400 sweep did
+# not reach ('unbound -', today's index 7364) and runs to the end.
+#
+#   870 cells, today's indices 7364..8233 (cells 7365-8234).
+#   First cell 'unbound -', last cell 'zunit -'.
+#   Reproduce with parity_corpus.discover_cases(None, False)[7364:].
+#
+# MEASUREMENT PINS (private scratch subdir, unique to this sweep — a shared
+# pin dir already held nine stale binaries from earlier sessions):
+#   zshrs  sha256 5acbc7284f5eadd810eb358d53dbf451abe0d64cce359832654936d71bb0e8be
+#          copy of target/debug/zshrs at repo HEAD 1e549c1dec, built 17:53,
+#          `codesign -f -s -`d (an unsigned copy is SIGKILLed on exec, rc=137,
+#          and the harness reports that as a fake boot hang)
+#   dump   sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#          2122607 bytes — BYTE-IDENTICAL to the dump the 5201-6300 and
+#          6301-7400 sweeps used, so this range is directly comparable to
+#          both.  Hashed before AND after every chunk; unchanged throughout.
+#   mode native, geom 40x110, `--jobs 4 --confirm 1` for the sweep; every
+#   FAIL and every TIMEOUT re-confirmed serially and alone, 3x, `--jobs 1`.
+#
+# HOST LOAD: `uptime` load average 8.6-12.5 at the start — far quieter than
+# the 30-138 the 6301-7400 sweep ran under, and the per-cell cost shows it
+# (1.9s/cell against that sweep's 4.8s/cell).  Two zero-CPU stuck
+# `target/debug/deps/zsh-9a7d0b10a72dd1d1 utils` test processes (pids 40196,
+# 83238, 0:00.22 CPU each) were present and left alone; they consume nothing.
+# Peer agents were still editing .rs files in this tree throughout, which is
+# exactly why the binary is pinned.
+#
+# Exact sweep command, per 100-cell chunk:
+#   PYTHONPATH=/Users/wizard/Library/Python/3.14/lib/python/site-packages \
+#   /opt/homebrew/bin/python3.14 scripts/comptab_parity.py \
+#     --zshrs <pin>/zshrs.pin --dump <pin>/dump.pin --mode native \
+#     --corpus <pin>/part_NN.txt --sequences tab1 \
+#     --jobs 4 --confirm 1 --jsonl <pin>/part_NN.jsonl
+#
+# VERBATIM PER-CHUNK SUMMARY LINES, appended as each chunk landed:
+#
+# chunk part_00  cells 7365-7464  'unbound -' .. 'uppltotf '
+#   # 99 passed, 1 failed, 100 cell(s)
+#   # categories: PASS=99 FAIL=1 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 190.6s (1.9s/cell)
+#   # 2 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   FAIL   tab1               'upmendex -'  (1 row(s) differ)
+#     b36c77debd  x1   smallest: --case 'upmendex -' --keys tab
+#        cell/rowlist/col3 | ref/-g -- make Japanese index head <あかさたなはま� | test/-g -- make Japanese index head <
