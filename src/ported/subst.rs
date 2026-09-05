@@ -7604,6 +7604,7 @@ pub fn paramsubst(
         let mut bash_at_assign = false; // ${v@A} recreating assignment statement
         let mut bash_at_kv = false; // ${v@K} quoted key/value pairs, one word
         let mut bash_at_kwords = false; // ${v@k} unquoted key/value words
+        let mut bash_at_p = false; // ${v@P} expand as a prompt string
         if crate::dash_mode::bash_mode() {
             let r = rest.as_str();
             match r {
@@ -7616,6 +7617,13 @@ pub fn paramsubst(
                 "@A" => bash_at_assign = true,
                 "@K" => bash_at_kv = true,
                 "@k" => bash_at_kwords = true,
+                // `${v@P}` — expand `v` as a PROMPT string. bash(1)
+                // Parameter Expansion: "the expansion is a string that is
+                // the result of expanding the value of parameter as if it
+                // were a prompt string". It is how a bash user inspects
+                // `$PS1` without a terminal, and it is the differential
+                // oracle tests/startup_file_parity.rs compares against.
+                "@P" => bash_at_p = true,
                 "~~" => bash_casemod_toggle = 1,
                 "~" => bash_casemod_toggle = 2,
                 _ => {
@@ -7644,6 +7652,7 @@ pub fn paramsubst(
                 || bash_at_assign
                 || bash_at_kv
                 || bash_at_kwords
+                || bash_at_p
             {
                 rest = String::new();
             }
@@ -18629,6 +18638,18 @@ pub fn paramsubst(
             };
             value = new_value;
             split_parts = new_parts;
+        }
+
+        // bash `${v@P}` — expand the value as a PROMPT string: the bash
+        // backslash escapes (`\u`, `\h`, `\w`, `\$`, …) are rendered the
+        // way they would be if the value were `$PS1`. No C counterpart;
+        // --bash only. See `extensions::bash_prompt` for the escape table.
+        if bash_at_p {
+            let p = |s: &str| -> String { crate::extensions::bash_prompt::expand(s) };
+            value = p(&value);
+            if let Some(parts) = split_parts.as_ref() {
+                split_parts = Some(parts.iter().map(|x| p(x)).collect());
+            }
         }
 
         if casmod != CASMOD_NONE {

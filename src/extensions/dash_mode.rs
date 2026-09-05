@@ -496,6 +496,11 @@ pub const BASH_SHOPTS: &[(&str, Option<&str>, bool)] = &[
     ("lithist", None, false),
     ("localvar_inherit", None, false),
     ("localvar_unset", None, false),
+    // Backed by zsh's LOGINSHELL, which is what `argv[0]`'s leading dash
+    // and `-l` both set — bash(1) calls this one "not settable": it
+    // REPORTS how the shell was started rather than configuring it. It is
+    // therefore excluded from `bash_shopt_apply_defaults` below, which
+    // would otherwise stamp `false` over a real login shell's state.
     ("login_shell", Some("loginshell"), false),
     ("mailwarn", Some("mailwarn"), false),
     ("no_empty_cmd_completion", None, false),
@@ -600,6 +605,14 @@ pub fn bash_shopt_set(name: &str, on: bool) -> bool {
 /// code runs, so a script's own `setopt`/`shopt` still wins.
 pub fn bash_shopt_apply_defaults() {
     for (name, zsh_opt, default_on) in BASH_SHOPTS {
+        // Derived rows report how the shell was STARTED; they have no
+        // configurable default to stamp. `login_shell` is set from
+        // `argv[0]`'s leading dash / `-l` before any user code runs, and
+        // writing the table default here would report a real login shell
+        // as a non-login one.
+        if DERIVED_SHOPTS.contains(name) {
+            continue;
+        }
         // Inverted rows (`xpg_echo`) live in a zsh option too, so they need
         // the same seeding even though the middle column is `None`.
         if zsh_opt.is_some() || bash_shopt_inverted_zsh_opt(name).is_some() {
@@ -607,6 +620,10 @@ pub fn bash_shopt_apply_defaults() {
         }
     }
 }
+
+/// shopt rows whose value is derived from how the shell was invoked, not
+/// from a default. bash(1) lists these under "not settable".
+const DERIVED_SHOPTS: &[&str] = &["login_shell", "restricted_shell"];
 
 /// `$BASHOPTS` — bash(1): the shopt options "valid as an argument for the
 /// -s option to shopt", colon-separated, in the table's (alphabetical)

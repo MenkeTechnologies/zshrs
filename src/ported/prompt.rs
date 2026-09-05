@@ -4621,6 +4621,30 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
 /// promptexpand c:1286), runs the per-`%X` walker, then unmetafies
 /// the resulting buffer back to a UTF-8 String for display.
 pub fn expand_prompt(s: &str) -> String {
+    // ZSHRS-ONLY hook, no C counterpart. bash prompts use BACKSLASH
+    // escapes (`\u@\h \w\$ `), zsh's use `%`; the two sets are disjoint,
+    // so under `--bash` a user's `PS1` is translated into the equivalent
+    // zsh prompt string before this expander sees it. Without it every
+    // bash `.bashrc` renders its prompt as literal backslash text.
+    //
+    // The translation, its re-entry guard and every helper live in
+    // `extensions::bash_prompt` — `src/ported/` takes no new functions
+    // (build.rs enforces that this directory stays a faithful port), so
+    // the hook is this borrow-and-shadow, not a wrapper function. The
+    // guard is held for the rest of the body: the translator emits `%`
+    // sequences that this function expands, and a nested `expand_prompt`
+    // (from `%D{…}`, PROMPTSUBST, …) must not translate them again.
+    let bash_translated;
+    let _bash_guard;
+    let s = match crate::extensions::bash_prompt::begin_translation(s) {
+        Some((translated, guard)) => {
+            bash_translated = translated;
+            _bash_guard = guard;
+            bash_translated.as_str()
+        }
+        None => s,
+    };
+
     // c:Src/prompt.c:189-190 — `if ((termflags & TERM_UNKNOWN) &&
     // (unset(INTERACTIVE))) init_term();` — lazy terminal init so
     // non-interactive `print -P` / PS4 expansion resolves termcap

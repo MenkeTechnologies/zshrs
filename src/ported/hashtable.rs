@@ -1154,6 +1154,17 @@ impl alias_table {
     /// come out in C's order.
     pub fn with_defaults() -> Self {
         let mut table = Self::new();
+        // ZSHRS-ONLY. `run-help` / `which-command` are ZSH's default
+        // aliases. A drop-in starts with the set ITS shell defines:
+        // bash, dash and /bin/sh define none at all, ksh93 defines 19
+        // (`r`, `functions`, `integer`, …) and mksh 11. Measured with
+        // `<shell> -c alias` in an empty environment.
+        if let Some(defaults) = crate::extensions::emulation_startup::default_aliases() {
+            for (name, text) in defaults {
+                table.add(createaliasnode(name, text, 0));
+            }
+            return table;
+        }
         // C addaliasnode(aliastab, "run-help", createaliasnode("man", 0));
         // at hashtable.c:1215-1216.
         table.add(createaliasnode("run-help", "man", 0)); // c:1215
@@ -2782,6 +2793,21 @@ pub fn createaliastables() {
     // c:1206 — newhashtable(23, "aliastab", NULL)
     // c:1212 — createaliastable(aliastab)
     let mut tab = aliastab_lock().write().expect("aliastab poisoned");
+    // ZSHRS-ONLY. Same gate as `with_defaults`: a drop-in gets ITS
+    // shell's default aliases, not zsh's two. This function runs during
+    // init, AFTER the binary has selected the personality, so without the
+    // gate it re-added `run-help` / `which-command` on top of the set
+    // installed at table-creation time — `--bash` listed two aliases bash
+    // does not have, and `--ksh` listed 21 where ksh has 19.
+    if let Some(defaults) = crate::extensions::emulation_startup::default_aliases() {
+        tab.clear();
+        for (name, text) in defaults {
+            tab.add(createaliasnode(name, text, 0));
+        }
+        drop(tab);
+        let _ = sufaliastab_lock();
+        return;
+    }
     // c:1215 — `aliastab->addnode(aliastab, ztrdup("run-help"),
     //                              createaliasnode(ztrdup("man"), 0));`
     tab.add(createaliasnode("run-help", "man", 0)); // c:1215
@@ -2905,6 +2931,22 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
         let _ = nicezputs(&hn.text, &mut so); // c:1305
         println!(); // c:1306
         return; // c:1307
+    }
+
+    // ZSHRS-ONLY, no C counterpart. bash's `alias` listing always emits
+    // the reusable `alias NAME='value'` form with the value single-quoted
+    // — `alias a=1` lists as `alias a='1'` — where zsh's plain listing is
+    // bare `a=1` and only `alias -L` adds the prefix. So a `--bash` shell
+    // printed `ll='ls -alF'` where bash prints `alias ll='ls -alF'`.
+    // Applies to the plain listing only; the whence/nameonly forms above
+    // have already returned.
+    if crate::extensions::dash_mode::bash_mode() {
+        println!(
+            "alias {}={}",
+            hn.node.nam,
+            crate::extensions::emulation_startup::single_quote(&hn.text)
+        );
+        return;
     }
 
     // c:1310-1330 — PRINT_LIST prefix block (falls through to the

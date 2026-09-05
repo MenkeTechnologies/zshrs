@@ -13012,6 +13012,22 @@ pub fn zexit(val: i32, from_where: i32) {
         let mut tab = tab.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::jobs::cleanfilelists(&mut tab); // c:6012
     }
+    // ZSHRS-ONLY, no C counterpart — the selected drop-in's logout file
+    // (`~/.bash_logout` for `--bash`, `~/.logout` + `/etc/csh.logout` for
+    // `--csh`; the Korn and Bourne shells document none).
+    //
+    // NOT gated on `interact()` the way zsh's `.zlogout` below is: bash
+    // reads `~/.bash_logout` when "an interactive login shell exits, or a
+    // non-interactive login shell executes the exit builtin" (bash(1)
+    // INVOCATION) — verified against bash 5.3.15, where both `bash -l -i`
+    // on exit and `bash -l -c exit` source it, while `bash -l -c true`
+    // (fall-through, no exit builtin) does not. zshrs reaches this
+    // function only through the exit path, matching that distinction.
+    // History saving below still runs for every drop-in; only the
+    // `.zlogout` sourcing is theirs to replace.
+    if crate::extensions::emulation_startup::overrides_zsh_startup() {
+        crate::extensions::emulation_startup::run_logout_scripts();
+    }
     // c:6013-6028 — `if (isset(RCS) && interact)`: save the history
     // file and run logout scripts. This is THE write-at-exit path for
     // interactive history (`-f`/NO_RCS shells intentionally skip it,
@@ -13032,7 +13048,9 @@ pub fn zexit(val: i32, from_where: i32) {
                                         // ... source(GLOBAL_ZLOGOUT); }`. The C `subsh` check is covered
                                         // by the RUST-ONLY SUBSHELL_DEPTH gate above (in-process
                                         // subshells returned before reaching here).
-        if islogin() {
+        // `&& !overrides_zsh_startup()`: only a zsh shell has a
+        // `.zlogout`; every drop-in's logout file was sourced above.
+        if islogin() && !crate::extensions::emulation_startup::overrides_zsh_startup() {
             // c:6021
             crate::ported::init::sourcehome(".zlogout"); // c:6022
             if isset(RCS) && isset(GLOBALRCS) {
@@ -15847,12 +15865,15 @@ pub fn bin_times(
         // centiseconds (2-digit zero-pad). Bug #499 — previous Rust
         // port used floating-point `%.3f` with 3-decimal precision,
         // diverging from zsh's `0m0.00s`.
-        let x = t as i64;
-        let clktck_i = clktck as i64;
-        let mins = x / (60 * clktck_i);
-        let secs = (x / clktck_i) % clktck_i;
-        let csec = (x * 100 / clktck_i) % 100;
-        print!("{}m{}.{:02}s", mins, secs, csec);
+        // ZSHRS-ONLY dispatch: the fraction width and seconds padding
+        // differ per shell — bash prints milliseconds, dash microseconds,
+        // mksh zero-pads the seconds — so a drop-in cannot use zsh's
+        // centisecond form. `emulation_output::times_field` carries the
+        // captured table; the zsh arm there is this c:7315-7318 formula.
+        print!(
+            "{}",
+            crate::extensions::emulation_output::times_field(t as i64, clktck as i64)
+        );
     };
     pttime(buf.tms_utime); // c:7332
     print!(" "); // c:7333

@@ -172,6 +172,35 @@ Outside the Bourne family; provided for argv[0] dispatch.
 .B \-\-zsh\-compat
 Legacy alias for
 .BR \-\-zsh .
+.SS bash startup-file options
+Accepted in
+.B \-\-bash
+mode only; outside it they are rejected the way
+.BR zsh (1)
+rejects an unknown option.
+.TP
+.B \-\-norc
+Do not read
+.I ~/.bashrc
+for an interactive non-login shell.
+.TP
+.B \-\-noprofile
+Do not read
+.I /etc/profile
+or the
+.I ~/.bash_profile
+chain for a login shell.
+.TP
+.BI \-\-rcfile " FILE"
+Read
+.I FILE
+instead of
+.IR ~/.bashrc .
+The separate-word form only, as bash requires.
+.TP
+.BI \-\-init\-file " FILE"
+Alias of
+.BR \-\-rcfile .
 .PP
 Two notions of fidelity are available, and they are not the same shell.
 .B \-\-sh
@@ -336,6 +365,8 @@ and the upper-case
 .BR \-H " " \-I " " \-J " " \-K " " \-L " " \-M " " \-N " " \-O " " \-P " " \-Q " " \-R " " \-S " " \-T " " \-U " " \-V " " \-W " " \-X " " \-Y " " \-Z
 family.
 .SH STARTUP FILES
+In its native mode and under
+.BR \-\-zsh ,
 zshrs reads the same startup files as
 .BR zsh (1)
 in the same order:
@@ -373,6 +404,164 @@ is unset)
 and the
 .B PRIVILEGED
 option modulate which files are sourced, identically to zsh.
+.SS Use as a login shell
+.B chsh
+takes a path, not a flag, so a drop-in is selected the way
+.BR login (1)
+and
+.BR sshd
+start a shell: symlink the binary under the target shell's name and let it
+be exec'd with a leading dash on
+.IR argv[0] .
+.PP
+.RS 4
+.EX
+ln -s /path/to/zshrs ~/bin/bash
+# add ~/bin/bash to /etc/shells, then:
+chsh -s ~/bin/bash
+.EE
+.RE
+.PP
+The leading dash is the only signal a login shell gets: it selects the
+personality, sets
+.B shopt login_shell
+and drives the profile chain and
+.IR ~/.bash_logout .
+In
+.B \-\-bash
+mode the bash
+.B $PS1
+backslash escapes
+.RB ( \\u ", " \\h ", " \\w ", " \\W ", " \\$ ", " \\t ", " \\A ", " \\d ,
+.BR \\D{ fmt } ", " \\j ", " \\[ / \\] ,
+octal) are expanded as bash expands them, and
+.B ${var@P}
+reports the expansion.
+.SS Emulation drop-ins
+Each drop-in reads the startup files of the shell it stands in for, not
+zsh's.
+.B \-\-no\-rcs
+suppresses all of them.
+.TP
+.B \-\-bash
+Login:
+.I /etc/profile
+then the first readable of
+.IR ~/.bash_profile ", " ~/.bash_login ", " ~/.profile .
+Interactive non-login:
+.I /etc/bash.bashrc
+(where the platform ships one) then
+.IR ~/.bashrc .
+Non-interactive:
+.BR $BASH_ENV .
+A login shell reads
+.I ~/.bash_logout
+on exit.
+.TP
+.B \-\-ksh
+Login:
+.I /etc/profile
+then
+.IR ~/.profile .
+Interactive:
+.I /etc/ksh.kshrc
+(where present) then
+.BR $ENV ,
+which defaults to
+.IR ~/.kshrc .
+.TP
+.B \-\-mksh
+As
+.BR \-\-ksh ,
+but
+.B $ENV
+falls back to
+.I ~/.mkshrc
+rather than
+.IR ~/.kshrc .
+.TP
+.B \-\-pdksh
+As
+.BR \-\-ksh ,
+but
+.B $ENV
+has no default.
+.TP
+.BR \-\-sh ", " \-\-posix ", " \-\-dash ", " \-\-ash
+Login:
+.I /etc/profile
+then
+.IR ~/.profile .
+Interactive:
+.B $ENV
+with no default.
+.TP
+.B \-\-csh
+Always:
+.I /etc/csh.cshrc
+then
+.IR ~/.tcshrc ,
+or
+.I ~/.cshrc
+when
+.I ~/.tcshrc
+is absent. A login shell additionally reads
+.I /etc/csh.login
+and
+.IR ~/.login ,
+and reads
+.I ~/.logout
+and
+.I /etc/csh.logout
+on exit.
+.PP
+An interactive LOGIN shell reads both its profile and its interactive
+file in every mode except
+.BR \-\-bash ,
+which reads the profile only. A PRIVILEGED shell reads no user file; the
+Korn and Bourne drop-ins take
+.I /etc/suid_profile
+in place of the profile pair.
+.PP
+Rules that differ per shell, each measured against the reference binary
+rather than assumed:
+.TP
+.B Login by argv[0] alone
+A non-interactive shell that is a login shell only because of the dash on
+.I argv[0]
+reads the profile in every mode EXCEPT
+.BR \-\-bash ,
+which additionally requires the shell to be interactive or
+.B \-l
+to have been given explicitly.
+.TP
+.B \-f
+means
+.B noglob
+under
+.BR \-\-bash ", " \-\-ksh ", " \-\-mksh ", " \-\-pdksh ", " \-\-sh ", " \-\-posix ", " \-\-dash " and " \-\-ash
+(those install the Bourne option-letter table), and
+.B \-\-no\-rcs
+under
+.BR \-\-zsh " and " \-\-csh .
+Use
+.B \-\-no\-rcs
+to suppress startup files in any mode.
+.TP
+.B $PS1
+takes bash's backslash escapes under
+.BR \-\-bash ,
+zsh's
+.B %
+escapes under
+.BR \-\-zsh ,
+and is literal text elsewhere.
+.TP
+.B Terminal sequences
+Bracketed paste is written under
+.BR \-\-bash " and " \-\-zsh " only; the OSC 133 shell-integration marker and zsh's partial-line " %
+marker (PROMPT_SP) are written by native zshrs only. Every drop-in
+matches what the shell it stands in for sends.
 .SH ENVIRONMENT
 In addition to the standard zsh-recognised variables
 .RB ( PATH ,

@@ -208,6 +208,15 @@ pub mod ast_sexp;
 /// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
 #[path = "extensions/bash_arrays.rs"]
 pub mod bash_arrays;
+/// `bash_prompt` submodule — bash `$PS1` backslash escapes (Rust-only).
+#[path = "extensions/bash_prompt.rs"]
+pub mod bash_prompt;
+/// `emulation_output` submodule — per-shell builtin output formats (Rust-only).
+#[path = "extensions/emulation_output.rs"]
+pub mod emulation_output;
+/// `emulation_startup` submodule — per-drop-in startup/logout files (Rust-only).
+#[path = "extensions/emulation_startup.rs"]
+pub mod emulation_startup;
 /// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
