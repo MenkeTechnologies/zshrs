@@ -7533,58 +7533,28 @@ pub fn cfp_matcher_range(
     ms: &[Option<Box<Cmatcher>>], // c:4307
     add: &str,
 ) -> String {
-    // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
-    // / pattern_match_equivalence. Walks an encoded char-range byte
-    // sequence looking for `c`. Encoding:
-    //   0x80 + PP_RANGE: next 2 bytes are lo,hi range
-    //   0x80 + PP_*: POSIX class marker; matched for LOWER/UPPER
-    //   plain bytes: literal char
-    // Returns Some((idx, mtp)) on hit.
+    // c:4405 — `PATMATCHRANGE(m->line->u.str, addc, &ind, &mt)`. The macro
+    // resolves to `patmatchrange` (pattern.c:3865), so call the canonical
+    // port instead of a local copy. The copy that used to live here counted
+    // ONE index per element, where C adds `ch - r1` on a range hit
+    // (c:3970) and `r2 - r1` plus the shared per-iteration `(*indptr)++`
+    // (c:3974, c:3992-3993) when stepping over one — the exact divergence
+    // pattern.rs:4300-4317 already records. With `m:{a-zA-Z}={A-Za-z}`
+    // (the matcher `_path_files` derives from NO_CASE_GLOB, sh:145-149)
+    // every character therefore reported index 0, and
+    // `pattern_match_equivalence` handed back the FIRST member of the word
+    // class for all of them: `compfiles -p` built
+    // `[tA][mA][pA]/[aA][bA][cA][dA]*` instead of
+    // `[tT][mM][pP]/[aA][bB][cC][dD]*`, which globs nothing, so
+    // `setopt nocaseglob` path completion added no matches at all.
     fn patmatchrange_local(s: Option<&[u8]>, c: u32) -> Option<(u32, i32)> {
-        let bytes = s?;
-        let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
-        let pp_lower_marker = (0x80u8).wrapping_add(PP_LOWER as u8);
-        let pp_upper_marker = (0x80u8).wrapping_add(PP_UPPER as u8);
-
-        let mut idx: u32 = 0;
-        let mut i = 0usize;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if b == pp_range_marker {
-                if i + 2 >= bytes.len() {
-                    break;
-                }
-                let r1 = bytes[i + 1] as u32;
-                let r2 = bytes[i + 2] as u32;
-                if c >= r1 && c <= r2 {
-                    return Some((idx, 0));
-                }
-                idx += 1;
-                i += 3;
-            } else if b >= 0x80 {
-                let is_lower = b == pp_lower_marker;
-                let is_upper = b == pp_upper_marker;
-                let matched = if is_lower {
-                    c < 256 && (c as u8).is_ascii_lowercase()
-                } else if is_upper {
-                    c < 256 && (c as u8).is_ascii_uppercase()
-                } else {
-                    false
-                };
-                if matched {
-                    return Some((idx, (b as i32) - 0x80));
-                }
-                idx += 1;
-                i += 1;
-            } else {
-                if c == b as u32 {
-                    return Some((idx, 0));
-                }
-                idx += 1;
-                i += 1;
-            }
+        let mut ind: u32 = 0;
+        let mut mt: i32 = 0;
+        if crate::ported::pattern::patmatchrange(s, c, Some(&mut ind), Some(&mut mt)) {
+            Some((ind, mt))
+        } else {
+            None
         }
-        None
     }
 
     let mut out = String::with_capacity(add.len() * 2);
@@ -9948,6 +9918,34 @@ mod tests {
         let ms: Vec<Option<Box<Cmatcher>>> = vec![None, None, None];
         let r = cfp_matcher_range(&ms, "abc");
         assert_eq!(r, "abc");
+    }
+
+    /// c:4405-4421 — the genuine-equivalence arm of `cfp_matcher_range`
+    /// pairs each input character with the SAME-POSITION member of the
+    /// word-side class, via `PATMATCHRANGE` (pattern.c:3865) feeding
+    /// `pattern_match_equivalence` (compmatch.c:1316).
+    ///
+    /// `m:{a-zA-Z}={A-Za-z}` is the matcher `_path_files` synthesises when
+    /// `NO_CASE_GLOB` is set and no matcher was given (sh:145-149), so this
+    /// is the spec every `nocaseglob` path completion runs through.
+    /// Real zsh 5.9 emits `[tT][mM][pP]` for "tmp" here (observed as the
+    /// `compfiles -p` pattern in a live completion).
+    ///
+    /// This test fails on the pre-fix code, which used a private copy of
+    /// PATMATCHRANGE that counted one index per class ELEMENT instead of
+    /// per class MEMBER: every character reported index 0, so
+    /// `pattern_match_equivalence` returned the first member of the word
+    /// class and the pattern came out `[tA][mA][pA]` — which globs nothing.
+    #[test]
+    fn cfp_matcher_range_equivalence_pairs_by_position_not_first_member() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        inittyptab();
+        let r = cfp_matcher_pats("m:{a-zA-Z}={A-Za-z}", "tmp");
+        assert_eq!(
+            r, "[tT][mM][pP]",
+            "each char must pair with its own equivalence-class partner"
+        );
     }
 
     /// c:247-394 — cd_prep groups path emits CRT_EXPL + CRT_SPEC runs
