@@ -178,7 +178,7 @@ fn run_zparseopts(
     Vec<String>,
 ) {
     let src_name = "__compsys_argv";
-    setaparam(src_name, argv.to_vec());
+    crate::compsys::ported::shared::set_bridge_argv(src_name, argv);
     setaparam("nopt", nopt_seed);
     setaparam("gropt", gropt_seed);
     setaparam("ign", ign_seed);
@@ -209,8 +209,10 @@ fn run_zparseopts(
     let ign = getaparam("ign").unwrap_or_default();
     let xopt = getaparam("xopt").unwrap_or_default();
     let remaining = getaparam(src_name).unwrap_or_default();
-    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
-    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    // Tear down `__compsys_argv` — the zparseopts-bridge scratch array, not a
+    // real zsh identifier (zsh operates on positional $argv). It is declared
+    // FUNCTION-LOCAL by `shared::set_bridge_argv`; this unset is what clears it
+    // when the port runs outside any function scope. Bug #657.
     crate::ported::params::unsetparam(src_name);
     (remaining, nopt, gropt, ign, xopt)
 }

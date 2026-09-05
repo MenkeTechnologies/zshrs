@@ -23,8 +23,25 @@
 /// `-M "r:|/=* r:|=*"` into `-M`, `"r:|/=*`, `r:|=*"` — the stray leading `"`
 /// made `compadd`'s matcher parser reject it (`unknown match specification
 /// character '"'`, seen on `df -<TAB>` via `_umountable` → `_canonical_paths`).
-/// The scratch globals are unset because zsh's `action` is a function local.
+///
+/// Both scratch names are declared LOCAL first. Upstream has no counterpart
+/// to declare against — the name it evaluates into is its own function-local
+/// `action` — so the requirement is not "match an `sh:NN local` line" but
+/// "do not create a global". Under `WARN_CREATE_GLOBAL` (a completer may set
+/// it for its own body: `_mc:36` `setopt localoptions warncreateglobal
+/// typesetsilent`) an undeclared assignment prints `_arguments:411: scalar
+/// parameter _cs_split_src created globally in function _arguments` per call,
+/// which lands on the terminal instead of the match list. The names still have
+/// to exist in `paramtab`: the `eval` reads `$_cs_split_src` by name, and that
+/// indirection IS the semantics being ported — zsh expands `$action` and
+/// re-parses the RESULT, so splicing the text into the eval string instead
+/// would parse it one time too few.
 pub fn eval_action_words(action: &str) -> Vec<String> {
+    crate::compsys::ported::shared::declare_locals(&["_cs_split_src"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["_cs_split_dst"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let _ = crate::ported::params::setsparam("_cs_split_src", action);
     let _ = crate::ported::exec::execute_script("eval \"_cs_split_dst=( $_cs_split_src )\"");
     let out = crate::ported::params::getaparam("_cs_split_dst").unwrap_or_default();

@@ -51,6 +51,7 @@
 
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -150,6 +151,14 @@ fn extract_match_parts(arr: &[String]) -> Vec<String> {
 /// `'( -a:existing\ file … )'` (sh:18) came back as `-a:existing\` +
 /// `file`, one element per word.
 fn eval_array_literal(literal: &str) -> Vec<String> {
+    // The name the eval assigns into has no upstream counterpart — sh:80
+    // evaluates straight into the `local`-declared `_a_$_try$_i`. Declaring it
+    // is still required, for the same reason that line says `local`: an
+    // undeclared assignment inside a function creates a level-0 parameter and
+    // prints `_describe: array parameter _cs_lit_dst created globally in
+    // function _describe` for every literal `( … )` argument once a completer
+    // has set WARN_CREATE_GLOBAL for its own body.
+    declare_locals(&["_cs_lit_dst"], PM_ARRAY);
     let _ = crate::ported::exec::execute_script(&format!("_cs_lit_dst={}", literal));
     let out = getaparam("_cs_lit_dst").unwrap_or_default();
     let _ = crate::ported::params::unsetparam("_cs_lit_dst");
@@ -216,7 +225,6 @@ pub fn _describe_impl(args: &[String]) -> i32 {
     // _sep`, `local csl=… csl2`, `local _oargv _argv _new _strs _mats
     // _opts _i _try=0`, `local OPTIND OPTARG`, `local -a _jvx12`.
     {
-        use crate::compsys::ported::shared::{declare_locals, PM_ARRAY};
         declare_locals(
             &[
                 "_opt",
@@ -395,6 +403,11 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                 while p < _oargv.len() {
                     // sh:76-84 — value array → _a_<try><i>.
                     let _strs = format!("_a_{}{}", _try, _i);
+                    // sh:80/82 — `eval local "_a_$_try$_i;_a_$_try$_i"'=…'`.
+                    // The `local` half of that line was dropped in the port,
+                    // so each stash was created at level 0 and announced
+                    // itself under WARN_CREATE_GLOBAL.
+                    declare_locals(&[_strs.as_str()], PM_ARRAY);
                     let vals = stash_array_arg(&_oargv[p]); // sh:82
                     setaparam(&_strs, vals.clone());
                     a_names.push(_strs.clone());
@@ -411,6 +424,8 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                         (None, Vec::new())
                     } else {
                         let mn = format!("_a_{}{}", _try, _i);
+                        // sh:93/95 — same `eval local "…"` line as sh:80/82.
+                        declare_locals(&[mn.as_str()], PM_ARRAY);
                         let mv = stash_array_arg(&_oargv[p]); // sh:95
                         setaparam(&mn, mv.clone());
                         a_names.push(mn.clone());

@@ -59,7 +59,7 @@ fn make_ops() -> options {
 /// assoc; we use the flat key/value layout.
 fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
     let src = "__compsys_argv";
-    setaparam(src, args.to_vec());
+    crate::compsys::ported::shared::set_bridge_argv(src, args);
     setaparam("opts_flat", Vec::new());
     let _ = bin_zparseopts(
         "zparseopts",
@@ -78,8 +78,10 @@ fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
     );
     let opts_flat = getaparam("opts_flat").unwrap_or_default();
     let remaining = getaparam(src).unwrap_or_default();
-    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
-    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    // Tear down `__compsys_argv` — the zparseopts-bridge scratch array, not a
+    // real zsh identifier (zsh operates on positional $argv). It is declared
+    // FUNCTION-LOCAL by `shared::set_bridge_argv`; this unset is what clears it
+    // when the port runs outside any function scope. Bug #657.
     crate::ported::params::unsetparam(src);
     (remaining, opts_flat)
 }
