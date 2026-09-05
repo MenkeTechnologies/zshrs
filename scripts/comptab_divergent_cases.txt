@@ -2361,3 +2361,9 @@ read
 #   FAIL   tab1               'ssh-agent -'  (1 row(s) differ)
 #     4356dd07a7  x1   smallest: --case 'ssh-agent -' --keys tab
 #        cell/rowlist/col0 | ref/-/ | test/-
+#
+# chunk part_04  cells 6701-6800  'ssimulacra2 -' .. 'suexec '
+#   # 100 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=100 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 220.1s (2.2s/cell)
+#   # 9 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
