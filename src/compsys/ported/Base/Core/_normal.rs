@@ -84,7 +84,7 @@ pub fn _normal_impl(args: &[String]) -> i32 {
     //   a flat array `opts_flat` of [flag, value, ...] where the
     //   value is empty for boolean flags.
     let src = "__compsys_argv";
-    setaparam(src, args.to_vec());
+    crate::compsys::ported::shared::set_bridge_argv(src, args);
     setaparam("opts_flat", Vec::new());
     setaparam("precommand", Vec::new());
     let _ = bin_zparseopts(
@@ -105,7 +105,7 @@ pub fn _normal_impl(args: &[String]) -> i32 {
     );
     let opts_flat = getaparam("opts_flat").unwrap_or_default();
     let precommand = getaparam("precommand").unwrap_or_default();
-    // Tear down the zparseopts-bridge scratch globals. `__compsys_argv` and
+    // Tear down the zparseopts-bridge scratch arrays. `__compsys_argv` and
     // `opts_flat` are not real zsh identifiers at all (zsh operates on
     // positional `$argv` and on the `local -A opts` of sh:4); `precommand` is
     // sh:3's `local`, so it must not survive into the completers this

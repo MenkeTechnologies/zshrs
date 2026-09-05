@@ -225,6 +225,36 @@ pub fn mark_readonly(names: &[&str]) {
     }
 }
 
+/// Hand `args` to `bin_zparseopts` through its `-v <name>` source array,
+/// declared LOCAL to the enclosing function scope first.
+///
+/// zsh's `zparseopts` has no `-v`: upstream reads the positional list, so
+/// there is no `sh:NN local __compsys_argv` line to port. The bridge array
+/// exists only because `bin_zparseopts` takes its argv from `paramtab` by
+/// name, and it cannot be dropped without rewriting that builtin's entry
+/// point — the DESTINATION arrays (`-a __gopt`, …) go through `paramtab`
+/// too. What it must not be is GLOBAL.
+///
+/// A completer is allowed to turn `WARN_CREATE_GLOBAL` on for its own body
+/// (`~/.zinit/completions/_mc:36` — `setopt localoptions warncreateglobal
+/// typesetsilent` — the house style of the zsh-completions collection;
+/// `compinit`'s `_comp_options` only turns it OFF for the utility functions
+/// that do not opt back in). Every port reached from such a completer then
+/// printed one `_requested: array parameter __compsys_argv created globally
+/// in function _requested` per call, on the terminal, in place of the match
+/// list.
+///
+/// The destination arrays escaped the same diagnostic only by accident: they
+/// are left behind after the call, so `createparam` reports `created == 0`
+/// from the second completion onwards and `check_warn_pm`
+/// (`src/ported/params.rs:6669`) returns early. `__compsys_argv` is unset
+/// after every call — the tidier lifetime — so it was re-created, and warned
+/// about, every single time.
+pub fn set_bridge_argv(name: &str, args: &[String]) {
+    declare_locals(&[name], PM_ARRAY);
+    let _ = crate::ported::params::setaparam(name, args.to_vec());
+}
+
 /// `local NAME="$NAME"` — declare `names` local while carrying the
 /// enclosing scope's scalar value into the shadow.
 ///
@@ -426,6 +456,60 @@ pub fn get_ignored_patterns(context: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The zparseopts bridge array must be a FUNCTION LOCAL, not a global.
+    ///
+    /// `__compsys_argv` is written by 18 `run_*` helpers under
+    /// `src/compsys/ported/`, once per call, and unset again straight after —
+    /// so every call RE-CREATES it. `createparam` at `locallevel == 0` makes
+    /// that a global creation, and `check_warn_pm`
+    /// (`src/ported/params.rs:6669`, port of `Src/params.c:3158`) prints
+    /// `<caller>: array parameter __compsys_argv created globally in function
+    /// <caller>` for each one whenever `WARN_CREATE_GLOBAL` is on.
+    ///
+    /// It is on more often than the option's rarity suggests: `compinit`'s
+    /// `_comp_options` clears it (sh:171 `NO_warncreateglobal`), but a
+    /// completer is free to set it back for its own body, and the
+    /// zsh-completions house style does exactly that
+    /// (`_mc:36` — `setopt localoptions warncreateglobal typesetsilent`).
+    /// `mc <TAB>` then drew 29 rows of diagnostics instead of its match list,
+    /// and `mc -<TAB>` 40.
+    ///
+    /// Asserting the TYPE STRING rather than `pm.level` is deliberate: it is
+    /// the same `${(t)name}` text `_parameters` filters on, so this test also
+    /// pins the property that made the earlier leaks visible as bogus
+    /// completion matches.
+    #[test]
+    fn bridge_argv_is_declared_local_not_created_global() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inc_locallevel();
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            set_bridge_argv("__compsys_argv", &["-J".to_string(), "grp".to_string()]);
+            let ty = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get("__compsys_argv")
+                        .map(|pm| crate::ported::modules::parameter::paramtypestr(pm))
+                })
+                .unwrap_or_default();
+            assert_eq!(
+                ty, "array-local",
+                "bridge argv must be `local -a`; `array` means every call \
+                 re-creates a global and WARN_CREATE_GLOBAL prints a line"
+            );
+            assert_eq!(
+                crate::ported::params::getaparam("__compsys_argv").unwrap_or_default(),
+                vec!["-J".to_string(), "grp".to_string()],
+                "declaring it local must not cost the value zparseopts reads"
+            );
+        }));
+        crate::ported::params::endparamscope();
+        let _ = crate::ported::params::unsetparam("__compsys_argv");
+        if let Err(p) = out {
+            std::panic::resume_unwind(p);
+        }
+    }
 
     /// compinit sh:523 — the scan reads `$fpath`, not the `$FPATH` the
     /// process happened to inherit.

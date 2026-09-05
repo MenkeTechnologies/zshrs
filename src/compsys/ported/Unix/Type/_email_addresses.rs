@@ -465,7 +465,7 @@ pub fn _email_addresses(args: &[String]) -> i32 {
 
     // sh:119  zparseopts -D -E -A opts n: s: c
     let src = "__compsys_argv";
-    setaparam(src, args.to_vec());
+    crate::compsys::ported::shared::set_bridge_argv(src, args);
     let _ = bin_zparseopts(
         "zparseopts",
         &[

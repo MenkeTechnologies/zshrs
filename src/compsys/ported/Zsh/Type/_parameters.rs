@@ -151,7 +151,7 @@ pub fn _parameters(args: &[String]) -> i32 {
 
     // sh:21  zparseopts -D -K -E g:=pattern
     let src = "__compsys_argv";
-    setaparam(src, args.to_vec());
+    crate::compsys::ported::shared::set_bridge_argv(src, args);
     setaparam("pattern", pattern_seed.clone());
     let _ = bin_zparseopts(
         "zparseopts",
@@ -172,8 +172,10 @@ pub fn _parameters(args: &[String]) -> i32 {
         .cloned()
         .unwrap_or_else(|| "*".to_string());
     let argv = getaparam(src).unwrap_or_default();
-    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
-    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    // Tear down `__compsys_argv` — the zparseopts-bridge scratch array, not a
+    // real zsh identifier (zsh operates on positional $argv). It is declared
+    // FUNCTION-LOCAL by `shared::set_bridge_argv`; this unset is what clears it
+    // when the port runs outside any function scope. Bug #657.
     crate::ported::params::unsetparam(src);
 
     // Build the filter against (R)pattern + excl PM_LOCAL + pfilt.
