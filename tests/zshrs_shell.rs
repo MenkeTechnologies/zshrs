@@ -15587,3 +15587,230 @@ fn sort_and_unique_flags_do_not_run_in_scalar_substitution_context() {
         assert_eq!(out, want, "{script}");
     }
 }
+
+/// c:Src/subst.c:514-525 `singsub` — `prefork(&foo, PREFORK_SINGLE, NULL)` — is
+/// the OTHER caller that sets paramsubst's `ssub` (c:Src/subst.c:1761), and
+/// there are three shapes of it this port never marked:
+///
+///   * the `case` WORD          — c:Src/loop.c:611 `singsub(&word);`
+///   * every `[[ … ]]` operand  — c:Src/cond.c:53 `singsub(strp);`, reached from
+///     `cond_subst` at c:198 (left) and c:205 (right), plus c:308 for the
+///     `==` / `!=` pattern and c:530 / c:544 / c:556 (`cond_str` / `cond_val` /
+///     `cond_match`) for module conditions
+///   * a SUBSCRIPTED assignment target — `v[1]=…`, `v[lo,hi]=…`, `m[k]=…`,
+///     `v[@]=…`. Those are all `WC_ASSIGN_SCALAR` whose name still carries its
+///     subscript, so `addvars` preforks them at the SAME c:Src/exec.c:2603
+///     `prefork(vl, (isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN),
+///     &prefork_ret)` as a plain `v=…`
+///
+/// `ssub` decides four things at once, so the divergence was never only about
+/// sorting:
+///
+///   * c:4226 `if (isarr && ssub) { val = sepjoin(aval, NULL, 1); isarr = 0; }`
+///     joins an array result with `IFS[0]` BEFORE the array emit block at
+///     c:4256 — so the `(u)` fold (c:4264) and the `(o)`/`(O)`/`(n)`/`(a)`/`(i)`
+///     sort (c:4301-4326) never run, AND the join is `IFS[0]`, not a space
+///   * c:170 `if (unset(IGNOREBRACES) && !(flags & PREFORK_SINGLE))` gates
+///     `xpandbraces` off entirely
+///   * c:183 `else if (!(flags & PREFORK_SINGLE) && …)` gates off prefork's
+///     empty-word removal
+///   * `singsub` runs `prefork` and NOTHING else, so `globlist` is never
+///     reached and the word is not filename-generated
+///
+/// The glob-qualifier branch of `cond_subst` (c:Src/cond.c:43-51) is the one
+/// exception — it preforks with flags 0 and then runs `zglob`.
+///
+/// Every expectation below is the verbatim output of `/bin/zsh -f -c '<case>'`
+/// (5.9), captured line-by-line so a word-boundary difference cannot hide
+/// inside `print`'s space-joining.
+#[test]
+fn singsub_contexts_are_prefork_single() {
+    for (script, want) in [
+        // ---- `[[ … ]]` operand: the sort / unique block must not run.
+        (
+            "a=(c a b); [[ ${(o)a} == \"c a b\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); [[ ${(O)a} == \"c a b\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(3 10 2); [[ ${(n)a} == \"3 10 2\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(b a b c a); [[ ${(u)a} == \"b a b c a\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // c:4226 is unconditional on `nojoin`, so `(@)` (nojoin = 2, c:2167) is
+        // not an exception.
+        (
+            "a=(bb a ccc); [[ ${(@o)a} == \"bb a ccc\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // The join is `sepjoin(aval, NULL, 1)` — separator NULL, i.e. IFS[0].
+        (
+            "a=(c a b); IFS=-; [[ ${(o)a} == \"c-a-b\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // Both operand positions: c:198 (left) and c:308 (the `==` pattern).
+        (
+            "a=(c a b); [[ \"c a b\" == ${(o)a} ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); [[ ${(o)a} == ${(o)a} ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // A unary operand takes the same `cond_subst` (c:196-199).
+        (
+            "a=(c a b); [[ -n ${(o)a} ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // The joined scalar is what the PATTERN and the REGEX see.
+        (
+            "a=(c a b); [[ ${(o)a} == c* ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); [[ ${(o)a} == a* ]] && print -rl -- Y || print -rl -- N",
+            "N\n",
+        ),
+        (
+            "a=(c a b); [[ ${(o)a} =~ \"^c a b$\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); [[ ${(o)a} =~ \"^a b c$\" ]] && print -rl -- Y || print -rl -- N",
+            "N\n",
+        ),
+        // `${a[*]}` under `ssub` joins on IFS[0] too.
+        (
+            "a=(x y); IFS=:; [[ ${a[*]} == \"x:y\" ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        // ---- `case` WORD (c:Src/loop.c:611).
+        (
+            "a=(c a b); case ${(o)a} in (\"c a b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); case ${(@o)a} in (\"c a b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); case ${(o)a} in (c*) print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); IFS=-; case ${(o)a} in (\"c-a-b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // The IFS[0] join of a bare array, across separator shapes. An EMPTY
+        // IFS joins with nothing; a multi-char IFS uses only its first char.
+        (
+            "a=(c a b); IFS=-; case ${a} in (\"c-a-b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); IFS=; case ${a} in (cab) print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(c a b); IFS=\":;\"; case ${a} in (\"c:a:b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // c:183 — the empty-word removal is gated OFF by PREFORK_SINGLE, so the
+        // empty element keeps its separator.
+        (
+            "a=(a \"\" b); case ${a} in (\"a  b\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // c:170 — no brace expansion; `singsub` runs prefork only — no glob.
+        (
+            "case a{1,2} in ('a{1,2}') print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "cd /tmp; case *.nonexistzzz in ('*.nonexistzzz') print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // ---- SUBSCRIPTED assignment target: same c:Src/exec.c:2603 prefork.
+        (
+            "a=(c a b); v=(x y); v[1]=${(o)a}; print -rl -- \"${v[1]}\"",
+            "c a b\n",
+        ),
+        (
+            "a=(c a b); typeset -A m; m[k]=${(o)a}; print -rl -- \"${m[k]}\"",
+            "c a b\n",
+        ),
+        (
+            "a=(bb a ccc); v=(x); v[1]=${(@o)a}; print -rl -- \"${v[1]}\"",
+            "bb a ccc\n",
+        ),
+        (
+            "a=(c a b); v=(x); v[1]=PRE${(o)a}POST; print -rl -- \"${v[1]}\"",
+            "PREc a bPOST\n",
+        ),
+        (
+            "a=(c a b); IFS=-; v=(x); v[1]=${a}; print -rl -- \"${v[1]}\"",
+            "c-a-b\n",
+        ),
+        (
+            "a=(c a b); IFS=; v=(x); v[1]=${a}; print -rl -- \"${v[1]}\"",
+            "cab\n",
+        ),
+        // c:Src/params.c:2895 setarrvalue — a range target with a scalar RHS
+        // splices ONE element in, so the array shrinks to two.
+        (
+            "a=(c a b); v=(x y z); v[2,3]=${a}; print -rl -- \"${v[@]}\"",
+            "x\nc a b\n",
+        ),
+        // The same three non-sort consequences of PREFORK_SINGLE, on the
+        // subscripted target: no glob (c:Src/exec.c:2611 globs an assignment
+        // value only under GLOB_ASSIGN), no brace expansion (c:170), and the
+        // PREFORK_ASSIGN half's `filesub` colon-walk (c:Src/subst.c:689).
+        ("v=(x); v[1]=/tmp/*; print -rl -- \"${v[1]}\"", "/tmp/*\n"),
+        ("v=(x); v[1]={p,q}; print -rl -- \"${v[1]}\"", "{p,q}\n"),
+        // ---- The ARRAY contexts must still sort: `ssub` is 0 there, so c:4226
+        // does not fire and the c:4301-4326 block runs.
+        (
+            "a=(c a b); b=(${(o)a}); print -rl -- \"${b[@]}\"",
+            "a\nb\nc\n",
+        ),
+        ("a=(c a b); print -rl -- ${(o)a}", "a\nb\nc\n"),
+        ("a=(b a b c a); print -rl -- ${(u)a}", "b\na\nc\n"),
+        ("a=(3 10 2); print -rl -- ${(n)a}", "2\n3\n10\n"),
+        (
+            "a=(c a b); f(){ print -rl -- \"$@\" }; f ${(o)a}",
+            "a\nb\nc\n",
+        ),
+        ("a=(c a b); set -- ${(o)a}; print -rl -- \"$@\"", "a\nb\nc\n"),
+        // ---- Pins for the cond machinery the singsub flag runs alongside:
+        // source-level pattern metas, `${~…}` GLOB_SUBST promotion, brace
+        // literality, and an arithmetic RHS carrying a subscript.
+        ("[[ a* == a* ]] && print -rl -- Y || print -rl -- N", "Y\n"),
+        ("[[ abc == a* ]] && print -rl -- Y || print -rl -- N", "Y\n"),
+        (
+            "p=\"foo*\"; [[ foobar == $~p ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "h=foo; [[ foo = $h* ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        ("[[ -n a{2,3} ]] && print -rl -- Y || print -rl -- N", "Y\n"),
+        (
+            "[[ aaa =~ a{2,3} ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+        (
+            "typeset -A m; m=(nmatches 4); [[ 3 -ne m[nmatches] ]] && print -rl -- Y || print -rl -- N",
+            "Y\n",
+        ),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(script);
+        assert_eq!(out, want, "{script}");
+    }
+}

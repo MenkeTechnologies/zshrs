@@ -58176,11 +58176,13 @@ Still divergent, pre-existing and NOT touched by this fix:
 
 ---
 
-## #1131 — the `(o)` / `(O)` / `(n)` / `(u)` flags sorted in scalar-substitution context, where zsh never sorts at all — fixed
+## #1131 — `PREFORK_SINGLE` was missing from four expansion contexts: the `(o)`/`(O)`/`(n)`/`(u)` flags sorted, arrays joined on a space instead of `IFS[0]`, and braces and globs expanded where zsh keeps them literal — fixed
 
-**Status:** `fixed` 2026-09-04. Recorded as an untouched divergence under both
-#1129 and #1130; broken out here because the gate it moves decides array-vs-
-scalar shape for every `${…}` in an assignment RHS.
+**Status:** `fixed` 2026-09-04 (scalar-assignment RHS) and 2026-09-05 (`case`
+word, `[[ … ]]` operand, subscripted assignment target). Recorded as an
+untouched divergence under both #1129 and #1130; broken out here because the
+gate it moves decides array-vs-scalar shape for every `${…}` reached by a
+`PREFORK_SINGLE` prefork.
 
 ```console
 $ a=(c a b); v=${(o)a}; print -r -- "$v"
@@ -58262,21 +58264,124 @@ c:3032 — which also precedes c:4256, so the DQ forms were already correct in
 both shells and are pinned unchanged.
 
 Verified against `/bin/zsh -f` (5.9) on a 120-case differential sweep: 67 → 116
-matching, zero regressions. The four still divergent are a separate, narrower
-defect — zshrs does not mark `case`/`[[ ]]` word expansion or a subscripted
-assignment target (`v[1]=…`, `m[k]=…`) as `PREFORK_SINGLE` at all, so those
-words never reach this gate:
-
-```console
-$ a=(c a b); [[ ${(o)a} == "c a b" ]] && print yes || print no
-  zsh  : yes
-  zshrs: no
-
-$ a=(c a b); v[1]=${(o)a}; print -r -- "$v"
-  zsh  : c a b
-  zshrs: a b c
-```
+matching, zero regressions.
 
 Pinned by
 `tests/zshrs_shell.rs::sort_and_unique_flags_do_not_run_in_scalar_substitution_context`
 (65 shapes, every expectation captured from `/bin/zsh -f`).
+
+---
+
+### Second half — the remaining `PREFORK_SINGLE` contexts (fixed 2026-09-05)
+
+The first half only wired c:`Src/exec.c:2603`. Four more contexts never reached
+the c:4226 gate because zshrs never marked them `PREFORK_SINGLE` at all:
+
+```console
+$ a=(c a b); [[ ${(o)a} == "c a b" ]] && print Y || print N
+  zsh  : Y            zshrs: N      # sorted, so compared "a b c"
+
+$ a=(c a b); case ${(o)a} in ("c a b") print Y;; (*) print N;; esac
+  zsh  : Y            zshrs: N
+
+$ a=(c a b); v=(x y); v[1]=${(o)a}; print -rl -- "${v[1]}"
+  zsh  : c a b        zshrs: a b c
+
+$ a=(c a b); typeset -A m; m[k]=${(o)a}; print -rl -- "${m[k]}"
+  zsh  : c a b        zshrs: a b c
+```
+
+**C basis, one citation per context.** `singsub` is c:`Src/subst.c:514-525` —
+`prefork(&foo, PREFORK_SINGLE, NULL)` at c:520 and nothing else, so `globlist`
+is never reached.
+
+| context | C call site | flags |
+| --- | --- | --- |
+| scalar assignment RHS (first half) | `Src/exec.c:2603` `prefork(vl, (isstr ? (PREFORK_SINGLE\|PREFORK_ASSIGN) : PREFORK_ASSIGN), &prefork_ret)` | `PREFORK_SINGLE\|PREFORK_ASSIGN` |
+| `v[1]=…`, `v[lo,hi]=…`, `m[k]=…`, `v[@]=…` | the SAME `Src/exec.c:2603` — a subscripted target is still a `WC_ASSIGN_SCALAR` whose `asg->name` carries its subscript (`untokenize(name)` runs later, c:2589) | `PREFORK_SINGLE\|PREFORK_ASSIGN` |
+| `case` WORD | `Src/loop.c:610-612` `word = ecgetstr(state, EC_DUP, NULL); singsub(&word); untokenize(word);` | `PREFORK_SINGLE` |
+| `case` PATTERN | `Src/loop.c:643` and `Src/loop.c:661` `if (htok) singsub(&pat);` | `PREFORK_SINGLE` |
+| `[[ … ]]` left operand | `Src/cond.c:198` `cond_subst(&left, !fromtest);` → c:53 `singsub(strp);` | `PREFORK_SINGLE` |
+| `[[ … ]]` right operand (arith / file ops) | `Src/cond.c:205` `cond_subst(&right, !fromtest);` → c:53 | `PREFORK_SINGLE` |
+| `[[ … ]]` `==` / `!=` / `=` pattern | `Src/cond.c:308` `singsub(&right);` | `PREFORK_SINGLE` |
+| `[[ … ]]` module conditions / `=~` | `Src/cond.c:530` `cond_str`, c:544 `cond_val`, c:556 `cond_match` | `PREFORK_SINGLE` |
+| **exception** — a cond operand ending in a glob QUALIFIER | `Src/cond.c:43-51` `prefork(args, 0, NULL);` then `zglob` then `sepjoin` | **0**, NOT single |
+
+**Why the blast radius is wider than sorting.** `ssub` decides four things at
+once, so all four moved together:
+
+* c:4226 joins with `sepjoin(aval, NULL, 1)` — separator `NULL`, i.e. `IFS[0]`.
+  zshrs was splitting the array into words and rejoining them on a SPACE, so
+  every `IFS` other than a space was wrong:
+  `a=(c a b); IFS=-; case ${a} in (c-a-b)` did not match.
+* c:170 `if (unset(IGNOREBRACES) && !(flags & PREFORK_SINGLE))` gates
+  `xpandbraces` OFF: `case a{1,2} in ('a{1,2}')` matches in zsh; zshrs expanded
+  to `a1 a2`.
+* c:183 `else if (!(flags & PREFORK_SINGLE) && …)` gates prefork's empty-word
+  removal OFF: `a=(a "" b); case ${a} in ("a  b")` matches in zsh — two spaces,
+  the empty element keeping its separators.
+* `singsub` runs `prefork` and stops, so no filename generation:
+  `case *.nonexistzzz in ('*.nonexistzzz')` matches in zsh; `v[1]=/tmp/*`
+  stores the literal (c:Src/exec.c:2611 globs an assignment value only under
+  `GLOB_ASSIGN`).
+
+**Fix**, all in `src/extensions/compile_zsh.rs` plus one bridge mode:
+
+* a `singsub_depth` counter, bumped for the `case` word, the whole
+  `compile_cond_expr`, and every `case`-pattern / cond-operand substitution
+  segment. It joins `scalar_assign_depth` in `brace_array_ssub()`, in the
+  `${(flags)NAME}` fast path's `ssub` argument, in the `GET_VAR` vs
+  `GET_VAR_DQ` choice at all three bare/braced/`$*` sites, in `${=…}`'s
+  `force_split` suppression, and in the `in_prefork_single` brace gate. The two
+  `cond_operand_has_globqual` arms zero it for the duration of the operand,
+  because c:Src/cond.c:43-51 preforks those with flags 0.
+* `BUILTIN_EXPAND_TEXT` mode **9** = "singsub word": `PREFORK_SINGLE` alone —
+  mode 0 plus that flag, minus filename generation. Deliberately NOT mode 8:
+  mode 8 also carries `PREFORK_ASSIGN`, whose `filesub` colon-walk
+  (c:Src/subst.c:689) is an assignment-only rule, so
+  `case /usr/bin:~/bin in` must keep the literal `~/bin`.
+* `cond_glob_suppress_depth`, which records how much of `dq_context_depth` is
+  the cond's synthetic glob-suppression bump rather than a real `"…"`. This
+  compiler has always spelled "no filename generation" as `dq_context_depth`,
+  but that flag ALSO means paramsubst's `qt` (c:1625) — a different bit from
+  `ssub` (c:1761). An unquoted cond operand has only the second, and while it
+  read as `qt` it skipped the `${(flags)NAME}` fast path (the only one that
+  carries `ssub`) so the sort ran unguarded. The two sites that ask "is this
+  word double-quoted?" now subtract the counter; every glob-suppression site
+  still reads the raw depth.
+* `compile_scalar_assign_value`, the shared body of the plain-name RHS, is now
+  what the four subscripted spellings call. They used to call `compile_word_str`
+  bare, i.e. as an argv word.
+
+**Measured**, `/bin/zsh -f` (5.9) vs `zshrs --zsh -f`, line-by-line through
+`print -rl` so a word boundary cannot hide inside `print`'s space-joining:
+
+| corpus | before | after |
+| --- | --- | --- |
+| 96 cases — the four contexts, IFS variations, glob/`==`/`=~` RHS, array contexts that must still sort | 70 match | **96 match** |
+| 126 cases — `case` / `[[ … ]]` word splitting, quoting, empty and one-element arrays, embedded whitespace, `v[i]=` / `m[k]=` shapes | 114 match | **122 match** |
+
+Zero regressions in either corpus.
+
+**Still divergent** — all pre-existing, all verified unchanged against the
+pre-fix binary, none of them one of the four contexts above:
+
+* `case ${a[*]}` and `case $*` join on a space rather than `IFS[0]`. That is
+  the positional / `[*]` splat path (`BUILTIN_ARRAY_ALL` +
+  `BUILTIN_ARRAY_DROP_EMPTY`), where c:183's elision gate and the `[*]` join
+  have to move together on the `ssub` bit; the cond spelling
+  `[[ ${a[*]} == "x:y" ]]` IS fixed here.
+* A SLICE splat joins on a space too:
+  `a=(one two three); IFS=,; [[ ${a[2,3]} == "two,three" ]]` is false in zshrs.
+  Same family as the `[*]` gap — the space-default join, not the sort.
+* `[[ -z zzznope*(#qN) ]]` errors "unknown file attribute" under `-f`: a
+  `checkglobqual` / `EXTENDEDGLOB`-decided-at-compile-time gap, unrelated to
+  `PREFORK_SINGLE`.
+* `[[ nm -ne compstate[nmatches] ]]` reads the subscript as 0 when the
+  association holds a non-zero value — an arithmetic-subscript defect on the
+  cond RHS, not an expansion one.
+
+Pinned by `tests/zshrs_shell.rs::singsub_contexts_are_prefork_single` (46
+shapes, every expectation captured from `/bin/zsh -f`; 30 of them fail against
+the pre-fix binary and 16 are must-not-regress pins for the array contexts that
+still sort and for the cond pattern machinery).

@@ -11438,6 +11438,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //         (c:Src/glob.c:2161-2167 xpandredir)
     //   8 = unquoted assignment VALUE — same as 6 plus PREFORK_SINGLE
     //         (c:Src/exec.c:2603 / :4239-4241)
+    //   9 = singsub word — mode 0 plus PREFORK_SINGLE and nothing else
+    //         (c:Src/subst.c:514-520 `prefork(&foo, PREFORK_SINGLE, NULL)`:
+    //          the `case` WORD c:Src/loop.c:611, every `[[ … ]]` operand
+    //          c:Src/cond.c:53). No PREFORK_ASSIGN — filesub's colon-walk
+    //          is assignment-only (c:Src/subst.c:689).
     // Single result → Value::str; multi → Value::Array.
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
         let mode = vm.pop().to_int() as u8;
@@ -11612,8 +11617,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // PREFORK_SINGLE half is paramsubst's `ssub`
                 // (c:Src/subst.c:1761), which gates off the forced split at
                 // c:Src/subst.c:3913.
+                // Mode 9 = a word C expands with `singsub` (c:Src/subst.c:520
+                // `prefork(&foo, PREFORK_SINGLE, NULL)`) — the `case` WORD
+                // (c:Src/loop.c:611) and every `[[ … ]]` operand
+                // (c:Src/cond.c:53). PREFORK_SINGLE alone: it is paramsubst's
+                // `ssub` (c:Src/subst.c:1761), which takes the c:4226
+                // `if (isarr && ssub)` IFS[0] join BEFORE the c:4256 array-emit
+                // block, so the c:4264 unique fold and the c:4301-4326 sort do
+                // not run; it also turns off `xpandbraces` (c:Src/subst.c:170)
+                // and c:3913's `force_split`. NO PREFORK_ASSIGN — a `case`
+                // word / cond operand gets no `filesub` colon-walk.
                 let pf_flags = if mode == 8 {
                     crate::ported::zsh_h::PREFORK_SINGLE | crate::ported::zsh_h::PREFORK_ASSIGN
+                } else if mode == 9 {
+                    crate::ported::zsh_h::PREFORK_SINGLE
                 } else if mode == 6 {
                     crate::ported::zsh_h::PREFORK_ASSIGN
                 } else {
@@ -11708,7 +11725,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let noglob = opt_state_get("noglob").unwrap_or(false)
                     || opt_state_get("GLOB").map(|v| !v).unwrap_or(false)
                     || !opt_state_get("glob").unwrap_or(true)
-                    || (mode == 7 && !opt_state_get("multios").unwrap_or(true));
+                    || (mode == 7 && !opt_state_get("multios").unwrap_or(true))
+                    // Mode 9 = singsub. c:Src/subst.c:514-525 runs `prefork`
+                    // and NOTHING else — `globlist` is never called, so a
+                    // `case` word (c:Src/loop.c:610-612) and a `[[ … ]]`
+                    // operand (c:Src/cond.c:53) are never filename-generated.
+                    || mode == 9;
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
