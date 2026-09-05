@@ -3894,6 +3894,22 @@ impl ZshCompiler {
             return;
         }
         if matches!(redir.rtype, REDIR_HERESTR) {
+            // The here-string WORD is the fourth `singsub` caller —
+            // c:Src/exec.c:4711-4718 `getherestr`:
+            //
+            //     t = fn->name;
+            //     singsub(&t);
+            //     untokenize(t);
+            //
+            // `singsub` (c:Src/subst.c:514-525) is `prefork(&foo,
+            // PREFORK_SINGLE, NULL)` and nothing else, and the `untokenize`
+            // behind it discards the glob and brace tokens rather than acting
+            // on them — so `cat <<< /tmp/*` and `cat <<< {a,b}` are literal in
+            // zsh, and `IFS=:; cat <<< ${a[@]}` is the one word `x:y`. All
+            // three call sites below compiled the word as an ordinary argv
+            // word, which globbed, brace-expanded and space-joined instead.
+            // `compile_singsub_word_noglob` is exactly that C pair.
+            //
             // `<<< str` with an EXPLICIT target fd > 0 (e.g.
             // `exec 3<<<"line"`): the existing `Op::HereString` path
             // stages the content as "pending stdin" for the NEXT
@@ -3914,7 +3930,7 @@ impl ZshCompiler {
             // expected". Marker 254 = genuine here-string, so
             // BUILTIN_OPEN_NAMED_FD appends the newline of c:4671-4672.
             if let Some(ref vid) = redir.varid {
-                self.compile_word_str(&redir.name);
+                self.compile_singsub_word_noglob(&redir.name);
                 let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
                 self.builder.emit(Op::LoadConst(vid_const), 0);
                 self.builder.emit(Op::LoadInt(254), 0);
@@ -3926,7 +3942,7 @@ impl ZshCompiler {
                 return;
             }
             if redir.fd > 0 {
-                self.compile_word_str(&redir.name);
+                self.compile_singsub_word_noglob(&redir.name);
                 self.builder.emit(Op::LoadInt(fd as i64), 0);
                 // c:4671-4672 — NOT from a here-document, so the
                 // helper appends the trailing newline.
@@ -3940,7 +3956,7 @@ impl ZshCompiler {
             }
             // Default fd=0 (stdin) — original pending-stdin path
             // works because the next simple command picks it up.
-            self.compile_word_str(&redir.name);
+            self.compile_singsub_word_noglob(&redir.name);
             self.builder.emit(Op::HereString, 0);
             return;
         }
@@ -6041,6 +6057,37 @@ impl ZshCompiler {
             // first positional because pop_args flattens Array.
             let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
             self.builder.emit(Op::LoadConst(idx), 0);
+            // c:Src/subst.c:4226 — `if (isarr && ssub) { val = sepjoin(aval,
+            // NULL, 1); isarr = 0; }`. The bare `$@` / `$*` read is an array
+            // reference (`isarr != 0`), and this join runs AFTER every
+            // quoting decision, unconditionally: `nojoin` — the flag that
+            // keeps `"$@"` a splat in argument position — gets no say. So a
+            // PREFORK_SINGLE context joins both spellings on `IFS[0]`, quoted
+            // or not, and `IFS=:; v="$@"` is the one word `x:y` just like
+            // `v=$@` and `v=$*`.
+            //
+            // GET_VAR_DQ below cannot express that: `force_dq` conflates
+            // "quoted" with "scalar-substituted", and its `$@`/`$*` arm
+            // (`get_var_impl`, fusevm_bridge.rs) returns the raw positional
+            // list either way — correct for `f "$@"`, wrong here. Route the
+            // three `singsub` callers plus the two assignment forms straight
+            // at the joiner instead, with its no-split argc.
+            //
+            // `assign_builtin_arg_depth` is paired with
+            // `assign_context_depth` for the same reason as the `${NAME[@]}`
+            // splice below: the depth covers every typeset-family argument,
+            // and only a `NAME=value` one is a scalar assignment. `set -- p q;
+            // local $@` declares two parameters.
+            let ssub = self.scalar_assign_depth > 0
+                || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
+                || self.singsub_depth > 0;
+            if ssub {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1),
+                    0,
+                );
+                return;
+            }
             // c:Src/exec.c:2554 addvars — a SCALAR assignment RHS is expanded
             // with PREFORK_SINGLE, so it is NOT word-split even under
             // SH_WORD_SPLIT. GET_VAR applies the split (and hence trims
@@ -6925,16 +6972,43 @@ impl ZshCompiler {
                 if let Some(name) = array_splice_ref(&untoked) {
                     let idx = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    // Typeset-family scalar RHS joins `[@]` like `[*]`,
-                    // same as a bare `b="${a[@]}"` scalar assign.
-                    let force_join =
-                        self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
-                    let bid = if is_star || force_join {
+                    // c:Src/subst.c:4226 — `if (isarr && ssub) { val =
+                    // sepjoin(aval, NULL, 1); isarr = 0; }`, "prefork() wants
+                    // a scalar, so join no matter what else". `ssub` is
+                    // PREFORK_SINGLE from any of its callers: a scalar
+                    // assignment RHS and a `typeset NAME=…` argument
+                    // (c:Src/exec.c:2603), and `singsub` (c:Src/subst.c:520),
+                    // which is how a `case` word (c:Src/loop.c:611) and every
+                    // `[[ … ]]` operand (c:Src/cond.c:53) are expanded.
+                    // `[@]` therefore joins exactly like `[*]` in all of them.
+                    //
+                    // The join alone is not enough: BUILTIN_ARRAY_JOIN_STAR's
+                    // default behaviour is the command-argument one — join on
+                    // IFS[0], then word-split the result on IFS — and that
+                    // second half has no counterpart under `singsub`, which
+                    // stops at `prefork(…, PREFORK_SINGLE, NULL)` and never
+                    // reaches `globlist`. Passing argc=1 is the "joined, do
+                    // not split" signal (see the builtin's argc contract).
+                    // Splitting is why `IFS=:; v=${a[@]}` came back as the
+                    // array `(x y)` — which then stringified with a hardcoded
+                    // space — instead of zsh's single `x:y`.
+                    //
+                    // `assign_builtin_arg_depth` must be paired with
+                    // `assign_context_depth`: it is bumped for EVERY
+                    // typeset-family argument, and only the `NAME=value` ones
+                    // are assignments. A bare `local -a ${a[@]}` names the
+                    // arrays to declare, so it stays a splat — joining it
+                    // handed `typeset` the single name `p:q`.
+                    let ssub = self.scalar_assign_depth > 0
+                        || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)
+                        || self.singsub_depth > 0;
+                    let bid = if is_star || ssub {
                         crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
                     } else {
                         crate::vm_helper::BUILTIN_ARRAY_ALL
                     };
-                    self.builder.emit(Op::CallBuiltin(bid, 0), 0);
+                    let join_argc = u8::from(ssub);
+                    self.builder.emit(Op::CallBuiltin(bid, join_argc), 0);
                     // c:Src/subst.c:184-188 — an UNQUOTED array splat drops
                     // empty words (`uremnode`). The `[@]` subscript only sets
                     // splat-vs-join shape (SCANPM_ISVAR_AT), not empty removal,

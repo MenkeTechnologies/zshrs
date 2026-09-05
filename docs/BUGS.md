@@ -58385,3 +58385,141 @@ Pinned by `tests/zshrs_shell.rs::singsub_contexts_are_prefork_single` (46
 shapes, every expectation captured from `/bin/zsh -f`; 30 of them fail against
 the pre-fix binary and 16 are must-not-regress pins for the array contexts that
 still sort and for the cond pattern machinery).
+
+## #1132 — `${a[@]}` and `$@` joined on a hardcoded space instead of `IFS[0]` in every `PREFORK_SINGLE` context, and the here-string word was never `singsub`ed at all — fixed
+
+**Status:** `fixed` 2026-09-05. The sibling of #1131: that entry moved the
+`ssub` gate inside the PORTED `paramsubst`, this one covers the three compiler
+FAST paths that never reach it.
+
+```console
+$ a=(x y); IFS=:; v=${a[@]};   print -r -- "$v"
+  zsh  : x:y
+  zshrs: x y                    # before
+
+$ a=(x y); IFS=:; v="${a[@]}"; print -r -- "$v"
+  zsh  : x:y
+  zshrs: x y                    # before
+
+$ a=(x y); IFS=:; [[ ${a[@]} == x:y ]] && echo HIT || echo MISS
+  zsh  : HIT
+  zshrs: MISS                   # before
+
+$ a=(x y); IFS=:; case ${a[@]} in x:y) echo HIT;; *) echo MISS;; esac
+  zsh  : HIT
+  zshrs: MISS                   # before
+
+$ set -- x y; IFS=:; v=$@;   print -r -- "$v"
+  zsh  : x:y
+  zshrs: x y                    # before
+
+$ a=(x y); IFS=:; cat <<< ${a[@]}
+  zsh  : x:y
+  zshrs: x y                    # before
+
+$ cat <<< /tmp/*(N[1])
+  zsh  : /tmp/*(N[1])
+  zshrs: /tmp/AdODIS-install.log   # before
+
+$ cat <<< {a,b}
+  zsh  : {a,b}
+  zshrs: a b                    # before
+
+$ a=(c a b); IFS=:; cat <<< ${(o)a}
+  zsh  : c:a:b
+  zshrs: a b c                  # before
+```
+
+Only a NON-EMPTY, NON-SPACE `IFS` exposed the join. `IFS=` joins with `""` and
+has nothing to split; an unset `IFS` joins with `" "` and re-splits to the same
+bytes. Both were accidentally right, which is what kept this out of the
+`${a[*]}` measurements — `[*]` was already correct in all four contexts.
+
+**Root cause** — three fast paths in `src/extensions/compile_zsh.rs` bypass the
+ported `paramsubst`, so #1131's `ssub` gate never sees them:
+
+1. The `${NAME[@]}` / `${NAME[*]}` array-splice fast path emitted
+   `BUILTIN_ARRAY_JOIN_STAR`, whose contract is the COMMAND-ARGUMENT one:
+   join on `IFS[0]`, then word-split the joined string on `IFS` and return an
+   array. That array later stringifies with a hardcoded space
+   (`fusevm` `value.rs:132-146`). Choosing the joiner was therefore not enough
+   — the second half of its job had to be suppressed. The `[@]` spelling
+   reached it only for a scalar assignment (`scalar_assign_depth`) or a
+   `typeset` argument (`assign_builtin_arg_depth`); a `case` word and a
+   `[[ … ]]` operand got `BUILTIN_ARRAY_ALL` and stayed an array.
+2. The bare `$@` / `$*` path emitted `BUILTIN_GET_VAR_DQ`, whose `$@`/`$*` arm
+   (`get_var_impl`, `src/fusevm_bridge.rs`) returns the raw positional list
+   whatever `force_dq` says. `force_dq` conflates "quoted" with
+   "scalar-substituted", so it cannot express this: `f "$@"` must splat and
+   `v="$@"` must join.
+3. The here-string word was compiled as an ordinary argv word.
+
+c:`Src/subst.c:4226-4231`:
+
+```c
+    if (isarr && ssub) {
+	/* prefork() wants a scalar, so join no matter what else */
+	val = sepjoin(aval, NULL, 1);
+	isarr = 0;
+	l->list.flags &= ~LF_ARRAY;
+    }
+```
+
+`sepjoin(aval, NULL, 1)` — separator `NULL`, i.e. `IFS[0]`. The join is
+UNCONDITIONAL on `nojoin`, which is the flag that keeps `"$@"` a splat in
+argument position, so a `PREFORK_SINGLE` context joins `[@]` and `$@` exactly
+like `[*]` and `$*`, quoted or not. And `singsub` (c:`Src/subst.c:514-525`) is
+`prefork(&foo, PREFORK_SINGLE, NULL)` and nothing else — it never reaches
+`globlist`, so nothing splits the joined value afterwards.
+
+The here-string is the fourth `singsub` caller, c:`Src/exec.c:4711-4718`
+`getherestr`:
+
+```c
+    t = fn->name;
+    singsub(&t);
+    untokenize(t);
+```
+
+The `untokenize` behind it DISCARDS the glob and brace tokens rather than
+acting on them, which is why `cat <<< /tmp/*` and `cat <<< {a,b}` are literal.
+
+**Fix**
+
+* `BUILTIN_ARRAY_JOIN_STAR` gains an argc contract: `1` means the caller is a
+  `PREFORK_SINGLE` context — join and stop, do not word-split. `0` is the
+  ordinary command-argument caller, unchanged.
+* The array-splice fast path selects the joiner for `is_star || ssub` and
+  passes that argc.
+* The bare `$@` / `$*` path routes straight at the joiner under `ssub` instead
+  of at `BUILTIN_GET_VAR_DQ`.
+* The three here-string call sites compile their word with
+  `compile_singsub_word_noglob`, which is exactly the `singsub` + `untokenize`
+  pair.
+
+`ssub` is `scalar_assign_depth > 0 || (assign_builtin_arg_depth > 0 &&
+assign_context_depth > 0) || singsub_depth > 0`. The `assign_context_depth`
+pairing is load-bearing: `assign_builtin_arg_depth` is bumped for EVERY
+typeset-family argument, and only a `NAME=value` one is an assignment
+(c:`Src/exec.c:4239-4241` vs the PREFORK_TYPESET arg at c:4197). `a=(p q);
+local -a ${a[@]}` names the arrays to declare and must stay a splat; joining it
+handed `typeset` the single name `p:q`.
+
+**Still open, same family, NOT fixed here** — `BUILTIN_ARRAY_INDEX`
+(`src/extensions/compile_zsh.rs`, the `braced_subscript_ref` fast path) returns
+an array for a RANGE subscript and has no `ssub` gate of its own:
+
+```console
+$ a=(x y z); IFS=:; [[ ${a[1,2]} == x:y ]] && echo HIT || echo MISS
+  zsh  : HIT
+  zshrs: MISS
+
+$ a=(x y z); IFS=:; cat <<< ${a[1,2]}
+  zsh  : x:y
+  zshrs: x y
+```
+
+`v=${a[1,2]}` and `typeset v=${a[1,2]}` are correct; only the `singsub`
+callers diverge. Also still open and unrelated to `IFS`: bare `$argv` is not
+recognised where `$@` / `$*` are, so `set -- x y; v=$argv` joins on a space and
+`v=${argv}` comes back EMPTY.
