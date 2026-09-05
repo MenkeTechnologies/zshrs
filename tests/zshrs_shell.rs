@@ -15721,6 +15721,41 @@ fn singsub_contexts_are_prefork_single() {
             "a=(c a b); IFS=\":;\"; case ${a} in (\"c:a:b\") print -rl -- Y;; (*) print -rl -- N;; esac",
             "Y\n",
         ),
+        // The `[*]` / `[@]` / `$*` spellings of the same word take the same
+        // c:3916 / c:4226 `sepjoin(aval, NULL, 1)`. These were the shapes that
+        // reached the VM as an array and got stringified with a hardcoded
+        // space: `case ${a[*]}` took `*)` for every non-space IFS.
+        (
+            "a=(x y); IFS=:; case ${a[*]} in (\"x:y\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // Both spellings as arms of ONE case, so the verdict cannot be read
+        // two ways: the word is `x:y`, not `x y`.
+        (
+            "a=(x y); IFS=:; case ${a[*]} in ('x y') print -rl -- SPACE;; (x:y) print -rl -- IFS;; (*) print -rl -- OTHER;; esac",
+            "IFS\n",
+        ),
+        (
+            "set -- x y; IFS=:; case $* in (\"x:y\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // A non-space IFS that is an ordinary letter, so the divergence cannot
+        // be blamed on the separator being punctuation.
+        (
+            "a=(x y); IFS=Q; case ${a[*]} in (xQy) print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        // IFS SET-but-EMPTY concatenates (c:Src/utils.c:3938-3940 —
+        // `dupstrpfx(\"\", …)`); only UNSET or space-leading falls back to a
+        // space.
+        (
+            "a=(x y); IFS=; case ${a[*]} in (xy) print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
+        (
+            "a=(x y); unset IFS; case ${a[*]} in (\"x y\") print -rl -- Y;; (*) print -rl -- N;; esac",
+            "Y\n",
+        ),
         // c:183 — the empty-word removal is gated OFF by PREFORK_SINGLE, so the
         // empty element keeps its separator.
         (

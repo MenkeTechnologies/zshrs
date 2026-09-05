@@ -9932,14 +9932,25 @@ impl ZshCompiler {
         // see the prior command's status. The reset to 0 happens AFTER
         // (c:705 `if (!anypatok) lastval = 0`), so capture the word
         // first, THEN reset.
-        // c:Src/loop.c:611 `singsub(&word);` — the case WORD is preforked with
-        // PREFORK_SINGLE (c:Src/subst.c:520), so it is never word-split, never
-        // brace-expanded (c:Src/subst.c:170), and an array result is joined with
-        // IFS[0] at c:Src/subst.c:4226 BEFORE the c:4256 emit block that holds
+        // c:Src/loop.c:611-612 `singsub(&word); untokenize(word);` — byte for
+        // byte the same pair `cond_subst` runs on a `[[ … ]]` operand
+        // (c:Src/cond.c:53), so the case WORD takes the same compiler path as
+        // one: PREFORK_SINGLE, and no `globlist`. It is therefore never
+        // word-split, never brace-expanded (c:Src/subst.c:170), never
+        // filename-generated, and an array result is joined with IFS[0] at
+        // c:Src/subst.c:3916 / c:4226 BEFORE the c:4256 emit block that holds
         // the (u) fold and the (o)/(O)/(n) sort.
-        self.singsub_depth += 1;
-        self.compile_word_str(&c.word);
-        self.singsub_depth -= 1;
+        //
+        // Bumping `singsub_depth` alone was not that path. It missed the
+        // `dq_context_depth` half, which is what routes an array-valued word
+        // into the c:3032/c:3916 join instead of letting it reach the VM as a
+        // `Value::Array` — and a `Value::Array` is stringified with a
+        // hardcoded space (fusevm value.rs `as_str_cow`), not `sepjoin(…,
+        // NULL, 1)`'s `$IFS[1]`. `a=(x y); IFS=:; case ${a[*]} in (x:y)` took
+        // the `*)` arm because the word was `x y`; the identical `[[ ${a[*]}
+        // == x:y ]]` was already right, because cond_subst's operand goes
+        // through `compile_singsub_word_noglob`.
+        self.compile_singsub_word_noglob(&c.word);
         let word_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(word_slot), 0);
