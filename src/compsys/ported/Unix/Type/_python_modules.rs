@@ -66,11 +66,17 @@ pub fn _python_modules(args: &[String]) -> i32 {
         && _retrieve_cache(&[cache_id.clone()]) != 0
     {
         // sh:32 — set -A $array_name $(python -c $script)
+        // sh:34 `_call_program modules $python -c ${(q)script}` — the SCRIPT
+        // is (q)-quoted, the interpreter is not. `_call_program` sh:33 evals
+        // `"$argv[2,-1]"`, joining with spaces first, so handing SCRIPT over
+        // RAW let eval re-split it on its own spaces and embedded newline:
+        // `(eval):2: parse error near `importer,'`. Same defect as
+        // `_perl_modules` sh:86; no parity cell covers this one.
         let _ = call_program_capture(&[
             "modules".to_string(),
             python.clone(),
             "-c".to_string(),
-            SCRIPT.to_string(),
+            crate::ported::utils::quotestring(SCRIPT, crate::ported::zsh_h::QT_BACKSLASH),
         ]);
         let mods: Vec<String> = getsparam("REPLY")
             .unwrap_or_default()

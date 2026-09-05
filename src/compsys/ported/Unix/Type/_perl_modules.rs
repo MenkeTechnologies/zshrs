@@ -115,12 +115,22 @@ fn scan_libdir(libdir: &str, pod: bool) -> Vec<String> {
 
 /// sh:86 `perl -e 'print "@INC"'` — the module search path for `$perl`.
 fn perl_inc(perl: &str) -> Vec<String> {
-    let _ = call_program_capture(&[
-        "perl-inc".to_string(),
-        perl.to_string(),
-        "-e".to_string(),
-        "print \"@INC\"".to_string(),
-    ]);
+    // sh:86 is ONE word: `${(q)perl}$' -e \'print "@INC"\''` — the
+    // (q)-quoted interpreter path with an already-quoted `-e` script glued on.
+    //
+    // `_call_program` sh:33 is `eval $clocale $prefix "$argv[2,-1]"`, and eval
+    // JOINS its arguments with spaces before parsing. Passing `perl`, `-e` and
+    // the script as three SEPARATE unquoted words therefore produced
+    // `eval 'perl -e print "@INC"'`, which the shell re-split into
+    // `perl -e print @INC`: the `-e` script became bare `print` (printing an
+    // undef `$_`) and `@INC` became `$ARGV[0]`. REPLY came back EMPTY, no
+    // libdir was ever scanned, and `perldoc <TAB>` fell through to plain
+    // file completion with 0 matches where zsh offers 1124.
+    let cmd = format!(
+        "{} -e 'print \"@INC\"'",
+        crate::ported::utils::quotestring(perl, crate::ported::zsh_h::QT_BACKSLASH)
+    );
+    let _ = call_program_capture(&["perl-inc".to_string(), cmd]);
     getsparam("REPLY")
         .unwrap_or_default()
         .split_whitespace()
