@@ -111,7 +111,46 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().write() {
         tab.enable("repeat");
     }
+    load_test_terminal();
     g
+}
+
+/// Load the terminal the capability-reading tests measure in, once per test
+/// binary.
+///
+/// `%B` is `tcstr[TCBOLDFACEBEG]`, `echoti bold` reads the terminfo entry and
+/// `gettermcap co` reads the termcap one; all three come from `init_term()`,
+/// which fills them from the entry `$TERM` names. A test binary runs none of
+/// zsh's startup, and a CI runner has no tty and no `TERM` at all — so every
+/// capability came back empty there and `%B` expanded to nothing, while a
+/// developer machine's own terminal made the same assertions pass. The terminal
+/// is a fact about the environment, so the harness states it rather than
+/// inheriting whatever the shell that started `cargo test` was using.
+///
+/// Three names, in order, because a minimal image carries only the older ones:
+/// each of `xterm-256color`, `xterm` and `vt100` gives the capabilities these
+/// tests pin (measured: the same `\e[1m`, `\e[4m` and `\e[0m` from all three).
+/// If none of them loads there is no terminfo database at all, and the tests
+/// that read a capability fail on that, which is what a missing database
+/// deserves.
+fn load_test_terminal() {
+    static LOADED: OnceLock<()> = OnceLock::new();
+    LOADED.get_or_init(|| {
+        for term in ["xterm-256color", "xterm", "vt100"] {
+            crate::ported::params::setsparam("TERM", term);
+            if crate::ported::init::init_term() == 1 {
+                // `zsh/terminfo` asks the ENVIRONMENT rather than the parameter
+                // table — `setupterm(NULL)` is ncurses' own lookup, and the port
+                // keeps it — so the environment has to say what the table says or
+                // `${terminfo[bold]}` answers for a terminal nobody selected.
+                //
+                // SAFETY: once per process, from inside the crate-wide test lock,
+                // before any test has read the variable.
+                unsafe { std::env::set_var("TERM", term) };
+                break;
+            }
+        }
+    });
 }
 
 /// Reset the completion-machinery globals a `compadd`-driven completion
