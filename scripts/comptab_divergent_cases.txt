@@ -839,3 +839,13 @@ gawkbug -
 #   # 108 passed, 0 failed, 108 cell(s)
 #   # categories: PASS=108 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
 #   # elapsed: 170.0s (1.6s/cell)
+#
+# chunk part_05  `mDNSResponder ` .. `mcxrefresh -`
+#   # 106 passed, 2 failed, 108 cell(s)
+#   # categories: PASS=106 FAIL=2 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 152.4s (1.4s/cell)
+#
+# chunk part_06  `md2html ` .. `mkdoc `
+#   # 107 passed, 0 failed, 108 cell(s)
+#   # categories: PASS=107 FAIL=0 TIMEOUT=1 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 276.7s (2.6s/cell)
