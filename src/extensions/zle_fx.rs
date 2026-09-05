@@ -63,11 +63,16 @@ fn with_fx<R>(f: impl FnOnce(&mut FxState) -> R) -> R {
 
 /// Kill switch: `ZSHRS_NATIVE_ZLE_FX=0` (param or environment) disables all three.
 pub fn enabled() -> bool {
-    match getsparam("ZSHRS_NATIVE_ZLE_FX") {
+    // An explicit `ZSHRS_NATIVE_ZLE_FX` always wins, in both directions:
+    // `=0` turns the engines off natively, `=1` turns them back on inside
+    // a drop-in for anyone who wants zshrs's editor while emulating.
+    match getsparam("ZSHRS_NATIVE_ZLE_FX").or_else(|| std::env::var("ZSHRS_NATIVE_ZLE_FX").ok()) {
         Some(v) => v != "0",
-        None => std::env::var("ZSHRS_NATIVE_ZLE_FX")
-            .map(|v| v != "0")
-            .unwrap_or(true),
+        // Default: on for zshrs being itself, OFF in any parity mode.
+        // These engines are zshrs-original — no shell zshrs stands in for
+        // has autosuggestion ghost text or input highlighting, so a
+        // drop-in that renders them does not look like its reference.
+        None => !crate::extensions::emulation_startup::emulating(),
     }
 }
 

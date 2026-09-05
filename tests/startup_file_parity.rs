@@ -1620,6 +1620,63 @@ fn default_aliases_match_the_reference_shell() {
     report(tested, &missing, &mismatches, "default alias set");
 }
 
+/// The zshrs-original line-editor engines — autosuggestion ghost text,
+/// input syntax highlighting, history search, autopair — are OFF in every
+/// parity mode and ON for zshrs being itself.
+///
+/// No shell zshrs stands in for renders any of them, so a drop-in that
+/// did could not look like its reference: verified under a pty, a
+/// `--bash` login shell was painting a grey `\e[90m` suggestion and
+/// colouring the command line `\e[31m`/`\e[32m` where bash prints plain
+/// text. `--zsh` is included — real zsh has no ghost text either, and it
+/// shares `Personality::Zsh` with native zshrs, which is why the gate is
+/// `emulating()` rather than the personality.
+///
+/// An explicit `ZSHRS_NATIVE_ZLE_FX` still wins in BOTH directions, so
+/// `=0` disables them natively and `=1` re-enables them inside a drop-in.
+#[test]
+fn native_zle_engines_are_off_in_every_parity_mode() {
+    let _g = PERSONALITY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    use zsh::emulation_startup::{emulating, set_emulating};
+    let saved = emulating();
+
+    // The env var must be unset for the default to be observable; the
+    // test binary's own environment is inherited by `zle_fx::enabled`.
+    let restore = std::env::var("ZSHRS_NATIVE_ZLE_FX").ok();
+    std::env::remove_var("ZSHRS_NATIVE_ZLE_FX");
+
+    set_emulating(false);
+    assert!(
+        zsh::zle_fx::enabled(),
+        "zshrs being itself must keep its line-editor engines"
+    );
+    set_emulating(true);
+    assert!(
+        !zsh::zle_fx::enabled(),
+        "a parity mode must not render ghost text or input highlighting"
+    );
+
+    // The explicit opt-in overrides the parity default…
+    std::env::set_var("ZSHRS_NATIVE_ZLE_FX", "1");
+    assert!(
+        zsh::zle_fx::enabled(),
+        "ZSHRS_NATIVE_ZLE_FX=1 must re-enable the engines inside a drop-in"
+    );
+    // …and the explicit opt-out still works natively.
+    std::env::set_var("ZSHRS_NATIVE_ZLE_FX", "0");
+    set_emulating(false);
+    assert!(
+        !zsh::zle_fx::enabled(),
+        "ZSHRS_NATIVE_ZLE_FX=0 must disable the engines natively"
+    );
+
+    match restore {
+        Some(v) => std::env::set_var("ZSHRS_NATIVE_ZLE_FX", v),
+        None => std::env::remove_var("ZSHRS_NATIVE_ZLE_FX"),
+    }
+    set_emulating(saved);
+}
+
 /// Shared reporting: a divergence fails, a missing REQUIRED reference fails
 /// only under `ZSHRS_REQUIRE_REF_SHELLS`, and a run that tested nothing at
 /// all always fails — a harness that silently covers zero legs is worse

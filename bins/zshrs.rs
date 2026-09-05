@@ -1750,6 +1750,15 @@ pub fn zshrs_main() {
         zsh::emulation_startup::set_explicit_login(explicit);
     }
 
+    // Tell the library a parity mode is in force. The zshrs-original
+    // line-editor engines (autosuggestion ghost text, input syntax
+    // highlighting, history search, autopair) default OFF from here on:
+    // none of the shells zshrs stands in for have them, so leaving them
+    // on made a `--bash` login shell paint grey suggestions and colour
+    // the command line where bash prints plain text. `--zsh` counts too —
+    // real zsh has no ghost text either.
+    zsh::emulation_startup::set_emulating(parity_mode_selected);
+
     if parity_mode_selected {
         // Use the process-local AtomicBool override instead of
         // exporting `ZSHRS_CACHE=0` in env. The env-var approach

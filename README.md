@@ -699,6 +699,7 @@ Rules that differ per shell, each measured rather than assumed:
 | bracketed paste (`\e[?2004h`) | yes | no | no | yes |
 | OSC 133 shell-integration marker | no | no | no | yes |
 | zsh partial-line `%` marker (`PROMPT_SP`) | no | no | no | yes |
+| zshrs's own line-editor engines (autosuggestion ghost text, input syntax highlighting, history search, autopair) | off | off | off | on |
 
 Startup state beyond the files — also per-shell, also measured:
 
@@ -725,6 +726,14 @@ resolving to its builtin, whereas inventing one shadows a real command.
 
 A privileged shell (effective uid ≠ real uid) reads no user file at all; the
 Korn and Bourne drop-ins take `/etc/suid_profile` in place of the profile pair.
+
+The zshrs-original line-editor engines are off in every parity mode, `--zsh`
+included, and on only when zshrs is being itself. None of the shells zshrs
+stands in for renders autosuggestion ghost text or colours the command line
+as you type, so a drop-in that did could not look like its reference.
+`ZSHRS_NATIVE_ZLE_FX` overrides the default in both directions: `=1` brings
+the engines back inside a drop-in, `=0` turns them off natively. The OSC 133
+shell-integration markers are gated the same way.
 
 POSIX requires that "if there is an error in a special built-in utility …
 the shell shall abort", and ksh93u+m, mksh and dash all do — `readonly -X`,
