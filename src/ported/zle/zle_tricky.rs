@@ -4425,10 +4425,31 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
                     i += 1;
                     while i < bytes.len() && !(bytes[i] == b'%' && bytes.get(i + 1) == Some(&b'}'))
                     {
-                        if dopr {
-                            out.push(bytes[i]); // c:2525
+                        // c:2519-2523 — `if (*p == Meta) { p++; if (dopr)
+                        // putc(*p ^ 32, shout); } else if (dopr) putc(*p, shout);`
+                        // The literal payload is un-metafied on the way out
+                        // here too; see the character arm below for why the
+                        // escape is two CHARACTERS (four bytes) in zshrs.
+                        let meta_at = bytes[i] == 0xc2 && bytes.get(i + 1) == Some(&0x83);
+                        let pay = if meta_at {
+                            fmt[i + 2..].chars().next().filter(|n| (0x80..=0xff).contains(&(*n as u32)))
+                        } else {
+                            None
+                        };
+                        match pay {
+                            Some(n) => {
+                                if dopr {
+                                    out.push(((n as u32) as u8) ^ 32); // c:2522
+                                }
+                                i += 2 + n.len_utf8();
+                            }
+                            None => {
+                                if dopr {
+                                    out.push(bytes[i]); // c:2525
+                                }
+                                i += 1;
+                            }
                         }
-                        i += 1;
                     }
                     // c:2527-2530 — `if (*p) p++; else p--;` (the `%` of `%}`
                     // is at `i`, so this lands on `}` and c:2535's `p++` steps
@@ -4477,17 +4498,46 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
             i += 1;
         } else {
             // c:2555-2572 — `MB_METACHARLENCONV(p, &cchar)` takes the WHOLE
-            // next multibyte character, C emits its bytes verbatim, and the
-            // column counter advances by `WCWIDTH_WINT(cchar)` — the glyph's
-            // display width, not its byte count. zshrs strings are native
-            // UTF-8, so the character is `fmt[i..]`'s first `char` and its
-            // width is `zwcwidth` (the same convention `niceztrlen` /
-            // `mb_niceformat` already use for every other width in this port).
-            let ch = fmt[i..].chars().next().unwrap_or(c as char);
-            let clen = ch.len_utf8();
+            // next multibyte character, C emits it one byte at a time
+            // UN-METAFYING as it goes (c:2561-2564 `if (*p == Meta) { p++;
+            // clen--; putc(*p++ ^ 32, shout); }`), and the column counter
+            // advances by `WCWIDTH_WINT(cchar)` — the glyph's display width,
+            // not its byte count.
+            //
+            // zshrs metafies at the CHARACTER level: a byte that cannot stand
+            // alone is stored as `U+0083` followed by `char::from(byte ^ 32)`,
+            // the encoding `unmetafy_str` decodes (utils.rs:16906). Its own
+            // UTF-8 is FOUR bytes (`C2 83` + the payload's two), so emitting
+            // `bytes[i..i + clen]` verbatim put four bytes on the terminal
+            // where C puts one. `compdescribe` cuts a described-match row at
+            // the screen edge one BYTE at a time (computil.c:699-715), so a
+            // description ending in a multibyte glyph leaves exactly such a
+            // lone byte: `upmendex -` at 40 columns rendered
+            // `-g  -- make Japanese index head <` and dropped zsh's trailing
+            // `\xe3`.
+            let mut chit = fmt[i..].chars();
+            let ch0 = chit.next().unwrap_or(c as char);
+            // c:2561-2564 — the Meta pair, decoded to the single raw byte it
+            // stands for. Anything else is a native character (c:2566).
+            let payload = if ch0 == char::from(crate::ported::zsh_h::Meta) {
+                chit.next().filter(|n| (0x80..=0xff).contains(&(*n as u32)))
+            } else {
+                None
+            };
+            let meta_byte = payload.map(|n| ((n as u32) as u8) ^ 32);
+            // c:2557 — `clen` is the length of the metafied character;
+            // c:2570 — `cchar` is what MB_METACHARLENCONV DECODED, i.e. the
+            // un-metafied byte, not the escape that carries it.
+            let (clen, ch) = match (payload, meta_byte) {
+                (Some(n), Some(b)) => (ch0.len_utf8() + n.len_utf8(), char::from(b)),
+                _ => (ch0.len_utf8(), ch0),
+            };
             if dopr {
                 out.extend_from_slice(applytextattributes(0).as_bytes()); // c:2559
-                out.extend_from_slice(&bytes[i..i + clen]); // c:2560-2567
+                match meta_byte {
+                    Some(b) => out.push(b),                    // c:2561-2564
+                    None => out.extend_from_slice(&bytes[i..i + clen]), // c:2566
+                }
             }
             cc += crate::ported::utils::zwcwidth(ch) as i32; // c:2570
             // c:2571-2572 — `if (dopr && !(cc % zterm_columns)) fputs(" \010")`:
@@ -6578,5 +6628,59 @@ mod tests {
         );
         let _ = crate::ported::params::unsetparam("words");
         let _ = crate::ported::params::unsetparam("CURRENT");
+    }
+
+    /// c:2555-2567 — `printfmt`'s character arm un-metafies on the way out:
+    /// `while (clen--) { if (*p == Meta) { p++; clen--; putc(*p++ ^ 32, shout); }
+    ///  else putc(*p++, shout); }`. A byte that cannot stand alone as a
+    /// character reaches `printfmt` in its metafied form, and the terminal must
+    /// see the ONE raw byte, never the escape.
+    ///
+    /// zshrs metafies at the CHARACTER level (`U+0083` + `char::from(byte ^ 32)`,
+    /// the encoding `unmetafy_str` decodes — utils.rs:16906), so the escape's
+    /// own UTF-8 is `C2 83` + the payload's two bytes. Writing the format's
+    /// bytes verbatim therefore put FOUR bytes on the terminal where zsh puts
+    /// one: a described-match row truncated mid-UTF-8-character by
+    /// `compdescribe` (computil.c:699-715) is exactly that shape, and
+    /// `-g  -- make Japanese index head <<E3>` came out as
+    /// `… <\u{83}\u{C3}` (`upmendex -`, `--cols 40`).
+    #[test]
+    fn printfmt_unmetafies_the_bytes_it_writes() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // `<` then the metafied lone byte 0xE3 (the lead byte of `あ`, which is
+        // all that fits when the description is cut at the screen edge).
+        let meta = char::from(crate::ported::zsh_h::Meta);
+        let fmt: String = format!("<{}{}", meta, char::from(0xe3u8 ^ 32));
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        let _ = printfmt(&fmt, 0, true, false);
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+
+        // The trailing bytes are the attribute reset / clear-to-EOL the C tail
+        // emits (c:2576-2588); only the text prefix is under test.
+        assert!(
+            out.starts_with(b"<\xe3"),
+            "printfmt must un-metafy: expected the raw byte E3 after `<`, got {:02x?}",
+            out
+        );
+        assert!(
+            !out.windows(2).any(|w| w == [0xc2u8, 0x83u8]),
+            "the Meta escape must never reach the terminal; got {:02x?}",
+            out
+        );
     }
 }
