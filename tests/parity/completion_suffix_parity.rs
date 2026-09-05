@@ -226,6 +226,73 @@ sleep 2
     );
 }
 
+/// The suffix is still on the line when the NEXT widget is a user
+/// widget, because a `zle -N` widget does not tear it down.
+///
+/// `execzlefunc` runs `removesuffix()` / `fixsuffix()` inside the
+/// `(w->flags & (WIDGET_INT|WIDGET_NCOMP))` branch only
+/// (Src/Zle/zle_main.c:1449 + 1468-1473). A widget made by `zle -N`
+/// carries flags `0` (zle_thingy.c:588) and takes the shell-function
+/// branch at zle_main.c:1501, which does neither — so `dumpbuf`, fired
+/// straight after TAB with nothing typed in between, sees the slash
+/// `do_single` appended. Running the teardown for user widgets too
+/// deleted the character from the line before the widget could see it,
+/// and `$BUFFER` came back one character short.
+#[test]
+fn a_user_widget_fired_straight_after_tab_still_sees_the_slash() {
+    let driver = format!(
+        "{}
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w 'print Rustrover'
+sleep 1
+zpty -w -n w $'\\t'
+sleep 3
+{DUMP_KEY}
+{DRAIN}
+",
+        open_in_fixture()
+    );
+    assert_same_dump(
+        &driver,
+        "the buffer a user widget sees immediately after a directory completion",
+    );
+}
+
+/// …and the slash DOES go when that user widget calls an internal
+/// widget, because the inner `zle end-of-line` reaches `execzlefunc`
+/// through `bin_zle_call` and takes the `WIDGET_INT` branch that does
+/// run `removesuffix()`.
+///
+/// This is the wrapper shape plugins use (`w() { zle some-widget }`),
+/// and it is the reason the teardown belongs in the branch rather than
+/// in the key loop: put it only in the key loop and it fires for the
+/// outer user widget that should skip it; leave it out of `execzlefunc`
+/// and it never fires for the inner internal widget that should run it.
+#[test]
+fn an_internal_widget_called_from_a_user_widget_removes_the_slash() {
+    let driver = format!(
+        "{}
+{DUMP_WIDGET}
+zpty -w w 'wrapeol(){{ zle end-of-line }}; zle -N wrapeol; bindkey \"^X^E\" wrapeol'
+sleep 1
+zpty -w -n w 'print Rustrover'
+sleep 1
+zpty -w -n w $'\\t'
+sleep 3
+zpty -w -n w $'\\C-x\\C-e'
+sleep 2
+{DUMP_KEY}
+{DRAIN}
+",
+        open_in_fixture()
+    );
+    assert_same_dump(
+        &driver,
+        "the buffer after a user widget delegated to an internal widget",
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Not covered here: the native line-editor engines
 // ═══════════════════════════════════════════════════════════════════════
