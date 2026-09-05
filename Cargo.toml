@@ -41,6 +41,14 @@ exclude = [
     # ceiling. `zshall.1` carries the same content, and a git or Homebrew
     # build still bundles it. build.rs treats this tree as optional.
     "/vendor/zsh/info/",
+    # The differential fuzzer's source, dropped from the PUBLISHED crate
+    # only -- 0.57 MiB of it, and the crate is against crates.io's 10 MiB
+    # ceiling again (0.12.58 shipped at 9.99 MiB). It is a development
+    # tool behind `required-features = ["parity-fuzz"]`; nobody installing
+    # zshrs runs it, and a git or Homebrew build still has it. Cargo warns
+    # and ignores a target whose source is excluded, the same way it
+    # already does for `tests/ztst_runner.rs`.
+    "/bins/parity-fuzz.rs",
     "/zshrs_dump.*",
     "/tmux",
     "/zterm_columns",
