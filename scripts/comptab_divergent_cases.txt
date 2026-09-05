@@ -2282,3 +2282,58 @@ read
 # (the host `FPATH` leaks into `zsh -f` and makes `compinit` scan 16k files, so
 # it has to be overridden), `ZSHRS_NATIVE_ZLE_FX=0`, `setopt no_beep`, values
 # read back through a FILE redirect.  3 serial runs each.
+
+# ══════════════════════════════════════════════════════════════════════════
+# MINING SWEEP — 2026-09-05, discover CELLS 6301-7400 (`--sequences tab1`)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Range: discover_cases() indices 6301..7400 (1-based) of the 8270 cases this
+# host contributes, i.e. 1100 cells, one `tab1` cell per case.  First cell
+# 'scp -', last cell 'unbound '.  Slice reproduced exactly with
+# parity_corpus.discover_cases(None, False)[6300:7400] — the same
+# deterministic sorted set `--discover N` takes its prefix from, so cells
+# 1-6300 (mined by earlier sweeps) are the complement.  It picks up exactly
+# where the 5201-6300 sweep stopped ('scp ' was its last cell).
+#
+# MEASUREMENT PINS (private scratch dir, not shared with the peer agents that
+# were editing .rs files concurrently — a shared `zshrs.pin` was overwritten
+# mid-run once already):
+#   zshrs  sha256 3f5bf06d807574efb014797dd5443fc541ad5fa3220a4c055234ae6637ea9af4
+#          (copy of target/debug/zshrs at a6979d36dd, `codesign -f -s -`d —
+#          an unsigned copy is SIGKILLed on exec and the harness reports it
+#          as a fake boot hang)
+#   dump   sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#          2122607 bytes (private copy of ~/.zpwr/local/.zcompdump-zpwr-…),
+#          the SAME dump the 5201-6300 sweep used.  Hashed BEFORE and AFTER
+#          every chunk; unchanged across the whole sweep, so no cell in this
+#          block sits inside a dump-rewrite window.
+#   mode native, geom 40x110, settle 300ms, `--jobs 4 --confirm 1` for the
+#   sweep; every FAIL re-confirmed serially and alone at `--jobs 1`, 3x.
+#
+# LOAD CAVEAT, recorded rather than hidden: this sweep ran with three peer
+# agents compiling in the same tree, `uptime` load average 47-52 for the
+# whole first chunk.  It is NOT "measured alone".  The effect is visible in
+# the per-cell cost — 4.8s/cell here against 2.2-3.9s/cell for the identical
+# --jobs 4 configuration in the 5201-6300 sweep — and it makes the default
+# 10.0s key budget marginal, so TIMEOUT counts in this block are an upper
+# bound on real silence.  Every one is re-run serially at a larger budget.
+#
+# Exact sweep command, per 100-cell chunk:
+#   PYTHONPATH=/Users/wizard/Library/Python/3.14/lib/python/site-packages \
+#   /opt/homebrew/bin/python3.14 scripts/comptab_parity.py \
+#     --zshrs <pin>/zshrs.pin --dump <pin>/dump.pin --mode native \
+#     --corpus <pin>/part_NN.txt --sequences tab1 \
+#     --jobs 4 --confirm 1 --jsonl <pin>/part_NN.jsonl
+#
+# VERBATIM PER-CHUNK SUMMARY LINES, appended as each chunk landed:
+#
+# chunk part_00  cells 6301-6400  'scp -' .. 'shar '
+#   # 97 passed, 1 failed, 100 cell(s)
+#   # categories: PASS=97 FAIL=1 TIMEOUT=2 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 477.7s (4.8s/cell)
+#   # 6 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   TIMEOUT tab1               'screen '  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
+#   TIMEOUT tab1               'serialver -'  (budget exhausted, not a divergence: zshrs: nothing at all after key 'tab' within 10.0s; serial re-run: TIMEOUT — still NOT scored as a pass, the first measurement was never valid)
+#   FAIL   tab1               'scselect '  (1 row(s) differ)
+#     1479a74662  x1   smallest: --case 'scselect ' --keys tab
+#        cell/row0/col1 | ref/$ scselect Automatic | test/$ scselect <hex>-#E#B-#F#B-#-<hex>
