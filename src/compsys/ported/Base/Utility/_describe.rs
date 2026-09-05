@@ -266,30 +266,91 @@ pub fn _describe_impl(args: &[String]) -> i32 {
     let mut _hide = String::new();
     let mut _jvx12: Vec<String> = Vec::new();
 
-    // sh:19-30 — getopts "oOt:12JVx".  Single-token parse (getopts flag
-    // clustering like `-12` is not reproduced — `_describe` callers pass
-    // each flag separately in practice).
+    // sh:21 — `while getopts "oOt:12JVx" _opt; do`, ported as a real
+    // getopts walk rather than a token match.
+    //
+    // Two behaviours of getopts that a per-token `match` cannot express, and
+    // `_typer` needs BOTH of them at once:
+    //
+    //  1. CLUSTERING. getopts consumes the characters of one word one at a
+    //     time. `_typer` calls `_describe -default- …`, and zsh does not see
+    //     an unknown word `-default-`; it sees `d`, `e`, `f`, `a`, `u`, `l`
+    //     (six invalid options, each reported separately) and then `t`, which
+    //     IS in the optstring and takes an argument, so it swallows the
+    //     trailing `-` as OPTARG. Measured, `typer <TAB>` under zsh 5.9:
+    //         _describe:21: bad option: -d
+    //         _describe:21: bad option: -e
+    //         _describe:21: bad option: -f
+    //         _describe:21: bad option: -a
+    //         _describe:21: bad option: -u
+    //         _describe:21: bad option: -l
+    //
+    //  2. RECOVERY. The optstring has NO leading `:`, so getopts reports an
+    //     invalid option ITSELF and then CARRIES ON — it returns 0 with
+    //     `_opt` set to `?`, the `case` has no `(?)` arm so nothing matches,
+    //     and the loop runs again with OPTIND already past the bad character.
+    //     The old `_ => break` made the bad flag the first POSITIONAL, so
+    //     `_describe -d subcommand subs` took `-d` as `_descr` and
+    //     `subcommand` as the array NAME.
+    //
+    // The diagnostic carries no command name because C's getopts uses
+    // `zwarn`, not `zwarnnam` (c:Src/builtin.c:5736) — hence the rendered
+    // prefix is `_describe:21:`, not `_describe:getopts:21:`.
+    const OPTSTRING: &str = "oOt:12JVx";
     let mut idx = 0usize;
     while idx < args.len() {
-        match args[idx].as_str() {
-            "-o" => {
-                _type = "options".to_string(); // sh:22
-                idx += 1;
+        let tok = args[idx].clone();
+        // getopts stops at the first word that is not an option, at `--`,
+        // and at a bare `-`.
+        if !tok.starts_with('-') || tok.len() < 2 || tok == "--" {
+            break;
+        }
+        let chars: Vec<char> = tok.chars().skip(1).collect();
+        let mut ci = 0usize;
+        let mut consumed_next = false;
+        while ci < chars.len() {
+            let c = chars[ci];
+            ci += 1;
+            match OPTSTRING.find(c) {
+                None => {
+                    crate::compsys::ported::shared::set_sh_lineno(21);
+                    crate::ported::utils::zwarn(&format!("bad option: -{}", c));
+                }
+                Some(pos) => {
+                    if OPTSTRING.as_bytes().get(pos + 1) == Some(&b':') {
+                        // Option takes an argument: the rest of THIS word if
+                        // any is left, otherwise the next word.
+                        let rest: String = chars[ci..].iter().collect();
+                        ci = chars.len();
+                        let val = if !rest.is_empty() {
+                            rest
+                        } else if idx + 1 < args.len() {
+                            consumed_next = true;
+                            args[idx + 1].clone()
+                        } else {
+                            String::new()
+                        };
+                        if c == 't' {
+                            _type = val; // sh:27
+                        }
+                    } else {
+                        match c {
+                            'o' => _type = "options".to_string(), // sh:22
+                            'O' => {
+                                _type = "options".to_string(); // sh:24
+                                _noprefix = true; // sh:25
+                            }
+                            // sh:28-29 — `-1 -2 -J -V -x` are collected and
+                            // passed through to `_description` verbatim.
+                            _ => _jvx12.push(format!("-{}", c)),
+                        }
+                    }
+                }
             }
-            "-O" => {
-                _type = "options".to_string(); // sh:24
-                _noprefix = true; // sh:25
-                idx += 1;
-            }
-            "-t" if idx + 1 < args.len() => {
-                _type = args[idx + 1].clone(); // sh:27
-                idx += 2;
-            }
-            "-1" | "-2" | "-J" | "-V" | "-x" => {
-                _jvx12.push(args[idx].clone()); // sh:28-29
-                idx += 1;
-            }
-            _ => break,
+        }
+        idx += 1;
+        if consumed_next {
+            idx += 1;
         }
     }
 
