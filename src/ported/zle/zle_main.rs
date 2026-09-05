@@ -1748,6 +1748,20 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
             & (crate::ported::zle::zle_h::WIDGET_INT | crate::ported::zle::zle_h::WIDGET_NCOMP))
             != 0
         {
+            // c:1468-1473 — the same per-widget suffix/list teardown the key
+            // loop performs, repeated here because this is the path a shell
+            // widget's `zle <internal-widget>` takes (bin_zle_call →
+            // execzlefunc). C runs it in this branch too; without it a
+            // wrapper widget (`w() { zle expand-or-complete }`, the shape
+            // fzf-tab and zsh-autosuggestions use) never tore the suffix
+            // down at all, because the outer user widget correctly skips it.
+            if (wflags & crate::ported::zle::zle_h::ZLE_KEEPSUFFIX) == 0 {
+                let _ = crate::ported::zle::zle_h::removesuffix(); // c:1469
+            }
+            if (wflags & crate::ported::zle::zle_h::ZLE_MENUCMP) == 0 {
+                crate::ported::zle::zle_misc::fixsuffix(); // c:1471
+                crate::ported::zle::zle_h::invalidatelist(); // c:1472
+            }
             let rc = if (wflags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0 {
                 // c:1481-1486 — `compwidget = w; ret = completecall(args)`.
                 *COMPWIDGET.lock().unwrap() = Some((**w).clone()); // c:1483
@@ -3647,12 +3661,27 @@ fn execute_widget(widget: &widget) -> i32 {
     // The `!ZLE_MENUCMP` arm is the other half: an ordinary (non-completion)
     // widget also drops the completion list, which is why typing a normal
     // character after a listing clears it in zsh.
-    if (widget.flags & crate::ported::zle::zle_h::ZLE_KEEPSUFFIX) == 0 {
-        let _ = crate::ported::zle::zle_h::removesuffix(); // c:1469
-    }
-    if (widget.flags & crate::ported::zle::zle_h::ZLE_MENUCMP) == 0 {
-        crate::ported::zle::zle_misc::fixsuffix(); // c:1471
-        crate::ported::zle::zle_h::invalidatelist(); // c:1472
+    //
+    // c:1449 — `} else if((w = func->widget)->flags & (WIDGET_INT|WIDGET_NCOMP))`:
+    // the teardown lives INSIDE that branch. A user widget (`zle -N`, flags 0
+    // per zle_thingy.c:588) takes the `else` arm at c:1501-1557, which runs
+    // neither `removesuffix()` nor `fixsuffix()`/`invalidatelist()`. Running it
+    // for user widgets too deleted the auto-suffix `do_single` had just
+    // inserted, so a `zle -N` widget bound after a completion key saw
+    // `$BUFFER` = "echo alpha.txt" where zsh gives "echo alpha.txt " (and
+    // "echo dir/Abc" where zsh gives "echo dir/AbcDir/") — and the character
+    // was really gone from the line, not merely hidden from the widget.
+    if (widget.flags
+        & (crate::ported::zle::zle_h::WIDGET_INT | crate::ported::zle::zle_h::WIDGET_NCOMP))
+        != 0
+    {
+        if (widget.flags & crate::ported::zle::zle_h::ZLE_KEEPSUFFIX) == 0 {
+            let _ = crate::ported::zle::zle_h::removesuffix(); // c:1469
+        }
+        if (widget.flags & crate::ported::zle::zle_h::ZLE_MENUCMP) == 0 {
+            crate::ported::zle::zle_misc::fixsuffix(); // c:1471
+            crate::ported::zle::zle_h::invalidatelist(); // c:1472
+        }
     }
 
     // Reset sticky column unless the widget keeps it.
