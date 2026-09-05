@@ -7361,38 +7361,56 @@ pub fn zreaddir(dir: &mut fs::ReadDir, ignoredots: i32) -> Option<String> {
 /// return 0;
 /// ```
 ///
-/// Writes `s` to `stream` with Meta+X pair decoding and ITOK-byte
+/// Writes `s` to `stream` with Meta+X pair decoding and ITOK-char
 /// skipping. Returns `0` on success, `-1` on write error (mirroring
 /// C's `EOF` sentinel for the int return).
+///
+/// The walk is over CHARS, not bytes. C can scan bytes at c:5267
+/// because zsh metafies: a raw byte >= 0x80 is stored escaped
+/// (`Meta`, then `byte ^ 32`), so a bare `0x84..=0xa1` in a metafied
+/// string is always a real token. zshrs keeps UTF-8 `str` and stores
+/// tokens as CHARS in `U+0084..=U+00A1` — the representation
+/// `lex::untokenize` and `has_token` (utils.rs:3089) both test with
+/// `c as u32`. Scanning bytes here mistook a UTF-8 CONTINUATION byte
+/// for a token and DROPPED it: `functions f` printed `print "a<E2><80>b"`
+/// for a body containing `—` (U+2014 = E2 80 94, 0x94 = `Inang`), and
+/// the same for `→` (E2 86 92) and `“` (E2 80 9C). This is the
+/// `has_token` defect (fixed in 1e549c1dec) at a second site.
 pub fn zputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
     // c:5265
-    let bytes = s.as_bytes(); // c:5265 *s walk
-    let mut i = 0;
-    while i < bytes.len() {
+    let mut it = s.chars(); // c:5265 *s walk
+    while let Some(ch) = it.next() {
         // c:5267 while (*s)
-        let c: u8; // c:5268 char c
-        if bytes[i] == Meta {
+        if ch as u32 == Meta as u32 {
             // c:5269 if (*s == Meta)
-            // c:5270 — `c = *++s ^ 32;`
-            if i + 1 < bytes.len() {
-                c = bytes[i + 1] ^ 32;
-                i += 1; // c:5270 ++s
-            } else {
-                i += 1;
-                continue;
+            // c:5270 — `c = *++s ^ 32;`. zshrs metafies at the CHARACTER
+            // level (U+0083 then `char::from(byte ^ 32)`, see
+            // mb_niceformat's note at utils.rs:7574), so the escaped
+            // byte is recovered as a single raw byte exactly as C's
+            // `fputc` writes it.
+            let Some(n) = it.next() else {
+                continue; // c:5267 — lone trailing Meta ends the walk
+            };
+            let c = (n as u32 as u8) ^ 32; // c:5270
+                                           // c:5276 s++ — `it.next()` already advanced past both chars.
+            if stream.write_all(&[c]).is_err() {
+                // c:5277 fputc(c, stream)
+                return -1; // c:5278 return EOF
             }
-        } else if itok(bytes[i]) {
+        } else if (ch as u32) <= 0xff && itok(ch as u32 as u8) {
             // c:5271 else if (itok(*s))
-            // c:5272 — `s++; continue;` (skip token byte)
-            i += 1;
+            // c:5272 — `s++; continue;` (skip token char)
             continue;
         } else {
-            c = bytes[i]; // c:5274 else c = *s
-        }
-        i += 1; // c:5276 s++
-        if stream.write_all(&[c]).is_err() {
-            // c:5277 fputc(c, stream)
-            return -1; // c:5278 return EOF
+            // c:5274 else c = *s — a plain char goes out in its own
+            // UTF-8 encoding; C's byte-at-a-time `fputc` emits the same
+            // bytes because its `s` is already the encoded form.
+            let mut buf = [0u8; 4];
+            // c:5276 s++
+            if stream.write_all(ch.encode_utf8(&mut buf).as_bytes()).is_err() {
+                // c:5277 fputc(c, stream)
+                return -1; // c:5278 return EOF
+            }
         }
     }
     0 // c:5280 return 0
@@ -13758,6 +13776,43 @@ mod tests {
         // Still true for a genuine token char, so the fix isn't a blanket
         // "non-ASCII is never a token".
         assert!(has_token("plain\u{9c}"), "c:2285 — Bang (U+009C) is a token");
+    }
+
+    /// `Src/utils.c:5271` — `else if (itok(*s)) { s++; continue; }`. C may
+    /// scan bytes there because its `s` is metafied; zshrs keeps UTF-8
+    /// `str` with tokens as CHARS, so the byte walk silently DROPPED the
+    /// continuation byte of any multibyte glyph landing in `0x84..=0xa1`.
+    /// `functions f` printed `print "a<E2><80>b"` for a body holding `—`
+    /// (U+2014 = E2 80 94, 0x94 = `Inang`). Same defect as
+    /// `has_token_ignores_utf8_continuation_bytes_in_itok_range` above,
+    /// at the printing site.
+    #[test]
+    fn zputs_ignores_utf8_continuation_bytes_in_itok_range() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        for s in ["a—b", "a→b", "a“b”c", "字符", "aéb"] {
+            let mut out: Vec<u8> = Vec::new();
+            assert_eq!(zputs(s, &mut out), 0, "c:5280 — zputs returns 0");
+            assert_eq!(
+                out,
+                s.as_bytes(),
+                "c:5271 — {s:?} holds no token CHAR (U+0084..=U+00A1); zputs \
+                 must emit it verbatim, not drop UTF-8 continuation bytes"
+            );
+        }
+        // Genuine token chars are still skipped (c:5271-5272), and a
+        // Meta pair still decodes to the escaped byte (c:5269-5270), so
+        // the fix is not a blanket "pass everything through".
+        let mut out: Vec<u8> = Vec::new();
+        let _ = zputs("a\u{9c}b", &mut out);
+        assert_eq!(out, b"ab", "c:5271 — Bang (U+009C) is a token, skipped");
+        let mut out: Vec<u8> = Vec::new();
+        let _ = zputs("a\u{83}\u{c1}b", &mut out);
+        assert_eq!(
+            out,
+            b"a\xe1b",
+            "c:5270 — Meta + (0xe1 ^ 32) decodes back to the raw 0xe1"
+        );
     }
 
     /// `Src/utils.c:6082-6124` — `addunprintable(c)`. Renders bytes

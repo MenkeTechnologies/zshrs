@@ -661,7 +661,14 @@ pub fn bld_eprog(heap: bool) -> eprog {
         strs: Some(strs_string),
         shf: None,
         dump: None,
-        strs_metafied: false, // native pool — clean UTF-8
+        // The pool `ecstrcode` (c:426) just built is METAFIED — that
+        // function encodes every IMETA byte as `Meta` + `b ^ 0x20`
+        // (parse.rs:363-389) and the wordcode offsets it hands back
+        // count metafied bytes. Flagging the pool clean made
+        // `ecgetstr` skip `unmetafy`, so any multibyte glyph with a
+        // continuation byte in 0x83..=0xa2 came back mangled
+        // (`—` E2 80 94 → stored E2 80 83 B4 → decoded U+2003 + U+00B4).
+        strs_metafied: true,
     };
 
     // c:577 — free ecbuf so next parse starts fresh.
@@ -5732,7 +5739,7 @@ pub static DUMMY_EPROG: std::sync::Mutex<eprog> = std::sync::Mutex::new(eprog {
     pats: Vec::new(),
     shf: None,
     dump: None,
-    strs_metafied: false, // native pool — clean UTF-8
+    strs_metafied: false, // no pool (strs: None) — flag unused
 });
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -11478,7 +11485,7 @@ esac"#;
                 strs: None,
                 shf: None,
                 dump: None,
-                strs_metafied: false, // native pool — clean UTF-8
+                strs_metafied: false, // no pool (strs: None) — flag unused
             };
             estate {
                 prog: Box::new(p),

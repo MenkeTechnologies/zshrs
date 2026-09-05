@@ -7202,9 +7202,11 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 pats,
                 prog: prog_words,
                 strs: strs_tail,
-                shf: None,            // c:5377
-                dump: None,           // c:5356
-                strs_metafied: false, // native pool — clean UTF-8
+                shf: None,  // c:5377
+                dump: None, // c:5356
+                // c:5365 — `prog->strs = state->strs + sbeg;` — the tail is
+                // the SAME pool, so it keeps the same encoding.
+                strs_metafied: state.prog.strs_metafied,
             });
         } else if dump_present {
             // c:5358-5363 — EF_MAP path: refcount the dump, allocate
@@ -7251,9 +7253,11 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 pats,
                 prog: prog_words,
                 strs: strs_copy,
-                shf: None,            // c:5377
-                dump: None,           // c:5371
-                strs_metafied: false, // native pool — clean UTF-8
+                shf: None,  // c:5377
+                dump: None, // c:5371
+                // c:5373 — `memcpy(prog->strs, state->strs + sbeg, nstrs);` —
+                // a byte copy of the source pool, so the same encoding.
+                strs_metafied: state.prog.strs_metafied,
             });
         }
 
@@ -12140,6 +12144,7 @@ pub fn stripkshdef(
 
     // c:6353 — `ret->strs = prog->strs + sbeg;` (EF_MAP) or
     // c:6359 — `memcpy(ret->strs, prog->strs + sbeg, nstrs);` (heap).
+    let strs_metafied = prog.strs_metafied; // pool sliced verbatim — carry provenance
     let old_strs = prog.strs.take().unwrap_or_default();
     let old_bytes = old_strs.as_bytes();
     let new_strs = if sbeg + nstrs <= old_bytes.len() {
@@ -12172,7 +12177,7 @@ pub fn stripkshdef(
         strs: new_strs,
         shf: None, // c:6363
         dump: None,
-        strs_metafied: false, // native pool — clean UTF-8
+        strs_metafied, // c:6353/6359 — the slice keeps the source pool's encoding
     });
     Some(ret)
 }
