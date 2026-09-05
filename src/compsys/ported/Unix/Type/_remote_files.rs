@@ -42,6 +42,7 @@
 use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_tags::_tags;
 use crate::ported::glob::{matchpat, tokenize};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
@@ -278,58 +279,77 @@ pub fn _remote_files(args_in: &[String]) -> i32 {
         Vec::new()
     };
 
-    // sh:104-110 — offer files (when not dirs-only) and directories, using the
+    // sh:101 — `_tags remote-files`.
+    //
+    //   This registration is what makes the `_next_label remote-files` below
+    //   succeed: `_next_label`:8 is `comptags -A "$1" curtag __spec`, which
+    //   answers out of the tag set the ENCLOSING `_tags` published. Most
+    //   callers do not publish one — `_ssh`:714,728 and `_rlogin`:42
+    //   call `_remote_files` bare — so with the registration missing
+    //   `_next_label` failed on its first call, the loop broke before either
+    //   compadd, and the function returned 1 with no matches at all.
+    let _ = _tags(&["remote-files".to_string()]);
+
+    // sh:102-110 — offer files (when not dirs-only) and directories, using the
     //   classifier DISPLAY (`-d`) list and the quoted candidate (`--`) list.
     let mut ret = 1;
-    loop {
-        let descr = if suf_is_file {
-            "remote file"
-        } else {
-            "remote directory"
-        };
-        if _next_label(&[
-            "remote-files".to_string(),
-            "expl".to_string(),
-            descr.to_string(),
-        ]) != 0
-        {
-            break;
-        }
-        let expl = getaparam("expl").unwrap_or_default();
-        // sh:105 — files: -d remdispf (classifier display) -- remdispfq.
-        if suf_is_file && !remdispfq.is_empty() {
-            setaparam("remdispf", remdispf.clone());
-            let mut cadd = passthru.clone();
-            cadd.extend(expl.clone());
-            cadd.push("-d".to_string());
-            cadd.push("remdispf".to_string());
-            cadd.push("--".to_string());
-            cadd.extend(remdispfq.clone());
-            if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
-                ret = 0;
+    // sh:102  while _tags; do
+    while _tags(&[]) == 0 {
+        // sh:103  while _next_label remote-files expl ${suf:-remote directory}; do
+        loop {
+            let descr = if suf_is_file {
+                "remote file"
+            } else {
+                "remote directory"
+            };
+            if _next_label(&[
+                "remote-files".to_string(),
+                "expl".to_string(),
+                descr.to_string(),
+            ]) != 0
+            {
+                break;
+            }
+            let expl = getaparam("expl").unwrap_or_default();
+            // sh:105 — files: -d remdispf (classifier display) -- remdispfq.
+            if suf_is_file && !remdispfq.is_empty() {
+                setaparam("remdispf", remdispf.clone());
+                let mut cadd = passthru.clone();
+                cadd.extend(expl.clone());
+                cadd.push("-d".to_string());
+                cadd.push("remdispf".to_string());
+                cadd.push("--".to_string());
+                cadd.extend(remdispfq.clone());
+                if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
+                    ret = 0;
+                }
+            }
+            // sh:107 — directories: ${suf:+-S/} $autoremove -d remdispd -- remdispdq.
+            if !remdispdq.is_empty() {
+                setaparam("remdispd", remdispd.clone());
+                let mut cadd: Vec<String> = Vec::new();
+                if suf_is_file {
+                    cadd.push("-S".to_string());
+                    cadd.push("/".to_string());
+                }
+                cadd.extend(autoremove.clone());
+                cadd.extend(passthru.clone());
+                cadd.extend(expl.clone());
+                cadd.push("-d".to_string());
+                cadd.push("remdispd".to_string());
+                cadd.push("--".to_string());
+                cadd.extend(remdispdq.clone());
+                if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
+                    ret = 0;
+                }
             }
         }
-        // sh:107 — directories: ${suf:+-S/} $autoremove -d remdispd -- remdispdq.
-        if !remdispdq.is_empty() {
-            setaparam("remdispd", remdispd.clone());
-            let mut cadd: Vec<String> = Vec::new();
-            if suf_is_file {
-                cadd.push("-S".to_string());
-                cadd.push("/".to_string());
-            }
-            cadd.extend(autoremove.clone());
-            cadd.extend(passthru.clone());
-            cadd.extend(expl.clone());
-            cadd.push("-d".to_string());
-            cadd.push("remdispd".to_string());
-            cadd.push("--".to_string());
-            cadd.extend(remdispdq.clone());
-            if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
-                ret = 0;
-            }
+        // sh:109  (( ret )) || return 0
+        if ret == 0 {
+            return 0;
         }
-        break;
     }
+    // sh:111  return ret
     ret
 }
 
