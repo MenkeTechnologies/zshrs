@@ -4003,3 +4003,77 @@ xsetroot -solid
 # described row is CMF_DISPLINE, so `iprintm` prints it with `printfmt`
 # (compresult.c:2247-2249) and NOT with `mb_niceformat` (c:2252).  That is why
 # the one `unmetafy_str` on the `mb_niceformat` path never ran for this cell.
+
+# ============================================================================
+# 'texfot -' — SECOND cell of the libc qsort tie-order class, ESTABLISHED HERE
+# BY A CONTROL THAT ACTUALLY MOVES THE PARTITION. fp 4356dd07a7. NOT A DEFECT.
+# ============================================================================
+#     zsh   last row: '-/'        zshrs last row: '-'
+# The rest of the grid (the `-  -- 569BGPXZfims` described row and all 13
+# `--*` option rows) is byte-identical, so only the surviving `-` differs.
+#
+# `_texfot`'s `1: :_command_names -e` is what brings the `-` matches in, the
+# same way `_ktrace`'s `*:: : _normal -p ktrace` does: three matches spell `-`
+# in the one `-default-` group — the `-` BUILTIN, a `_describe` entry with a
+# disp, and the `-` DIRECTORY that exists in this repo root
+# (`drwxr-xr-x 2 wizard staff 64 Sep 4 19:23 ./-`). `matcheq`
+# (c:Src/Zle/compcore.c:3206-3214) compares only ipre/pre/ppre/psuf/suf/str —
+# NOT flags, NOT modec — so the builtin and the directory are DUPLICATES,
+# `matchcmp` returns 0 for the pair, and the dedup at c:3269-3272 keeps
+# whichever the preceding qsort (c:3259-3260) left first.
+#
+# THE DESCRIPTION-TEXT CONTROL RECORDED FOR 'ktrace -' DOES NOT REPRODUCE HERE,
+# and that is a fact about the control, not about the cell. `_texfot` was
+# redefined from `--init-extra` with its own body (run A: FAIL 4356dd07a7,
+# so the instrument is validated) and then with every description replaced by
+# desc0..desc12 (run B): zsh still printed '-/'. It cannot flip — `matchcmp`
+# (c:3172-3197) compares `disp` when both matches have one, and every described
+# match's disp still begins with its own option name, so renaming the text
+# leaves the sorted order untouched. The ktrace synthetic's descriptions were
+# the whole disp, which is why renaming them moved that one.
+#
+# THE CONTROL THAT DOES MOVE IT is the COUNT of unrelated option matches. Same
+# `-` match set, same compadd order, same group flags, same `_command_names -e`
+# positional; only the number of `--*` specs in the `_arguments` call changes.
+# Pinned+codesigned binary 5defa47c470e…, pinned dump 10ebe0a033…, `--jobs 1`,
+# `--case 'texfot -' --keys tab`, one run per K:
+#
+#     K=13  zsh '-/'   zshrs '-'    FAIL
+#     K=12  both '-'                PASS
+#     K=11  both '-'                PASS
+#     K=10  both '-'                PASS
+#     K= 9  both '-'                PASS
+#     K= 8  zsh '-/'   zshrs '-'    FAIL
+#     K= 7  zsh '-/'   zshrs '-'    FAIL
+#     K= 6  both '-'                PASS
+#     K= 5  both '-'                PASS
+#     K= 4  both '-'                PASS
+#     K= 3  both '-'                PASS
+#     K= 2  both '-'                PASS
+#     K= 1  both '-'                PASS
+#     K= 0  both '-'                PASS
+#
+# zsh's surviving `-` FLIPS between '-/' and '-' as a NON-MONOTONIC function of
+# how many unrelated matches sit next to it; zshrs's is CONSTANT '-' at every K,
+# which is what a STABLE merge sort (`tolerant_sort::qsort_tolerant`,
+# src/tolerant_sort.rs, called from compcore.rs:6051) does with a tie. An
+# unstable partition, not a semantic rule — the same signature already recorded
+# for 'ktrace -'.
+#
+# NOT FIXED, deliberately, and no test written: pinning either side encodes an
+# Apple libc qsort permutation of EQUAL elements. Making zshrs agree means
+# either emulating BSD qsort or making the dedup prefer CMF_FILE, and the C
+# source licenses neither. On a glibc merge-sort qsort, zsh prints zshrs's
+# answer. Third confirmed instance of the class after 'getconf ' and 'ktrace -'.
+#
+# ---------------------------------------------------------------------------
+# 'tac -' — RE-CONFIRMED as the builtin-shadowing finding, NOT a compsys bug.
+# fp 5378f5ae30. Already recorded above; measured again on 5defa47c470e:
+#     zsh    $ tac --version  -> tac (GNU coreutils) 9.11 …        rc=0
+#     zshrs  $ tac --version  -> tac: unrecognized option: '--version'  rc=1
+#            $ whence -w tac  -> tac: builtin
+# `builtin_tac` is src/extensions/ext_builtins.rs:7205 and the rejection is
+# :7227, so `_tac` sh:4's `_pick_variant gnu='(Free Soft|uutils)' unix
+# --version` takes the `|| { _default; return }` arm on zshrs and the
+# `_arguments` arm on zsh. The completion ports are faithful; the divergence is
+# the shell's command table. Left where it belongs, in src/extensions/**.
