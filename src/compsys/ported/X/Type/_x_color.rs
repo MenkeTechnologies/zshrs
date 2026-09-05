@@ -54,10 +54,20 @@ const RGB_TXT_CANDIDATES: &[&str] = &[
 /// sh:22 — `(( $+commands[showrgb] ))`: is `showrgb` a hashed command?
 /// Mirrors the identical `has_command` helper in `_users_on.rs`.
 fn has_command(name: &str) -> bool {
-    getaparam("commands")
-        .unwrap_or_default()
-        .chunks(2)
-        .any(|kv| kv.first().map(|k| k == name).unwrap_or(false))
+    // c:Src/Modules/parameter.c:213 `getpmcommand` — the getfn behind the
+    // `commands` special hash. `commands` is NOT paramtab-hashed storage, so
+    // `getaparam("commands")` returned None and this predicate was ALWAYS
+    // false: the `(( $+commands[…] ))` guard never fired. Same defect and the
+    // same fix as `_set_command.rs:99-116`, which is the one site that was
+    // converted when this was first found.
+    //
+    // `getpmcommand` ALWAYS returns `Some` — on a miss it returns a param
+    // carrying `PM_UNSET` (c:239) rather than `None` — so the existence test
+    // is the flag, not `is_some()`. That is what `$+` reads.
+    crate::vm_helper::mark_module_param_used("commands");
+    crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), name)
+        .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0)
+        .unwrap_or(false)
 }
 
 /// sh:21/23/28 — `${line##*\t\t}`: strip the longest prefix ending in
@@ -212,8 +222,25 @@ mod tests {
     #[test]
     fn has_command_false_when_commands_array_empty() {
         let _g = crate::test_util::global_state_lock();
-        crate::ported::params::setaparam("commands", Vec::new());
-        assert!(!has_command("showrgb"));
+        // `commands` is a module SPECIAL (cmdnamtab view), so writing a
+        // paramtab array named `commands` does NOT control the lookup — that
+        // only ever worked while `has_command` used `getaparam`, which is the
+        // bug this file was just fixed for. Make the miss REAL and
+        // host-independent: empty cmdnamtab and point `PATH` at a directory
+        // with nothing in it, so `getpmcommand`'s HASHLISTALL filltable finds
+        // nothing. `showrgb` IS installed on some dev boxes (it is on this
+        // one), so without this the test asserts the HOST rather than the
+        // code. PATH is restored below so the shared test binary is not left
+        // clobbered; cmdnamtab refills itself on demand.
+        let saved_path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        crate::ported::hashtable::emptycmdnamtable();
+        let empty_dir = std::env::temp_dir().join("zshrs_x_color_empty_path");
+        let _ = std::fs::create_dir_all(&empty_dir);
+        let _ = crate::ported::params::setsparam("PATH", empty_dir.to_str().unwrap_or(""));
+        let got = has_command("showrgb");
+        let _ = crate::ported::params::setsparam("PATH", &saved_path);
+        crate::ported::hashtable::emptycmdnamtable();
+        assert!(!got);
     }
 
     /// `commands` is a zsh SPECIAL parameter — the `cmdnamtab` view, a
@@ -248,9 +275,25 @@ mod tests {
         // (headless-CI) box -> the hardcoded 6-color default.
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("_cache_x_colors");
-        crate::ported::params::setaparam("commands", Vec::new());
-        crate::ported::params::setsparam("curcontext", ":completion::::");
+        // `commands` is a module SPECIAL (cmdnamtab view), so writing a
+        // paramtab array named `commands` does NOT control the lookup — that
+        // only ever worked while `has_command` used `getaparam`, which is the
+        // bug this file was just fixed for. Make the miss REAL and
+        // host-independent: empty cmdnamtab and point `PATH` at a directory
+        // with nothing in it, so `getpmcommand`'s HASHLISTALL filltable finds
+        // nothing. `showrgb` IS installed on some dev boxes (it is on this
+        // one), so without this the test asserts the HOST rather than the
+        // code. PATH is restored below so the shared test binary is not left
+        // clobbered; cmdnamtab refills itself on demand.
+        let saved_path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        crate::ported::hashtable::emptycmdnamtable();
+        let empty_dir = std::env::temp_dir().join("zshrs_x_color_empty_path");
+        let _ = std::fs::create_dir_all(&empty_dir);
+        let _ = crate::ported::params::setsparam("PATH", empty_dir.to_str().unwrap_or(""));
+        let _ = crate::ported::params::setsparam("curcontext", ":completion::::");
         populate_cache_if_unset();
+        let _ = crate::ported::params::setsparam("PATH", &saved_path);
+        crate::ported::hashtable::emptycmdnamtable();
         assert_eq!(
             getaparam("_cache_x_colors"),
             Some(vec![

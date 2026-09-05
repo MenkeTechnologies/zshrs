@@ -60,7 +60,25 @@ fn make_ops() -> options {
 /// (the shell's hashed-command table) and emits each entry's
 /// absolute path under its own basename-`descs` alias.
 pub fn _hashed_absolute_command_paths(args: &[String]) -> i32 {
-    let commands = getaparam("commands").unwrap_or_default();
+    // c:Src/Modules/parameter.c:213/245 — `commands` is a module SPECIAL
+    // backed by getfn/scanfn, NOT paramtab-hashed storage, so
+    // `getaparam("commands")` returned None and this completer emitted
+    // nothing at all. Same defect as the `has_command` helpers in
+    // `_users_on.rs` / `_x_color.rs` and as `_set_command.rs:99-116`.
+    //
+    // Rebuild the flat key/value layout the rest of this function walks, via
+    // the two entry points that DO route through the special: `gethkparam`
+    // for the keys (c:3138 `paramvalarr(pm->gsu.h->getfn(pm),
+    // SCANPM_WANTKEYS)`) and `getpmcommand` for each value.
+    crate::vm_helper::mark_module_param_used("commands");
+    let mut commands: Vec<String> = Vec::new();
+    for key in crate::ported::params::gethkparam("commands").unwrap_or_default() {
+        let val = crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), &key)
+            .and_then(|pm| pm.u_str.clone())
+            .unwrap_or_default();
+        commands.push(key);
+        commands.push(val);
+    }
     // sh:5 — extract unique directories from each command's value (paths)
     let mut dirs: Vec<String> = Vec::new();
     for v in commands.iter().skip(1).step_by(2) {
