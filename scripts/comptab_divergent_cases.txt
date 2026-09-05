@@ -2995,3 +2995,10 @@ tor-resolve -
 #   FAIL   tab1               'watch '  (1 row(s) differ)
 #     b29792c9a7  x1   smallest: --case 'watch ' --keys tab
 #        cell/rowtop/col3 | ref/zsh: do you wish to see all # possibilities (# lines)? | test/zsh: do you wish to see all # possibilities (# lines)?
+#
+# chunk part_04  cells 7765-7864  'wopl2ofm -' .. 'xdvipdfmx '   [PIN 2]
+#   # 99 passed, 0 failed, 100 cell(s)
+#   # categories: PASS=99 FAIL=0 TIMEOUT=1 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 173.6s (1.7s/cell)
+#   # 2 pass(es) captured under a truncated or empty settle window — the screens agreed, but the capture is worth less than a clean one
+#   TIMEOUT tab1               'write '  (zshrs: nothing at all after key 'tab' within 10.0s)
