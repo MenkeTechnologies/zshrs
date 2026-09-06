@@ -384,3 +384,99 @@ mod precedence {
         assert_parity(r#"(( X = 2 + 3 * 4 - 1 )); echo $X"#);
     }
 }
+
+/// `(( $name ))` — the arithmetic COMMAND whose expression text carries a
+/// parameter substitution.
+///
+/// `c:Src/exec.c:5302-5304` is the whole contract:
+///
+/// ```c
+/// e = ecgetstr(state, EC_DUPTOK, &htok);
+/// if (htok)
+///     singsub(&e);
+/// val = matheval(e);
+/// ```
+///
+/// and `c:Src/exec.c:5321` turns the value into the status
+/// (`return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`).
+/// A math command ALWAYS publishes a status; there is no path out of
+/// `execarith` that leaves `lastval` alone.
+///
+/// zshrs left `$?` untouched for every one of these, so the shell reported
+/// whatever the PREVIOUS command had exited with:
+///
+/// ```text
+/// $ x=2; (exit 7); (( $x == 1 )); echo $?
+/// zsh   1
+/// zshrs 7
+/// ```
+///
+/// which flipped `&&`, ran `until` zero times and `while` one time too many.
+mod dollar_in_math_command {
+    use super::*;
+
+    /// The base case: a false comparison must exit 1, not inherit.
+    #[test]
+    fn dollar_scalar_false_comparison_exits_1() {
+        assert_parity(r#"x=2; (( $x == 1 )); echo $?"#);
+    }
+
+    /// True comparison, so the status is 0 for the right reason rather
+    /// than by inheriting a 0.
+    #[test]
+    fn dollar_scalar_true_comparison_exits_0() {
+        assert_parity(r#"x=2; (( $x == 2 )); echo $?"#);
+    }
+
+    /// The status must be DERIVED, not inherited — seed `$?` with a value
+    /// that neither answer can be confused with.
+    #[test]
+    fn dollar_status_is_derived_not_inherited() {
+        assert_parity(r#"x=2; (exit 7); (( $x == 1 )); echo $?"#);
+        assert_parity(r#"x=2; (exit 7); (( $x == 2 )); echo $?"#);
+    }
+
+    /// A bare `(( $x ))` on a zero value is false.
+    #[test]
+    fn dollar_bare_zero_is_false() {
+        assert_parity(r#"x=0; (exit 7); (( $x )); echo $?"#);
+    }
+
+    /// `${name}` is the same substitution written the other way.
+    #[test]
+    fn braced_scalar_false_comparison_exits_1() {
+        assert_parity(r#"x=2; (( ${x} == 1 )); echo $?"#);
+    }
+
+    /// `singsub` expands the TEXT, so a parameter holding an expression
+    /// evaluates as that expression.
+    #[test]
+    fn dollar_expands_text_before_math() {
+        assert_parity(r#"x='1+1'; (( $x == 2 )); echo $?"#);
+    }
+
+    /// The status feeds `&&` / `||`.
+    #[test]
+    fn dollar_drives_and_or() {
+        assert_parity(r#"x=2; (( $x == 1 )) && echo AND || echo OR"#);
+    }
+
+    /// ... and `while`, which ran one iteration too many.
+    #[test]
+    fn dollar_drives_while() {
+        assert_parity(r#"x=2; while (( $x > 0 )); do print -n $x; (( x-- )); done; print"#);
+    }
+
+    /// ... and `until`, which ran zero iterations.
+    #[test]
+    fn dollar_drives_until() {
+        assert_parity(r#"x=2; until (( $x == 0 )); do print -n $x; (( x-- )); done; print"#);
+    }
+
+    /// A malformed expression still reports the math error and status 2,
+    /// which is the branch this status derivation shares.
+    #[test]
+    fn dollar_math_error_still_exits_2() {
+        assert_parity(r#"x=2; (( $x + )) 2>/dev/null; echo $?"#);
+    }
+}

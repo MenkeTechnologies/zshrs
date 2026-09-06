@@ -12122,7 +12122,36 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-            self.builder.emit(Op::Pop, 0);
+            // c:Src/exec.c:5321 — `execarith` has exactly one return for a
+            // successful evaluation, `return (val.type == MN_INTEGER) ?
+            // val.u.l == 0 : val.u.d == 0.0;`, so a math command ALWAYS
+            // publishes a status. This arm used to `Pop` the result and emit
+            // no status at all, so `$?` kept whatever the PREVIOUS command
+            // left — and the arm is not the rare one it looks like: the
+            // pre-check runs C's math lexer, where `$` is the `$$`/pid token
+            // (c:Src/math.c:769-771), so EVERY `(( $name ... ))` lands here.
+            // C never sees that `$` because c:Src/exec.c:5302-5304 runs
+            // `singsub` on the expression text first; zshrs does the same
+            // substitution at runtime inside `arithsubst`, which is why the
+            // VALUE was already right and only the status was missing.
+            // Measured: `x=2; (exit 7); (( $x == 1 )); echo $?` printed 7
+            // (zsh: 1), `while (( $x > 0 ))` ran one iteration too many and
+            // `until (( $x == 0 ))` ran none. Derive it the same way the
+            // `needs_eval` arm above does — BUILTIN_ARITH_CMD_FINISH still
+            // overrides with 2 when the runtime re-fire sets errflag.
+            let zero_const = self.builder.add_constant(Value::str("0"));
+            self.builder.emit(Op::LoadConst(zero_const), 0);
+            self.builder.emit(Op::StrEq, 0);
+            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            let end_jump = self.builder.emit(Op::Jump(0), 0);
+            let true_target = self.builder.current_pos();
+            self.builder.patch_jump(true_jump, true_target);
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            let after_status = self.builder.current_pos();
+            self.builder.patch_jump(end_jump, after_status);
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
                 0,
