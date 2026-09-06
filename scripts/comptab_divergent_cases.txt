@@ -5080,3 +5080,68 @@ gstack
 # `left_tab_tab` FAIL from a `--jobs 4` run is worth NOTHING until it has been
 # reproduced at `--jobs 1`.  On this evidence the false-positive rate for
 # those two sequences under contention is 100% (21 of 21).
+
+# ============================================================================
+# FINDING 6 — RESOLVED (2026-09-06), and it was never the errflag class.
+# ============================================================================
+# The finding recorded two symptoms under one heading.  They are two
+# different things and only one of them was still real.
+#
+# --- half 1: the chain DEATH.  Does not reproduce. -------------------------
+# Fixture `zstyle ':completion:*' completer _zznotacompleter _complete`,
+# case 'chmod ', `--jobs 1`, 3 runs: PASS 3/3 at 83a16ad753 (the parent of
+# the fix below) and PASS 3/3 after it.  Seven more cases ('ls /etc/pass',
+# 'ls -', 'git ', 'ec', 'ssh -', 'echo $HO', 'ls ~/Doc') also PASS.  Both
+# shells print the diagnostic and both then complete.
+#
+# The errflag contract measures FAITHFUL in both directions, which is why:
+#
+#     f(){ _zznotacompleter; echo AFTER; }; f; echo DONE
+#       zsh   -> command not found | AFTER | DONE
+#       zshrs -> command not found | AFTER | DONE
+#
+#     readonly r=1; f(){ r=2; echo AFTER; }; for i in 1 2; do f; done; echo DONE
+#       zsh   -> read-only variable: r      (input aborted, no DONE)
+#       zshrs -> read-only variable: r      (same)
+#
+# `command not found` is `c:Src/exec.c:903`, reached only inside the fork
+# `execcmd` makes, so the parent's errflag is never raised and the
+# `_main_complete` loop keeps going (`sh:218-221`, `elif "$tmp"; then ret=0;
+# break 2` — an unrunnable completer is just a non-zero status).  A real
+# `zerr` DOES raise it (`c:Src/utils.c:184`), and then BOTH shells stop.
+# There is no reset to port: C never sets the flag on this path.
+#
+# --- half 2: the leaked `fc -l` row.  Real, and unrelated. -----------------
+# It was the arithmetic COMMAND, not the completer chain.  `_megacomplete`
+# gates its history completer on `if (( $CURRENT == 1 ))`; that test was TRUE
+# for every word position, so `_complete_hist` ran on 'chmod ' and its
+# `fc -l -200` output landed in the match list.  Probed live in the harness
+# with both shells writing to one log:
+#
+#     [zsh]   cmd='chmod' CURRENT=2 nwords=2
+#     [zsh]     no _complete_hist branch
+#     [zshrs] cmd='chmod' CURRENT=2 nwords=2
+#     [zshrs]   BRANCH _complete_hist          <-- CURRENT is 2 in both
+#
+# The cause is core, not completion: `(( $name ... ))` published NO status at
+# all, so `$?` kept whatever the previous command had left.
+#
+#     x=2; (exit 7); (( $x == 1 )); echo $?     zsh 1     zshrs 7
+#
+# `c:Src/exec.c:5302-5304` runs `singsub` on the expression text before
+# `matheval`; zshrs pre-validates with C's math lexer instead, where `$` is
+# the `$$`/pid token (`c:Src/math.c:769-771`), so every `$name` failed that
+# check and fell into a compile_arith arm that emitted no status.  Fixed in
+# 7ca4f54554, with the float-zero flaw in the same status derivation fixed in
+# e03275eb92.
+#
+# Sweep, `--sequences tab1 --skip-optional`, 167 cells, same dump, failing
+# SETS (not counts) before -> after:
+#
+#   default zstyle: 12 -> 11, delta = pre_builtin.tab1 now PASSES
+#   his own fixture (scripts/parity_zstyle.zsh): 13 -> 12, same delta
+#
+# `builtin <TAB>` was the other victim in the corpus: stock `_builtin` opens
+# with `if (( $CURRENT > 2 ))` (`sh:3`).  Serially re-confirmed 3/3 FAIL on
+# the before binary and 3/3 PASS on the after binary.  Nothing regressed in
+# either regime.
