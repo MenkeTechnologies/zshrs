@@ -4224,9 +4224,17 @@ impl ShellExecutor {
                         .flatten();
                     let abspath_used =
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
-                    let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
+                    // c:Src/Modules/parameter.c:295-315 — a body that arrived
+                    // through `functions[NAME]=BODY` is NOT a file. See
+                    // `body_came_from_param_assignment`.
+                    let param_body = body_came_from_param_assignment(stub.node.flags);
+                    let ksh_style = !param_body && autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let (registered, from_wordcode) = autoload_register_source(name, &body);
+                    let (registered, from_wordcode) = if param_body {
+                        (param_definition_source(name, &body), false)
+                    } else {
+                        autoload_register_source(name, &body)
+                    };
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                         // as the function body; it executes nothing at load
@@ -4642,9 +4650,17 @@ impl ShellExecutor {
                         .flatten();
                     let abspath_used =
                         (stub.node.flags as u32 & crate::ported::zsh_h::PM_ABSPATH_USED) != 0;
-                    let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
+                    // c:Src/Modules/parameter.c:295-315 — a body that arrived
+                    // through `functions[NAME]=BODY` is NOT a file. See
+                    // `body_came_from_param_assignment`.
+                    let param_body = body_came_from_param_assignment(stub.node.flags);
+                    let ksh_style = !param_body && autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let (registered, from_wordcode) = autoload_register_source(name, &body);
+                    let (registered, from_wordcode) = if param_body {
+                        (param_definition_source(name, &body), false)
+                    } else {
+                        autoload_register_source(name, &body)
+                    };
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                         // as the function body; it executes nothing at load
@@ -6686,6 +6702,51 @@ fn restore_loaddir(name: &str, dir: &str, abspath_used: bool, ksh_style: bool) {
             }
         }
     }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// C never has to ask this question. `Src/Modules/parameter.c:295-315`
+/// (`setfunction`, the `functions[NAME]=BODY` setter) parses the assigned text
+/// with `parse_string(val, 1)` and stores the result AS THE BODY —
+/// `shf->funcdef = dupeprog(prog, 0)` (c:313) — so the function is fully
+/// defined the moment the assignment runs. `loadautofn`
+/// (`Src/exec.c:5723-5806`), which reads a FILE and therefore has to decide
+/// between "the file IS the body" and "the file DEFINES the function"
+/// (c:5781 `ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD))`), is a different
+/// entry point that a parameter assignment never reaches.
+///
+/// zshrs stores the assigned text on `shfunc.body` with no compiled chunk, so
+/// the first CALL lands in the same autoload prelude a real `autoload` stub
+/// uses — and that prelude was applying `loadautofn`'s file rules to it. The
+/// two cases are told apart by the flag `loadautofn` stamps and a parameter
+/// assignment does not: `loadautofnsetfile` sets PM_LOADDIR (c:5657) on the
+/// node it loaded, while `setfunction` leaves the flag word at `dis` (c:314).
+/// The `loaded_dir` capture at both call sites already reads the same bit for
+/// the same reason.
+fn body_came_from_param_assignment(flags: i32) -> bool {
+    (flags as u32 & crate::ported::zsh_h::PM_LOADDIR) == 0
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// The text to run to install a `functions[NAME]=BODY` assignment: ALWAYS the
+/// `NAME() { … }` wrap, never the verbatim run that
+/// [`autoload_definition_source`] falls back to for a file whose contents are
+/// already a definition of `NAME`. c:Src/Modules/parameter.c:313 makes the
+/// parsed text the funcdef unconditionally, so text that happens to READ as
+/// `NAME () { … }` is a BODY whose execution defines `NAME` — measured
+/// against the reference shell:
+///
+/// ```text
+/// $ zsh -f -c 'functions[g]="g () { print inner }"; g; print "[${functions[g]}]"'
+/// [	print inner]
+/// ```
+///
+/// Nothing is printed: the call ran the definition. Running that text verbatim
+/// at install time instead printed `inner` and defined `g` a call too early.
+fn param_definition_source(name: &str, body: &str) -> String {
+    format!("{name}() {{\n{body}\n}}")
 }
 
 /// c:Src/exec.c:5781 — `if (ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD)))`,
