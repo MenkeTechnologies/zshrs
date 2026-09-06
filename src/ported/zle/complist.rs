@@ -945,9 +945,16 @@ pub fn initiscol() -> i32 {
         .ok()
         .and_then(|p| p.first().cloned())
         .unwrap_or_default();
-    if !first_cap.is_empty() {
-        let _ = zlrputs(&first_cap);
-    }
+    // UNCONDITIONAL, as in C: an EMPTY cap is not "no cap". `zlrputs("")`
+    // still writes `lc=` + `rc=` (c:569-571) and still overwrites
+    // `last_cap` (c:575), so skipping it dropped a real emission and
+    // desynced the duplicate suppression. `=(#b)(l)(*)==31=32` (empty base
+    // cap) is the reachable case: zsh writes `<>` here, the port wrote
+    // nothing. Safe to call with any cap because C reaches c:622 only with
+    // `patcols` pointing at a matched rule's `cols[]` — `do_colors` /
+    // `subcols` gate every caller (c:746, c:1798) — so PATCOLS is never
+    // the empty vector here either.
+    let _ = zlrputs(&first_cap);
     // c:624 — `curiscols[curiscol = 0] = *patcols++;`
     if let Ok(mut cs) = CURISCOLS.lock() {
         if !cs.is_empty() {
@@ -990,12 +997,13 @@ pub fn initiscol() -> i32 {
 /// character position `pos` in the current match emission:
 ///
 /// 1. Pops finished regions (where `pos > sendpos[curissend]`) —
-///    each pop emits SGR-reset + restores the prior color from the
-///    `curiscols[]` stack.
+///    each pop emits `zcputs(NULL, COL_NO)` (the `no=` cap, wrapped in
+///    `lc=`/`rc=`) + restores the prior color from the `curiscols[]`
+///    stack.
 /// 2. Pushes any region whose begin position equals `pos`, or
 ///    finishes-empty regions (endpos < begpos or begpos == -1):
 ///    inserts `endpos` into the sorted `sendpos[]` array, emits
-///    SGR-reset + the new color, pushes onto curiscols[].
+///    `zcputs(NULL, COL_NO)` + the new color, pushes onto curiscols[].
 pub fn doiscol(pos: i32) -> i32 {
     // c:635
 
@@ -1013,8 +1021,14 @@ pub fn doiscol(pos: i32) -> i32 {
         CURISSEND.fetch_add(1, Ordering::Relaxed);
         let curiscol = CURISCOL.load(Ordering::Relaxed);
         if curiscol > 0 {
-            // c:642 — `zcputs(NULL, COL_NO);` — SGR reset.
-            crate::shout::write(b"\x1b[0m");
+            // c:642 — `zcputs(NULL, COL_NO);`. NOT a hardcoded `\e[0m`:
+            // C routes this through `zcputs` -> `zlrputs`, so it picks up
+            // the user's `no=` cap and is wrapped in `lc=`/`rc=` like every
+            // other emitted colour, and it participates in the `last_cap`
+            // duplicate suppression (c:566). Writing the SGR literally
+            // dropped all three: with `lc=<' 'rc=>' 'no=35`, C emits `<35>`
+            // where the port emitted a real `ESC [ 0 m`.
+            zcputs(None, COL_NO);
             // c:643 — `zlrputs(curiscols[--curiscol]);`
             let new_idx = curiscol - 1;
             CURISCOL.store(new_idx, Ordering::Relaxed);
@@ -1023,9 +1037,9 @@ pub fn doiscol(pos: i32) -> i32 {
                 .ok()
                 .and_then(|c| c.get(new_idx as usize).cloned())
                 .unwrap_or_default();
-            if !restore_cap.is_empty() {
-                let _ = zlrputs(&restore_cap);
-            }
+            // UNCONDITIONAL, as at c:622 above — an empty restore cap is
+            // still an `lc=` + `rc=` write and still sets `last_cap`.
+            let _ = zlrputs(&restore_cap);
         }
     }
 
@@ -1083,7 +1097,9 @@ pub fn doiscol(pos: i32) -> i32 {
                 }
             }
             // c:659-660 — `zcputs(NULL, COL_NO); zlrputs(*patcols);`
-            crate::shout::write(b"\x1b[0m");
+            // Same as c:642 above: the reset is the `no=` cap emitted
+            // through `lc=`/`rc=`, not a literal `ESC [ 0 m`.
+            zcputs(None, COL_NO);
             let _ = zlrputs(&cap_now);
             // c:661 — `curiscols[++curiscol] = *patcols;`
             let new_idx = CURISCOL.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4549,15 +4565,16 @@ pub fn domenuselect(
     //   * the EDITOR buffer — `zle_main::ZLELINE`/`ZLECS`/`ZLELL`, which is
     //     what actually renders and what the ZLE widgets in `zle_misc` mutate.
     //
-    // The two closures below re-establish "one buffer" at the only two places
-    // the split can be observed, and are the ONLY sync points in this
-    // function:
+    // The two closures below re-establish "one buffer" at the only places the
+    // split can be observed, and are the ONLY sync points in this function:
     //
     //   `push_line_to_editor` — the completion line became authoritative
-    //   (domenuselect rewrote it), so hand it to the editor. Folded into
-    //   `set_zlemetaline` below so every whole-line rewrite in this function
-    //   syncs by construction, and called once more after `setmstatus`
-    //   (c:2782), which performs the same rewrite internally.
+    //   (domenuselect rewrote it, or the completion that led here did), so
+    //   hand it to the editor. Folded into `set_zlemetaline` below so every
+    //   whole-line rewrite in this function syncs by construction, called
+    //   once more after `setmstatus` (c:2782), which performs the same
+    //   rewrite internally, and once just before the selection loop (c:2483)
+    //   for the match the completion inserted BEFORE this hook ran.
     //
     //   `with_editor_line` — a dispatched widget is about to run and will
     //   read/write the EDITOR buffer. Seed the editor from the completion
@@ -5208,6 +5225,23 @@ pub fn domenuselect(
         }
         do_menucmp0(); // c:2481
     }
+
+    // zshrs bridge — see `push_line_to_editor` above. The menu_start-hook
+    // entry (compcore.c:517, after_complete) arrives with the first match
+    // ALREADY inserted, by the `do_ambig_menu` → `do_menucmp` → `do_single`
+    // chain that ran before the hook. In C that insertion landed in
+    // `zlemetaline`, which IS the buffer the loop below redisplays, so no
+    // sync exists or is expressible there. Here `do_single` wrote the
+    // COMPLETION buffer and the EDITOR buffer still holds the pre-TAB line,
+    // and this loop never returns to `docomplete`'s exit sync — it owns the
+    // terminal from here — so the inserted match was never displayed.
+    // Measured with `zstyle ':completion:*' menu yes select=0` on
+    // `zsh -<TAB>`: zsh drew `zsh --aliases`, zshrs drew `zsh -` with a
+    // byte-identical match list underneath. Placed after the c:2472-2481
+    // skip loop so the pushed line includes whatever `do_menucmp0` stepped
+    // to, and after the c:2454-2458 interactive restore (which syncs itself
+    // through `set_zlemetaline`), so both modes display the buffer C would.
+    push_line_to_editor();
 
     // c:2483-2488 — initial selection + geometry.
     MSELECT.store(cur_gnum(), Ordering::SeqCst); // c:2483
@@ -7594,6 +7628,102 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         zcoff();
         zcoff();
+    }
+
+    /// c:642 / c:659 — the in-string colour reset `doiscol` emits is
+    /// `zcputs(NULL, COL_NO)`, i.e. the `no=` cap put through `zlrputs`,
+    /// which wraps it in `lc=` / `rc=` (c:569-571). The port wrote a
+    /// literal `ESC [ 0 m` instead, so all three meta keys were dropped
+    /// on every `(#b)` backreference region: with
+    ///
+    ///     zstyle ':completion:*' list-colors \
+    ///         'lc=<' 'rc=>' 'no=35' '=(#b)(l)(*)=0=31=32'
+    ///
+    /// zsh emits `<35><31>l…` and the port emitted `ESC[0m<31>l…`
+    /// (measured via scripts/comptab_parity.py on `ls /usr/l`).
+    #[test]
+    fn doiscol_reset_uses_no_cap_wrapped_in_lc_rc() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut mc = MCOLORS.lock().unwrap();
+            mc.files = (0..NUM_COLS).map(|_| filecol(None)).collect();
+            mc.files[COL_NO] = filecol(Some("35"));
+            mc.files[COL_LC] = filecol(Some("<"));
+            mc.files[COL_RC] = filecol(Some(">"));
+        }
+        LAST_CAP.lock().unwrap().clear();
+        // One pending region: begins at 0, ends at 5, cap "31".
+        *PATCOLS.lock().unwrap() = vec!["31".to_string()];
+        PATCOLS_IDX.store(0, Ordering::Relaxed);
+        CURISBEG.store(0, Ordering::Relaxed);
+        CURISSEND.store(0, Ordering::Relaxed);
+        CURISCOL.store(0, Ordering::Relaxed);
+        {
+            let mut bp = BEGPOS.lock().unwrap();
+            bp.iter_mut().for_each(|x| *x = 0xfffffff);
+            bp[0] = 0;
+        }
+        {
+            let mut ep = ENDPOS.lock().unwrap();
+            ep.iter_mut().for_each(|x| *x = 0xfffffff);
+            ep[0] = 5;
+        }
+        SENDPOS
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .for_each(|x| *x = 0xfffffff);
+        CURISCOLS.lock().unwrap().iter_mut().for_each(|c| c.clear());
+
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe(2)");
+        let saved = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(fds[1], Ordering::Relaxed);
+        doiscol(0);
+        crate::ported::init::SHTTY.store(saved, Ordering::Relaxed);
+        unsafe { libc::close(fds[1]) };
+        let mut buf = [0u8; 64];
+        let n = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe { libc::close(fds[0]) };
+        assert!(n > 0, "read from capture pipe");
+        let out = String::from_utf8_lossy(&buf[..n.max(0) as usize]).to_string();
+        assert_eq!(
+            out, "<35><31>",
+            "c:659-660 — `no=` cap wrapped in lc/rc, then the region cap"
+        );
+    }
+
+    /// c:622 — `zlrputs(patcols[0])` is unconditional, so an EMPTY base
+    /// cap still emits `lc=` + `rc=`. The port skipped the call when the
+    /// cap was empty, which `list-colors 'lc=<' 'rc=>' '=(#b)(l)(*)==31=32'`
+    /// exposes: zsh opens each match with `<>`, the port with nothing.
+    #[test]
+    fn initiscol_empty_cap_still_emits_lc_rc() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut mc = MCOLORS.lock().unwrap();
+            mc.files = (0..NUM_COLS).map(|_| filecol(None)).collect();
+            mc.files[COL_LC] = filecol(Some("<"));
+            mc.files[COL_RC] = filecol(Some(">"));
+        }
+        LAST_CAP.lock().unwrap().clear();
+        *PATCOLS.lock().unwrap() = vec![String::new(), "31".to_string()];
+
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe(2)");
+        let saved = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(fds[1], Ordering::Relaxed);
+        initiscol();
+        crate::ported::init::SHTTY.store(saved, Ordering::Relaxed);
+        unsafe { libc::close(fds[1]) };
+        let mut buf = [0u8; 64];
+        let n = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe { libc::close(fds[0]) };
+        assert!(n > 0, "read from capture pipe");
+        let out = String::from_utf8_lossy(&buf[..n.max(0) as usize]).to_string();
+        assert_eq!(out, "<>", "c:622 — empty cap is still lc + cap + rc");
     }
 
     /// `cleareol()` runs without panic. C emits termcap `ce`.
