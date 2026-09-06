@@ -4749,3 +4749,48 @@ gstack
 # NOTE for whoever fixes it: the harness init does NOT `zmodload zsh/complist`,
 # and the reference zsh still honours these keys, so the earlier note in this
 # file that list-colors "needs zmodload zsh/complist" does not cover lc/rc/ec.
+
+# ============================================================================
+# SWEEP #4 (2026-09-05) — STORAGE / LOOKUP layouts (`--layout-fuzz`), the
+# curated 30-layout catalog.  Both shells always get the byte-identical tree.
+# ============================================================================
+#   # 23 passed, 4 failed, 27 cell(s) over 27 layout(s)
+#   # categories: PASS=23 FAIL=4 FLAKY=0 TIMEOUT=0 SKIP=0 INVALID-LAYOUT=2
+#   #             REF-WARNED=2 UNBUILDABLE=1 REF-CRASHED=0 TEST-CRASHED=0
+#   INVALID-LAYOUT: dump-corrupt-C, insecure-ask (the reference zsh refuses
+#   the layout, so neither was run).  UNBUILDABLE: insecure-other-owner (no
+#   second uid available on this host).  The harness also flags 1 pass —
+#   insecure-i — where NEITHER shell ran the layout's own completer, so the
+#   agreement proves nothing about the layout.
+#
+#   Every fpath composition (dup, missing, unreadable, symlink, two-dirs,
+#   tag-mismatch), the whole compinit flag matrix, every dump state
+#   (missing/stale/zsh-written/zshrs-written/none/bare) and the world-writable
+#   security conditions are byte-identical.  The 4 FAILs are two classes.
+#
+# ---------------------------------------------------------------------------
+# FINDING 5 — a helper reached ONLY through a `.zwc` digest resolves in zshrs
+#             and NOT in zsh.  zshrs is the PERMISSIVE side here.
+# ---------------------------------------------------------------------------
+# Layouts `digest-only` (the helper exists only inside `<dir>.zwc`, no
+# directory of that name) and `digest-explicit` (the fpath element IS the
+# `.zwc`).  One fingerprint, ad149ae13c, FAIL 3/3 serial for both:
+#     ref/zsh  : $ zz01 _zz01:2: command not found: _zzimpl
+#     test/zshrs: $ zz01 zz01-DIGEST-
+# zsh loads `_zz01` out of the digest, then cannot resolve the `_zzimpl`
+# helper that `_zz01` calls; zshrs resolves it and completes normally.
+# Spec cited by the layout: func.yo:97-103 (`element.zwc` is searched like the
+# directory) and func.yo:105-112 (an explicit `.zwc` element is used without
+# an age comparison), which on their face favour zshrs — but the two shells
+# still disagree, and the disagreement is zshrs autoloading a name the
+# reference does not.  Recorded as a REFERENCE-SIDE-FAILS divergence; it is
+# not a completion regression and nothing on the daily-driver path reaches it.
+#
+# ---------------------------------------------------------------------------
+# NOT FILED — `digest-corrupt` / `digest-corrupt-D` (fingerprints 1fe4e73f8b,
+# e543a47953).  Both shells detect the truncated digest and emit `invalid zwc
+# file:` for it; they differ only in the LOCATION PREFIX on the diagnostic —
+# zsh writes `zsh:2:` and `_main_complete:218:` where zshrs writes a bare
+# `_main_complete:` with no line number.  That is the diagnostic-FRAMING class
+# already recorded in this file (see the `tor-resolve -` block), not a lookup
+# divergence: zsh still finishes with `zz01-PLAIN-` and so does zshrs.
