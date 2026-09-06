@@ -64,6 +64,7 @@ use crate::ported::zle::{
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 use crate::ported::zsh_h::ERRFLAG_ERROR;
+use crate::ported::zsh_h::MB_METASTRWIDTH;
 use crate::ported::zsh_h::{
     isset, AUTOPARAMKEYS, AUTOPARAMSLASH, AUTOREMOVESLASH, LISTPACKED, LISTROWSFIRST, LISTTYPES,
     USEZLE,
@@ -2718,7 +2719,29 @@ pub fn calclist(showall: i32) -> i32 {
     let am = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut groups = am.lock().unwrap();
     let nmatches2 = nmatches.load(Relaxed);
-    let mut mlens: Vec<i32> = vec![0; (nmatches2 + 1) as usize];
+    // c:1504 — `VARARR(int, mlens, nmatches + 1)`, indexed below (and in
+    // pass A / pass B) by `m->gnum`. Those two quantities come from
+    // DIFFERENT places: `nmatches` is summed over the groups reachable
+    // from `amatches` (compcore.c:3477/3537), while `gnum` is handed out
+    // across `pmatches` up to `permmnum` (compcore.c:3556/3566). They
+    // agree only because every caller that reaches a listing has already
+    // pointed `amatches` at `pmatches` (compcore.c:1022) — a coupling
+    // nothing in `calclist` checks, and one `list_lines()` leans on
+    // directly by swapping the two around this call (c:1452-1457). Where
+    // C would read and write off the end of the VLA and silently corrupt
+    // its own stack frame, Rust has no such escape hatch: `Vec` indexing
+    // panics, and no panic hook or `catch_unwind` sits on the widget
+    // path to contain it. Size the array to cover the largest `gnum`
+    // actually present, so the coupling is enforced here rather than
+    // assumed; every in-bounds case is byte-identical to C.
+    let max_gnum = groups
+        .iter()
+        .flat_map(|g| g.matches.iter())
+        .map(|m| m.gnum)
+        .max()
+        .unwrap_or(0);
+    let mlens_len = nmatches2.max(max_gnum).max(0) as usize + 1;
+    let mut mlens: Vec<i32> = vec![0; mlens_len];
 
     let mut hidden = 0i32;
     let mut nlist = 0i32;
@@ -2740,39 +2763,55 @@ pub fn calclist(showall: i32) -> i32 {
 
         g.flags |= CGF_PACKED | CGF_ROWS; // c:1524
 
-        if onlyexpl_v == 0 && !g.ylist.is_empty() {
-            if !listpacked {
-                g.flags &= !CGF_PACKED;
-            } // c:1528-1529
-            if !listrowsfirst {
-                g.flags &= !CGF_ROWS;
-            } // c:1530-1531
+        // c:1526 — `if (!onlyexpl && pp)`: a POINTER test. A present but
+        // EMPTY ylist is still an ylist group; it must NOT fall through to
+        // the per-match walk below, which would count every match into
+        // `nlist` and inflate the "do you wish to see all N possibilities"
+        // prompt.
+        if onlyexpl_v == 0 && g.ylist.is_some() {
+            // Owned copy: the branch mutates `g.flags` while walking the
+            // list, and `g` is a `&mut` from `iter_mut()`.
+            let yl: Vec<String> = g.ylist.clone().unwrap_or_default();
+            if !yl.is_empty() {
+                // c:1527 — the flag clears sit inside `if (*pp)`, so an
+                // empty ylist keeps CGF_PACKED | CGF_ROWS.
+                if !listpacked {
+                    g.flags &= !CGF_PACKED;
+                } // c:1528-1529
+                if !listrowsfirst {
+                    g.flags &= !CGF_ROWS;
+                } // c:1530-1531
+            }
 
             hidden = 1; // c:1535
-            for s in g.ylist.iter() {
-                // c:1536-1541
-                if (s.chars().count() as i32) >= zterm_columns || s.contains('\n') {
+            for s in &yl {
+                // c:1536-1541 — `MB_METASTRWIDTH(*pp)`: DISPLAY COLUMNS.
+                // `chars().count()` under-measured every CJK/emoji entry
+                // (two columns each) and over-measured combining marks
+                // (zero columns), moving the wrap decision and with it the
+                // `M` in the ask prompt's "(M lines)".
+                if (MB_METASTRWIDTH(s) as i32) >= zterm_columns || s.contains('\n') {
                     nl = true;
                     break;
                 }
             }
-            if nl || g.ylist.len() < 2 {
+            if nl || yl.len() < 2 {
                 // c:1543
                 g.flags |= CGF_LINES; // c:1547
                 hidden = 1; // c:1548
-                for s in g.ylist.iter() {
+                for s in &yl {
                     // c:1549-1564
                     let mut acc = 0i32;
                     for chunk in s.split('\n') {
-                        let w = chunk.chars().count().saturating_sub(1) as i32;
+                        let w = (MB_METASTRWIDTH(chunk) as i32).saturating_sub(1);
                         acc += 1 + w / zterm_columns;
                     }
                     nlines += acc;
                 }
             } else {
-                for s in g.ylist.iter() {
+                for s in &yl {
                     // c:1567-1577
-                    let l = s.chars().count() as i32;
+                    let l = MB_METASTRWIDTH(s) as i32;
                     ndisp += 1;
                     if l > glong {
                         glong = l;
@@ -2897,18 +2936,21 @@ pub fn calclist(showall: i32) -> i32 {
         for g in groups.iter_mut() {
             let mut glines = 0i32;
             g.widths.clear(); // c:1670-1671
-            if !g.ylist.is_empty() {
+            if g.ylist.is_some() {
+                // c:1673 — `if ((pp = g->ylist))`: pointer test again.
+                let yl: Vec<String> = g.ylist.clone().unwrap_or_default();
                 if (g.flags & CGF_LINES) == 0 {
                     if g.cols > 0 {
-                        glines += (g.ylist.len() as i32 + g.cols - 1) / g.cols;
+                        glines += (yl.len() as i32 + g.cols - 1) / g.cols;
                         if g.cols > 1 {
                             g.width += (max - (g.width * g.cols - CM_SPACE)) / g.cols;
                         }
                     } else {
                         g.cols = 1;
                         g.width = 1;
-                        for s in g.ylist.iter() {
-                            glines += 1 + s.chars().count() as i32 / zterm_columns;
+                        for s in &yl {
+                            // c:1687 — `MB_METASTRWIDTH(*pp++)`.
+                            glines += 1 + MB_METASTRWIDTH(s) as i32 / zterm_columns;
                         }
                     }
                 }
@@ -2953,15 +2995,18 @@ pub fn calclist(showall: i32) -> i32 {
             let mut tcols = g.cols; // c:1723
             let mut width: i32 = 0; // c:1724
 
-            if !g.ylist.is_empty() {
-                // c:1726
+            // c:1726 — `if ((pp = g->ylist))`: pointer test again.
+            if g.ylist.is_some() {
                 if (g.flags & CGF_LINES) == 0 {
                     // c:1727
-                    // c:1728-1732 — per-item widths in `ylens`.
+                    // c:1728-1732 — per-item widths in `ylens`, measured
+                    // with `MB_METASTRWIDTH` (display columns).
                     let ylens: Vec<i32> = g
                         .ylist
+                        .as_deref()
+                        .unwrap_or(&[])
                         .iter()
-                        .map(|s| s.chars().count() as i32 + CM_SPACE)
+                        .map(|s| MB_METASTRWIDTH(s) as i32 + CM_SPACE)
                         .collect();
 
                     if (g.flags & CGF_ROWS) != 0 {
@@ -3526,7 +3571,10 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         }
 
         // c:2032-2076 — ylist branch (alternative listing).
-        if listdat.onlyexpl == 0 && !g.ylist.is_empty() {
+        // c:2028 guards with `pp && *pp`, so unlike calclist's three
+        // pointer tests an empty-but-present ylist takes the ELSE arm here.
+        let ypp: &[String] = g.ylist.as_deref().unwrap_or(&[]);
+        if listdat.onlyexpl == 0 && !ypp.is_empty() {
             // c:2032
             if pnl != 0 {
                 // c:2033
@@ -3540,8 +3588,8 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             if (g.flags & CGF_LINES) != 0 {
                 // c:2044
                 let mut so = std::io::stdout();
-                let last_idx = g.ylist.len().saturating_sub(1);
-                for (i, p) in g.ylist.iter().enumerate() {
+                let last_idx = ypp.len().saturating_sub(1);
+                for (i, p) in ypp.iter().enumerate() {
                     let _ = zputs(p, &mut so);
                     if i != last_idx {
                         // c:2050
@@ -3553,7 +3601,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 // c:2058
                 // Column layout — emit each entry.
                 let mut so = std::io::stdout();
-                for entry in &g.ylist {
+                for entry in ypp {
                     let _ = zputs(entry, &mut so);
                     let _ = write_loop(out_fd, b"\n");
                     ml += 1;

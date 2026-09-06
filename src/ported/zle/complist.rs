@@ -2473,8 +2473,10 @@ pub fn compprintlist(showall: i32) -> i32 {
                 break;
             }
 
-            // c:1405 — `char **pp = g->ylist;`
-            let pp = &g.ylist;
+            // c:1405 — `char **pp = g->ylist;`. The one guard below
+            // (c:1471) is `pp && *pp`, so flattening NULL to an empty
+            // slice here is exact.
+            let pp: &[String] = g.ylist.as_deref().unwrap_or(&[]);
             let onlyexpl: i32 = listdat
                 .get()
                 .and_then(|m| m.lock().ok().map(|g| g.onlyexpl))
