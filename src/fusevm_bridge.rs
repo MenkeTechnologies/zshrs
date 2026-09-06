@@ -2802,12 +2802,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // bashcompinit-style completion file (zsh-more-completions
         // _msync/_gocomplete/_qshell/_cw), spraying "command not
         // found: complete" at every deferred compinit load.
+        // c:Src/exec.c:3105-3110 — a shell FUNCTION is consulted before the
+        // builtin table, UNCONDITIONALLY. This check used to sit INSIDE the
+        // `IS_ZSH_MODE` arm below, so in NATIVE mode zshrs's own extension
+        // builtin ran and a user function of the same name was ignored.
+        //
+        // Live cost: `bashcompinit` defines shell functions named `complete`
+        // and `compgen`, so in native mode `complete -F _fn cmd` silently
+        // registered NOTHING and returned 0:
+        //     zsh -f          _comps[zzbashc]=[_bash_complete -F _zzfn]
+        //     zshrs -f        _comps[zzbashc]=[]            <- BUG
+        //     zshrs --zsh -f  _comps[zzbashc]=[_bash_complete -F _zzfn]
+        // That breaks every bashcompinit-bridged completer on the host.
+        //
+        // `try_user_fn_override` is the shape the correct registrations
+        // already use — `zsleep` (below) and `compdef` — which is why
+        // `compdef` alone always worked.
+        if let Some(status) = try_user_fn_override("compgen", &args) {
+            return Value::Status(status);
+        }
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            if crate::ported::utils::getshfunc("compgen").is_some() {
-                let status = with_executor(|exec| exec.dispatch_function_call("compgen", &args))
-                    .unwrap_or(127);
-                return Value::Status(status);
-            }
+            // No user function, and `compgen` is a bash-only builtin, so in a
+            // zsh-emulation shell it genuinely does not exist.
             eprintln!("zsh:1: command not found: compgen");
             let _ = args;
             return Value::Status(127);
@@ -2820,12 +2836,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // c:Bug #475 — `complete` is a bash-only builtin. Same gate +
         // user-function precedence as BUILTIN_COMPGEN above.
+        // Same unconditional function-before-builtin rule as BUILTIN_COMPGEN
+        // above (c:Src/exec.c:3105-3110); this check was inside the mode gate
+        // too, so `bashcompinit`'s `complete` function lost to the extension
+        // builtin in native mode.
+        if let Some(status) = try_user_fn_override("complete", &args) {
+            return Value::Status(status);
+        }
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            if crate::ported::utils::getshfunc("complete").is_some() {
-                let status = with_executor(|exec| exec.dispatch_function_call("complete", &args))
-                    .unwrap_or(127);
-                return Value::Status(status);
-            }
             eprintln!("zsh:1: command not found: complete");
             let _ = args;
             return Value::Status(127);
