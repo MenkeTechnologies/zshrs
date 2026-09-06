@@ -16201,28 +16201,7 @@ pub fn paramsubst(
                                 // value, which is how a single expansion inside a
                                 // ^D widget could hold the shell at 100% CPU for
                                 // hours. Same match, n tries instead of n^2/2.
-                                // c:3033-3035 — `set_pat_start(p, t-s)` raises
-                                // PAT_NOANCH (and PAT_NOTSTART past the head), so
-                                // the try matches a PREFIX of the tail and
-                                // `patmatchlen()` reports how much of it matched.
-                                // `gms` has no such flag: it asks whether the whole
-                                // slice matches, which for `${(S)p##usr}` on
-                                // `/usr/local/bin/zsh` is asking `usr` to match
-                                // `usr/local/bin/zsh` — never true, so the strip
-                                // never happened and the value came back whole.
-                                // The `(S)` replacement path a few hundred lines up
-                                // already compiles and flags it this way.
-                                let prog_noanch = {
-                                    let mut t = p.to_string();
-                                    crate::ported::glob::tokenize(&mut t);
-                                    crate::ported::pattern::patcompile(
-                                        &t,
-                                        crate::ported::zsh_h::PAT_HEAPDUP as i32,
-                                        None,
-                                    )
-                                };
                                 for start in 0..=nn {
-<<<<<<< Updated upstream
                                     if let Some(ml_) = gmsl(sl(start, nn), &p, ioff(start), start > 0)
                                     {
                                         // c:3034 — `mpos = t + patmatchlen()`,
@@ -16230,50 +16209,6 @@ pub fn paramsubst(
                                         let mlen = ml_.max(0) as usize;
                                         let endb = (bidx[start] + mlen).min(val.len());
                                         let e = start + val[bidx[start]..endb].chars().count();
-=======
-                                    let Some(prog) = &prog_noanch else { break };
-                                    let start_byte = bidx[start];
-                                    crate::ported::pattern::patflags.store(
-                                        prog.0.flags
-                                            | crate::ported::zsh_h::PAT_NOANCH
-                                            | if start_byte > 0 {
-                                                crate::ported::zsh_h::PAT_NOTSTART
-                                            } else {
-                                                0
-                                            },
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
-                                    let mut pst = crate::ported::pattern::rpat::new();
-                                    // c:3035 — one try per start position: the
-                                    // matcher is greedy, so this IS the longest
-                                    // match from here, which is what `##` wants.
-                                    let longest = if (prog.0.flags
-                                        & crate::ported::zsh_h::PAT_ANY)
-                                        != 0
-                                    {
-                                        Some(val.len() - start_byte)
-                                    } else {
-                                        crate::ported::pattern::patmatch(
-                                            &prog.1,
-                                            0,
-                                            &val[start_byte..],
-                                            0,
-                                            &mut pst,
-                                            prog.0.globflags,
-                                        )
-                                    };
-                                    if let Some(mlen) = longest {
-                                        let endb = (start_byte + mlen).min(val.len());
-                                        let e = start + val[start_byte..endb].chars().count();
-                                        // `$MATCH` / `$match` for a `(#m)` / `(#b)`
-                                        // pattern are published by a `pattry`, which
-                                        // the greedy call above is not — run the
-                                        // ordinary try over the matched span so the
-                                        // captures are the ones this match made.
-                                        if p.contains("(#b)") || p.contains("(#m)") {
-                                            let _ = gms(&val[start_byte..endb], &p, ioff(start));
-                                        }
->>>>>>> Stashed changes
                                         count += 1; // c:3055 `--n`
                                         if count >= target {
                                             found = Some((start, e));
