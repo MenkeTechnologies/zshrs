@@ -6817,7 +6817,26 @@ pub fn paramsubst(
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
-                                                  // The PARSE-TIME argument split for `subscript`, recorded while the
+        // c:Src/params.c:2047-2054 — getindex decides the WHOLE-PARAMETER
+        // splat on the RAW bracket text, BEFORE getarg ever runs
+        // `parsestr`/`singsub` on it (c:1567-1592):
+        //     s = *pptr + 1;
+        //     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack) {
+        //         ...  v->start = 0; v->end = -1;  s += 2;
+        //     } else {
+        //         start = getarg(&s, &inv, v, 0, &we, ...);
+        //     }
+        // So ONLY a literal one-character `[@]` / `[*]` is the splat. A
+        // subscript that merely EXPANDS to `@` or `*` (`k='@'; ${h[$k]}`) is an
+        // ordinary key/index, and a QUOTED `["@"]` stays a key too because the
+        // c:2033-2038 untokenize loop deliberately leaves the inull() quote
+        // marker sitting at `s[0]`. zshrs decided the splat from the
+        // SUBSTITUTED text, so `${h[$k]}` splatted the whole hash instead of
+        // reading the key `@`. This flag carries C's raw-text verdict to every
+        // downstream shape test; `subscript` keeps carrying getarg's resolved
+        // key/index, which is what the lookups need.
+        let mut sub_is_splat = false; // c:2048
+        // The PARSE-TIME argument split for `subscript`, recorded while the
                                                   // subscript text is still UNEXPANDED (c:Src/params.c:1533-1536).
                                                   //   None            — this reference took a path that never recorded
                                                   //                     one; downstream falls back to scanning the
@@ -6829,12 +6848,37 @@ pub fn paramsubst(
                                                                                     // `!` block above bound the name array into subexp_array_temp).
         if let Some(s) = bang_prefix_subscript.take() {
             subscript = Some(s);
+            // The `${!prefix@}` / `${!prefix*}` form synthesises the literal
+            // one-char subscript itself (see the `bang_prefix_subscript`
+            // assignment above), so it IS c:2048's splat.
+            sub_is_splat = true; // c:2048
         }
         // Persistent record that the reference carried an explicit `[@]`/`[*]`
         // splat. `subscript` gets cleared by downstream fetch arms, so the
         // KSHARRAYS bare→element-0 reductions (below) key off this flag to keep
         // `${(o)a[@]}` (whole array) distinct from bare `${(o)a}` (element 0).
         let mut was_at_star_splat = false;
+        // c:2048 — a splat-shaped VIEW of `subscript`: it answers Some("@") /
+        // Some("*") only when the raw bracket text really was that one
+        // character. Every shape decision below is asking "was this the
+        // whole-parameter splat?", which is exactly c:2048's predicate and not
+        // a test on getarg's resolved key.
+        macro_rules! splat_sub {
+            () => {
+                if sub_is_splat {
+                    subscript.as_deref()
+                } else {
+                    None
+                }
+            };
+        }
+        // c:2048 — same predicate for the call sites that already hold the
+        // subscript text in a local (`sub`, `t`, `s_trim`, …).
+        macro_rules! is_splat_txt {
+            ($s:expr) => {
+                sub_is_splat && matches!($s, "@" | "*")
+            };
+        }
         if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
             // c:2867
             // dash/ash have no array subscripts — braced `${name[...]}` (any of
@@ -7295,7 +7339,27 @@ pub fn paramsubst(
                 // path, so `${a[]}` on (1 2 3) printed `1 2 3` at status 0 and
                 // `${s[]}` printed the whole scalar — wrong DATA, not just a
                 // missing diagnostic. docs/BUGS.md #1035.
-                if matches!(expanded.as_str(), "@" | "*") {
+                // c:Src/params.c:2033-2048 — getindex untokenizes the raw
+                // bracket text, mapping every TOKEN back to its character but
+                // deliberately LEAVING the inull() quote markers in place:
+                //     for (tbrack = *pptr + 1; *tbrack && tbrack != s; tbrack++) {
+                //         if (inull(*tbrack) && !*++tbrack) break;
+                //         if (itok(*tbrack)) *tbrack = ztokens[*tbrack - Pound];
+                //     }
+                //     ...
+                //     s = *pptr + 1;
+                //     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack)
+                // and only THEN, on the else branch, hands the text to getarg's
+                // parsestr/singsub (c:1567-1592). `untokenize_preserve_quotes`
+                // is that same mapping: Star → `*`, while Dnull/Snull/Bnull
+                // become `"`/`'`/`\` so a quoted or escaped `["@"]` / `[\@]` is
+                // more than one character and misses the test — exactly as C's
+                // surviving inull() marker at `s[0]` makes it miss.
+                if matches!(
+                    crate::ported::lex::untokenize_preserve_quotes(&raw_sub).as_str(),
+                    "@" | "*"
+                ) {
+                    sub_is_splat = true; // c:2048
                     was_at_star_splat = true;
                 }
                 subscript = Some(expanded);
@@ -7697,6 +7761,7 @@ pub fn paramsubst(
                     None => resolved,
                 }; // c:2800
                 subscript = None; // c:2806 (consumed by the first fetch)
+                sub_is_splat = false; // c:2806 — and so is its splat verdict
             } else {
                 // c:2741
                 let target = vars_get(&var_name) // c:2741
@@ -7801,6 +7866,12 @@ pub fn paramsubst(
                         // sees the resolved index/key. Matches the
                         // singsub call at line 3998 of the bare
                         // `${arr[expr]}` subscript handler.
+                        // c:Src/params.c:2048 — the `${(P)n[...]}` operand's
+                        // subscript goes through the same getindex, so its
+                        // splat verdict is likewise the RAW text's, taken
+                        // before the singsub below. `pn=h; ${(P)pn[$k]}` with
+                        // `k='@'` reads the key `@`, it does not splat `h`.
+                        sub_is_splat = matches!(raw_key.as_str(), "@" | "*"); // c:2048
                         let key = if raw_key.contains('$') || raw_key.contains('`') {
                             singsub(&raw_key)
                         } else {
@@ -8042,14 +8113,14 @@ pub fn paramsubst(
                         // lookup (string or numeric key), matching
                         // `${an[key]}`. `@`/`*` keep the values (the
                         // flattened sv). c:Src/subst.c (P) named-ref.
-                        if sub == "@" || sub == "*" {
+                        if is_splat_txt!(sub) {
                             sv
                         } else {
                             assoc_get(an)
                                 .and_then(|m| m.get(sub).cloned())
                                 .unwrap_or_default()
                         }
-                    } else if sub == "@" || sub == "*" {
+                    } else if is_splat_txt!(sub) {
                         match arr_shape {
                             Some(arr) => arr.join(" "),
                             None => sv,
@@ -8165,8 +8236,7 @@ pub fn paramsubst(
             // `(kv)` sets both flags, leaves scanflags 0, and yields the value.
             let want_index = (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
             let partab_plain_key: Option<String> = if !sub.starts_with('(')
-                    && sub != "@"
-                    && sub != "*"
+                    && !is_splat_txt!(sub)
                     // `(v)` (and `(kv)`) want the enumerated VALUE shape the
                     // map machinery below produces; only a flagless key or a
                     // `(k)`-only key takes the getnode fast path.
@@ -8198,8 +8268,7 @@ pub fn paramsubst(
             if let Some(v) = partab_plain_key {
                 v
             } else if !sub.trim_start().starts_with('(')
-                && sub != "@"
-                && sub != "*"
+                && !is_splat_txt!(sub)
                 // The gate must be "is this name in the HASHED STORE", not
                 // `assoc_contains` — that answers yes for the `zsh/parameter`
                 // magic assocs too (parameters/functions/aliases/options/…),
@@ -8282,7 +8351,7 @@ pub fn paramsubst(
                 }
             } else if (hkeys & SCANPM_WANTKEYS) != 0
                 && (hvals & SCANPM_WANTVALS) == 0
-                && (sub == "@" || sub == "*")
+                && is_splat_txt!(sub)
             {
                 // c:Src/params.c:1492 — `(k)` on `${assoc[@]}` / `[*]`
                 // wants the KEYS. Routing through assoc_get (the arm
@@ -8302,8 +8371,7 @@ pub fn paramsubst(
                 assoc_keys(&var_name)
                     .map(|k| k.join(" "))
                     .unwrap_or_default()
-            } else if sub != "@"
-                && sub != "*"
+            } else if !is_splat_txt!(sub)
                 && crate::vm_helper::exact_assoc_sub_key(sub)
                     .is_some_and(|k| crate::vm_helper::assoc_key_hit(&var_name, k).is_some())
             {
@@ -8452,7 +8520,7 @@ pub fn paramsubst(
                 // named "@" / "*" and returned empty — so
                 // `${h[@]}` came out blank instead of enumerating
                 // the value bag. Bug #109 in docs/BUGS.md.
-                if sub == "@" || sub == "*" {
+                if is_splat_txt!(sub) {
                     map.iter()
                         .map(|(_, v)| v.clone())
                         .collect::<Vec<_>>()
@@ -8840,7 +8908,7 @@ pub fn paramsubst(
                         _ => sub,
                     }
                 };
-                if sub == "*" || sub == "@" {
+                if is_splat_txt!(sub) {
                     // c:2916 (full array)
                     arr.join(" ")
                 } else if let Some((flags, num, beg, pat, flag_ind, flag_down)) = {
@@ -9779,7 +9847,7 @@ pub fn paramsubst(
                 // c:2926 — magic-assoc per-key lookup. Routes through
                 // canonical PARTAB (Src/Modules/parameter.c:2235-2298
                 // ports at parameter.rs::PARTAB / PARTAB_ARRAY).
-                let is_splice = sub == "@" || sub == "*";
+                let is_splice = is_splat_txt!(sub);
                 if is_splice {
                     if let Some(values) = arrays_get(&var_name) {
                         Some(values.join(" "))
@@ -10021,7 +10089,7 @@ pub fn paramsubst(
                 // arm matched `[@]`) and split empty → one empty
                 // element. Bug #85 in docs/BUGS.md:
                 // `"${(s. .)s[@]}"` returned `[]` not `[a] [b] [c]`.
-                if sub == "@" || sub == "*" {
+                if is_splat_txt!(sub) {
                     if spsep.is_some() {
                         // c:Src/subst.c — set isarr so the
                         // auto_splat block (subst.rs:8332) fires for
@@ -11587,7 +11655,7 @@ pub fn paramsubst(
             // any elements, not whether a named slot exists. Without
             // this, `${arr[@]:-x}` always fired the default because
             // the integer-parse path bailed on the non-numeric `@`.
-            let is_at_or_star = matches!(sub, "@" | "*");
+            let is_at_or_star = is_splat_txt!(sub);
             // c:Src/params.c:1533-1536 — range decided pre-expansion.
             let is_slice =
                 crate::subscript_escape::subscript_range_bounds(sub, &subscript_split).is_some();
@@ -11965,8 +12033,7 @@ pub fn paramsubst(
             // array shape (SCANPM_ISVAR_AT at c:2027-2029), feeding the
             // c:3853 element-count path.
             let single_slot_subscript = subscript.as_deref().map_or(false, |s| {
-                s != "@"
-                    && s != "*"
+                !is_splat_txt!(s)
                     && crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                         .is_none()
             });
@@ -12348,7 +12415,7 @@ pub fn paramsubst(
         // `[@]`/`[*]` splat subscripts MUST still hit this branch — the
         // splat is the trigger for (k)/(v)/(kv) enumeration in zsh
         // (`${(k)h[@]}` = keys, NOT raw splat-of-values). Bug #592.
-        let is_at_splat_sub = matches!(subscript.as_deref(), Some("@") | Some("*"));
+        let is_at_splat_sub = matches!(splat_sub!(), Some("@") | Some("*"));
         let has_subscript_for_kvflag = subscript.is_some() && !is_at_splat_sub;
         // c:Src/params.c:2293-2296 — under KSHARRAYS a bare `$assoc` (no
         // subscript) is a SCALAR: the hash-bucket-first value. Any
@@ -12628,7 +12695,7 @@ pub fn paramsubst(
             // array instead of yielding element 1; `${(@)a[2]}` leaned on
             // the splat-block value fallback but the sort variant escaped.
             let single_index_sub = subscript.as_deref().map_or(false, |s| {
-                if matches!(s, "@" | "*") {
+                if is_splat_txt!(s) {
                     return false;
                 }
                 // Depth-aware: a comma at paren/bracket depth 0 marks a
@@ -12684,7 +12751,7 @@ pub fn paramsubst(
             // the c:3032 qt-sepjoin fires → isarr=0 in DQ, sort
             // skipped, value stays joined. That's the test-
             // documented "in DQ the slice JOINS" behavior.
-            let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            let is_at_subscript = matches!(splat_sub!(), Some("@") | Some("*"));
             // c:Src/subst.c:2916 — `(v->scanflags & SCANPM_ISVAR_AT)
             // ? -1 : v->scanflags ? 1 : 0`. SCANPM_ISVAR_AT is set
             // ONLY for the `@` subscript (c:Src/params.c:2028) and the
@@ -12702,7 +12769,7 @@ pub fn paramsubst(
             // For `[@]` and bare positional `@`/`*`, splat is
             // preserved (isarr=-1) so the c:4245 sort/splat block
             // fires even in DQ. Bug #277.
-            let is_strict_at_subscript = matches!(subscript.as_deref(), Some("@"));
+            let is_strict_at_subscript = matches!(splat_sub!(), Some("@"));
             // c:Src/subst.c — same `*` vs `@` distinction applies
             // to the positional-param pseudo-names. `$@` keeps
             // splat (-1, SCANPM_ISVAR_AT) so quoted `"$@"` survives
@@ -12955,7 +13022,7 @@ pub fn paramsubst(
                 // `[@]`→isarr=-1 / `[*]`→isarr=1 (DQ-collapse) split so the
                 // splat block re-fetches the (empty) assoc and yields nothing.
                 split_parts = Some(Vec::new());
-                isarr = if matches!(subscript.as_deref(), Some("@")) {
+                isarr = if matches!(splat_sub!(), Some("@")) {
                     -1
                 } else {
                     1
@@ -12997,7 +13064,7 @@ pub fn paramsubst(
         // — `"${(kv)m[@]}"` must splat each key/value — so it's excluded
         // (the magic-assoc seed clobbered its `isarr=-1` to 1 above).
         if isarr > 0
-            && subscript.as_deref() != Some("@")
+            && splat_sub!() != Some("@")
             && (magic_assoc_array.is_some() || (nojoin == 2 && subscript.is_none()))
         {
             if nojoin != 0 {
@@ -13125,7 +13192,7 @@ pub fn paramsubst(
                                   // set (SCANPM_ISVAR_AT path at c:2027-2029) so the
                                   // array iteration MUST fire — `\${arr[@]:#pat}` filters
                                   // the elements, not the joined scalar.
-                let is_array_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"))
+                let is_array_subscript = matches!(splat_sub!(), Some("@") | Some("*"))
                     || subscript.as_deref().map_or(false, |s| {
                         crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                             .is_some()
@@ -13171,7 +13238,7 @@ pub fn paramsubst(
                 // they transform-then-join, which yields the same text either
                 // way; only the FILTER, which REMOVES elements, shows it.
                 // Bug #1055.
-                let splices_in_dq = matches!(subscript.as_deref(), Some("@"));
+                let splices_in_dq = matches!(splat_sub!(), Some("@"));
                 let per_element_array =
                     !has_subscript && (!qt || splices_in_dq || nojoin == 2 || var_name == "@");
                 // c:Src/subst.c:3417 + Src/glob.c:2727 — empty
@@ -14069,7 +14136,7 @@ pub fn paramsubst(
                 // an unquoted read all keep per-element shape.
                 // `a=(a b); print -r -- "${a:/a b/X}"` is `X` in zsh; the
                 // ungated per-element walk left it `a b`.
-                let per_element_all = matches!(subscript.as_deref(), Some("@"))
+                let per_element_all = matches!(splat_sub!(), Some("@"))
                     || var_name == "@"
                     || nojoin == 2
                     || !qt;
@@ -14991,8 +15058,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -15004,7 +15070,7 @@ pub fn paramsubst(
                 // subscript into `@`, so `${a[*]//?/X}` in DQ ran per-
                 // element instead of joining first. Unquoted (`!qt`) and
                 // explicit `(@)` flag still trigger per-element regardless.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
                 if let Some(arr) =
@@ -15777,8 +15843,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -15788,7 +15853,7 @@ pub fn paramsubst(
                 // DQ; bug #322 in docs/BUGS.md. `!qt` (unquoted) and
                 // explicit `(@)` flag (nojoin==2) still trigger per-
                 // element regardless of subscript form.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
                 if let Some(arr) =
@@ -15888,8 +15953,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -15899,7 +15963,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
                 // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
                 // bug #322 in docs/BUGS.md.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
@@ -16157,7 +16221,7 @@ pub fn paramsubst(
                                                       // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
                                                       // upstream; suppress auto_splat re-fetch. Bug #322
                                                       // in docs/BUGS.md.
-                    if matches!(subscript.as_deref(), Some("*")) && qt && arrays_contains(&var_name)
+                    if matches!(splat_sub!(), Some("*")) && qt && arrays_contains(&var_name)
                     {
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
@@ -16192,8 +16256,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -16207,7 +16270,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
                 // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
                 // bug #322 in docs/BUGS.md.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
@@ -16430,7 +16493,7 @@ pub fn paramsubst(
                     value = strip_one(&raw_value); // c:3540
                                                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
                                                    // upstream; suppress auto_splat re-fetch. Bug #322.
-                    if matches!(subscript.as_deref(), Some("*")) && qt && arrays_contains(&var_name)
+                    if matches!(splat_sub!(), Some("*")) && qt && arrays_contains(&var_name)
                     {
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
@@ -16465,8 +16528,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -16474,7 +16536,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
                 // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
                 // bug #322 in docs/BUGS.md.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
@@ -16689,7 +16751,7 @@ pub fn paramsubst(
                     value = strip_one(&raw_value); // c:3540
                                                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
                                                    // upstream; suppress auto_splat re-fetch. Bug #322.
-                    if matches!(subscript.as_deref(), Some("*")) && qt && arrays_contains(&var_name)
+                    if matches!(splat_sub!(), Some("*")) && qt && arrays_contains(&var_name)
                     {
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
@@ -16724,8 +16786,7 @@ pub fn paramsubst(
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
-                        t != "@"
-                            && t != "*"
+                        !is_splat_txt!(t)
                             && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                                 .is_none()
                     })
@@ -16733,7 +16794,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:2916 SCANPM_ISVAR_AT only fires per-
                 // element on `[@]`/bare `@`. `[*]`/bare `*` join in DQ;
                 // bug #322 in docs/BUGS.md.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@"));
                 let per_element_array = !has_scalar_sub
                     && (!qt || is_at_subscript || nojoin == 2 || matches!(var_name.as_str(), "@"));
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
@@ -16973,7 +17034,7 @@ pub fn paramsubst(
                     value = strip_one(&raw_value); // c:3540
                                                    // c:Src/subst.c:3034 — DQ `[*]` sepjoined to scalar
                                                    // upstream; suppress auto_splat re-fetch. Bug #322.
-                    if matches!(subscript.as_deref(), Some("*")) && qt && arrays_contains(&var_name)
+                    if matches!(splat_sub!(), Some("*")) && qt && arrays_contains(&var_name)
                     {
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
@@ -17041,7 +17102,7 @@ pub fn paramsubst(
                 // iff present (exclude). This is why `"${a:|b}"` returns the
                 // original joined array unless the joined string itself is a
                 // literal element of `b`.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@") | Some("*"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 // c:3539 / c:3555 — the array filter only runs `if (isarr)`.
                 // Inside `"…"` the c:2798 collapse has already cleared isarr, so C
@@ -17118,7 +17179,7 @@ pub fn paramsubst(
                 // c:Src/subst.c:3539/3566 — DQ scalar context (see the `:|`
                 // arm) collapses to the sepjoin'd scalar and intersect-
                 // blanks it iff that whole joined string is NOT a member.
-                let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let is_at_subscript = matches!(splat_sub!(), Some("@") | Some("*"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 // c:3539 / c:3555 — the array filter only runs `if (isarr)`.
                 // Inside `"…"` the c:2798 collapse has already cleared isarr, so C
@@ -17224,7 +17285,7 @@ pub fn paramsubst(
                                                                             // carries it instead. `[@]`/`[*]` keeps isarr=-1 through the
                                                                             // qt transition (params.c:2027-2029 SCANPM_ISVAR_AT), so it
                                                                             // stays element-wise.
-                    let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                    let is_at_subscript_zip = matches!(splat_sub!(), Some("@") | Some("*"));
                     let scalar_ctx =
                         (qt || dq_collapsed || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
                             && !is_at_subscript_zip
@@ -17421,8 +17482,8 @@ pub fn paramsubst(
                     // Accept tokenized Star (\u{87}) as the `*`
                     // subscript — the lexer pre-tokenizes `*` in
                     // some unquoted contexts.
-                    let is_at = subscript.as_deref() == Some("@");
-                    let is_star = matches!(subscript.as_deref(), Some("*") | Some("\u{87}"));
+                    let is_at = splat_sub!() == Some("@");
+                    let is_star = matches!(splat_sub!(), Some("*") | Some("\u{87}"));
                     let is_range = subscript.as_deref().map_or(false, |s| {
                         crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                             .is_some()
@@ -17774,8 +17835,7 @@ pub fn paramsubst(
                     // of arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep the
                     // array shape that drives the slice path.
                     let single_slot_subscript = subscript.as_deref().map_or(false, |s| {
-                        s != "@"
-                            && s != "*"
+                        !is_splat_txt!(s)
                             && crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                                 .is_none()
                     });
@@ -18711,7 +18771,7 @@ pub fn paramsubst(
         if wantt && !used_subexp {
             if let Some(sub) = subscript.as_deref() {
                 let s_trim = sub.trim();
-                if !s_trim.is_empty() && s_trim != "*" && s_trim != "@" && !s_trim.starts_with('(')
+                if !s_trim.is_empty() && !is_splat_txt!(s_trim) && !s_trim.starts_with('(')
                 {
                     let parts: Vec<&str> = s_trim.splitn(2, ',').collect();
                     for p in &parts {
@@ -18835,7 +18895,7 @@ pub fn paramsubst(
         // below refetches it. A bare array NAME is element 0 in bash exactly
         // as it is under KSHARRAYS (`bash -c 'a=(x y); echo "${a@Q}"'` → 'x'),
         // so only an explicit `[@]`/`[*]` splat refetches.
-        let bash_splat_ref = matches!(subscript.as_deref(), Some("@") | Some("*"))
+        let bash_splat_ref = matches!(splat_sub!(), Some("@") | Some("*"))
             || (was_at_star_splat && subscript.is_none());
         let bash_elemwise = crate::dash_mode::bash_mode()
             && (bash_casemod != 0
@@ -19050,7 +19110,7 @@ pub fn paramsubst(
                     kind = 1;
                 }
             }
-            let at_splat = matches!(subscript.as_deref(), Some("@"))
+            let at_splat = matches!(splat_sub!(), Some("@"))
                 || (was_at_star_splat && subscript.is_none());
             let (new_value, new_parts): (String, Option<Vec<String>>) = {
                 let scalar: String =
@@ -19151,7 +19211,10 @@ pub fn paramsubst(
                // case where subscript-collapsed value lives in `value`
                // but arrays_get still resolves to the full array).
             let has_non_splat_subscript =
-                subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
+                subscript
+                .as_deref()
+                // c:2048 — only a LITERAL one-char `[@]`/`[*]` is the splat.
+                .map_or(false, |s| !is_splat_txt!(s));
             let is_subexp_temp = var_name.starts_with("__subexp_arr_");
             if dq_collapsed {
                 // c:3947-3960 — `if (isarr) { per element } else { val =
@@ -19331,8 +19394,7 @@ pub fn paramsubst(
                 .as_deref()
                 .map(|s| {
                     let t = s.trim();
-                    t != "@"
-                        && t != "*"
+                    !is_splat_txt!(t)
                         && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                             .is_none()
                 })
@@ -19535,8 +19597,7 @@ pub fn paramsubst(
                 .as_deref()
                 .map(|s| {
                     let t = s.trim();
-                    t != "@"
-                        && t != "*"
+                    !is_splat_txt!(t)
                         && crate::subscript_escape::subscript_range_bounds(t, &subscript_split)
                             .is_none()
                 })
@@ -21048,7 +21109,7 @@ pub fn paramsubst(
             // semantics). Without this, qt=true forces the join-first
             // path and produces `'a b c d e'` instead of `'a b' 'c'
             // 'd e'`. Bug #392.
-            let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            let is_at_subscript_splat = matches!(splat_sub!(), Some("@") | Some("*"));
             // c:2800 — once the DQ collapse has run, `isarr` is 0 and C takes
             // the SCALAR quoting path on `val`. zshrs's `!qt` disjunct below is a
             // stand-in for that test, and it is wrong for a NESTED inner (qt is
@@ -21200,7 +21261,7 @@ pub fn paramsubst(
             // two flags gate on the identical C variable, so the condition
             // must stay identical. `is_at_subscript_splat` is re-derived here
             // because that arm scopes it to its own block.
-            let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            let is_at_subscript_splat = matches!(splat_sub!(), Some("@") | Some("*"));
             let want_per_element = !joined_scalar_c3907
                 && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             if !want_per_element {
@@ -21384,7 +21445,10 @@ pub fn paramsubst(
             // to the isarr arm. Mirrors the case-conversion block's
             // subscript handling (subst.rs `has_non_splat_subscript`).
             let has_non_splat_subscript =
-                subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
+                subscript
+                .as_deref()
+                // c:2048 — only a LITERAL one-char `[@]`/`[*]` is the splat.
+                .map_or(false, |s| !is_splat_txt!(s));
             if let Some(parts) = split_parts.clone() {
                 // c:4245 array branch — array shape already materialized.
                 let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
@@ -21718,7 +21782,7 @@ pub fn paramsubst(
                 // auto-splat (it was yielding zero words).
                 let top_comma =
                     crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some();
-                s != "@" && s != "*" && !top_comma
+                !is_splat_txt!(s) && !top_comma
             })
             .unwrap_or(false); // c:3950
                                // ${=name} explicitly forces splat even in DQ context per
@@ -22677,6 +22741,18 @@ pub fn paramsubst(
         // processed during outer expansion; the `[` -only check
         // dropped through to scalar lookup, then `[a]` glob'd.
         let mut subscript_str: Option<String> = None; // c:1625
+        // c:Src/params.c:2047-2054 — the unbraced `$name[...]` reference reaches
+        // the SAME getindex, which decides the whole-parameter splat on the RAW
+        // bracket text before getarg's parsestr/singsub (c:1567-1592) touches it.
+        // Only a literal one-character `[@]` / `[*]` is the splat; `k='@';
+        // $arr[$k]` is an ordinary index and reaches c:1618 mathevalarg, which
+        // rejects `@`. See the braced walk above for the full citation.
+        let mut sub_is_splat = false; // c:2048
+        macro_rules! is_splat_txt {
+            ($s:expr) => {
+                sub_is_splat && matches!($s, "@" | "*")
+            };
+        }
         let opener = chars.get(pos).copied();
         // c:Src/subst.c:2800-2802 — fetchvalue's bracket-parse arg is
         // `(unset(KSHARRAYS) || inbrace) ? 1 : -1`: the BARE form
@@ -22757,7 +22833,18 @@ pub fn paramsubst(
             } else if depth == 0 {
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
-                                                                          // c:Src/params.c:1577-1582 — `if (ishash && (keymatch ||
+                // c:2033-2048 — the raw text with TOKENs mapped back to their
+                // characters but the inull() quote markers left in place, so a
+                // quoted/escaped `["@"]` / `[\@]` is longer than one char and
+                // is a key, not the splat. Taken here, before the remnulargs
+                // rebinding and the singsub below.
+                if matches!(
+                    crate::ported::lex::untokenize_preserve_quotes(&raw_sub).as_str(),
+                    "@" | "*"
+                ) {
+                    sub_is_splat = true; // c:2048
+                }
+                // c:Src/params.c:1577-1582 — `if (ishash && (keymatch ||
                                                                           // !rev)) remnulargs(s)` BEFORE singsub: de-escape a
                                                                           // backslash-escaped key (`$A[\]]`→`]`, `$A[\\3]`→`\3`)
                                                                           // so it matches the stored key, while leaving search-
@@ -22845,6 +22932,20 @@ pub fn paramsubst(
                 errflag_set_error();
                 return (String::new(), pos, vec![]);
             }
+            // c:Src/params.c:1618 — the same terminal branch for a subscript
+            // that RESOLVED to `@` / `*` on a non-hash target: `mathevalarg`
+            // rejects them as operands (zsh 5.9: `arr=(x y z); k='@'; print
+            // $arr[$k]` → "bad math expression: operand expected at `@'",
+            // status 1). Only an EXPANSION can put that text here — a literal
+            // `[@]`/`[*]` was consumed by c:2048 and set `sub_is_splat`.
+            if !sub_is_splat
+                && matches!(subscript_str.as_deref(), Some("@") | Some("*"))
+                && !assoc_contains(&var_name)
+            {
+                crate::ported::math::mathevalarg(subscript_str.as_deref().unwrap_or("")); // c:1618
+                errflag_set_error();
+                return (String::new(), pos, vec![]);
+            }
         } // c:1625
 
         // Element list of a hash MATCHMANY search subscript (`(K)`/`(I)`/`(R)`),
@@ -22876,8 +22977,7 @@ pub fn paramsubst(
                 // idiom over the 51k-entry `$_comps` never finished.
                 hit.unwrap_or_default() // c:1625
             } else if !sub.trim_start().starts_with('(')
-                && sub != "@"
-                && sub != "*"
+                && !is_splat_txt!(sub)
                 && crate::ported::modules::parameter::PARTAB
                     .iter()
                     .any(|e_| e_.name == var_name.as_str())
@@ -22930,7 +23030,7 @@ pub fn paramsubst(
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
                 // c:1625
-                if sub == "*" || sub == "@" {
+                if is_splat_txt!(sub) {
                     // c:1625
                     // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1)`.
                     // Quoted `"$a[*]"` joins by IFS[0]. The braced
@@ -23025,7 +23125,7 @@ pub fn paramsubst(
                 // (Src/Modules/parameter.c:2235-2298 ports at
                 // parameter.rs::PARTAB / PARTAB_ARRAY). Mirrors the
                 // companion braced-form dispatch above.
-                let is_splice = sub == "@" || sub == "*";
+                let is_splice = is_splat_txt!(sub);
                 if is_splice {
                     if let Some(values) = arrays_get(&var_name) {
                         Some(values.join(" "))
@@ -23132,7 +23232,7 @@ pub fn paramsubst(
                 // c:1625
                 let s = vars_get(&var_name).unwrap_or_default(); // c:1625
                 let chars_v: Vec<char> = s.chars().collect(); // c:1625
-                if sub == "*" || sub == "@" {
+                if is_splat_txt!(sub) {
                     // c:1625
                     s // c:1625
                 } else if let Some(crate::ported::params::getarg_out::Value(v)) =
@@ -23303,8 +23403,12 @@ pub fn paramsubst(
         // explicit-splat forms — even with a subscript, a `@`/`*`
         // sub means "all elements as separate words".
         // Direct port of subst.c:3950 multi-node return.
-        let splat_full = subscript_str.as_deref() == Some("@") // c:3950
-            || subscript_str.as_deref() == Some("*"); // c:3950
+        // c:Src/params.c:2048 — the explicit-splat spelling is the LITERAL
+        // one-char `[@]` / `[*]`; a subscript that only EXPANDS to one of them
+        // (`k='@'; $h[$k]`) is an ordinary key and keeps scalar shape.
+        let splat_full = subscript_str
+            .as_deref()
+            .is_some_and(|s| is_splat_txt!(s)); // c:3950 + c:2048
                                                       // Range subscript like `[1,3]` also produces array-shape
                                                       // slice — splat in non-DQ.
                                                       // c:Src/params.c:2037-2112 getindex — the `,` that opens a slice is
@@ -23739,7 +23843,10 @@ pub fn paramsubst(
                         let hi: i64 = hi.trim().parse().unwrap_or(0);
                         values = getarrvalue(&values, lo, hi);
                     } else if sub == "@" || sub == "*" {
-                        // splat — values unchanged
+                        // splat — values unchanged. c:2048's raw-text rule
+                        // needs no flag here: this `$@[…]` / `$*[…]` arm reads
+                        // the bracket text VERBATIM (no getarg singsub round),
+                        // so `sub` already IS the raw subscript.
                     } else if let Ok(idx) = sub.parse::<i64>() {
                         let n = values.len() as i64;
                         let i = if idx == 0 {
