@@ -4685,3 +4685,67 @@ gstack
 # select buffers known to produce 2+ matches or score the nav phase
 # separately; `--sequences tab2,tab_down` on the same buffer would at least
 # guarantee the menu is open before the arrow arrives.
+
+# ============================================================================
+# SWEEP #3 (2026-09-05) — TERMINAL GEOMETRY, alone and crossed with the
+# listing styles.
+# ============================================================================
+# Geometry alone (`--rows`/`--cols`, default styles), 20 listing-heavy cases
+# from the default-style PASS set, one `tab1` cell each:
+#   24x80    # 20 passed, 0 failed, 20 cell(s)
+#   10x40    # 20 passed, 0 failed, 20 cell(s)
+#   40x31    # 20 passed, 0 failed, 20 cell(s)
+#   15x200   # 20 passed, 0 failed, 20 cell(s)
+#   categories for all four: PASS=20 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0
+#                            TEST-CRASHED=0
+#   Vacuous: 0 of 80.  The geometry axis by itself is CLEAN on this set at
+#   default styles — narrow, short, and very wide all reproduce zsh byte for
+#   byte, including the packed multi-column signal-name rows of 'kill -'.
+#
+# Geometry CROSSED with the listing styles — 100 generated configs, 3
+# statements each, seed 7001, --rows 40 --cols 31, restricted to
+# list-packed list-rows-first list-grouped list-separator list-colors format
+# verbose extra-verbose group-name group-order list-prompt list-dirs-first
+# list-suffixes, on the same 20 cases:
+#   # 95 passed, 5 failed, 100 config(s)
+#   # categories: PASS=95 FAIL=5 FLAKY=0 TIMEOUT=0 SKIP=0 INVALID-CONFIG=0
+#   #             REF-REFUSED=0 REF-CRASHED=0 TEST-CRASHED=0
+#   Vacuous: 0 of 95.
+#   Pin re-verified unchanged after the chunk:
+#     zshrs cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#     dump  10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#
+# ---------------------------------------------------------------------------
+# FINDING 4 — the `lc=` / `rc=` / `ec=` keys of `list-colors` are IGNORED.
+#             ALL FIVE of sweep #3's failures are this one class.
+# ---------------------------------------------------------------------------
+#   cfg0015 'kill -'  list-colors 'ec=<EC>' sp=33 '=(#b)(*)=1;30=1;32;43'
+#   cfg0037 'fc -'    list-colors ec= 'rc=<RC>'
+#   cfg0052 'print -' list-colors 'fi=0;37' ec= rc=
+#   cfg0055 'date -'  list-colors 'lc=<LC>' lc= rc=m
+#   cfg0069 'df -'    list-colors 'lc=<LC>' '*.rs=32' sp=33
+#
+# Minimal fixture (one statement, one key):
+#     zstyle ':completion:*' list-colors 'lc=<LC>'
+# 'date -': FAIL 3/3 serial at --cols 31, and it reproduces at the default
+# --cols 110 as a single-row diff, so this is a STYLE finding that the narrow
+# geometry only AMPLIFIES (10 rows differ instead of 1) rather than causes:
+#
+#   ref/zsh                                        test/zshrs
+#    1| <LC>0m-I  -- display in ISO 8601 format     1| -I  -- display in ISO 8601 format
+#    2| -R  -- display in RFC2822 format            2| -R  -- display in RFC2822 format
+#    (rows 2-9 identical)
+#
+# `lc` is the LEFT CODE — what complist writes before a colour value
+# (Doc/Zsh/mod_complist.yo, the same lc/rc/ec/tc keys LS_COLORS defines).
+# Overriding it to a literal makes zsh print `<LC>` followed by the bare `0m`
+# that the default `\e[` prefix would have introduced; zshrs prints neither,
+# i.e. it never consults the key.  Each of `lc=`, `rc=` and `ec=` reproduces
+# on its own at --cols 110 ('date -': lc 1 row, rc 1 row, ec 9 rows).  An
+# ORDINARY colour key is fine — `list-colors 'no=31'` PASSES on the same cell
+# — so the gap is confined to the three meta-keys, not to list-colors at
+# large.
+#
+# NOTE for whoever fixes it: the harness init does NOT `zmodload zsh/complist`,
+# and the reference zsh still honours these keys, so the earlier note in this
+# file that list-colors "needs zmodload zsh/complist" does not cover lc/rc/ec.
