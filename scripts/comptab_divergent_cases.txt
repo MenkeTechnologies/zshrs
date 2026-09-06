@@ -4507,7 +4507,12 @@ gstack
 #     complete …   -> (nothing)            (the bug)
 #     whence -w zsleep complete -> both `function` on both shells
 #
-# and `compgen` are not among them.
+# `try_user_fn_override` has 14 call sites in src/fusevm_bridge.rs (:1293,
+# :1666, :1731, :1749, :1760, :1776, :1787, :1800, :1842, :1869, :2083, :2156,
+# :2898, :2983; the definition is at :14221).  `complete` and `compgen` are not
+# among them.  `compdef` IS — :2898 — which is why `compdef` itself behaves
+# correctly from a sourced file on zshrs and only the two bash-only names in
+# the same bridge do not.
 #
 # THE CLASS IS SEVEN NAMES, not two.  Same probe, all five other bash-only
 # builtins that carry an `IS_ZSH_MODE` gate instead of an unconditional
