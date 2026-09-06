@@ -491,7 +491,13 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 ///     output empty, returns a single Nularg sentinel so callers
 ///     see "empty value" rather than "no value".
 ///   - qt=0 (unquoted, `$(...)`): trim trailing newlines, then
-///     `spacesplit(buf, allownull=false)` per c:4865-4871.
+///     `spacesplit(buf, allownull=false)` per c:4865-4871, and
+///     `shtokenize` each word when `GLOBSUBST` is set (c:4868-4869)
+///     so the substituted words glob downstream.
+///
+/// Both arms — `$(< file)` (c:4746) and `$( cmd )` (c:4772) — go through
+/// the same c:4858-4872 tail (inlined twice — see the cross-reference
+/// notes at :619 and :3829), mirroring C where both go through `readoutput`.
 ///
 /// Uses `with_executor` (panics on missing VM context), not
 /// `try_with_executor + unwrap_or_default()`. C `getoutput` calls
@@ -610,17 +616,43 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     let buf = crate::ported::exec::run_command_substitution(cmd);
     LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
 
-    // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
-    let buf = buf.trim_end_matches('\n');
+    // ── c:4772 `retval = readoutput(pipes[0], qt, NULL);` ─────────────
+    // The fd died with the fork, but readoutput's POST-READ half (c:4858-
+    // 4872) still applies verbatim, so it is inlined here.
+    //
+    // !!! THIS BLOCK IS DUPLICATED at `readoutput` (:3829). See the note
+    // there for why build.rs's no-new-functions gate rules out a shared
+    // helper. ANY EDIT HERE MUST BE MIRRORED AT :3829 AND VICE VERSA.
+    //
+    // What was missing before: the c:4868-4869 `if (isset(GLOBSUBST))
+    // shtokenize(*words);` step. `readoutput` has it, this copy did not, so
+    // `setopt globsubst; echo $(echo '*')` printed `*` where zsh expands the
+    // glob — while `setopt globsubst; echo $(< star.txt)`, which reaches
+    // `readoutput` through the c:4746 arm, globbed correctly.
+    //
+    // `buf` arrives as a plain (un-metafied) String from
+    // `run_command_substitution`; `readoutput` now hands its own tail the
+    // same representation (see the deviation note at :3792).
+    //
+    // c:4858-4859 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`
+    let s = buf.trim_end_matches('\n');
+    // c:4861-4863 — qt branch: empty → Nularg sentinel; else single elem.
     if qt != 0 {
-        if buf.is_empty() {
-            vec![String::from(Nularg)] // c:4859-4861
-        } else {
-            vec![buf.to_string()] // c:4863
+        // c:4861
+        if s.is_empty() {
+            return vec![String::from(Nularg)]; // c:4862
         }
-    } else {
-        crate::ported::utils::spacesplit(buf, false) // c:4865
+        return vec![s.to_string()]; // c:4864
     }
+    // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
+    let mut words = crate::ported::utils::spacesplit(s, false); // c:4867
+    if isset(crate::ported::zsh_h::GLOBSUBST) {
+        // c:4870
+        for w in words.iter_mut() {
+            crate::ported::glob::shtokenize(w); // c:4870
+        }
+    }
+    words
 }
 
 /// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,
@@ -3754,17 +3786,34 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
             }
             break; // c:4832
         }
-        // c:4835 — `for (bufptr = inbuf; bufptr < inbuf + readret; bufptr++)`
-        for i in 0..(readret as usize) {
-            let c = inbuf[i];
-            if crate::ported::ztype_h::imeta(c) {
-                // c:4837 — `if (imeta(c)) { *ptr++ = Meta; c ^= 32; cnt++; }`
-                buf.push(Meta as u8); // c:4838
-                buf.push(c ^ 32); // c:4839 (Meta-encoded payload)
-            } else {
-                buf.push(c); // c:4848 *ptr++ = c
-            }
-        }
+        // c:4835-4849 — `for (bufptr = inbuf; ...) { c = *bufptr; if
+        // (imeta(c)) { *ptr++ = Meta; c ^= 32; cnt++; } ... *ptr++ = c; }`
+        //
+        // !!! DELIBERATE DEVIATION — the byte-level metafication is DROPPED.
+        //
+        // C's buffer is a `char *` that may hold arbitrary bytes, so it
+        // escapes every `imeta` byte (NUL, and Meta 0x83 .. Marker 0xa2 —
+        // `Src/utils.c:4195-4201`) to keep raw input bytes from colliding
+        // with the token bytes the lexer/glob layers use.
+        //
+        // zshrs's buffer is a Rust `String`. A lone 0x83 is not valid UTF-8,
+        // so `String::from_utf8_lossy` below replaced every emitted `Meta`
+        // with U+FFFD — the metafied form could never survive the conversion,
+        // and the "escaped" payload byte was left stranded next to a
+        // replacement char. `utils::spacesplit`'s Meta decoder
+        // (`utils.rs:5307`, `bytes[i] == Meta`) can never see a real Meta in a
+        // `String` for the same reason, so nothing downstream un-did it
+        // either. The loop was pure corruption for any input containing a
+        // byte in {0x00} ∪ [0x83,0xa2] — which includes the UTF-8 tails of
+        // common characters (U+2003 EM SPACE is `e2 80 83`, U+2022 BULLET is
+        // `e2 80 a2`).
+        //
+        // The in-process `$( cmd )` arm in `getoutput` (:619) never had a
+        // metafication step at all — it receives a plain `String` from
+        // `run_command_substitution`. Dropping it here is what makes the two
+        // arms hand this tail the SAME representation, which is the
+        // property C gets for free by routing both arms through `readoutput`.
+        buf.extend_from_slice(&inbuf[..readret as usize]); // c:4848
     }
     child_block(); // c:4854
                    // c:4855 — `if (readerror) *readerror = readret < 0 ? errno : 0;`
@@ -3777,21 +3826,33 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     unsafe {
         libc::close(in_fd);
     }
+    // ── c:4858-4872 tail ──────────────────────────────────────────────
+    // !!! THIS BLOCK IS DUPLICATED at `getoutput` (:619), which is the
+    // `$( cmd )` arm. C needs no duplicate: both of getoutput's arms
+    // (c:4746 `$(< file)` and c:4772 the pipe) call `readoutput`, so they
+    // share this tail by construction. zshrs collapses the fork, so its
+    // `$( cmd )` arm holds an in-memory String and has no fd to hand
+    // `readoutput`. Factoring the tail into a helper is what build.rs's
+    // no-new-functions gate on src/ported/ forbids (there is no C function
+    // to name it after), and its own remedy #1 is "inline the body at every
+    // call site" — so the two copies must be kept in lockstep BY HAND.
+    // ANY EDIT HERE MUST BE MIRRORED AT :619 AND VICE VERSA. The copies
+    // already drifted once: the getoutput copy (:619) had silently lost the
+    // c:4868-4869 `isset(GLOBSUBST)` → `shtokenize` step, so `setopt
+    // globsubst; echo $(echo '*')` did not glob while `$(< f)` did.
+    let s = String::from_utf8_lossy(&buf);
     // c:4858-4859 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`
-    while buf.last() == Some(&b'\n') {
-        buf.pop();
-    }
+    let s = s.trim_end_matches('\n');
     // c:4861-4863 — qt branch: empty → Nularg sentinel; else single elem.
-    let s = String::from_utf8_lossy(&buf).into_owned();
     if qt != 0 {
         // c:4861
-        if buf.is_empty() {
+        if s.is_empty() {
             return vec![String::from(Nularg)]; // c:4862
         }
-        return vec![s]; // c:4864
+        return vec![s.to_string()]; // c:4864
     }
     // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
-    let mut words = crate::ported::utils::spacesplit(&s, false); // c:4867
+    let mut words = crate::ported::utils::spacesplit(s, false); // c:4867
     if isset(crate::ported::zsh_h::GLOBSUBST) {
         // c:4870
         for w in words.iter_mut() {
@@ -6044,6 +6105,16 @@ pub fn doshfunc(
     mut body_runner: impl FnMut() -> i32, // (Rust-only — body delegate)
 ) -> i32 {
     use crate::ported::builtin::{BREAKS, CONTFLAG, LASTVAL, LOOPS, RETFLAG};
+    // TEMP-INSTRUMENTATION (remove before commit): shell-function invocation
+    // volume, to tell "few slow calls" from "very many cheap calls".
+    {
+        use std::sync::atomic::{AtomicU64, Ordering as O};
+        static CALLS: AtomicU64 = AtomicU64::new(0);
+        let n = CALLS.fetch_add(1, O::Relaxed) + 1;
+        if n % 5000 == 0 {
+            tracing::info!(target: "fncount", calls = n, "doshfunc cumulative");
+        }
+    }
     use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
     use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::endparamscope;
