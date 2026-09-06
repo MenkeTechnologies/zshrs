@@ -31,7 +31,7 @@
 //! and extract extensions from filenames in that dir.
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::modules::zutil::testforstyle;
+use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
@@ -111,7 +111,8 @@ pub fn _extensions() -> i32 {
 
     // sh:17-22  prefix-hidden style
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let prefix_hidden = testforstyle(
+    // sh:17 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+    let prefix_hidden = zstyle_t(
         &format!(":completion:{}:extensions", curcontext),
         "prefix-hidden",
     ) == 0;
@@ -130,7 +131,9 @@ pub fn _extensions() -> i32 {
     }
 
     // sh:24-25  add-space style → -S '' suffix
-    let add_space = testforstyle(
+    // sh:24 — `zstyle -T … add-space || suf=( -S '' )`, so an UNSET style
+    //   is true here; see [`zstyle_T`].
+    let add_space = zstyle_T(
         &format!(":completion:{}:extensions", curcontext),
         "add-space",
     ) == 0;

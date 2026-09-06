@@ -44,7 +44,8 @@
 //! sh:57  return 1
 //! ```
 
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_T;
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getiparam, getsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
@@ -156,7 +157,8 @@ pub fn _oldlist() -> i32 {
     let widget_is_complete = widgetstyle.contains("complete")
         || widgetstyle.contains("complete-prefix")
         || widgetstyle.contains("complete-word");
-    let old_menu_on = testforstyle(&format!(":completion:{}:", curcontext), "old-menu") == 0;
+    // sh:43 — `zstyle -T … old-menu`: unset counts as true; see [`zstyle_T`].
+    let old_menu_on = zstyle_T(&format!(":completion:{}:", curcontext), "old-menu") == 0;
     if widget_is_complete && old_menu_on {
         if !old_insert.is_empty() {
             set_compstate_str("old_list", "keep");
