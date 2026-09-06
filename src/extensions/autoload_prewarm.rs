@@ -166,11 +166,10 @@ fn muted<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
 /// caching one would be dead weight at best and wrong at worst.
 fn definition_source(name: &str, path: &Path) -> Option<String> {
     let body = std::fs::read_to_string(path).ok()?;
-    muted(|| {
-        Some(crate::vm_helper::autoload_definition_source(
-            name, &body, false,
-        ))
-    })
+    // The `parse_failed` half is the loader's business (it silences the second
+    // report of a parse error C only makes once); the prewarm already runs
+    // `muted` and only wants the text it would compile.
+    muted(|| Some(crate::vm_helper::autoload_definition_source(name, &body, false).0))
 }
 
 /// Parse + compile one definition text into the chunk the loader installs.
