@@ -4174,3 +4174,131 @@ xsetroot -solid
 # a zsh completer — but bisect it rather than assuming a bash-construct gap; it
 # may never run at all (the zstyle `script` lookup at _git:21, a failed
 # condition, an errflag abort) or abort partway.
+
+# ============================================================================
+# ZSTYLE-VARIATION SWEEP #1 (2026-09-05) — the axis every prior sweep ran with
+# `--zstyle <none>`.  120 GENERATED configs, 4 statements each.
+# ============================================================================
+# Method.  `scripts/comptab_parity.py --style-fuzz`, whose generator builds
+# statements from the documented value grammar rather than sampling a fixed
+# fixture (comptab_parity.py:2364-2853).  Judged on a 36-case pool drawn from
+# the PASS side of a default-style `--sequences tab1` baseline, so a FAIL is
+# attributable to the STYLE and not to a pre-existing divergence.
+#
+#   baseline, default styles, whole shared corpus, tab1, --jobs 4 --skip-optional
+#     # 153 passed, 11 failed, 167 cell(s)
+#     # categories: PASS=153 FAIL=11 TIMEOUT=3 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#     # elapsed: 770.3s (4.6s/cell)
+#
+#   style-value fuzz, seed 5001, 4 styles/config, --jobs 4 --shrink-probes 12
+#     # 114 passed, 6 failed, 120 config(s)
+#     # categories: PASS=114 FAIL=5 FLAKY=1 TIMEOUT=0 SKIP=0 INVALID-CONFIG=0
+#     #             REF-REFUSED=0 REF-CRASHED=0 TEST-CRASHED=0
+#
+#   Vacuous-pass rate, computed from --json phase records the way the earlier
+#   audits in this file do (`key 'tab'` came back `no-output` on BOTH sides):
+#   4 of 114 PASSes, 3.5%.  The default-style baseline above measures 26 of
+#   153, 17.0% — the hand-written corpus carries far more silent cells than
+#   the discovered corpus whose 5.3-5.8% is recorded earlier in this file.
+#
+#   BOTH shells got every fixture.  `build_init` (comptab_parity.py:428-471)
+#   writes ONE init file containing a single `source <fixture>` line and both
+#   shells source that same path; independently confirmed by asking each
+#   binary directly —
+#     $ <shell> -f -c "source dmin.zsh; zstyle -L"
+#     zsh   : zstyle ':completion:*:*:*:*:default' menu yes 'select=0' interactive
+#     zshrs : zstyle ':completion:*:*:*:*:default' menu yes 'select=0' interactive
+#
+#   Binary pinned into a private scratch dir and codesigned; dump pinned.
+#     zshrs sha256 cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#     dump  sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#   Re-verified unchanged after the chunk.  Dump health: comps=51739 patcomps=1.
+#
+# ---------------------------------------------------------------------------
+# FINDING 1 — `last-prompt` is IGNORED when it is false.  The engine is fine;
+#             the STYLE never reaches it.
+# ---------------------------------------------------------------------------
+# Fixture (one statement, shrunk from four):
+#     zstyle ':completion:*' last-prompt 0
+# Reproduces on 'mkdir -', 'du -', 'cd /usr/' — 3/3 serial each, --jobs 1.
+# ('ls -' passes under the same fixture.)  `last-prompt yes` PASSES.
+#
+#   ref/zsh                          test/zshrs
+#    0| $ mkdir -                     0| $ mkdir -
+#    1| -m  -- set permission mode    1| -m  -- set permission mode
+#    2| -p  -- make parent dirs       2| -p  -- make parent dirs
+#    3| -v  -- print message ...      3| -v  -- print message ...
+#    4| -/                            4| -/
+#    5| $ mkdir -                     <absent>
+#   raw stream: zsh emits `\r\n` then `\e[J$ mkdir -`; zshrs emits `\e[4A`
+#   then `\r\e[5Cmkdir -` — it climbs back to the prompt, i.e. it behaves as
+#   `last-prompt yes` no matter what the style says.
+#
+# ROOT CAUSE, narrowed to the style->compstate leg by two measurements:
+#   * The style LOOKUP is at parity.  `zstyle ':completion:*' last-prompt 0`
+#     then `zstyle -t ':completion:foo:bar' last-prompt` answers 1 in BOTH
+#     shells (and `-s` yields `0` in both), so `_setup`'s sh:48-52 arm
+#     (`elif [[ $? -eq 1 ]]; then compstate[last_prompt]=''`) is the arm both
+#     shells should take.
+#   * The ENGINE leg is at parity.  Driving the same state through the OPTION
+#     instead of the style — `--init-extra 'unsetopt alwayslastprompt'`, no
+#     zstyle at all — the cell PASSES and both shells print the extra `$ mkdir -`
+#     row, byte-identical to zsh's screen above.  So `complastprompt` ->
+#     `dolastprompt` (compcore.rs:5600-5610, c:Src/Zle/compcore.c:3015-3016)
+#     -> `clearflag` (compresult.rs:1250, c:compresult.c:1925) all work when
+#     the value arrives.
+#   The break is therefore between `_setup`'s port writing
+#   `compstate[last_prompt]=""` (src/compsys/ported/Base/Core/_setup.rs:114-124,
+#   sh:48-53) and compcore's read of it at compcore.rs:5608
+#   (`get_compstate_str("last_prompt")`).  Not chased further — mining task.
+#
+# ---------------------------------------------------------------------------
+# FINDING 2 — a TRUTH WORD combined with `select` in the `menu` style loses
+#             the auto-menu INSERTION.  Either half alone is at parity.
+# ---------------------------------------------------------------------------
+# Doc/Zsh/compsys.yo:2189-2245 — the words of the `menu` value are independent
+# list elements: a boolean turns menu completion on, `select[=N]` turns menu
+# SELECTION on.  _main_complete:252-291 makes the boolean set
+# `compstate[insert]=menu` (which inserts the first match); :316-329 makes
+# `select` set MENUSELECT.  zshrs performs the second and drops the first.
+#
+# Isolation matrix, each cell --jobs 1, on the case named:
+#     zstyle ':completion:*' menu yes                    'tar -'   PASS
+#     zstyle ':completion:*' menu select=0               'ls *('   PASS
+#     zstyle ':completion:*' menu select=2 search        'tar -'   PASS
+#     zstyle ':completion:*' menu select=0 interactive   'which '  PASS
+#     zstyle ':completion:*' menu true select=0          'ls *('   FAIL
+#     zstyle ':completion:*' menu 1 select=2 search      'tar -'   FAIL
+#     zstyle ':completion:*' menu yes select=0 interactive 'which ' FAIL
+# The context is NOT the trigger: the same values at
+# `:completion:*:*:*:*:default` and at `:completion:*` give the same verdicts,
+# and `':completion:*:*:*:*:default' menu select=0 interactive` PASSES.
+#
+# 2a. `menu 1 select=2 search`, case 'tar -', 3/3 serial:
+#       zsh  row 0: `$ tar -A`     (first match inserted, then isearch)
+#       zshrs row 0: `$ tar -`     (nothing inserted)
+#     rows 1-8 (the `isearch:` prompt and the 7 described options) are
+#     byte-identical, so the listing half is right and only the insertion is
+#     missing.  Same shape for `menu true select=0` on 'ls *(': zsh shows
+#     `$ ls *(%`, zshrs `$ ls *(`, with all 60 qualifier rows identical.
+#
+# 2b. `menu yes select=0 interactive`, case 'which ', 3/3 serial, 31 rows:
+#     zsh draws `interactive: []` AND the full two-column listing beneath it;
+#     zshrs draws `interactive: []` and NOTHING else.  Same trigger word, much
+#     larger blast radius — under `interactive` the missing insert takes the
+#     whole listing with it.
+#
+# The port of the min/max loops themselves reads faithful
+# (src/compsys/ported/Base/Core/_main_complete.rs:1018-1091 against sh:252-296),
+# so the suspicion is downstream of `set_compstate_str("insert", "menu")`:
+# the MENUSELECT setup at sh:301-349 appears to win over the insert the
+# boolean arm just requested.  Not chased further — mining task.
+#
+# ---------------------------------------------------------------------------
+# NOT FILED — two `ls **/` cells (fingerprints cc203e3451 FAIL, bd82817699
+# FLAKY).  Both are the 40-row screen showing the TAIL of a listing of this
+# repo's whole directory tree, and they differ only in where the top row
+# starts.  The tree is being rewritten continuously by the other agents in
+# this worktree (target/debug/incremental/... dominates both listings), so the
+# input is not stable enough for the cell to mean anything.  `ls **/` is
+# excluded from the style-fuzz case pool from here on.
