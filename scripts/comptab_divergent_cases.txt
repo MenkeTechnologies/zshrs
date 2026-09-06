@@ -4631,3 +4631,57 @@ gstack
 # interface (zshmodules(1), zsh/parameter), so anything reading it — the
 # `_history_complete_word` widget, `_history`'s `range` style slicing, user
 # code — sees the current word where it expects the previous one.
+
+# ============================================================================
+# CHUNK B: `tab_down` + `tab_up` — MENU NAVIGATION, under `menu select`
+# ============================================================================
+# First finding of the chunk is about the MEASUREMENT, and it invalidates the
+# obvious way to run this sequence: `tab_down` against the bare (no-zstyle)
+# config is nearly useless.  A first run of `--sequences tab_down --jobs 4`
+# with NO fixture was abandoned after 12 cells, all of them looking like
+#
+#     PASS tab_down '2to3 '
+#       ~ zsh:   no output at all after key 'down' (waited 10.1s)
+#       ~ zshrs: no output at all after key 'down' (waited 10.0s)
+#
+# — 25s of wall clock per cell, all of it spent waiting out two 10s budgets
+# for a keystroke that draws nothing.  Without `menu select` there is no menu
+# for DOWN to move in: the key is `down-line-or-history` on a one-line buffer,
+# so the cell measures a redraw that neither shell performs.  Any future
+# sweep of a navigation sequence has to carry a fixture that opens a menu, or
+# it is buying 25s/cell of nothing.  Re-run as:
+#
+#   --sequences tab_down,tab_up --zstyle scripts/parity_combos/force-menu-select.zsh
+#
+# Slice: stride-68 of the same fresh `discover_cases(None, False)` list,
+# 122 buffers, '2to3 ' .. 'zt-icat '.  Same PRIVATE pinned binary and dump as
+# chunk A, both re-verified byte-identical after the run:
+#   zshrs sha256 cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#   dump  sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#
+# VERBATIM totals:
+#   # 238 passed, 0 failed, 244 cell(s)
+#   # categories: PASS=238 FAIL=0 TIMEOUT=6 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 1586.3s (6.5s/cell)
+#
+# All SIX TIMEOUTs re-run at `--jobs 1 --key-budget 45`:
+#   # 6 passed, 0 failed, 6 cell(s)
+#   # categories: PASS=6 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+# ('pass -', 'tidy ', 'tmux -' under both sequences) — every one a budget
+# artefact under a load average of 30+, not a divergence.
+#
+# So: ZERO menu-navigation divergences in 244 cells.  That is a real result
+# for `tab_down`/`tab_up` over this slice, but read it with the coverage
+# number below, not as "menu navigation is at parity".
+#
+# VACUOUS-PASS RATES, both of them, because the interesting one is the second:
+#   fully vacuous (every key phase `no-output` on BOTH sides):  0 of 238 (0.0%)
+#   NAVIGATION-key vacuous (the DOWN/UP phase specifically):  101 of 238 (42.4%)
+# Even with `menu select` forced, 42% of these cells never opened a menu — a
+# single unambiguous match inserts and there is nothing to navigate — so the
+# arrow key drew nothing on either side and that cell is evidence about TAB,
+# not about navigation.  The honest coverage claim for this chunk is 137
+# cells of real navigation, not 244.  A future navigation sweep should either
+# select buffers known to produce 2+ matches or score the nav phase
+# separately; `--sequences tab2,tab_down` on the same buffer would at least
+# guarantee the menu is open before the arrow arrives.
