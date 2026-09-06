@@ -4063,6 +4063,21 @@ impl ShellExecutor {
         let mut _autoload_file_guard: Option<AutoloadFileGuard> = None;
         // Same Rust-port short-circuit as dispatch_function_call,
         // sans the doshfunc wrap.
+        //
+        // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`,
+        // the gate execcmd_exec applies AFTER argument expansion and BEFORE it
+        // invokes anything. A shell function whose argument list raised errflag
+        // (`_describe -t t "${(j:,:)${(s: :)x y z}}" d` — a bad substitution)
+        // is therefore never entered. zshrs's ordinary function path honours
+        // that, but the compsys router short-circuits above it, so a NATIVE
+        // PORT ran where the stock shell function did not and the completion
+        // listed matches zsh never offered. Gate the short-circuit on the same
+        // condition; the ordinary path below is left alone, since it already
+        // aborts upstream.
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:3761
+            return Some(1); // c:3762 goto err
+        }
         if let Some(rc) = crate::compsys::router::dispatch_compsys(name, args) {
             // Plugin override (ABI v4) wins over the built-in Rust port.
             return Some(rc);
@@ -4382,6 +4397,19 @@ impl ShellExecutor {
         // intercepts natively: it supplies the body, so no shell autoload
         // or compiled chunk is needed — same as a built-in Rust port.
         let has_plugin_override = crate::extensions::plugin_host::compfn_override(name).is_some();
+        // c:Src/exec.c:3760-3763 — the twin of the gate in
+        // `run_function_body_only`: a native compsys port stands in for the
+        // COMMAND here, so it must not run when the argument expansion that
+        // built its argument list already raised errflag. Scoped to the ported
+        // names on purpose — this function is also the shim ports use to call
+        // ordinary shell functions (src/ported/exec.rs:8588), and those keep
+        // whatever behaviour the executor gives them.
+        if (direct_rust_fn.is_some() || has_plugin_override)
+            && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
+        {
+            crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:3761
+            return Some(1); // c:3762 goto err
+        }
         // c:Src/exec.c:5626 — the body of a function loaded on THIS call
         // runs through `execode(shf->funcdef, 1, 0, "loadautofunc")`
         // (execautofn_basic), nested inside runshfunc's "shfunc" frame.
