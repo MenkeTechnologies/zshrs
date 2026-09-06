@@ -4991,3 +4991,88 @@ gstack
 # zshrs takes the spec's action instead. Garbage in on both sides, and zsh's
 # output is not obviously the more defensible one, so this is recorded rather
 # than matched. No real completer passes a flag-shaped `-O` argument.
+
+# ============================================================================
+# CHUNK C: `tab,tab,down` — the fix for chunk B's 42% nav-vacuous rate
+# ============================================================================
+# Chunk B's recommendation, run.  Same 122-buffer stride-68 slice, same pinned
+# binary/dump (sha256 cb8d9e2939d6… / 10ebe0a033…), same
+# `--zstyle scripts/parity_combos/force-menu-select.zsh`, but the extra TAB in
+# front so the menu is guaranteed open before the arrow lands.  There is no
+# `tab2_down` in `parity_corpus.KEY_SEQUENCES`; `--keys tab,tab,down` gets it
+# without touching the corpus module.
+#
+# VERBATIM totals:
+#   # 122 passed, 0 failed, 122 cell(s)
+#   # categories: PASS=122 FAIL=0 TIMEOUT=0 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 392.8s (3.2s/cell)
+#
+# VACUOUS: 0 of 122 fully vacuous; NAVIGATION-key vacuous 21 of 122 (17.2%),
+# down from 42.4% for the same slice under `tab_down`.  So the extra TAB buys
+# 25 percentage points of real navigation coverage AND halves the wall clock
+# per cell (3.2s vs 6.5s), because the cells that used to burn two 10s budgets
+# on a keystroke that drew nothing now draw something.  `--keys tab,tab,<nav>`
+# is the shape a navigation sweep should use.
+#
+# 101 cells of genuine menu movement, zero divergences.
+
+# ============================================================================
+# CHUNK D: `tab2_ctrl_g` + `tab_down_ctrl_l` + `left_tab_tab` — abort, redraw,
+# mid-word.  ZERO real divergences; 21 cells MIS-SCORED by --jobs 4.
+# ============================================================================
+# Same slice, same pins (both re-verified byte-identical afterwards), same
+# menu-select fixture.  Three shapes no sweep of this corpus had touched:
+# ^G with a list on screen, ^L repainting with a menu open, and completing
+# with the cursor moved off the end of the buffer.
+#
+# VERBATIM totals:
+#   # 345 passed, 9 failed, 366 cell(s)
+#   # categories: PASS=345 FAIL=9 TIMEOUT=12 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 1950.7s (5.3s/cell)
+#
+# VACUOUS: 0 of 345 fully vacuous, and 0% last-key-vacuous on ALL THREE
+# sequences (tab2_ctrl_g 112 passes, left_tab_tab 111, tab_down_ctrl_l 122).
+# Every key drew on both sides.  These are the most evidence-dense sequences
+# measured today — worth more per cell than `tab2`, and far more than a bare
+# `tab_down`.
+#
+# ---------------------------------------------------------------------------
+# ALL 9 FAILs AND ALL 12 TIMEOUTs DISSOLVE UNDER SERIAL RE-MEASUREMENT
+# ---------------------------------------------------------------------------
+# The nine FAILs were all `tab2_ctrl_g`, in two fingerprints, both of them the
+# same shape — zsh draws a fresh prompt row after ^G and zshrs's has not
+# arrived when the screen is captured:
+#
+#     dc7476dfe6  x6   smallest: --case 'mktemp '   --keys tab,tab,ctrl-g
+#                      cell/rowtop/col0  | ref/$ | test/<absent>
+#     99d13d4a4b  x3   smallest: --case 'checkgid ' --keys tab,tab,ctrl-g
+#                      cell/rowlist/col0 | ref/$ | test/<absent>
+#
+# and on 'c_rehash -' the 19 rows above the divergence are byte-identical
+# (four repetitions of the same `_arguments:comparguments:327: invalid option
+# definition:` warning on both sides).  Only the trailing prompt differs, and
+# zsh's raw stream shows the `send-break` restart — the PROMPT_SP `%` mark,
+# `\r \r\r`, the prompt and `\e[?2004h`.
+#
+# Re-run 3x SERIALLY at --jobs 1, all nine buffers, same fixture and pins:
+#   # 9 passed, 0 failed, 9 cell(s)      (three times, identically)
+# 9/9 PASS on every one of the three runs.  Not a divergence.
+#
+# The twelve TIMEOUTs (eleven `left_tab_tab`, one `java -` tab2_ctrl_g), all
+# reported as `zshrs: nothing at all after key 'tab' within 10.0s`, re-run at
+# `--jobs 1 --key-budget 45`:
+#   # 11 passed, 0 failed, 11 cell(s)     (the left_tab_tab set)
+#   # 1 passed, 0 failed, 1 cell(s)       ('java -')
+#
+# So 21 of 366 cells (5.7%) were mis-scored by the parallel run.  The machine
+# was carrying a load average of 30+ (sixteen agents), and these two sequences
+# are the load-sensitive ones: both END on a key whose only output is a
+# REPAINT (^G's fresh prompt; the second TAB's re-listing after a cursor
+# move), and a repaint that misses the settle window looks exactly like a
+# shell that answered differently.  `tab2` and `tab_down` did not behave this
+# way in chunks A-C.
+#
+# PRACTICAL RULE for anyone extending this axis: a `tab2_ctrl_g` or
+# `left_tab_tab` FAIL from a `--jobs 4` run is worth NOTHING until it has been
+# reproduced at `--jobs 1`.  On this evidence the false-positive rate for
+# those two sequences under contention is 100% (21 of 21).
