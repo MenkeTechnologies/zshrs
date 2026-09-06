@@ -159,6 +159,10 @@ mod tests {
     #[test]
     fn returns_one_without_completion_context() {
         let _g = crate::test_util::global_state_lock();
+        // The lock serialises but restores nothing, and a `compadd`-driven
+        // test parks a word in `$PREFIX` that makes every later candidate fail
+        // to match — so this returned 0 in a full run and 1 on its own.
+        crate::test_util::reset_completion_state();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _services(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
