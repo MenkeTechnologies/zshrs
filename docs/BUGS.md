@@ -59381,3 +59381,93 @@ that), and the downstream empty-word elision then removes it. c:186's
 with neighbouring text — or one that came from a `nulstring` rather than from
 an empty array element — must survive it. That is the same residual #1132's
 third round recorded for the splice's word-SEGMENT form.
+
+---
+
+## #1136 — `${(S)v##pat}` stripped the RIGHTMOST match, not the leftmost — fixed
+
+**Status:** `fixed` 2026-09-06.
+
+```console
+$ zsh   -fc 'v=foobarfoo; print -r -- "${(S)v##foo}" "${(BS)v##foo}"'
+barfoo 1
+$ zshrs --zsh -f -c 'v=foobarfoo; print -r -- "${(S)v##foo}" "${(BS)v##foo}"'
+foobar 7
+```
+
+`(S)` adds `SUB_SUBSTR`, so `${v##pat}` takes the `(SUB_SUBSTR|SUB_LONG)`
+arm of `igetmatch` (`Src/glob.c:3017-3036`): walk `t` forward from the START
+of the string and, at the first position where the pattern matches, take the
+LONGEST match there.
+
+`getmatch` compiles the pattern with `PAT_SCAN|PAT_NOANCH`
+(`Src/glob.c:2665`), clearing `PAT_NOANCH` only for `SUB_ALL` or for
+`SUB_END && !SUB_SUBSTR` (`Src/glob.c:2672-2673`). That flag is what the scan
+runs on: `PAT_NOANCH` lets `P_END` accept `patinput < patinend`
+(`Src/pattern.c:3452`), so `pattrylen` reports a PREFIX match and
+`patmatchlen()` (`Src/pattern.c:2649`, set from `patinlen = patinput -
+patinstart` at `:2508`) hands back its length. That is how "longest match
+starting HERE" is asked one position at a time.
+
+The port's scan had the right shape — one try per start position, reading
+`patmatchlen()` — but its `gms` helper compiled with `PAT_HEAPDUP` alone. With
+no `PAT_NOANCH` every trial demanded a WHOLE-slice match, so the only position
+that could succeed was the last one whose entire tail the pattern matched: the
+rightmost occurrence. Two of the four sweep cases hid it by coincidence
+(`${(S)v##o*}` is `f` either way, and `(MS)` returns the matched TEXT, which is
+the same string at either occurrence); `(B)`/`(E)` reported the wrong index
+outright.
+
+**Fix.** `src/ported/subst.rs` — the `(SUB_SUBSTR|SUB_LONG)` scan gets its own
+`PAT_NOANCH`-compiled program, with `PAT_NOTSTART` mirroring
+`set_pat_start(p, t-s)` (`Src/glob.c:2780`) so `(#s)` still fails at interior
+positions. The two variants are memoised separately because the bit lives on
+the compiled program. `gms` keeps its whole-slice semantics for the
+anchored-prefix scan beside it, which enumerates ends and needs them.
+
+Measured against `/opt/homebrew/bin/zsh` over `#`/`##`/`%`/`%%` x
+``/`M`/`B`/`E`/`N`/`R`/`S`/`MS`/`BS`/`MB` x four patterns: 4 of 164 cases
+differed before, 0 after.
+
+---
+
+## #1137 — the `--ksh` drop-in accepted two ksh93 rejections: parenthesised substring offsets, and an empty replacement pattern — fixed
+
+**Status:** `fixed` 2026-09-06.
+
+```console
+$ ksh -c 'v=abcdef; print "${v:(-2)}"'
+ksh: \(-2\): arithmetic syntax error          # rc 1
+$ zshrs --ksh -f -c 'v=abcdef; print "${v:(-2)}"'
+ef                                            # rc 0
+
+$ ksh -c 'a=(1 2 3); print "${a[@]/#/x}"'
+1 2 3
+$ zshrs --ksh -f -c 'a=(1 2 3); print "${a[@]/#/x}"'
+x1 x2 x3
+```
+
+Two unrelated ksh93 behaviours, both measured on ksh93u+ 2012-08-01
+(`/bin/ksh`, macOS 15):
+
+**Parenthesised offsets.** ksh93's `${var:offset[:length]}` arithmetic accepts
+no parentheses at all — not the `(-3)` idiom bash and zsh document for a
+negative offset, and not a grouping paren in an ordinary expression either
+(`${v:1+(1)}` → `1+\(1\): arithmetic syntax error`). The space form it does
+accept: `${v: -3:2}` → `de`.
+
+**Empty replacement pattern.** An empty pattern never matches, so the whole
+replacement is a no-op: `${v/#/X}` and `${v/%/X}` on `abc` both yield `abc`,
+and so does `${v//X}`. zsh and bash match the empty pattern at the anchor and
+give `Xabc` / `abcX`. ksh93 does support the anchors with a NON-empty pattern
+(`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`), so the rule is specifically
+"empty pattern matches nothing", not "no anchors".
+
+**Fix.** `src/ported/subst.rs`, both gated on `korn_mode() &&
+!pdksh_family()`. `korn_mode()` (`src/extensions/dash_mode.rs`) is the BARE
+`--ksh`/`--mksh`/`--pdksh` drop-in, so `zshrs --ksh --zsh` and a runtime
+`emulate ksh` keep zsh's behavior — which is what the zsh-style parity leg
+measures. The `pdksh_family()` exclusion is load-bearing: mksh sides with
+zsh/bash on BOTH rules (`mksh -c 'v=abcdef; print "${v:(-2)}"'` → `ef`,
+`${v/#/X}` → `Xabc`), and gating on `korn_mode()` alone regressed `--mksh`
+into ksh93's error.
