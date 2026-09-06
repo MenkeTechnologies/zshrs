@@ -58899,58 +58899,25 @@ $ set -- x y; unset argv; print -r -- "[$@]"
   zsh  : []              zshrs: [x y]
 ```
 
-**Fourth round — both `argv` siblings closed** 2026-09-05, in
-`src/ported/params.rs` only. Neither was in `bin_unset` or in the compiler;
-both were in the two `vararray_gsu` callbacks the `argv` row shares with `*`
-and `@`.
+**Fourth round — the `unset argv` sibling closed** 2026-09-05, in
+`src/ported/params.rs` only. It was not in `bin_unset` after all; it was in the
+`vararray_gsu` callback the `argv` row shares with `*` and `@`.
 
 ```console
-$ set -- x y; v=${argv:-n};  print -r -- "[$v]"
-  zsh  : [x y]            zshrs: [n]              # before
-$ set -- x y; v=${argv:+Y};  print -r -- "[$v]"
-  zsh  : [Y]              zshrs: [x y]            # before
-$ set -- x y; v=${argv:?};   print -r -- "[$v]"
-  zsh  : [x y]            zshrs: argv: parameter not set   # before
-$ set -- x y; cat <<< ${argv:-n}
-  zsh  : x y              zshrs: n                # before
-$ set -- x y; unset argv;    print -r -- "[$@]" $#
+$ set -- x y; unset argv; print -r -- "[$@]" $#
   zsh  : [] 0             zshrs: [x y] 2          # before
+$ set -- x y; unset argv; print -r -- "[$argv]" "[$*]"
+  zsh  : [] []            zshrs: [x y] [x y]      # before
+$ f(){ unset argv; print -r -- "[$@] $#"; }; f p q
+  zsh  : [] 0             zshrs: [p q] 2          # before
 $ set -- x y; unset argv; shift
-  zsh  : shift count must be <= $#   zshrs: (silently shifts)   # before
+  zsh  : shift count must be <= $#   zshrs: (shifts silently, rc 0)  # before
 ```
 
-**Root cause 1 — the READ side: `getsparam("argv")` answered `""`.**
-c:`Src/params.c:2350-2358` `getstrvalue` takes the PM_ARRAY case for all three
-IPDEF9 rows and returns `sepjoin(getvaluearr(v), NULL, 1)`, and
-`getvaluearr` (c:724-732) reads `pm->gsu.a->getfn(pm)` — `arrvargetfn`
-(c:189-190 `vararray_gsu`), i.e. the GLOBAL `pparams`, not the node's own
-`u.arr`. zshrs's port of that getfn (`lookup_special_var`, the GSU-dispatch
-step `getsparam` runs first) knew the `*` and `@` spellings and not the third.
-`argv` therefore fell through to the paramtab read, found the seeded PM_ARRAY
-node whose `u_arr` is empty — the positionals live in `builtin::PPARAMS`, the
-same split `assignaparam` mirrors for `argv=(…)` (params.rs:9548) and
-`printparamnode` for `typeset -p argv` (params.rs:13874) — and answered
-`Some("")`.
-
-Only the operators that decide on the VALUE could see it.
-c:`Src/subst.c:3188-3189`:
-
-```c
-	if (colf && !vunset) {
-	    vunset = (isarr) ? !*aval : !*val || (*val == Nularg && !val[1]);
-```
-
-so every COLON form took the null branch while the non-colon `${argv-n}` /
-`${argv+Y}` / `${argv?}` — which test set-ness alone, and set-ness already
-resolved `argv` — were right. That is also why only the four `ssub` /
-`singsub` contexts showed it: command position reaches
-`BUILTIN_PARAM_DEFAULT_FAMILY`, which normalises the spelling to `*` before
-rebuilding the body (`src/fusevm_bridge.rs`, third round above); the
-PREFORK_SINGLE routes reach `paramsubst` directly.
-
-**Root cause 2 — the UNSET side: `stdunsetfn` cleared the wrong storage.**
-c:`Src/params.c:3917-3920` — the PM_ARRAY arm of `stdunsetfn` is
-`pm->gsu.a->setfn(pm, NULL)`, which for a `vararray_gsu` row is `arrvarsetfn`:
+**Root cause — `stdunsetfn` cleared storage nothing reads.**
+c:`Src/builtin.c:3952` `unsetparam_pm` → c:`Src/params.c:3917-3920`, whose
+PM_ARRAY arm is `pm->gsu.a->setfn(pm, NULL)`. For a `vararray_gsu` row
+(c:189-190) that setfn is `arrvarsetfn`:
 
 ```c
     char ***dptr = (char ***)pm->u.data;
@@ -58960,25 +58927,44 @@ c:`Src/params.c:3917-3920` — the PM_ARRAY arm of `stdunsetfn` is
 ```
 
 c:4248 + c:4259-4260 — it never touches `pm->u.arr`; it replaces the GLOBAL
-vector with an EMPTY array (not a NULL — the row carries PM_SPECIAL from
-IPDEF9, which is why `set -- a b` works straight afterwards). The Rust port
-cleared `pm.u_arr`, which nothing reads. `argv` is the only spelling that gets
-here: c:392-393 give `*` and `@` PM_READONLY_SPECIAL so `unsetparam_pm`
-rejects them at c:3850, and `unset '*'` fails `isident` first
-(c:`Src/builtin.c:3878`); c:430's `argv` has a flag word of 0.
+vector, and with an EMPTY array rather than a NULL (the row carries PM_SPECIAL
+from IPDEF9), which is why `set -- a b` works straight afterwards. The Rust
+`stdunsetfn` cleared `pm.u_arr`, which nothing reads: zshrs keeps the vector in
+`builtin::PPARAMS`, the same split `assignaparam` already mirrors for
+`argv=(…)` (params.rs:9548) and `printparamnode` for `typeset -p argv`
+(params.rs:13874).
 
-**Fix** — `src/ported/params.rs` only.
+`argv` is the only spelling that reaches this at all: c:392-393 give `*` and
+`@` PM_READONLY_SPECIAL so `unsetparam_pm` rejects them at c:3850, and
+`unset '*'` fails `isident` before that (c:`Src/builtin.c:3878`); c:430's
+`argv` has a flag word of 0.
 
-* `lookup_special_var`'s `"*" | "@"` arm — the port of `arrvargetfn` — takes
-  the third IPDEF9 spelling, so `getsparam("argv")` is `sepjoin(pparams)`.
-* `stdunsetfn`'s PM_ARRAY arm mirrors c:4259-4260 for the three pparams rows,
-  clearing `builtin::PPARAMS`.
+**Also closed here, with no cell that shows it — the READ side of the same
+three-names-one-storage identity.** c:`Src/params.c:2350-2358` `getstrvalue`
+takes the PM_ARRAY case for all three IPDEF9 rows and answers
+`sepjoin(getvaluearr(v), NULL, 1)`, and `getvaluearr` (c:724-732) reads
+`pm->gsu.a->getfn(pm)` — `arrvargetfn`, i.e. the global `pparams`, not the
+node's `u.arr`. zshrs's port of that getfn (`lookup_special_var`, the
+GSU-dispatch step `getsparam` runs first) knew the `*` and `@` spellings and
+not the third, so `getsparam("argv")` fell through to the paramtab read, found
+the seeded PM_ARRAY node whose `u_arr` is empty, and answered `Some("")`.
+The third spelling was added to that arm.
+
+Measured, not assumed: on the tree this round was written against, **no cell of
+the 2610-cell positional sweep below distinguishes that one-line change**, and
+neither do 13 hand-picked spellings that read `argv` as a scalar
+(`${(P)n}`, `${argv//x/Z}`, `${argv:s/…/…/}`, `${#${argv}}`, `${(j.-.)argv}`,
+`$((${#argv}))`, `typeset -p argv`, …). The `${argv:-…}` family it would have
+covered is closed one layer up by the `#1132 residual` entry below, which makes
+the colon NULL test consult `isarr` instead of the joined scalar. It is kept
+because the value `getsparam("argv")` returns is wrong on its own terms, not
+because it moved a number.
 
 **Still open in this family, unchanged by the round.** c:`Src/params.c:3921`
 `pm->node.flags |= PM_UNSET` stays on the node forever — `set --` writes
 `pparams` directly and never clears it — so in zsh `${+argv}` is 0 and
 `${argv-n}` takes the default for the rest of the shell's life, even after
-`set -- a b` refills the vector. zshrs's set-ness probe answers from the name
+`set -- a b` refills the vector. zshrs's set-ness probe answers from the NAME
 (`arrays_contains`, `src/ported/subst.rs`), not from the node flag:
 
 ```console
@@ -58991,19 +58977,24 @@ changed the wrong answer, not the verdict.
 
 **Measurement.**
 
-* The 1260-cell IFS sweep this entry's second and third rounds used:
-  **0 divergent before, 0 after** — the round is inert there, as expected.
-* A 2610-cell positional sweep built for it (3 IFS settings x SH_WORD_SPLIT
-  on/off x 6 `set --` shapes x 29 spellings of `$argv` / `$*` / `$@` and their
-  operator forms x 5 contexts — command word, scalar-assignment RHS, function
-  argument, here-string, `case` word): **448 divergent before, 234 after —
-  214 fixed, 0 new.** Diffed as SETS of failing cells, not as counts.
-* Both sides `-f`; both binaries pinned copies with `codesign -f -s -`
-  applied; build output grepped case-insensitively for `error`.
-* The two new `tests/bugs_md_regression.rs` tests were run against the pinned
-  PRE-fix binary and BOTH FAILED there, while the five older `bug1132_*` tests
-  in the same file passed on it — so neither is vacuous and neither restates
-  an older round.
+* Attribution was established by building the tree with THIS round's two hunks
+  reverted into a pinned binary and diffing the two failure SETS, because
+  another agent landed the `#1132 residual` fix in `src/ported/subst.rs` in the
+  same working tree while this round was in progress. Against that reverted
+  binary the round moves exactly the `unset argv` cells and nothing else.
+* A 2610-cell positional sweep (3 IFS settings x SH_WORD_SPLIT on/off x 6
+  `set --` shapes x 29 spellings of `$argv` / `$*` / `$@` and their operator
+  forms x 5 contexts — command word, scalar-assignment RHS, function argument,
+  here-string, `case` word): **234 divergent before, 234 after, 0 new, 0
+  fixed** — the sweep carries no `unset` cell, and the read-side hunk is inert
+  there.
+* The 1260-cell IFS sweep this entry's second and third rounds used: **0
+  divergent before, 0 after.**
+* Both sides `-f`; both binaries pinned copies with `codesign -f -s -` applied;
+  build output grepped case-insensitively for `error`.
+* The new `tests/bugs_md_regression.rs::bug1132_unset_argv_clears_the_positional_vector`
+  was run against the pinned PRE-fix binary and FAILED there, while the five
+  older `bug1132_*` tests in the same file passed on it.
 
 ## #1133 — a range bound whose math evaluation FAILED silently substituted the arm's default bound, so a bad subscript returned the whole value instead of erroring — fixed
 
@@ -59236,3 +59227,157 @@ so a peer's transient `error[E0277]` could not leave a stale binary in place.
 * `--test parity`: 47270 passed / 30 failed. All 30 were re-run individually
   against the pinned PRE-fix binary and ALL 30 FAILED there too, so the
   after-set is the before-set and this change adds no member.
+
+## #1134 — SH_WORD_SPLIT reached the `[@]`/`[*]` splice and nothing else: the bare `$NAME` read, the `${=NAME}` / `${==NAME}` flags and every subscripted read skipped c:3912's join-then-split block — fixed
+
+**Status:** `fixed` 2026-09-05. #1132's third round closed the block for the
+`${NAME[@]}` / `${NAME[*]}` splice fast paths and named the rest as still open.
+This is the rest: the SAME block, reached through the other four opcodes.
+
+```console
+$ setopt shwordsplit; a=('p:q' r); IFS=:;      print -rl -- $a
+  zsh  : p / q / r        zshrs: p:q / r          # before
+$ setopt shwordsplit; a=('p q' r); unset IFS;  print -rl -- ${a}
+  zsh  : p / q / r        zshrs: p q / r          # before
+$ setopt shwordsplit; a=(x '' y); IFS=:;       print -rl -- $a
+  zsh  : x / '' / y       zshrs: x / y            # before
+$ setopt shwordsplit; a=('p:q' r); IFS=:;      print -rl -- ${a[1,2]}
+  zsh  : p / q / r        zshrs: p:q / r          # before
+$ setopt shwordsplit; a=('p:q' r); IFS=:;      print -rl -- ${a[1]}
+  zsh  : p / q            zshrs: p:q              # before
+$ setopt shwordsplit; typeset -A h=(k 'p:q'); IFS=:; print -rl -- ${h[k]}
+  zsh  : p / q            zshrs: p:q              # before
+$ a=(x y);     IFS=;                           print -rl -- ${=a}
+  zsh  : x / y            zshrs: xy               # before
+$ a=('p:q' r); IFS=:;                          print -rl -- ${==a}
+  zsh  : p:q / r          zshrs: p:q:r            # before
+$ a=(x y);     IFS=:;                          print -rl -- "${=a}"
+  zsh  : x / y            zshrs: x:y              # before
+$ set -- 'a b' 'c d'; IFS=:;                   print -rl -- $=@
+  zsh  : a b / c d        zshrs: a b c d          # before
+```
+
+**Root cause — one block, four opcodes that did not run it.** c:`Src/subst.c`
+decides this in three consecutive steps, and every read has to take all three:
+
+```c
+3030	    if (isarr) {
+3031		if (nojoin)
+3032		    isarr = -1;
+3033		if (qt && !getlen && isarr > 0) {
+3034		    val = sepjoin(aval, sep, 1);
+3035		    isarr = 0;
+…
+3899	    } else if (isarr && aval && aval[0] && !aval[1]) {
+3904		val = aval[0];
+3905		isarr = 0;
+…
+3912	    if (ssub || spbreak || spsep || sep || quoted_array_with_offset) {
+3913		int force_split = !ssub && (spbreak || spsep);
+3914		if (isarr || quoted_array_with_offset) {
+3916		    if (nojoin == 0 || sep) {			/* join on IFS[0] */
+3919		    } else if (force_split &&
+3920			       (spsep || nojoin == 2 || (!ifs && isarr < 0))) {
+…
+3931		if (force_split && !isarr)
+3932		    aval = sepsplit(val, spsep, 0, 1);
+```
+
+`isarr` is c:2916-2917 — non-zero for ANY array-shaped read, which is what
+makes the spelling irrelevant: a bare `$a`, a `${a[1,2]}` range and a
+`${a[@]}` splice are the same thing here. The four handlers each had a
+different hole:
+
+1. **`BUILTIN_GET_VAR`** (bare `$NAME` / `${NAME}`) returned the element vector
+   whatever SH_WORD_SPLIT said. Its SH_WORD_SPLIT arm existed but sat *below*
+   the array arm, so only a SCALAR ever reached it.
+2. **`BUILTIN_ARRAY_INDEX`** (`${NAME[…]}`) had no arm at all — neither the
+   c:3914 join for a RANGE (array-shaped) nor c:3931's split for the SCALAR
+   shapes (single index, assoc key, scalar slice, `(r)`-search).
+3. **`BUILTIN_GET_VAR_DQ`**, which the bare-name `${=NAME}` / `${==NAME}` /
+   `$=NAME` spelling used as its read, joins UNCONDITIONALLY. That is c:4226's
+   `ssub` join, and it is right only for an `ssub` caller: c:3916 needs
+   `nojoin == 0`, c:3919 needs IFS UNSET (`!ifs`, not merely empty), and
+   c:2562's `${==…}` shuts the block outright. So `${==a}` came back joined and
+   `${=a}` under an empty IFS came back as one concatenated word.
+4. The quoted `"${=a}"` needed c:3033's `qt` join to be conditional on
+   `isarr > 0`, i.e. on `nojoin` — and `qt` is not visible at run time for a
+   whole-word `"${=a}"`, which compiles with no `BUILTIN_EXPAND_TEXT` wrapper
+   around it, so `in_dq_context` is 0 there.
+
+**Fix** — `src/fusevm_bridge.rs` + `src/extensions/compile_zsh.rs`.
+
+* `param_value_elems_c2916` is c:2916-2917's read, extracted from
+  `BUILTIN_ARRAY_JOIN_STAR`'s body so both callers share ONE chain: it returns
+  the elements plus the `isarr != 0` bit, which every arm above discriminates
+  on. #1132's `join_c3914` / `sepsplit_c3932` / `splice_words_value` helpers are
+  reused unchanged.
+* `BUILTIN_GET_VAR`'s array arm runs c:3912 under SH_WORD_SPLIT. Only the
+  JOINED outcome changes shape; when c:3914-3927 leaves the vector alone
+  (IFS set but EMPTY) c:3931's `!isarr` closes the split too, which is the
+  untouched array the existing code already returned.
+* `BUILTIN_ARRAY_INDEX` runs c:3912 on an array-shaped result and c:3931's
+  `sepsplit` on a scalar one, both gated on `!ssub` and `!qt`.
+* `BUILTIN_BARE_SPBREAK` (new) is c:3030-3033 plus c:3912-3930 for the
+  bare-name `${=NAME}` / `${==NAME}` / `$=NAME` spelling, stopping at the join
+  because c:3932's `sepsplit` is `BUILTIN_FORCE_SPLIT` at the compile site. Its
+  argc carries two bits: the `spbreak`/`nojoin` pair the spelling sets, and
+  c:3033's `qt`. It also carries c:3899-3906 — a ONE-element array is a scalar
+  for this block, so `a=('p q'); IFS=; ${=a}` splits its text rather than
+  surviving as an element.
+* `BUILTIN_FORCE_SPLIT`'s splice bit (c:3931's `!isarr` gate) is now set for
+  the bare name too. It used to be off there because that read was an
+  unconditional join and could only hand over a scalar; with the block in place
+  it can hand over an array, which must pass through unsplit.
+
+**Measurement.** Four sweeps, each diffed as SETS of failing cells against a
+pinned binary of the tree with these hunks reverted — not as counts.
+
+| sweep | cells | before | after | new |
+| --- | --- | --- | --- | --- |
+| spelling x IFS x SH_WORD_SPLIT (`$a`, `${a}`, `${=a}`, `${==a}`, `${^a}`, `${a[1,2]}`, `${a[2,-1]}`, the splices, the quoted forms, `p…q` segments, `${(j:-:)a}`) | 1728 | 104 | 18 | 0 |
+| subscript x forced-split (`${a[1]}`, `${a[-1]}`, `${h[k]}`, `${a[1,2]}`, `${a[(r)x]}`, `${a[1][1,2]}`, `${=a}`, `${==a}`, `$=a`, `$==a`, quoted forms) | 1536 | 168 | 8 | 0 |
+| #1132's IFS matrix (5 IFS x SH_WORD_SPLIT x 6 shapes x 7 spellings x 3 contexts) | 1260 | 0 | 0 | 0 |
+
+* Both sides `-f`. Both binaries pinned copies with `codesign -f -s -` applied,
+  and the build output grepped case-insensitively for `error`.
+* The three new `tests/parity/ifs_parity.rs::splice_join_split_c3912` tests
+  caught two defects on their first run that no sweep cell covered — the
+  quoted `"${==a}"` join (c:3033) and the SCALAR subscript split (c:3931 with
+  `isarr == 0`) — both fixed above before the sweeps were re-run.
+* A fourth sweep of 2610 positional cells (`$argv` / `$*` / `$@` and 29
+  operator forms x 5 contexts) went 234 -> 170 with 0 new, but that pair of
+  binaries straddles another agent's landing in the same tree, so the delta is
+  NOT attributed here. Its shapes are the bare `$@` / `$*` read, which goes
+  through `BUILTIN_ARRAY_ALL` — an opcode this entry does not touch.
+* `--lib subst` 424 passed, `--lib compile_zsh` 37 passed.
+* `--test parity -- subst`: 424 passed / 2 failed
+  (`prompt_render_parity::promptsubst_runs_a_command_substitution_in_the_prompt`,
+  `subst_flags_more_parity::spliced_backslash_in_replace_pattern::hsmw_specch_class_escapes_metas`).
+  Both were re-run against the pinned PRE-fix binary and BOTH FAILED there too.
+* `--test parity -- ifs_parity subst_split_join_parity`: 66 passed / 0 failed,
+  including `subst_split_join_parity::bare_split_flag_special_names::at_splits_each_positional`,
+  the test that guards `$=@`'s split and that the `BUILTIN_FORCE_SPLIT` bit
+  above could have broken.
+
+**Still open, same block, NOT touched here.**
+
+```console
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${^a}
+  zsh  : p / q / r        zshrs: p:q / r
+$ setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${(j:-:)a}
+  zsh  : p / q-r          zshrs: p:q-r
+$ setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${a[1,2]}
+  zsh  : x / ''           zshrs: x
+$ setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- p${a[@]}q
+  zsh  : px / '' / yq     zshrs: px / yq
+```
+
+`${^a}` (RC_EXPAND) and the `(j:…:)`-flagged read are two more opcodes that do
+not run the block. The last two are ONE thing and it is not the split: the
+`nulstring` empty field IS produced (c:3932 keeps it, `sepsplit_c3932` models
+that), and the downstream empty-word elision then removes it. c:186's
+`uremnode` runs on the ASSEMBLED word, after the affixes attach, so a field
+with neighbouring text — or one that came from a `nulstring` rather than from
+an empty array element — must survive it. That is the same residual #1132's
+third round recorded for the splice's word-SEGMENT form.

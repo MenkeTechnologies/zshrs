@@ -1571,6 +1571,64 @@ fn prefork_c184_drop_empty(elems: Vec<String>) -> Vec<String> {
     elems.into_iter().filter(|e| !e.is_empty()).collect()
 }
 
+/// Read a parameter as `paramsubst` does at c:`Src/subst.c:2916-2917`, which is
+/// where both halves of the value come from:
+///
+/// ```c
+///     if ((isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1
+///                : v->scanflags ? 1 : 0)) {
+///         … aval = getarrvalue(v);
+///     } else {
+///         … val = getstrvalue(v);
+/// ```
+///
+/// The `bool` is that `isarr != 0` test — whether `fetchvalue` handed back an
+/// ARRAY (or a hash, whose values `getarrvalue` enumerates) rather than a
+/// scalar. Every caller needs it, because c:3914's join arm and c:3931's split
+/// arm are mutually exclusive on exactly that bit.
+///
+/// A scalar comes back as a one-element vector so the two shapes share a type;
+/// the `bool` is what tells them apart (a genuine one-element ARRAY is not the
+/// same thing, though c:3899-3906 goes on to treat it as a scalar for the
+/// join/split block — that rule belongs to the caller, not here).
+fn param_value_elems_c2916(exec: &mut ShellExecutor, name: &str) -> (Vec<String>, bool) {
+    if let Some(v) = crate::dash_mode::bash_special_array(name) {
+        // bash `"${PIPESTATUS[*]}"` / `"${FUNCNAME[*]}"` join.
+        return (v, true);
+    }
+    if name == "@" || name == "*" || name == "argv" {
+        // c:Src/params.c:392,393,430 — the three IPDEF9 rows over `pparams`.
+        return (exec.pparams(), true);
+    }
+    if let Some(assoc_map) = exec.assoc(name) {
+        // c:Src/params.c — assoc-splat values for `"${h[@]}"` / `"${h[*]}"`.
+        // Bug #109 in docs/BUGS.md.
+        return (assoc_map.values().cloned().collect::<Vec<_>>(), true);
+    }
+    if let Some(arr) = exec.array(name) {
+        // bash sparse arrays: `"${a[*]}"` joins only LIVE elements, dropping
+        // hole slots. No-op in --zsh (no holes tracked).
+        return (crate::bash_arrays::compact(name, arr), true);
+    }
+    if let Some(arr) = crate::ported::subst::arrays_get(name) {
+        // c:Src/Modules/parameter.c:2239-2291 partab[] — the PM_ARRAY magic
+        // specials (reswords/patchars/dis_*/…) are getfn-backed, so
+        // `getaparam`'s `pm->u.arr` read (behind `exec.array`) comes back NULL
+        // and the join fell through to the scalar fallback, which is empty.
+        // Same omission the `[@]` splat had.
+        return (arr, true);
+    }
+    if let Some(map) = crate::ported::subst::assoc_get(name) {
+        // c:Src/Modules/parameter.c:2235-2298 partab[] — the PM_HASHED magic
+        // assocs (aliases/functions/options/…) live behind a scanfn+getfn pair,
+        // not in the executor's assoc storage, so `exec.assoc` above misses
+        // them and `${aliases[*]}` joined an empty scalar where zsh joins the
+        // alias VALUES.
+        return (map.values().cloned().collect::<Vec<_>>(), true);
+    }
+    (vec![exec.get_variable(name)], false) // c:2927 getstrvalue
+}
+
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // src/ported/ reaches the live executor (param store, function
@@ -4375,7 +4433,49 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let ssub = argc == 3;
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        array_index_lookup(&name, &idx, ssub)
+        let v = array_index_lookup(&name, &idx, ssub);
+        // c:Src/subst.c:3912 — a RANGE subscript is array-shaped, so
+        // c:2916-2917 leaves `isarr` non-zero and the join-then-split block
+        // applies to it exactly as it does to a `[@]`/`[*]` splice or a bare
+        // array read. The single-element, assoc-key and search-flag shapes all
+        // come back as scalars (`isarr == 0`) and pass straight through.
+        //
+        // The gate: `ssub` joins at c:4226 and stops (c:3913 `force_split =
+        // !ssub && …`); `qt` clears `spbreak` at c:1707 and joins at c:3033;
+        // `sep` / `spsep` are the `(j:…:)` / `(s:…:)` separators, which take a
+        // flagged expansion to `paramsubst` rather than this fast path. So the
+        // only door in from here is SH_WORD_SPLIT, and the handler had no such
+        // block at all:
+        //     setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[1,2]}
+        //       zsh: `p` `q` `r`          zshrs: `p:q` `r`
+        //     setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- ${a[1,2]}
+        //       zsh: `x` ``               zshrs: `x`
+        // The second is `sepsplit_c3932`'s `nulstring` rule (c:Src/subst.c:36),
+        // which c:186 keeps for an IFS-NON-whitespace separator.
+        if ssub || !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+            return v;
+        }
+        let (ifs_opt, in_dq) = with_executor(|exec| (exec.scalar("IFS"), exec.in_dq_context > 0));
+        if in_dq {
+            return v; // c:1707 `!qt` — `spbreak` is 0, the block never opens
+        }
+        let Value::Array(items) = &v else {
+            // c:2916 `isarr == 0` — the single-element, assoc-key, scalar-slice
+            // and search-flag shapes. c:3914's join arm does not apply to them,
+            // but c:3931's `if (force_split && !isarr)` does, and it is the
+            // SAME `sepsplit`: `setopt shwordsplit; a=('p:q' r); IFS=:;
+            // print -rl -- ${a[1]}` is `p` `q` in zsh, and
+            // `typeset -A h=(k 'p:q'); … ${h[k]}` likewise.
+            return splice_words_value(sepsplit_c3932(&v.to_str(), false));
+        };
+        let elems: Vec<String> = items.iter().map(|x| x.to_str()).collect();
+        match join_c3914(elems, ifs_opt.as_deref()) {
+            // c:3914-3927 left `isarr` non-zero, so c:3931's `!isarr` keeps the
+            // split off too and the ORIGINAL elements are the answer.
+            JoinC3914::Elements(_) => v,
+            // c:3932 `sepsplit`, then c:3933-3938's 0/1/N result shape.
+            JoinC3914::Joined(val) => splice_words_value(sepsplit_c3932(&val, false)),
+        }
     });
     // BUILTIN_ARRAY_INDEX_UNBRACED — bare `$name[idx]` (no braces).
     // Same subscript dispatch as BUILTIN_ARRAY_INDEX when KSHARRAYS
@@ -5505,6 +5605,72 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::array(out.into_iter().map(Value::str).collect())
     });
 
+    // See BUILTIN_BARE_SPBREAK's declaration for the argc contract.
+    vm.register_builtin(BUILTIN_BARE_SPBREAK, |vm, argc| {
+        // c:2567 / c:2562 — `${=…}` sets spbreak 2, `${==…}` clears it.
+        let spbreak = if argc & 1 != 0 { 2 } else { 0 };
+        let qt = argc & 2 != 0; // c:3033 `qt`
+        let name = vm.pop().to_str();
+        let (elems, is_arr, ifs_opt, in_dq) = with_executor(|exec| {
+            // c:Src/params.c:4745 `ifssetfn` — the C `ifs` global is NULL only
+            // when IFS is genuinely UNSET, and c:3920's `(!ifs && …)` turns on
+            // exactly that distinction, so carry the Option, not a defaulted
+            // string.
+            let ifs_opt = exec.scalar("IFS");
+            let in_dq = qt || exec.in_dq_context > 0; // c:3033 `qt`
+            let (elems, is_arr) = param_value_elems_c2916(exec, &name);
+            (elems, is_arr, ifs_opt, in_dq)
+        });
+        // c:3899-3906 — "treat a one-element array as a scalar for purposes of
+        // concatenation with surrounding text (some${param}thing) and
+        // rc_expand_param handling":
+        //     } else if (isarr && aval && aval[0] && !aval[1]) {
+        //         val = aval[0];
+        //         isarr = 0;
+        // An EMPTY array fails `aval[0]` and keeps `isarr`.
+        let mut isarr: i32 = i32::from(is_arr && elems.len() != 1);
+        // c:1819 / c:2564 / c:2569 — `nojoin` for this spelling. `${==…}`
+        // clears it outright; `${=…}` recomputes it as `!(ifs && *ifs)` (and,
+        // unlike c:1819's SH_WORD_SPLIT form, with no `!qt` term).
+        let nojoin = spbreak != 0 && !matches!(ifs_opt.as_deref(), Some(s) if !s.is_empty());
+        // c:3030-3032 — `if (isarr) { if (nojoin) isarr = -1; }`.
+        if isarr != 0 && nojoin {
+            isarr = -1;
+        }
+        // c:3033-3036 — `if (qt && !getlen && isarr > 0) { val = sepjoin(aval,
+        // sep, 1); isarr = 0; }`. This is why `"${==a}"` with a non-empty IFS
+        // is ONE joined word while the unquoted form keeps its elements.
+        if in_dq && isarr > 0 {
+            return Value::str(crate::ported::utils::sepjoin(&elems, None));
+        }
+        // c:3912-3930 — the gate is open only for `${=…}` here (`ssub`,
+        // `spsep`, `sep` and the quoted-with-offset case never reach this
+        // spelling), and `force_split` is 1, so `join_c3914` is c:3916 and
+        // c:3919 exactly. c:3931's `sepsplit` is BUILTIN_FORCE_SPLIT at the
+        // compile site, which is why this stops at the join.
+        if spbreak != 0 && isarr != 0 {
+            return match join_c3914(elems, ifs_opt.as_deref()) {
+                JoinC3914::Joined(val) => Value::str(val), // c:3917 / c:3925
+                // Neither join arm fired (IFS set but EMPTY), so `isarr` is
+                // still non-zero at c:3931 and the split does not run either —
+                // BUILTIN_FORCE_SPLIT's splice bit passes the array through.
+                JoinC3914::Elements(kept) => {
+                    Value::array(kept.into_iter().map(Value::str).collect())
+                }
+            };
+        }
+        if isarr != 0 {
+            // `${==NAME}` on an array: the block never ran, so the element
+            // vector is the answer. c:184-187's empty-word removal is the
+            // BUILTIN_ARRAY_DROP_EMPTY the compile site emits after this.
+            return Value::array(elems.into_iter().map(Value::str).collect());
+        }
+        // c:2927 / c:3904 — a scalar (or the one-element array c:3899
+        // collapsed): `isarr == 0`, so no join arm applies and c:3931 splits
+        // this text directly.
+        Value::str(elems.into_iter().next().unwrap_or_default())
+    });
+
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
         // c:Src/glob.c::xpandbraces — brace expansion runs per word.
         // When the upstream produced an array (e.g. `${a:e}` splat),
@@ -5971,37 +6137,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // that vector untouched. Keep both shapes: the joined scalar for
             // the quoted / join-and-stop arms, and the elements for the plain
             // command-argument arm that must not join at all.
-            let elems: Vec<String> = if let Some(v) = crate::dash_mode::bash_special_array(&name) {
-                // bash `"${PIPESTATUS[*]}"` / `"${FUNCNAME[*]}"` join.
-                v
-            } else if name == "@" || name == "*" || name == "argv" {
-                exec.pparams()
-            } else if let Some(assoc_map) = exec.assoc(&name) {
-                // c:Src/params.c — assoc-splat values for
-                // `"${h[@]}"` / `"${h[*]}"`. Bug #109 in
-                // docs/BUGS.md.
-                assoc_map.values().cloned().collect::<Vec<_>>()
-            } else if let Some(arr) = exec.array(&name) {
-                // bash sparse arrays: `"${a[*]}"` joins only LIVE elements,
-                // dropping hole slots. No-op in --zsh (no holes tracked).
-                crate::bash_arrays::compact(&name, arr)
-            } else if let Some(arr) = crate::ported::subst::arrays_get(&name) {
-                // c:Src/Modules/parameter.c:2239-2291 partab[] — the PM_ARRAY
-                // magic specials (reswords/patchars/dis_*/…) are getfn-backed,
-                // so `getaparam`'s `pm->u.arr` read (behind `exec.array`) comes
-                // back NULL and the join fell through to the scalar fallback,
-                // which is empty. Same omission the `[@]` splat had.
-                arr
-            } else if let Some(map) = crate::ported::subst::assoc_get(&name) {
-                // c:Src/Modules/parameter.c:2235-2298 partab[] — the PM_HASHED
-                // magic assocs (aliases/functions/options/…) live behind a
-                // scanfn+getfn pair, not in the executor's assoc storage, so
-                // `exec.assoc` above misses them and `${aliases[*]}` joined an
-                // empty scalar where zsh joins the alias VALUES.
-                map.values().cloned().collect::<Vec<_>>()
-            } else {
-                vec![exec.get_variable(&name)]
-            };
+            let (elems, _) = param_value_elems_c2916(exec, &name);
             let joined = elems.join(&sep);
             (elems, joined, ifs_opt, in_dq)
         });
@@ -6825,6 +6961,52 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // IFS yields " ". The previous get_variable read
                 // couldn't distinguish unset from set-empty.
                 return Value::str(crate::ported::utils::sepjoin(&items, None));
+            }
+            // c:Src/subst.c:3912 — the join-then-split block:
+            //
+            //     if (ssub || spbreak || spsep || sep || quoted_array_with_offset) {
+            //         int force_split = !ssub && (spbreak || spsep);
+            //         if (isarr || quoted_array_with_offset) {
+            //
+            // A BARE `$NAME` / `${NAME}` read of an ARRAY is `isarr != 0`, so it
+            // takes the same block the `${NAME[@]}` / `${NAME[*]}` splice does
+            // (BUILTIN_ARRAY_ALL / BUILTIN_ARRAY_JOIN_STAR above) — c:3030-3032
+            // makes the three spellings indistinguishable once inside it. The
+            // only door in from HERE is `spbreak`, c:Src/subst.c:1707
+            //     int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
+            //                   && !(pf_flags & PREFORK_SINGLE) && !qt;
+            // — SH_WORD_SPLIT. `qt` and PREFORK_SINGLE both reach this handler
+            // as `force_dq` (the compile site emits GET_VAR_DQ for either), and
+            // that arm returned above, so getting here already means `!qt` and
+            // `!ssub`; the explicit `${=…}` / `${==…}` spellings have their own
+            // fast path. `sep` / `spsep` are the `(j:…:)` / `(s:…:)` separators,
+            // which never reach a compiler fast path.
+            //
+            // This handler had no such block at all: it returned the element
+            // vector whatever the option said, so an element carrying an IFS
+            // byte was never broken up —
+            //     setopt shwordsplit; a=('p:q' r); IFS=:;    print -rl -- $a
+            //       zsh: `p` `q` `r`            zshrs: `p:q` `r`
+            //     setopt shwordsplit; a=('p q' r); unset IFS; print -rl -- ${a}
+            //       zsh: `p` `q` `r`            zshrs: `p q` `r`
+            //     setopt shwordsplit; a=(x '' y); IFS=:;     print -rl -- $a
+            //       zsh: `x` `` `y`             zshrs: `x` `y`
+            // The last is `sepsplit_c3932`'s `nulstring` rule: the join makes
+            // `x::y`, and an empty field delimited by IFS-NON-whitespace comes
+            // back as c:Src/subst.c:36's one-byte `nulstring`, which c:186 KEEPS.
+            //
+            // Only the JOINED outcome changes shape. When c:3914-3927 leaves the
+            // vector alone (an IFS that is set but EMPTY: c:1819 `nojoin` is 1
+            // and c:3919's second arm needs `!ifs`, which a set-empty IFS fails)
+            // c:3931's `!isarr` closes the split too, and the answer is the
+            // untouched array the code below already returns.
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHWORDSPLIT) {
+                let ifs_opt = with_executor(|exec| exec.scalar("IFS"));
+                if let JoinC3914::Joined(val) = join_c3914(items.clone(), ifs_opt.as_deref()) {
+                    // c:3932 `aval = sepsplit(val, spsep, 0, 1)`, then
+                    // c:3933-3938's 0/1/N result shape.
+                    return splice_words_value(sepsplit_c3932(&val, false));
+                }
             }
             // c:Src/subst.c:184-187 — prefork's `else if (!keep)
             // uremnode(list, node)`: UNQUOTED expansion drops empty
@@ -15077,6 +15259,25 @@ pub const BUILTIN_STMT_PROLOGUE_FAST: u16 = 680;
 /// argc 0 opens the word, argc 1 closes it; the pushed status is popped by
 /// the emitter in both halves. Emitted only where a drop will run.
 pub const BUILTIN_WORD_DEFER_EMPTIES: u16 = 681;
+
+/// c:`Src/subst.c:3030-3033` + c:3912-3930 for the BARE-name `${=NAME}` /
+/// `${==NAME}` / `$=NAME` spelling — everything up to, but not including,
+/// c:3932's `sepsplit`, which the compile site emits as `BUILTIN_FORCE_SPLIT`.
+///
+/// argc is two bits:
+///   bit 0  the `spbreak`/`nojoin` pair the spelling sets — set for `${=NAME}`
+///          (c:2566-2570 `spbreak = 2; if (nojoin < 2) nojoin = !(ifs && *ifs);`)
+///          and clear for `${==NAME}` (c:2561-2565 `spbreak = 0; if (nojoin < 2)
+///          nojoin = 0;`).
+///   bit 1  `qt` — the word is double-quoted, which c:3033 needs. The runtime
+///          `in_dq_context` counter cannot answer it: a whole-word `"${=a}"`
+///          compiles to this call with no `BUILTIN_EXPAND_TEXT` wrapper around
+///          it, so the counter is 0 there. Same dual check the bare `$NAME`
+///          fast path makes (`compile_zsh.rs`, `word_is_single_dq_span`).
+///
+/// The `ssub` callers do NOT come here: c:4226 joins and stops for them, and
+/// the compile site keeps them on `BUILTIN_GET_VAR_DQ`.
+pub const BUILTIN_BARE_SPBREAK: u16 = 682;
 
 thread_local! {
     /// c:Src/exec.c:1417 — C keeps `oldnoerrexit` as an execlist-local

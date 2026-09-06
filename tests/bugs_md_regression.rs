@@ -2084,6 +2084,58 @@ fn bug1132_unquoted_star_splice_keeps_its_elements_without_shwordsplit() {
     }
 }
 
+/// c:Src/params.c:430 `IPDEF9("argv", &pparams, NULL, 0)` — the flag word is
+/// 0, unlike c:392-393's `*` and `@` which carry PM_READONLY_SPECIAL. `argv`
+/// is therefore the one spelling of the positional list that `unset` accepts.
+///
+/// c:Src/builtin.c:3952 `unsetparam_pm` → c:Src/params.c:3917-3920 the
+/// PM_ARRAY arm of `stdunsetfn` is `pm->gsu.a->setfn(pm, NULL)`, which for a
+/// `vararray_gsu` row is `arrvarsetfn`: c:4248 `char ***dptr = (char
+/// ***)pm->u.data;` then c:4259-4260 `if ((pm->node.flags & PM_SPECIAL) && !x)
+/// *dptr = mkarray(NULL);`. So the GLOBAL positional vector is replaced by an
+/// empty array. The Rust `stdunsetfn` only cleared the node's own `u_arr`,
+/// which nothing reads — zshrs keeps the vector in `builtin::PPARAMS`, the
+/// same split `assignaparam` already mirrors for `argv=(…)`.
+#[test]
+fn bug1132_unset_argv_clears_the_positional_vector() {
+    let cases: &[(&str, &str)] = &[
+        ("set -- x y; unset argv; print -r -- \"[$@]\"", "[]\n"),
+        ("set -- x y; unset argv; print -r -- $#", "0\n"),
+        // All three spellings share the storage, so all three go empty.
+        ("set -- x y; unset argv; print -r -- \"[$argv]\"", "[]\n"),
+        ("set -- x y; unset argv; print -r -- \"[$*]\"", "[]\n"),
+        // c:4260 leaves an EMPTY array, not a NULL — the vector is writable
+        // again straight away.
+        (
+            "set -- x y; unset argv; set -- a b; print -r -- \"[$@]\"",
+            "[a b]\n",
+        ),
+        (
+            "set -- x y; unset argv; argv=(q); print -r -- \"[$@]\"",
+            "[q]\n",
+        ),
+        // A function frame has its own positionals; the unset clears those.
+        (
+            "f(){ unset argv; print -r -- \"[$@] $#\"; }; f p q",
+            "[] 0\n",
+        ),
+        // `$#` really is 0 afterwards, so `shift` refuses — c:Src/builtin.c
+        // bin_shift's `count > arrlen(pparams)` guard.
+        (
+            "set -- x y; unset argv; shift 2>&1; print -r -- rc=$?",
+            "zsh:shift:1: shift count must be <= $#\nrc=1\n",
+        ),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}
+
 /// c:Src/params.c:1622-1640 — getarg's `word` branch counts WORDS but returns
 /// a CHARACTER position: `return (a2 ? s : d + 1) - t;` (c:1640). That is the
 /// whole reason a `(w)`/`(f)`/`(s.X.)` flag can appear on either side of a

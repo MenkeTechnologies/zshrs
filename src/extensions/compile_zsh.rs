@@ -6197,7 +6197,22 @@ impl ZshCompiler {
                             // Inner key must not itself contain a `$` /
                             // `[` / `]` — those would be a nested subscript
                             // or paramsubst that needs the runtime path.
-                            if !key.contains('$') && !key.contains('[') && !key.contains(']') {
+                            // c:Src/params.c:2048 — nor may it be the LITERAL
+                            // one-char `[@]` / `[*]`, the whole-parameter splat
+                            // getindex consumes before `getarg` ever runs. This
+                            // fast path hands the key to the runtime as an
+                            // ordinary subscript, so `$argv[@]` came back as an
+                            // index lookup instead of the splat. Same rejection
+                            // its three sibling matchers already make
+                            // (`bare_subscript_ref`, `bare_subscript_with_suffix`,
+                            // `braced_subscript_ref`); the general word path
+                            // below handles the splat spelling.
+                            if !key.contains('$')
+                                && !key.contains('[')
+                                && !key.contains(']')
+                                && key != "@"
+                                && key != "*"
+                            {
                                 let quoted = self.dq_context_depth > 0
                                     || s.contains('\u{9d}')
                                     || s.contains('\u{9e}');
@@ -6913,7 +6928,22 @@ impl ZshCompiler {
                     // the same read WITHOUT the split, and its array arm
                     // sepjoins — which is precisely c:3903's
                     // `val = sepjoin(aval, sep, 1)` before the c:3921 split.
-                    _ => crate::vm_helper::BUILTIN_GET_VAR_DQ,
+                    //
+                    // …but that unconditional join is only right for an `ssub`
+                    // caller, whose c:4226 join IS unconditional. For everyone
+                    // else the join is c:3916 / c:3919, which fire only for
+                    // particular `nojoin` / IFS combinations:
+                    //   a=(x y);     IFS=;  print -rl -- ${=a}   zsh: x / y
+                    //   a=(x '' y);  IFS=:; print -rl -- ${==a}  zsh: x / y
+                    //   a=('p:q' r); IFS=:; print -rl -- ${==a}  zsh: p:q / r
+                    //   set -- 'a b' 'c d'; IFS=:; print -rl -- $=@
+                    //                                           zsh: a b / c d
+                    // all came back as the single joined words `xy`, `x::y`,
+                    // `p:q:r` and `a b c d`. BUILTIN_BARE_SPBREAK is that
+                    // block — c:3030-3033 plus c:3912-3930 — for the bare-name
+                    // spelling.
+                    _ if in_scalar_assign => crate::vm_helper::BUILTIN_GET_VAR_DQ,
+                    _ => crate::vm_helper::BUILTIN_BARE_SPBREAK,
                 };
                 // c:Src/subst.c:3912-3939 — for a SPLICE the whole join/split
                 // block is gated on `spbreak`, so tell the handler which one
@@ -6933,8 +6963,20 @@ impl ZshCompiler {
                 // c:3030-3032 `if (isarr) { if (nojoin) isarr = -1; }` makes
                 // `[@]` and `[*]` indistinguishable inside the block, so the
                 // two splices take the same argc.
-                let argc: u8 = if splice == ' ' || in_scalar_assign {
+                let argc: u8 = if in_scalar_assign {
                     1
+                } else if splice == ' ' {
+                    // BUILTIN_BARE_SPBREAK's own two-bit contract: bit 0 is
+                    // `${=NAME}` (c:2567 spbreak 2) vs `${==NAME}` (c:2562
+                    // spbreak 0); bit 1 is c:3033's `qt`, which the runtime
+                    // in_dq counter cannot see for a whole-word `"${=a}"`
+                    // (no BUILTIN_EXPAND_TEXT wrapper is emitted around it).
+                    u8::from(force_split)
+                        | if self.dq_context_depth > 0 || word_is_single_dq_span(s) {
+                            2
+                        } else {
+                            0
+                        }
                 } else if force_split {
                     3
                 } else if splice == '*' {
@@ -6962,11 +7004,15 @@ impl ZshCompiler {
                     // BUILTIN_FORCE_SPLIT's argc contract.
                     let in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
                     let keep_empties = in_dq || self.word_seg_depth > 0;
-                    // Bit 1 says the operand is a `[@]`/`[*]` splice, whose
-                    // c:3914-3927 join arm can leave the value ARRAY-shaped and
-                    // so make c:3931's `!isarr` gate close the split. A scalar
-                    // read (`${=v}`, `$=@`) has no such gate.
-                    let argc = u8::from(keep_empties) | if splice == ' ' { 0 } else { 2 };
+                    // Bit 1 says c:3931's `!isarr` gate is live on the operand
+                    // — i.e. the read ran c:3914-3927, whose join arms can
+                    // leave the value ARRAY-shaped, in which case the split
+                    // must not run. Every read reached from here does now: the
+                    // splices through BUILTIN_ARRAY_ALL / _JOIN_STAR, the bare
+                    // name through BUILTIN_BARE_SPBREAK. It used to be off for
+                    // the bare name because that read was an unconditional
+                    // join (GET_VAR_DQ) that could only hand over a scalar.
+                    let argc = u8::from(keep_empties) | 2;
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_FORCE_SPLIT, argc),
                         0,
