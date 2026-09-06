@@ -10754,6 +10754,34 @@ pub fn stdunsetfn(pm: &mut param, exp: i32) {
         }
         PM_ARRAY => {
             pm.u_arr = None;
+            // c:3917-3920 — the PM_ARRAY arm is `pm->gsu.a->setfn(pm, NULL)`,
+            // and for the three `IPDEF9(…, &pparams, …)` rows
+            // (c:Src/params.c:392,393,430 — `*`, `@`, `argv`) that setfn is
+            // `arrvarsetfn` (c:189-190 `vararray_gsu`). Its body does NOT
+            // touch `pm->u.arr`: c:4248 `char ***dptr = (char ***)pm->u.data;`
+            // then c:4259-4260 `if ((pm->node.flags & PM_SPECIAL) && !x)
+            // *dptr = mkarray(NULL);` — so the GLOBAL positional vector is
+            // replaced by an EMPTY array (not a NULL pointer; the row carries
+            // PM_SPECIAL from IPDEF9).
+            //
+            // zshrs keeps that vector in `builtin::PPARAMS` rather than on the
+            // node — the same split `assignaparam` mirrors for the write side
+            // (params.rs:9548) and `printparamnode` for the print side
+            // (params.rs:13874). Without the mirror here `unset argv` stamped
+            // PM_UNSET on a node nothing reads and left `$@` / `$#` holding
+            // the old positionals.
+            //
+            // `*` and `@` are unreachable through this path — both carry
+            // PM_READONLY_SPECIAL (c:392-393) so `unsetparam_pm` rejects them
+            // at c:3850, and `unset '*'` never gets that far anyway
+            // (`isident` fails, c:Src/builtin.c:3878). Only c:430's `argv`,
+            // whose IPDEF9 flag word is 0, is unsettable. They are matched
+            // together because they are one parameter.
+            if matches!(pm.node.nam.as_str(), "argv" | "*" | "@") {
+                if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+                    pp.clear(); // c:4260 mkarray(NULL)
+                }
+            }
         }
         PM_HASHED => {
             pm.u_hash = None;
@@ -15722,7 +15750,26 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // (`IFS=""; echo "$*"` concatenates); unset IFS joins with
         // " ". The previous `.unwrap_or(' ')` collapsed empty-IFS to
         // a space.
-        "*" | "@" => pparams_lock()
+        //
+        // c:Src/params.c:392,393,430 — `IPDEF9("*", &pparams, …)`,
+        // `IPDEF9("@", &pparams, …)` and `IPDEF9("argv", &pparams, …)` are
+        // THREE names over ONE storage, all reading through `vararray_gsu`
+        // (c:189-190). This arm IS that gsu's `arrvargetfn`, so the third
+        // spelling belongs here too: c:Src/params.c:2350-2358 `getstrvalue`
+        // takes the PM_ARRAY case for all three and answers
+        // `sepjoin(getvaluearr(v), NULL, 1)`.
+        //
+        // Without the `argv` spelling, `getsparam("argv")` fell through to
+        // the paramtab read below, found the seeded PM_ARRAY node whose own
+        // `u_arr` is empty (the positionals live in `PPARAMS`, not on the
+        // node — see `printparamnode`'s refresh at params.rs:13874), and
+        // answered `Some("")`. Every operator that decides on the VALUE
+        // rather than on set-ness then took the null branch:
+        // c:Src/subst.c:3188-3189 `if (colf && !vunset) vunset = (isarr) ?
+        // !*aval : !*val`, so `${argv:-n}` / `${argv:+Y}` / `${argv:?}`
+        // diverged while the non-colon `${argv-n}` / `${argv+Y}` / `${argv?}`
+        // — which test set-ness alone — were already right.
+        "*" | "@" | "argv" => pparams_lock()
             .lock()
             .ok()
             .map(|p| crate::ported::utils::sepjoin(&p, None)),

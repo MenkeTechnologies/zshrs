@@ -352,4 +352,88 @@ mod splice_join_split_c3912 {
         assert_parity(r#"set -- x y; print -r -- ${argv:=dflt}"#);
         assert_parity(r#"set -- x y; print -r -- ${+argv}"#);
     }
+
+    /// c:2916-2917 sets `isarr` non-zero for ANY array-shaped read, and
+    /// c:3030-3032 then makes the spellings indistinguishable inside the
+    /// block, so the BARE `$NAME` / `${NAME}` read of an array takes exactly
+    /// the same c:3912-3939 treatment as a `[@]`/`[*]` splice. Only the
+    /// splice fast paths had it; `BUILTIN_GET_VAR`'s array arm returned the
+    /// element vector whatever SH_WORD_SPLIT said.
+    #[test]
+    fn bare_array_read_takes_the_same_block_as_the_splice() {
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- $a"#);
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a}"#);
+        assert_parity(r#"setopt shwordsplit; a=('p q' r); unset IFS; print -rl -- ${a}"#);
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; f(){print -r -- $#}; f $a"#,
+        );
+        // c:Src/utils.c:3732 `nulstring` — an empty field an IFS-NON-space
+        // separator delimits survives c:186.
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=:; print -rl -- $a"#);
+        // IFS set but EMPTY: neither join arm fires (c:3919 wants `!ifs`, not
+        // an empty one), so c:3931's `!isarr` keeps the split off too.
+        assert_parity(r#"setopt shwordsplit; a=(x y); IFS=; print -rl -- $a"#);
+        // Without the option the block never opens at all.
+        assert_parity(r#"a=('p:q' r); IFS=:; print -rl -- $a"#);
+        assert_parity(r#"a=('p:q' r); IFS=:; print -rl -- ${a}"#);
+    }
+
+    /// The BARE-name `${=NAME}` / `${==NAME}` / `$=NAME` spelling reached the
+    /// split through `BUILTIN_GET_VAR_DQ`, whose array arm joins
+    /// UNCONDITIONALLY. That is c:4226's `ssub` join, not c:3916/:3919, which
+    /// fire only for particular `nojoin` / IFS combinations — and c:2562's
+    /// `${==…}` shuts the whole block, so its elements must survive whole.
+    #[test]
+    fn bare_forced_split_flag_runs_the_c3912_block() {
+        // c:2562 — `${==NAME}` clears `spbreak`: no join, no split.
+        assert_parity(r#"a=('p:q' r); IFS=:; print -rl -- ${==a}"#);
+        assert_parity(r#"a=(x '' y); IFS=:; print -rl -- ${==a}"#);
+        assert_parity(r#"setopt shwordsplit; a=(x y); IFS=:; print -rl -- ${==a}"#);
+        assert_parity(r#"a=('p:q' r); IFS=:; f(){print -r -- $#}; f ${==a}"#);
+        // c:2569 — `${=NAME}` recomputes `nojoin` as `!(ifs && *ifs)`, so a
+        // set-but-EMPTY IFS leaves the elements alone.
+        assert_parity(r#"a=(x y); IFS=; print -rl -- ${=a}"#);
+        assert_parity(r#"a=(x '' y); IFS=; print -rl -- ${=a}"#);
+        assert_parity(r#"a=('p:q' r); IFS=; f(){print -r -- $#}; f ${=a}"#);
+        // c:3033 — the QUOTED form still takes the c:3033 join first when
+        // `isarr > 0`, and splits the joined text after.
+        assert_parity(r#"a=(x y); IFS=:; print -rl -- "${=a}""#);
+        assert_parity(r#"a=(x y); IFS=; print -rl -- "${=a}""#);
+        assert_parity(r#"a=(x y); IFS=:; print -rl -- "${==a}""#);
+        // c:3899-3906 — a ONE-element array is a scalar for the block, so the
+        // split runs over its text.
+        assert_parity(r#"a=('p q'); IFS=; print -rl -- ${=a}"#);
+        assert_parity(r#"a=(only); IFS=:; print -rl -- ${=a}"#);
+        // A genuine SCALAR keeps `isarr == 0` and goes straight to c:3931.
+        assert_parity(r#"v='a b'; IFS=; print -rl -- ${=v}"#);
+        assert_parity(r#"v='a:b'; IFS=:; print -rl -- ${=v}"#);
+        assert_parity(r#"v=''; r=(${==v}); print -r -- $#r"#);
+        // The unbraced `$=@` reads the positional list through the same path.
+        assert_parity(r#"set -- 'a b' 'c d'; print -rl -- $=@"#);
+        assert_parity(r#"set -- 'a b' 'c d'; IFS=:; print -rl -- $=@"#);
+        assert_parity(r#"set -- 'a b' 'c d'; IFS=; print -rl -- $=@"#);
+        // c:3913 `force_split = !ssub && …` — a PREFORK_SINGLE context joins
+        // at c:4226 and never splits.
+        assert_parity(r#"a=(x y); IFS=:; v=${=a}; print -r -- "[$v]""#);
+    }
+
+    /// A RANGE subscript is array-shaped (c:2916-2917), so c:3912's block
+    /// applies to `${NAME[lo,hi]}` too. `BUILTIN_ARRAY_INDEX` had no
+    /// SH_WORD_SPLIT arm, so the range came back as untouched elements.
+    #[test]
+    fn range_subscript_takes_the_block_under_shwordsplit() {
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[1,2]}"#);
+        assert_parity(r#"setopt shwordsplit; a=('p q' r); unset IFS; print -rl -- ${a[1,2]}"#);
+        assert_parity(
+            r#"setopt shwordsplit; a=('p:q' r); IFS=:; f(){print -r -- $#}; f ${a[1,2]}"#,
+        );
+        // IFS set but EMPTY — elements survive.
+        assert_parity(r#"setopt shwordsplit; a=(x y); IFS=; print -rl -- ${a[1,2]}"#);
+        // A SINGLE index is a scalar (`isarr == 0`) and is untouched by the
+        // block; so is the quoted range (c:1707 `!qt`).
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- ${a[1]}"#);
+        assert_parity(r#"setopt shwordsplit; a=('p:q' r); IFS=:; print -rl -- "${a[1,2]}""#);
+        // Without the option the block never opens.
+        assert_parity(r#"a=('p:q' r); IFS=:; print -rl -- ${a[1,2]}"#);
+    }
 }
