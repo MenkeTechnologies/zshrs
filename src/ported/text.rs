@@ -250,7 +250,15 @@ pub fn getjobtext(mut prog: Eprog, c: Option<usize>) -> String {
     tlim.with(|l| *l.borrow_mut() = Some(JOBTEXTSIZE));
     tpending.with(|p| *p.borrow_mut() = None);
     tindent.with(|t| *t.borrow_mut() = 0);
-    tnewlins.with(|n| *n.borrow_mut() = true);
+    // c:332 — `tnewlins = 0;`. This is the ONE flag that distinguishes job
+    // text from permanent text: `taddnl` (c:163) writes `"; "` when it is
+    // clear and a newline + `tindent` tabs when it is set. Job text is a
+    // single `jobs`/`printjob` display line, so it must never break. The
+    // port set it to `true` (getpermtext's value, c:296), which rendered
+    // `for i in 1 2; do sleep 3; done` as the four lines
+    // `for i in 1 2\ndo\n\tsleep 3\ndone` instead of zsh's
+    // `for i in 1 2; do; sleep 3; done`.
+    tnewlins.with(|n| *n.borrow_mut() = false);
     tjob.with(|j| *j.borrow_mut() = true);
     if state.prog.len != 0 {
         gettext2(&mut state);
@@ -2324,5 +2332,54 @@ mod tests {
             "`=A` is NOT a binary op (no prefix-match semantics)"
         );
         assert_eq!(is_cond_binary_op("=="), 1, "`==` IS a binary op");
+    }
+
+    /// c:Src/text.c:326-346 — `getjobtext` is the ONE-LINE renderer: c:332
+    /// sets `tnewlins = 0`, so every `taddnl` in `gettext2` emits `"; "`
+    /// instead of a newline + indent, and c:337 calls `gettext2`
+    /// unconditionally. This is the text `jobs` prints for a backgrounded
+    /// compound, e.g. real zsh:
+    ///
+    /// ```text
+    /// % for i in 1 2; do sleep 3; done & jobs
+    /// [1]  + running    for i in 1 2; do; sleep 3; done
+    /// ```
+    ///
+    /// c:586's `if (tjob)` `{ ... }` truncation is reached ONLY from the
+    /// `WC_FUNCDEF` arm (c:575), so a compound is spelled out in full here —
+    /// it is not licence to abbreviate `for`/`if`/`while`.
+    #[test]
+    fn getjobtext_renders_compounds_on_one_line() {
+        let _g = crate::test_util::global_state_lock();
+        for (src, want) in [
+            (
+                "for i in 1 2; do sleep 3; done",
+                "for i in 1 2; do; sleep 3; done",
+            ),
+            ("if true; then sleep 3; fi", "if true; then; sleep 3; fi"),
+            (
+                "while false; do sleep 3; done",
+                "while false; do; sleep 3; done",
+            ),
+            (
+                "until true; do sleep 3; done",
+                "until true; do; sleep 3; done",
+            ),
+            ("repeat 2 do sleep 3; done", "repeat 2; do; sleep 3; done"),
+            (
+                "case x in x) sleep 3;; esac",
+                "case x in (x) sleep 3 ;; esac",
+            ),
+            ("{ sleep 3 }", "{ sleep 3; }"),
+            ("( sleep 3 )", "( sleep 3; )"),
+        ] {
+            let prog = crate::ported::exec::parse_string(src, 1)
+                .unwrap_or_else(|| panic!("job text source must parse: {src:?}"));
+            assert_eq!(
+                getjobtext(Box::new(prog), None),
+                want,
+                "c:326-346 job text of {src:?}"
+            );
+        }
     }
 }
