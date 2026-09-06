@@ -445,12 +445,18 @@ pub struct SubshellSnapshot {
     /// the override bytecode chunk in place so the parent's
     /// `g` call still runs the override after `subshell_end`
     /// restored shfunctab. Bug #208 in docs/BUGS.md.
-    pub functions_compiled: HashMap<String, fusevm::Chunk>,
+    ///
+    /// Copy-on-write (`crate::cow_map`): taking this snapshot is a
+    /// refcount bump, and the deep copy happens only if the subshell
+    /// body actually compiles or redefines a function.
+    pub functions_compiled: crate::cow_map::CowHashMap<String, fusevm::Chunk>,
     /// Parent's function source map at subshell entry. Companion to
     /// `functions_compiled` so `typeset -f` / `whence` show the
     /// parent's source after subshell exit, not the subshell's
     /// overridden body. Bug #208 in docs/BUGS.md.
-    pub function_source: HashMap<String, String>,
+    ///
+    /// Copy-on-write, for the same reason as `functions_compiled`.
+    pub function_source: crate::cow_map::CowHashMap<String, String>,
     /// Parent's modulestab `modules` map at subshell entry. zsh forks
     /// for `(...)` so a `(zmodload zsh/X)` inside the subshell sets
     /// MOD_INIT_B on the child's modulestab; when the child exits the
@@ -745,14 +751,24 @@ pub struct ShellExecutor {
     /// `BUILTIN_REGISTER_FUNCTION` (from `FunctionDef` lowering) and lazily by
     /// `ZshrsHost::call_function` when only an AST exists in `self.functions`
     /// (autoloaded, sourced, etc.). `Op::CallFunction` dispatches through here.
-    pub functions_compiled: HashMap<String, fusevm::Chunk>,
+    ///
+    /// COPY-ON-WRITE. `$( … )` and `( … )` snapshot this whole map for
+    /// subshell isolation (Bug #208), so a plain `HashMap` made entering
+    /// a substitution cost one `Chunk` clone per compiled function. It
+    /// is a `CowHashMap`, so the snapshot shares and the first write
+    /// inside the body splits. Reads and writes are unchanged —
+    /// `Deref`/`DerefMut` keep every call site as it was.
+    pub functions_compiled: crate::cow_map::CowHashMap<String, fusevm::Chunk>,
     /// Canonical source text for functions. Populated by autoload paths (the
     /// raw file/cache body), runtime FuncDef compile (the parsed source span),
     /// and `unfunction` removal. Used by introspection (`whence`, `which`,
     /// `typeset -f`) instead of reconstructing from a ShellCommand AST. When a
     /// function is in `functions_compiled` but not here, introspection falls
     /// back to `text::getpermtext(self.functions[name])`.
-    pub function_source: HashMap<String, String>,
+    ///
+    /// Copy-on-write for the same reason as `functions_compiled`: a
+    /// subshell snapshots it whole, and the body usually never writes.
+    pub function_source: crate::cow_map::CowHashMap<String, String>,
     /// `first_body_line - 1` per compiled function — matches inner
     /// `ZshCompiler::lineno_offset` / zsh `funcstack->flineno` combined with
     /// relative `$LINENO` for Src/prompt.c:909 `%I`.
@@ -1604,8 +1620,8 @@ impl ShellExecutor {
             pipe_output_pending: false,
             pipe_output_scope: None,
             redirect_failed: false,
-            functions_compiled: HashMap::new(),
-            function_source: HashMap::new(),
+            functions_compiled: crate::cow_map::CowHashMap::new(),
+            function_source: crate::cow_map::CowHashMap::new(),
             function_line_base: HashMap::new(),
             function_def_file: HashMap::new(),
             prompt_funcstack: Vec::new(),
@@ -2439,8 +2455,8 @@ impl ShellExecutor {
             pipe_output_pending: false,
             pipe_output_scope: None,
             redirect_failed: false,
-            functions_compiled: HashMap::new(),
-            function_source: HashMap::new(),
+            functions_compiled: crate::cow_map::CowHashMap::new(),
+            function_source: crate::cow_map::CowHashMap::new(),
             function_line_base: HashMap::new(),
             function_def_file: HashMap::new(),
             prompt_funcstack: Vec::new(),
