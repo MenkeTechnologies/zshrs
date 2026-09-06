@@ -32,7 +32,7 @@ use libc::{
 // SHTTY imported under an alias to avoid collision with the
 // `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
 // (Rule E — C uses SHTTY as both the global and the parameter name).
-use crate::ported::lex::{lineno, untokenize};
+use crate::ported::lex::lineno;
 use crate::ported::options::{dosetopt, opt_state_set};
 use crate::ported::params::{
     assignsparam, convbase as convbase_param, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn,
@@ -7594,7 +7594,18 @@ pub fn mb_niceformat(
     // itself encodes as the two UTF-8 bytes C2 83. `unmeta` scans for a 0x83
     // BYTE, so it finds the trailing byte of that pair and mangles the string:
     // `$'\M-a'` came back out as `\M-^C\M-A` instead of `\M-a`.
-    let detok = untokenize(s);
+    //
+    // The variant matters: C's `untokenize` (c:Src/exec.c:2077) MAPS every
+    // token char back to its source character through `ztokens`
+    // (c:Src/lex.c:38) — Dnull -> `"`, Snull -> `'`, String -> `$`. Its
+    // `lex::untokenize` namesake here is the SUBSTITUTION-stream variant,
+    // which DELETES the quote nulls instead, so `%s` rendered a still-
+    // tokenized word with its quoting silently erased: zsh prints
+    // `condition expected: "$glob"` where zshrs printed the invisible
+    // Dnull/Qstring bytes around a bare `glob`. The two `sb_*` twins below
+    // already inline the ztokens mapping (c:5871 / c:5943); use the ported
+    // form of the same walk here.
+    let detok = crate::ported::lex::untokenize_ztokens(s);
     ums = unmetafy_str(&detok);
     umlen = ums.len(); // c:5389 *umlen
     ptr = 0; // c:5389 ptr starts at 0 in ums
@@ -7884,7 +7895,11 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     // (`\341`) where zsh emits `$'\M-a'`. `unmetafy_str` preserves the raw
     // 0xE1 byte (C's `unmetafy`), so the MB_INVALID arm's is_nicechar(0xE1)
     // fires (high-bit → nice) exactly as C does.
-    let detok = untokenize(s);
+    // c:5481 `untokenize` is exec.c:2077 — the ztokens-MAPPING walk, not the
+    // substitution-stream variant that deletes quote nulls. Must agree with
+    // `mb_niceformat` above or the "does this need $'…'" answer is computed
+    // over a different string than the one that gets formatted.
+    let detok = crate::ported::lex::untokenize_ztokens(s);
     ums = unmetafy_str(&detok);
     umlen = ums.len(); // c:5483 *umlen
     ptr = 0; // c:5483 ptr starts at 0

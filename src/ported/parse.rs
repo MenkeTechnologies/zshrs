@@ -3481,7 +3481,16 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
         // `|| echo n` branch). Setting LEXERR aborts the upper
         // parse so the whole line is rejected, matching zsh's
         // observable behavior of stdout="" on parse error.
-        zerr(&format!("parse error: condition expected: {}", a));
+        // c:2629 `COND_ERROR("parse error: condition expected: %s", a)` — the
+        // `%s` conversion is `nicezputs` (c:Src/utils.c:311), which untokenizes
+        // through `ztokens` first, so zsh prints the operand WITH its source
+        // quoting: `[[ "$glob" = … ]]` reports `"$glob"`, not a bare `glob`
+        // wrapped in invisible Dnull/Qstring bytes. Rust pre-formats the
+        // message, so the `%s` step has to happen on the argument here.
+        zerr(&format!(
+            "parse error: condition expected: {}",
+            crate::ported::utils::nicedupstring(a)
+        ));
         errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
         set_tok(LEXERR);
         return 1;
@@ -3654,7 +3663,12 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecstr(c);
         return 1;
     }
-    zerr(&format!("condition expected: {}", b));
+    // c:2709 `COND_ERROR("condition expected: %s", b)` — `%s` is nicezputs,
+    // which untokenizes through `ztokens`; see par_cond_double.
+    zerr(&format!(
+        "condition expected: {}",
+        crate::ported::utils::nicedupstring(b)
+    ));
     1
 }
 
@@ -3666,7 +3680,12 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
     // single code point.
     let ac: Vec<char> = a.chars().collect();
     if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
-        zerr(&format!("condition expected: {}", a));
+        // c:2719 `COND_ERROR("condition expected: %s", a)` — `%s` is nicezputs,
+        // which untokenizes through `ztokens`; see par_cond_double.
+        zerr(&format!(
+            "condition expected: {}",
+            crate::ported::utils::nicedupstring(a)
+        ));
         return 1;
     }
     ecadd(WCB_COND(COND_MOD as u32, l.len() as u32));
@@ -10505,7 +10524,12 @@ fn parse_cond_primary() -> Option<ZshCond> {
     let is_dash_a_or_o =
         op_chars.len() == 2 && IS_DASH(op_chars[0]) && (op_chars[1] == 'a' || op_chars[1] == 'o');
     if is_dash_a_or_o {
-        crate::ported::utils::zerr(&format!("parse error: condition expected: {}", s1));
+        // c:2629 `%s` = nicezputs = untokenize-through-`ztokens`; see
+        // par_cond_double.
+        crate::ported::utils::zerr(&format!(
+            "parse error: condition expected: {}",
+            crate::ported::utils::nicedupstring(&s1)
+        ));
         crate::ported::utils::errflag.fetch_or(
             crate::ported::zsh_h::ERRFLAG_ERROR,
             std::sync::atomic::Ordering::Relaxed,
@@ -10528,13 +10552,14 @@ fn parse_cond_primary() -> Option<ZshCond> {
             // `Binary(s1, op, "")` which silently evaluated as if the
             // RHS were empty string → rc=1. Bug #482.
             //
-            // Convert Dash (\u{9b}) back to ASCII `-` in the LHS
-            // display so the diagnostic reads cleanly.
-            let display: String = s1
-                .chars()
-                .map(|c| if IS_DASH(c) { '-' } else { c })
-                .collect();
-            crate::ported::utils::zerr(&format!("parse error: condition expected: {}", display));
+            // c:2629 `%s` = nicezputs, which untokenizes the operand through
+            // `ztokens` (c:Src/lex.c:38) — that maps Dash (\u{9b}) back to
+            // ASCII `-` AND restores the quote nulls / `$` this hand-rolled
+            // map dropped. See par_cond_double.
+            crate::ported::utils::zerr(&format!(
+                "parse error: condition expected: {}",
+                crate::ported::utils::nicedupstring(&s1)
+            ));
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
@@ -10575,11 +10600,12 @@ fn parse_cond_primary() -> Option<ZshCond> {
     } else if is_recognized_op {
         Some(ZshCond::Binary(s1, op, s2))
     } else {
-        let display: String = op
-            .chars()
-            .map(|c| if IS_DASH(c) { '-' } else { c })
-            .collect();
-        crate::ported::utils::zerr(&format!("condition expected: {}", display));
+        // c:2709 `%s` = nicezputs, which untokenizes through `ztokens`
+        // (Dash -> `-`, Snull -> `'`, String -> `$`). See par_cond_double.
+        crate::ported::utils::zerr(&format!(
+            "condition expected: {}",
+            crate::ported::utils::nicedupstring(&op)
+        ));
         crate::ported::utils::errflag.fetch_or(
             crate::ported::zsh_h::ERRFLAG_ERROR,
             std::sync::atomic::Ordering::Relaxed,
