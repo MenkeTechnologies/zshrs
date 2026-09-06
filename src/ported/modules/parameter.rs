@@ -3079,7 +3079,23 @@ pub fn histwgetfn(pm: *mut param) -> Vec<String> {
         .collect();
     let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let (bw, _) = crate::ported::hist::bufferwords(&zleline, cursor);
-    out.extend(bw); // c:1225-1226 pushnode
+    // c:1239-1241 — `for (n = firstnode(ll); n; incnode(n)) pushnode(l, getdata(n));`
+    //
+    // `pushnode` PREPENDS, so walking `ll` front-to-back and pushing each
+    // element onto `l` leaves `l` holding `bufferwords` REVERSED. The ring
+    // walk below is different and is already right: C uses `addlinknode`
+    // there (c:1256), an APPEND, which is what `out.push` does.
+    //
+    // This appended, so `$historywords` came out in the wrong order. The
+    // comment already said "pushnode" while the code did the opposite —
+    // measured on the buffer `kill -`:
+    //     zsh   ${(qq)historywords} = '- kill …'
+    //     zshrs                       'kill - …'
+    // Live cost: `_history` anywhere in the completer chain saw the wrong
+    // leading word, returned a match where zsh returns none (hist_ret=0
+    // nm=1 vs zsh's hist_ret=1 nm=0), and so KILLED every completer after
+    // it in the chain.
+    out.extend(bw.into_iter().rev());
                     // c:1229-1247 — walk hist_ring newest-to-oldest, slicing each
                     // entry's words by `histent.words[iw*2..iw*2+2]` byte offsets in
                     // reverse-position order.
