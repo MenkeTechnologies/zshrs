@@ -36,8 +36,9 @@
 //! `completer` style if set, else use the prior-rounds slice of
 //! `$_completers` per sh:12-14.
 
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
@@ -77,7 +78,8 @@ pub fn _prefix() -> i32 {
     };
 
     // sh:17-21
-    if testforstyle(&ctx, "add-space") == 0 {
+    // sh:18 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+    if zstyle_t(&ctx, "add-space") == 0 {
         let _ = setsparam("ISUFFIX", &format!(" {}", suffix));
     } else {
         let _ = setsparam("ISUFFIX", &suffix);

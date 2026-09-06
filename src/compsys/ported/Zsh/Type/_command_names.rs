@@ -51,8 +51,9 @@
 //! ≠ empty, rare).
 
 use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::utils::quotedzputs;
 
@@ -134,12 +135,13 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     let mut ffilt = String::new();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
-    // sh:9 — rehash style (TODO: dispatch `rehash` builtin)
-    let _ = testforstyle(&format!(":completion:{}:commands", curcontext), "rehash");
+    // sh:9 — `zstyle -t … rehash && rehash`, a VALUE test; see
+    //   [`zstyle_t`]. (TODO: dispatch the `rehash` builtin.)
+    let _ = zstyle_t(&format!(":completion:{}:commands", curcontext), "rehash");
 
-    // sh:11-13
+    // sh:11 — `zstyle -t … prefix-needed`, a VALUE test; see [`zstyle_t`].
     let style_ctx = format!(":completion:{}:functions", curcontext);
-    let prefix_needed = testforstyle(&style_ctx, "prefix-needed") == 0;
+    let prefix_needed = zstyle_t(&style_ctx, "prefix-needed") == 0;
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix_needed && !prefix.starts_with('_') && !prefix.starts_with('.') {
         ffilt = "[(I)[^_.]*]".to_string();

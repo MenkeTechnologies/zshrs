@@ -50,7 +50,8 @@
 //! `$~pfilt` excludes names matching that pattern.
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, paramtab, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -123,7 +124,8 @@ pub fn _parameters(args: &[String]) -> i32 {
 
     // sh:14-16  prefix-needed handling
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let prefix_needed = testforstyle(
+    // sh:18 — `zstyle -t … prefix-needed`, a VALUE test; see [`zstyle_t`].
+    let prefix_needed = zstyle_t(
         &format!(":completion:{}:parameters", curcontext),
         "prefix-needed",
     ) == 0;

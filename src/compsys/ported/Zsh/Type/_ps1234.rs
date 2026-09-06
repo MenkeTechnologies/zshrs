@@ -31,8 +31,8 @@
 //! and test characters, `%D{…}` strftime formats, or the general
 //! `%x` format-specifier catalogue.
 
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, sethparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset, cond_psfix};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -352,7 +352,9 @@ pub fn _ps1234() -> i32 {
             ret = 0;
         }
     } else if cond_psfix(&["%".to_string()], 0) != 0
-        || testforstyle(
+        // sh:102 — `! zstyle -t … prefix-needed`, a VALUE test; see
+        //   [`zstyle_t`].
+        || zstyle_t(
             &format!(
                 ":completion:{}:prompt-format-specifiers",
                 getsparam("curcontext").unwrap_or_default()

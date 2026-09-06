@@ -24,8 +24,8 @@
 //! Reads `$WIDGET` to decide direction.
 
 use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
@@ -56,9 +56,19 @@ pub fn _history_complete_word() -> i32 {
         "older"
     };
 
-    let stop_on = testforstyle(&format!(":completion:{}:history-words", new_ctx), "stop") == 0;
+    // sh:34 — `zstyle -t … stop && stop=yes`, a VALUE test; see [`zstyle_t`].
+    let stop_on = zstyle_t(&format!(":completion:{}:history-words", new_ctx), "stop") == 0;
 
-    if !testforstyle(&format!(":completion:{}:history-words", new_ctx), "list") == 0 {
+    // sh:36 — `zstyle -T … list || compstate[list]=''`: an UNSET style is
+    //   true, so the list is cleared only when the style is set to a
+    //   non-boolean value. See [`zstyle_T`].
+    //
+    //   The previous spelling was `if !testforstyle(…) == 0`, which Rust
+    //   parses as `(!testforstyle(…)) == 0` with `!` the BITWISE NOT of an
+    //   i32 — true only for a return of -1, which `testforstyle` never
+    //   produces. The branch was therefore dead and `compstate[list]` was
+    //   never cleared.
+    if zstyle_T(&format!(":completion:{}:history-words", new_ctx), "list") != 0 {
         set_compstate_str("list", "");
     }
 

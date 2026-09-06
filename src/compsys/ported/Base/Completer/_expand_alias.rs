@@ -41,9 +41,10 @@
 
 use crate::compsys::ported::_aliases::_aliases;
 use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 
 /// sh:34-37 — assoc lookup in flat key/value layout.
@@ -110,10 +111,13 @@ pub fn _expand_alias() -> i32 {
     } else if matches!(regular.as_str(), "yes" | "1" | "true" | "on") && current == 1 {
         sel.push('r');
     }
-    if testforstyle(&ctx, "global") == 0 || lookupstyle(&ctx, "global").is_empty() {
+    // sh:33 — `zstyle -T … global`: true unless the style is set to a
+    //   non-boolean value; see [`zstyle_T`].
+    if zstyle_T(&ctx, "global") == 0 {
         sel = format!("g{}", sel);
     }
-    if testforstyle(&ctx, "disabled") == 0 {
+    // sh:34 — `zstyle -t … disabled`; see [`zstyle_t`].
+    if zstyle_t(&ctx, "disabled") == 0 {
         let upper: String = sel.chars().map(|c| c.to_ascii_uppercase()).collect();
         sel.push_str(&upper);
     }
@@ -142,8 +146,8 @@ pub fn _expand_alias() -> i32 {
         if first_word == word && assoc_get("aliases", &word) == Some(tmp.clone()) {
             tmp = format!("\\{}", tmp);
         }
-        let add_space =
-            testforstyle(&ctx, "add-space") == 0 || lookupstyle(&ctx, "add-space").is_empty();
+        // sh:61 — `zstyle -T … add-space || suf=( -S '' )`; see [`zstyle_T`].
+        let add_space = zstyle_T(&ctx, "add-space") == 0;
         let suf: Vec<String> = if add_space {
             Vec::new()
         } else {
@@ -171,7 +175,8 @@ pub fn _expand_alias() -> i32 {
         } else {
             _wanted(&w_args)
         }
-    } else if has_main_complete_pre && testforstyle(&ctx, "complete") == 0 {
+    // sh:63 — `zstyle -t … complete`; see [`zstyle_t`].
+    } else if has_main_complete_pre && zstyle_t(&ctx, "complete") == 0 {
         // sh:56-57
         dispatch_function_call(
             "_aliases",

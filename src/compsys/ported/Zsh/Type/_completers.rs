@@ -23,7 +23,8 @@
 //! `_complete _approximate _correct …` when `-p` is given.
 
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::modules::zutil::{bin_zparseopts, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -109,7 +110,8 @@ pub fn _completers(args: &[String]) -> i32 {
     // sh:11-12
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let style_ctx = format!(":completion:{}:completers", curcontext);
-    let prefix_hidden = testforstyle(&style_ctx, "prefix-hidden") == 0;
+    // sh:11 — `zstyle -t … prefix-hidden`, a VALUE test; see [`zstyle_t`].
+    let prefix_hidden = zstyle_t(&style_ctx, "prefix-hidden") == 0;
 
     // sh:14  expand `$us${^list[@]}` into prefixed names; publish
     //   the BARE list for `-d list` (display column) usage.
