@@ -437,3 +437,71 @@ mod splice_join_split_c3912 {
         assert_parity(r#"a=('p:q' r); IFS=:; print -rl -- ${a[1,2]}"#);
     }
 }
+
+/// c:Src/subst.c:4387 / :4404 / :4426 — `if (qt && !*y && isarr != 2)
+/// y = dupstring(nulstring)`. A QUOTED splat's empty element is stored as
+/// c:36 `nulstring`, which c:183 finds NON-empty, so c:186's `uremnode`
+/// never deletes it and `remnulargs` (c:170) restores `""` afterwards.
+///
+/// The rule stops at c:4261 `if ((!aval[0] || !aval[1]) && !plan9)`: the
+/// empty and one-element cases are claimed FIRST and have their `Dnull`
+/// markers stripped (c:4272-4274), so those nodes really are empty and DO
+/// get removed. Element count is therefore a run-time input to the rule.
+mod quoted_splat_keeps_nulstring_c4387 {
+    use super::*;
+
+    /// The word the splat is CONCATENATED into is where it shows: with no
+    /// affixes the empty slot already survived, but `PRE"${a[@]}"POST` sent
+    /// the assembled word through an unconditional end-of-word empty drop.
+    #[test]
+    fn quoted_splat_with_affixes_keeps_its_empty_element() {
+        assert_parity(r#"a=(x '' y); for w in PRE"${a[@]}"POST; do print -r -- "<$w>"; done"#);
+        assert_parity(r#"a=(x '' y); for w in PRE"${a[@]}"; do print -r -- "<$w>"; done"#);
+        assert_parity(r#"a=(x '' y); for w in "${a[@]}"POST; do print -r -- "<$w>"; done"#);
+        assert_parity(r#"set -- x '' y; for w in PRE"$@"POST; do print -r -- "<$w>"; done"#);
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f PRE"${a[@]}"POST"#);
+        assert_parity(r#"set -- x '' y; f(){ print -r -- $# }; f PRE"$@"POST"#);
+    }
+
+    /// c:4261's cut-off — below two elements the emit block strips the quotes
+    /// and the node is a true empty, so the drop still applies.
+    #[test]
+    fn one_and_zero_element_splats_still_drop() {
+        assert_parity(r#"a=(''); f(){ print -r -- $# }; f PRE"${a[@]}"POST"#);
+        assert_parity(r#"a=(); f(){ print -r -- $# }; f PRE"${a[@]}"POST"#);
+        assert_parity(r#"a=(); b=(); f(){ print -r -- $# }; f "${a[@]}""${b[@]}""#);
+        assert_parity(r#"a=(); print -r -- "[${a[@]}]""#);
+    }
+
+    /// An UNQUOTED splat has `qt == 0`, so its empties are genuine empty
+    /// nodes and c:186 removes them — before and after this rule.
+    #[test]
+    fn unquoted_splat_still_drops_its_empties() {
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f PRE${a[@]}POST"#);
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f ${a[@]}"#);
+        assert_parity(r#"set -- x '' y; f(){ print -r -- $# }; f $@"#);
+        assert_parity(r#"a=(y '' x); for i in $a; do print -r -- "<$i>"; done"#);
+    }
+
+    /// The bit is word-scoped: a whole-word `"${a[@]}"` emits no end-of-word
+    /// drop, so a following UNQUOTED word must not inherit its retention.
+    #[test]
+    fn retention_does_not_leak_into_the_next_word() {
+        assert_parity(r#"a=(x '' y); b=(p '' q); f(){ print -r -- $# }; f "${a[@]}" X${b[@]}Y"#);
+        assert_parity(r#"a=(x '' y); b=(p '' q); f(){ print -r -- $# }; f "${a[@]}" $b"#);
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f "${a[@]}" "${a[@]}""#);
+    }
+
+    /// A SPLIT field's empty is `nulstring` for a different reason (c:3919
+    /// `sepsplit`) and must keep surviving; `"${a[*]}"` is one joined word.
+    #[test]
+    fn split_fields_and_star_join_are_unaffected() {
+        assert_parity(
+            r#"setopt shwordsplit; IFS=:; s='a::b'; for w in P${s}S; do print -r -- "<$w>"; done"#,
+        );
+        assert_parity(r#"setopt shwordsplit; a=(x '' y); IFS=:; f(){ print -r -- $# }; f ${a[*]}"#);
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f PRE"${a[*]}"POST"#);
+        assert_parity(r#"a=(x '' y); f(){ print -r -- $# }; f "${(@)a}""#);
+        assert_parity(r#"a=(x y ''); f(){ print -r -- $# }; f ${a}POST"#);
+    }
+}
