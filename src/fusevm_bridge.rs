@@ -5176,6 +5176,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // spent here even though this builtin drops unconditionally, so a
         // following word starts from a clean bit.
         let _ = take_array_empties_elidable();
+        // c:Src/subst.c:4387 / :4404 / :4426 — a QUOTED splat of two or more
+        // elements stored `nulstring` in its empty nodes, which c:183 finds
+        // NON-empty, so c:186's `uremnode` skips them and `remnulargs` (c:170)
+        // restores `""`. `a=(x '' y); PRE"${a[@]}"POST` is three words in zsh.
+        // See `QUOTED_SPLICE_KEEPS_EMPTIES` for the c:4261 element-count
+        // cut-off that makes this a run-time decision.
+        if take_quoted_splice_keeps_empties() {
+            return v;
+        }
         match v {
             Value::Array(items) => {
                 let filtered: Vec<Value> = items
@@ -5231,6 +5240,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // cleared by that marker's closing half, emitted just below this op.
         let elidable = take_array_empties_elidable()
             | crate::ported::subst::PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.get());
+        // A quoted splat never reaches this arm (the compile site sends every
+        // splice-shaped word to `BUILTIN_ARRAY_DROP_EMPTY` instead), but the
+        // bit is word-scoped, so spend it here too rather than let it reach
+        // the next word's drop. See `QUOTED_SPLICE_KEEPS_EMPTIES`.
+        let _ = take_quoted_splice_keeps_empties();
         // argc == 2 is the compiler's "this word carries a quoted-empty
         // literal segment" bit (see the emit site). c:4341 — under plan9 that
         // affix is glued to EVERY element, so no node of the word can be
@@ -6449,6 +6463,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !matches!(&result, Value::Array(a) if a.is_empty()) {
             note_empty_is_scalar(saved_empty_is_scalar);
         }
+        // argc 4 is the compile site's "this `[@]` splat is QUOTED" bit
+        // (`compile_zsh.rs`, the `${NAME[@]}` fast path). c:Src/subst.c:4387
+        // `if (qt && !*y && isarr != 2) y = dupstring(nulstring)` then keeps
+        // this read's empty elements alive through c:186 — but only above
+        // c:4261's two-element cut-off, which is why the count is applied here
+        // and not at the compile site. See `QUOTED_SPLICE_KEEPS_EMPTIES`.
+        // Every other argc is an UNQUOTED (or `ssub`-joined) read, so it must
+        // CLEAR the bit rather than leave a previous word's set: a whole-word
+        // `"${a[@]}"` emits no end-of-word drop, so nothing else spends it.
+        let quoted_splat_elems = match &result {
+            Value::Array(items) if argc == 4 => items.len(),
+            _ => 0,
+        };
+        note_quoted_splice_elems(quoted_splat_elems);
         // c:Src/subst.c:3912-3939 for the `${NAME[@]}` splice fast paths. Only
         // an ARRAY-shaped result reaches the block (c:3914 `if (isarr || …)`);
         // the scalar arms above — an unset parameter (c:3480-3485), the
@@ -6802,6 +6830,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
             }
+            // c:Src/subst.c:4387 — `"$@"` is the quoted splat of the positional
+            // list, so its empty elements become `nulstring` and survive
+            // c:186: `set -- x '' y; PRE"$@"POST` is three words in zsh. `*` is
+            // excluded because c:3032's quoted `sepjoin` has already collapsed
+            // it to one scalar (the compile site routes `"$*"` through
+            // BUILTIN_EXPAND_TEXT and discards this value). c:4261's
+            // element-count cut-off is applied by `note_quoted_splice_elems`.
+            // An UNQUOTED `$@` passes 0, which CLEARS the bit: a preceding
+            // whole-word `"${a[@]}"` emits no end-of-word drop, so its bit is
+            // still standing and this word's drop must not honour it.
+            let quoted_at_elems = if force_dq && name == "@" { pp.len() } else { 0 };
+            note_quoted_splice_elems(quoted_at_elems);
             return Value::array(pp.iter().map(Value::str).collect());
         }
         // RC_EXPAND_PARAM: when the option is set and `name` refers to
@@ -13346,15 +13386,66 @@ thread_local! {
     static ARRAY_EMPTIES_ELIDABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+thread_local! {
+    /// The opposite bit: this word's array came out of a QUOTED splat whose
+    /// empty elements C stores as `nulstring`, so the end-of-word drop must
+    /// KEEP them.
+    ///
+    /// c:Src/subst.c:4387, :4404, :4426 — every node the array emit block
+    /// produces runs `if (qt && !*y && isarr != 2) y = dupstring(nulstring)`.
+    /// `nulstring` (c:36 `{Nularg, '\0'}`) is NON-empty, so c:183's
+    /// `if (*(char *)getdata(node))` keeps the node and c:186's `uremnode`
+    /// never sees it; `remnulargs` (c:170) turns it back into `""`.
+    ///
+    /// The rule has a RUN-time cut-off that no compile-time gate can express:
+    /// c:4261 `if ((!aval[0] || !aval[1]) && !plan9)` claims the empty and
+    /// single-element cases FIRST and strips the surrounding `Dnull` markers
+    /// (c:4272-4274 `*--aptr = '\0', fstr++`), so those nodes really are empty
+    /// and c:186 deletes them. That is why `a=(); b=(); "${a[@]}""${b[@]}"` is
+    /// ZERO words while `a=(x '' y); PRE"${a[@]}"POST` is three. Hence the bit
+    /// is set by the READ (which knows the element count) and only when the
+    /// compile site marked the splat quoted (`BUILTIN_ARRAY_ALL` argc 4, or
+    /// `BUILTIN_GET_VAR_DQ` on the `@` positional).
+    ///
+    /// Word-scoped: cleared when a word opens (`BUILTIN_WORD_DEFER_EMPTIES`
+    /// argc 0), cleared by any UNQUOTED array read
+    /// (`note_array_empties_elidable`, its exact complement), and consumed by
+    /// the end-of-word drop.
+    ///
+    /// Known residue: the bit is per-WORD, while C's `nulstring` is per-NODE,
+    /// so a word mixing a quoted and an unquoted splat
+    /// (`PRE"${a[@]}"${b[@]}POST`) keeps both sets of empties where C keeps
+    /// only the quoted one.
+    static QUOTED_SPLICE_KEEPS_EMPTIES: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 /// Record that the value just read is a genuine ARRAY reference, so an empty
 /// element of it is a true empty word. See `ARRAY_EMPTIES_ELIDABLE`.
 fn note_array_empties_elidable() {
     ARRAY_EMPTIES_ELIDABLE.with(|c| c.set(true));
+    // c:4387's `qt` half is false for this read, so nothing it produced is
+    // `nulstring`. The two bits are complements; do not let a previous word's
+    // quoted splat keep this one's empties.
+    QUOTED_SPLICE_KEEPS_EMPTIES.with(|c| c.set(false));
 }
 
 /// Read and clear the elidable-empties bit. See `ARRAY_EMPTIES_ELIDABLE`.
 fn take_array_empties_elidable() -> bool {
     ARRAY_EMPTIES_ELIDABLE.with(|c| c.replace(false))
+}
+
+/// c:Src/subst.c:4387 — record that a QUOTED splat of `n` elements was read.
+/// c:4261's cut-off means the `nulstring` rewrite is only reachable for
+/// `n >= 2`; below that the emit block strips the quotes and the node is a
+/// true empty. See `QUOTED_SPLICE_KEEPS_EMPTIES`.
+fn note_quoted_splice_elems(n: usize) {
+    QUOTED_SPLICE_KEEPS_EMPTIES.with(|c| c.set(n >= 2));
+}
+
+/// Read and clear the quoted-splat bit. See `QUOTED_SPLICE_KEEPS_EMPTIES`.
+fn take_quoted_splice_keeps_empties() -> bool {
+    QUOTED_SPLICE_KEEPS_EMPTIES.with(|c| c.replace(false))
 }
 
 /// Declare that the word now being assembled attaches its own literals, so
@@ -13363,6 +13454,10 @@ fn take_array_empties_elidable() -> bool {
 /// `src/ported/subst.rs`, `PARAMSUBST_AFFIXES_DEFERRED`.
 fn open_deferred_affix_word() {
     crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(c.get() + 1));
+    // c:4387's `qt`/`nulstring` bit belongs to the word being assembled, so a
+    // word that opens starts from a clean one — a preceding whole-word
+    // `"${a[@]}"` emits no end-of-word drop and would otherwise leave it set.
+    QUOTED_SPLICE_KEEPS_EMPTIES.with(|c| c.set(false));
 }
 
 /// End the declaration `open_deferred_affix_word` made — the marker's
