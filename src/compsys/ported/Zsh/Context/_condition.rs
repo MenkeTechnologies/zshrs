@@ -29,8 +29,8 @@ use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_file_descriptors::_file_descriptors;
 use crate::compsys::ported::_options::_options;
 use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::shared::zstyle_T;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam};
 
 const UNARY_TESTS: &[&str] = &[
@@ -124,7 +124,10 @@ pub fn _condition() -> i32 {
     // sh:13-15  default branch
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let prefix_needed = testforstyle(
+    // sh:15 — `! zstyle -T … prefix-needed`: an UNSET style is TRUE, so the
+    //   catalogue is offered only when `$PREFIX` starts with `-`; see
+    //   [`zstyle_T`].
+    let prefix_needed = zstyle_T(
         &format!(":completion:{}:options", curcontext),
         "prefix-needed",
     ) == 0;
