@@ -4169,3 +4169,131 @@ mod assoc_search_subscript_assignment {
         assert_parity(r#"typeset -A h; k=; h[$k]=z; print -rl -- ${(k)h}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// AA. `(@)` bridge-array routing decides on a TEXTUAL scan of the body
+//
+// `compile_zsh.rs`'s `need_array` gate routes a `${(flags)…}` word to
+// BUILTIN_BRIDGE_BRACE_ARRAY when the flag chain carries `@` and the text
+// AFTER the flag group contains `${`. That tail is RAW TEXT, so a `${`
+// sitting inside a nested command substitution — which belongs to the
+// command's own text, not to this expansion — trips the gate too. The
+// bridge then IFS-splits the result where `(@f)` must split on NEWLINES
+// only (c:Src/subst.c — the `f` flag sets the separator to "\n" before
+// c:3921's split; IFS never enters it).
+//
+// Textual, not semantic: single-quoting or backslash-escaping the inner
+// `${` inside the same `$( … )` diverges identically.
+// ─────────────────────────────────────────────────────────────────────
+mod at_flag_bridge_textual_scan {
+    use super::*;
+
+    /// zshrs gap: `3` vs zsh's `2` — the `${s}` inside the command
+    /// substitution makes `need_array` fire, the word goes to
+    /// BRIDGE_BRACE_ARRAY, and `a b` splits on the SPACE.
+    #[test]
+    #[ignore]
+    fn f_flag_split_survives_nested_brace_inside_cmdsubst() {
+        assert_parity(r#"s=$'a b\nc'; r=("${(@f)$(print -r -- "${s}")}"); print $#r"#);
+    }
+
+    /// zshrs gap: `5` vs zsh's `3`. The `ykman `/`ykman -` completion
+    /// cells reduce to this shape.
+    #[test]
+    #[ignore]
+    fn f_flag_split_survives_nested_brace_in_printf_operand() {
+        assert_parity(r#"v=X; r=("${(@f)$(printf "%s\n" one "two ${v} three" four)}"); print $#r"#);
+    }
+
+    /// Controls that must keep agreeing once the gate scans structurally:
+    /// the same word without `@` (gate needs `@`), with the substitution
+    /// spelled `$s` (no `${`), and with a genuine nested expansion as the
+    /// operand — the shape the gate exists for.
+    #[test]
+    fn split_controls_unaffected() {
+        assert_parity(r#"s=$'a b\nc'; r=("${(f)$(print -r -- "${s}")}"); print $#r"#);
+        assert_parity(r#"s=$'a b\nc'; r=("${(@f)$(print -r -- $s)}"); print $#r"#);
+        assert_parity(r#"s=$'a b\nc'; r=("${(@f)${s}}"); print $#r"#);
+    }
+
+    /// The three sibling triggers on the same textual tail — `[@]` + `:#`,
+    /// `(M)`/`(R)` + `:#`, and `@` + `[(I)`. Probed non-diverging today;
+    /// pinned so re-basing all four on one structural scanner is measured.
+    #[test]
+    fn sibling_triggers_unaffected() {
+        assert_parity(r#"a=(ha he hi); print -r -- "${(M)a:#h?}""#);
+        assert_parity(r#"a=(x1 y2 x3); print -rl -- ${(M)a:#x*}"#);
+        assert_parity(r#"typeset -A m=(a 1 b 2); print -rl -- ${(@on)m[(I)*]}"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AB. `jobs` prints a placeholder for every compound command
+//
+// C derives a background job's display text from the program itself:
+// `getjobtext(state->prog, …)` (c:Src/exec.c:2005) walks the wordcode
+// through `gettext2` with `tnewlins = 0` (c:Src/text.c:332), producing one
+// line. zshrs builds the text at COMPILE time from the extensions AST in
+// `render_cmd_for_debug` (src/extensions/compile_zsh.rs), whose `For` /
+// `Case` / `If` / `While` / `Until` / `Repeat` arms are hardcoded
+// `"for ..."` … placeholders; only `Subsh` / `Cursh` recurse into a real
+// render, which is why the block forms already agree.
+//
+// c:Src/text.c:586's `if (tjob)` `{ ... }` abbreviation is reached ONLY
+// from the `WC_FUNCDEF` arm at c:575 — it is not licence to abbreviate a
+// compound. Every other byte of the `jobs` line already matches.
+// ─────────────────────────────────────────────────────────────────────
+mod job_text_compound_placeholder {
+    use super::*;
+
+    /// `Cursh` / `Subsh` already recurse — pin so the compound fix can't
+    /// regress the block forms.
+    #[test]
+    fn block_and_subshell_job_text_agree() {
+        assert_parity("{ sleep 3 } &\njobs\nwait");
+        assert_parity("( sleep 3 ) &\njobs\nwait");
+    }
+
+    /// zshrs gap: `for ...` vs zsh's `for i in 1 2; do; sleep 3; done`.
+    #[test]
+    #[ignore]
+    fn for_loop_job_text() {
+        assert_parity("for i in 1 2; do\nsleep 3\ndone &\njobs\nwait");
+    }
+
+    /// zshrs gap: `if ...` vs zsh's `if true; then; sleep 3; fi`.
+    #[test]
+    #[ignore]
+    fn if_job_text() {
+        assert_parity("if true; then\nsleep 3\nfi &\njobs\nwait");
+    }
+
+    /// zshrs gap: `while ...` vs zsh's `while false; do; sleep 3; done`.
+    #[test]
+    #[ignore]
+    fn while_job_text() {
+        assert_parity("while false; do\nsleep 3\ndone &\njobs\nwait");
+    }
+
+    /// zshrs gap: `until ...` vs zsh's `until true; do; sleep 3; done`.
+    #[test]
+    #[ignore]
+    fn until_job_text() {
+        assert_parity("until true; do\nsleep 3\ndone &\njobs\nwait");
+    }
+
+    /// zshrs gap: `repeat ...` vs zsh's `repeat 2; do; sleep 3; done`.
+    #[test]
+    #[ignore]
+    fn repeat_job_text() {
+        assert_parity("repeat 2 do\nsleep 3\ndone &\njobs\nwait");
+    }
+
+    /// zshrs gap: `case ...` vs zsh's `case x in (x) sleep 3 ;; esac` —
+    /// note C re-emits the pattern with a LEADING paren.
+    #[test]
+    #[ignore]
+    fn case_job_text() {
+        assert_parity("case x in x) sleep 3;; esac &\njobs\nwait");
+    }
+}
