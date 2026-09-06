@@ -245,21 +245,10 @@ fn make_segment(
 /// `$commands[name]` — locate an executable on $PATH (uncached; every
 /// caller sits behind a TTL/stat cache or a cheap short-circuit).
 /// Mirrors segments_env::have_cmd's scan.
+/// Was a second private copy of the `$PATH` walk. Delegates to the one
+/// cached implementation — see `segments_sys::cmd_on_path`.
 fn cmd_on_path(name: &str) -> Option<PathBuf> {
-    let path_var = env_or_param("PATH");
-    for dir in path_var.split(':').filter(|d| !d.is_empty()) {
-        let cand = Path::new(dir).join(name);
-        let is_exec = std::fs::metadata(&cand)
-            .map(|md| {
-                use std::os::unix::fs::PermissionsExt;
-                md.is_file() && md.permissions().mode() & 0o111 != 0
-            })
-            .unwrap_or(false);
-        if is_exec {
-            return Some(cand);
-        }
-    }
-    None
+    super::segments_sys::cmd_on_path(name)
 }
 
 /// p10k:203-210 — `_p9k_fetch_cwd`: logical $PWD when absolute, else

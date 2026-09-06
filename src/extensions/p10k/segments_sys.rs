@@ -252,8 +252,43 @@ fn make_segment(
 /// `$commands[name]` — locate an executable on $PATH (uncached; every
 /// caller sits behind a TTL cache or a cheap-file short-circuit).
 /// Mirrors segments_env::have_cmd's scan.
-fn cmd_on_path(name: &str) -> Option<PathBuf> {
+/// Cache for [`cmd_on_path`], keyed on the whole `$PATH` so a changed
+/// `$PATH` drops every entry at once (what `rehash` does to zsh's
+/// command hash).
+///
+/// p10k gates each of these segments on `$commands[<tool>]`, which in zsh
+/// is the ALREADY-POPULATED command hash — an O(1) lookup. This port
+/// re-walked `$PATH` with a `stat()` per directory on EVERY prompt for
+/// EVERY gating segment. Measured on the author's shell: 53 `$PATH`
+/// entries x ~10 gating segments = ~500 `stat()` calls per frame, and
+/// `taskwarrior` cost 76ms of a 256ms frame with its OWN 30s TTL cache
+/// already warm — because the gate runs BEFORE the cache.
+///
+/// Negative results are cached too: a tool that is absent must not cost a
+/// full 53-directory walk on every prompt. That matches `$commands`,
+/// which also will not see a newly installed binary until a rehash; the
+/// TTL is the safety valve so one does appear without a shell restart.
+static CMD_PATH_CACHE: OnceLock<Mutex<(String, Instant, HashMap<String, Option<PathBuf>>)>> =
+    OnceLock::new();
+
+/// How long a `$PATH` lookup stands before it is re-walked. Long enough
+/// that a burst of prompts costs one walk, short enough that installing a
+/// tool shows up without restarting the shell.
+const CMD_PATH_TTL: Duration = Duration::from_secs(15);
+
+pub(crate) fn cmd_on_path(name: &str) -> Option<PathBuf> {
     let path_var = env_or_param("PATH");
+    let m = CMD_PATH_CACHE.get_or_init(|| Mutex::new((String::new(), Instant::now(), HashMap::new())));
+    if let Ok(mut g) = m.lock() {
+        if g.0 != path_var || g.1.elapsed() >= CMD_PATH_TTL {
+            g.0 = path_var.clone();
+            g.1 = Instant::now();
+            g.2.clear();
+        } else if let Some(hit) = g.2.get(name) {
+            return hit.clone();
+        }
+    }
+    let mut found = None;
     for dir in path_var.split(':').filter(|d| !d.is_empty()) {
         let cand = std::path::Path::new(dir).join(name);
         let is_exec = std::fs::metadata(&cand)
@@ -263,10 +298,17 @@ fn cmd_on_path(name: &str) -> Option<PathBuf> {
             })
             .unwrap_or(false);
         if is_exec {
-            return Some(cand);
+            found = Some(cand);
+            break;
         }
     }
-    None
+    if let Ok(mut g) = m.lock() {
+        // Only publish against the `$PATH` this walk actually used.
+        if g.0 == path_var {
+            g.2.insert(name.to_string(), found.clone());
+        }
+    }
+    found
 }
 
 // ---------------------------------------------------------------------
