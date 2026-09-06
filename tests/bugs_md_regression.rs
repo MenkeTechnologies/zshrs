@@ -2267,3 +2267,87 @@ fn word_flag_subscript_bounds_return_character_positions() {
         );
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// A braced/unbraced subscript that EXPANDS to `@` or `*` is a KEY,
+// not the whole-parameter splat.
+// Fix: src/ported/subst.rs::paramsubst (`sub_is_splat`),
+//      src/fusevm_bridge.rs::expanded_subscript_text
+// ════════════════════════════════════════════════════════════════════
+
+/// c:Src/params.c:2047-2054 — `getindex` decides the whole-parameter splat on
+/// the RAW bracket text, before `getarg` runs `parsestr`/`singsub` on it
+/// (c:1567-1592):
+///
+/// ```c
+///     s = *pptr + 1;
+///     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack) {
+///         ...  v->start = 0; v->end = -1;  s += 2;
+///     } else {
+///         start = getarg(&s, &inv, v, 0, &we, ...);
+///     }
+/// ```
+///
+/// Only a LITERAL one-character `[@]` / `[*]` splats. zshrs decided from the
+/// SUBSTITUTED text, so `k='@'; ${h[$k]}` enumerated the whole hash instead of
+/// reading the key `@`, and `${arr[$k]}` handed back every element instead of
+/// the c:1618 `mathevalarg` error. Expected values below are `zsh -f` 5.9.
+#[test]
+fn expanded_at_or_star_subscript_is_a_key_not_the_splat() {
+    let assoc = "typeset -A h=( '@' AT '*' STAR a 1 b 2 ); k='@'; s='*';";
+    let cases: &[(&str, &str)] = &[
+        // ── The defect: an EXPANDED `@`/`*` keys the hash (c:1583-1612).
+        (&format!("{assoc} print -r -- ${{h[$k]}}"), "AT\n"),
+        (&format!("{assoc} print -r -- ${{h[$s]}}"), "STAR\n"),
+        (&format!("{assoc} print -r -- ${{h[${{k}}]}}"), "AT\n"),
+        // Unbraced `$name[…]` reaches the same getindex (c:Src/subst.c:2800).
+        (&format!("{assoc} print -r -- $h[$k]"), "AT\n"),
+        // The shape flags read the key, not a splat.
+        (&format!("{assoc} print -r -- ${{(k)h[$k]}}"), "@\n"),
+        (&format!("{assoc} print -r -- ${{(o)h[$k]}}"), "AT\n"),
+        (&format!("{assoc} print -r -- ${{#h[$k]}}"), "2\n"),
+        (&format!("{assoc} print -r -- ${{+h[$k]}}"), "1\n"),
+        // ── c:1618 — a non-hash target hands the text to `mathevalarg`, which
+        // rejects `@`/`*` as operands. The subshell keeps the errflag off the
+        // outer script; `done` proves no word was produced.
+        (
+            "arr=(x y z); k='@'; ( print -r -- ${arr[$k]} ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        (
+            "arr=(x y z); k='*'; ( print -r -- ${arr[$k]} ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        (
+            "str=abcdef; k='@'; ( print -r -- ${str[$k]} ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        (
+            "arr=(x y z); k='@'; ( print -r -- $arr[$k] ) 2>/dev/null; print -r -- done",
+            "done\n",
+        ),
+        // ── The LITERAL spelling still splats (c:2048's true branch). One
+        // entry only: hash enumeration order is not part of this contract.
+        ("typeset -A h=( a 1 ); print -r -- ${h[@]}", "1\n"),
+        ("typeset -A h=( a 1 ); print -r -- ${h[*]}", "1\n"),
+        ("typeset -A h=( a 1 ); print -r -- $h[@]", "1\n"),
+        ("arr=(x y z); print -r -- ${arr[@]}", "x y z\n"),
+        ("arr=(x y z); print -r -- \"${arr[*]}\"", "x y z\n"),
+        // An ordinary expanded index is unaffected.
+        ("arr=(x y z); k=2; print -r -- ${arr[$k]}", "y\n"),
+        // c:2033-2038 — a QUOTED `["@"]` keeps the inull() marker at `s[0]`,
+        // so it is neither the splat nor the bare key.
+        ("typeset -A h=( '@' AT ); print -r -- \"[${h[\"@\"]}]\"", "[]\n"),
+        // c:1449-1450 — the `(e)` exact-match group is the spelling the
+        // bridge rebuilds an expanded subscript with; it must key the hash.
+        (&format!("{assoc} print -r -- ${{(v)h[(e)$k]}}"), "AT\n"),
+    ];
+    for (script, want) in cases {
+        let (code, out, err) = run_zshrs(script);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, *want),
+            "script: {script}\nstderr: {err}"
+        );
+    }
+}

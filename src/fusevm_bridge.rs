@@ -4495,7 +4495,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::str("")
                 }
             }
-            _ => paramsubst_to_value(&format!("${{(k){}[{}]}}", name, key)),
+            // c:2048 — `key` is already expanded, so an `@`/`*` here is a key,
+            // not the splat; see `expanded_subscript_text`.
+            _ => paramsubst_to_value(&format!(
+                "${{(k){}[{}]}}",
+                name,
+                expanded_subscript_text(&key)
+            )),
         }
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, argc| {
@@ -12695,6 +12701,44 @@ impl ZshrsHost {
 /// `BUILTIN_ARRAY_INDEX` argc contract. It only reaches the textual
 /// `paramsubst` rebuild at the bottom: every direct-lookup shortcut above it
 /// resolves a single assoc value, which c:4226's join leaves alone.
+/// Spell an ALREADY-EXPANDED subscript so a flat `${name[…]}` rebuild reads it
+/// back as the key/index it is.
+///
+/// c:Src/params.c:2047-2054 — `getindex` decides the whole-parameter splat on
+/// the RAW bracket text, before `getarg` runs `parsestr`/`singsub` on it:
+///
+/// ```c
+///     s = *pptr + 1;
+///     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack) {
+///         ...  v->start = 0; v->end = -1;  s += 2;
+///     } else {
+///         start = getarg(&s, &inv, v, 0, &we, ...);
+///     }
+/// ```
+///
+/// So in C a subscript that merely EXPANDS to `@` or `*` can never be the
+/// splat — the text at `s[0]` is still `$k`. zshrs expands the subscript in the
+/// VM and then rebuilds the flat `${name[VALUE]}` string for `paramsubst`,
+/// which puts that `@` exactly where c:2048 reads it as the splat: `k='@';
+/// ${h[$k]}` enumerated the whole hash instead of reading the key `@`.
+///
+/// Every compiler route that reaches a rebuild rejects a SOURCE-literal
+/// `[@]`/`[*]` first (`braced_subscript_ref`, `braced_subscript_dynamic_ref`
+/// and `parse_zsh_flag_subscript` all bail on `key == "@" || key == "*"`), so
+/// an `@`/`*` seen here is always an expansion result. Re-spell it with C's
+/// exact-match subscript group (c:Src/params.c:1449-1450 `(e)`), which sidesteps
+/// c:2048 — `s[0]` is `(` — and then keys on the literal text. `${h[(e)@]}` is
+/// byte-identical to `k='@'; ${h[$k]}` on zsh 5.9 for every shape measured:
+/// hash key (`AT`), array/scalar (`bad math expression`), `(k)` (`@`),
+/// `${#…}` (`2`) and `${+…}` (`1`).
+fn expanded_subscript_text(idx: &str) -> std::borrow::Cow<'_, str> {
+    if idx == "@" || idx == "*" {
+        std::borrow::Cow::Owned(format!("(e){}", idx)) // c:1449-1450
+    } else {
+        std::borrow::Cow::Borrowed(idx)
+    }
+}
+
 fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
@@ -12741,7 +12785,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
             return Value::str(hit.unwrap_or_default());
         }
     }
-    let body = format!("${{{}[{}]}}", name, idx);
+    let body = format!("${{{}[{}]}}", name, expanded_subscript_text(idx));
     // c:Src/subst.c:4226 — `if (isarr && ssub) { val = sepjoin(aval, NULL, 1);
     // isarr = 0; }`. `PREFORK_SINGLE` is the whole of `ssub` (c:1761), and the
     // ported `paramsubst` already carries that gate (`ssub_c4226` /
