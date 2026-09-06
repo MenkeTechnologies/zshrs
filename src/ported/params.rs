@@ -2154,8 +2154,9 @@ pub fn createparamtable() {
 /// is typed `Option<HashTable>` per Src/zsh.h:1841 but the full
 /// HashTable substrate isn't wired yet; the assoc-array values live
 /// here keyed on param name until that lands.
-static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<Mutex<HashMap<String, IndexMap<String, String>>>> =
-    OnceLock::new();
+static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
+    Mutex<crate::cow_map::CowHashMap<String, IndexMap<String, String>>>,
+> = OnceLock::new();
 
 /// Port of `assigngetset()` from `Src/params.c:994`. C body
 /// installs the standard get/set/unset vtable matching the
@@ -14990,9 +14991,10 @@ pub static DELUNSET: std::sync::atomic::AtomicI32 = // c:610
 /// `HashTable` hanging off `pm->u.hash`, walked through the Param's GSU vtable.
 /// zshrs stores them in this side table keyed by the owning param's name, because
 /// the Rust `param` struct has no owned nested-table field.
-pub(crate) fn paramtab_hashed_storage() -> &'static Mutex<HashMap<String, IndexMap<String, String>>>
-{
-    PARAMTAB_HASHED_STORAGE_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) fn paramtab_hashed_storage(
+) -> &'static Mutex<crate::cow_map::CowHashMap<String, IndexMap<String, String>>> {
+    PARAMTAB_HASHED_STORAGE_INNER
+        .get_or_init(|| Mutex::new(crate::cow_map::CowHashMap::new()))
 }
 
 /// Shadow stack for `paramtab_hashed_storage` entries displaced by
