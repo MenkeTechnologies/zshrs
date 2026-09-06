@@ -39,16 +39,30 @@
 //!   tags in the normal (packed) case. gitstatus peels via libgit2
 //!   (tag_db.cc:295-330 TagHasTarget); this is a documented divergence, not
 //!   an approximation.
-//! - Cache: per-gitdir entry with ~2s TTL, additionally invalidated when
-//!   `.git/index` or `.git/HEAD` mtime changes. The prompt is never blocked
-//!   more than ~45ms: the subprocess output is read on a helper thread and
-//!   awaited via `mpsc::recv_timeout`; on timeout the child is killed and the
-//!   fresh NATIVE fields are returned with the stale cached subprocess-only
-//!   fields merged in (or None when there is no cache yet).
-//! - Perf: native path is one ~400KB index read + one lstat per index entry
-//!   (3,884 entries on this repo) + a few small ref/config/log reads.
-//!   Target < 5ms warm on this repo (cache hit is a map lookup; cache miss is
-//!   dominated by the lstat scan, low single-digit ms warm). Indexes over
+//! - Caches: two, with different lifetimes.
+//!   * `cache()` — the combined snapshot, per-gitdir, ~2s TTL, additionally
+//!     invalidated when `.git/index` or `.git/HEAD` mtime changes. A hit is
+//!     a map lookup.
+//!   * `sub_cache()` — the last COMPLETED porcelain parse, per-gitdir, no
+//!     TTL. It exists because the subprocess is run ASYNCHRONOUSLY, the way
+//!     p10k queries gitstatusd: the prompt waits at most
+//!     `POWERLEVEL9K_VCS_MAX_SYNC_LATENCY_SECONDS` (0.05 default) and then
+//!     renders the LAST KNOWN status while the daemon answers
+//!     (p10k:3799-3812). So only the first prompt in a repo ever blocks
+//!     (SUBPROCESS_BUDGET); after that the snapshot is served immediately
+//!     and a refresh runs on a helper thread, at most one per repo. The
+//!     child is never killed — killing it, as this code used to do, threw
+//!     away every answer in any repo where `git status` is slower than the
+//!     budget, so the segment never rendered AND the full cost was paid
+//!     again on the very next prompt.
+//!   The cost of that async model is that staged/untracked (and diverged
+//!   ahead/behind) can be one prompt stale; every NATIVE field is always
+//!   recomputed fresh.
+//! - Perf: native path is one ~600KB index read + one lstat per index entry
+//!   + a few small ref/config/log reads. The lstat scan dominates and is
+//!   latency-bound, so it fans out over up to MAX_STAT_THREADS threads the
+//!   way gitstatusd's does (`gitstatusd -t <n>`): measured on this repo at
+//!   5,831 entries, 63-132ms serial vs 20-24ms parallel. Indexes over
 //!   NATIVE_SCAN_MAX entries skip the native scan to protect the budget.
 //! - No new crate dependencies; std only.
 //!
@@ -101,6 +115,14 @@ const SUBPROCESS_BUDGET: Duration = Duration::from_millis(45);
 /// back to the subprocess for unstaged/conflicted (gitstatus has the same
 /// escape hatch via its dirty_max_index_size option).
 const NATIVE_SCAN_MAX: usize = 20_000;
+/// Index-entry count below which the worktree scan stays on one thread —
+/// below this the spawn/join overhead outweighs the latency it hides.
+const PAR_STAT_MIN: usize = 512;
+/// Upper bound on worktree-scan threads. gitstatusd defaults its pool to the
+/// core count (`gitstatusd -t`, gitstatus/src/options.cc), but the prompt is
+/// not the only thing running; past ~8 the lstat queue, not the CPU, is the
+/// limit.
+const MAX_STAT_THREADS: usize = 8;
 
 struct CacheEntry {
     at: Instant,
@@ -112,6 +134,98 @@ struct CacheEntry {
 fn cache() -> &'static Mutex<HashMap<PathBuf, CacheEntry>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, CacheEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Last completed `git status --porcelain=v2` parse per gitdir, kept apart
+/// from `cache()` because it has its OWN lifetime: a background refresh
+/// lands here whenever the child finishes, long after the prompt that
+/// started it returned. Only the subprocess-only fields of the value are
+/// ever read (module doc); the rest is recomputed natively every time.
+struct SubEntry {
+    at: Instant,
+    status: GitStatus,
+}
+
+fn sub_cache() -> &'static Mutex<HashMap<PathBuf, SubEntry>> {
+    static SUB: OnceLock<Mutex<HashMap<PathBuf, SubEntry>>> = OnceLock::new();
+    SUB.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// gitdirs with a `git status` child already running. p10k likewise keeps at
+/// most one outstanding gitstatusd request per repo (p10k:3799-3812 —
+/// `_p9k_vcs_status_deferred`), so a slow repo cannot pile up work.
+fn sub_inflight() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+    static IN: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+    IN.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Bound on both caches — one entry per repo visited, generous because the
+/// map is per-repo, not per-directory.
+const CACHE_CAP: usize = 64;
+
+/// Start a `git status --porcelain=v2` for `repo` unless one is already
+/// running, and wait up to `wait` for it.
+///
+/// Returns the parse when the child answered inside `wait`. Otherwise the
+/// child is NOT killed: it keeps running on its helper thread and stores its
+/// answer in `sub_cache()` for the next prompt. That is the gitstatusd
+/// contract p10k is written against — the prompt waits at most
+/// `POWERLEVEL9K_VCS_MAX_SYNC_LATENCY_SECONDS` (0.05 by default,
+/// p10k:7495) and then renders the last known status while the daemon
+/// finishes (p10k:3799-3812). Killing the child instead, as this code did
+/// before, threw away every answer in any repo where `git status` is slower
+/// than the budget — so the snapshot never appeared at all, and the full
+/// cost was paid again on the very next prompt.
+fn refresh_porcelain(repo: &Repo, wait: Option<Duration>) -> Option<GitStatus> {
+    {
+        let mut set = sub_inflight().lock().ok()?;
+        if !set.insert(repo.git_dir.clone()) {
+            return None; // already refreshing; nothing new to serve yet
+        }
+    }
+
+    let work_dir = repo.work_dir.clone();
+    let git_dir = repo.git_dir.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let out = run_porcelain(&work_dir);
+        if let Some(out) = out {
+            let mut sub = GitStatus::default();
+            parse_porcelain_v2(&out, &mut sub);
+            if let Ok(mut map) = sub_cache().lock() {
+                if map.len() >= CACHE_CAP && !map.contains_key(&git_dir) {
+                    evict_oldest(&mut map, |e: &SubEntry| e.at);
+                }
+                map.insert(
+                    git_dir.clone(),
+                    SubEntry {
+                        at: Instant::now(),
+                        status: sub.clone(),
+                    },
+                );
+            }
+            let _ = tx.send(sub);
+        }
+        if let Ok(mut set) = sub_inflight().lock() {
+            set.remove(&git_dir);
+        }
+    });
+
+    match wait {
+        Some(d) => rx.recv_timeout(d).ok(),
+        None => None,
+    }
+}
+
+/// Drop the stalest entry of a capped cache.
+fn evict_oldest<V>(map: &mut HashMap<PathBuf, V>, at: impl Fn(&V) -> Instant) {
+    if let Some(oldest) = map
+        .iter()
+        .max_by_key(|(_, v)| at(v).elapsed())
+        .map(|(k, _)| k.clone())
+    {
+        map.remove(&oldest);
+    }
 }
 
 /// Public entry point per the p10k module contract. `dir` is any directory;
@@ -198,92 +312,83 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
         status.conflicted = ic.conflicted;
     }
 
-    // -------- gated subprocess (staged/untracked always; the rest only when
-    // the native layer could not produce them — see module doc) --------
-    match run_porcelain(&repo.work_dir) {
-        Some(out) => {
-            let mut sub = GitStatus::default();
-            parse_porcelain_v2(&out, &mut sub);
-            status.staged = sub.staged;
-            status.untracked = sub.untracked;
-            if native_counts.is_none() {
-                status.unstaged = sub.unstaged;
-                status.conflicted = sub.conflicted;
-            }
-            if !ab_native {
-                status.ahead = sub.ahead;
-                status.behind = sub.behind;
-            }
-            if native_stash.is_none() {
-                status.stashes = sub.stashes; // --show-stash fallback
-            }
-            if status.commit.is_empty() {
-                status.commit = sub.commit;
-            }
-            if status.branch.is_empty() {
-                status.branch = sub.branch;
-            }
-            if status.remote_branch.is_empty() && !sub.remote_branch.is_empty() {
-                // `# branch.upstream` is `<remote>/<branch>`; strip the remote
-                // (remote names cannot contain '/') to the branch-only shape.
-                status.remote_branch = match sub.remote_branch.split_once('/') {
-                    Some((_, b)) => b.to_string(),
-                    None => sub.remote_branch,
-                };
-            }
-            if let Ok(mut map) = cache().lock() {
-                // Bound the cache: one entry per repo visited; a
-                // long-lived shell hopping across many repos must not
-                // grow this without limit. Evict the stalest entry
-                // once over the cap (cap is generous — the map is
-                // per-repo, not per-directory).
-                const CACHE_CAP: usize = 64;
-                if map.len() >= CACHE_CAP && !map.contains_key(&repo.git_dir) {
-                    if let Some(oldest) = map
-                        .iter()
-                        .max_by_key(|(_, e)| e.at.elapsed())
-                        .map(|(k, _)| k.clone())
-                    {
-                        map.remove(&oldest);
-                    }
-                }
-                map.insert(
-                    repo.git_dir.clone(),
-                    CacheEntry {
-                        at: Instant::now(),
-                        head_mtime,
-                        index_mtime,
-                        status: status.clone(),
-                    },
-                );
-            }
-            Some(status)
+    // -------- subprocess fields (staged/untracked always; the rest only
+    // when the native layer could not produce them — see module doc) --------
+    // Asynchronous, exactly as p10k queries gitstatusd: serve the last
+    // snapshot immediately and let a refresh land in the background; only
+    // the first-ever prompt in a repo blocks, and then only for
+    // SUBPROCESS_BUDGET. The native fields above are always fresh; a
+    // background refresh can leave staged/untracked one prompt stale, which
+    // is the same window p10k lives with (p10k:3799-3812).
+    let prev_sub = sub_cache()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&repo.git_dir).map(|e| e.status.clone()));
+    let sub = match prev_sub {
+        Some(s) => {
+            // Have something to render: never block, just kick the refresh.
+            refresh_porcelain(&repo, None);
+            Some(s)
         }
-        // Subprocess overran the budget: return the FRESH native fields with
-        // the stale cached subprocess-only fields merged in (slightly-old
-        // staged/untracked beat a blocked prompt); None when no cache yet.
-        None => {
-            if let Ok(map) = cache().lock() {
-                if let Some(e) = map.get(&repo.git_dir) {
-                    status.staged = e.status.staged;
-                    status.untracked = e.status.untracked;
-                    if native_counts.is_none() {
-                        status.unstaged = e.status.unstaged;
-                        status.conflicted = e.status.conflicted;
-                    }
-                    if !ab_native {
-                        status.ahead = e.status.ahead;
-                        status.behind = e.status.behind;
-                    }
-                    if native_stash.is_none() {
-                        status.stashes = e.status.stashes;
-                    }
-                    return Some(status);
-                }
-            }
-            None
-        }
+        // Nothing cached yet — wait out the budget so a first paint in a
+        // fast repo is already complete.
+        None => refresh_porcelain(&repo, Some(SUBPROCESS_BUDGET)),
+    };
+
+    let sub = match sub {
+        Some(s) => s,
+        // First prompt in this repo and `git status` is still running: the
+        // subprocess-only fields have no value yet, and a segment claiming
+        // "0 staged, 0 untracked" would be a lie. Same as before: no
+        // segment this prompt, real numbers on the next one.
+        None => return None,
+    };
+
+    status.staged = sub.staged;
+    status.untracked = sub.untracked;
+    if native_counts.is_none() {
+        status.unstaged = sub.unstaged;
+        status.conflicted = sub.conflicted;
     }
+    if !ab_native {
+        status.ahead = sub.ahead;
+        status.behind = sub.behind;
+    }
+    if native_stash.is_none() {
+        status.stashes = sub.stashes; // --show-stash fallback
+    }
+    if status.commit.is_empty() {
+        status.commit = sub.commit;
+    }
+    if status.branch.is_empty() {
+        status.branch = sub.branch;
+    }
+    if status.remote_branch.is_empty() && !sub.remote_branch.is_empty() {
+        // `# branch.upstream` is `<remote>/<branch>`; strip the remote
+        // (remote names cannot contain '/') to the branch-only shape.
+        status.remote_branch = match sub.remote_branch.split_once('/') {
+            Some((_, b)) => b.to_string(),
+            None => sub.remote_branch,
+        };
+    }
+
+    if let Ok(mut map) = cache().lock() {
+        // Bound the cache: one entry per repo visited; a long-lived shell
+        // hopping across many repos must not grow this without limit.
+        if map.len() >= CACHE_CAP && !map.contains_key(&repo.git_dir) {
+            evict_oldest(&mut map, |e: &CacheEntry| e.at);
+        }
+        map.insert(
+            repo.git_dir.clone(),
+            CacheEntry {
+                at: Instant::now(),
+                head_mtime,
+                index_mtime,
+                status: status.clone(),
+            },
+        );
+    }
+    Some(status)
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +685,7 @@ fn upstream_of(cfg: &GitConfig, branch: &str) -> Option<(String, String)> {
 /// Port of gitstatus RepoCaps (index.cc:308-318): repository capabilities
 /// that steer the lstat comparison. libgit2 defaults both to true on unix;
 /// `git clone`/`git init` write them explicitly.
+#[derive(Clone, Copy)]
 struct RepoCaps {
     trust_filemode: bool, // core.filemode  (index.cc:309 is_filemode_trustworthy)
     has_symlinks: bool,   // core.symlinks  (index.cc:310 index_supports_symlinks)
@@ -651,6 +757,7 @@ fn decode_varint(data: &[u8], pos: &mut usize) -> Option<u64> {
 ///   bytes from the entry start (1-8 NULs); v4 prefix-compressed — varint N
 ///   (bytes to strip from the END of the previous path) + NUL-terminated
 ///   suffix, no padding.
+#[derive(Clone, Copy)]
 struct EntryStat {
     mode: u32,
     ino: u32,
@@ -711,6 +818,45 @@ fn is_modified(e: &EntryStat, st: &fs::Metadata, caps: &RepoCaps) -> bool {
     false
 }
 
+/// lstat every collected entry and count the modified ones (index.cc:191-199
+/// StatFiles + IsModified). One lstat(2) per index entry is latency-bound,
+/// not CPU-bound, which is why gitstatusd fans the same scan out over its
+/// thread pool (`gitstatusd -t <n>`); measured here at 5,831 entries the
+/// serial scan is ~115-133ms and an 8-way scan ~28-49ms.
+///
+/// The count is order-independent (a plain sum over entries), so splitting
+/// the slice changes nothing about the result.
+fn count_modified(entries: &[(EntryStat, PathBuf)], caps: &RepoCaps) -> i64 {
+    fn scan(chunk: &[(EntryStat, PathBuf)], caps: &RepoCaps) -> i64 {
+        chunk
+            .iter()
+            .filter(|(e, path)| match fs::symlink_metadata(path) {
+                // index.cc:195 — ENOENT ⇒ deleted, other errors ⇒ unreadable;
+                // both are dirty candidates.
+                Err(_) => true,
+                Ok(st) => is_modified(e, &st, caps),
+            })
+            .count() as i64
+    }
+
+    let nthreads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(MAX_STAT_THREADS);
+    if entries.len() < PAR_STAT_MIN || nthreads < 2 {
+        return scan(entries, caps);
+    }
+    let caps = *caps;
+    let chunk_len = entries.len().div_ceil(nthreads);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = entries
+            .chunks(chunk_len)
+            .map(|c| s.spawn(move || scan(c, &caps)))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap_or(0)).sum()
+    })
+}
+
 /// Parse `.git/index` and lstat each stage-0 entry: unstaged = entries whose
 /// worktree file is missing/unreadable/modified (index.cc:191-199 StatFiles
 /// + IsModified), conflicted = distinct paths with stage > 0. Returns None
@@ -748,6 +894,9 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
     let mut last_conflict: Vec<u8> = Vec::new();
     let mut unstaged = 0i64;
     let mut conflicted = 0i64;
+    // Entries whose worktree file must be lstat'ed, collected here and
+    // scanned in parallel once the (inherently serial) parse is done.
+    let mut to_stat: Vec<(EntryStat, PathBuf)> = Vec::with_capacity(nentries);
 
     for _ in 0..nentries {
         let start = pos;
@@ -843,18 +992,13 @@ fn read_index_counts(repo: &Repo, caps: &RepoCaps) -> Option<IndexCounts> {
             );
             return None;
         }
-        let full = repo.work_dir.join(OsStr::from_bytes(&prev_path));
-        match fs::symlink_metadata(&full) {
-            // index.cc:195 — ENOENT ⇒ deleted, other errors ⇒ unreadable;
-            // both are dirty candidates.
-            Err(_) => unstaged += 1,
-            Ok(st) => {
-                if is_modified(&e, &st, caps) {
-                    unstaged += 1;
-                }
-            }
-        }
+        // Defer the lstat: gitstatus does the whole worktree scan on a thread
+        // pool (index.cc:191-199 StatFiles runs under ParallelForEach), and
+        // the parse cannot itself be parallelised because v4 paths are
+        // prefix-compressed against the previous entry.
+        to_stat.push((e, repo.work_dir.join(OsStr::from_bytes(&prev_path))));
     }
+    unstaged += count_modified(&to_stat, caps);
     // Extensions (TREE, REUC, UNTR, ...) follow the entries; none are needed
     // for these two counts, so parsing stops here.
 
@@ -996,25 +1140,18 @@ fn run_porcelain(work_dir: &Path) -> Option<String> {
         }
     };
 
+    // Runs to completion on the caller's (always a helper) thread — the
+    // prompt-latency budget is applied by `refresh_porcelain`, which decides
+    // how long to WAIT for this, never how long to let it run. See that
+    // function for why the child is no longer killed on a timeout.
     let mut stdout = child.stdout.take()?;
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut out = String::new();
-        let _ = stdout.read_to_string(&mut out);
-        let _ = tx.send(out);
-    });
-
-    match rx.recv_timeout(SUBPROCESS_BUDGET) {
-        Ok(out) => {
-            let _ = child.wait();
-            Some(out)
-        }
-        Err(_) => {
-            tracing::debug!(
-                "p10k git: git status exceeded {SUBPROCESS_BUDGET:?} in {work_dir:?}, serving cache"
-            );
-            let _ = child.kill();
-            let _ = child.wait();
+    let mut out = String::new();
+    let read = stdout.read_to_string(&mut out);
+    let _ = child.wait();
+    match read {
+        Ok(_) => Some(out),
+        Err(e) => {
+            tracing::warn!("p10k git: reading git status output failed: {e}");
             None
         }
     }
