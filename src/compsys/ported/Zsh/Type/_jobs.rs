@@ -24,7 +24,7 @@
 //! guard).
 
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::modules::zutil::testforstyle;
+use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
 
@@ -87,11 +87,15 @@ pub fn _jobs(args: &[String]) -> i32 {
         // no `prefix-needed` style in scope — the default — the guard never
         // fired and `_jobs` ran its `compadd` anyway. zsh returns 1 here, so
         // for `- <TAB>` (PREFIX not `%`, matches already added) zshrs issued
-        // one compadd call zsh never issues. Same `-T` idiom the `verbose`
-        // read below and _expand_alias.rs:113 already use.
+        // one compadd call zsh never issues.
+        //
+        // The `testforstyle(…) == 0 || lookupstyle(…).is_empty()` stand-in
+        // that first patched that got the unset case right and the FALSE-Y
+        // case wrong: `testforstyle` is `zstyle -q`'s primitive and answers
+        // "is this style defined", so `prefix-needed 0` read as TRUE. Run
+        // the real builtin instead; see [`zstyle_T`].
         let jobs_ctx = format!(":completion:{}:jobs", curcontext);
-        let prefix_needed = testforstyle(&jobs_ctx, "prefix-needed") == 0
-            || crate::ported::modules::zutil::lookupstyle(&jobs_ctx, "prefix-needed").is_empty();
+        let prefix_needed = zstyle_T(&jobs_ctx, "prefix-needed") == 0;
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let nm: i64 = get_compstate_str("nmatches")
             .and_then(|s| s.parse().ok())
@@ -104,15 +108,13 @@ pub fn _jobs(args: &[String]) -> i32 {
 
     // sh:8-9  styles
     let mut pfx = String::from("%");
-    if testforstyle(&format!(":completion:{}:jobs", curcontext), "prefix-hidden") == 0 {
+    // sh:10 — `zstyle -t … prefix-hidden && pfx=''`; see [`zstyle_t`].
+    if zstyle_t(&format!(":completion:{}:jobs", curcontext), "prefix-hidden") == 0 {
         pfx.clear();
     }
-    let verbose = testforstyle(&format!(":completion:{}:jobs", curcontext), "verbose") == 0
-        || crate::ported::modules::zutil::lookupstyle(
-            &format!(":completion:{}:jobs", curcontext),
-            "verbose",
-        )
-        .is_empty();
+    // sh:11 — `zstyle -T … verbose && desc=yes`: unset counts as true; see
+    //   [`zstyle_T`].
+    let verbose = zstyle_T(&format!(":completion:{}:jobs", curcontext), "verbose") == 0;
 
     // sh:11-21  filter
     let jobstates = assoc_chunks("jobstates");

@@ -36,8 +36,9 @@
 //!   * sh:384-396 ZLS_COLORS save/restore
 
 use crate::compsys::ported::_setup::_setup;
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
+use crate::ported::modules::zutil::{bin_zformat, lookupstyle};
 use crate::ported::params::{
     getaparam, gethkparam, gethparam, getiparam, getsparam, setaparam, sethparam, setsparam,
     unsetparam,
@@ -591,7 +592,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
         if on_tab
             && (!curcontext.starts_with(':')
                 || vared.is_empty()
-                || testforstyle(&format!(":completion:vared{}:", curcontext), "insert-tab") == 0)
+                // sh:73 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+                || zstyle_t(&format!(":completion:vared{}:", curcontext), "insert-tab") == 0)
         {
             tracing::debug!(target: "compsys_args", %cur_insert, %insert_tab, "_main_complete EARLY RETURN: insert-tab");
             return 0;
@@ -869,7 +871,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
         // flash a progress line naming the completer context being tried (a
         // debugging aid). `zle -R <msg>` = bin_zle_refresh with the message as
         // its sole positional (sets the statusline + refreshes).
-        if testforstyle(&format!(":completion:{}:", curcontext), "show-completer") == 0 {
+        // sh:197 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+        if zstyle_t(&format!(":completion:{}:", curcontext), "show-completer") == 0 {
             let msg = format!("Trying completion for :completion:{}", curcontext);
             let _ = crate::ported::zle::zle_thingy::bin_zle_refresh(
                 "zle",

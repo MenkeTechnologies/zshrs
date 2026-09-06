@@ -19,7 +19,7 @@
 //! or `.`. The full subscripted name is passed as a literal arg.
 
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::modules::zutil::testforstyle;
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::params::getsparam;
 
 /// `_functions` — `unfunction` completion: emit shell function
@@ -32,7 +32,8 @@ pub fn _functions(args: &[String]) -> i32 {
 
     // sh:5-7
     let style_ctx = format!(":completion:{}:functions", curcontext);
-    let prefix_needed = testforstyle(&style_ctx, "prefix-needed") == 0;
+    // sh:5 — `zstyle -t … prefix-needed`, a VALUE test; see [`zstyle_t`].
+    let prefix_needed = zstyle_t(&style_ctx, "prefix-needed") == 0;
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let prefix_filtered = prefix_needed && !prefix.starts_with('_') && !prefix.starts_with('.');
     let ffilt = if prefix_filtered { "[(I)[^_.]*]" } else { "" };
