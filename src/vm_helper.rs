@@ -3818,6 +3818,7 @@ impl ShellExecutor {
         registered: &str,
         ksh_style: bool,
         from_wordcode: bool,
+        parse_failed: bool,
     ) -> Result<i32, String> {
         let unaliased = crate::ported::utils::getshfunc(name)
             .map(|f| (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0)
@@ -3863,6 +3864,17 @@ impl ShellExecutor {
             // instead; pin the lexer to the spelling the deparse was written
             // in for the duration of that compile, and only that compile.
             let _relex = from_wordcode.then(ZwcRelexGuard::enter);
+            // c:Src/exec.c:6264-6266 / c:5726 — C parses the file ONCE and a
+            // failure ends the load (`return NULL`), so exactly one diagnostic
+            // reaches the terminal. zshrs parsed the raw body in
+            // `autoload_definition_source` and parses the WRAPPED text again
+            // here, so a body zsh rejects printed the error twice — the second
+            // time shifted one line by the wrap's leading `name() {`. The
+            // first pass already reported it against the loadee's name; mute
+            // this one. `noerrs` still sets ERRFLAG_ERROR (c:Src/utils.c:175),
+            // which is what `compile_script_isolated` reads, so the load still
+            // fails.
+            let _muted = parse_failed.then(ZerrMute::enter);
             self.compile_script_isolated(registered)?
         };
         if let Some((dir, sha)) = key.as_ref() {
@@ -4185,7 +4197,11 @@ impl ShellExecutor {
                     let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                        let (registered, from_wordcode) = autoload_register_source(name, &body);
+                        let AutoloadSource {
+                            text: registered,
+                            from_wordcode,
+                            parse_failed,
+                        } = autoload_register_source(name, &body);
                         {
                             // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
                             // as the function body; it executes nothing at load
@@ -4215,6 +4231,7 @@ impl ShellExecutor {
                                 &registered,
                                 ksh_style,
                                 from_wordcode,
+                                parse_failed,
                             );
                             crate::ported::lex::set_lineno(caller_lineno);
                             if synthesized {
@@ -4261,10 +4278,18 @@ impl ShellExecutor {
                     let param_body = body_came_from_param_assignment(stub.node.flags);
                     let ksh_style = !param_body && autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let (registered, from_wordcode) = if param_body {
-                        (param_definition_source(name, &body), false)
+                    // A `functions[name]=body` assignment is already a parsed
+                    // body, so it takes no file parse and cannot have reported
+                    // one (`parse_failed` is false by construction).
+                    let (registered, from_wordcode, parse_failed) = if param_body {
+                        (param_definition_source(name, &body), false, false)
                     } else {
-                        autoload_register_source(name, &body)
+                        let AutoloadSource {
+                            text,
+                            from_wordcode,
+                            parse_failed,
+                        } = autoload_register_source(name, &body);
+                        (text, from_wordcode, parse_failed)
                     };
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
@@ -4295,6 +4320,7 @@ impl ShellExecutor {
                             &registered,
                             ksh_style,
                             from_wordcode,
+                            parse_failed,
                         );
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
@@ -4534,7 +4560,11 @@ impl ShellExecutor {
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let ksh_style = autoload_is_ksh_style(name); // c:5781 (pre-registration)
                         _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                        let (registered, from_wordcode) = autoload_register_source(name, &body);
+                        let AutoloadSource {
+                            text: registered,
+                            from_wordcode,
+                            parse_failed,
+                        } = autoload_register_source(name, &body);
                         // c:Src/exec.c:5739 — the ksh-autoload body runs via
                         // `execode(prog, 1, 0, "evalautofunc")` at the function
                         // invocation's locallevel, so a `return`/`break`/
@@ -4611,6 +4641,7 @@ impl ShellExecutor {
                                         &registered,
                                         ksh_style,
                                         from_wordcode,
+                                        parse_failed,
                                     );
                                     crate::ported::lex::set_lineno(caller_lineno);
                                     if synthesized {
@@ -4643,13 +4674,25 @@ impl ShellExecutor {
                             // the file (`execode`, "evalautofunc") but it
                             // didn't define NAME:
                             //   `zwarn("%s: function not defined by file", n);`
-                            // The wrap/strip zsh-style paths always define
-                            // NAME, so reaching here means the verbatim run
-                            // failed to — same condition as C.
-                            crate::ported::utils::zwarn(&format!(
-                                "{}: function not defined by file",
-                                name
-                            ));
+                            // That diagnostic lives INSIDE C's
+                            // `ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD))`
+                            // branch (c:5726). The zsh-style branch (c:5753-
+                            // 5758) installs the parsed program as the body
+                            // outright and cannot fail this way, so zsh prints
+                            // nothing there — and when the file did not parse,
+                            // `getfpfunc` already returned NULL and the load
+                            // ended at c:5722 with only the parse error.
+                            // zshrs used to print it for every failed
+                            // registration, so `g(){ emulate ksh -c _files }`
+                            // gained a `_files: function not defined by file`
+                            // line zsh never emits. Status still propagates:
+                            // c:5644 `if (!loadautofn(...)) return 1`.
+                            if ksh_style {
+                                crate::ported::utils::zwarn(&format!(
+                                    "{}: function not defined by file",
+                                    name
+                                ));
+                            }
                             return Some(1);
                         }
                     } else if load_rc != 0 {
@@ -4700,10 +4743,18 @@ impl ShellExecutor {
                     let param_body = body_came_from_param_assignment(stub.node.flags);
                     let ksh_style = !param_body && autoload_is_ksh_style(name); // c:5781 (pre-registration)
                     _autoload_file_guard = Some(AutoloadFileGuard::enter(name));
-                    let (registered, from_wordcode) = if param_body {
-                        (param_definition_source(name, &body), false)
+                    // A `functions[name]=body` assignment is already a parsed
+                    // body, so it takes no file parse and cannot have reported
+                    // one (`parse_failed` is false by construction).
+                    let (registered, from_wordcode, parse_failed) = if param_body {
+                        (param_definition_source(name, &body), false, false)
                     } else {
-                        autoload_register_source(name, &body)
+                        let AutoloadSource {
+                            text,
+                            from_wordcode,
+                            parse_failed,
+                        } = autoload_register_source(name, &body);
+                        (text, from_wordcode, parse_failed)
                     };
                     {
                         // c:Src/exec.c:5735-5760 — C INSTALLS the parsed Eprog
@@ -4734,6 +4785,7 @@ impl ShellExecutor {
                             &registered,
                             ksh_style,
                             from_wordcode,
+                            parse_failed,
                         );
                         crate::ported::lex::set_lineno(caller_lineno);
                         if synthesized {
@@ -6854,19 +6906,64 @@ fn autoload_source_key(
     Some((dir, sha))
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Raises `noerrs` (c:Src/utils.c:175 — the gate every `zerr`/`zwarn`
+/// consults) for the life of the guard, so a pass that only exists because
+/// zshrs parses text where C carries a parsed `Eprog` cannot report an error
+/// C would report exactly once. `ERRFLAG_ERROR` is still set while muted, so
+/// callers that read errflag still see the failure.
+struct ZerrMute(i32);
+
+impl ZerrMute {
+    fn enter() -> Self {
+        let mut g = crate::ported::utils::noerrs_lock().lock().unwrap();
+        let prev = *g;
+        *g = 1;
+        Self(prev)
+    }
+}
+
+impl Drop for ZerrMute {
+    fn drop(&mut self) {
+        if let Ok(mut g) = crate::ported::utils::noerrs_lock().lock() {
+            *g = self.0;
+        }
+    }
+}
+
+/// What an autoload of one name will hand the compiler.
+struct AutoloadSource {
+    /// The definition text: the file body verbatim, or the `name() { … }` wrap.
+    text: String,
+    /// The body is a `.zwc` deparse, so the compile needs [`ZwcRelexGuard`].
+    from_wordcode: bool,
+    /// c:Src/exec.c:6264 — `parse_string` rejected the file and has ALREADY
+    /// reported the error against the loadee's name. C returns NULL from
+    /// `getfpfunc`, so `loadautofn` abandons the load right there (c:5726) and
+    /// prints nothing more. zshrs still runs `text` through the compiler
+    /// (that is where the body becomes a chunk), so the caller silences THAT
+    /// pass instead — otherwise the same parse error lands twice, the second
+    /// time one line off because of the wrap's leading `name() {` line.
+    parse_failed: bool,
+}
+
 /// Returns the text to run to install `name`, plus whether that text came out
 /// of a `.zwc` (see [`autoload_note_wordcode_body`]) and therefore has to be
-/// lexed under [`ZwcRelexGuard`] wherever it is lexed.
-fn autoload_register_source(name: &str, body: &str) -> (String, bool) {
+/// lexed under [`ZwcRelexGuard`] wherever it is lexed, and whether the file's
+/// one parse rejected it.
+fn autoload_register_source(name: &str, body: &str) -> AutoloadSource {
     // c:Src/exec.c:5725 `stripkshdef(prog, …)` — the ksh-vs-zsh wrap decision
     // below PARSES `body`, so it is itself a second lex of the deparse and
     // needs the same pin as the compile that follows it.
     let from_wordcode = autoload_body_from_wordcode(name, body);
     let _relex = from_wordcode.then(ZwcRelexGuard::enter);
-    (
-        autoload_definition_source(name, body, autoload_is_ksh_style(name)),
+    let (text, parse_failed) = autoload_definition_source(name, body, autoload_is_ksh_style(name));
+    AutoloadSource {
+        text,
         from_wordcode,
-    )
+        parse_failed,
+    }
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
@@ -7124,15 +7221,57 @@ pub(crate) fn autoload_body_from_wordcode(name: &str, body: &str) -> bool {
 /// byte-identical text to what the loader will run. The two drifting
 /// apart is precisely what made the pre-v2 shard unusable: it cached a
 /// different program than the one the loader installs.
-pub(crate) fn autoload_definition_source(name: &str, body: &str, ksh_style: bool) -> String {
+/// Returns the definition text plus whether that parse REJECTED the body
+/// (c:Src/exec.c:6264 `r = parse_string(d, 1)` returning NULL, which makes
+/// `loadautofn` abandon the load at c:5726 with no further diagnostic).
+pub(crate) fn autoload_definition_source(
+    name: &str,
+    body: &str,
+    ksh_style: bool,
+) -> (String, bool) {
     // c:Src/exec.c:5781 — a ksh-style load executes the file contents at top
     // level (c:5795 `execode(prog, 1, 0, "evalautofunc")`) and expects the
     // file itself to define the function — so the body goes through the
     // pipeline VERBATIM, never wrapped.
     if ksh_style {
-        return body.to_string(); // c:5795 execode(prog, ..., "evalautofunc")
+        return (body.to_string(), false); // c:5795 execode(prog, ..., "evalautofunc")
     }
-    let stripped = crate::ported::exec::parse_string(body, 0)
+    // c:6257-6265 — `getfpfunc` parses the file under the LOADEE's name:
+    //     char *oldscriptname = scriptname;
+    //     scriptname = dupstring(s);
+    //     r = parse_string(d, 1);
+    //     scriptname = oldscriptname;
+    // so a syntax error in an autoloaded file is reported as
+    // `_files:40: parse error: …`, not against the frame that triggered the
+    // load. zshrs runs the only parse of the raw body right here, so the
+    // same window belongs around it — without it the diagnostic came out as
+    // `g:40:` for `g(){ emulate ksh -c _files }`.
+    //
+    // `scriptname` is one process-wide cell where C's is a single-thread
+    // global, and a worker-thread compile prints nothing anyway (`zwarning`,
+    // utils.rs:150, routes its diagnostics to the log) — so only the shell
+    // thread takes the window, and no worker can blank out a prefix the shell
+    // thread is in the middle of writing.
+    let swap_scriptname = !crate::worker::in_worker_thread();
+    let old_scriptname = crate::ported::utils::scriptname_get(); // c:6257
+    if swap_scriptname {
+        crate::ported::utils::set_scriptname(Some(name.to_string())); // c:6263
+    }
+    let saved_errflag = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::utils::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let prog = crate::ported::exec::parse_string(body, 0); // c:6264
+    let parse_failed = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::utils::ERRFLAG_ERROR)
+        != 0
+        || prog.is_none();
+    crate::ported::utils::errflag.store(saved_errflag, std::sync::atomic::Ordering::Relaxed);
+    if swap_scriptname {
+        crate::ported::utils::set_scriptname(old_scriptname); // c:6265
+    }
+    let stripped = prog
         .map(|prog| {
             let original_len = prog.prog.len();
             // stripkshdef returns the input untouched when the prog
@@ -7146,11 +7285,12 @@ pub(crate) fn autoload_definition_source(name: &str, body: &str, ksh_style: bool
                 .unwrap_or(false)
         })
         .unwrap_or(false);
-    if stripped {
+    let text = if stripped {
         body.to_string()
     } else {
         format!("{name}() {{\n{body}\n}}")
-    }
+    };
+    (text, parse_failed)
 }
 
 // zsh_eval_context push/pop/sync relocated 2026-06-12 INTO doshfunc

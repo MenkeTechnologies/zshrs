@@ -412,7 +412,22 @@ pub struct Cmgroup {
     /// Number of line-displays.
     pub llcount: i32, // c:57
     /// Things to list.
-    pub ylist: Vec<String>, // c:58
+    ///
+    /// `Option` — not a bare `Vec` — because C tests this field as a
+    /// POINTER in three places (`compresult.c:1526`, `:1673`, `:1726`) and
+    /// as `pp && *pp` in two others (`compresult.c:2028`,
+    /// `complist.c:1471`). A NULL `ylist` and a non-NULL zero-length one
+    /// take DIFFERENT branches in `calclist`: the empty-but-present group
+    /// is still an ylist group (`hidden = 1`, contributes 0 to `nlist`,
+    /// `g->matches` never walked), while a NULL one falls through to the
+    /// per-match walk that counts every match into `nlist` — the `N` in
+    /// "do you wish to see all N possibilities". A bare `Vec` cannot hold
+    /// the two apart, so `Vec::is_empty()` sent the empty-but-present
+    /// group down the wrong arm. The only producer is `compctl -y`
+    /// (`compctl.c:3916-3925`), which passes whatever `get_user_var`
+    /// returns — NULL for a missing parameter, an empty array for
+    /// `reply=()`.
+    pub ylist: Option<Vec<String>>, // c:58
     /// Number of explanation strings.
     pub ecount: i32, // c:59
     /// Explanation strings.

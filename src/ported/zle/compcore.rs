@@ -5789,7 +5789,12 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     // as begcmgroup dedups). Without this the matches added between
     // begcmgroup/endcmgroup never reach permmatches and `nmatches`
     // stays 0.
-    let yl = ylist.unwrap_or_default();
+    // c:3133 — `mgroup->ylist = ylist`. The NULL is stored AS a NULL: an
+    // absent ylist and an empty-but-present one take different branches in
+    // `calclist` (compresult.c:1526/1673/1726 test the pointer), so
+    // `unwrap_or_default()` here would erase the distinction before it
+    // ever reaches the listing code.
+    let yl = ylist;
 
     // c:3131 — in C this is a one-liner (`mgroup->ylist = ylist`): `matches`
     // etc. already ARE `mgroup->lmatches` (aliased in begcmgroup), so nothing
@@ -6415,9 +6420,11 @@ pub fn permmatches(last: i32) -> i32 {
                 g.lcount = 0;
             } // c:3466
             g.llcount = ll; // c:3467
-            if !g.ylist.is_empty() {
-                // c:3468
-                g.lcount = g.ylist.len() as i32; // c:3469
+            // c:3468 — pointer test, so an EMPTY ylist still forces
+            // `lcount = 0` and `smatches = 2` rather than keeping the
+            // match-derived count.
+            if let Some(ylen) = g.ylist.as_ref().map(|y| y.len() as i32) {
+                g.lcount = ylen; // c:3469
                 smatches.store(2, Ordering::Relaxed); // c:3470
             }
             // c:3472 — makearray(lexpls, 0, 0, &ecount, NULL, NULL).
@@ -6460,12 +6467,10 @@ pub fn permmatches(last: i32) -> i32 {
             n_grp.name = g.name.clone(); // c:3504
             n_grp.lcount = g.lcount; // c:3508
             n_grp.llcount = g.llcount; // c:3509
-            if !g.ylist.is_empty() {
-                // c:3510
-                n_grp.ylist = g.ylist.clone(); // c:3511 zarrdup
-            } else {
-                n_grp.ylist = Vec::new(); // c:3513
-            }
+            // c:3509-3513 — `if (g->ylist) n->ylist = zarrdup(g->ylist);
+            // else n->ylist = NULL;` — a plain clone of the Option carries
+            // both the NULL and the empty-but-present case unchanged.
+            n_grp.ylist = g.ylist.clone(); // c:3511 zarrdup / c:3513 NULL
             if g.ecount != 0 {
                 // c:3515
                 // Build n->expls from g->expls deep-copying str + (fi
