@@ -28,7 +28,7 @@
 //! last-prompt, accept-exact, menu, force-list, show-ambiguity,
 //! list-colors). Called by `_description` per tag-spec.
 
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
@@ -112,28 +112,25 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     apply_list_flag(&ctx, "list-rows-first", "rows");
 
     // sh:50-56  last-prompt
-    let lp = testforstyle(&ctx, "last-prompt") == 0;
-    let lp_vals = lookupstyle(&ctx, "last-prompt");
-    if lp {
-        set_compstate_str("last_prompt", "yes");
-    } else if !lp_vals.is_empty() {
-        set_compstate_str("last_prompt", "");
-    } else {
-        // restore saved
-        let saved = getsparam("_saved_lastprompt").unwrap_or_default();
-        set_compstate_str("last_prompt", &saved);
+    match zstyle_t(&ctx, "last-prompt") {
+        0 => set_compstate_str("last_prompt", "yes"), // sh:51
+        1 => set_compstate_str("last_prompt", ""),    // sh:53
+        _ => {
+            // sh:55 — style undefined for this context: restore saved
+            let saved = getsparam("_saved_lastprompt").unwrap_or_default();
+            set_compstate_str("last_prompt", &saved);
+        }
     }
 
     // sh:58-64  accept-exact
-    let ae = testforstyle(&ctx, "accept-exact") == 0;
-    let ae_vals = lookupstyle(&ctx, "accept-exact");
-    if ae {
-        set_compstate_str("exact", "accept");
-    } else if !ae_vals.is_empty() {
-        set_compstate_str("exact", "");
-    } else {
-        let saved = getsparam("_saved_exact").unwrap_or_default();
-        set_compstate_str("exact", &saved);
+    match zstyle_t(&ctx, "accept-exact") {
+        0 => set_compstate_str("exact", "accept"), // sh:59
+        1 => set_compstate_str("exact", ""),       // sh:61
+        _ => {
+            // sh:63
+            let saved = getsparam("_saved_exact").unwrap_or_default();
+            set_compstate_str("exact", &saved);
+        }
     }
 
     // sh:66-67  menu-style stash (when nmatches grew since last)
@@ -202,13 +199,51 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     0
 }
 
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// No C counterpart. Upstream `_setup` is a SHELL function, so its four
+/// boolean-style tests are literally `zstyle -t "$ctx" "$style"` command
+/// invocations (sh:33, sh:42, sh:50, sh:58) and the arms below them read
+/// `$?`. This helper runs that same builtin — [`bin_zstyle`], the port of
+/// `Src/Modules/zutil.c:487` — so the tri-state exit is the builtin's own,
+/// not a re-derivation of it:
+///
+/// * `0` — style set for the context AND its first value is one of
+///   `true` / `yes` / `on` / `1` (c:719-722).
+/// * `1` — style set for the context but its first value is not one of
+///   those, or it carries no values (c:722 / c:724 `vals ? 1 : …`).
+/// * `2` — no style pattern matched this context (c:724 `: 2`).
+///
+/// It exists because the obvious-looking [`testforstyle`](crate::ported::modules::zutil::testforstyle)
+/// (`Src/Modules/zutil.c:465`) is NOT `zstyle -t`: it backs `zstyle -q`
+/// (c:753) and answers "is this style DEFINED for this context",
+/// ignoring the value entirely. Using it here made
+/// `zstyle ':completion:*' last-prompt 0` set `$compstate[last_prompt]`
+/// to `yes` — the exact opposite of what the style asks for — so
+/// `add_match_data` never cleared `dolastprompt` (`Src/Zle/compcore.c:3014-3015`)
+/// and the completion listing kept climbing back to the original prompt
+/// row instead of letting zsh reprint the prompt below it.
+fn zstyle_t(ctx: &str, style: &str) -> i32 {
+    let ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    crate::ported::modules::zutil::bin_zstyle(
+        "zstyle",
+        &["-t".to_string(), ctx.to_string(), style.to_string()],
+        &ops,
+        0,
+    )
+}
+
 /// Helper for sh:33/sh:42 — toggle `compstate[list]` += `<flag>`
 /// based on style.
 fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
-    let test = testforstyle(ctx, style) == 0;
-    let vals = lookupstyle(ctx, style);
+    // sh:33 / sh:42 — `zstyle -t …` is a VALUE test; see [`zstyle_t`].
+    let rc = zstyle_t(ctx, style);
     let mut list_val = get_compstate_str("list").unwrap_or_default();
-    if test {
+    if rc == 0 {
         if !list_val.contains(flag) {
             if !list_val.is_empty() {
                 list_val.push(' ');
@@ -216,10 +251,12 @@ fn apply_list_flag(ctx: &str, style: &str, flag: &str) {
             list_val.push_str(flag);
         }
         set_compstate_str("list", &list_val);
-    } else if !vals.is_empty() {
+    } else if rc == 1 {
+        // sh:35 / sh:44 — `compstate[list]="${compstate[list]:gs/<flag>//}"`
         let stripped = list_val.replace(flag, "");
         set_compstate_str("list", stripped.trim());
     } else {
+        // sh:37 / sh:46 — style undefined for this context
         let saved = getsparam("_saved_list").unwrap_or_default();
         set_compstate_str("list", &saved);
     }
@@ -297,5 +334,60 @@ mod tests {
         //   style set" fall-through path. The assertion just checks
         //   no panic + integer return.
         let _ = _setup_impl(&["tag1".to_string()]);
+    }
+
+    /// sh:50-56 — `zstyle -t … last-prompt` is a VALUE test, not an
+    /// existence test. With `last-prompt 0` registered for the context,
+    /// upstream `zstyle -t` exits 1 (zutil.c:719-722: the first value is
+    /// not one of `true`/`yes`/`on`/`1`), so `_setup` takes the
+    /// `[[ $? -eq 1 ]]` arm at sh:52 and stores the EMPTY string in
+    /// `$compstate[last_prompt]`. `add_match_data` then clears
+    /// `dolastprompt` (compcore.c:3014-3015) and the prompt is reprinted
+    /// BELOW the completion listing.
+    ///
+    /// The port used to call `testforstyle` (zutil.c:465), which backs
+    /// `zstyle -q` — "is this style defined for this context" — and so
+    /// answered 0 for `last-prompt 0` and stored `yes`.
+    #[test]
+    fn last_prompt_style_zero_stores_empty_not_yes() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("_comp_force_list", "");
+        let _ = setsparam("curcontext", "lpz:lpz:lpz");
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[
+                ":completion:lpz:lpz:lpz:lptag".to_string(),
+                "last-prompt".to_string(),
+                "0".to_string(),
+            ],
+            &ops,
+            0,
+        );
+        set_compstate_str("last_prompt", "yes");
+        let _ = _setup_impl(&["lptag".to_string()]);
+        let landed = get_compstate_str("last_prompt");
+        // Restore shared globals before asserting.
+        let _ = crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[
+                "-d".to_string(),
+                ":completion:lpz:lpz:lpz:lptag".to_string(),
+                "last-prompt".to_string(),
+            ],
+            &ops,
+            0,
+        );
+        crate::ported::params::unsetparam("curcontext");
+        assert_eq!(
+            landed.as_deref(),
+            Some(""),
+            "sh:52 — a non-boolean `last-prompt` value must store the empty string"
+        );
     }
 }
