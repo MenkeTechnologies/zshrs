@@ -4077,3 +4077,43 @@ xsetroot -solid
 # --version` takes the `|| { _default; return }` arm on zshrs and the
 # `_arguments` arm on zsh. The completion ports are faithful; the divergence is
 # the shell's command table. Left where it belongs, in src/extensions/**.
+
+# ============================================================================
+# RE-MEASUREMENT #2 of the 39 recorded FAIL buffers — 15 PASS / 24 FAIL
+# ============================================================================
+# Same 39 buffers as the earlier sweep in this file (11 PASS / 28 FAIL then).
+# Pinned+codesigned build of current main, live dump, --sequences tab1 --jobs 3.
+#
+# NEWLY PASSING since that sweep: 'typer ', 'typer -' (a95c513732, _describe
+# getopts walks CHARACTERS not tokens), 'uvicorn ', 'uvicorn -' (bb07da892a,
+# a FAILED action eval leaves `action` a SCALAR), 'w3m ' (eebf37440f, the row
+# loop was bounded by g->lins, which counts WRAPPED display lines) and
+# 'upmendex -' (51cf18f4d2, printfmt wrote the Meta escape instead of the byte).
+#
+# REGRESSED, and it is the documented flake, not a fix: 'ponysay ' /
+# 'ponysay -' passed in the earlier sweep and fail here. Both are the
+# already-recorded flaky redraw race against foreign tty output. Treat this
+# pair as evidence that single-run PASSes in this corpus are worth less than
+# 3/3 ones, not as a regression to chase.
+#
+# EVERY REMAINING CELL IS NOW IN A CLASSIFIED CLASS — no unknowns left in this
+# set. The last two to be classified were 'ssh-agent ' and 'ssh-agent -':
+#   'ssh-agent '   row 1: 52817 (26312 lines) vs 52849 (26325)  -> the
+#                  ask-prompt COUNT band. Proven BENIGN by ladder: unset
+#                  HELPDIR/INFOPATH takes it to +4, adding
+#                  `zstyle ':completion:*' verbose no` takes it to
+#                  byte-identical. The residue is -E<n> padding entries from
+#                  compdescribe -g's column packing, which calclist counts
+#                  into nlist (c:Src/Zle/compresult.c:1571,1605,1619).
+#   'ssh-agent -'  row 12: '-/' vs '-'  -> the macOS libc qsort TIE-ORDER
+#                  class, third sibling of 'ktrace -' and 'texfot -'. Not a
+#                  defect; do not chase. See those blocks above.
+#
+# Roll-up of the 24 by class: bundled-docs/count band (printenv, prterun,
+# reattach-to-user-namespace, time, watch, read, thefuck, torify, torsocks,
+# taskinfo, termshot, texfot, ssh-agent); live-`ps` (pstree, sc_usage, wait);
+# flaky redraw (ponysay x2); libc qsort tie (texfot -, ssh-agent -);
+# zshrs's own shadow builtin, NOT compsys (tac -); ZLE diagnostic FRAMING,
+# content already byte-identical (tor-resolve -); and tig / tig -, which one
+# agent measured PASS 3/3 and this sweep measures FAIL — re-run that pair at
+# --jobs 1 before treating either result as settled.
