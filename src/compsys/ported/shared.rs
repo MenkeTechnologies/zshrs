@@ -938,6 +938,10 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
 /// `_exit(127)`s at c:908, so the parent shell's `errflag` is never raised.
 /// `zerr` here runs in the live shell and would set `ERRFLAG_ERROR`
 /// (`src/ported/utils.rs:236`), abandoning the rest of the completion.
+/// The same fork has a second consequence — the child already cleared
+/// `zleactive`, so the diagnostic must not repaint the editor — which
+/// the `SubshStateGuard` at the emission site carries; see the comment
+/// there.
 ///
 /// This is the extraction of `_all_labels`' private `dispatch_action` tail,
 /// which had the same three arms; that port now calls this one, so the
@@ -975,6 +979,31 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     }
 
     // c:Src/exec.c:903 — `zerr("command not found: %s", arg0);`
+    //
+    // The FORKED CHILD is not just about `errflag`. Before `execute()`
+    // ever reaches c:903 the child has run `entersubsh()`, whose last
+    // two scalar deltas are `opts[USEZLE] = 0; zleactive = 0;`
+    // (Src/exec.c:1247-1248). `zwarning` opens with
+    // `if (isatty(2)) zleentry(ZLE_CMD_TRASH);` (Src/utils.c:144-145)
+    // and `trashzle` is gated on `if (zleactive && !trashedzle)`
+    // (Src/Zle/zle_main.c:2071), so in C that hook does NOTHING here:
+    // no `zrefresh`, no `moveto(nlnct, 0)`, no `resetneeded = 1`. The
+    // diagnostic lands wherever ZLE left the cursor — appended to the
+    // command line's own row — and the editor display is not repainted.
+    //
+    // zshrs runs this in the live shell with no fork, so without the
+    // guard `zleactive` is still 1, `trashzle` fires, and its
+    // `moveto(nlnct, 0)` writes `\r` + `\n` before the text while
+    // `resetneeded` makes the following `zrefresh` repaint the prompt
+    // after it. Measured against zsh on `_alternative 'x:x: nosuchcmd'`:
+    //   zsh  : row 0 `$ true _alternative:63: command not found: …`
+    //   zshrs: row 0 `$ true`, row 1 the diagnostic, row 2 the prompt again
+    // — the same text, three rows instead of one.
+    //
+    // `SubshStateGuard` (exec.rs) is the ported stand-in for exactly
+    // those `entersubsh` deltas that are correct without a fork, and it
+    // restores them on drop.
+    let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
     crate::ported::utils::zwarn(&format!("command not found: {}", cmd)); // c:903
     127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
 }
@@ -1030,5 +1059,114 @@ mod lineno_scope_tests {
         assert_eq!(lineno(), 122, "_describe's line must survive _tags");
         drop(outer);
         assert_eq!(lineno(), 0);
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_framing_tests {
+    use std::sync::atomic::Ordering;
+
+    /// The `command not found` diagnostic must NOT trash the line editor.
+    ///
+    /// `Src/exec.c:903` is reached only inside the fork `execcmd` makes for
+    /// an external command, and that child has already run `entersubsh`,
+    /// whose last two scalar deltas are `opts[USEZLE] = 0; zleactive = 0;`
+    /// (`Src/exec.c:1247-1248`). `zwarning` opens with
+    /// `if (isatty(2)) zleentry(ZLE_CMD_TRASH);` (`Src/utils.c:144-145`)
+    /// and `trashzle` runs its body only `if (zleactive && !trashedzle)`
+    /// (`Src/Zle/zle_main.c:2071`) — so with `zleactive` cleared the hook
+    /// is a no-op and the diagnostic lands on the command line's own row
+    /// with no repaint after it.
+    ///
+    /// The two flags asserted here are the ones `trashzle` sets on its way
+    /// through: `trashedzle = 1` (c:2079) and `resetneeded = 1` (c:2091),
+    /// the second of which is what makes the NEXT `zrefresh` repaint the
+    /// prompt below the diagnostic. Either being raised is the three-row
+    /// display zshrs used to produce where zsh produces one.
+    ///
+    /// `fd 2` is pointed at a pty for the duration: `isatty(2)` is false
+    /// under `cargo test`, and with it false `zwarning` never reaches the
+    /// hook at all — the case would pass without measuring anything.
+    #[test]
+    fn the_not_found_diagnostic_does_not_trash_the_line_editor() {
+        use crate::ported::builtins::sched::zleactive;
+        use crate::ported::init::zle_load_state;
+        use crate::ported::zle::zle_refresh::{RESETNEEDED, TRASHEDZLE};
+
+        let _g = crate::test_util::global_state_lock();
+
+        let mut master: libc::c_int = 0;
+        let mut slave: libc::c_int = 0;
+        let rc = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut::<libc::termios>(),
+                std::ptr::null_mut::<libc::winsize>(),
+            )
+        };
+        assert_eq!(rc, 0, "openpty failed; the probe needs a terminal on fd 2");
+        let saved_stderr = unsafe { libc::dup(2) };
+        assert!(saved_stderr >= 0, "dup(2) failed");
+        assert!(
+            unsafe { libc::dup2(slave, 2) } >= 0,
+            "dup2 onto fd 2 failed"
+        );
+        assert_eq!(
+            unsafe { libc::isatty(2) },
+            1,
+            "fd 2 must be a terminal or Src/utils.c:144 skips the hook"
+        );
+
+        let saved = (
+            zleactive.load(Ordering::Relaxed),
+            zle_load_state.load(Ordering::SeqCst),
+            TRASHEDZLE.load(Ordering::Relaxed),
+            RESETNEEDED.load(Ordering::Relaxed),
+        );
+        // `zle_load_state == 1` is "the module is loaded", the state in
+        // which `zleentry` forwards to `zle_main_entry` (Src/init.c:1777)
+        // rather than to the no-ZLE fallback. An interactive shell running
+        // a completer is always in it.
+        zleactive.store(1, Ordering::Relaxed);
+        zle_load_state.store(1, Ordering::SeqCst);
+        TRASHEDZLE.store(0, Ordering::Relaxed);
+        RESETNEEDED.store(0, Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+
+        let status = super::dispatch_action_command("nosuchcmd_zz_framing_probe", &[], 63);
+
+        let trashed = TRASHEDZLE.load(Ordering::Relaxed);
+        let reset = RESETNEEDED.load(Ordering::Relaxed);
+        let still_active = zleactive.load(Ordering::Relaxed);
+
+        zleactive.store(saved.0, Ordering::Relaxed);
+        zle_load_state.store(saved.1, Ordering::SeqCst);
+        TRASHEDZLE.store(saved.2, Ordering::Relaxed);
+        RESETNEEDED.store(saved.3, Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+        unsafe {
+            libc::dup2(saved_stderr, 2);
+            libc::close(saved_stderr);
+            libc::close(slave);
+            libc::close(master);
+        }
+
+        assert_eq!(status, 127, "c:908 — a name that resolves nowhere is 127");
+        assert_eq!(
+            trashed, 0,
+            "trashzle ran: the diagnostic moved the cursor off the command \
+             line's row (Src/Zle/zle_main.c:2071 is false in C's forked child)"
+        );
+        assert_eq!(
+            reset, 0,
+            "resetneeded was raised: the next zrefresh repaints the prompt \
+             BELOW the diagnostic, which zsh never does here"
+        );
+        assert_eq!(
+            still_active, 1,
+            "the entersubsh stand-in must restore zleactive when it drops"
+        );
     }
 }
