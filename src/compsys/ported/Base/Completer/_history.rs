@@ -22,7 +22,8 @@
 //! ```
 
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 
@@ -52,11 +53,11 @@ pub fn _history() -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
 
-    // sh:21
-    let remove_all_dups = testforstyle(&ctx, "remove-all-dups") == 0;
+    // sh:21 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+    let remove_all_dups = zstyle_t(&ctx, "remove-all-dups") == 0;
     let opt_prefix = if remove_all_dups { "-" } else { "-1" };
-    // sh:27
-    let sort_on = testforstyle(&ctx, "sort") == 0;
+    // sh:27 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+    let sort_on = zstyle_t(&ctx, "sort") == 0;
     let opt = if sort_on {
         format!("{}J", opt_prefix)
     } else {

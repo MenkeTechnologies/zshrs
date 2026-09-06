@@ -71,7 +71,8 @@ use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_call_program::call_program_capture;
 use crate::compsys::ported::_retrieve_cache::_retrieve_cache;
 use crate::compsys::ported::_store_cache::_store_cache;
-use crate::ported::modules::zutil::{bin_zstyle, lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::{bin_zstyle, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::collections::HashSet;
@@ -457,15 +458,15 @@ fn mac_apps_old_retrieve(app_dir_root: &[String], curcontext: &str) -> Vec<Strin
 
     let mut mac_apps = Vec::new();
 
-    // sh:44-47  `if ! zstyle -t ... ignore-bundle; then ...` — mirrors
-    // `_cache_invalid`/`_retrieve_cache`'s own `testforstyle(...) != 0`
-    // idiom for `-t` style tests (0 == style found/true).
-    if testforstyle(&commands_ctx, "ignore-bundle") != 0 {
+    // sh:44 — `if ! zstyle -t … ignore-bundle; then`, a VALUE test; see
+    //   [`zstyle_t`]. The bundle search runs on any non-zero exit: the
+    //   style set to a non-boolean value (1) and the style unset (2).
+    if zstyle_t(&commands_ctx, "ignore-bundle") != 0 {
         mac_apps.extend(mac_apps_bundle_search(&app_dir));
     }
 
-    // sh:50-59
-    if testforstyle(&commands_ctx, "ignore-single") != 0 {
+    // sh:50 — `if ! zstyle -t … ignore-single; then`; see [`zstyle_t`].
+    if zstyle_t(&commands_ctx, "ignore-single") != 0 {
         mac_apps.extend(mac_apps_single_file_search(&app_dir));
     }
 
