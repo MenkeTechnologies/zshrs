@@ -496,7 +496,13 @@ fn values_impl(args: &[String]) -> i32 {
         }
     } else if action.starts_with(' ') {
         // sh:138 — `eval "action=( $action )"; "$action[@]"` (quote-respecting).
-        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+        // A FAILED eval leaves `action` a SCALAR; sh:140's `[@]` is then the
+        // whole string as ONE word. Same shape as `_alternative` sh:61.
+        let parts: Vec<String> =
+            match crate::compsys::ported::eval_action_words_status(&action) {
+                Ok(words) => words,
+                Err(scalar) => vec![scalar],
+            };
         loop {
             if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {
                 break;
@@ -510,7 +516,13 @@ fn values_impl(args: &[String]) -> i32 {
         }
     } else {
         // sh:146 — `eval "action=( $action )"` then cmd+args (quote-respecting).
-        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+        // A FAILED eval leaves `action` a SCALAR; sh:148's `$action[1]` is
+        // then its first CHARACTER. Same shape as `_alternative` sh:69.
+        let parts: Vec<String> =
+            match crate::compsys::ported::eval_action_words_status(&action) {
+                Ok(words) => words,
+                Err(scalar) => crate::compsys::ported::scalar_action_call(&scalar),
+            };
         if let Some((cmd, rest)) = parts.split_first() {
             loop {
                 if _next_label(&["arguments".to_string(), "expl".to_string(), descr.clone()]) != 0 {

@@ -279,7 +279,18 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                 }
             } else if action.starts_with(' ') {
                 // sh:61 — `eval "action=( $action )"; "$action[@]"`.
-                let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+                // When the eval FAILS, the assignment never happens and
+                // `action` stays a SCALAR, whose `[@]` is the whole string as
+                // ONE word — so the command word is the entire action text.
+                // Measured: `_alternative 'x:x: app or factory:fn; env: BAD):'`
+                // gives zsh
+                //   _alternative:63: command not found:  app or factory:fn; env: BAD):
+                // (leading space preserved) where zshrs printed nothing.
+                let parts: Vec<String> =
+                    match crate::compsys::ported::eval_action_words_status(&action) {
+                        Ok(words) => words,
+                        Err(scalar) => vec![scalar],
+                    };
                 loop {
                     let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
                     if _next_label(&nl) != 0 {
@@ -299,13 +310,8 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         // last of those. `dispatch_action_command` publishes the line,
                         // routes `compadd` to the builtin, then falls back to the
                         // builtin table and `findcmd` before reporting.
-                        // `compadd` is a BUILTIN, so `dispatch_function_call`
-                        // finds no shell function and the action adds NOTHING.
-                        // The sh:69 arm 40 lines below already handles this;
-                        // this arm did not, and `_values` has it on BOTH of
-                        // its arms — so the omission is here, not the pattern.
-                        //
-                        // Live cost: `_rsync:16` is
+                        // Live cost of the compadd half of that gap:
+                        // `_rsync:16` is
                         // `rsync='rsync:rsync: compadd -S "" rsync://'`, so
                         // `rsync <TAB>` offered 229 matches where zsh offers
                         // 230 — the missing one is the literal `rsync://`.
@@ -314,7 +320,15 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                 }
             } else {
                 // sh:69 — `eval "action=( $action )"`, then cmd args with descs.
-                let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
+                // A FAILED eval leaves `action` a SCALAR, so sh:71's
+                // `$action[1]` is its first CHARACTER and `${(@)action[2,-1]}`
+                // the rest. Measured: the same malformed action through the
+                // bare arm gives zsh `_alternative:71: command not found: a`.
+                let parts: Vec<String> =
+                    match crate::compsys::ported::eval_action_words_status(&action) {
+                        Ok(words) => words,
+                        Err(scalar) => crate::compsys::ported::scalar_action_call(&scalar),
+                    };
                 if let Some((cmd, rest)) = parts.split_first() {
                     loop {
                         let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
