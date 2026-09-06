@@ -117,6 +117,7 @@ mod session_regression_parity;
 mod shell_semantics_parity;
 mod setopt_pattern_parity;
 mod shift_positional_parity;
+mod locale_parity;
 mod special_params_parity;
 mod special_runtime_params_parity;
 mod subscript_chain_and_ssub_parity;
