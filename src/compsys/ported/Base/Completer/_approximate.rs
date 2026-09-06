@@ -37,7 +37,8 @@ use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{
@@ -284,7 +285,8 @@ pub fn _approximate(args: &[String]) -> i32 {
         if comp_ret == 0 {
             // sh:85-87  insert-unambiguous?
             let unambig = get_compstate_str("unambiguous").unwrap_or_default();
-            if testforstyle(&format!(":completion:{}:", new_ctx), "insert-unambiguous") == 0
+            // sh:89 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+            if zstyle_t(&format!(":completion:{}:", new_ctx), "insert-unambiguous") == 0
                 && unambig.chars().count() >= pre_suf.chars().count()
             {
                 set_compstate_str("pattern_insert", "unambiguous");
@@ -293,7 +295,8 @@ pub fn _approximate(args: &[String]) -> i32 {
                 let nm: i64 = get_compstate_str("nmatches")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
-                if nm > 1 || testforstyle(&format!(":completion:{}:", new_ctx), "original") == 0 {
+                // sh:94 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
+                if nm > 1 || zstyle_t(&format!(":completion:{}:", new_ctx), "original") == 0 {
                     // sh:93
                     let _ = _description(&[
                         "-V".to_string(),
