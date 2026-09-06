@@ -4794,3 +4794,72 @@ gstack
 # `_main_complete:` with no line number.  That is the diagnostic-FRAMING class
 # already recorded in this file (see the `tor-resolve -` block), not a lookup
 # divergence: zsh still finishes with `zz01-PLAIN-` and so does zshrs.
+
+# ============================================================================
+# ZSTYLE-VARIATION SWEEP #5 (2026-09-05) — GENERATED statements COMPOSED with a
+# random subset of the user's REAL fixture (`--style-fuzz-mix 0.2 --zstyle
+# scripts/parity_zstyle.zsh`).  Closest regime to the daily driver: the
+# generated statement is placed AFTER the fixture subset, so it is the
+# specificity/definition-order override that gets tested.
+# ============================================================================
+# 100 configs, 3 GENERATED statements each plus ~20 drawn fixture lines, seed
+# 8001, same 35-case pool, generation restricted to 36 style names (the sweep
+# #2 list minus list-colors, whose lc/rc/ec gap is already filed as FINDING 4).
+#
+#   # 92 passed, 4 failed, 100 config(s)
+#   # categories: PASS=92 FAIL=4 FLAKY=0 TIMEOUT=4 SKIP=0 INVALID-CONFIG=0
+#   #             REF-REFUSED=0 REF-CRASHED=0 TEST-CRASHED=0
+#
+#   Vacuous-pass rate: 1 of 92 PASSes, 1.1%.
+#   All 4 TIMEOUTs were 'zshrs produced nothing within the 10s per-key budget'
+#   under --jobs 4 and every one re-ran serially as PASS; per the standing
+#   rule they are still scored TIMEOUT, not PASS.
+#   Pin re-verified unchanged after the chunk:
+#     zshrs cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#     dump  10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#
+#   cfg0033 'which ' [b29792c9a7] is the ask-prompt COUNT band again. NOT FILED.
+#
+# ---------------------------------------------------------------------------
+# FINDING 6 — a completer that ERRORS kills the whole chain.  This is the
+#             `errflag not cleared between completers` class, now with a
+#             one-statement reproducer, and it is on HIS OWN completer chain.
+# ---------------------------------------------------------------------------
+# Fixture (one statement):
+#     zstyle ':completion:*' completer _zznotacompleter _complete
+# 'chmod ': FAIL 3/3 serial.  BOTH shells print the same diagnostic; only zsh
+# then goes on to complete:
+#
+#   ref/zsh                                              test/zshrs
+#    0| $ chmod _main_complete:218: command not found:    0| (same line)
+#    |    _zznotacompleter                                   <nothing else>
+#    1|      chmod
+#    2| a  -- all
+#    3| g  -- group
+#    4| o  -- others
+#    5| u  -- owner
+#    6| +   -   \=
+#
+# c:Completion/Base/Core/_main_complete:218-221 is `elif "$tmp"; then ret=0;
+# break 2` — a completer that cannot be executed is simply a non-zero status
+# there and the `for` loop moves to the next one.  zshrs stops instead.
+#
+# HOW IT WAS FOUND, and why it matters more than the synthetic name suggests:
+# the fuzz drew his real `zstyle ':completion:*' completer _expand _ignored
+# _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger` out of
+# scripts/parity_zstyle.zsh.  Under the harness's `-f` fpath `_megacomplete`
+# is reachable (/Users/.../autoload/comp_utils) but does not survive, and the
+# cell FAILS 3/3 with the same shape PLUS a leaked `fc -l`-style history row
+# in the middle of the listing:
+#     zsh   row 5: `+   -   \=`
+#     zshrs row 5: `   1  source /var/.../init.zsh`   (then `+`, `-`, `\=`
+#                                                      pushed onto rows 6-8)
+# So on this chain zshrs both loses the rest of the completers AND prints a
+# history line into the match list.  Bisected: dropping `_megacomplete`
+# (`completer _expand _ignored _approximate _correct`) PASSES, so it is that
+# one entry, and a name that exists NOWHERE (`_zznotacompleter`) reproduces
+# the chain-death half on its own.
+#
+# This is the same underlying class as the `errflag not cleared between
+# completers` note already in the project's memory, but every earlier record
+# of it lacked a fixture.  This one is two lines and reproduces every time.
