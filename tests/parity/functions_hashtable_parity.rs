@@ -268,3 +268,54 @@ mod functions_display_case_terminators {
         assert_parity(r#"f() { pre; case a in a) :;; esac; post }; functions f"#);
     }
 }
+
+/// c:Src/Modules/parameter.c:295-315 `setfunction` — `functions[NAME]=BODY`
+/// installs the TEXT AS THE FUNCTION BODY
+/// (`shf->funcdef = dupeprog(parse_string(val, 1), 0)`). It never goes near
+/// `loadautofn` (c:Src/exec.c:5723-5806), so neither the `KSH_AUTOLOAD`
+/// option nor `stripkshdef`'s "the file defines the function itself" shape
+/// test has any say over what the text means.
+///
+/// zshrs installed such a body into `shfunctab` without a compiled chunk and
+/// then let the CALL fall into the autoload prelude, which applied both of
+/// those file-level rules to it. Under `KSH_AUTOLOAD` the text was run at top
+/// level as a "file" that was expected to define the function — it defined
+/// nothing, so the call reported `command not found` after running the body,
+/// which is how `tig <TAB>` lost `_tig`'s `functions[__git_complete]=:`
+/// override and printed
+/// `tig-completion.bash:103: command not found: __git_complete`.
+mod functions_assignment_is_a_body_not_a_file {
+    use super::*;
+
+    /// Under `KSH_AUTOLOAD` the assigned text is still the body: one `hi`,
+    /// status 0. zshrs ran it as an autoload file (printing `hi` at "load"
+    /// time), found no function defined, and fell through to PATH.
+    #[test]
+    fn ksh_autoload_does_not_turn_the_body_into_a_file() {
+        assert_parity(r#"setopt kshautoload; functions[g]='print hi'; g; print "rc=$?""#);
+    }
+
+    /// The `:` body is the case `_tig` uses to neutralise `__git_complete`
+    /// while it sources tig-completion.bash.
+    #[test]
+    fn ksh_autoload_colon_body_is_callable() {
+        assert_parity(r#"setopt kshautoload; functions[g]=:; g; print "rc=$?""#);
+    }
+
+    /// A body that is itself a definition of the SAME name is a body, not a
+    /// self-defining autoload file: calling `g` runs the definition (printing
+    /// nothing) and leaves `g` with the INNER body. zshrs's `stripkshdef`
+    /// shape test ran it verbatim at install time instead, so `g` printed.
+    #[test]
+    fn body_that_redefines_itself_is_not_stripped() {
+        assert_parity(r#"functions[g]='g () { print inner }'; g; print "after=[${functions[g]}]""#);
+    }
+
+    /// Same shape under KSH_AUTOLOAD.
+    #[test]
+    fn body_that_redefines_itself_under_ksh_autoload() {
+        assert_parity(
+            r#"setopt kshautoload; functions[g]='g () { print inner }'; g; print "after=[${functions[g]}]""#,
+        );
+    }
+}
