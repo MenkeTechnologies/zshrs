@@ -4302,3 +4302,171 @@ xsetroot -solid
 # this worktree (target/debug/incremental/... dominates both listings), so the
 # input is not stable enough for the cell to mean anything.  `ls **/` is
 # excluded from the style-fuzz case pool from here on.
+
+# ============================================================================
+# SEQUENCES BEYOND `tab1` — CHUNK A: `tab2` over a stride-27 slice (305 cases)
+# ============================================================================
+# The discovered corpus reached 100% coverage under `--sequences tab1` only.
+# This is the first sweep of a SECOND key press over that corpus.
+#
+# Slice: `parity_corpus.discover_cases(None, False)` (8234 cases on this host,
+# '2to3 ' .. 'zunit -'), taken with a stride of 27 so the sample spans the whole
+# alphabet rather than a prefix — 305 buffers, '2to3 ' / 'DevToolsSecurity -'
+# / ... / 'zshdb '.  Sliced from a FRESH generator call, not a remembered index.
+#
+# Pinned, PRIVATE scratch dir (a shared pin was clobbered by peers four times
+# earlier today), re-verified unchanged after the run:
+#   zshrs  sha256 cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#          (target/debug of af6ae216ec, `codesign -f -s -`; an unsigned copy is
+#           SIGKILLed and shows up as a fake boot hang)
+#   dump   sha256 10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#          (copy of ~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies, comps=51739)
+#   geom 40x110, settle 300ms, --jobs 4, native mode.
+#
+# VERBATIM totals:
+#   # 300 passed, 1 failed, 305 cell(s)
+#   # categories: PASS=300 FAIL=1 TIMEOUT=4 SKIP=0 REF-CRASHED=0 TEST-CRASHED=0
+#   # elapsed: 1218.7s (4.0s/cell)
+#
+# VACUOUS-PASS RATE: 17 of the 300 passes (5.7%) had every `key` phase come
+# back `no-output` on BOTH sides — i.e. neither shell drew anything and the
+# cell is not evidence.  In line with the 5.3-5.8% prior sweeps measured, so
+# the second TAB does not make the corpus more vacuous than the first.
+#
+# The four TIMEOUTs were each re-run at `--jobs 1 --key-budget 45`, because a
+# TIMEOUT is neither a pass nor a divergence:
+#   'gh '         -> PASS
+#   'jdb '        -> PASS
+#   'minikube -'  -> TIMEOUT again.  NOT a divergence: at `--sequences tab1
+#                    --jobs 1 --key-budget 120` the cell PASSES with BOTH
+#                    shells silent for the whole 120s.  `_minikube`'s first TAB
+#                    costs more than any budget this harness can afford, and
+#                    the tab2 asymmetry (zsh's output lands during the SECOND
+#                    key phase, zshrs's has not landed after 90s) is a race
+#                    against that cost, not a completion answer.  Measurement
+#                    blocked; do not file.
+#   'opam '       -> TIMEOUT again at 45s.  Both shells silent through the
+#                    first TAB; `_opam` shells out to `opam <cmd> --help=groff`
+#                    per candidate.  Same measurement-blocked class.  It did
+#                    leave one asymmetry worth recording: zshrs's stream
+#                    carried `_opam_argtype:shift:3: shift count must be <= $#`
+#                    and `:shift:4:` and zsh's did not.  That is downstream of
+#                    the `complete` finding below — `_opam` ends in
+#                    `autoload bashcompinit; bashcompinit; complete -F _opam
+#                    opam`, so on zshrs the registration is a no-op and the
+#                    function runs with an unpopulated COMP_WORDS.
+#
+# ---------------------------------------------------------------------------
+# 'gstack ' — the live-`ps` NONDETERMINISM class, a fifth member.  Not a defect.
+# ---------------------------------------------------------------------------
+# fp cad1721535.  Re-run 3x serially at --jobs 1: FAIL 3/3, with 19, 7 and 15
+# rows differing on the three runs.  A row count that changes every run is the
+# signature of the class, not of a completion bug: `gstack` completes PIDs, so
+# both shells are describing a process table that moves under them (16 agents
+# share this host).  Same standing as 'ps ', 'pstree ', 'sc_usage ', 'wait '.
+gstack 
+#
+# ---------------------------------------------------------------------------
+# REAL, NEW, HIGH IMPACT — `complete` and `compgen` are shadowed by zshrs's own
+# extension builtins in NATIVE mode, so bashcompinit registers NOTHING
+# ---------------------------------------------------------------------------
+# Found while classifying the 'opam ' diagnostics above; isolated away from
+# opam entirely, so the finding does not depend on that file.
+#
+# zsh resolves a command word against `shfunctab` BEFORE `builtintab`
+# (c:Src/exec.c:3105-3110 — the shfunc lookup at :3106 `break`s out with
+# `is_shfunc = 1` before the `builtintab->getnode` at :3110 is reached).  A
+# shell function therefore always wins over a builtin of the same name, and
+# zshrs gets this right in general:
+#
+#     echo() { print -r -- FUNC; }; echo x
+#     zsh -f        FUNC        zshrs -f       FUNC
+#
+# It does NOT get it right for `complete` and `compgen`, which are zshrs
+# extension builtins (src/extensions/ext_builtins.rs:244 and :246, bodies at
+# :2024 `builtin_compgen` and :2199 `builtin_complete`).  Their VM registrations
+# gate the "prefer the user's shell function" branch on `IS_ZSH_MODE`:
+#
+#     src/fusevm_bridge.rs:2805-2814   compgen
+#     src/fusevm_bridge.rs:2823-2832   complete
+#         if crate::IS_ZSH_MODE.load(...) {
+#             if crate::ported::utils::getshfunc("complete").is_some() { ... }
+#             ...
+#         }
+#         let status = with_executor(|exec| exec.builtin_complete(&args));
+#
+# so in NATIVE mode — the default, and what every comptab sweep measures —
+# the extension builtin runs and the shell function is never consulted.  The
+# `--zsh` path is correct; only the default one is wrong.  The doc comment at
+# :2798-2804 already records that an unconditional shadow "broke every
+# bashcompinit-style completion file … spraying command not found: compgen";
+# the repair was applied inside the `IS_ZSH_MODE` arm only, so native mode
+# still has the defect in its silent form.
+#
+# `bashcompinit`'s `complete()` (Src/Completion/bashcompinit:161-176, byte
+# identical to the copy zshrs bundles at src/compsys/ported/bashcompinit) is
+# the whole bridge: its last line is
+#     compdef _bash_complete\ ${(j. .)${(q)args[1,-1-$#]}} "$@"
+# and it is that `compdef` that puts the command into `$_comps`.  Because the
+# function never runs, nothing is registered and `complete` still exits 0, so
+# the failure is completely silent.
+#
+# MINIMAL REPRODUCER (no completion file involved, both shells `-f`):
+#
+#     autoload -Uz compinit; compinit -u -C -d <dump>
+#     autoload -Uz bashcompinit; bashcompinit
+#     _zzfn() { : }
+#     complete -F _zzfn zzbashc
+#     print -r -- "rc=$? _comps[zzbashc]=[${_comps[zzbashc]}]"
+#
+#     zsh -f        rc=0 _comps[zzbashc]=[_bash_complete -F _zzfn]
+#     zshrs -f      rc=0 _comps[zzbashc]=[]                        <- BUG
+#     zshrs --zsh -f rc=0 _comps[zzbashc]=[_bash_complete -F _zzfn]
+#
+# `whence -w complete` says `complete: function` on BOTH shells, and `which
+# complete` prints the same body on both — the function IS defined, the
+# dispatcher just does not reach it.  Proved by replacing `compdef` with a
+# tracing wrapper: zsh logs the `compdef '_bash_complete -F _zzfn' 'zzbashc'`
+# call, zshrs logs nothing.  Proved again by autoloading an instrumented copy
+# of bashcompinit under another name: zsh prints the `TRACE enter complete`
+# line, zshrs prints no trace at all, so the body is never entered (it is NOT
+# a mis-parse inside `zparseopts` or a wrong `if/elif` arm — an inline copy of
+# the identical body, defined in the script instead of by bashcompinit, works
+# on zshrs).
+#
+# `compgen` fails the same way, and its failure is NOISY rather than silent
+# because the extension builtin rejects bash's argument shape:
+#
+#     compgen -W 'alpha beta gamma' -- a
+#     zsh -f     alpha\nbeta\ngamma
+#     zshrs -f   zshrs:compgen:1: bad option: --      (and no output)
+#
+# END-TO-END, through the harness, with the bridge defined in `--init-extra`
+# instead of in a completion file (fp 552dda82c3):
+#
+#     _zzbashc_fn() { COMPREPLY=(alpha beta gamma); return 0 }
+#     autoload -Uz bashcompinit; bashcompinit
+#     complete -F _zzbashc_fn zzbashc
+#
+#     zsh    row 0  $ zzbashc  ZZ n=2 cw=1 w0=[zzbashc] w1=[] line=[zzbashc ] pt=8
+#            row 2  alpha  beta   gamma
+#     zshrs  row 0  $ zzbashc
+#            rows 1-6  a plain `_files` listing of the cwd
+#
+# so zsh runs the registered bash function with COMP_WORDS/COMP_CWORD/COMP_LINE/
+# COMP_POINT correctly populated, and zshrs falls all the way through to
+# `-default-`.  No bare corpus line is added for this cell: it needs
+# `--init-extra`, and a repro without it replays a different cell.
+#
+# BLAST RADIUS: every bashcompinit-bridged completer on the host is inert in
+# the default mode — `_opam` above, and the zsh-more-completions files the
+# fusevm_bridge comment already names (`_msync`, `_gocomplete`, `_qshell`,
+# `_cw`).  NOT claimed as the cause of the open 'tig ' / `__git_complete` entry
+# earlier in this file; that one is a different shape (a function the bash
+# bridge defines unconditionally) and has not been re-measured against this.
+#
+# FIX SHAPE (not applied here — this task is mining only): the `getshfunc`
+# preference in both registrations belongs OUTSIDE the `IS_ZSH_MODE` gate,
+# which is what c:exec.c:3105-3110 does for every name unconditionally.  The
+# gate should decide only what happens when NO shell function exists (native
+# mode: run zshrs's own builtin; zsh mode: `command not found`).
