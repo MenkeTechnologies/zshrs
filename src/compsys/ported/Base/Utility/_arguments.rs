@@ -37,7 +37,7 @@ use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::declare_locals;
-use crate::ported::exec::{dispatch_function_call, execute_script};
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
 use crate::ported::params::{
@@ -1357,7 +1357,20 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                         // display, where zsh yields one `a -- add files to archive`.
                         // It also multiplied the match count enough to take `7z `
                         // from zsh's 0.10s to over 25s.
-                        let _ = execute_script(&format!("ws=( {} )", body));
+                        // sh:425 is an `eval`, and the BUILTIN is what names the
+                        // error context: a body that fails to parse
+                        // (`((a "b))`) is reported by zsh as `(eval):1: unmatched
+                        // "`, where a bare execute_script left `scriptname` at the
+                        // enclosing function and printed `_arguments:1: unmatched
+                        // "`. `eval_comp` is the shared port of `eval()`
+                        // (c:Src/builtin.c:6151) and pushes the same `(eval)`
+                        // funcstack frame, which `$#funcstack`-reading completion
+                        // code (`_all_labels`/`_alternative` vs `_tags_level`) also
+                        // depends on.
+                        let _ = crate::compsys::ported::shared::eval_comp(
+                            &format!("ws=( {} )", body),
+                            425,
+                        ); // sh:425
                         let mut dv = vec![
                             "-t".to_string(),
                             subc.clone(),
@@ -1378,7 +1391,12 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                         let body = &action[1..action.len() - 1];
                         // sh:435 — `eval ws\=\( "${action[2,-2]}" \)`; same
                         // array-assignment tokenization as the `((…))` arm above.
-                        let _ = execute_script(&format!("ws=( {} )", body));
+                        // sh:435 — same `eval` (not `execute_script`) as the
+                        // `((…))` arm above; see the note there.
+                        let _ = crate::compsys::ported::shared::eval_comp(
+                            &format!("ws=( {} )", body),
+                            435,
+                        ); // sh:435
                         let mut av = vec![
                             subc.clone(),
                             "expl".to_string(),
@@ -1401,7 +1419,11 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                             {
                                 break;
                             }
-                            if execute_script(body).map(|rc| rc == 0).unwrap_or(false) {
+                            // sh:445 — `eval "$action[2,-2]" && ret=0`. Through
+                            // the `eval` port so a parse error inside the body is
+                            // attributed to `(eval)` and the `(eval)` funcstack
+                            // frame is pushed, as upstream's builtin does.
+                            if crate::compsys::ported::shared::eval_comp(body, 445) == 0 {
                                 ret = 0;
                             }
                         }
