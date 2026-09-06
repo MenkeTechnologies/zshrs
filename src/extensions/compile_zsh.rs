@@ -17741,6 +17741,32 @@ mod tests {
         );
     }
 
+    /// The bridge-array gate's structural scan. A marker at the
+    /// expansion's own level is found; the same marker inside a nested
+    /// `$( … )` or `` `…` `` is not, because that text belongs to the
+    /// command being substituted (c:Src/subst.c:2147 — paramsubst walks a
+    /// lexed body in which the substitution is one unit).
+    #[test]
+    fn contains_outside_cmdsubst_skips_nested_substitutions() {
+        // Own level.
+        assert!(contains_outside_cmdsubst("${v}", "${"));
+        assert!(contains_outside_cmdsubst("a[@]:#p", "[@]"));
+        assert!(contains_outside_cmdsubst("m[(I)*]", "[(I)"));
+        // Inside `$( … )` — the shape that mis-routed `(@f)`.
+        assert!(!contains_outside_cmdsubst("$(print -r -- ${s})", "${"));
+        assert!(!contains_outside_cmdsubst("$(printf '%s' \"${v}\")", "${"));
+        // Inside backquotes.
+        assert!(!contains_outside_cmdsubst("`print ${s}`", "${"));
+        // Nested parens inside the substitution must not end it early.
+        assert!(!contains_outside_cmdsubst("$(f $(g ${s}) h)", "${"));
+        assert!(!contains_outside_cmdsubst("$(( 1 + ${n} ))", "${"));
+        // A marker AFTER the substitution is still at this level.
+        assert!(contains_outside_cmdsubst("$(print x)${v}", "${"));
+        assert!(contains_outside_cmdsubst("$(print x):#p", ":#"));
+        // An unbalanced opener swallows the rest — "not at this level".
+        assert!(!contains_outside_cmdsubst("$(print ${s}", "${"));
+    }
+
     #[test]
     fn compile_doesnt_panic_on_nested_constructs() {
         // Catch-all: a moderately complex script. Compilation succeeds.
