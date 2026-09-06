@@ -7123,12 +7123,27 @@ impl ZshCompiler {
                     // is 2 lines), but the SH_WORD_SPLIT arm's `nulstring`
                     // empties (c:Src/utils.c:3732 / :3752) must SURVIVE it, and
                     // the separate BUILTIN_ARRAY_DROP_EMPTY this site used to
-                    // append cannot tell the two apart. A QUOTED
-                    // `"${arr[@]}"` takes argc 0 and keeps its empties.
+                    // append cannot tell the two apart.
+                    //
+                    // A QUOTED `"${arr[@]}"` runs neither arm, and takes its
+                    // OWN argc 4 rather than sharing `is_star`'s 0. c:4387
+                    // `if (qt && !*y && isarr != 2) y = dupstring(nulstring)`
+                    // is a rule about this read that the word's end-of-word
+                    // drop has to honour, and only the compile site knows the
+                    // splat was quoted — argc 0 could not say so, because the
+                    // unquoted for-list splat (`for i in $a`, the ARRAY_ALL at
+                    // the bottom of this file) already spells itself argc 0 and
+                    // MUST keep dropping. `is_star` still takes 0: it routes to
+                    // BUILTIN_ARRAY_JOIN_STAR, which never sees 4. See
+                    // `QUOTED_SPLICE_KEEPS_EMPTIES` in fusevm_bridge.rs for the
+                    // c:4261 element-count half of the rule, which is a RUN-time
+                    // fact and so is applied by the handler.
                     let join_argc: u8 = if ssub {
                         1
-                    } else if is_star || dq_for_splice {
+                    } else if is_star {
                         0
+                    } else if dq_for_splice {
+                        4
                     } else {
                         2
                     };
