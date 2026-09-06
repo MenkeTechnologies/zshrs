@@ -4117,3 +4117,60 @@ xsetroot -solid
 # content already byte-identical (tor-resolve -); and tig / tig -, which one
 # agent measured PASS 3/3 and this sweep measures FAIL — re-run that pair at
 # --jobs 1 before treating either result as settled.
+
+# ============================================================================
+# 'tor-resolve -' CLOSED (00c22d5802) / 'tig ' 'tig -' settled as REAL
+# ============================================================================
+# The ZLE framing gap is FIXED, so `tor-resolve -` now PASSES with its full
+# 12-row option listing byte-identical.
+#
+# Root cause was the false-equivalence shape again, in PARTIAL form.
+# `shared::dispatch_action_command` emitted c:Src/exec.c:903's `command not
+# found` via `zwarn` in the LIVE shell. In C that line is only ever reached
+# inside the fork `execcmd` makes for an external command, and that child has
+# already run `entersubsh`, whose last two scalar deltas are c:exec.c:1247-1248
+# `opts[USEZLE] = 0; zleactive = 0;`. `zwarning` opens with c:Src/utils.c:144-145
+# `if (isatty(2)) zleentry(ZLE_CMD_TRASH);`, and `trashzle` runs its body only
+# under c:Src/Zle/zle_main.c:2071 `if (zleactive && !trashedzle)` — so in C the
+# hook is a NO-OP here. With `zleactive` still 1, zshrs ran the full `trashzle`:
+# `moveto(nlnct, 0)` emitted the `\r\r\n` and `resetneeded` made the next
+# `zrefresh` repaint the prompt below it.
+#
+# The existing doc comment at shared.rs:936-940 already said "`zwarn`, NOT
+# `zerr`: c:903 runs in the FORKED child … so the parent shell's `errflag` is
+# never raised" — it followed the fork through for `errflag` and STOPPED,
+# never noticing the same fork also cleared `zleactive`. A comment that is
+# half-right about why an omission is safe is the same hazard as one that is
+# wrong.
+#
+# ---------------------------------------------------------------------------
+# 'tig ' / 'tig -' — REAL, OPEN, and newly VISIBLE rather than newly broken
+# ---------------------------------------------------------------------------
+# One agent reported these PASS 3/3 and a later sweep reported FAIL; settled by
+# re-running at --jobs 1 — they FAIL, reproducibly:
+#     ref/zsh  : $ tig            (then a normal file listing)
+#     test/zshrs: $ tig <path>:#: command not found: __git_complete
+#
+# EXPOSED, not caused, by today's command-not-found work (fcc19d6296 /
+# 067a269fdc / 7b6cfe636d). Before those, zshrs dispatched an unresolvable
+# action word SILENTLY, so this pre-existing failure had no symptom. zsh does
+# not merely stay quiet here — it SUCCEEDS, so the fix is to define
+# `__git_complete`, never to re-silence the diagnostic.
+#
+# Established, measured:
+#   - BOTH shells map `tig` -> `_git` ($_comps[tig] probed live).
+#   - It is Homebrew's /opt/homebrew/share/zsh/site-functions/_git.
+#   - _git:36 sources "$(dirname ${funcsourcetrace[1]%:*})"/git-completion.bash;
+#     :143 defines __git_complete_command, :163/:168 call it.
+#   - The bridge EXISTS: .../site-functions/git-completion.bash -> Cellar/git/2.55.0/…
+#   - `funcsourcetrace[1]` is AT PARITY inside an autoloaded completion
+#     function (synthetic autoloaded _zzfst probe: cell PASSED, same path and
+#     same dirname on both). So _git:36's expression is NOT the divergence.
+#   - `__git_complete` is undefined in BOTH shells outside _git ($+functions,
+#     $+commands, $+aliases all 0) — it must be defined BY the bridge.
+#   - Corroboration: under a warncreateglobal amplifier the REFERENCE zsh emits
+#     eight lines originating in that bash bridge; zshrs emits none.
+# So zsh executes the bridge and zshrs does not. It is a BASH script sourced by
+# a zsh completer — but bisect it rather than assuming a bash-construct gap; it
+# may never run at all (the zstyle `script` lookup at _git:21, a failed
+# condition, an errflag abort) or abort partway.
