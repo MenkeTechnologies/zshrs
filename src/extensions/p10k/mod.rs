@@ -453,14 +453,32 @@ pub fn preprompt_render() {
     }
     let render_t0 = std::time::Instant::now();
     // RAII so every early return still logs the frame cost.
+    // Per-segment costs for this frame, filled in by the build loop below.
+    // The frame timer alone said only THAT a paint was slow, never WHICH
+    // segment made it slow — measured 220-615ms frames with no way to
+    // attribute them. Segments are built serially, so these sum to the frame.
+    thread_local! {
+        static SEG_MS: std::cell::RefCell<Vec<(String, u128)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    SEG_MS.with(|v| v.borrow_mut().clear());
     struct RenderTimer(std::time::Instant);
     impl Drop for RenderTimer {
         fn drop(&mut self) {
             let ms = self.0.elapsed().as_millis();
+            // Slowest-first, so the offender is the first thing in the line.
+            let mut segs = SEG_MS.with(|v| v.borrow().clone());
+            segs.sort_by(|a, b| b.1.cmp(&a.1));
+            let brk = segs
+                .iter()
+                .filter(|(_, m)| *m > 0)
+                .map(|(n, m)| format!("{n}={m}"))
+                .collect::<Vec<_>>()
+                .join(" ");
             if ms > 100 {
-                tracing::info!(target: "p10k", ms, "slow preprompt_render");
+                tracing::info!(target: "p10k", ms, segments = %brk, "slow preprompt_render");
             } else {
-                tracing::debug!(target: "p10k", ms, "preprompt_render");
+                tracing::debug!(target: "p10k", ms, segments = %brk, "preprompt_render");
             }
         }
     }
@@ -514,6 +532,7 @@ pub fn preprompt_render() {
                 tracing::debug!(target: "p10k", %name, "SHOW_ON_UPGLOB: no parent match — hidden");
                 continue;
             }
+            let seg_t0 = std::time::Instant::now();
             let built = segments_core::build_segment(base)
                 .or_else(|| segments_env::build_segment(base))
                 .or_else(|| segments_sys::build_segment(base))
@@ -530,6 +549,10 @@ pub fn preprompt_render() {
                 // segment -t … -f …` (routed through the
                 // zshrs-p10k-api bridge into USER_SEGMENT_SINK).
                 .or_else(|| run_user_segment_fn(base));
+            SEG_MS.with(|v| {
+                v.borrow_mut()
+                    .push((base.to_string(), seg_t0.elapsed().as_millis()))
+            });
             match built {
                 Some(mut segs) => {
                     if joined {
