@@ -263,19 +263,23 @@ pub fn _complete_impl() -> i32 {
                             argv.extend(getaparam("expl").unwrap_or_default()); // sh:77
                         }
                         argv.extend(rest.iter().cloned());
-                        crate::compsys::ported::shared::set_sh_lineno(
+                        // A bare `dispatch_function_call` resolves SHELL
+                        // FUNCTIONS and native ports only, so a builtin, a
+                        // `$PATH` executable and a NONEXISTENT name all came
+                        // back `None` and collapsed to "non-zero" with NO
+                        // diagnostic, where zsh prints `command not found`.
+                        // `dispatch_action_command` publishes the sh line,
+                        // routes `compadd` to the builtin, then falls back to
+                        // the builtin table and `findcmd` before reporting.
+                        //
+                        // Reachable WITHOUT any completer: a `compcontext` of
+                        // the form `tag:descr: compadd foo` is a documented
+                        // user-facing spelling, so a plain zstyle reaches here.
+                        let rc = crate::compsys::ported::shared::dispatch_action_command(
+                            cmd,
+                            &argv,
                             if splice_expl { 77 } else { 66 },
                         );
-                        let rc = if cmd == "compadd" {
-                            crate::ported::zle::complete::bin_compadd(
-                                "compadd",
-                                &argv,
-                                &make_ops(),
-                                0,
-                            )
-                        } else {
-                            dispatch_function_call(cmd, &argv).unwrap_or(1)
-                        };
                         if rc == 0 {
                             ret = 0;
                         }
@@ -286,27 +290,9 @@ pub fn _complete_impl() -> i32 {
                 }
                 return ret;
             }
-            #[allow(unreachable_code)]
-            if let Some((cmd, rest)) = parts.split_first() {
-                // `compadd` is a BUILTIN, so `dispatch_function_call` finds no
-                // shell function and the action adds NOTHING, silently. Fourth
-                // site of this class after `_alternative` sh:61 / `_arguments`
-                // sh:453 (9caf16845d) and `_sequence` sh:40 (a3c8ef3edc).
-                //
-                // A `compcontext` of the form `tag:descr: compadd foo` is a
-                // documented user-facing spelling, so this is reachable from a
-                // plain zstyle without any completer involved.
-                return if cmd == "compadd" {
-                    crate::ported::zle::complete::bin_compadd(
-                        "compadd",
-                        rest,
-                        &make_ops(),
-                        0,
-                    )
-                } else {
-                    dispatch_function_call(cmd, rest).unwrap_or(1)
-                };
-            }
+            // sh:66 / sh:77 run inside the `_tags` loop above, which returns
+            // from within its `if let`. An action that evaluates to NO words
+            // has nothing to run, so it simply fails.
             return 1;
         }
         // sh:85  `ccarray[3]="$compcontext"` — a user-supplied context
