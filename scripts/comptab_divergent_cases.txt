@@ -4470,3 +4470,58 @@ gstack
 # which is what c:exec.c:3105-3110 does for every name unconditionally.  The
 # gate should decide only what happens when NO shell function exists (native
 # mode: run zshrs's own builtin; zsh mode: `command not found`).
+
+# ---------------------------------------------------------------------------
+# REFINEMENT of the `complete`/`compgen` finding above — it is a SEVEN-name
+# class, and the in-repo precedent for the correct shape is already there
+# ---------------------------------------------------------------------------
+# The gate is the whole story, but the shape needed narrowing, because a
+# user function named `complete` DOES win in native mode when it is defined
+# in the SAME compilation unit as the call:
+#
+#     complete() { builtin print -r -- FUNC }   # same script
+#     complete -F _x zzq                        -> FUNC   on both shells
+#
+# It loses when the definition arrives from ANOTHER unit — which is every real
+# case, `bashcompinit` included:
+#
+#     source defs.zsh          # defs.zsh defines complete() and compgen()
+#     complete -F _x zzq
+#     compgen -W 'a b' -- a
+#
+#     zsh -f    FUNC:complete -F _x zzq
+#               FUNC:compgen -W a b -- a
+#     zshrs -f  (nothing at all for complete)
+#               zshrs:compgen:1: bad option: --
+#
+#     eval 'complete() { … }'; complete -F _x zzq   -> same: zsh FUNC, zshrs silent
+#
+# So the opcode fires in both cases and only the RUNTIME fallback decides.
+# That is confirmed against a sibling builtin that gets it right: `zsleep`'s
+# registration (src/fusevm_bridge.rs:2980-2985) opens with
+# `try_user_fn_override("zsleep", &args)` OUTSIDE any mode gate, and a
+# `zsleep()` defined in a sourced file DOES win in native mode:
+#
+#     source defs2.zsh   # defines zsleep() and complete()
+#     zsleep 0     -> FUNC:zsleep 0        (correct)
+#     complete …   -> (nothing)            (the bug)
+#     whence -w zsleep complete -> both `function` on both shells
+#
+# `try_user_fn_override` is used by 19 registrations in that file; `complete`
+# and `compgen` are not among them.
+#
+# THE CLASS IS SEVEN NAMES, not two.  Same probe, all five other bash-only
+# builtins that carry an `IS_ZSH_MODE` gate instead of an unconditional
+# function preference — `caller`, `help`, `compopt`, `mapfile`, `readarray`
+# (registration sites src/fusevm_bridge.rs:2948-2959, :2961-2971, and the
+# generic builtintab gate at :1006-1012, plus BUILTIN_MAPFILE at :1949-1957):
+#
+#     source defs3.zsh   # defines caller() help() mapfile() readarray() compopt()
+#     caller; help; mapfile </dev/null; readarray </dev/null; compopt
+#
+#     zsh -f     FUNC:caller / FUNC:help / FUNC:mapfile / FUNC:readarray / FUNC:compopt
+#     zshrs -f   nothing / zshrs's builtin `help` listing / nothing / nothing / nothing
+#
+# All seven are one edit each: hoist the shell-function preference out of the
+# `IS_ZSH_MODE` arm, exactly as `try_user_fn_override` already does, and leave
+# the gate deciding only what happens when no function exists.
