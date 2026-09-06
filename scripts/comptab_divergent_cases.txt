@@ -4863,3 +4863,131 @@ gstack
 # This is the same underlying class as the `errflag not cleared between
 # completers` note already in the project's memory, but every earlier record
 # of it lacked a fixture.  This one is two lines and reproduces every time.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADVERSARIAL COMPLETION CORPUS, 2026-09-05 — the shapes the DISCOVERED corpus
+# provably cannot reach (it only ever types `<cmd><TAB>` and `<cmd> -<TAB>`
+# against completers that already exist on this host)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Every case below is a SYNTHETIC completer handed to both shells through
+# `--init-extra FILE` and attached with `compdef` to an installed carrier
+# command (`true`, `cat`, `seq`, …); a stub on $PATH does not work, the
+# harness's install check rejects it. None of them can be expressed as a
+# corpus line, which is why this block is comment-only.
+#
+# Measured with scripts/comptab_parity.py, `--jobs 1`, binary and dump pinned
+# into a private scratch dir and re-signed (`codesign -f -s -`); every FAIL
+# re-confirmed 3x serially. 148 cells over five shapes.
+#
+#   shape 1  over-width / edge-width matches  60 cells @ --cols 40/110/200
+#            match wider than the screen, EXACTLY the screen, ±1, 2x+3, three
+#            over-wide matches in one group, over-wide DESCRIPTION vs over-wide
+#            MATCH, over-wide -X group description, over-wide `-d` display
+#            string, -P/-S around an over-wide match, an over-wide match beside
+#            an empty one, list-packed / list-rows-first / `format`.
+#            ALL PASS, 0 vacuous. The two defects this shape found earlier
+#            today (eebf37440f, 51cf18f4d2) do not re-open.
+#
+#   shape 5  huge and degenerate match sets   28 cells @ --cols 110, tab1+tab2
+#            1 / 2 / 120 / 3000 matches, all-identical, case-only-differing,
+#            pure punctuation, an EMPTY group beside a full one, 8 matches
+#            sharing one display string, repeated empty matches.
+#            ALL PASS. The libc-qsort TIE-ORDER class did not arise: its own
+#            control (hold the set, order and group flags fixed, vary ONLY the
+#            count of identical matches, 2..9 — `_adv5n`) is 8/8 byte-identical
+#            because `matcheq` collapses the copies deterministically on both
+#            sides when nothing distinguishes them.
+#            The ask-prompt COUNT band did not arise either: these completers
+#            add their own matches and never reach `_parameters`.
+#
+# FOUR DEFECTS FOUND AND FIXED (see the commits for the measurements):
+#   92a5a20490  a runtime LANG/LC_ALL/LC_* assignment never reached setlocale
+#   02f9068322  a native compsys port ran after its own argument expansion
+#               had already failed
+#   ff871062ac  _arguments evaluated its list/brace actions without the eval
+#               frame, so an action's parse error was attributed to
+#               `_arguments` instead of `(eval)`
+#   35b0f556db  _values dropped an option whose argument was ATTACHED to the
+#               letter (`-s,` / `-sJ`), which then became the description and
+#               was passed on to `_describe`
+#
+# ---------------------------------------------------------------------------
+# OPEN 1 — completion match SORT ORDER diverges under a UTF-8 locale.
+#          Root-caused, not fixed: the fix is a comparator restructure.
+# ---------------------------------------------------------------------------
+# Reproducer (no completion needed for the mechanism, but this is where it is
+# visible). Both shells run under `LC_ALL=en_US.UTF-8`:
+#
+#     _advm1() { compadd -- 日本語 中文字 한국어 ascii あかさたなはまやらわ }
+#     compdef _advm1 seq        # then `seq <TAB>`
+#
+#     zsh   : ascii  あかさたなはまやらわ  中文字  日本語  한국어
+#     zshrs : 日本語  中文字  한국어  あかさたなはまやらわ  ascii
+#
+# zsh's order is byte order; zshrs's is macOS `strcoll` collation order. The
+# CAUSE is which BYTES reach strcoll. `matchcmp` (c:Src/Zle/compcore.c:3194)
+# calls `zstrcmp`, whose operands are C's METAFIED strings, and metafication
+# rewrites every byte in 0x83..0xa2 as `Meta`+`b^32` (`inittyptab`,
+# c:Src/utils.c:4195-4201) — which for most non-ASCII text makes the operand
+# INVALID UTF-8, so macOS strcoll degrades to a byte comparison. zshrs holds
+# real `char`s, hands strcoll VALID UTF-8, and gets real collation.
+# Verified directly, not inferred: strcoll over the five words above, macOS
+# libc, en_US.UTF-8 — raw UTF-8 gives zshrs's order, the metafied byte stream
+# gives zsh's, exactly.
+#
+# It is NOT a general zstrcmp bug: `${(o)}` AGREES in both locales, because
+# zsh's `${(o)}` goes through `strmetasort` (c:Src/sort.c:234), which
+# UNMETAFIES into `elt->cmp` (c:289-315) before comparing. So C's invariant is
+# per-call-site — `zstrcmp`'s operands are metafied, `strmetasort`'s are not —
+# and zshrs's single representation cannot honour both at once.
+# STRUCTURAL BLOCKER: zshrs's `eltpcmp` DELEGATES to `zstrcmp`
+# (src/ported/sort.rs:62,141) where C has it the other way round, so metafying
+# inside `zstrcmp` would also change `${(o)}`, `print -o`, glob sorting
+# (c:Src/glob.c:945,981) and `compdescribe`'s sort (c:Src/Zle/computil.c:235).
+# The comparator body has to move into `eltpcmp` first — which sort.rs:154-164
+# already records as a needed follow-up — and even then the metafied operand
+# cannot travel as a Rust `String`, so the strcoll copy has to metafy at the
+# BYTE level inside `strcoll_cmp` (sort.rs:293-347).
+# Under `LC_ALL=C` — the harness default — both shells agree, which is why no
+# discovered cell has ever shown this.
+#
+# ---------------------------------------------------------------------------
+# OPEN 2 — the lexer drops zsh's SPECIFIC first diagnostic and prints only the
+#          generic `parse error near`.
+# ---------------------------------------------------------------------------
+# Core-shell reproducer, no completion involved (write to a file; the shell
+# quoting matters):
+#
+#     eval 'ws=( ($(print -l ${(s ) )'
+#     zsh   : (eval):1: closing brace expected
+#             (eval):1: parse error near `($(print -l ${(s ) )...'
+#     zshrs : (eval):1: parse error near `($(print -l ${(s ) )...'
+#
+#     eval 'ws=( ($(print -n "${(j ) )'
+#     zsh   : (eval):1: unmatched "
+#             (eval):1: parse error near `($(print -n "${(j ) ...'
+#     zshrs : (eval):1: parse error near `($(print -n "${(j ) ...'
+#
+# zsh emits TWO diagnostics; zshrs emits only the second. Both agree on the
+# SIMPLE forms (`eval "a=(aa bb \"cc)"` → `unmatched "` on both), so what is
+# missing is the specific diagnostic raised while re-lexing a NESTED `$( )` /
+# `${ }`. It reaches completion through a malformed `_arguments` action —
+# `_arguments '-a[A]:m:($(print -l ${(s: :)"a b"}))'`, where the spec's `:`
+# splitting truncates the action mid-substitution — which is how it was found.
+# Diagnostic text only; both shells complete nothing either way.
+#
+# ---------------------------------------------------------------------------
+# OPEN 3 — `_alternative -O <flag-shaped arg>`: hostile-spec divergence.
+# ---------------------------------------------------------------------------
+#     _adv4e() { _alternative -O -bogus 'x:desc:(a b)' }
+#     compdef _adv4e sort       # then `sort <TAB>`
+#
+#     zsh   : -   -J   -a   -default-   569BGPXZfims   ws
+#     zshrs : a   b
+#
+# zsh's `-O name` reads the ARRAY named by the argument as extra compadd
+# options; given `-bogus` it ends up offering its own internal option words.
+# zshrs takes the spec's action instead. Garbage in on both sides, and zsh's
+# output is not obviously the more defensible one, so this is recorded rather
+# than matched. No real completer passes a flag-shaped `-O` argument.
