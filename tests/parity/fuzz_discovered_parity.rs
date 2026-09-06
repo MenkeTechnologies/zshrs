@@ -4203,6 +4203,21 @@ mod at_flag_bridge_textual_scan {
         assert_parity(r#"v=X; r=("${(@f)$(printf "%s\n" one "two ${v} three" four)}"); print $#r"#);
     }
 
+    /// The same shape as it appears in SHIPPED completions — reduced from
+    /// `_whence`'s `${(@f)$(builtin whence -va ${(Q)1})}`, `_tar`'s
+    /// `${(@f)$($words[1] ${words[(r)--force-local]} $largs $tf)}` and
+    /// `_arch`'s `${(@)$($ARCHCMD ${library:-}branches $category)}`. Each
+    /// returned 5 / 4 / 3 words against zsh's 1 before the gate learned to
+    /// skip the substitution.
+    #[test]
+    fn shipped_completion_cell_shapes() {
+        assert_parity(r#"1=print; lines=("${(@f)$(builtin whence -va ${(Q)1})}"); print $#lines"#);
+        assert_parity(r#"words=(tar); r=("${(@f)$(print -r -- ${words[1]} "a b" c)}"); print $#r"#);
+        assert_parity(
+            r#"ARCHCMD=print; library=; category="x y"; r=("${(@)$($ARCHCMD ${library:-}branches $category)}"); print $#r"#,
+        );
+    }
+
     /// Controls that must keep agreeing once the gate scans structurally:
     /// the same word without `@` (gate needs `@`), with the substitution
     /// spelled `$s` (no `${`), and with a genuine nested expansion as the
