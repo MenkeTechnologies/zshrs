@@ -2158,6 +2158,108 @@ ldapsearch
 rsync 
 #
 # ══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+# 'getconf ' NARROWED 2026-09-06 — duplicate-match SUPPRESSION, and a
+# FORK-vs-ORACLE C divergence that affects every makearray citation
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Deterministic, 6+ runs, rows=40 cols=110 LISTMAX=1:
+#   zsh 'all 293 possibilities (147 lines)'   zshrs 'all 294'
+# compstate[nmatches] is 295 on BOTH.  The compadd argv and all 295 match
+# strings are byte-identical on both sides: 295 adds, 294 distinct, with
+# PIPE_BUF added TWICE — _getconf:23 `pathkeys1` with -S '' and :25
+# `pathkeys2` with -S ' '.
+#
+# The divergence is ONE extra suppressed match: zsh's listing contains NO
+# PIPE_BUF, zshrs's contains it once.  So listdat.nlist sees 2 excluded
+# matches in zsh and 1 in zshrs.
+#
+#   variant                                          zsh    zshrs
+#   stock                                            293    294
+#   pathkeys2 uses -S '' (pair becomes matcheq)      nm 293 nm 294
+#   restconfig block deleted (64 matches)            63     63   (agree)
+#   restkeys truncated to 1 (65 matches)             63     64
+#   _next_label/$expl bypassed for pathkeys only     293    294
+#   all six compadds replaced by `builtin compadd`
+#     with identical argv                            294    294  (agree)
+#
+# Two consequences.  (1) With an exactly-equal pair zsh removes BOTH copies
+# where zshrs removes one, and the divergence then moves into nmatches itself.
+# (2) It needs the completion to run through _description/_setup: with
+# identical argv but no _requested/_all_labels both shells give 294, and a
+# standalone replay of the six logged compadd calls also gives 294 on zsh.
+# So state outside makearray participates (_setup:33-45 writes compstate[list]).
+#
+# ── THE C-REFERENCE TRAP, which generalises well beyond this cell ──────────
+# The port's makearray is written against the FORK at
+# ~/forkedRepos/zsh/Src/Zle/compcore.c (VERSION 5.9.0.3-test), whose inner
+# loop increments `bp = ++sp` — advancing the array BASE.  The parity ORACLE
+# is zsh 5.9.2, whose Src/Zle/compcore.c:3288-3313 has `bp = ++asp` plus an
+# `asp--` fixup at :3309-3311.  `makearray` GENUINELY DIFFERS between the two
+# trees.  src/ported/zle/compcore.rs:6130-6172 declines to replicate the
+# run-walk as "an upstream oddity", citing c:3312/c:3316 — line numbers from
+# the FORK, not from the oracle the sweep measures against.
+#
+# Anyone citing Src/Zle/compcore.c must say WHICH tree.  A 5.9.2 tarball is
+# unpacked at /tmp/zsh592.
+#
+# NOT FIXED, deliberately: neither the fork's loop nor 5.9.2's marks more than
+# one element of a two-element duplicate run, so how zsh reaches TWO exclusions
+# is not yet derivable from the C.  Editing the dedup path without a citation
+# behind it would be a guess.
+#
+# Confirms the ledger's refutation of the "libc qsort tie order" story for this
+# cell: the split is fully deterministic and vanishes under an argv-identical
+# bypass.  Refutes "diverges AFTER the adds, unexplained" — it is duplicate-
+# match suppression, and the -S '' variant shows it also moves nmatches.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 'read ' RESOLVED 2026-09-06 — NOT a scratch-parameter leak.  The entry
+# below is superseded; its premise was measured and is WRONG.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Measured with a pty driver (init/env shape copied from comptab_parity.py's
+# build_init/child_env) that captured, out of band: ${(k)parameters} before and
+# after, the `ary` list `_parameters` hands `_describe`, every compadd call with
+# its compstate[nmatches] delta, and _lastcomp[nmatches].
+#
+#   probe                                    zsh        zshrs
+#   _lastcomp[nmatches], stock env           440        456
+#   real (-2V) matches added                 155        157
+#   -E<n> dummy padding matches              285        299
+#   _parameters name sets, both calls        IDENTICAL  IDENTICAL
+#
+# The `_parameters` candidate sets are IDENTICAL on both sides IN-COMPLETION,
+# so nothing is reaching the `${(k)parameters[(R)…~*local*]}` filter that
+# should not.  `__compsys_argv`, `_cs_split_src` and `_cs_split_dst` are NOT
+# implicated.  The only extra NAMES are HELPDIR and INFOPATH.
+#
+# Everything else is compdescribe's column-padding dummies (`compadd -E<n>`,
+# c:Src/Zle/computil.c:758 CRT_DUMMY / :780 CRT_EXPL, counts from cd_prep()
+# at :239-390).  `_describe` groups matches by identical description, and for
+# `_parameters` the description IS the parameter's value (_parameters:34-36).
+# MANPATH/manpath are empty under `zsh -f` with a scrubbed env but hold
+# /Users/wizard/.zshrs/man in zshrs, so each leaves the big empty-description
+# group and adds one distinct description per _parameters call -> preplines +1
+# per call -> one extra dummy in every CRT_DUMMY/CRT_EXPL run.
+#
+# PROOF BY EQUALIZATION — adding these to the ZSH side only:
+#     export HELPDIR=/Users/wizard/.zshrs/help
+#     export INFOPATH=/Users/wizard/.zshrs/info:
+#     export MANPATH=/Users/wizard/.zshrs/man:
+#   gives nmatches 468 vs 468 — exact parity, 3/3.  With only HELPDIR+INFOPATH
+#   equalized it is 448 vs 456; MANPATH accounts for the rest.
+#
+# Source: src/extensions/bundled_docs.rs:157 (INFOPATH), :192-193 and :231-234
+# (HELPDIR), :177-181 (MANPATH/INFOPATH prepend).  This is the SAME deliberate
+# feature already recorded as the +28 residual on 'command ' — do not "fix" it
+# by changing the shell.  The +-4 wander is RANDOM/$$/ZSH_EVAL_CONTEXT-driven
+# description churn feeding the same grouping math, not a varying leak set.
+#
+# 'read ' therefore belongs with 'command ' as a DELIBERATE-FEATURE cell, not
+# as an open defect.  It stays in the corpus so the sweep keeps running it.
+#
+
 # OPEN — 'read ' offers 12-16 parameter names zsh does not.  fp e8e0447836.
 # ══════════════════════════════════════════════════════════════════════════
 #
