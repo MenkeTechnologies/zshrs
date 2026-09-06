@@ -175,37 +175,60 @@ fn values_impl(args: &[String]) -> i32 {
     while idx < args.len() {
         let a = &args[idx];
         let b = a.as_bytes();
-        if b.len() != 2 || b[0] != b'-' {
+        if b.len() < 2 || b[0] != b'-' {
             break;
         }
+        // sh:6-7 — every spec there that ends in `:` (`s+: S+: O: M: J: V:
+        // o+: F: X:`) is an OPTION WITH AN ARGUMENT, and zparseopts takes that
+        // argument from the SAME WORD when there is more of it (`-s,`) and
+        // only otherwise from the next word (`-s ,`) — see zshmodules(1),
+        // zsh/zutil, `zparseopts`. The port required an exactly-two-byte
+        // option word, so `_values -s, …` / `_values -sJ …` fell out of the
+        // loop with the option still in place: it became the DESCRIPTION
+        // positional and was handed on to `_describe`, which rejected it
+        // (`_describe:21: bad option: -s`) where zsh completed normally.
+        // A no-argument spec (`w+ C 1 2 n`) is still an exact two-byte word;
+        // zparseopts does not split clusters.
+        let attached: Option<&str> = if b.len() > 2 { Some(&a[2..]) } else { None };
+        let takes_arg = attached.is_some() || idx + 1 < args.len();
+        // How far to step, and what the argument is, for an arg-taking option.
+        let arg_of = |attached: Option<&str>, idx: usize| -> (String, usize) {
+            match attached {
+                Some(v) => (v.to_string(), idx + 1),
+                None => (args[idx + 1].clone(), idx + 2),
+            }
+        };
         match b[1] {
             // s+:=keep / S+:=keep — flag + arg, kept for `compvalues -i`.
-            b's' | b'S' if idx + 1 < args.len() => {
-                keep.push(a.clone());
-                keep.push(args[idx + 1].clone());
-                idx += 2;
+            b's' | b'S' if takes_arg => {
+                let (val, next) = arg_of(attached, idx);
+                keep.push(format!("-{}", b[1] as char));
+                keep.push(val);
+                idx = next;
             }
             // w+=keep — flag, no arg.
-            b'w' => {
+            b'w' if attached.is_none() => {
                 keep.push(a.clone());
                 idx += 1;
             }
             // C=usecc — no arg.
-            b'C' => {
+            b'C' if attached.is_none() => {
                 usecc = true;
                 idx += 1;
             }
             // O:=subopts — arg is an array name; expand it into subopts.
-            b'O' if idx + 1 < args.len() => {
-                subopts = getaparam(&args[idx + 1]).unwrap_or_default();
-                idx += 2;
+            b'O' if takes_arg => {
+                let (name, next) = arg_of(attached, idx);
+                subopts = getaparam(&name).unwrap_or_default();
+                idx = next;
             }
             // garbage, arg-taking: M: J: V: o+: F: X:
-            b'M' | b'J' | b'V' | b'o' | b'F' | b'X' if idx + 1 < args.len() => {
-                idx += 2;
+            b'M' | b'J' | b'V' | b'o' | b'F' | b'X' if takes_arg => {
+                let (_, next) = arg_of(attached, idx);
+                idx = next;
             }
             // garbage, no arg: 1 2 n
-            b'1' | b'2' | b'n' => {
+            b'1' | b'2' | b'n' if attached.is_none() => {
                 idx += 1;
             }
             _ => break,
