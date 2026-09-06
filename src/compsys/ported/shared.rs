@@ -1305,6 +1305,17 @@ mod zstyle_bool_tests {
                 1,
                 "-T on `{v}` must be 1, not 0 — the style is OFF"
             );
+            // The defect itself, pinned: the primitive the ports used
+            // answers the SAME thing here as it does for `yes`. Every
+            // converted site spelled its test `testforstyle(…) == 0`, so
+            // every one of them ran the true branch for a style the user
+            // had switched off.
+            assert_eq!(
+                crate::ported::modules::zutil::testforstyle(CTX, "boolprobe"),
+                0,
+                "`testforstyle` reports `{v}` as TRUE — it is zstyle -q's \
+                 primitive (zutil.c:465/749-756) and never reads the value"
+            );
         }
 
         del_style();

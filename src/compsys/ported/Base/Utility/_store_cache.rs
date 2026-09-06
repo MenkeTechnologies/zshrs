@@ -42,7 +42,8 @@
 //! skipped. Returns 0 on write, 1 when cache disabled.
 
 use crate::compsys::ported::_message::_message;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::compsys::ported::shared::zstyle_t;
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam};
 use std::fs;
 use std::path::Path;
@@ -74,8 +75,9 @@ pub fn _store_cache_impl(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
 
-    // sh:8
-    if testforstyle(&ctx, "use-cache") != 0 {
+    // sh:8 — `if zstyle -t … use-cache; then`, a VALUE test; see
+    //   [`zstyle_t`].
+    if zstyle_t(&ctx, "use-cache") != 0 {
         return 1;
     }
 
@@ -152,5 +154,59 @@ mod tests {
     fn returns_one_when_use_cache_disabled() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_store_cache_impl(&["test-cache".to_string()]), 1);
+    }
+
+    /// sh:8 — `if zstyle -t … use-cache; then` is a VALUE test, so
+    /// `use-cache 0` takes the `else return 1` arm at sh:60-61 and NOTHING
+    /// is written to disk.
+    ///
+    /// The port tested it with `testforstyle` (zutil.c:465), the primitive
+    /// behind `zstyle -q`, which answers "is this style defined" — so
+    /// `use-cache 0` read as ON and the completer wrote the cache file the
+    /// user had just turned caching off to avoid.
+    #[test]
+    fn use_cache_zero_writes_nothing() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let dir = std::env::temp_dir().join(format!("zshrs-store-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let ctx = ":completion:sczero:sczero:sczero:";
+        let _ = crate::ported::params::setsparam("curcontext", "sczero:sczero:sczero");
+        for (style, val) in [
+            ("use-cache", "0"),
+            ("cache-path", dir.to_string_lossy().as_ref()),
+        ] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &[ctx.to_string(), style.to_string(), val.to_string()],
+                &ops,
+                0,
+            );
+        }
+
+        let rc = _store_cache_impl(&["scz-ident".to_string()]);
+        let landed = dir.join("scz-ident").exists();
+
+        for style in ["use-cache", "cache-path"] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &["-d".to_string(), ctx.to_string(), style.to_string()],
+                &ops,
+                0,
+            );
+        }
+        crate::ported::params::unsetparam("curcontext");
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(rc, 1, "sh:61 — `use-cache 0` returns 1");
+        assert!(
+            !landed,
+            "sh:59 — the cache file must not be written when use-cache is off"
+        );
     }
 }

@@ -37,8 +37,9 @@
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::execute_script;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use std::path::Path;
 
@@ -73,8 +74,9 @@ pub fn _retrieve_cache_impl(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
 
-    // sh:8
-    if testforstyle(&ctx, "use-cache") != 0 {
+    // sh:8 — `if zstyle -t … use-cache; then`, a VALUE test; see
+    //   [`zstyle_t`].
+    if zstyle_t(&ctx, "use-cache") != 0 {
         return 1;
     }
 
@@ -139,5 +141,59 @@ mod tests {
     fn returns_one_when_use_cache_disabled() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_retrieve_cache_impl(&["my-cache".to_string()]), 1);
+    }
+
+    /// sh:8 — `if zstyle -t … use-cache; then` is a VALUE test, so
+    /// `use-cache 0` takes the `else return 1` at sh:29 without sourcing
+    /// anything. With `testforstyle` (zutil.c:465, `zstyle -q`'s primitive)
+    /// standing in for it the style read as ON, an existing cache file was
+    /// sourced, and this returned 0 — so the caller skipped regeneration.
+    #[test]
+    fn use_cache_zero_does_not_source_an_existing_cache() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let dir = std::env::temp_dir().join(format!("zshrs-retr-cache-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("rcz-ident"), "rcz_probe=loaded\n");
+        let ctx = ":completion:rczero:rczero:rczero:";
+        let _ = crate::ported::params::setsparam("curcontext", "rczero:rczero:rczero");
+        crate::ported::params::unsetparam("rcz_probe");
+        for (style, val) in [
+            ("use-cache", "0"),
+            ("cache-path", dir.to_string_lossy().as_ref()),
+        ] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &[ctx.to_string(), style.to_string(), val.to_string()],
+                &ops,
+                0,
+            );
+        }
+
+        let rc = _retrieve_cache_impl(&["rcz-ident".to_string()]);
+        let sourced = getsparam("rcz_probe");
+
+        for style in ["use-cache", "cache-path"] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &["-d".to_string(), ctx.to_string(), style.to_string()],
+                &ops,
+                0,
+            );
+        }
+        crate::ported::params::unsetparam("curcontext");
+        crate::ported::params::unsetparam("rcz_probe");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(rc, 1, "sh:29 — `use-cache 0` returns 1");
+        assert_eq!(
+            sourced, None,
+            "sh:23 — the cache file must not be sourced when use-cache is off"
+        );
     }
 }
