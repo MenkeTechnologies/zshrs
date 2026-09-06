@@ -17892,7 +17892,12 @@ mod tests {
         };
 
         // Call lcsetfn with LC_CTYPE → "C" (universally available POSIX locale).
-        lcsetfn("LC_CTYPE", Some("C".to_string()));
+        // c:4876 matches the category on `pm->node.nam`, so the parameter
+        // being assigned IS the category selector — the name has to live on
+        // the `param` handed in, not in a separate argument.
+        let mut pm = param::default();
+        pm.node.nam = "LC_CTYPE".to_string();
+        lcsetfn(&mut pm, "C".to_string());
 
         // Read it back — must report "C" since C invokes setlocale(LC_CTYPE, "C").
         let after = unsafe {
@@ -17955,7 +17960,9 @@ mod tests {
         };
 
         // Try to set LC_CTYPE; should NOT touch libc state.
-        lcsetfn("LC_CTYPE", Some("POSIX".to_string()));
+        let mut pm = param::default();
+        pm.node.nam = "LC_CTYPE".to_string();
+        lcsetfn(&mut pm, "POSIX".to_string());
 
         // libc state must be unchanged.
         let after = unsafe {
