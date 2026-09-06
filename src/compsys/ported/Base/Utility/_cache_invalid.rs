@@ -20,8 +20,9 @@
 //! Returns 0 when the cache needs rebuilding (per the user-supplied
 //! `cache-policy` hook); 1 otherwise (cache disabled or no policy).
 
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::{dispatch_function_call, execute_script_zsh_pipeline};
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::utils::quotestring;
 use crate::ported::zsh_h::QT_SINGLE;
@@ -100,8 +101,10 @@ pub fn _cache_invalid_impl(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
 
-    // sh:10
-    if testforstyle(&ctx, "use-cache") != 0 {
+    // sh:10 — `zstyle -t … use-cache || return 1`, a VALUE test; see
+    //   [`zstyle_t`]. Both the "set but not boolean-true" exit (1) and the
+    //   "no pattern matched" exit (2) take the `|| return 1` arm.
+    if zstyle_t(&ctx, "use-cache") != 0 {
         return 1;
     }
 
@@ -140,5 +143,54 @@ mod tests {
         // sh:10 — without use-cache style set, returns 1.
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_cache_invalid_impl(&["my-cache".to_string()]), 1);
+    }
+
+    /// sh:10 — `zstyle -t … use-cache || return 1` is a VALUE test. The
+    /// comment above it says why the answer matters: "If the cache is
+    /// disabled, we never want to rebuild it, so pretend it's valid."
+    /// `use-cache 0` must therefore return 1 (valid) WITHOUT consulting the
+    /// `cache-policy` hook at sh:19.
+    ///
+    /// The port tested it with `testforstyle` (zutil.c:465), the primitive
+    /// behind `zstyle -q`, which answers "is this style defined" — so with
+    /// caching switched off the policy still ran, and a policy that says
+    /// "stale" turned this into a 0 and forced the rebuild.
+    #[test]
+    fn use_cache_zero_skips_the_policy_hook() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let ctx = ":completion:cizero:cizero:cizero:";
+        let _ = crate::ported::params::setsparam("curcontext", "cizero:cizero:cizero");
+        // `true` always succeeds, i.e. "the cache IS stale" at sh:19.
+        for (style, val) in [("use-cache", "0"), ("cache-policy", "true")] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &[ctx.to_string(), style.to_string(), val.to_string()],
+                &ops,
+                0,
+            );
+        }
+
+        let rc = _cache_invalid_impl(&["ciz-ident".to_string()]);
+
+        for style in ["use-cache", "cache-policy"] {
+            crate::ported::modules::zutil::bin_zstyle(
+                "zstyle",
+                &["-d".to_string(), ctx.to_string(), style.to_string()],
+                &ops,
+                0,
+            );
+        }
+        crate::ported::params::unsetparam("curcontext");
+
+        assert_eq!(
+            rc, 1,
+            "sh:10 — `use-cache 0` returns 1 before the always-stale policy runs"
+        );
     }
 }
