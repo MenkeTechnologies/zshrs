@@ -1695,6 +1695,13 @@ pub fn createparamtable() {
             "USERNAME" => Some(Box::new(USERNAME_GSU.clone())), // c:247
             "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())), // c:253
             "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
+            "LANG" => Some(Box::new(LANG_GSU.clone())), // c:332
+            "LC_ALL" => Some(Box::new(LC_ALL_GSU.clone())), // c:333
+            // c:331 `# define LCIPDEF(name) IPDEF2(name, lc_blah_gsu, PM_UNSET)`
+            // — c:334-347 lists exactly these five categories.
+            "LC_COLLATE" | "LC_CTYPE" | "LC_MESSAGES" | "LC_NUMERIC" | "LC_TIME" => {
+                Some(Box::new(LC_BLAH_GSU.clone())) // c:335-346
+            }
             _ => None,
         };
         let pm = Box::new(param {
@@ -2739,6 +2746,11 @@ pub fn createparam(
             "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),
             "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())),
             "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())),
+            "LANG" => Some(Box::new(LANG_GSU.clone())), // c:332
+            "LC_ALL" => Some(Box::new(LC_ALL_GSU.clone())), // c:333
+            "LC_COLLATE" | "LC_CTYPE" | "LC_MESSAGES" | "LC_NUMERIC" | "LC_TIME" => {
+                Some(Box::new(LC_BLAH_GSU.clone())) // c:335-346
+            }
             _ => None,
         };
         if let Some(gsu) = special_gsu {
@@ -8291,6 +8303,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 pm_flags |= PM_SPECIAL as i32;
                 Some(Box::new(HISTCHARS_GSU.clone())) // c:246
             }
+            "LANG" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(LANG_GSU.clone())) // c:332
+            }
+            "LC_ALL" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(LC_ALL_GSU.clone())) // c:333
+            }
+            "LC_COLLATE" | "LC_CTYPE" | "LC_MESSAGES" | "LC_NUMERIC" | "LC_TIME" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(LC_BLAH_GSU.clone())) // c:335-346
+            }
             _ => None,
         };
         // c:1152-1155 — createparam's REUSE arm:
@@ -8367,6 +8391,11 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 "USERNAME" => Some(Box::new(USERNAME_GSU.clone())), // c:247
                 "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())), // c:253
                 "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
+                "LANG" => Some(Box::new(LANG_GSU.clone())), // c:332
+                "LC_ALL" => Some(Box::new(LC_ALL_GSU.clone())), // c:333
+                "LC_COLLATE" | "LC_CTYPE" | "LC_MESSAGES" | "LC_NUMERIC" | "LC_TIME" => {
+                    Some(Box::new(LC_BLAH_GSU.clone())) // c:335-346
+                }
                 _ => None,
             };
             if new_gsu.is_some() {
@@ -11845,17 +11874,22 @@ pub fn setlang(x: Option<&str>) {
 ///   3. `inittyptab()` — rebuilds the typtab for the new
 ///      LC_CTYPE per c:4892.
 ///
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn lc_allsetfn(x: Option<String>) {
-    // c:4873
+pub fn lc_allsetfn(pm: &mut param, x: String) {
+    // c:4823
+    // c:4825 — `strsetfn(pm, x);`. `lc_all_gsu`'s getfn is the plain
+    // `strgetfn` (c:261-262), so the param slot is the only storage this
+    // value has; skipping the store would make `$LC_ALL` read back empty.
+    strsetfn(pm, x.clone()); // c:4825
+                             // c:4831 — `if (!x || !*x)`: C's `char *x` is NULL for an unset and ""
+                             // for an empty assignment, and both take the LANG fallback. A GSU setfn
+                             // always receives a String, so the two collapse into `is_empty()`.
     match x {
-        None => setlang(getsparam_u("LANG").as_deref()), // c:4882 getsparam_u
-        Some(s) if s.is_empty() => {
-            // c:4881
-            // c:4881-4884 — empty x falls back to setlang(getsparam_u("LANG")).
-            setlang(getsparam_u("LANG").as_deref()); // c:4882
+        s if s.is_empty() => {
+            // c:4831
+            // c:4831-4838 — empty x falls back to setlang(getsparam_u("LANG")).
+            setlang(getsparam_u("LANG").as_deref()); // c:4832
         }
-        Some(s) => {
+        s => {
             // c:4889 — `setlocale(LC_ALL, unmeta(x));`
             let unmeta = unmeta(&s); // c:4889 unmeta(x)
             let cstr = std::ffi::CString::new(unmeta.as_bytes()).unwrap_or_default();
@@ -11881,17 +11915,15 @@ pub fn lc_allsetfn(x: Option<String>) {
 /// setlocale literally. The previous Rust port passed raw `x`
 /// without unmeta'ing — divergent.
 ///
-/// `strsetfn(pm, x)` stores the value in the param slot. The Rust
-/// adaptation doesn't have a `pm` in scope; the assign path that
-/// reaches langsetfn already stored the value in the paramtab,
-/// so this body only runs the post-store side effect (locale).
-///
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x).
-pub fn langsetfn(x: String) {
-    // c:4898
-    // c:4901 — `setlang(unmeta(x));`. Strip Meta bytes before
-    // passing to libc setlocale.
-    let unmeta_x = unmeta(&x); // c:4901 unmeta(x)
+/// `strsetfn(pm, x)` stores the value in the param slot — `lang_gsu`
+/// pairs this setter with the plain `strgetfn` (c:259-260), so the slot
+/// is the only storage `$LANG` has.
+pub fn langsetfn(pm: &mut param, x: String) {
+    // c:4848
+    strsetfn(pm, x.clone()); // c:4850
+                             // c:4851 — `setlang(unmeta(x));`. Strip Meta bytes before
+                             // passing to libc setlocale.
+    let unmeta_x = unmeta(&x); // c:4851 unmeta(x)
     setlang(Some(&unmeta_x));
 }
 
@@ -11920,19 +11952,25 @@ pub fn langsetfn(x: String) {
 ///      would still classify with the old C locale's tables.
 ///   2. The Meta-unmeta'ing on the value passed to setlocale
 ///      wasn't applied. C uses `setlocale(cat, unmeta(x))`.
-pub fn lcsetfn(pm: &str, x: Option<String>) {
-    // c:4906
-    // c:4912-4913 — `if ((x2 = getsparam("LC_ALL")) && *x2) return;`.
+pub fn lcsetfn(pm: &mut param, x: String) {
+    // c:4856
+    // c:4861 — `strsetfn(pm, x);` runs BEFORE the `$LC_ALL` early return, so
+    // the value is stored even when the locale is not applied.
+    strsetfn(pm, x.clone()); // c:4861
+                             // c:4876 — `!strcmp(ln->name, pm->node.nam)` matches the CATEGORY by the
+                             // parameter's own name; read it here, after the store's borrow ends.
+    let pm_name = pm.node.nam.clone(); // c:4876 pm->node.nam
+                                       // c:4862-4863 — `if ((x2 = getsparam("LC_ALL")) && *x2) return;`.
     if let Some(lc_all) = getsparam("LC_ALL") {
-        // c:4912
+        // c:4862
         if !lc_all.is_empty() {
             return;
         }
     }
-    // c:4916-4917 — `if (!x || !*x) x = getsparam("LANG");`.
-    let val = x
+    // c:4866-4867 — `if (!x || !*x) x = getsparam("LANG");`.
+    let val = Some(x)
         .filter(|s| !s.is_empty())
-        .or_else(|| getsparam("LANG").filter(|s| !s.is_empty())); // c:4917
+        .or_else(|| getsparam("LANG").filter(|s| !s.is_empty())); // c:4867
                                                                   // c:4924-4928 — apply `setlocale(category, unmeta(x))` for the
                                                                   // matching LC_* category. The previous Rust port skipped the
                                                                   // actual libc setlocale call and only wrote the env var, so
@@ -11941,11 +11979,11 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {
     if let Some(v) = val {
         let unmeta = unmeta(&v); // c:4928 unmeta(x)
                                  // c:Src/params.c:5354 — setenv via the C-named zputenv
-        let _ = zputenv(&format!("{}={}", pm, &unmeta));
+        let _ = zputenv(&format!("{}={}", pm_name, &unmeta));
         for (name, category) in LC_NAMES {
-            // c:4925
-            if *name == pm {
-                // c:4926 strcmp
+            // c:4875
+            if *name == pm_name {
+                // c:4876 strcmp
                 let cstr = std::ffi::CString::new(unmeta.as_bytes()).unwrap_or_default();
                 unsafe {
                     libc::setlocale(*category, cstr.as_ptr()); // c:4927
@@ -12380,6 +12418,37 @@ pub const KEYBOARDHACK_GSU: gsu_scalar = gsu_scalar {
     // c:253
     getfn: keyboardhackgetfn,
     setfn: keyboardhacksetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar lang_gsu` from `Src/params.c:259-260`.
+/// `{ strgetfn, langsetfn, stdunsetfn }` — registered by
+/// `IPDEF2("LANG", lang_gsu, PM_UNSET)` at c:332.
+pub const LANG_GSU: gsu_scalar = gsu_scalar {
+    // c:259-260
+    getfn: strgetfn,
+    setfn: langsetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar lc_all_gsu` from `Src/params.c:261-262`.
+/// `{ strgetfn, lc_allsetfn, stdunsetfn }` — registered by
+/// `IPDEF2("LC_ALL", lc_all_gsu, PM_UNSET)` at c:333.
+pub const LC_ALL_GSU: gsu_scalar = gsu_scalar {
+    // c:261-262
+    getfn: strgetfn,
+    setfn: lc_allsetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar lc_blah_gsu` from `Src/params.c:257-258`.
+/// `{ strgetfn, lcsetfn, stdunsetfn }` — the vtable every per-category
+/// `LCIPDEF(name)` entry gets (c:331, c:334-347): LC_COLLATE, LC_CTYPE,
+/// LC_MESSAGES, LC_NUMERIC, LC_TIME.
+pub const LC_BLAH_GSU: gsu_scalar = gsu_scalar {
+    // c:257-258
+    getfn: strgetfn,
+    setfn: lcsetfn,
     unsetfn: stdunsetfn,
 };
 
