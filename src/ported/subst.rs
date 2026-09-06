@@ -14307,6 +14307,24 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
+                // !!! EMULATION-ONLY (no C counterpart) !!! An EMPTY pattern
+                // never matches in ksh93, so the whole replacement is a no-op:
+                //     $ ksh -c 'v=abc; print "[${v/#/X}]"'   → [abc]
+                //     $ ksh -c 'v=abc; print "[${v/%/X}]"'   → [abc]
+                //     $ ksh -c 'v=abc; print "[${v//X}]"'    → [abc]
+                // where zsh (and bash) match the empty pattern at the anchor
+                // and prepend/append:  zsh → [Xabc] / [abcX].
+                // ksh93 does support the anchors themselves with a NON-empty
+                // pattern (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`), so the
+                // rule is specifically "empty pattern matches nothing", not
+                // "no anchors". (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.)
+                //
+                // mksh/pdksh side with zsh/bash here, not ksh93: `mksh -c
+                // 'v=abc; print "[${v/#/X}]"'` prints `[Xabc]`, so that line is
+                // excluded via `pdksh_family()`.
+                let korn_empty_pat = crate::dash_mode::korn_mode()
+                    && !crate::dash_mode::pdksh_family()
+                    && pat_after_anchor.is_empty();
                 // c:Src/subst.c:3360-3412 — C order transposed: the
                 // pattern is pre-tokenized (source metas -> token
                 // chars, as the lexer leaves them for paramsubst),
@@ -14505,6 +14523,11 @@ pub fn paramsubst(
                     }
                 };
                 let replace_global = |val: &str| -> String {
+                    // See `korn_empty_pat` above: ksh93's empty pattern never
+                    // matches, so the replacement is a no-op on every element.
+                    if korn_empty_pat {
+                        return val.to_string();
+                    }
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
                     // Byte offset of every character boundary, plus the end.
@@ -15254,6 +15277,24 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
+                // !!! EMULATION-ONLY (no C counterpart) !!! An EMPTY pattern
+                // never matches in ksh93, so the whole replacement is a no-op:
+                //     $ ksh -c 'v=abc; print "[${v/#/X}]"'   → [abc]
+                //     $ ksh -c 'v=abc; print "[${v/%/X}]"'   → [abc]
+                //     $ ksh -c 'v=abc; print "[${v//X}]"'    → [abc]
+                // where zsh (and bash) match the empty pattern at the anchor
+                // and prepend/append:  zsh → [Xabc] / [abcX].
+                // ksh93 does support the anchors themselves with a NON-empty
+                // pattern (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`), so the
+                // rule is specifically "empty pattern matches nothing", not
+                // "no anchors". (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.)
+                //
+                // mksh/pdksh side with zsh/bash here, not ksh93: `mksh -c
+                // 'v=abc; print "[${v/#/X}]"'` prints `[Xabc]`, so that line is
+                // excluded via `pdksh_family()`.
+                let korn_empty_pat = crate::dash_mode::korn_mode()
+                    && !crate::dash_mode::pdksh_family()
+                    && pat_after_anchor.is_empty();
                 // Pattern: keep \X for glob meta literals (untokenize
                 // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
@@ -15495,6 +15536,11 @@ pub fn paramsubst(
                     }
                 };
                 let replace_one = |val: &str| -> String {
+                    // See `korn_empty_pat` above: ksh93's empty pattern never
+                    // matches, so the replacement is a no-op on every element.
+                    if korn_empty_pat {
+                        return val.to_string();
+                    }
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
@@ -16036,6 +16082,66 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
+                // c:Src/glob.c:2665 — `getmatch` compiles the pattern with
+                // `PAT_SCAN|PAT_NOANCH`, clearing NOANCH only for `SUB_ALL` or
+                // `SUB_END && !SUB_SUBSTR` (c:2672-2673). NOANCH is what makes
+                // `pattrylen` report a PREFIX match (`patinput < patinend`
+                // accepted at P_END, c:Src/pattern.c:3452) so the
+                // `(SUB_SUBSTR|SUB_LONG)` scan at c:Src/glob.c:3030-3036 can ask
+                // "what is the LONGEST match starting HERE" one position at a
+                // time. `gms` above compiles without it, so every trial demanded
+                // a WHOLE-slice match and the scan found the last position whose
+                // tail the pattern matched entirely — the RIGHTMOST occurrence.
+                // `${(S)v##foo}` on `foobarfoo` stripped the trailing `foo` and
+                // returned `foobar` where zsh returns `barfoo`, and `(B)` handed
+                // back 7 instead of 1.
+                //
+                // PAT_NOTSTART mirrors `set_pat_start(p, t-s)` (c:Src/glob.c:2780)
+                // so `(#s)` still fails at interior positions; the two variants
+                // are memoised separately because the bit lives on the compiled
+                // program.
+                let gmsl_memo: std::cell::RefCell<
+                    std::collections::HashMap<
+                        (String, bool),
+                        Option<std::rc::Rc<crate::ported::pattern::Patprog>>,
+                    >,
+                > = std::cell::RefCell::new(std::collections::HashMap::new());
+                let gmsl = |s_: &str, p_: &str, off_: i32, notstart_: bool| -> Option<i32> {
+                    let key_ = (p_.to_string(), notstart_);
+                    let prog_ = {
+                        let hit_ = gmsl_memo.borrow().get(&key_).cloned();
+                        match hit_ {
+                            Some(pr_) => pr_,
+                            None => {
+                                let mut t_ = p_.to_string();
+                                crate::ported::glob::tokenize(&mut t_);
+                                let c_ = crate::ported::pattern::patcompile(
+                                    &t_,
+                                    crate::ported::zsh_h::PAT_HEAPDUP
+                                        | crate::ported::zsh_h::PAT_NOANCH // c:2665
+                                        | if notstart_ {
+                                            crate::ported::zsh_h::PAT_NOTSTART // c:2790
+                                        } else {
+                                            0
+                                        },
+                                    None,
+                                )
+                                .map(std::rc::Rc::new);
+                                gmsl_memo.borrow_mut().insert(key_, c_.clone());
+                                c_
+                            }
+                        }
+                    };
+                    let pr_ = prog_?;
+                    // c:3033-3034 — one `pattrylen` per start position; the
+                    // matcher is greedy, so it reports the longest match from
+                    // here and `patmatchlen()` hands back its byte length.
+                    if crate::ported::pattern::pattrylen(&pr_, s_, s_.len() as i32, -1, None, off_) {
+                        Some(crate::ported::pattern::patmatchlen())
+                    } else {
+                        None
+                    }
+                };
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
@@ -16096,11 +16202,11 @@ pub fn paramsubst(
                                 // ^D widget could hold the shell at 100% CPU for
                                 // hours. Same match, n tries instead of n^2/2.
                                 for start in 0..=nn {
-                                    if gms(sl(start, nn), &p, ioff(start)) {
+                                    if let Some(ml_) = gmsl(sl(start, nn), &p, ioff(start), start > 0)
+                                    {
                                         // c:3034 — `mpos = t + patmatchlen()`,
                                         // a BYTE length within the trial slice.
-                                        let mlen = crate::ported::pattern::patmatchlen().max(0)
-                                            as usize;
+                                        let mlen = ml_.max(0) as usize;
                                         let endb = (bidx[start] + mlen).min(val.len());
                                         let e = start + val[bidx[start]..endb].chars().count();
                                         count += 1; // c:3055 `--n`
@@ -17711,6 +17817,34 @@ pub fn paramsubst(
                         }
                     };
                     let parts: Vec<&str> = core_slice.splitn(2, ':').collect();
+                    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93's
+                    // `${var:offset[:length]}` arithmetic accepts no
+                    // parentheses at all — not the `(-3)` idiom bash and zsh
+                    // document for a negative offset, and not even a grouping
+                    // paren in an ordinary expression:
+                    //     $ ksh -c 'v=abcdef; print "${v:(-3):2}"'
+                    //     ksh: \(-3\):2: arithmetic syntax error
+                    //     $ ksh -c 'v=abcdef; print "${v:1+(1)}"'
+                    //     ksh: 1+\(1\): arithmetic syntax error
+                    //     $ ksh -c 'v=abcdef; print "${v: -3:2}"'
+                    //     de
+                    // (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.) zsh accepts
+                    // all three, so the gate is `korn_mode()` — the BARE
+                    // `--ksh`/`--mksh`/`--pdksh` drop-in. `zshrs --ksh --zsh`
+                    // and a runtime `emulate ksh` keep zsh's behavior, which is
+                    // what the zsh-style parity leg measures.
+                    //
+                    // mksh/pdksh are NOT ksh93 here: `mksh -c 'v=abcdef; print
+                    // "${v:(-2)}"'` prints `ef`, so that line is excluded via
+                    // `pdksh_family()`.
+                    if crate::dash_mode::korn_mode()
+                        && !crate::dash_mode::pdksh_family()
+                        && core_slice.contains('(')
+                    {
+                        zerr(&format!("{}: arithmetic syntax error", core_slice));
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new());
+                    }
                     // c:Src/subst.c:3825 — `${str:offset:length}` arms
                     // both go through `mathevali` (Src/math.c:1240),
                     // not literal strtol. Allows parentheses, leading

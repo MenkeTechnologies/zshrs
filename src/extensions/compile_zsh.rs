@@ -12233,6 +12233,26 @@ impl ZshCompiler {
         ac.slots = self.slots.clone();
         ac.next_slot = self.next_slot;
 
+        // c:Src/math.c:367 — `mathevall` opens EVERY evaluation with
+        // `lastbase = -1`. The interpreted evaluator is that code; this path
+        // never enters it, so the base of the last literal ANY evaluation read
+        // stayed set, and `assignsparam` handed the next freshly created
+        // integer that base (c:Src/params.c:2801): `typeset -i iv="2#101"`
+        // followed by `(( c += 3 ))` printed `2#11` where zsh prints `3`.
+        //
+        // Nothing has to put a base BACK for this path. An expression that
+        // names one goes to the interpreted evaluator, where `lexconstant`
+        // sets it as the literal is read — measured after this change,
+        // `(( x = 0xff ))` still prints `16#FF` and `(( q = 0x10 ))` `16#10`,
+        // in a loop body as well as at the top level.
+        let none_yet = ac.builder.add_constant(Value::Int(-1));
+        ac.builder.emit(Op::LoadConst(none_yet), 0);
+        ac.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_LASTBASE, 1),
+            0,
+        );
+        ac.builder.emit(Op::Pop, 0);
+
         // Pre-load: any var the arith expression touches needs its current
         // value pulled from executor.variables into its slot. Without this
         // `i=5; (( i+1 ))` reads 0 from the uninitialized slot.

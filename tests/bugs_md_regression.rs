@@ -2417,3 +2417,120 @@ fn expanded_at_or_star_subscript_is_a_key_not_the_splat() {
         );
     }
 }
+
+// BUGS.md #1136 — `(S)` + `##` takes the LEFTMOST longest match
+// Fix: src/ported/subst.rs — the (SUB_SUBSTR|SUB_LONG) scan compiles its
+// pattern with PAT_NOANCH (c:Src/glob.c:2665) so `pattrylen` reports a
+// PREFIX match at each start position instead of demanding a whole-slice
+// match, which had made the scan find the RIGHTMOST occurrence.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn substr_longest_prefix_strip_scans_from_the_left() {
+    // Reference values are `zsh -f` output for each line. `foobarfoo` has
+    // `foo` at both ends, so leftmost vs rightmost is observable in the
+    // remainder AND in the `(B)` index.
+    let cases: [(&str, &str); 6] = [
+        (r#"v=foobarfoo; print -r -- "${(S)v##foo}""#, "barfoo\n"),
+        (r#"v=foobarfoo; print -r -- "${(BS)v##foo}""#, "1\n"),
+        // Greedy at the leftmost position: `(o)##` matches `oo` at index 1.
+        (
+            r#"setopt extendedglob; v=foobarfoo; print -r -- "${(S)v##(o)##}""#,
+            "fbarfoo\n",
+        ),
+        (
+            r#"setopt extendedglob; v=foobarfoo; print -r -- "${(BS)v##(o)##}""#,
+            "2\n",
+        ),
+        // The two shapes that coincided under the old whole-slice scan and
+        // so could not catch the bug — pinned to keep them honest.
+        (r#"v=foobarfoo; print -r -- "${(S)v##o*}""#, "f\n"),
+        (r#"v=foobarfoo; print -r -- "${(MS)v##foo}""#, "foo\n"),
+    ];
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in cases {
+        let (_ec, out, err) = run_zshrs(script);
+        assert_eq!(out, want, "{script:?} stderr={err:?}");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #1137 — ksh93 drop-in: parenthesised substring offsets are an
+// arithmetic error, and an empty replacement pattern never matches.
+// Fix: src/ported/subst.rs, gated on korn_mode() && !pdksh_family().
+// ════════════════════════════════════════════════════════════════════
+
+/// Run a script under an explicit drop-in mode flag.
+fn run_mode(mode: &str, script: &str) -> (i32, String) {
+    let bin = match zshrs_bin() {
+        Some(b) => b,
+        None => return (0, String::new()),
+    };
+    let out = Command::new(&bin)
+        .args([mode, "-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .env_remove("ZDOTDIR")
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {bin:?}: {e}"));
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+#[test]
+fn korn_dropin_rejects_a_parenthesised_substring_offset() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // ksh93u+ 2012-08-01 errors on ANY paren in the offset arithmetic;
+    // the space form is the one it accepts.
+    for script in [
+        r#"v=abcdef; print "${v:(-2)}""#,
+        r#"v=abcdef; print "${v:(-3):2}""#,
+        r#"v=abcdef; print "${v:1+(1)}""#,
+    ] {
+        let (ec, out) = run_mode("--ksh", script);
+        assert_ne!(ec, 0, "--ksh must reject {script:?}; got stdout={out:?}");
+        assert_eq!(out, "", "--ksh must print nothing for {script:?}");
+    }
+    let (ec, out) = run_mode("--ksh", r#"v=abcdef; print "${v: -3:2}""#);
+    assert_eq!((ec, out.as_str()), (0, "de\n"), "space-offset form is valid ksh");
+
+    // mksh sides with zsh/bash — `mksh -c 'v=abcdef; print "${v:(-2)}"'`
+    // prints `ef` — so the Korn gate must not catch the pdksh line, and
+    // zsh/bash modes must be untouched.
+    for mode in ["--mksh", "--zsh", "--bash"] {
+        let (ec, out) = run_mode(mode, r#"v=abcdef; printf '%s\n' "${v:(-2)}""#);
+        assert_eq!((ec, out.as_str()), (0, "ef\n"), "{mode} must keep parens");
+    }
+}
+
+#[test]
+fn korn_dropin_never_matches_an_empty_replacement_pattern() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // ksh93: empty pattern matches nothing, anchored or not.
+    for script in [
+        r#"v=abc; print "[${v/#/X}]""#,
+        r#"v=abc; print "[${v/%/X}]""#,
+        r#"v=abc; print "[${v//X}]""#,
+    ] {
+        let (ec, out) = run_mode("--ksh", script);
+        assert_eq!((ec, out.as_str()), (0, "[abc]\n"), "--ksh: {script:?}");
+    }
+    // A NON-empty pattern still anchors, exactly as ksh93 does.
+    let (_ec, out) = run_mode("--ksh", r#"v=abc; print "[${v/#a/X}]""#);
+    assert_eq!(out, "[Xbc]\n", "--ksh keeps the anchor for a real pattern");
+    let (_ec, out) = run_mode("--ksh", r#"v=abc; print "[${v/%c/X}]""#);
+    assert_eq!(out, "[abX]\n", "--ksh keeps the end anchor too");
+
+    // mksh, zsh and bash all prepend/append at the anchor.
+    for mode in ["--mksh", "--zsh", "--bash"] {
+        let (_ec, out) = run_mode(mode, r#"v=abc; printf '[%s]\n' "${v/#/X}""#);
+        assert_eq!(out, "[Xabc]\n", "{mode} must keep the empty-pattern match");
+    }
+}
