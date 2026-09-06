@@ -1517,12 +1517,9 @@ pub fn zleread(
     // (c:2276-2280). zshrs links zle statically and never ran the module
     // boot chain, so the param stayed unset and start_edit() below had
     // nothing to emit. Run it once on first entry.
-    {
-        static ZLE_MODULE_SETUP: std::sync::Once = std::sync::Once::new();
-        ZLE_MODULE_SETUP.call_once(|| {
-            let _ = setup_(std::ptr::null());
-        });
-    }
+    ZLE_MODULE_SETUP.call_once(|| {
+        let _ = setup_(std::ptr::null());
+    });
 
     // c:1362 — `start_edit()` (termquery.c:737-741 → collate_seq(0, 1)):
     // emits the edit-mode enter sequences, most importantly bracketed
@@ -2620,6 +2617,18 @@ pub fn zleaftertrap(
 /// `Src/Zle/zle_main.c:2243`. Module-load init: registers thingies +
 /// queries terminal capabilities + assigns `$zle_bracketed_paste`.
 #[allow(unused_variables)]
+/// Guards the one-shot `setup_` run. C loads `zsh/zle` through the normal
+/// module chain, so `setup_` (c:zle_main.c:2246-2288) runs at MODULE LOAD;
+/// zshrs links zle statically and used to run it lazily on first `zleread`.
+/// That left `$zle_bracketed_paste` unset in any shell that had loaded the
+/// module but not yet entered the editor:
+///
+///     zmodload zsh/zle; print ${+zle_bracketed_paste}
+///     zsh 1    zshrs 0
+///
+/// Shared by both call sites so `init_thingies()` cannot run twice.
+pub(crate) static ZLE_MODULE_SETUP: std::sync::Once = std::sync::Once::new();
+
 pub fn setup_(m: *const module) -> i32 {
     // c:zle_main.c setup_
     // c:2252 — `init_thingies()` registers the built-in widgets.

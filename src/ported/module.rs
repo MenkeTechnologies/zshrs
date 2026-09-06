@@ -1922,6 +1922,21 @@ impl modulestab {
                 "zsh/compctl" => {
                     crate::ported::zle::compctl::setup_();
                 }
+                // c:Src/Zle/zle_main.c:2246-2288 — `setup_` is the zle
+                // module's boot function, so C runs it at module LOAD and
+                // c:2276-2280 assigns `$zle_bracketed_paste` there. zshrs
+                // links zle statically and ran `setup_` lazily on first
+                // `zleread`, so a shell that had loaded the module but not
+                // yet entered the editor was missing the parameter:
+                //     zmodload zsh/zle; print ${+zle_bracketed_paste}
+                //     zsh 1    zshrs 0
+                // `termquery.rs:760` already READ that array, so the port
+                // had a consumer with no producer outside the editor.
+                "zsh/zle" => {
+                    crate::ported::zle::zle_main::ZLE_MODULE_SETUP.call_once(|| {
+                        let _ = crate::ported::zle::zle_main::setup_(std::ptr::null());
+                    });
+                }
                 _ => {}
             }
         }
