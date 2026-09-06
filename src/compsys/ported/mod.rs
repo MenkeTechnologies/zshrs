@@ -50,10 +50,12 @@ pub fn eval_action_words(action: &str) -> Vec<String> {
 /// the rest of the string. zsh therefore runs a one-character command name.
 /// Measured, zsh 5.9 and this shell agreeing on the scalar semantics:
 ///
-///     action='app or factory:fn; env: UVICORN_APP):'
-///     eval "action=( $action )"   → (eval):1: parse error near `)'  rc=1
-///     $action[1]                  → a
-///     ${(@)action[2,-1]}          → pp or factory:fn; env: UVICORN_APP):
+/// ```text
+/// action='app or factory:fn; env: UVICORN_APP):'
+/// eval "action=( $action )"   → (eval):1: parse error near `)'  rc=1
+/// $action[1]                  → a
+/// ${(@)action[2,-1]}          → pp or factory:fn; env: UVICORN_APP):
+/// ```
 ///
 /// which is how `uvicorn <TAB>` reaches `_arguments:465: command not found: a`
 /// — `_uvicorn`'s last spec is
