@@ -11934,6 +11934,39 @@ impl ZshCompiler {
         };
     }
 
+    /// Turn a `BUILTIN_ARITH_EVAL` result (on the stack) into the math
+    /// command's exit status, then drop it.
+    ///
+    /// `c:Src/exec.c:5316-5321` is the whole of what a `(( ))` does with
+    /// its value:
+    ///
+    /// ```c
+    /// if (errflag) {
+    ///     errflag &= ~ERRFLAG_ERROR;
+    ///     return 2;
+    /// }
+    /// return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;
+    /// ```
+    ///
+    /// `BUILTIN_ARITH_CMD_FINISH_VAL` already IS that statement — the
+    /// errflag split, `lastmathval` (c:Src/math.c:1500, which a
+    /// `functions -M` math function returns at c:1115) and the
+    /// integer-vs-float zero test — and the compiled path has always
+    /// called it. The three arms that hand the expression to the runtime
+    /// evaluator instead open-coded the test as a STRING compare of the
+    /// result against `"0"`, which is not C's comparison: a float zero
+    /// prints as `0.0`, compared unequal, and `(( $x ))` with `x=0.0`
+    /// reported TRUE where zsh reports false (`val.u.d == 0.0`). Routing
+    /// all four through the one primitive removes the second spelling
+    /// rather than repairing it in three places.
+    fn emit_arith_cmd_status_from_result(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH_VAL, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     fn compile_arith(&mut self, expr: &str) {
         // xtrace: emit `(( expr ))` text BEFORE pushing CS_MATH so
         // the trace line itself is NOT labeled "math". Direct port
@@ -12013,26 +12046,7 @@ impl ZshCompiler {
             // (zi/zpl/zplg/zini), `add-zsh-hook` autoload, and the rest of
             // the file. Derive the status from the value, same as the
             // scalar `needs_eval` path below.
-            let zero_const = self.builder.add_constant(Value::str("0"));
-            self.builder.emit(Op::LoadConst(zero_const), 0);
-            self.builder.emit(Op::StrEq, 0);
-            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-            self.builder.emit(Op::LoadInt(0), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let end_jump = self.builder.emit(Op::Jump(0), 0);
-            let true_target = self.builder.current_pos();
-            self.builder.patch_jump(true_jump, true_target);
-            self.builder.emit(Op::LoadInt(1), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let after_status = self.builder.current_pos();
-            self.builder.patch_jump(end_jump, after_status);
-            // Errflag-aware finish — overrides status to 2 if a math error
-            // fired, clearing errflag so the next statement still runs.
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
-                0,
-            );
-            self.builder.emit(Op::Pop, 0);
+            self.emit_arith_cmd_status_from_result();
             self.emit_cmd_pop();
             return;
         }
@@ -12057,38 +12071,10 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
             // c:Src/exec.c WC_ARITH — `(( expr ))` is a "math
-            // command": result string → status (0 if non-zero,
+            // command": the value becomes the status (0 if non-zero,
             // 1 if zero). On math error, status=2 and errflag is
-            // cleared by BUILTIN_ARITH_CMD_FINISH so the next
-            // statement still runs.
-            //
-            // Stack on entry to the finish block: [result_str]
-            //   1. Compare result to "0" to compute truthiness.
-            //   2. JumpIfTrue → status=1 (math result was 0).
-            //   3. Else → status=0 (math result was non-zero).
-            //   4. Then BUILTIN_ARITH_CMD_FINISH inspects errflag
-            //      and, if set, overrides status with 2 + clears
-            //      the global errflag.
-            let zero_const = self.builder.add_constant(Value::str("0"));
-            self.builder.emit(Op::LoadConst(zero_const), 0);
-            self.builder.emit(Op::StrEq, 0);
-            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-            self.builder.emit(Op::LoadInt(0), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let end_jump = self.builder.emit(Op::Jump(0), 0);
-            let true_target = self.builder.current_pos();
-            self.builder.patch_jump(true_jump, true_target);
-            self.builder.emit(Op::LoadInt(1), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let after_status = self.builder.current_pos();
-            self.builder.patch_jump(end_jump, after_status);
-            // Errflag-aware finish — overrides status to 2 if math
-            // error fired, clearing errflag for next statement.
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
-                0,
-            );
-            self.builder.emit(Op::Pop, 0);
+            // cleared so the next statement still runs.
+            self.emit_arith_cmd_status_from_result();
             self.emit_cmd_pop();
             return;
         }
@@ -12137,26 +12123,9 @@ impl ZshCompiler {
             // Measured: `x=2; (exit 7); (( $x == 1 )); echo $?` printed 7
             // (zsh: 1), `while (( $x > 0 ))` ran one iteration too many and
             // `until (( $x == 0 ))` ran none. Derive it the same way the
-            // `needs_eval` arm above does — BUILTIN_ARITH_CMD_FINISH still
+            // `needs_eval` arm above does — the finish primitive still
             // overrides with 2 when the runtime re-fire sets errflag.
-            let zero_const = self.builder.add_constant(Value::str("0"));
-            self.builder.emit(Op::LoadConst(zero_const), 0);
-            self.builder.emit(Op::StrEq, 0);
-            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-            self.builder.emit(Op::LoadInt(0), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let end_jump = self.builder.emit(Op::Jump(0), 0);
-            let true_target = self.builder.current_pos();
-            self.builder.patch_jump(true_jump, true_target);
-            self.builder.emit(Op::LoadInt(1), 0);
-            self.builder.emit(Op::SetStatus, 0);
-            let after_status = self.builder.current_pos();
-            self.builder.patch_jump(end_jump, after_status);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
-                0,
-            );
-            self.builder.emit(Op::Pop, 0);
+            self.emit_arith_cmd_status_from_result();
             self.emit_cmd_pop();
             return;
         }

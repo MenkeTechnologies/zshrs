@@ -480,3 +480,74 @@ mod dollar_in_math_command {
         assert_parity(r#"x=2; (( $x + )) 2>/dev/null; echo $?"#);
     }
 }
+
+/// A math command whose value is a FLOAT zero.
+///
+/// `c:Src/exec.c:5321` distinguishes the two number types:
+///
+/// ```c
+/// return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;
+/// ```
+///
+/// The arms of `compile_arith` that hand the expression to the runtime
+/// evaluator each derived that status by comparing the RESULT STRING to
+/// `"0"`, so a float zero — whose string form is `0.0` — compared unequal
+/// and reported true. `(( 0.0 ))` and `(( x ))` were right only because
+/// they reach the compiled path, which already calls the primitive that
+/// does C's comparison.
+mod float_zero_status {
+    use super::*;
+
+    /// The `$name` arm.
+    #[test]
+    fn dollar_float_zero_is_false() {
+        assert_parity(r#"x=0.0; (( $x )); echo $?"#);
+    }
+
+    /// The `${name}` spelling of the same arm.
+    #[test]
+    fn braced_float_zero_is_false() {
+        assert_parity(r#"x=0.0; (( ${x} )); echo $?"#);
+    }
+
+    /// The positional arm, which `arith_uncompilable_reason` sends to the
+    /// runtime evaluator for a different reason and which shared the flaw.
+    #[test]
+    fn positional_float_zero_is_false() {
+        assert_parity(r#"set -- 0.0; (( $1 )); echo $?"#);
+    }
+
+    /// The subscript arm, likewise.
+    #[test]
+    fn subscript_float_zero_is_false() {
+        assert_parity(r#"a=(0.0); (( ${a[1]} )); echo $?"#);
+    }
+
+    /// A float zero produced by the arithmetic rather than read as text.
+    #[test]
+    fn computed_float_zero_is_false() {
+        assert_parity(r#"x=0.0; (( $x + 0.0 )); echo $?"#);
+    }
+
+    /// A non-zero float still reads as true.
+    #[test]
+    fn dollar_float_nonzero_is_true() {
+        assert_parity(r#"x=0.5; (( $x )); echo $?"#);
+    }
+
+    /// The forms that were already correct must stay correct.
+    #[test]
+    fn literal_and_bare_float_zero_unchanged() {
+        assert_parity(r#"(( 0.0 )); echo $?"#);
+        assert_parity(r#"x=0.0; (( x )); echo $?"#);
+    }
+
+    /// The read-then-modify arm derives its status from the OLD value, so
+    /// a zero slot must stay false — this is what `zinit`'s
+    /// `(( ZINIT[SOURCED]++ )) && return` depends on.
+    #[test]
+    fn subscript_post_increment_from_zero_is_false() {
+        assert_parity(r#"typeset -A h; (( h[k]++ )); echo "$? ${h[k]}""#);
+        assert_parity(r#"typeset -A h; h[k]=1; (( h[k]++ )); echo "$? ${h[k]}""#);
+    }
+}
