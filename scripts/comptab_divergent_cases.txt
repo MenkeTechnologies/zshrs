@@ -4525,3 +4525,109 @@ gstack
 # All seven are one edit each: hoist the shell-function preference out of the
 # `IS_ZSH_MODE` arm, exactly as `try_user_fn_override` already does, and leave
 # the gate deciding only what happens when no function exists.
+
+# ============================================================================
+# ZSTYLE-VARIATION SWEEP #2 (2026-09-05) — the LISTING / FORMAT / MATCHER
+# surfaces, `menu` and `last-prompt` excluded so sweep #1's two findings do not
+# soak up the budget.
+# ============================================================================
+# 140 GENERATED configs, 3 statements each, seed 6001, --style-fuzz-only over
+# 39 style names (list-colors group-name group-order tag-order format verbose
+# extra-verbose list-packed list-rows-first list-grouped list-separator
+# list-dirs-first list-suffixes squeeze-slashes ignored-patterns matcher-list
+# matcher prefix-needed hidden sort file-sort special-dirs accept-exact
+# add-space keep-prefix expand substitute insert-unambiguous max-errors
+# completer single-ignored ambiguous original auto-description use-cache
+# complete-options accept-exact-dirs select-prompt list-prompt), judged on the
+# same 35-case default-style-PASS pool minus 'ls **/'.
+#
+#   # 137 passed, 2 failed, 140 config(s)
+#   # categories: PASS=137 FAIL=2 FLAKY=0 TIMEOUT=1 SKIP=0 INVALID-CONFIG=0
+#   #             REF-REFUSED=0 REF-CRASHED=0 TEST-CRASHED=0
+#
+#   Vacuous-pass rate: 8 of 137 PASSes, 5.8% — in line with the 5.3-5.8%
+#   recorded for the discovered corpus earlier in this file.
+#   The 1 TIMEOUT ('git add ', cfg0016) re-ran serially and TIMED OUT again;
+#   not classified either way, per the standing rule.
+#   Pin re-verified unchanged after the chunk:
+#     zshrs cb8d9e2939d6ce8dd6e6873b609dda475bc4eea288e59fefe53f2f20620243c5
+#     dump  10ebe0a03395e167689fc3e1ef3e44f38492847e5633932103da0ff0d801df5d
+#
+# Of the 2 FAILs, one is a KNOWN class and one is new:
+#
+#   cfg0094 'which ' [b29792c9a7] — the ask-prompt COUNT band, same
+#   fingerprint the default-style baseline produces for 'sudo ' /
+#   'echo $' / 'diff <(' and the same one classified BENIGN earlier in this
+#   file (52394/26197 vs 52414/26207 possibilities/lines). Its config
+#   (list-suffixes / file-sort / insert-unambiguous, all at contexts that do
+#   not apply to `which`) is incidental. NOT FILED.
+#
+# ---------------------------------------------------------------------------
+# FINDING 3 — `$historywords` is in the WRONG ORDER, so `_history` anywhere in
+#             the `completer` chain KILLS every completer after it.
+# ---------------------------------------------------------------------------
+# Fixture (one statement):
+#     zstyle ':completion:*' completer _history _complete
+# 'kill -': FAIL 3/3 serial, --jobs 1. Also FAILs on 'cd /usr/' (2 rows) and
+# 'ls -' (1 row). 'git ' passes.
+#
+#   ref/zsh                                    test/zshrs
+#    0| $ kill -                                0| $ kill -
+#    1| -L  -- list each signal and number      <nothing at all>
+#    2| -l  -- list signal names or numbers
+#    3| -n  -- specify signal number
+#    4| -q  -- send the specified integer ...
+#    5| -s  -- specify signal name
+#    6| -ABRT  -CHLD  -FPE  ... (3 packed rows of signal names)
+#
+# It is `_history` specifically, and its POSITION does not matter:
+#     completer _expand   _complete   'kill -'  PASS
+#     completer _oldlist  _complete   'kill -'  PASS
+#     completer _prefix   _complete   'kill -'  PASS
+#     completer _history              'kill -'  PASS  (nothing on either side)
+#     completer _complete _history    'kill -'  PASS  (_complete wins first)
+#     completer _history  _complete   'kill -'  FAIL
+#     completer _correct _history _complete  'kill -'  FAIL
+#
+# ROOT CAUSE — measured, not inferred. A probe completer chain
+# `_p1 _history _p2 _complete _p3`, each probe appending to its own
+# `$$`-keyed file, shows `_p2` running in zsh and NEVER running in zshrs: the
+# chain stops at `_history`. A second probe that calls `_history` itself and
+# records its status says why:
+#     zsh   : hist_ret=1 nm=0
+#     zshrs : hist_ret=0 nm=1
+# zshrs's `_history` ADDS a match, so its `sh:65` tail `(( $compstate[nmatches] ))`
+# returns 0 and `_main_complete`'s `elif "$tmp"; then ret=0; break 2` (sh:219-221)
+# ends the chain. The one bogus match is what renders as the lone bold space.
+#
+# And the match it adds is the word being completed, because `$historywords`
+# is built in the WRONG ORDER. Same probe, same cell, `${(qq)historywords}`:
+#     zsh   : '- kill /var/.../init.zsh source'
+#     zshrs : 'kill - /var/.../init.zsh source'
+# `_history` starts at `beg=2` deliberately — Completion/Base/Completer/_history:53-54,
+# "We skip the first element of historywords so the current word doesn't
+# interfere with the completion". With the current word at index 2 instead of
+# 1, the skip misses it, `-` matches PREFIX `-`, and a match appears.
+#
+# The C builds the buffer words REVERSED, and the port appends them forward:
+#   c:Src/Modules/parameter.c:1237-1239
+#       if ((ll = bufferwords(NULL, NULL, NULL, 0)))
+#           for (n = firstnode(ll); n; incnode(n))
+#               pushnode(l, getdata(n));
+#   `pushnode` PREPENDS, so walking the buffer words forward and prepending
+#   each one leaves them in REVERSE order at the head of the list — for the
+#   buffer `kill -` that is `-`, `kill`.
+#   src/ported/modules/parameter.rs:3081-3082
+#       let (bw, _) = crate::ported::hist::bufferwords(&zleline, cursor);
+#       out.extend(bw); // c:1225-1226 pushnode
+#   `extend` APPENDS in forward order: `kill`, `-`.
+# The doc comment on the same function (parameter.rs:3064-3065) says the C
+# body "prepends `bufferwords(...)`" and the inline marker says `pushnode` —
+# both name the right C primitive while the code does the opposite. Another
+# instance of the false-equivalence comment shape recorded elsewhere in this
+# file.
+#
+# Blast radius beyond the `completer` style: `$historywords` is the documented
+# interface (zshmodules(1), zsh/parameter), so anything reading it — the
+# `_history_complete_word` widget, `_history`'s `range` style slicing, user
+# code — sees the current word where it expects the previous one.
