@@ -28,6 +28,7 @@
 //! last-prompt, accept-exact, menu, force-list, show-ambiguity,
 //! list-colors). Called by `_description` per tag-spec.
 
+use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -197,44 +198,6 @@ pub fn _setup_impl(args: &[String]) -> i32 {
     // sh:79
     let _ = setsparam("_comp_force_list", &val);
     0
-}
-
-/// !!! WARNING: RUST-ONLY HELPER !!!
-/// No C counterpart. Upstream `_setup` is a SHELL function, so its four
-/// boolean-style tests are literally `zstyle -t "$ctx" "$style"` command
-/// invocations (sh:33, sh:42, sh:50, sh:58) and the arms below them read
-/// `$?`. This helper runs that same builtin — [`bin_zstyle`], the port of
-/// `Src/Modules/zutil.c:487` — so the tri-state exit is the builtin's own,
-/// not a re-derivation of it:
-///
-/// * `0` — style set for the context AND its first value is one of
-///   `true` / `yes` / `on` / `1` (c:719-722).
-/// * `1` — style set for the context but its first value is not one of
-///   those, or it carries no values (c:722 / c:724 `vals ? 1 : …`).
-/// * `2` — no style pattern matched this context (c:724 `: 2`).
-///
-/// It exists because the obvious-looking [`testforstyle`](crate::ported::modules::zutil::testforstyle)
-/// (`Src/Modules/zutil.c:465`) is NOT `zstyle -t`: it backs `zstyle -q`
-/// (c:753) and answers "is this style DEFINED for this context",
-/// ignoring the value entirely. Using it here made
-/// `zstyle ':completion:*' last-prompt 0` set `$compstate[last_prompt]`
-/// to `yes` — the exact opposite of what the style asks for — so
-/// `add_match_data` never cleared `dolastprompt` (`Src/Zle/compcore.c:3014-3015`)
-/// and the completion listing kept climbing back to the original prompt
-/// row instead of letting zsh reprint the prompt below it.
-fn zstyle_t(ctx: &str, style: &str) -> i32 {
-    let ops = crate::ported::zsh_h::options {
-        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-        args: Vec::new(),
-        argscount: 0,
-        argsalloc: 0,
-    };
-    crate::ported::modules::zutil::bin_zstyle(
-        "zstyle",
-        &["-t".to_string(), ctx.to_string(), style.to_string()],
-        &ops,
-        0,
-    )
 }
 
 /// Helper for sh:33/sh:42 — toggle `compstate[list]` += `<flag>`

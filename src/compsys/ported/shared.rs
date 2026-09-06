@@ -225,6 +225,77 @@ pub fn mark_readonly(names: &[&str]) {
     }
 }
 
+// =====================================================================
+// Boolean style tests — `zstyle -t` / `zstyle -T`.
+// =====================================================================
+//
+// !!! WARNING: RUST-ONLY HELPERS !!!
+//
+// These two have no C counterpart, because upstream has no function to
+// port here: every compsys boolean style test is literally the COMMAND
+// `zstyle -t "$ctx" <style>` (or `-T`) in the shell source, with the
+// arms below it reading `$?`. The helpers run that same builtin —
+// [`bin_zstyle`](crate::ported::modules::zutil::bin_zstyle), the port of
+// `Src/Modules/zutil.c:487` — so the tri-state exit is the builtin's
+// own rather than a re-derivation of it.
+//
+// They exist because the obvious-looking
+// [`testforstyle`](crate::ported::modules::zutil::testforstyle)
+// (`Src/Modules/zutil.c:465`) is NOT `zstyle -t`. It is the primitive
+// behind `zstyle -q` (c:749-756) and answers "is this style DEFINED for
+// this context", ignoring the value entirely — so
+// `zstyle ':completion:*' <style> 0` made every port that called it take
+// the TRUE branch, the exact opposite of what the style asks for. The
+// same misport was measured and fixed at `_setup`'s `last-prompt`
+// (e3f05f5c05); these helpers are that fix generalised so the shape is
+// written once instead of once per completer.
+//
+// The exits are the `case 't': case 'T':` arm at c:701-724:
+//
+//   * 0 — style set for the context AND its first value is one of
+//     `true` / `yes` / `on` / `1` (c:719-722).
+//   * 1 — style set for the context but its first value is not one of
+//     those (c:719-722), or set with NO values (c:724 `vals ? 1 : 2`).
+//   * 2 — no style pattern matched this context (c:724 `: 2`), for `-t`
+//     only; `-T` returns 0 there instead (c:724 `: 0`), which is the
+//     whole difference between the two letters.
+
+/// Build the empty `options` struct `bin_zstyle` wants. It parses
+/// `args[0]` itself (the BUILTIN spec carries a NULL optstr at c:2139),
+/// so nothing needs to be pre-set here.
+fn empty_ops() -> crate::ported::zsh_h::options {
+    crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `zstyle -t <ctx> <style>` — 0 boolean-true, 1 set-but-not-true,
+/// 2 unset for this context. See the block comment above.
+pub fn zstyle_t(ctx: &str, style: &str) -> i32 {
+    crate::ported::modules::zutil::bin_zstyle(
+        "zstyle",
+        &["-t".to_string(), ctx.to_string(), style.to_string()],
+        &empty_ops(),
+        0,
+    )
+}
+
+/// `zstyle -T <ctx> <style>` — as [`zstyle_t`], except that an UNSET
+/// style is true (0) rather than 2 (c:724). This is the "default yes"
+/// spelling upstream uses for styles like `add-space` and `verbose`.
+#[allow(non_snake_case)]
+pub fn zstyle_T(ctx: &str, style: &str) -> i32 {
+    crate::ported::modules::zutil::bin_zstyle(
+        "zstyle",
+        &["-T".to_string(), ctx.to_string(), style.to_string()],
+        &empty_ops(),
+        0,
+    )
+}
+
 /// Hand `args` to `bin_zparseopts` through its `-v <name>` source array,
 /// declared LOCAL to the enclosing function scope first.
 ///
@@ -861,35 +932,35 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
         }
     }
     drop(fstack); // c:6218-6219 `if (fpushed) funcstack = funcstack->prev;`
-    // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
-    //
-    // `eval` swallows the error bit on the way out, UNCONDITIONALLY, and that
-    // is load-bearing for completion: it is what lets an error deep inside a
-    // completer TRUNCATE the work while KEEPING the matches already banked.
-    // `_CC` ends in `_files -g "*(-.):t:source files" -g "*(-/):t:directories"`,
-    // which brace-expands to four sdefs; the third is a genuine bad pattern
-    // (`/` ends a segment at EVERY paren depth — c:Src/pattern.c:949-952 — so
-    // the group is unterminated and c:Src/pattern.c:913-914 rejects it).
-    // `zerr` raises ERRFLAG_ERROR (c:Src/utils.c:184); that aborts
-    // `_path_files`, `_files` (so the FOURTH sdef, `*(-/)` = every directory,
-    // never runs), `_arguments` and `_CC` — and then THIS clear runs at the
-    // `eval "$comp"` in sh:Completion/Base/Core/_dispatch:63, so
-    // `makecomplist`'s `(nmatches || nmessages) && !errflag`
-    // (c:Src/Zle/compcore.c:1031) still sees errflag == 0 and keeps the one
-    // match added before the error.  Without it the completion is discarded
-    // and `CC <TAB>` produces nothing at all.
-    //
-    // Measured on an instrumented zsh 5.9.999.3 driving `CC <TAB>`:
-    //   ZDBG SET   utils.c:184 zerr fmt=<bad pattern: %s> errflag=1
-    //   ZDBG FUNC< _path_files errflag=1 ret=1
-    //   ZDBG FUNC< _files      errflag=1 ret=1
-    //   ZDBG FUNC< _arguments  errflag=1 ret=1
-    //   ZDBG FUNC< _CC         errflag=1 ret=1
-    //   ZDBG CLR   builtin.c:6213 before=1 stmt=<errflag &= ~ERRFLAG_ERROR;>
-    //   ZDBG FUNC< _dispatch   errflag=0 ret=1
-    //   ZDBG CHECK compcore.c:1031 nmatches=1 nmessages=0 errflag=0
-    // Of the 87 errflag clear sites in the C source, that is the ONLY one in
-    // the whole session that observes a set ERRFLAG_ERROR.
+                  // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
+                  //
+                  // `eval` swallows the error bit on the way out, UNCONDITIONALLY, and that
+                  // is load-bearing for completion: it is what lets an error deep inside a
+                  // completer TRUNCATE the work while KEEPING the matches already banked.
+                  // `_CC` ends in `_files -g "*(-.):t:source files" -g "*(-/):t:directories"`,
+                  // which brace-expands to four sdefs; the third is a genuine bad pattern
+                  // (`/` ends a segment at EVERY paren depth — c:Src/pattern.c:949-952 — so
+                  // the group is unterminated and c:Src/pattern.c:913-914 rejects it).
+                  // `zerr` raises ERRFLAG_ERROR (c:Src/utils.c:184); that aborts
+                  // `_path_files`, `_files` (so the FOURTH sdef, `*(-/)` = every directory,
+                  // never runs), `_arguments` and `_CC` — and then THIS clear runs at the
+                  // `eval "$comp"` in sh:Completion/Base/Core/_dispatch:63, so
+                  // `makecomplist`'s `(nmatches || nmessages) && !errflag`
+                  // (c:Src/Zle/compcore.c:1031) still sees errflag == 0 and keeps the one
+                  // match added before the error.  Without it the completion is discarded
+                  // and `CC <TAB>` produces nothing at all.
+                  //
+                  // Measured on an instrumented zsh 5.9.999.3 driving `CC <TAB>`:
+                  //   ZDBG SET   utils.c:184 zerr fmt=<bad pattern: %s> errflag=1
+                  //   ZDBG FUNC< _path_files errflag=1 ret=1
+                  //   ZDBG FUNC< _files      errflag=1 ret=1
+                  //   ZDBG FUNC< _arguments  errflag=1 ret=1
+                  //   ZDBG FUNC< _CC         errflag=1 ret=1
+                  //   ZDBG CLR   builtin.c:6213 before=1 stmt=<errflag &= ~ERRFLAG_ERROR;>
+                  //   ZDBG FUNC< _dispatch   errflag=0 ret=1
+                  //   ZDBG CHECK compcore.c:1031 nmatches=1 nmessages=0 errflag=0
+                  // Of the 87 errflag clear sites in the C source, that is the ONLY one in
+                  // the whole session that observes a set ERRFLAG_ERROR.
     crate::ported::utils::errflag.fetch_and(
         !crate::ported::zsh_h::ERRFLAG_ERROR,
         std::sync::atomic::Ordering::Relaxed,
@@ -1168,5 +1239,74 @@ mod diagnostic_framing_tests {
             still_active, 1,
             "the entersubsh stand-in must restore zleactive when it drops"
         );
+    }
+}
+
+#[cfg(test)]
+mod zstyle_bool_tests {
+    use super::{empty_ops, zstyle_T, zstyle_t};
+
+    const CTX: &str = ":completion:zstyle-bool-probe:zstyle-bool-probe:";
+
+    fn set_style(value: &str) {
+        crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[CTX.to_string(), "boolprobe".to_string(), value.to_string()],
+            &empty_ops(),
+            0,
+        );
+    }
+
+    fn del_style() {
+        crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &["-d".to_string(), CTX.to_string(), "boolprobe".to_string()],
+            &empty_ops(),
+            0,
+        );
+    }
+
+    /// `Src/Modules/zutil.c:701-724` — the `-t`/`-T` arm reads the style's
+    /// FIRST VALUE. `testforstyle` (c:465), which backs `zstyle -q` (c:749-756),
+    /// answers only "is this style defined" and returns the same thing for
+    /// `boolprobe yes` and `boolprobe 0`. Every compsys port that tested a
+    /// boolean style through it therefore took the TRUE branch for a style the
+    /// user had explicitly turned OFF.
+    #[test]
+    fn value_decides_the_exit_not_mere_definition() {
+        let _g = crate::test_util::global_state_lock();
+        del_style();
+
+        // c:724 — `return (args[0][1] == 't' ? (vals ? 1 : 2) : 0);`
+        assert_eq!(zstyle_t(CTX, "boolprobe"), 2, "-t, no pattern matched → 2");
+        assert_eq!(zstyle_T(CTX, "boolprobe"), 0, "-T, no pattern matched → 0");
+
+        // c:719-722 — the four boolean-true spellings.
+        for v in ["true", "yes", "on", "1"] {
+            del_style();
+            set_style(v);
+            assert_eq!(zstyle_t(CTX, "boolprobe"), 0, "-t on `{v}` must be 0");
+            assert_eq!(zstyle_T(CTX, "boolprobe"), 0, "-T on `{v}` must be 0");
+        }
+
+        // c:719-722 — anything else is FALSE for both letters. This is the
+        // whole defect class: `testforstyle` answered 0 ("defined") for each
+        // of these, so the ports ran the true branch.
+        for v in ["false", "no", "off", "0"] {
+            del_style();
+            set_style(v);
+            assert_eq!(
+                zstyle_t(CTX, "boolprobe"),
+                1,
+                "-t on `{v}` must be 1, not 0 — the style is OFF"
+            );
+            assert_eq!(
+                zstyle_T(CTX, "boolprobe"),
+                1,
+                "-T on `{v}` must be 1, not 0 — the style is OFF"
+            );
+        }
+
+        del_style();
     }
 }
