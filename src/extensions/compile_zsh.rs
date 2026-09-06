@@ -2579,8 +2579,7 @@ impl ZshCompiler {
                 // `continue` does not need the same guard: its jump
                 // lands on the loop's continue target, which falls into
                 // the drain and clears the flag on the next pass.
-                if self.try_block_depth > 0
-                    && idx < self.try_loop_base.last().copied().unwrap_or(0)
+                if self.try_block_depth > 0 && idx < self.try_loop_base.last().copied().unwrap_or(0)
                 {
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0), 0);
@@ -4276,9 +4275,9 @@ impl ZshCompiler {
                     self.last_assign_had_cmd_subst = match &assign.value {
                         ZshAssignValue::Scalar(rhs) => scalar_rhs_has_cmd_subst(rhs),
                         ZshAssignValue::Array(els) => {
-                        els.iter().any(|e| scalar_rhs_has_cmd_subst(e))
+                            els.iter().any(|e| scalar_rhs_has_cmd_subst(e))
                         }
-                };
+                    };
                     return;
                 }
                 let name_const = self.builder.add_constant(Value::str(base));
@@ -4443,9 +4442,7 @@ impl ZshCompiler {
                 // backend ran anyway with an empty gitdir and read `/HEAD`.
                 self.last_assign_had_cmd_subst = match &assign.value {
                     ZshAssignValue::Scalar(rhs) => scalar_rhs_has_cmd_subst(rhs),
-                    ZshAssignValue::Array(els) => {
-                        els.iter().any(|e| scalar_rhs_has_cmd_subst(e))
-                    }
+                    ZshAssignValue::Array(els) => els.iter().any(|e| scalar_rhs_has_cmd_subst(e)),
                 };
                 return;
             }
@@ -4481,24 +4478,24 @@ impl ZshCompiler {
                 // paths call as well.
                 //
                 // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
-                                                                     // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
-                                                                     // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
-                                                                     // token byte unambiguously means "unquoted glob pattern". This
-                                                                     // matches zsh: only literal unquoted patterns are globbed on
-                                                                     // assignment (Src/exec.c:2554); `x="/tmp/*"`, `x=$p`, `x=$(c)`
-                                                                     // are not. The DQ-wrap below untokenizes the value, so the
-                                                                     // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
-                                                                     // ELIGIBLE emitted just before SET_VAR.
-                                                                     // A glob token counts only at TOP LEVEL. A Star/Quest/Inbrack
-                                                                     // INSIDE a `${…}` / `$(…)` expansion, a `$name[…]` subscript, or
-                                                                     // a `` `…` `` is not a value glob: `${A[1]}` / `$A[1]` carry an
-                                                                     // Inbrack for their SUBSCRIPT, `${x#*/}` a Star for its PATTERN,
-                                                                     // `$*` a Star for the PARAM — none glob the assigned value. zsh
-                                                                     // globs the value POST-expansion (Src/subst.c globlist → zglob's
-                                                                     // haswilds on the RESULT), so an expansion-interior token never
-                                                                     // counts. Skipping those interiors before testing matches zsh:
-                                                                     // `x=/tmp/*`, `x=[abc]`, `x=$p*` glob; `x=$p`, `x=${A[1]}`,
-                                                                     // `x=$A[1]`, `x=$*` do not.
+                // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
+                // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
+                // token byte unambiguously means "unquoted glob pattern". This
+                // matches zsh: only literal unquoted patterns are globbed on
+                // assignment (Src/exec.c:2554); `x="/tmp/*"`, `x=$p`, `x=$(c)`
+                // are not. The DQ-wrap below untokenizes the value, so the
+                // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
+                // ELIGIBLE emitted just before SET_VAR.
+                // A glob token counts only at TOP LEVEL. A Star/Quest/Inbrack
+                // INSIDE a `${…}` / `$(…)` expansion, a `$name[…]` subscript, or
+                // a `` `…` `` is not a value glob: `${A[1]}` / `$A[1]` carry an
+                // Inbrack for their SUBSCRIPT, `${x#*/}` a Star for its PATTERN,
+                // `$*` a Star for the PARAM — none glob the assigned value. zsh
+                // globs the value POST-expansion (Src/subst.c globlist → zglob's
+                // haswilds on the RESULT), so an expansion-interior token never
+                // counts. Skipping those interiors before testing matches zsh:
+                // `x=/tmp/*`, `x=[abc]`, `x=$p*` glob; `x=$p`, `x=${A[1]}`,
+                // `x=$A[1]`, `x=$*` do not.
                 let glob_eligible = {
                     use crate::ported::zsh_h::{
                         Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Qstring, Qtick, Quest,
@@ -5138,7 +5135,10 @@ impl ZshCompiler {
                     // in subst.rs's bare `$name[sub]` arm).
                     let mut sub_end = name_end;
                     if name_end > name_start
-                        && matches!(ch.get(sub_end).copied(), Some('[') | Some(crate::ported::zsh_h::Inbrack))
+                        && matches!(
+                            ch.get(sub_end).copied(),
+                            Some('[') | Some(crate::ported::zsh_h::Inbrack)
+                        )
                     {
                         let mut depth = 1usize;
                         let mut q = sub_end + 1;
@@ -5826,9 +5826,8 @@ impl ZshCompiler {
         // c:Src/subst.c:520 — `singsub_depth` is the direct spelling of the
         // same PREFORK_SINGLE state for the `case` word (c:Src/loop.c:611),
         // which has no `dq_context_depth` bump of its own.
-        let in_prefork_single = self.dq_context_depth > 0
-            || word_is_single_dq_span(s)
-            || self.singsub_depth > 0;
+        let in_prefork_single =
+            self.dq_context_depth > 0 || word_is_single_dq_span(s) || self.singsub_depth > 0;
         let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
@@ -7428,7 +7427,8 @@ impl ZshCompiler {
                             // c:3916 joins an array value to one scalar before the c:4041
                             // quote block. Carried as an extra VM argument, exactly like
                             // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                            self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                            self.builder
+                                .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                             self.builder.emit(
                                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                                 0,
@@ -7448,7 +7448,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7524,7 +7525,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7558,7 +7560,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7589,7 +7592,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7725,7 +7729,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7755,7 +7760,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -7783,7 +7789,8 @@ impl ZshCompiler {
                     // c:3916 joins an array value to one scalar before the c:4041
                     // quote block. Carried as an extra VM argument, exactly like
                     // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                    self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                    self.builder
+                        .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                         0,
@@ -7839,7 +7846,8 @@ impl ZshCompiler {
                     //      (##, %%, /, etc.) on `NAME[@]` go through
                     //      their own per-element fast path that
                     //      already preserves shape.
-                    let has_at_filter = after_flags.contains("[@]") && after_flags.contains(":#");
+                    let has_at_filter = contains_outside_cmdsubst(after_flags, "[@]")
+                        && contains_outside_cmdsubst(after_flags, ":#");
                     // (M) / (R) filter on a `:#` operator — keeps
                     // matching elements (M) or first-match index (R).
                     // For arrays this MUST return array shape so the
@@ -7852,7 +7860,7 @@ impl ZshCompiler {
                     // by walking aval per element.
                     let has_filter_with_match_flag = (flag_chain.contains('M')
                         || flag_chain.contains('R'))
-                        && after_flags.contains(":#");
+                        && contains_outside_cmdsubst(after_flags, ":#");
                     // `(@)` with a `[(I)...]` / `[(R)...]` subscript —
                     // assoc-array key-pattern lookup that returns
                     // multiple matches. zinit's hook ordering pattern
@@ -7861,10 +7869,21 @@ impl ZshCompiler {
                     // key emerges as a separate word. Without this,
                     // the keys joined with space.
                     let at_with_index_subscript = flag_chain.contains('@')
-                        && (after_flags.contains("[(I)")
-                            || after_flags.contains("[(R)")
-                            || after_flags.contains("[(K)"));
-                    let need_array = (flag_chain.contains('@') && after_flags.contains("${"))
+                        && (contains_outside_cmdsubst(after_flags, "[(I)")
+                            || contains_outside_cmdsubst(after_flags, "[(R)")
+                            || contains_outside_cmdsubst(after_flags, "[(K)"));
+                    // Every trigger asks the same question — does this
+                    // MARKER belong to the expansion being compiled? — so
+                    // every one of them goes through the same structural
+                    // scan. A plain `str::contains` answered "yes" for a
+                    // marker sitting inside a nested command substitution,
+                    // whose text is the COMMAND's, not this expansion's:
+                    // `"${(@f)$(printf "%s\n" one "two ${v} three" four)}"`
+                    // was routed to BRIDGE_BRACE_ARRAY and IFS-split into
+                    // five words where `(@f)` splits on newlines alone
+                    // (zsh: three).
+                    let need_array = (flag_chain.contains('@')
+                        && contains_outside_cmdsubst(after_flags, "${"))
                         || has_at_filter
                         || has_filter_with_match_flag
                         || at_with_index_subscript;
@@ -7917,7 +7936,8 @@ impl ZshCompiler {
                         // c:3916 joins an array value to one scalar before the c:4041
                         // quote block. Carried as an extra VM argument, exactly like
                         // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                        self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                        self.builder
+                            .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
@@ -8017,7 +8037,8 @@ impl ZshCompiler {
                     // c:3916 joins an array value to one scalar before the c:4041
                     // quote block. Carried as an extra VM argument, exactly like
                     // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                    self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                    self.builder
+                        .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                         0,
@@ -8134,7 +8155,8 @@ impl ZshCompiler {
                             // c:3916 joins an array value to one scalar before the c:4041
                             // quote block. Carried as an extra VM argument, exactly like
                             // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                            self.builder.emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
+                            self.builder
+                                .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
                             self.builder.emit(
                                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                                 0,
@@ -9256,7 +9278,7 @@ impl ZshCompiler {
         self.builder.emit(Op::GetStatus, 0);
         self.builder.emit(Op::SetSlot(status_slot), 0);
         self.emit_loop_body_end(); // c:Src/loop.c:529-534
-        // c:Src/loop.c — the loop's own post-body errflag guard.
+                                   // c:Src/loop.c — the loop's own post-body errflag guard.
         let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
@@ -9473,8 +9495,8 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
-        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
-        // lastval = 1; break; }`. See emit_loop_errflag_break.
+                                   // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+                                   // lastval = 1; break; }`. See emit_loop_errflag_break.
         let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
@@ -9716,8 +9738,8 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
-        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
-        // lastval = 1; break; }`. See emit_loop_errflag_break.
+                                   // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+                                   // lastval = 1; break; }`. See emit_loop_errflag_break.
         let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
@@ -9892,8 +9914,8 @@ impl ZshCompiler {
 
         self.compile_program(body);
         self.emit_loop_body_end(); // c:Src/loop.c:180-185
-        // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
-        // lastval = 1; break; }`. See emit_loop_errflag_break.
+                                   // c:Src/loop.c:198-203 — `if (errflag) { if (breaks) breaks--;
+                                   // lastval = 1; break; }`. See emit_loop_errflag_break.
         let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
@@ -10053,7 +10075,11 @@ impl ZshCompiler {
                 out.push(cs[i]);
                 i += 1;
             }
-            if rewrote { Some(out) } else { None }
+            if rewrote {
+                Some(out)
+            } else {
+                None
+            }
         };
         let word: &str = normalized.as_deref().unwrap_or(word);
         let segments = split_pattern_for_glob_subst(word);
@@ -10501,7 +10527,7 @@ impl ZshCompiler {
 
         self.compile_program(&r.body);
         self.emit_loop_body_end(); // c:Src/loop.c:540-545
-        // c:Src/loop.c — the loop's own post-body errflag guard.
+                                   // c:Src/loop.c — the loop's own post-body errflag guard.
         let errflag_break = self.emit_loop_errflag_break();
 
         let cont = self.builder.current_pos();
@@ -12273,8 +12299,10 @@ impl ZshCompiler {
                 let name_const = self.builder.add_constant(Value::str(name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::GetSlot(slot), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2),
+                    0,
+                );
                 self.builder.emit(Op::Pop, 0); // discard Status(0)
             }
         }
@@ -13279,9 +13307,7 @@ impl ZshCompiler {
     /// c:Src/cond.c:53). It sets the same `ssub` bit, so it owes the same
     /// suppressions.
     fn brace_array_ssub(&self) -> bool {
-        self.scalar_assign_depth > 0
-            || self.assign_builtin_arg_depth > 0
-            || self.singsub_depth > 0
+        self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0 || self.singsub_depth > 0
     }
 
     /// c:Src/subst.c:1761 — `int ssub = (pf_flags & PREFORK_SINGLE);`, the
@@ -13490,6 +13516,75 @@ fn word_is_single_dq_span(s: &str) -> bool {
         }
     }
     depth0_dnull == 2
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// True when `needle` occurs in `hay` at the enclosing expansion's OWN
+/// nesting level — that is, outside every nested command substitution
+/// (`$( … )`, `` `…` ``), whose text belongs to the command being run and
+/// not to the expansion being compiled.
+///
+/// C never has to ask: `paramsubst` (c:Src/subst.c:2147) receives a body the
+/// lexer has already structured, in which a command substitution is a single
+/// `Inpar`/`Tick` unit that the flag and subscript scanners step over — a
+/// `${` inside it is simply not part of the body they walk. The bridge-array
+/// triggers at `emit_braced_expansion` have to re-derive that decision from
+/// the UNTOKENIZED word, and `str::contains` cannot: it fired on the `${` of
+/// `"${(@f)$(printf "%s\n" one "two ${v} three" four)}"` and routed the word
+/// to BUILTIN_BRIDGE_BRACE_ARRAY, which IFS-splits, where `(@f)` splits on
+/// newlines only.
+///
+/// Quoting inside the substitution is NOT consulted, because it cannot be:
+/// `lex::untokenize` has already dropped the Snull/Dnull markers by the time
+/// the triggers see the text. It does not need to be either — skipping the
+/// whole substitution covers a quoted, an escaped and a bare marker alike.
+fn contains_outside_cmdsubst(hay: &str, needle: &str) -> bool {
+    let b = hay.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return true;
+    }
+    let mut i = 0usize;
+    while i < b.len() {
+        // `$( … )` — step over the whole substitution, paren-nesting aware
+        // so an inner `$(…)` or `$((…))` cannot end it early. An unbalanced
+        // opener consumes the rest, which is the same "not at this level"
+        // answer.
+        if b[i] == b'$' && i + 1 < b.len() && b[i + 1] == b'(' {
+            let mut depth = 0i32;
+            let mut k = i + 1;
+            while k < b.len() {
+                match b[k] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            i = k.saturating_add(1);
+            continue;
+        }
+        // `` `…` `` — the older spelling, ended by the next backtick.
+        if b[i] == b'`' {
+            let mut k = i + 1;
+            while k < b.len() && b[k] != b'`' {
+                k += 1;
+            }
+            i = k.saturating_add(1);
+            continue;
+        }
+        if b[i..].starts_with(n) {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// True when the leading `${` of `untoked` matches the word's FINAL `}` —

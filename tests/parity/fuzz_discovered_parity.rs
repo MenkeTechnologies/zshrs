@@ -4188,19 +4188,17 @@ mod assoc_search_subscript_assignment {
 mod at_flag_bridge_textual_scan {
     use super::*;
 
-    /// zshrs gap: `3` vs zsh's `2` — the `${s}` inside the command
+    /// Was `3` vs zsh's `2`: the `${s}` inside the command
     /// substitution makes `need_array` fire, the word goes to
     /// BRIDGE_BRACE_ARRAY, and `a b` splits on the SPACE.
     #[test]
-    #[ignore]
     fn f_flag_split_survives_nested_brace_inside_cmdsubst() {
         assert_parity(r#"s=$'a b\nc'; r=("${(@f)$(print -r -- "${s}")}"); print $#r"#);
     }
 
-    /// zshrs gap: `5` vs zsh's `3`. The `ykman `/`ykman -` completion
+    /// Was `5` vs zsh's `3`. The `ykman `/`ykman -` completion
     /// cells reduce to this shape.
     #[test]
-    #[ignore]
     fn f_flag_split_survives_nested_brace_in_printf_operand() {
         assert_parity(r#"v=X; r=("${(@f)$(printf "%s\n" one "two ${v} three" four)}"); print $#r"#);
     }
