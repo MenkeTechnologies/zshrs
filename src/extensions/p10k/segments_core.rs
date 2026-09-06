@@ -910,10 +910,32 @@ fn custom_segments(name: &str) -> Vec<Segment> {
         Some(c) if !c.is_empty() => c,
         _ => return vec![],
     };
-    // p10k:1698 — `content="$(eval $command)"`: run through the live
-    // executor's command-substitution path (captures stdout, strips
-    // trailing newlines). The $+functions/$+commands pre-check
-    // (p10k:1697) is subsumed: a missing command yields empty output.
+    // p10k:1703 — `(( $+functions[$cmd] || $+commands[$cmd] )) || return`,
+    // where `$cmd` is the first word of the command, dequoted
+    // (p10k:1701-1702 `parts=("${(@z)command}")`, `cmd="${(Q)parts[1]}"`).
+    //
+    // This gate USED to be omitted here under the claim that it "is
+    // subsumed: a missing command yields empty output". That is true of the
+    // RESULT and false of the COST, which is the whole point of the gate
+    // upstream: zsh returns before `eval` ever runs, while this port paid a
+    // full command substitution first. In zshrs a `$()` is not a cheap
+    // fork — `run_command_substitution` deep-clones the entire mutable
+    // shell state for subshell isolation (paramtab, the hashed-param
+    // storage incl. `_comps`, shfunctab, …), measured at ~13ms per call on
+    // a populated shell. So an absent tool cost ~13ms per prompt to
+    // produce nothing at all.
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
+    let first_word = first_word.trim_matches(|c| c == '\'' || c == '"');
+    if !first_word.is_empty()
+        && crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| t.get(first_word).is_none())
+            .unwrap_or(true)
+        && crate::extensions::p10k::segments_sys::cmd_on_path(first_word).is_none()
+        && !crate::ported::builtin::createbuiltintable().contains_key(first_word)
+    {
+        return vec![];
+    }
     let content = crate::ported::exec::run_command_substitution(&cmd);
     let content = content.trim().to_string();
     // p10k:1699 — `[[ -n $content ]] || return`.
