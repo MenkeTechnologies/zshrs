@@ -2393,6 +2393,20 @@ fn expanded_at_or_star_subscript_is_a_key_not_the_splat() {
         // c:1449-1450 — the `(e)` exact-match group is the spelling the
         // bridge rebuilds an expanded subscript with; it must key the hash.
         (&format!("{assoc} print -r -- ${{(v)h[(e)$k]}}"), "AT\n"),
+        // ── The positional pseudo-names take a separate compile fast path
+        // (`$@[…]` / `$*[…]` / `$argv[…]`), which had no c:2048 rejection of
+        // its own and so handed the LITERAL splat to the runtime as an
+        // ordinary index. c:Src/params.c:385,386,423 — all three name the
+        // same pparams vector.
+        ("set -- a b c; print -r -- $argv[@]", "a b c\n"),
+        ("set -- a b c; print -r -- $argv[*]", "a b c\n"),
+        ("set -- a b c; print -r -- $@[@]", "a b c\n"),
+        ("set -- a b c; print -r -- $*[@]", "a b c\n"),
+        ("set -- a b c; print -r -- \"$argv[@]\"", "a b c\n"),
+        ("set -- a b c; print -r -- \"$argv[*]\"", "a b c\n"),
+        ("set -- a b c; print -r -- $argv[2]", "b\n"),
+        ("set -- a b c; print -r -- $argv[2,3]", "b c\n"),
+        ("set -- a b c; print -r -- $@[2]", "b\n"),
     ];
     for (script, want) in cases {
         let (code, out, err) = run_zshrs(script);
