@@ -11841,6 +11841,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // honors integer-vs-float distinction (zsh-compatible). Returns
     // the result as Value::Str so it can be Concat'd into surrounding
     // word context.
+    vm.register_builtin(BUILTIN_ARITH_LASTBASE, |vm, _argc| {
+        // See [`BUILTIN_ARITH_LASTBASE`]: `lastbase = -1` at the head of an
+        // evaluation, and the literal's own base where the compiler lexed one.
+        let base = vm.pop();
+        let base = match base {
+            Value::Int(n) => n as i32,
+            other => other.to_str().parse::<i32>().unwrap_or(-1),
+        };
+        crate::ported::math::set_lastbase(base);
+        Value::Int(i64::from(base))
+    });
     vm.register_builtin(BUILTIN_ARITH_EVAL, |vm, _argc| {
         // Pure path: evaluate expr, return string. errflag may be
         // set by arithsubst on math error; the caller decides
@@ -15234,6 +15245,28 @@ pub const BUILTIN_SET_MATH_VAR: u16 = 678;
 /// keeps the numeric result numeric instead of round-tripping it
 /// through its printed form. argc = 1.
 pub const BUILTIN_ARITH_CMD_FINISH_VAL: u16 = 679;
+
+/// `lastbase = <n>` for the COMPILED arithmetic path. Pops \[base\], sets the
+/// math layer's input base, returns it.
+///
+/// c:Src/math.c:367 `mathevall` opens every evaluation with `lastbase = -1;`
+/// and `lexconstant` (c:462) sets the base of each literal it reads. The
+/// interpreted evaluator is that code; the compiled path never enters it, so
+/// nothing reset the base between evaluations and `assignsparam`'s
+/// `pm.base == 0 ? lastbase` inheritance (c:Src/params.c:2801) handed the next
+/// freshly created integer whatever base the LAST evaluation had left behind:
+///
+/// ```text
+/// typeset -i iv="2#101"   # sets lastbase = 2, for `iv`
+/// (( c += 3 ))            # compiled: no literal, no reset
+/// print -r -- "$c"        # zsh: 3      zshrs: 2#11
+/// ```
+///
+/// Emitted once at the head of every compiled expression with `-1`, and again
+/// by [`crate::arith_compiler`] with the base of a `0x`/`0b`/`0o` literal it
+/// lexes — which is what `lexconstant` does, at the point the literal is read.
+/// argc = 1.
+pub const BUILTIN_ARITH_LASTBASE: u16 = 683;
 
 /// The whole quiet-case statement prologue in one call.
 ///
