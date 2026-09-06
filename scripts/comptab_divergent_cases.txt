@@ -4507,7 +4507,6 @@ gstack
 #     complete …   -> (nothing)            (the bug)
 #     whence -w zsleep complete -> both `function` on both shells
 #
-# `try_user_fn_override` is used by 19 registrations in that file; `complete`
 # and `compgen` are not among them.
 #
 # THE CLASS IS SEVEN NAMES, not two.  Same probe, all five other bash-only
