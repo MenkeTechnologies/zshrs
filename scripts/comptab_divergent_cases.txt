@@ -5521,3 +5521,61 @@ gstack
 #   'echo ${PA'   LASTKEY  'ls ~ro'    LASTKEY
 # `drop-menu` (full base) is 0% on both measures.  No combo certifies
 # nothing.
+
+# ============================================================================
+# CHUNK M3 (2026-09-07) — `tab,tab,down` across the seven `menu` combos.
+# The numbers that matter here are the VACUITY ones, not the failures.
+# ============================================================================
+# Same pins, same 54-buffer multi-key corpus, `--keys tab,tab,down --jobs 4
+# --skip-missing --key-budget 12`.
+#
+# VERBATIM totals:
+#
+#   force-menu-off                  # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select               # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-interactive   # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-search        # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-eq-2             # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-select-0         # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   drop-menu                       # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#
+# 378 cells, 3.1-7.9s/cell.  ZERO new fingerprints: every failure is again
+# 'zmodload ' (M1-B) and 'echo $path[' (M1-C), exactly as at `tab1`/`tab2`.
+#
+# ---------------------------------------------------------------------------
+# WHICH COMBO CERTIFIES WHAT, ON A NAVIGATION SEQUENCE.  Last-key vacuity —
+# the `down` drew NOTHING on EITHER side — measured from `--json`:
+#
+#   force-menu-off                  46 of 51 = 90.2%   <-- certifies ~nothing
+#   drop-menu                       37 of 52 = 71.2%
+#   force-menu-yes-eq-2             29 of 51 = 56.9%
+#   force-menu-select               17 of 51 = 33.3%
+#   force-menu-select-interactive   17 of 51 = 33.3%
+#   force-menu-select-search        17 of 51 = 33.3%
+#   force-menu-yes-select-0          2 of 52 =  3.8%   <-- best by far
+#   TOTAL                          165 of 359 = 46.0%
+#
+# Fully-vacuous (no key drew on either side) is a flat 3.3% and is the same
+# two minimal-base buffers as chunk M1 ('ls //usr//', 'ls | gr').
+#
+# PRACTICAL RULE, and it is the point of this chunk: `force-menu-off` and
+# `drop-menu` must NOT be paired with an arrow/navigation sequence.  With no
+# menu open there is nothing for `down` to move, so 90% / 71% of those cells
+# score a pass on a keystroke neither shell answered — the fake-pass class,
+# arrived at through the CONFIG axis rather than the missing-command one.
+# Chunk C's earlier finding (the extra TAB cuts nav-vacuity from 42% to 17%)
+# is a fix for the SEQUENCE; this is the orthogonal fix for the FIXTURE.
+# Pair navigation keys with `force-menu-yes-select-0` (3.8%) or the three
+# `select*` combos (33%), and use `force-menu-off`/`drop-menu` only for
+# sequences whose last key draws without a menu.
+#
+# That also makes `force-menu-yes-select-0` the most evidence-dense of the
+# seven on every axis measured today — and it is the one combo that did not
+# exist before `1d5ad7ca`.
