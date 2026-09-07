@@ -6954,6 +6954,16 @@ pub fn gettygrp() -> i32 {
 /// zsh's metafied form: each `imeta(b)` byte becomes `Meta` (0x83)
 /// followed by `b ^ 32`.
 ///
+/// NOTE ON THE RETURN TYPE: C hands back a `char *`, and a metafied byte
+/// string is routinely NOT valid UTF-8 — metafication escapes every byte
+/// in `{0x00} ∪ [0x83, 0xa2]` (c:4195-4201), a range that sits inside the
+/// UTF-8 lead/continuation ranges, so `日` (`e6 97 a5`) metafies to
+/// `e6 83 b7 a5`. This `String`-returning form therefore falls back to
+/// `from_utf8_lossy` on exactly those inputs. A caller that needs the
+/// bytes C would see (`matchcmp` at `Src/Zle/compcore.c:3194`, which
+/// collates the metafied form) must run the c:4880 loop over `u8`
+/// directly rather than through here.
+///
 /// Port of `metafy(char *buf, int len, int heap)` from Src/utils.c:4856. The C source takes a
 /// `heap` mode controlling whether the result is `zalloc`'d /
 /// `zhalloc`'d / written into a static buffer / appended to the

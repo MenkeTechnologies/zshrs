@@ -162,9 +162,32 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 /// assignment requires moving the comparator body into `eltpcmp` and
 /// extending the latter's signature to accept the flag bits directly
 /// (tracked as a follow-up; not a behavioral bug).
+///
+/// **Parameter type:** C takes `const char *` — raw bytes — and it is
+/// the CALLER that decides whether those bytes are metafied. That choice
+/// is observable, and the three C callers do not agree:
+///
+/// * `strmetasort` (`Src/sort.c:299-315`) unmetafies each element into
+///   `sortarrptr->cmp` before comparing, so `${(o)}` / `print -o`
+///   collate real multibyte text.
+/// * `gmatchcmp` (`Src/glob.c:945`) compares `gmptr->uname`, which
+///   `Src/glob.c:1963-1973` builds by `unmetafy()`ing the file name —
+///   glob sort is unmetafied too.
+/// * `matchcmp` (`Src/Zle/compcore.c:3194`) compares `(*a)->str` /
+///   `(*a)->disp` — completion match strings, which are metafied and are
+///   never unmetafied anywhere on the path to the `qsort` at c:3259.
+///
+/// Metafication escapes bytes inside the UTF-8 lead/continuation ranges
+/// (`Src/utils.c:4195-4201`), so that third caller hands `strcoll` a byte
+/// string that is not valid multibyte and the collation degrades
+/// accordingly. Reproducing zsh means passing the same bytes, so this
+/// takes `AsRef<[u8]>` rather than `&str`: a `&str` caller passes exactly
+/// the bytes it always did, and a caller holding metafied bytes — which
+/// are not valid UTF-8 and so cannot be a `&str` at all — can pass those.
 /// WARNING: param names don't match C — Rust=(a, bs, sortflags) vs C=(as, bs, sortflags)
-pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
+pub fn zstrcmp<A: AsRef<[u8]>, B: AsRef<[u8]>>(a: A, bs: B, sortflags: u32) -> Ordering {
     // c:191
+    let (a, bs) = (a.as_ref(), bs.as_ref());
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
         -1 // c:209-210
     } else if sortflags & (SORTIT_NUMERICALLY as u32) != 0 {
@@ -212,10 +235,10 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // pair on the strip path — turned every comparison into four heap
     // allocations. Borrow instead, and own only on the fallback arm
     // that genuinely rewrites the bytes.
-    let mut a_str: &str = a;
-    let mut b_str: &str = bs;
-    let a_owned: String;
-    let b_owned: String;
+    let mut a_str: &[u8] = a;
+    let mut b_str: &[u8] = bs;
+    let a_owned: Vec<u8>;
+    let b_owned: Vec<u8>;
     if no_backslash {
         let mut done = false;
         if !numeric {
@@ -236,10 +259,10 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
             // reaches the same `memchr` but builds a `CharSearcher` first,
             // and that setup — `encode_utf8_raw` per call — measured 4.6% of
             // the completion on its own.)
-            if !a.as_bytes().contains(&b'\\') && !bs.as_bytes().contains(&b'\\') {
+            if !a.contains(&b'\\') && !bs.contains(&b'\\') {
                 done = true; // a_str/b_str stay as the whole strings
             } else {
-                let (ab, bb) = (a.as_bytes(), bs.as_bytes());
+                let (ab, bb) = (a, bs);
                 let (alen, blen) = (ab.len(), bb.len()); // c:121 `*as`/`*bs` NUL test
                 let (mut i, mut j) = (0usize, 0usize);
                 while i < alen && j < blen {
@@ -258,19 +281,20 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
                     i += 1; // c:128-129
                     j += 1;
                 }
-                // Byte indices only land off a char boundary if a multibyte
-                // sequence straddled the divergence; slicing there would panic,
-                // so fall through to the old whole-string form in that case.
-                if let (Some(ar), Some(br)) = (a.get(i..), bs.get(j..)) {
-                    a_str = ar;
-                    b_str = br;
-                    done = true;
-                }
+                // c:116-117/134 — C advances raw `char *` cursors and hands
+                // `strcoll` whatever bytes follow. A byte slice does the same
+                // unconditionally. (The `&str` form this replaced could land
+                // off a UTF-8 char boundary when a multibyte sequence straddled
+                // the divergence, and had to fall back to the strip-all form
+                // there; on bytes that case does not exist.)
+                a_str = &a[i..];
+                b_str = &bs[j..];
+                done = true;
             }
         }
         if !done {
-            a_owned = a_str.chars().filter(|&c| c != '\\').collect();
-            b_owned = b_str.chars().filter(|&c| c != '\\').collect();
+            a_owned = a_str.iter().copied().filter(|&c| c != b'\\').collect();
+            b_owned = b_str.iter().copied().filter(|&c| c != b'\\').collect();
             a_str = &a_owned;
             b_str = &b_owned;
         }
@@ -290,7 +314,7 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // primary ordering, so non-numeric portions of a `(n)`-sorted array
     // must use it too — `${(n)a}` of `banana Mango apple zebra` sorts
     // case-insensitively just like `${(o)a}`.
-    let strcoll_cmp = |a: &str, b: &str| -> Ordering {
+    let strcoll_cmp = |a: &[u8], b: &[u8]| -> Ordering {
         #[cfg(unix)]
         {
             // !!! RUST-ONLY ADAPTER — NO C COUNTERPART !!!
@@ -314,8 +338,8 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
             // truncating at that byte would have. The scan this replaces cost
             // one `memchr` per operand on every comparison and could not
             // change an answer.
-            let fill = |s: &str, buf: &mut [u8; SCRATCH]| -> bool {
-                let sb = s.as_bytes();
+            let fill = |s: &[u8], buf: &mut [u8; SCRATCH]| -> bool {
+                let sb = s;
                 if sb.len() >= SCRATCH {
                     return false;
                 }
@@ -332,8 +356,8 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
                 };
                 return c.cmp(&0);
             }
-            let cstr_head = |s: &str| -> CString {
-                let bs = s.as_bytes();
+            let cstr_head = |s: &[u8]| -> CString {
+                let bs = s;
                 let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
                 CString::new(&bs[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
             };
@@ -358,9 +382,9 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // indices into the same strings. Reading past the end yields 0, which
     // is exactly what C reads at the NUL terminator, so `at()` stands in
     // for the `*ptr` dereference at every site.
-    let cmp_numeric = |a: &str, bs: &str, signed_mode: bool| -> Ordering {
-        let ab = a.as_bytes();
-        let bb = bs.as_bytes();
+    let cmp_numeric = |a: &[u8], bs: &[u8], signed_mode: bool| -> Ordering {
+        let ab = a;
+        let bb = bs;
         // c:139/141/144/… — `*as` on a NUL-terminated C string.
         let at = |s: &[u8], i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
         let is_digit = |c: u8| c.is_ascii_digit();

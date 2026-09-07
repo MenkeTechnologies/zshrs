@@ -59471,3 +59471,71 @@ measures. The `pdksh_family()` exclusion is load-bearing: mksh sides with
 zsh/bash on BOTH rules (`mksh -c 'v=abcdef; print "${v:(-2)}"'` → `ef`,
 `${v/#/X}` → `Xabc`), and gating on `korn_mode()` alone regressed `--mksh`
 into ksh93's error.
+
+---
+
+## #1138 — completion match sort collated UNMETAFIED text, so a UTF-8 locale reordered (and tied) non-ASCII matches — fixed
+
+**Status:** `fixed` 2026-09-07.
+
+```console
+$ cat init.zsh
+export LC_ALL=en_US.UTF-8
+_zzzsort() { compadd -- 日本語 中文字 한국어 ascii あかさたなはまやらわ }
+compdef _zzzsort true
+
+$ zsh   -f -i   # 'true <TAB>'
+ascii   あかさたなはまやらわ   中文字   日本語   한국어
+$ zshrs -f -i   # 'true <TAB>'
+日本語   中文字   한국어   あかさたなはまやらわ   ascii        ✗
+```
+
+Under `LC_ALL=C` the two agree, which is why the default `comptab_parity.py`
+run (it pins `LANG=C`/`LC_ALL=C` so the environment is not a variable) never
+saw it.
+
+**C reference — the caller decides, not the comparator.** `zstrcmp`
+(`Src/sort.c:191`) is a thin front-end to `eltpcmp`; the collation is
+`strcoll(as, bs)` at `Src/sort.c:134` over whatever `const char *` the caller
+supplied. zsh's three callers do not supply the same thing:
+
+| caller | operand | metafied? |
+| --- | --- | --- |
+| `strmetasort` (`Src/sort.c:234`) | `sortarrptr->cmp`, unmetafied at `c:299-315` | no |
+| `gmatchcmp` (`Src/glob.c:945`) | `gmptr->uname`, `unmetafy()`d at `Src/glob.c:1963-1973` | no |
+| `matchcmp` (`Src/Zle/compcore.c:3194`) | `(*a)->str` / `(*a)->disp` | **yes** |
+
+Nothing on the path from `compadd` to the `qsort` at `Src/Zle/compcore.c:3259`
+unmetafies a match string, and `zstrcmp` does not either. Metafication escapes
+every byte in `{0x00} ∪ [0x83, 0xa2]` (`Src/utils.c:4195-4201`), a range that
+sits inside the UTF-8 lead/continuation ranges — `日` (`e6 97 a5`) metafies to
+`e6 83 b7 a5` — so C hands `strcoll` a byte string that is not valid multibyte
+and the collation degrades to a byte-wise total order. That is where zsh's
+`ascii あかさたなはまやらわ 中文字 日本語 한국어` comes from: `61 < e3 < e4 <
+e6 < ed`.
+
+zshrs stores match strings unmetafied, so it was handing `strcoll` well-formed
+UTF-8 and getting the locale's real collation. On macOS under `en_US.UTF-8`
+that collation returns **0 for every pair** of CJK / Kana / Hangul strings
+(measured directly against libc), so all four distinct matches compared EQUAL
+and their listing order fell out of the sort's tie handling.
+
+**Fix.** `matchcmp` (`src/ported/zle/compcore.rs`) metafies both operands —
+the `Src/utils.c:4880` loop, inlined because the ported `utils::metafy` returns
+a `String` and therefore goes lossy on exactly these inputs — and passes the
+bytes to `zstrcmp`, whose parameters became `AsRef<[u8]>` to match C's
+`const char *`. Metafication is the identity on all of ASCII except NUL, so
+ASCII match ordering (including the case-insensitive `strcoll` primary that
+puts `alpha.txt` before `README.md`) is byte-for-byte unchanged, and the copy
+is skipped entirely when neither operand holds an `imeta()` byte.
+
+Deliberately NOT changed, because C does not metafy on those paths either:
+`${(o)}` / `${(O)}` / `print -o` (`strmetasort`), glob expansion order
+(`gmatchcmp` on `uname`), and `compdescribe` — `Src/Zle/computil.c:235` DOES
+pass a metafied `sortstr` and so shares this defect class, but it is a separate
+comparator on a separate path and is left for its own change.
+
+Regression test:
+`matchcmp_collates_metafied_form_so_distinct_matches_never_tie`
+(`src/ported/zle/compcore.rs`) — it sets `LC_ALL=en_US.UTF-8` for the duration,
+because under `LC_ALL=C` `strcoll` is `strcmp` and both forms agree.

@@ -5982,7 +5982,57 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
         } else {
             0
         };
-    let base = crate::ported::sort::zstrcmp(as_, bs, flags);
+    // c:3181-3182/3191-3192 — the operands are `(*a)->str` / `(*a)->disp`,
+    // i.e. METAFIED match strings. Nothing on the path from `compadd` to the
+    // `qsort` at c:3259 unmetafies them, and `zstrcmp` does not either — only
+    // `strmetasort` does (c:299-315), and that is a different C function on a
+    // different path. So C's `strcoll` here sees metafied bytes, which for
+    // most non-ASCII text is not a valid multibyte string, and the collation
+    // degrades to a byte-wise result. zshrs stores match strings unmetafied,
+    // so it was handing `strcoll` well-formed UTF-8 and getting the locale's
+    // real collation instead: under `LC_ALL=en_US.UTF-8` on macOS every pair
+    // of CJK/Kana/Hangul strings collates EQUAL, so `compadd -- 日本語 中文字
+    // 한국어 ascii あかさたなはまやらわ` listed them in an arbitrary
+    // qsort-tie order while zsh listed them deterministically.
+    //
+    // Metafy to put the same bytes in front of the same `strcoll` C uses.
+    // The `metafy()` loop is inlined here rather than called: the ported
+    // `utils::metafy` returns a `String` and so goes lossy on precisely the
+    // inputs that matter (a metafied `日` is `e6 83 b7 a5`, not UTF-8), and
+    // this is its only byte-level caller.
+    //
+    // Metafication rewrites only `{0x00} ∪ [0x83, 0xa2]` (`Src/utils.c:4195-
+    // 4201`), so it is the IDENTITY on every ASCII match name and the ASCII
+    // ordering — including the case-insensitive collation noted above — is
+    // untouched. Skip the copy entirely when neither operand holds such a
+    // byte: this is a sort comparator, called O(n log n) times.
+    let metafy = |s: &str| -> Vec<u8> {
+        // c:Src/utils.c:4880
+        let mut out = Vec::with_capacity(s.len());
+        for &b in s.as_bytes() {
+            if crate::ported::utils::imeta_byte(b) {
+                out.push(crate::ported::zsh_h::Meta);
+                out.push(b ^ 32);
+            } else {
+                out.push(b);
+            }
+        }
+        out
+    };
+    let any_meta = |s: &str| {
+        s.as_bytes()
+            .iter()
+            .any(|&b| crate::ported::utils::imeta_byte(b))
+    };
+    let (am, bm): (Vec<u8>, Vec<u8>);
+    let (ab, bb): (&[u8], &[u8]) = if any_meta(as_) || any_meta(bs) {
+        am = metafy(as_);
+        bm = metafy(bs);
+        (&am, &bm)
+    } else {
+        (as_.as_bytes(), bs.as_bytes())
+    };
+    let base = crate::ported::sort::zstrcmp(ab, bb, flags);
     if sortdir < 0 {
         base.reverse()
     } else {
@@ -8045,6 +8095,108 @@ mod tests {
         assert_eq!(matchcmp(&b, &a), std::cmp::Ordering::Greater);
         assert_eq!(matchcmp(&a, &a), std::cmp::Ordering::Equal);
         MATCHORDER.store(0, Ordering::Relaxed);
+    }
+
+    /// `matchcmp` must collate the METAFIED form of the match strings,
+    /// because that is what `Src/Zle/compcore.c:3194` hands `zstrcmp`:
+    /// `(*a)->str` is a metafied match string and nothing on the path to
+    /// the `qsort` at c:3259 unmetafies it (only `strmetasort` does, at
+    /// c:299-315, and that is a different path serving `${(o)}`).
+    ///
+    /// The failure this pins was measured under `LC_ALL=en_US.UTF-8` on
+    /// macOS, where `strcoll` returns 0 for every pair of CJK / Kana /
+    /// Hangul strings: comparing the UNmetafied text called all four
+    /// distinct matches EQUAL, so their list order fell out of the
+    /// qsort's tie handling and drifted from zsh's. Metafication escapes
+    /// bytes in `[0x83, 0xa2]` (`Src/utils.c:4195-4201`), which are dense
+    /// inside these UTF-8 sequences, so C's `strcoll` sees a non-multibyte
+    /// byte string and produces a total order instead.
+    ///
+    /// The locale is set and restored inside the test because the
+    /// divergence is invisible under `LC_ALL=C`, where `strcoll` is
+    /// `strcmp` and both forms agree.
+    #[test]
+    fn matchcmp_collates_metafied_form_so_distinct_matches_never_tie() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        MATCHORDER.store(CGF_MATSORT, Ordering::Relaxed);
+
+        let saved: Option<std::ffi::CString> = unsafe {
+            let p = libc::setlocale(libc::LC_ALL, std::ptr::null());
+            if p.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(p).to_owned())
+            }
+        };
+        let have_utf8 =
+            unsafe { !libc::setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()).is_null() };
+
+        let mk = |s: &str| {
+            let mut m = Cmatch::default();
+            m.str = Some(s.into());
+            m
+        };
+        // The corpus from the bug report, in the order `compadd` received it.
+        let words = [
+            "日本語",
+            "中文字",
+            "한국어",
+            "ascii",
+            "あかさたなはまやらわ",
+        ];
+        let cms: Vec<Cmatch> = words.iter().map(|w| mk(w)).collect();
+
+        let mut failures: Vec<String> = Vec::new();
+        for i in 0..cms.len() {
+            for j in 0..cms.len() {
+                if i == j {
+                    continue;
+                }
+                // Distinct matches must never compare equal: an Equal here
+                // leaves the listing order to the sort's tie handling, which
+                // is exactly the nondeterminism zsh does not have.
+                if matchcmp(&cms[i], &cms[j]) == std::cmp::Ordering::Equal {
+                    failures.push(format!("{} vs {}", words[i], words[j]));
+                }
+                // Antisymmetry, which a byte/metafied total order guarantees.
+                assert_eq!(
+                    matchcmp(&cms[i], &cms[j]),
+                    matchcmp(&cms[j], &cms[i]).reverse(),
+                    "matchcmp not antisymmetric for {} vs {}",
+                    words[i],
+                    words[j]
+                );
+            }
+        }
+
+        // ASCII is the overwhelmingly common case and metafication is the
+        // identity on it (`imeta` covers only NUL and [0x83, 0xa2]), so the
+        // locale-collated ordering that put `alpha.txt` before `README.md`
+        // must survive untouched.
+        assert_eq!(
+            matchcmp(&mk("alpha.txt"), &mk("README.md")),
+            crate::ported::sort::zstrcmp(
+                "alpha.txt",
+                "README.md",
+                crate::ported::zsh_h::SORTIT_IGNORING_BACKSLASHES as u32,
+            ),
+            "metafication must not change ASCII match ordering",
+        );
+
+        unsafe {
+            match saved {
+                Some(ref s) => libc::setlocale(libc::LC_ALL, s.as_ptr()),
+                None => libc::setlocale(libc::LC_ALL, c"C".as_ptr()),
+            };
+        }
+        MATCHORDER.store(0, Ordering::Relaxed);
+
+        assert!(
+            failures.is_empty(),
+            "matchcmp reported distinct non-ASCII matches as EQUAL \
+             (en_US.UTF-8 available: {have_utf8}): {failures:?}",
+        );
     }
 
     #[test]
