@@ -5468,3 +5468,56 @@ gstack
 # three names) does not explain — that band is deterministic and worth 3.
 # Classified as UNRESOLVED rather than benign; the name-set diff under
 # LISTMAX=100000 that would settle it was not run in this chunk.
+
+# ============================================================================
+# CHUNK M2 (2026-09-07) — the same seven `menu` combos at `tab2`.
+# ============================================================================
+# Same pins (1c3b0cbcd1f2… / 10ebe0a033…, both re-verified after the chunk),
+# same corpus minus one buffer: 'function ' was DROPPED for every multi-key
+# chunk.  Reason, measured: under a menu combo zshrs paints the WHOLE match
+# list rather than one screen, so the second TAB on its 47339-match set feeds
+# tens of MB to pyte and one cell ran >10 minutes at 98.7% CPU before it was
+# killed.  The buffer is fully measured at `tab1` in chunk M1; nothing is
+# lost but the multi-key view of it.  `--key-budget 12` was added so a cell
+# of that shape becomes a TIMEOUT instead of a wedge; none did.
+#
+# VERBATIM totals, `--sequences tab2 --jobs 4 --skip-missing --key-budget 12`:
+#
+#   force-menu-off                  # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select               # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-interactive   # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-search        # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-eq-2             # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-select-0         # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   drop-menu                       # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#
+# 378 cells, 1.6-2.6s/cell.  ZERO new fingerprints.  Every failure is one of
+# the two bands chunk M1 already classified:
+#   'zmodload '   the $module_path band (M1-B) — all seven
+#   'echo $path[' the ask-prompt count band (M1-C) — the six minimal-base
+#                 combos, never `drop-menu`
+#
+# ONE READING TRAP recorded so the next sweep does not chase it.  The `tab2`
+# fingerprint for 'echo $path[' prints
+#     ref/ZSH_ARGZERO ZSH_NAME -- zsh | test/ZSH_NAME -- zsh
+# which looks like zshrs is missing `ZSH_ARGZERO`.  It is not:
+#     zsh -f -c 'print ${+ZSH_ARGZERO}'        1
+#     zshrs -f -c 'print ${+ZSH_ARGZERO}'      1
+# The row differs because the two listings have different match COUNTS and
+# therefore different column breaks — the same M1-C band seen one key later.
+# A first-diff row is evidence about LAYOUT, not about membership; check
+# membership directly before filing a missing-match finding.
+#
+# VACUITY: 12 of 359 PASSes fully vacuous (3.3%), 24 last-key vacuous (6.7%).
+# Four buffers account for all of it, and only under the minimal base:
+#   'ls //usr//'  ALL      'ls | gr'   ALL
+#   'echo ${PA'   LASTKEY  'ls ~ro'    LASTKEY
+# `drop-menu` (full base) is 0% on both measures.  No combo certifies
+# nothing.
