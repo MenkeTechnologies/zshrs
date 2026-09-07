@@ -78,6 +78,7 @@ mod if_elif_parity;
 mod ifs_parity;
 mod jobs_parity;
 mod kill_signal_parity;
+mod ksharrays_bare_ref_parity;
 mod let_arith_command_parity;
 mod lexer_parity;
 mod local_tied_special_parity;

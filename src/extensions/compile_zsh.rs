@@ -15457,8 +15457,19 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             Some(p) => (unesc(&chars[..p]), unesc(&chars[p + 1..])),
             None => (unesc(&chars), String::new()),
         };
+        // Re-attach the `[@]` / `[*]` suffix the source carried, exactly as the
+        // `:#` filter arm above does and for the same reason (Bug #1054): the
+        // splat is recorded by paramsubst's OWN subscript loop
+        // (`was_at_star_splat`, subst.rs), and that flag is what exempts the
+        // reference from c:Src/params.c:2286-2288's KSHARRAYS clamp. Binding
+        // the replace to the bare name threw the `[@]` away before paramsubst
+        // saw it, so under KSH_ARRAYS — which `emulate sh` / `emulate ksh` both
+        // set — `${arr[@]/p/r}` collapsed to element 0.
         return Some(ParamModifier {
-            name,
+            name: match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
+            },
             kind: ParamModifierKind::Replace {
                 op,
                 pattern,
@@ -15471,7 +15482,11 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
     if let Some(b) = rest.strip_prefix("##") {
         return Some(ParamModifier {
-            name,
+            // Splat suffix re-attached — see the Replace arm above (Bug #1054).
+            name: match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
+            },
             kind: ParamModifierKind::Strip {
                 op: 1,
                 pattern: b.to_string(),
@@ -15481,7 +15496,11 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
     if let Some(b) = rest.strip_prefix("%%") {
         return Some(ParamModifier {
-            name,
+            // Splat suffix re-attached — see the Replace arm above (Bug #1054).
+            name: match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
+            },
             kind: ParamModifierKind::Strip {
                 op: 3,
                 pattern: b.to_string(),
@@ -15491,7 +15510,11 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
     if let Some(b) = rest.strip_prefix('#') {
         return Some(ParamModifier {
-            name,
+            // Splat suffix re-attached — see the Replace arm above (Bug #1054).
+            name: match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
+            },
             kind: ParamModifierKind::Strip {
                 op: 0,
                 pattern: b.to_string(),
@@ -15501,7 +15524,11 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
     if let Some(b) = rest.strip_prefix('%') {
         return Some(ParamModifier {
-            name,
+            // Splat suffix re-attached — see the Replace arm above (Bug #1054).
+            name: match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
+            },
             kind: ParamModifierKind::Strip {
                 op: 2,
                 pattern: b.to_string(),

@@ -7951,6 +7951,77 @@ pub fn paramsubst(
             }
         }
 
+        // c:Src/params.c:2286-2288 — fetchvalue's KSHARRAYS clamp:
+        //
+        //     } else if (!(scanflags & SCANPM_ASSIGNING) && v->scanflags &&
+        //                itype_end(t, INAMESPC, 1) != t && isset(KSHARRAYS))
+        //         v->end = 1, v->scanflags = 0;
+        //
+        // A bare `$name` — a valid identifier with NO `[...]` subscript and no
+        // `[@]`/`[*]` splat — that names an array or a hash is clamped to ONE
+        // element: `$a` IS `$a[0]`. `v->end = 1` narrows the Value to element
+        // 0 and `v->scanflags = 0` drops the array/hash shape, so every
+        // operator downstream of c:Src/subst.c:2800's fetchvalue sees that
+        // single element and nothing else. Nothing re-reads the full vector
+        // afterwards, because in C there is only one Value.
+        //
+        // zshrs has no Value: `paramsubst` re-reads the parameter from the
+        // paramtab at ~90 separate operator arms, and the clamp had been
+        // written out at nine of them. That is what let the rule drift —
+        // `${a:u}` folded EVERY element, and the double-quoted modifier arm
+        // re-fetched and sepjoin'd the whole array, so `"${a:h}"` took the
+        // head of the JOINED text. Both are the same missing clamp seen
+        // through different consumers. This closure SHADOWS the module-level
+        // `arrays_get` for the remainder of `paramsubst`, which is the same
+        // boundary c:2800 draws: every arm below reads through the clamp, and
+        // the rule exists once.
+        //
+        // Deliberately NOT clamped, matching the C predicate:
+        //   - KSHARRAYS unset — the closure is the identity, so the default
+        //     option state cannot move.
+        //   - `SCANPM_ASSIGNING`, which c:Src/subst.c:2767-2768 sets from
+        //     `arrasg` — the `(A)`/`(AA)` array-assign flags. `${(A)a}` keeps
+        //     the whole array.
+        //   - a subscript or an `[@]`/`[*]` splat: `v->scanflags` survives
+        //     because getindex ran instead (c:2280-2284).
+        //   - a name that is not an identifier: `itype_end(t, INAMESPC, 1)`
+        //     returns `t` for `@` and `*`, so `$@` / `$*` keep every
+        //     positional. Digit-leading names take the `argvparam` branch at
+        //     c:2240-2246 and never reach the clamp.
+        //
+        // The `other_name` fetches (`${a:|b}`, `${a:*b}`, `${a:^b}`) call the
+        // module path directly: those are C's SEPARATE fetchvalue on the RHS
+        // name, whose subscript state is its own, not `subscript`'s.
+        let ksh_bare_ref_c2286 = |name: &str| -> bool {
+            let is_ident = name
+                .as_bytes()
+                .first()
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_'); // c:2287 itype_end
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) // c:2287
+                && arrasg == 0 // c:2286 !(scanflags & SCANPM_ASSIGNING)
+                && is_ident
+                && subscript.is_none() // c:2280 — no getindex ran
+                && !was_at_star_splat
+        };
+        let arrays_get = |name: &str| -> Option<Vec<String>> {
+            let clamp = ksh_bare_ref_c2286(name);
+            match crate::ported::subst::arrays_get(name) {
+                Some(arr) if clamp => Some(arr.into_iter().take(1).collect()), // c:2288 v->end = 1
+                Some(arr) => Some(arr),
+                // c:2288's other half, `v->scanflags = 0`, drops the HASH shape
+                // too (c:2270-2276 sets `v->scanflags` for PM_HASHED exactly as
+                // it does for PM_ARRAY), so a bare `$h` is the one value at
+                // element 0 in bucket order and the `(k)`/`(kv)` flags it
+                // carried are gone. Answering it through the ARRAY fetch is
+                // what makes every operator arm see it: they reach for
+                // `arrays_get` first and only fall back to a hash-shaped read
+                // when that says None.
+                None if clamp => crate::ported::subst::assoc_get(name)
+                    .map(|m| m.values().take(1).cloned().collect()),
+                None => None,
+            }
+        };
+
         // Look up var (with subscript if present). Port of
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
         // If subexp_value is set, the value comes from the recursive
@@ -12100,7 +12171,14 @@ pub fn paramsubst(
                 && !flagged_array_subscript
                 && magic_keys.is_none()
                 && subexp_array_temp.is_none()
-                && arrays_contains(&var_name);
+                // c:Src/params.c:2270-2276 sets `v->scanflags` for PM_HASHED as
+                // well as PM_ARRAY, so c:2288's clamp scalarizes a bare hash
+                // too: `setopt ksharrays; typeset -A h=(k1 /a/v1.txt k2
+                // /b/v2.txt); print ${#h}` is 9 — the LENGTH of the first value
+                // — not 2, the entry count. `raw_value_for_len` below reads
+                // through the clamped fetch, which answers a bare hash with
+                // that one value.
+                && (arrays_contains(&var_name) || assoc_contains(&var_name));
             // The scalar length branch counts `raw_value_for_len`, which for a
             // bare array name is the space-joined array; under KSHARRAYS the
             // length source is element 1 alone, so override it.
@@ -12924,7 +13002,12 @@ pub fn paramsubst(
                     // operator reshaped it), join only LIVE elements so
                     // `"${a[*]}"` is `x y z q`, not `x y z   q`. No-op in --zsh.
                     if crate::bash_arrays::has_holes(&var_name)
-                        && arrays_get(&var_name).as_deref() == Some(sp.as_slice())
+                        // Deliberately bypasses the clamp: an IDENTITY test
+                        // against the raw stored vector (does `sp` still hold
+                        // the dense array?), not the operand read c:2286
+                        // narrows.
+                        && crate::ported::subst::arrays_get(&var_name).as_deref()
+                            == Some(sp.as_slice())
                     {
                         let live = crate::bash_arrays::compact(&var_name, sp.clone());
                         value = crate::ported::utils::sepjoin(&live, sep.as_deref());
@@ -17197,7 +17280,7 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let other = arrays_get(other_name).unwrap_or_default();
+                let other = crate::ported::subst::arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 // c:Src/subst.c:3539 — the array filter only runs when
                 // `isarr` (the `!vunset && isarr` gate). In DQ scalar
@@ -17280,7 +17363,7 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let other = arrays_get(other_name).unwrap_or_default();
+                let other = crate::ported::subst::arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 // c:Src/subst.c:3539/3566 — DQ scalar context (see the `:|`
                 // arm) collapses to the sepjoin'd scalar and intersect-
@@ -17375,7 +17458,9 @@ pub fn paramsubst(
                     //                                             params.c:3065)
                     //     if (!zip) { sval = getsparam(s);
                     //                 if (sval) zip = hmkarray(sval); }
-                    let zip: Option<Vec<String>> = arrays_get(other_name) // c:3489
+                    // c:3489 — the RHS name is C's own separate fetchvalue.
+                    let zip: Option<Vec<String>> =
+                        crate::ported::subst::arrays_get(other_name)
                         .or_else(|| {
                             getvaluearr_assoc!(other_name) // c:3491
                                 .map(|m| m.values().cloned().collect::<Vec<String>>())
@@ -17973,8 +18058,27 @@ pub fn paramsubst(
                             && crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                                 .is_none()
                     });
+                    // c:Src/params.c:2288 — element 0's TEXT, the scalar the
+                    // clamp leaves behind. None for anything the clamp does not
+                    // touch (a scalar name, a subscripted reference, KSHARRAYS
+                    // unset), which is what keeps the default path on
+                    // `raw_value` exactly as before.
+                    let ksh_bare_scalar_src: Option<String> = if ksh_bare_ref_c2286(&var_name) {
+                        arrays_get(&var_name).and_then(|a| a.into_iter().next())
+                    } else {
+                        None
+                    };
                     let array_source: Option<Vec<String>> = if single_slot_subscript {
                         None // c:2915 (scalar picked → substring on val)
+                    } else if ksh_bare_scalar_src.is_some() {
+                        // c:2288's `v->scanflags = 0` leaves `isarr` at 0
+                        // (c:Src/subst.c:2916), so c:3665's `if (isarr || …)`
+                        // array-slice block never runs and the bare reference
+                        // takes the CHARACTER substring of element 0:
+                        // `setopt ksharrays; a=(/x/one.txt /y/two.txt); ${a:1}`
+                        // is `x/one.txt`, not element 1. `${a[@]:1}` still
+                        // slices — a subscript means the clamp never fired.
+                        None
                     } else {
                         split_parts
                             .clone()
@@ -18143,7 +18247,9 @@ pub fn paramsubst(
                         // is 4 chars, `${x: -1}` → é). Identity for
                         // non-metafied values.
                         let dv: String = String::from_utf8_lossy(
-                            &crate::ported::utils::unmetafy_str(&raw_value),
+                            &crate::ported::utils::unmetafy_str(
+                                ksh_bare_scalar_src.as_deref().unwrap_or(raw_value.as_str()),
+                            ),
                         )
                         .into_owned();
                         let total = dv.chars().count() as i64;
@@ -18218,6 +18324,16 @@ pub fn paramsubst(
                             }
                             None => dv.chars().skip(start).collect(),
                         };
+                        // The clamped bare reference is a SCALAR (c:2288's
+                        // `v->scanflags = 0`), so the substring IS the whole
+                        // result. Publish it as the one-element value list the
+                        // way the modifier arm does: otherwise the downstream
+                        // bare-array emit block re-reads the parameter and
+                        // overwrites `value` with the unsliced element.
+                        if ksh_bare_scalar_src.is_some() {
+                            split_parts = Some(vec![value.clone()]);
+                            isarr = 0;
+                        }
                         if bash_off_underflow {
                             value = String::new();
                         }
@@ -22085,7 +22201,10 @@ pub fn paramsubst(
                 if !qt && !(subexp_dq && nojoin == 2) && !plan9 && spsep.is_some() {
                     sp.into_iter().filter(|s| !s.is_empty()).collect()
                 } else if crate::bash_arrays::has_holes(&var_name)
-                    && arrays_get(&var_name).as_deref() == Some(sp.as_slice())
+                    // Deliberately bypasses the clamp — see the identity test
+                    // in the sepjoin arm above.
+                    && crate::ported::subst::arrays_get(&var_name).as_deref()
+                        == Some(sp.as_slice())
                 {
                     // bash sparse arrays: `"${a[@]}"` / `"${a[*]}"` splat the
                     // dense Vec via split_parts (== the raw array here, no
