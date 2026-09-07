@@ -5579,3 +5579,111 @@ gstack
 # That also makes `force-menu-yes-select-0` the most evidence-dense of the
 # seven on every axis measured today — and it is the one combo that did not
 # exist before `1d5ad7ca`.
+
+# ============================================================================
+# CHUNK M4 (2026-09-07) — `menusel_type_s` (tab,tab,s) across the seven.
+# The densest sequence measured to date, and it caught a REAL divergence that
+# only `menu select search` reaches.
+# ============================================================================
+# Same pins, same 54-buffer multi-key corpus, `--sequences menusel_type_s
+# --jobs 4 --skip-missing --key-budget 12`.
+#
+# VERBATIM totals:
+#
+#   force-menu-off                  # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select               # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-interactive   # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-search        # 49 passed, 4 failed, 54 cell(s)
+#     # categories: PASS=49 FAIL=4 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-eq-2             # 51 passed, 2 failed, 54 cell(s)
+#     # categories: PASS=51 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-select-0         # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   drop-menu                       # 52 passed, 1 failed, 54 cell(s)
+#     # categories: PASS=52 FAIL=1 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#
+# VACUITY: 0 of 357 PASSes, on BOTH measures, across ALL SEVEN combos.
+# Every key drew on both sides in every cell.  `tab,tab,<printable>` is the
+# highest-yield shape this harness has been given — better than `tab2`
+# (6.7% last-key vacuous) and far better than `tab,tab,down` (46.0%),
+# because a printable key redraws the menu on every combo, menu-off
+# included.  Prefer it for future config-axis sweeps.
+#
+# ---------------------------------------------------------------------------
+# FINDING M4-A — `menu select search`: entering isearch WIPES the selected
+# match from the command line.  EXCLUSIVE to `force-menu-select-search`.
+# ---------------------------------------------------------------------------
+#   scripts/comptab_parity.py --zstyle scripts/parity_combos/\
+#     force-menu-select-search.zsh --case 'rm -' --keys tab,tab,s
+#
+#   zsh   : row 0 `rm -I`   cursor col 10
+#   zshrs : row 0 `rm`      cursor col  8
+#
+# The 13-row menu below is BYTE-IDENTICAL on both sides — same groups, same
+# options, same descriptions, same order.  Only the command line differs, and
+# zshrs's is shorter than the buffer the user TYPED: `rm -` came in, `rm` came
+# out, so the `-` was removed along with the menu's insertion rather than the
+# insertion alone being undone.
+#
+# The raw stream says where the highlight went:
+#     zsh    \e[7m-I\e[27m                      (the MATCH is highlighted)
+#     zshrs  \e[7m-- prompt when removing many files
+# i.e. zshrs moves the reverse-video onto the DESCRIPTION column of the same
+# row.  The harness reports `style-only rows: 3` for the cell, so the
+# highlight divergence is real but only the buffer row is scored.
+#
+# Second cell, same shape, same chunk:
+#   --case '[[ -' --keys tab,tab,s     zsh `[[ -h`   zshrs `[[`
+#
+# Both reproduced 3/3 SERIALLY at `--jobs 1 --key-budget 45`.  Neither
+# reproduces under `force-menu-select` or `force-menu-select-interactive`
+# with the identical key path — those two PASS — so it is `MENUMODE=
+# search-forward` (sh:vendor/zsh/functions/_main_complete:343-347) that is
+# broken, not menu-select in general.  This combo was a decoy before
+# `1d5ad7ca`, which is why the bug is only surfacing now.
+#
+# ============================================================================
+# CHUNK M5 (2026-09-07) — the TEN `full`-base force combos at `tab1`, run to
+# confirm the regeneration shifted nothing.  It shifted nothing.
+# ============================================================================
+# Same pins, the full 55-buffer corpus, `--sequences tab1 --jobs 4
+# --skip-missing --key-budget 12`.
+#
+#   force-listpacked-on             # 52 passed, 2 failed, 55 cell(s)
+#   force-listpacked-off            # 52 passed, 2 failed, 55 cell(s)
+#   force-rowsfirst-on              # 52 passed, 2 failed, 55 cell(s)
+#   force-groupname-off             # 52 passed, 2 failed, 55 cell(s)
+#   force-verbose-off               # 52 passed, 2 failed, 55 cell(s)
+#   force-no-descriptions           # 52 passed, 2 failed, 55 cell(s)
+#   force-single-completer          # 52 passed, 2 failed, 55 cell(s)
+#   force-complete-then-approximate # 52 passed, 2 failed, 55 cell(s)
+#   force-matcher-none              # 52 passed, 2 failed, 55 cell(s)
+#   force-matcher-caseless          # 51 passed, 3 failed, 55 cell(s)
+# every one:
+#     # categories: PASS=5{1,2} FAIL={2,3} TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#
+# 550 cells at 1.4-1.5s/cell.  Nine of the ten fail on exactly the two known
+# bands ('zmodload ' M1-B, 'function ' M1-C) and nothing else.
+#
+# ---------------------------------------------------------------------------
+# THE ONE EXTRA CELL — 'echo ${PA' under `force-matcher-caseless`, 3/3
+# serial.  It is a $parameters CONTENT difference, not a completion bug, and
+# it points the OPPOSITE way to the documented bundled-docs band.
+# ---------------------------------------------------------------------------
+#   --zstyle scripts/parity_combos/force-matcher-caseless.zsh \
+#   --case 'echo ${PA' --keys tab
+#
+# The caseless matcher widens the match set to PATH/parameters/patchars/path,
+# which puts the `parameters` association's own VALUE on screen as its
+# `_parameters` description.  Row 3, col 48:
+#   zsh   parameters  ///////// scalar-local integer-local association-hideval …
+#   zshrs parameters  ///////// scalar-local association-hideval …
+# zsh's completion context holds at least one `integer-local` parameter that
+# zshrs's does not.  Every other row of the listing is identical.  Recorded
+# OPEN and low priority: the interesting half is that it is zsh with the
+# extra name here, so it cannot be the same mechanism as HELPDIR/INFOPATH/
+# MANPATH — chase it by diffing `${(kv)parameters}` inside a completion
+# widget on both shells before touching anything.
