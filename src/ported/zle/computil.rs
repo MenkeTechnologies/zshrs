@@ -596,10 +596,31 @@ pub fn cd_prep() -> i32 {
             return 1;
         }
 
-        // c:297-303 — set sortstr from unmetafy(str) for each line.
+        // c:297-303 — `s->sortstr = ztrdup(s->str); unmetafy(s->sortstr, &dummy);`
+        //
+        // C's `str->str` is METAFIED: `cd_init` builds it with
+        // `ztrdup(rembslash(*ap))` (c:539) off a shell array, and shell
+        // strings are metafied in C. This copy exists to hand `cd_sort` the
+        // real text — the field's own declaration says so, `char *sortstr;
+        // /* unmetafied string used to sort matches */` (c:63) — so that the
+        // `zstrcmp` at c:235 collates what the user actually typed. (That is
+        // the OPPOSITE of `matchcmp`, `Src/Zle/compcore.c:3194`, which
+        // deliberately collates `(*a)->str` still metafied; the caller
+        // decides, and these two callers decide differently. Bug #1138.)
+        //
+        // zshrs' `cd_init` builds `str` from `get_user_var`, i.e. already
+        // the real text, so C's unmetafy step is the IDENTITY here and the
+        // port is the assignment alone. Running `unmeta` over it anyway is
+        // not that step, it is a second and destructive one: `0x83`, the
+        // `Meta` byte `unmeta` searches for, is an ordinary UTF-8
+        // CONTINUATION byte (`ă` is `c4 83`, `ッ` is `e3 83 83`), so
+        // `unmeta("ăA")` dropped the `83`, XOR'd the following `A` to `a`,
+        // and produced `c4 61` — not UTF-8 — which `from_utf8_lossy` handed
+        // on as `U+FFFD a`. Under `LC_ALL=C` that sorts AFTER `ĉ` (`c4 89`)
+        // where the true bytes `c4 83 41` sort before it, so `_describe`
+        // listed those two rows in the opposite order to zsh.
         for line in prep_lines.iter_mut() {
-            let s = line.str.clone().unwrap_or_default();
-            line.sortstr = Some(crate::ported::utils::unmeta(&s));
+            line.sortstr = Some(line.str.clone().unwrap_or_default());
         }
 
         // c:305 — sort if requested.
@@ -10260,6 +10281,102 @@ mod tests {
             groups[2].1,
             vec!["-qS=".to_string()],
             "the `equal` group must carry -qS= so `ls --<TAB>` inserts `--color=`"
+        );
+    }
+
+    /// `cd_prep`'s sort key must be the display string AS GIVEN, not the
+    /// result of running `unmetafy` over it a second time.
+    ///
+    /// C stores `str->str` metafied (`cd_init` c:539 `ztrdup(rembslash(*ap))`
+    /// off a metafied shell array), so c:297-303 makes a copy and unmetafies
+    /// it into `sortstr` — `/* unmetafied string used to sort matches */`
+    /// (c:63) — precisely so `cd_sort`'s `zstrcmp` (c:235) collates the REAL
+    /// text. zshrs' `cd_init` builds `str` from `get_user_var`, which is
+    /// already the real text, so that step is the identity here and calling
+    /// `unmeta` again is not a port of it but a second, destructive pass.
+    ///
+    /// It is destructive because `0x83` — the `Meta` byte `unmeta` scans for
+    /// — is a perfectly ordinary UTF-8 CONTINUATION byte: `ă` is `c4 83`,
+    /// `ッ` is `e3 83 83`. `unmeta("ăA")` sees the `83`, drops it, XORs the
+    /// following `A` to `a`, and leaves `c4 61`, which is not UTF-8 at all
+    /// and reaches `zstrcmp` as `U+FFFD a`. Under `LC_ALL=C` that sorts
+    /// after `ĉ` (`c4 89`) where the true bytes `c4 83 41` sort before it,
+    /// so `_describe` listed two entries in the opposite order to zsh:
+    ///
+    /// ```text
+    ///   _d=( 'ĉ:dee' 'ăA:dee2' 'zz1:same' 'zz2:same' ); _describe x _d
+    ///   zsh:   zz2 zz1 -- same / ăA -- dee2 / ĉ  -- dee
+    ///   zshrs: zz2 zz1 -- same / ĉ  -- dee  / ăA -- dee2      ✗
+    /// ```
+    ///
+    /// The locale is pinned to `C` for the duration because that is the
+    /// setting under which `strcoll` is `strcmp` and the byte order is the
+    /// answer; it is also what `scripts/comptab_parity.py` runs both shells
+    /// under.
+    #[test]
+    fn cd_prep_sorts_the_string_as_given_not_a_second_unmetafy() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let saved: Option<std::ffi::CString> = unsafe {
+            let p = libc::setlocale(libc::LC_ALL, std::ptr::null());
+            if p.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(p).to_owned())
+            }
+        };
+        unsafe { libc::setlocale(libc::LC_ALL, c"C".as_ptr()) };
+
+        // `zz1`/`zz2` share a description so `cd_group` counts a group and
+        // `cd_prep` takes its c:247-394 branch — the only one that sorts.
+        setaparam(
+            "cdset_meta",
+            ["ĉ:dee", "ăA:dee2", "zz1:same", "zz2:same"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+        let args: Vec<String> = ["-g", "cdset_meta"].iter().map(|s| s.to_string()).collect();
+        // disp=1 + a leading `-g` is `_describe`'s own call shape
+        // (`compdescribe -I "$_hide" "$_mlen" "$_sep " _expl -g …`,
+        // Completion/Base/Utility/_describe:122).
+        // mlen is `_describe`'s own default, `$((COLUMNS/2))`
+        // (Completion/Base/Utility/_describe:49); C clamps anything below 4
+        // up to 4 (c:502-503), which would stop `cd_group` from forming any
+        // group at all and leave `cd_prep` on its unsorted branch.
+        let rc = cd_init("compdescribe", "", "40", " -- ", &[], &args, 1);
+        assert_eq!(rc, 0, "cd_init parsed the set");
+
+        let params: Vec<String> = ["cd_csl", "cd_opts", "cd_mats", "cd_dpys"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut mats: Vec<Vec<String>> = Vec::new();
+        while cd_get(&params) == 0 {
+            mats.push(crate::ported::params::getaparam("cd_mats").unwrap_or_default());
+        }
+
+        unsafe {
+            match saved {
+                Some(ref s) => libc::setlocale(libc::LC_ALL, s.as_ptr()),
+                None => libc::setlocale(libc::LC_ALL, c"C".as_ptr()),
+            };
+        }
+
+        // Where each name first appears across the emitted runs, which is
+        // the order the list is drawn in.
+        let pos =
+            |name: &str| -> Option<usize> { mats.iter().position(|g| g.iter().any(|m| m == name)) };
+        let (p_a, p_c) = (pos("ăA"), pos("ĉ"));
+        assert!(
+            p_a.is_some() && p_c.is_some(),
+            "both described entries must be emitted: {mats:?}"
+        );
+        assert!(
+            p_a < p_c,
+            "c:235 collates `ăA` (c4 83 41) before `ĉ` (c4 89) under LC_ALL=C; \
+             a second unmetafy turns the first into U+FFFD a and flips them: {mats:?}"
         );
     }
 

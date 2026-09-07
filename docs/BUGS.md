@@ -59530,10 +59530,17 @@ puts `alpha.txt` before `README.md`) is byte-for-byte unchanged, and the copy
 is skipped entirely when neither operand holds an `imeta()` byte.
 
 Deliberately NOT changed, because C does not metafy on those paths either:
-`${(o)}` / `${(O)}` / `print -o` (`strmetasort`), glob expansion order
-(`gmatchcmp` on `uname`), and `compdescribe` — `Src/Zle/computil.c:235` DOES
-pass a metafied `sortstr` and so shares this defect class, but it is a separate
-comparator on a separate path and is left for its own change.
+`${(o)}` / `${(O)}` / `print -o` (`strmetasort`) and glob expansion order
+(`gmatchcmp` on `uname`).
+
+**Correction (#1140).** This entry also claimed `compdescribe`
+(`Src/Zle/computil.c:235`) passes a metafied `sortstr` and so shares the defect
+class. It does not: `sortstr` is declared `/* unmetafied string used to sort
+matches */` (c:63) and c:301-302 unmetafies it before the `qsort`, so `cd_sort`
+belongs in the *unmetafied* column with `strmetasort` and `gmatchcmp`. Reading
+that row as metafied is the opposite of the real defect there, which #1140
+records and fixes: zshrs' data is already unmetafied, so the port's *second*
+`unmeta` pass corrupted every string carrying a `0x83` byte.
 
 Regression test:
 `matchcmp_collates_metafied_form_so_distinct_matches_never_tie`
@@ -59638,3 +59645,96 @@ import loop would mark it exported (`Src/params.c:937`), masking the gap — and
 `SHLVL=` line against the shell's own `$SHLVL` (`/usr/bin/env` rather than
 `printenv`, because zshrs ships a `printenv` builtin that answers from the
 parameter table).
+
+---
+
+## #1140 — `compdescribe`'s sort ran `unmetafy` over text that was already unmetafied, so a UTF-8 continuation byte of `0x83` reordered the list — fixed
+
+**Status:** `fixed` 2026-09-07.
+
+```console
+$ cat rc.zsh
+_zzzcd() {
+  local -a _d
+  _d=( 'ĉ:dee' 'ăA:dee2' 'zz1:same' 'zz2:same' )
+  _describe -t zzz 'zzz thing' _d
+}
+compdef _zzzcd true
+
+$ zsh   -f -i        # LC_ALL=C, then 'true <TAB>'
+zz2      zz1  -- same
+ăA            -- dee2
+ĉ             -- dee
+$ zshrs -f -i
+zz2      zz1  -- same
+ĉ             -- dee
+ăA            -- dee2      ✗
+```
+
+**Not the defect that was expected here.** #1138 fixed `matchcmp`
+(`Src/Zle/compcore.c:3194`), which collates METAFIED text, and named
+`compdescribe` as the next instance of that class. It is not one:
+`Src/Zle/computil.c` declares the field as `char *sortstr; /* unmetafied
+string used to sort matches */` (c:63) and fills it at c:297-303 with
+
+```c
+s->sortstr = ztrdup(s->str);
+unmetafy(s->sortstr, &dummy);
+```
+
+before the `qsort` at c:306. `cd_sort` (c:233-236) therefore hands `zstrcmp`
+UNMETAFIED bytes — `compdescribe` belongs with `strmetasort` and `gmatchcmp`,
+not with `matchcmp`. That unmetafy has been there since 2006
+(`71fa876defa`). The caller-decides table in #1138 is corrected accordingly:
+
+| caller | operand | metafied? |
+| --- | --- | --- |
+| `strmetasort` (`Src/sort.c:234`) | `sortarrptr->cmp`, unmetafied at c:299-315 | no |
+| `gmatchcmp` (`Src/glob.c:945`) | `gmptr->uname`, unmetafied at `Src/glob.c:1963-1973` | no |
+| `cd_sort` (`Src/Zle/computil.c:233`) | `sortstr`, unmetafied at c:301-302 | no |
+| `matchcmp` (`Src/Zle/compcore.c:3194`) | `(*a)->str` / `->disp` | **yes** |
+
+**What was actually wrong.** C needs that unmetafy because its `str->str` is
+metafied — `cd_init` builds it with `ztrdup(rembslash(*ap))` (c:539) off a
+shell array, and shell strings are metafied in C. zshrs' `cd_init` builds
+`str` from `get_user_var`, which is already the real text, so C's step is the
+IDENTITY here. The port ran `utils::unmeta` anyway, which is a second and
+destructive pass, because `0x83` — the `Meta` byte `unmeta` searches for — is
+an ordinary UTF-8 CONTINUATION byte:
+
+```text
+ă  = c4 83        ĉ  = c4 89        ッ = e3 83 83        Ã = c3 83
+```
+
+`unmeta("ăA")` finds the `83`, drops it, XORs the following `A` to `a`, and
+yields `c4 61`, which is not UTF-8 at all; `from_utf8_lossy` then delivers
+`U+FFFD a` to `zstrcmp`. Under `LC_ALL=C` — where `strcoll` is `strcmp` and
+the byte order is the answer, and which is what `scripts/comptab_parity.py`
+pins for both shells — `ef bf bd 61` sorts AFTER `ĉ` (`c4 89`) while the true
+bytes `c4 83 41` sort before it, so the two rows came out swapped.
+
+**Fix.** `cd_prep` (`src/ported/zle/computil.rs`) assigns `str` to `sortstr`
+directly, which is what c:297-303 amounts to on data that is already
+unmetafied.
+
+Unchanged, and measured rather than argued: `${(o)}` / `${(O)}` / `${(oi)}` /
+`${(n)}`, `print -o` / `print -O`, and glob sort order (`*(oN)` / `*(nN)`)
+produce byte-identical output before and after under both `LC_ALL=C` and
+`LC_ALL=en_US.UTF-8` — none of them reach `cd_prep`. ASCII `_describe`
+ordering (`README.md` / `alpha.txt` / `Beta` / `beta2` / `x1` `x2` `x10` /
+`zulu`) is byte-identical before, after, and against zsh, because `unmeta` was
+already the identity on ASCII; only text carrying a `0x83` byte moved.
+
+Note that the non-ASCII order zshrs and zsh already disagree on under
+`LC_ALL=en_US.UTF-8` for `${(o)}` and glob is untouched by this and is a
+separate matter: macOS `strcoll` under that locale returns 0 for every pair of
+CJK / Kana / Hangul strings, so those orders are qsort tie artifacts on both
+sides.
+
+Regression test: `cd_prep_sorts_the_string_as_given_not_a_second_unmetafy`
+(`src/ported/zle/computil.rs`) — it drives `cd_init` with `_describe`'s own
+`-g` / `disp=1` call shape and asserts `ăA` is emitted before `ĉ`. It has to
+pass a `max-matches-width` of 40 (`_describe` defaults it to `$((COLUMNS/2))`,
+`Completion/Base/Utility/_describe:49`): C clamps anything below 4 up to 4
+(c:502-503), and at 4 `cd_group` forms no group at all, so `cd_prep` never
+reaches the branch that sorts.

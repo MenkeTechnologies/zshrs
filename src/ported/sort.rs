@@ -165,7 +165,7 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 ///
 /// **Parameter type:** C takes `const char *` — raw bytes — and it is
 /// the CALLER that decides whether those bytes are metafied. That choice
-/// is observable, and the three C callers do not agree:
+/// is observable, and the four C callers do not agree:
 ///
 /// * `strmetasort` (`Src/sort.c:299-315`) unmetafies each element into
 ///   `sortarrptr->cmp` before comparing, so `${(o)}` / `print -o`
@@ -173,12 +173,16 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 /// * `gmatchcmp` (`Src/glob.c:945`) compares `gmptr->uname`, which
 ///   `Src/glob.c:1963-1973` builds by `unmetafy()`ing the file name —
 ///   glob sort is unmetafied too.
+/// * `cd_sort` (`Src/Zle/computil.c:233-236`) compares `sortstr`, which
+///   c:301-302 unmetafies out of `str` for exactly this purpose — the
+///   field is declared `/* unmetafied string used to sort matches */`
+///   (c:63). `compdescribe` collates real text as well.
 /// * `matchcmp` (`Src/Zle/compcore.c:3194`) compares `(*a)->str` /
 ///   `(*a)->disp` — completion match strings, which are metafied and are
 ///   never unmetafied anywhere on the path to the `qsort` at c:3259.
 ///
 /// Metafication escapes bytes inside the UTF-8 lead/continuation ranges
-/// (`Src/utils.c:4195-4201`), so that third caller hands `strcoll` a byte
+/// (`Src/utils.c:4195-4201`), so that last caller hands `strcoll` a byte
 /// string that is not valid multibyte and the collation degrades
 /// accordingly. Reproducing zsh means passing the same bytes, so this
 /// takes `AsRef<[u8]>` rather than `&str`: a `&str` caller passes exactly
