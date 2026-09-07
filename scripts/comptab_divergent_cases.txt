@@ -5247,3 +5247,58 @@ gstack
 # with `if (( $CURRENT > 2 ))` (`sh:3`).  Serially re-confirmed 3/3 FAIL on
 # the before binary and 3/3 PASS on the after binary.  Nothing regressed in
 # either regime.
+
+# ============================================================================
+# CORRECTION — 'unset ' / 'env -u ' ARE the bundled-docs band. My earlier
+# claim that they "survive the ladder" was WRONG (stated in 9fd81cd502).
+# ============================================================================
+# I ran only HALF the ladder — `zstyle ':completion:*' verbose no` — saw the
+# cell still fail, and recorded it as NOT the benign band. The band's ladder
+# has two halves, and the second one is the one that matters here:
+#
+#   verbose no                                   FAIL  (148 vs 150)
+#   verbose no + unset HELPDIR INFOPATH          FAIL  (148 vs 149)
+#   verbose no + unset HELPDIR INFOPATH MANPATH  PASS
+#
+# Re-measured directly, --jobs 1, both fixtures sourced by both shells.
+#
+# The extras are REAL MATCH NAMES, not `-E<n>` padding — the
+# `compdescribe -g` / `calclist` `nlist` hypothesis recorded earlier is DEAD.
+# Forced full listing (LISTMAX=100000, 400-row pty) and diffed names:
+#     zsh 147   zshrs 149   zshrs-only: HELPDIR, INFOPATH   zsh-only: (none)
+#
+# Source: src/extensions/bundled_docs.rs — `publish_into` (:208-236) pushes
+# INFOPATH/MANPATH when absent and HELPDIR at :230-235 into the process-entry
+# `environ` snapshot; `install_and_publish` (:186-196) does the same live.
+# `createparamtable` then imports that snapshot (c:Src/params.c:893), so all
+# three land in paramtab as `scalar-export` and `_parameters` completes them.
+# This is a DOCUMENTED SHIPPED FEATURE (README.md:639, pinned by
+# tests/zsh_compat_pinning.rs:968-1004). The completion engine is correct;
+# closing the cell means removing the feature. NO FIX.
+#
+# `env -u <TAB>` is the same root cause and shows the names on screen (zsh 12
+# exported vars, zshrs 15). It needs MANPATH in the ladder too because it
+# filters `_parameters -g "*export*"` — which is exactly why a two-name ladder
+# left it failing and produced my wrong reading.
+#
+# ---------------------------------------------------------------------------
+# SEPARATE, STILL OPEN: 'env ' (no -u) is NOT this bug
+# ---------------------------------------------------------------------------
+# Both shells print `_describe:compdescribe:124: invalid argument:
+# __galiases_ary` then `:129: no parsed state`; zsh then asks about 52556
+# possibilities and zshrs produces NO ask prompt at all (rows 3/4 absent,
+# cursor stranded). The ladder does not touch it. A `_normal`
+# command-completion defect.
+#   repro: scripts/comptab_parity.py --case 'env ' --keys tab
+#
+# ---------------------------------------------------------------------------
+# ALSO CORRECTED: 9fd81cd502 over-fixed $zle_bracketed_paste
+# ---------------------------------------------------------------------------
+# That commit wired zle's `setup_` into `register_builtin_modules`, which is
+# the boot-time `autofeatures` replay — it registers a modulestab node without
+# LOADING anything. C reaches `setup_` only through the load chain
+# (c:Src/module.c:1884 `setup_module`), so the parameter then existed in EVERY
+# zshrs shell while `zmodload -e zsh/zle` still reported the module unloaded:
+#     zsh -f -c 'print ${+zle_bracketed_paste}'   zsh 0   zshrs 1
+# Fixed by 132defe3fa (arm moved to `setup_module`). Verified after: plain -c
+# 0/0, after `zmodload zsh/zle` 1/1, `zmodload -e` not-loaded on both.
