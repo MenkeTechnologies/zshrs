@@ -1199,3 +1199,39 @@ fn inherited_fpath_still_carries_the_bundled_tree() {
         );
     }
 }
+
+/// `$zle_bracketed_paste` exists only once `zsh/zle` is actually LOADED.
+///
+/// c:Src/Zle/zle_main.c:2246-2288 — `setup_` is the zle module's boot
+/// function and c:2276-2280 assigns the array inside it, so C creates
+/// the parameter from the module-load chain
+/// (c:Src/module.c:1884 `setup_module`) and from nowhere else. A `-c`
+/// script never enters the editor, so `zsh/zle` never loads and the
+/// name must be absent; an explicit `zmodload zsh/zle` must create it.
+/// Measured on this host:
+///
+///     zsh -f -c 'print ${+zle_bracketed_paste}'                  -> 0
+///     zsh -f -c 'zmodload zsh/zle; print ${+zle_bracketed_paste}' -> 1
+///
+/// Registering the arm at *static module registration* instead of at
+/// load makes the name unconditionally present, which shows up as a
+/// spurious extra match in every `${(k)parameters}` listing.
+#[test]
+fn zle_bracketed_paste_follows_module_load() {
+    if !zsh_available() {
+        return;
+    }
+    for script in [
+        "print ${+zle_bracketed_paste}",
+        "zmodload zsh/zle; print ${+zle_bracketed_paste}",
+        "zmodload zsh/zle; print -r -- ${(j: :)${(@V)zle_bracketed_paste}}",
+    ] {
+        let want = run_zsh(script);
+        let got = run_zshrs(script);
+        assert_eq!(
+            got.stdout.trim(),
+            want.stdout.trim(),
+            "`{script}` must match zsh"
+        );
+    }
+}

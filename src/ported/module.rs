@@ -1922,21 +1922,18 @@ impl modulestab {
                 "zsh/compctl" => {
                     crate::ported::zle::compctl::setup_();
                 }
-                // c:Src/Zle/zle_main.c:2246-2288 — `setup_` is the zle
-                // module's boot function, so C runs it at module LOAD and
-                // c:2276-2280 assigns `$zle_bracketed_paste` there. zshrs
-                // links zle statically and ran `setup_` lazily on first
-                // `zleread`, so a shell that had loaded the module but not
-                // yet entered the editor was missing the parameter:
-                //     zmodload zsh/zle; print ${+zle_bracketed_paste}
-                //     zsh 1    zshrs 0
-                // `termquery.rs:760` already READ that array, so the port
-                // had a consumer with no producer outside the editor.
-                "zsh/zle" => {
-                    crate::ported::zle::zle_main::ZLE_MODULE_SETUP.call_once(|| {
-                        let _ = crate::ported::zle::zle_main::setup_(std::ptr::null());
-                    });
-                }
+                // NOTE: `zsh/zle` deliberately has NO arm here. `setup_` is
+                // the zle module's boot function, so C reaches it only from
+                // the LOAD chain (`setup_module`, c:1884), never from static
+                // registration — this table is the boot-time
+                // `autofeatures` replay, which registers a node without
+                // loading anything. Calling it here made
+                // `$zle_bracketed_paste` (c:Src/Zle/zle_main.c:2276-2280)
+                // exist in every shell, including one that never enters the
+                // editor, where zsh leaves it unset:
+                //     zsh -f -c 'print ${+zle_bracketed_paste}'   -> 0
+                // The arm lives in `setup_module` instead, beside the other
+                // per-module `setup_` dispatch.
                 _ => {}
             }
         }
@@ -3997,6 +3994,21 @@ pub fn setup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/zselect" => crate::ported::modules::zselect::setup_(std::ptr::null()),
         "zsh/zutil" => crate::ported::modules::zutil::setup_(std::ptr::null()),
         "zsh/compctl" => crate::ported::zle::compctl::setup_(),
+        // c:Src/Zle/zle_main.c:2246-2288 — zle's `setup_` runs `init_thingies`
+        // and assigns `$zle_bracketed_paste` (c:2276-2280). C reaches it from
+        // here, the module-LOAD chain, so a shell that loaded `zsh/zle`
+        // without entering the editor still has the parameter:
+        //     zsh -f -c 'zmodload zsh/zle; print ${+zle_bracketed_paste}' -> 1
+        //     zsh -f -c '                  print ${+zle_bracketed_paste}' -> 0
+        // zshrs links zle statically, so `zleread` (zle_main.rs:1520) shares
+        // the same one-shot guard for the editor-entry half of the contract.
+        "zsh/zle" => {
+            let mut r = 0;
+            crate::ported::zle::zle_main::ZLE_MODULE_SETUP.call_once(|| {
+                r = crate::ported::zle::zle_main::setup_(std::ptr::null());
+            });
+            r
+        }
         _ => 0,
     }
 }
