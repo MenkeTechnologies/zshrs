@@ -1292,6 +1292,39 @@ mod zstyle_bool_tests {
         // c:719-722 — anything else is FALSE for both letters. This is the
         // whole defect class: `testforstyle` answered 0 ("defined") for each
         // of these, so the ports ran the true branch.
+        // An ARBITRARY non-boolean value is FALSE for both letters too —
+        // `-T` is "true unless it is set to something that is not true", NOT
+        // "true unless it is set to one of the four false-y words". Five
+        // private `zstyle_t_default_true` copies had spelled it
+        // `!matches!(first, "no"|"false"|"off"|"0")`, which answers TRUE here;
+        // `_describe`'s copy of the same-named helper answered FALSE, and the
+        // disagreement between two bodies under one name is how it surfaced.
+        for v in ["maybe", "2", "yes-ish", "-1"] {
+            del_style();
+            set_style(v);
+            assert_eq!(
+                zstyle_t(CTX, "boolprobe"),
+                1,
+                "-t on `{v}` must be 1 — only true/yes/on/1 are true"
+            );
+            assert_eq!(
+                zstyle_T(CTX, "boolprobe"),
+                1,
+                "-T on `{v}` must be 1 — a set-but-not-true value is FALSE"
+            );
+        }
+
+        // Set with NO values is a distinct case from unset, and both are
+        // `-T` true (c:724 `vals ? 1 : 2` for -t; the -T arm returns 0).
+        del_style();
+        crate::ported::modules::zutil::bin_zstyle(
+            "zstyle",
+            &[CTX.to_string(), "boolprobe".to_string()],
+            &empty_ops(),
+            0,
+        );
+        assert_eq!(zstyle_T(CTX, "boolprobe"), 0, "-T on a valueless style → 0");
+
         for v in ["false", "no", "off", "0"] {
             del_style();
             set_style(v);

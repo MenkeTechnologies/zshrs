@@ -29,10 +29,23 @@ use crate::ported::params::{getsparam, setaparam};
 
 /// zsh `zstyle -T ctx style` — true unless explicitly set false.
 fn zstyle_t_default_true(ctx: &str, style: &str) -> bool {
-    !matches!(
-        lookupstyle(ctx, style).first().map(|s| s.as_str()),
-        Some("no") | Some("false") | Some("off") | Some("0")
-    )
+    // `zstyle -T` (c:Src/Modules/zutil.c:701-724 with the not-found arm at
+    // c:724): TRUE when the style is unset, when it is set with NO values, or
+    // when its first value is `true`/`yes`/`on`/`1`; FALSE otherwise — and
+    // "otherwise" includes any OTHER string, not just the false-y words.
+    //
+    // This used to be `!matches!(first, "no"|"false"|"off"|"0")`, which
+    // returned TRUE for an arbitrary value. Measured against zsh, both shells
+    // agreeing on the builtin:
+    //     value 'maybe'   zsh -T = 1 (false)   this helper said true
+    //     value 'yes'/'1' -T = 0    value 'no'/'0'/'maybe' -T = 1
+    //     set with no values, and unset, are both -T = 0
+    // `_describe`'s copy of this helper was already correct, which is how the
+    // divergence was spotted: same name, two different bodies.
+    //
+    // Routed through the ported builtin so the tri-state is the builtin's own
+    // and cannot drift again. See `shared::zstyle_t` / `zstyle_T`.
+    crate::compsys::ported::shared::zstyle_T(ctx, style) == 0
 }
 
 /// sh:9 `zformat -a list " $sep " entries` — split each entry on the FIRST
