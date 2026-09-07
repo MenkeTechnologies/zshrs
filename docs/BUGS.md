@@ -59539,3 +59539,102 @@ Regression test:
 `matchcmp_collates_metafied_form_so_distinct_matches_never_tie`
 (`src/ported/zle/compcore.rs`) — it sets `LC_ALL=en_US.UTF-8` for the duration,
 because under `LC_ALL=C` `strcoll` is `strcmp` and both forms agree.
+
+## #1139 — `$SHLVL` never reached a child, so it could not count shell nesting — fixed
+
+**Status:** `fixed` 2026-09-07.
+
+```console
+$ env -i HOME=$HOME PATH=$PATH zsh   -f -c 'print L1=$SHLVL; zsh   -f -c "print L2=\$SHLVL; zsh   -f -c \"print L3=\\\$SHLVL\"; true"; true'
+L1=1
+L2=2
+L3=3
+$ env -i HOME=$HOME PATH=$PATH zshrs -f -c 'print L1=$SHLVL; zshrs -f -c "print L2=\$SHLVL; zshrs -f -c \"print L3=\\\$SHLVL\"; true"; true'
+L1=1
+L2=1                                                                     ✗
+L3=1                                                                     ✗
+```
+
+Each nested shell is FORKED here (`true` follows it), so no exec-in-place
+adjustment is in play — the number should simply climb. It did not, and under a
+scrubbed environment the parameter was not exported at all:
+
+```console
+$ env -i HOME=$HOME PATH=$PATH zsh   -f -c 'print -r -- ${(t)SHLVL}'
+integer-export-special
+$ env -i HOME=$HOME PATH=$PATH zshrs -f -c 'print -r -- ${(t)SHLVL}'
+integer-special                                                          ✗
+```
+
+**C reference.** `createparamtable` runs three fix-ups immediately after the
+environment-import loop, and the third is unconditional
+(`Src/params.c:971-974`):
+
+```c
+    pm = (Param) realparamtab->getnode2(realparamtab, "SHLVL");
+    sprintf(buf, "%d", (int)++shlvl);
+    /* shlvl value in environment needs updating unconditionally */
+    addenv(pm, buf);
+```
+
+`addenv` is what does both halves of the job: it `zputenv`s the string and it
+stamps `pm->node.flags |= PM_EXPORTED` (`Src/params.c:5482-5484`). zshrs's
+`ShellExecutor::new` (`src/vm_helper.rs`) had ported the `++shlvl` increment
+and the `PM_UNSET` clear but not the `addenv`, so the incremented value stayed
+inside the process: a child re-read the grandparent's stale `SHLVL=` entry and
+the count never advanced. The omission carried a comment that described the
+missing behaviour ("addenv also exports the INCREMENTED value, which is why a
+forked child sees 6 …") next to code that did not do it.
+
+**Fix.** Call `addenv("SHLVL", …)` with the incremented value, at c:974's
+position — hoisted just past the paramtab write-lock, because `addenv` takes
+that same lock.
+
+**The paired exec-time half.** C hands an exec'd command the DECREMENTED value
+(`Src/exec.c:4332-4336`, "for either implicit or explicit exec, decrease $SHLVL
+as we're now done as a shell", guarded by `!subsh && !forked`) — the shell is
+being replaced, not nested. That is why `SHLVL=5 zsh -fc '/usr/bin/env'` shows
+`SHLVL=5` while `'/usr/bin/env; true'` shows `SHLVL=6`. Exporting the increment
+without it would have made every `exec` read one too high, so the decrement is
+ported in the same change, at fusevm's `BUILTIN_EXEC`
+(`src/fusevm_bridge.rs`) — the one place fusevm replaces its own process, and
+the place where both of C's guards demonstrably hold (the in-subshell `exec`
+form returns from an earlier branch). It publishes through `addenv` explicitly:
+C gets the environment update for free because `setiparam` on an exported
+parameter runs `setnumvalue` → `setstrvalue(NULL)` → `export_param` → `addenv`
+(`Src/params.c:2872`, `2841`, `2672`), and zshrs's `setnumvalue`
+(`src/ported/params.rs`) has no `setstrvalue(v, NULL)` tail.
+
+Measured after, against the same reference zsh:
+
+| case | zsh | zshrs before | zshrs after |
+| --- | --- | --- | --- |
+| `${(t)SHLVL}` under `env -i` | `integer-export-special` | `integer-special` | `integer-export-special` |
+| forked nesting, three deep | `1 2 3` | `1 1 1` | `1 2 3` |
+| `SHLVL=5 … -fc '/usr/bin/env; true'` | `SHLVL=6` | `SHLVL=5` | `SHLVL=6` |
+| `SHLVL=5 … -fc 'exec /usr/bin/env'` | `SHLVL=5` | `SHLVL=5` | `SHLVL=5` |
+| `SHLVL=5 … -fc '/usr/bin/env'` | `SHLVL=5` | `SHLVL=5` | `SHLVL=6` ✗ |
+
+**Still open, and NOT this bug.** The last row is C's *implicit* exec-in-place:
+zsh execs the final command of a `-c` script in its own process, so C's
+`!forked` guard fires and the decrement applies. fusevm always forks there —
+`zsh -fc 'echo $$; /bin/sh -c "echo \$\$"'` prints one pid on zsh and two on
+zshrs — and for a genuinely forked command C's own rule says do not decrement,
+so `6` is the answer C would give for what zshrs actually did. Closing that row
+means teaching fusevm C's `do_exec` for the final command; it is a codegen
+change, not a SHLVL one. Before this fix the row agreed only by accident: zshrs
+was leaking the parent's untouched `SHLVL=5` into every child, right and wrong
+cases alike.
+
+**Where it showed up.** `env <TAB>` — the stock `_env` completer's `->normal`
+state runs `_alternative 'parameters:environment variable:_parameters -g
+"*export*"'`, and zsh offered `SHLVL` in that group where zshrs did not.
+
+Regression tests (`tests/parity/special_params_parity.rs`):
+`shlvl::shlvl_is_exported` — probes through `/usr/bin/env -i "$ZSH_ARGZERO"`,
+because a `cargo test` run's own environment already carries `SHLVL` and the
+import loop would mark it exported (`Src/params.c:937`), masking the gap — and
+`shlvl::shlvl_reaches_a_forked_child`, which compares `/usr/bin/env`'s
+`SHLVL=` line against the shell's own `$SHLVL` (`/usr/bin/env` rather than
+`printenv`, because zshrs ships a `printenv` builtin that answers from the
+parameter table).

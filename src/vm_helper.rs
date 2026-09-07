@@ -2532,6 +2532,11 @@ impl ShellExecutor {
         // c:Src/params.c:893-924 — the environment import runs AFTER the
         // specials table (moved above, c:838-847) and after the c:854-885
         // non-special seeds, exactly as `createparamtable` sequences them.
+        //
+        // Carries c:951's `addenv(pm, buf)` argument out of the paramtab
+        // write-lock below: `addenv` takes that same lock itself, so the call
+        // cannot be made while the guard is alive.
+        let mut shlvl_env: Option<String> = None;
         {
             use crate::ported::params::paramtab;
             if let Ok(mut tab) = paramtab().write() {
@@ -2784,13 +2789,42 @@ impl ShellExecutor {
                 // forked child sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`.
                 // (A bare `printenv SHLVL` shows 5 because zsh exec's the last
                 // command in place and backs the increment out — the shell is
-                // being replaced, not nested. That is a separate mechanism.)
+                // being replaced, not nested. That is a separate mechanism,
+                // ported for the explicit `exec` form at
+                // fusevm_bridge.rs's BUILTIN_EXEC.)
                 if let Some(pm) = tab.get_mut("SHLVL") {
                     let next = pm.u_val + 1; // c:949 `++shlvl`
                     crate::ported::params::intsetfn(pm.as_mut(), next); // c:949
                     pm.node.flags &= !(PM_UNSET as i32);
+                    // c:951 — the argument of the unconditional `addenv`.
+                    // C renders it with `sprintf(buf, "%d", (int)shlvl)`
+                    // AFTER the increment, so it is the incremented value.
+                    shlvl_env = Some(next.to_string()); // c:950
                 }
             }
+        }
+        // c:Src/params.c:951 — `addenv(pm, buf)`. Unconditional: the C comment
+        // on the line above it is "shlvl value in environment needs updating
+        // unconditionally". `addenv` both zputenv's the string and stamps
+        // `pm->node.flags |= PM_EXPORTED` (c:Src/params.c:5482-5484), so this
+        // one call is what makes `${(t)SHLVL}` read `integer-export-special`
+        // AND what puts the incremented number in a forked child's
+        // environment.
+        //
+        // Omitting it left $SHLVL unable to count nesting at all — measured
+        // with each shell nesting itself twice, the inner shells FORKED so
+        // that no exec-in-place decrement applies:
+        //     zsh    L1=1 L2=2 L3=3
+        //     zshrs  L1=1 L2=1 L3=1
+        // because every nested zshrs re-read the grandparent's stale
+        // environment entry instead of the parent's incremented one. It also
+        // left the parameter unexported under a scrubbed environment
+        // (`env -i … -f -c '${(t)SHLVL}'`: zsh `integer-export-special`,
+        // zshrs `integer-special`), which a completion listing sees directly:
+        // `env <TAB>` runs `_parameters -g "*export*"` and zsh offered SHLVL
+        // there where zshrs did not.
+        if let Some(v) = shlvl_env {
+            crate::ported::params::addenv("SHLVL", &v); // c:951
         }
 
         // c:Src/params.c:960-965 — HOME wiring, which C runs right
@@ -2893,30 +2927,28 @@ impl ShellExecutor {
         //     zsh  : scalar-export      zshrs: scalar
         //
         // and a child of zshrs saw no LOGNAME at all where a child of zsh did.
-        // Unlike the SHLVL case documented below, there is no paired exec-time
-        // adjustment to land first: C exports the value it already has.
+        // Like the SHLVL case above, C exports a value the import loop did not
+        // supply; unlike it, there is no paired exec-time adjustment.
         if let Some(v) = crate::ported::params::getsparam("LOGNAME") {
             crate::ported::params::addenv("LOGNAME", &v); // c:970
         }
 
-        // NOT DONE HERE: c:Src/params.c:951 `addenv(pm, buf)`, which zputenv's
-        // the INCREMENTED SHLVL into the process environment so a forked child
-        // sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`. zshrs still
-        // exports the inherited 5 there.
+        // SHLVL's own `addenv` (c:Src/params.c:951) is done above, beside the
+        // increment it publishes. Its paired exec-time half — c:Src/exec.c:
+        // 4332-4336, "for either implicit or explicit exec, decrease $SHLVL as
+        // we're now done as a shell", guarded by `!subsh && !forked` — is
+        // ported for the EXPLICIT `exec cmd` form at fusevm_bridge.rs's
+        // BUILTIN_EXEC, the one place fusevm replaces its own process.
         //
-        // Adding the addenv alone makes parity WORSE, not better, because it
-        // is only half of a pair. C hands an exec'd command the DECREMENTED
-        // value (c:Src/exec.c:4276-4281 — "for either implicit or explicit
-        // exec, decrease $SHLVL as we're now done as a shell", guarded by
-        // `!subsh && !forked`), which is why a bare `SHLVL=5 zsh -fc 'printenv
-        // SHLVL'` prints 5 while `'printenv SHLVL; true'` prints 6 — the first
-        // is exec'd in place, the second forked. Exporting 6 without that
-        // decrement turns one divergence into four: the exec'd cases and every
-        // nested-shell count start reading one too high.
-        //
-        // The decrement IS ported, at exec.rs:11195-11199, but on the
-        // `ported::exec` path — not the fusevm path that actually runs `-c`.
-        // Wiring both belongs in one change, with the exec side first.
+        // Still open: C also execs IN PLACE for the LAST command of a `-c`
+        // script, and fusevm always forks there (`zsh -fc 'echo $$; /bin/sh -c
+        // "echo \$\$"'` reports one pid on zsh, two on zshrs). So
+        // `SHLVL=5 <shell> -fc '/usr/bin/env'` shows SHLVL=5 on zsh (exec'd,
+        // decremented) and SHLVL=6 on zshrs (forked, so C's own rule says do
+        // not decrement). That divergence belongs to the unported implicit
+        // exec-in-place, not to the SHLVL wiring: fixing it means teaching
+        // fusevm C's `do_exec` for the final command, and until then the
+        // forked answer is the one C would give for a forked command.
         // c:Src/init.c:1907-1909 — `SHTTY = -1; init_io(cmd); setupvals(...)`.
         // zsh_main runs those three in that order, and this constructor stands
         // in for setupvals's param setup on the drivers that never reach
@@ -3268,7 +3300,13 @@ impl ShellExecutor {
         // `lex_init_buf` / `loop()` without engaging the history layer.
         // (zsh fires `!` history sub only on interactive input, so
         // sourced files run verbatim.)
-        let content = fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+        // c:Src/init.c:1566 source() / Src/input.c — a script is read as
+        // RAW BYTES. `read_to_string` rejected the WHOLE file on the first
+        // non-UTF-8 byte ("stream did not contain valid UTF-8"), so one
+        // legacy latin-1 byte anywhere made the script unrunnable and even
+        // `echo` on line 1 never fired. C metafies instead (Src/utils.c:4856).
+        let content = crate::script_bytes::read_script_file(file_path)
+            .map_err(|e| format!("{}: {}", file_path, e))?;
         let status = self.execute_script_zsh_pipeline(&content)?;
 
         // Best-effort cache save — failures don't block execution.
@@ -5744,7 +5782,10 @@ impl ShellExecutor {
                     filename.to_string()
                 };
                 let resolved = resolved.to_string();
-                match fs::read_to_string(&resolved) {
+                // c:Src/exec.c `readoutput` — `$(<file)` reads the file a
+                // BYTE at a time and metafies (`if (imeta(c)) { *ptr++ =
+                // Meta; ... }`); it does not require UTF-8.
+                match crate::script_bytes::read_script_file(&resolved) {
                     Ok(contents) => {
                         return contents.trim_end_matches('\n').to_string();
                     }

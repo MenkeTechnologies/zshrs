@@ -264,6 +264,37 @@ mod shlvl {
         // Each shell increments differently; pin presence.
         assert_parity(r#"[[ -n "$SHLVL" ]]; echo $?"#);
     }
+
+    /// c:Src/params.c:971-974 — `addenv(pm, buf)` runs UNCONDITIONALLY on
+    /// SHLVL right after the environment-import loop ("shlvl value in
+    /// environment needs updating unconditionally"), and `addenv` sets
+    /// `pm->node.flags |= PM_EXPORTED` (c:Src/params.c:5482-5484). The
+    /// parameter is therefore exported even when nothing in the inherited
+    /// environment named it.
+    ///
+    /// Probed through a scrubbed re-exec of the shell under test rather than
+    /// `${(t)SHLVL}` in place: the ambient environment of a `cargo test` run
+    /// already carries SHLVL, the import loop marks anything it imports
+    /// exported (c:Src/params.c:937), and that alone would mask the missing
+    /// `addenv`. `env -i` removes the import so only c:974 can set the flag.
+    #[test]
+    fn shlvl_is_exported() {
+        assert_parity(r#"/usr/bin/env -i "$ZSH_ARGZERO" -f -c 'print -r -- ${(t)SHLVL}'"#);
+    }
+
+    /// The value `addenv` publishes is the INCREMENTED one (c:972 —
+    /// `sprintf(buf, "%d", (int)++shlvl)`), so a FORKED child reads back
+    /// exactly the number the shell itself reports. That is what makes
+    /// $SHLVL count nesting depth: without it every nested shell re-reads
+    /// the grandparent's value and the count never advances.
+    ///
+    /// `/usr/bin/env` rather than `printenv`, because zshrs ships a
+    /// `printenv` builtin that answers from the parameter table and would
+    /// hide the very gap under test.
+    #[test]
+    fn shlvl_reaches_a_forked_child() {
+        assert_parity(r#"[[ $(/usr/bin/env | grep "^SHLVL=") == "SHLVL=$SHLVL" ]]; echo $?"#);
+    }
 }
 
 mod pwd {

@@ -2591,6 +2591,34 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
         }
+        // c:Src/exec.c:4332-4336 —
+        //     if (!subsh) {
+        //         /* for either implicit or explicit "exec", decrease $SHLVL
+        //          * as we're now done as a shell */
+        //         if (!forked)
+        //             setiparam("SHLVL", --shlvl);
+        // Both guards hold on the way to the `command.exec()` below: the
+        // in-subshell form returned at the branch above (so `subsh` is
+        // false), and this call replaces THIS process rather than a child
+        // (so `forked` is false). The command therefore inherits one level
+        // LESS than the shell counted for itself — it is taking the shell's
+        // place, not nesting inside it.
+        //
+        // C gets the environment update for free: SHLVL is PM_EXPORTED (from
+        // `addenv` in createparamtable, c:Src/params.c:951), and `setiparam`
+        // on an exported parameter runs setnumvalue → setstrvalue(NULL) →
+        // export_param → addenv (c:2872, c:2841, c:2672). zshrs's
+        // `setnumvalue` (src/ported/params.rs:5588-5595) has no
+        // `setstrvalue(v, NULL)` tail, so the paramtab write alone would
+        // leave the environment holding the pre-decrement number and the
+        // exec'd command would read one too high. Publish it explicitly.
+        {
+            let cur = crate::ported::params::getsparam("SHLVL")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(1);
+            crate::ported::params::setiparam("SHLVL", cur - 1); // c:4336
+            crate::ported::params::addenv("SHLVL", &(cur - 1).to_string()); // c:2672
+        }
         let mut command = std::process::Command::new(&cmd);
         command.arg0(&display_argv0);
         command.args(&rest);
