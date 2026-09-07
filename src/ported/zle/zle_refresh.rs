@@ -2986,9 +2986,16 @@ pub fn zrefresh() {
             zrefresh();
         }
     }
-    // c:1717-1718 — `if (showinglist == -1) showinglist = nlnct;`
+    // c:1775-1776 — `if (showinglist == -1) showinglist = nlnct;`. C reads the
+    // LIVE `nlnct` here, not the value the block above tested against: the
+    // `listmatches` + recursive `zrefresh` in between can move it (the
+    // recursion recomputes it at c:1636, `resetvideo` zeroes it at c:786), so
+    // re-load rather than reuse the c:1764 snapshot. In the shapes reachable
+    // today the two agree — the recursion resolves `showinglist == -1` itself
+    // at its own c:1776 before returning, so this line only runs when no
+    // recursion happened — but C reads the global and so does this.
     if SHOWINGLIST.load(Ordering::Relaxed) == -1 {
-        SHOWINGLIST.store(nlnct_final, Ordering::Relaxed);
+        SHOWINGLIST.store(NLNCT.load(Ordering::SeqCst), Ordering::Relaxed);
     }
 }
 
