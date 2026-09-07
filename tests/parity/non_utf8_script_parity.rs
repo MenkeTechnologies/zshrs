@@ -238,3 +238,65 @@ fn latin1_byte_in_comment_does_not_kill_the_file() {
     assert_eq!(show(&z), show(&r), "latin-1 in comment");
     assert_eq!(show(&r), "ok\\x0a", "the file must still run");
 }
+
+/// Every byte value 0x80..=0xff, one per script, inside a quoted word.
+/// C stores the byte raw (only 0x00 / 0x83..0xa2 are IMETA) and prints
+/// it back; zshrs Meta-encodes it and `unmetafy_str` restores it at the
+/// write. This sweep is the guard against the encoding colliding with
+/// the lexer's own marker codepoints on the file path.
+#[test]
+fn every_high_byte_round_trips_in_a_script_file() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    let mut bad = Vec::new();
+    for b in 0x80u8..=0xff {
+        let mut body = b"print -r -- 'x".to_vec();
+        body.push(b);
+        body.extend_from_slice(b"y'\n");
+        let (z, r) = run_file(d.path(), "sweep.zsh", &body);
+        if z != r {
+            bad.push(format!("0x{:02x}: zsh={} zshrs={}", b, show(&z), show(&r)));
+        }
+    }
+    assert!(bad.is_empty(), "diverging bytes:\n{}", bad.join("\n"));
+}
+
+/// DOCUMENTED GAP — the same sweep on STDIN.
+///
+/// The stdin/pipe path reaches the lexer one LINE at a time
+/// (`ingetcline` → `shingetline`, `Src/input.c:406`), and there the
+/// Meta payload char `b ^ 32` collides with zshrs's own token
+/// codepoints: the lexer reserves U+0084..U+00A1 for the markers C
+/// spells `Pound`..`Nularg` (`Src/utils.c:4198-4201`,
+/// `parse.rs::ecstrcode`), so for the 30 bytes whose payload lands in
+/// that range — 0x80, 0x81 and 0xa4..=0xbf — the payload char is eaten
+/// and only the bare Meta lead survives (`x\x80y` prints
+/// `x\xc2\x83y`). The file/`source`/`autoload` paths, which hand the
+/// whole decoded text to the parser at once, are unaffected — the
+/// sweep above passes for all 128 values.
+///
+/// Fixing this means giving the raw-byte encoding a payload range that
+/// cannot collide with the marker range, which is a cross-cutting
+/// change to `$'\xNN'` (`lex.rs`), `compile_zsh.rs::meta_encode_byte`,
+/// `utils::unmetafy_str` and `parse.rs::ecstrcode`. Pinned, not fixed.
+#[test]
+#[ignore = "documented gap: Meta payload collides with the lexer's marker codepoints on the line-at-a-time stdin path"]
+fn every_high_byte_round_trips_on_stdin() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    let mut bad = Vec::new();
+    for b in 0x80u8..=0xff {
+        let mut body = b"print -r -- 'x".to_vec();
+        body.push(b);
+        body.extend_from_slice(b"y'\n");
+        let (z, r) = run_stdin(d.path(), &body);
+        if z != r {
+            bad.push(format!("0x{:02x}: zsh={} zshrs={}", b, show(&z), show(&r)));
+        }
+    }
+    assert!(bad.is_empty(), "diverging bytes:\n{}", bad.join("\n"));
+}
