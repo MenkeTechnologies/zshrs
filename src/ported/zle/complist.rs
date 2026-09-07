@@ -4001,21 +4001,21 @@ pub fn complistmatches(
     }
     crate::shout::end();
 
-    // Rust adaptation (mirrors ilistmatches, compresult.rs c:2172): the
-    // recursive `zrefresh` that follows `listmatches` re-enters this hook while
-    // `showinglist == -2`, and a re-entry that lands on the `compprintlist`
-    // branch repaints the ENTIRE menu again below the first — a visible
-    // duplicate. It bites only when the list SCROLLS (clearflag=0):
-    // compprintlist's fits-branch sets showinglist=-1, but the exceeds-branch
-    // (c:1712) leaves it -2. Mark the list shown (-1) so the recursive zrefresh
-    // repaints only the command line — the same guard the plain-list path
-    // already has. No-op on the singledraw branch, which already stored -1
-    // itself (c:1985). (Was masked by the removed `\x1b[A` cursor hack, which
-    // repositioned so the 2nd draw overwrote the 1st; the faithful fix is to
-    // not draw twice at all.)
-    if SHOWINGLIST.load(Ordering::SeqCst) == -2 {
-        SHOWINGLIST.store(-1, Ordering::SeqCst);
-    }
+    // c:2110-2112 — C assigns `showinglist` NOTHING between the draw and the
+    // `onlnct = nlnct` capture below, and neither does this port. A Rust-only
+    // `showinglist == -2 -> -1` override used to sit here, justified by "the
+    // exceeds-branch (c:1712) leaves it -2". That premise is false: -2 cannot
+    // reach this point on ANY path. Every route into the draw has already
+    // zeroed it — c:2009 and c:2034 return before the draw, and both arms of
+    // the c:2048 branch zero it (c:2056 after `trashzle`, or `asklist`'s
+    // c:1923) — so `compprintlist` starts from 0 and only ever raises it to -1
+    // in its two fits-branches (c:1702/c:1708), leaving the exceeds-branch
+    // (c:1712) at 0, exactly as `printlist` does (c:2166 is likewise inside
+    // `if (clearflag)`). A `showinglist > 0` left behind here is what the NEXT
+    // completion's `resetvideo` turns back into -2 (zle_refresh.c:787-788),
+    // repainting the whole grid a second time under the one already on screen
+    // — the defect the same override shape caused on the plain-list path in
+    // `ilistmatches` (9e381b76dc).
 
     // c:2113-2116 — capture frame state for next call's diff.
     ONLNCT.store(nlnct, Ordering::SeqCst); // c:2113
@@ -8388,5 +8388,88 @@ mod tests {
     fn putfilecol_empty_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = putfilecol("", "", 0, 0);
+    }
+
+    /// `complistmatches` must leave `showinglist` exactly where `asklist`
+    /// (c:1923 `showinglist = listshown = 0;`) and `compprintlist`
+    /// (c:1686-1722) put it — c:2110-2124 assigns it nothing after the draw.
+    /// With ALWAYS_LAST_PROMPT off `clearflag` is 0 (c:1930), so the epilogue
+    /// takes the exceeds/else arm and `showinglist` is NEVER raised to -1
+    /// (c:1702 and c:1708 are both inside the `if (clearflag)` at c:1686),
+    /// while `listshown = (clearflag ? 1 : -1)` (c:1721) is -1.
+    ///
+    /// Pins the removal of a Rust-only `showinglist == -2 -> -1` override that
+    /// sat at the end of this fn. A `showinglist > 0` left behind here is what
+    /// the NEXT completion's `resetvideo` turns back into -2
+    /// (zle_refresh.c:787-788), so the whole grid gets painted a second time
+    /// under the one already on screen — the plain-list instance of the same
+    /// defect was 9e381b76dc.
+    #[test]
+    fn complistmatches_leaves_showinglist_per_c_when_clearflag_off() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let mut m1 = Cmatch::default();
+        m1.str = Some("alpha".to_string());
+        m1.orig = Some("alpha".to_string());
+        let mut m2 = Cmatch::default();
+        m2.str = Some("beta".to_string());
+        m2.orig = Some("beta".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![m1, m2];
+        g.mcount = 2;
+        g.lcount = 2;
+        if let Ok(mut a) = crate::ported::zle::compcore::amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![g];
+        }
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
+            *mi = Default::default();
+        }
+        crate::ported::zle::compcore::onlyexpl.store(0, Ordering::SeqCst);
+        crate::ported::zle::compcore::menuacc.store(0, Ordering::SeqCst);
+        crate::ported::zle::complete::COMPLISTMAX.store(0, Ordering::SeqCst);
+        listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+            .map(|mut d| d.valid = 0)
+            .ok();
+        // c:2007 — stay clear of the `nlnct >= zterm_lines` early return, and
+        // c:2048 — mselect/mlbeg both negative so the `asklist` arm is taken.
+        NLNCT.store(1, Ordering::SeqCst);
+        PROMPT_LAST_ROW.store(0, Ordering::SeqCst);
+        MSELECT.store(-1, Ordering::SeqCst);
+        MLBEG.store(-1, Ordering::SeqCst);
+        INSELECT.store(0, Ordering::SeqCst);
+        errflag.store(0, Ordering::SeqCst);
+        // ALWAYS_LAST_PROMPT off: `dolastprompt` is the only input that makes
+        // `clearflag` 0 in asklist (c:1930).
+        crate::ported::zle::compcore::dolastprompt.store(0, Ordering::SeqCst);
+        CLEARFLAG.store(1, Ordering::SeqCst);
+        SHOWINGLIST.store(-2, Ordering::SeqCst);
+        LISTSHOWN.store(0, Ordering::SeqCst);
+
+        let _rc = complistmatches(std::ptr::null_mut(), std::ptr::null_mut());
+        assert_eq!(
+            CLEARFLAG.load(Ordering::SeqCst),
+            0,
+            "c:1930 — dolastprompt off means clearflag off"
+        );
+        assert_eq!(
+            SHOWINGLIST.load(Ordering::SeqCst),
+            0,
+            "c:1923 asklist zeroed it, c:1702/c:1708 are inside `if (clearflag)`, \
+             and c:2110-2124 assigns nothing after the draw"
+        );
+        assert_eq!(
+            LISTSHOWN.load(Ordering::SeqCst),
+            -1,
+            "c:1721 — `listshown = (clearflag ? 1 : -1)`"
+        );
     }
 }
