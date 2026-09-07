@@ -135,16 +135,22 @@ thread_local! {
     #[allow(non_upper_case_globals)]
     pub static lineno: std::cell::Cell<usize> = const { std::cell::Cell::new(1) };
 
-    /// SHIN read buffer — C `shinbuffer`.
+    /// SHIN read buffer — C `shinbuffer` (`char *`, a RAW BYTE
+    /// buffer: `shingetchar` hands callers `(unsigned char)
+    /// *shinbufptr++`). Held as `Vec<u8>`, not `String`: the previous
+    /// `String` had to `from_utf8_lossy` every chunk read off SHIN,
+    /// which replaced any non-UTF-8 byte with U+FFFD before the lexer
+    /// ever saw it — `echo caf\xe9` piped on stdin printed
+    /// `caf\xef\xbf\xbd`. C imposes no encoding on script input.
     #[allow(non_upper_case_globals)]
-    static shinbuffer: RefCell<String> = const { RefCell::new(String::new()) };
+    static shinbuffer: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 
     /// SHIN read offset — C `shinbufptr`.
     #[allow(non_upper_case_globals)]
     static shinbufpos: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 
     /// SHIN save stack — C `shinsavestack`.
-    static shinsavestack: RefCell<Vec<(String, usize)>> = const { RefCell::new(Vec::new()) };
+    static shinsavestack: RefCell<Vec<(Vec<u8>, usize)>> = const { RefCell::new(Vec::new()) };
 
     /// Pushback queue for `inungetc`. zshrs-specific; C inlines a
     /// single inbufptr-decrement which can't model arbitrary-length
@@ -160,7 +166,7 @@ thread_local! {
 pub fn shinbufalloc() {
     // c:171
     shinbuffer.with(|b| {
-        *b.borrow_mut() = String::with_capacity(SHIN_BUF_SIZE);
+        *b.borrow_mut() = Vec::with_capacity(SHIN_BUF_SIZE);
     });
     shinbufreset();
 }
@@ -201,7 +207,7 @@ pub fn shingetchar() -> i32 {
     let bufd = shinbuffer.with(|b| b.borrow().clone());
     let pos = shinbufpos.with(|p| p.get());
     if pos < bufd.len() {
-        if let Some(b) = bufd.as_bytes().get(pos) {
+        if let Some(b) = bufd.get(pos) {
             shinbufpos.with(|p| p.set(pos + 1));
             return *b as i32;
         }
@@ -269,8 +275,11 @@ pub fn shingetchar() -> i32 {
         } else {
             nread // c:245-246 — `shinbufendptr = shinbuffer + nread`
         };
-        let s = String::from_utf8_lossy(&buf[..end]).into_owned();
-        shinbuffer.with(|b| *b.borrow_mut() = s);
+        // c:247 — the buffer is raw bytes; `shingetline` above does
+        // the UTF-8 reassembly and metafication the C source defers to
+        // `metafy`. Decoding here (the old `from_utf8_lossy`) destroyed
+        // any byte that is not valid UTF-8.
+        shinbuffer.with(|b| *b.borrow_mut() = buf[..end].to_vec());
         shinbufpos.with(|p| p.set(1));
         return buf[0] as i32; // c:247 — `return (unsigned char) *shinbufptr++;`
     }
@@ -300,9 +309,8 @@ pub fn shingetchar() -> i32 {
     if out.is_empty() {
         return -1; // c:265-266 — `if (shinbufendptr == shinbuffer) return -1;`
     }
-    let s = String::from_utf8_lossy(&out).into_owned();
     let first = out[0] as i32;
-    shinbuffer.with(|b| *b.borrow_mut() = s);
+    shinbuffer.with(|b| *b.borrow_mut() = out);
     shinbufpos.with(|p| p.set(1));
     first // c:267 — `return (unsigned char) *shinbufptr++;`
 }
@@ -313,62 +321,30 @@ pub fn shingetchar() -> i32 {
 /// (`""`) on EOF.
 pub fn shingetline() -> String {
     // c:267
-    let mut result = String::new();
-    // Inline metafy of one raw byte (Src/utils.c:4856 metafy + Src/zsh.h Meta
-    // protocol): reserved IMETA bytes (0x00, 0x83-0x9b) become `Meta` +
-    // (byte ^ 32); every other byte is literal.
-    let push_byte = |result: &mut String, byte: u32| {
-        let c = char::from_u32(byte).unwrap_or('\0');
-        if imeta(c) {
-            result.push(Meta as char);
-            result.push(char::from_u32(byte ^ 32).unwrap_or(c));
-        } else {
-            result.push(c);
-        }
-    };
+    // c:279-296 — C accumulates RAW BYTES, escaping only the reserved
+    // IMETA set (`if (imeta(c)) { *p++ = Meta; *p++ = c ^ 32; }`);
+    // every other byte, valid UTF-8 or not, lands in the buffer
+    // untouched. A Rust `String` cannot hold a byte that is not part
+    // of a UTF-8 sequence, so the collected bytes go through
+    // `script_bytes::decode_script_bytes`, which keeps valid UTF-8 as
+    // real `char`s (the lexer is Unicode-based — lex.rs:6171) and
+    // Meta-encodes only the bytes that have no `char` form. That is
+    // the same encoding `$'\xNN'` produces (lex.rs
+    // `getkeystring_dollar_quote`) and `unmetafy_str` reverses at the
+    // write boundary, so a legacy byte piped into the shell now comes
+    // back out verbatim instead of as U+FFFD.
+    let mut bytes: Vec<u8> = Vec::new();
     loop {
-        let b0 = match shingetchar() {
-            -1 => return result,
-            b => b as u32,
-        };
-        if b0 == '\n' as u32 {
-            result.push('\n');
-            return result;
+        let c = shingetchar(); // c:279
+        if c < 0 {
+            break; // c:280 — EOF
         }
-        // A UTF-8 multibyte lead byte (0xC2..=0xF4): read its continuation
-        // bytes and decode the sequence to ONE Unicode char. C keeps raw
-        // metafied bytes here and decodes UTF-8 later; the Rust port is
-        // Unicode-`String`-based, and the ZLE input path (ZLELINE = Vec<char>)
-        // already yields Unicode — decoding here makes the non-ZLE (piped /
-        // script) line use the same representation the lexer and output
-        // expect (prior byte-per-char storage double-encoded on output).
-        if (0xc2..=0xf4).contains(&b0) {
-            let extra = if b0 < 0xe0 {
-                1
-            } else if b0 < 0xf0 {
-                2
-            } else {
-                3
-            };
-            let mut bytes = vec![b0 as u8];
-            for _ in 0..extra {
-                match shingetchar() {
-                    -1 => break,
-                    cb => bytes.push(cb as u8),
-                }
-            }
-            if let Ok(s) = std::str::from_utf8(&bytes) {
-                result.push_str(s);
-            } else {
-                // Malformed sequence — metafy each collected byte literally.
-                for &b in &bytes {
-                    push_byte(&mut result, b as u32);
-                }
-            }
-            continue;
+        bytes.push(c as u8); // c:291 — `*p++ = c;`
+        if c == b'\n' as i32 {
+            break; // c:280-283 — `if (c == '\n') *p++ = '\n';`
         }
-        push_byte(&mut result, b0);
     }
+    crate::script_bytes::decode_script_bytes(&bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -808,15 +784,19 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
         Ok(m) => m.len() as i64,
         Err(_) => 0,
     };
-    let mut buf = String::new(); // c:629 — `buf = zalloc(len + 1);`
-                                 // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
-    if file.read_to_string(&mut buf).is_err() {
+    // c:629 — `buf = zalloc(len + 1);` C slurps RAW BYTES; the caller
+    // (`stuff`, c:647) pushes them onto the input stack where the lexer
+    // metafies. Reading as UTF-8 rejected any file with a legacy byte.
+    let mut raw: Vec<u8> = Vec::new();
+    // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
+    if file.read_to_end(&mut raw).is_err() {
         // c:630
         zerr(&format!("read error on {}", path)); // c:631
         unqueue_signals(); // c:633
         return Err(-1); // c:634
     }
     unqueue_signals(); // c:640
+    let buf = crate::script_bytes::decode_script_bytes(&raw);
     Ok((buf, len)) // c:642
 }
 
@@ -831,7 +811,9 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
 /// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
 pub fn stuff(filename: &str) -> i32 {
     // c:647
-    let buf = match std::fs::read_to_string(filename) {
+    // c:651 — `read(fd, buf, ...)`: raw bytes, metafied by the caller
+    // path, never rejected for encoding.
+    let buf = match crate::script_bytes::read_script_file(filename) {
         Ok(b) => b,
         Err(_) => return 1,
     };
@@ -1326,7 +1308,7 @@ mod tests {
     fn shinbufreset_clears_buffer_and_zeros_pos() {
         let _g = crate::test_util::global_state_lock();
         super::shinbuffer.with(|b| {
-            *b.borrow_mut() = "leftover".to_string();
+            *b.borrow_mut() = b"leftover".to_vec();
         });
         super::shinbufpos.with(|p| p.set(7));
         super::shinbufreset();
@@ -1345,7 +1327,7 @@ mod tests {
 
     /// `Src/input.c:171-175` — `shinbufalloc` body is
     /// `shinbuffer = zalloc(SHINBUFSIZE); shinbufreset();`. The
-    /// Rust port replaces the buffer with a fresh `String` of
+    /// Rust port replaces the buffer with a fresh `Vec<u8>` of
     /// `SHIN_BUF_SIZE` capacity, then calls `shinbufreset`.
     /// Pin the post-condition: empty buffer + pos==0 + capacity
     /// hint set.
@@ -1353,7 +1335,7 @@ mod tests {
     fn shinbufalloc_resets_and_capacity_hints() {
         let _g = crate::test_util::global_state_lock();
         super::shinbuffer.with(|b| {
-            *b.borrow_mut() = "stale".to_string();
+            *b.borrow_mut() = b"stale".to_vec();
         });
         super::shinbufpos.with(|p| p.set(3));
         super::shinbufalloc();
@@ -1379,7 +1361,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Clear stack from any prior test.
         super::shinsavestack.with(|s| s.borrow_mut().clear());
-        super::shinbuffer.with(|b| *b.borrow_mut() = "abc".to_string());
+        super::shinbuffer.with(|b| *b.borrow_mut() = b"abc".to_vec());
         super::shinbufpos.with(|p| p.set(2));
         super::shinbufsave();
         super::shinbuffer.with(|b| {
@@ -1397,7 +1379,7 @@ mod tests {
         super::shinbuffer.with(|b| {
             assert_eq!(
                 *b.borrow(),
-                "abc",
+                b"abc",
                 "c:200-209 — shinbufrestore restores saved buffer"
             );
         });
@@ -1417,12 +1399,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         super::shinsavestack.with(|s| s.borrow_mut().clear());
         // Pre-seed a non-empty buffer.
-        super::shinbuffer.with(|b| *b.borrow_mut() = "persist".to_string());
+        super::shinbuffer.with(|b| *b.borrow_mut() = b"persist".to_vec());
         super::shinbufrestore();
         super::shinbuffer.with(|b| {
             assert_eq!(
                 *b.borrow(),
-                "persist",
+                b"persist",
                 "empty-stack restore must leave buffer untouched"
             );
         });

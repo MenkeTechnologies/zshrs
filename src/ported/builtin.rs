@@ -13595,7 +13595,12 @@ pub fn bin_dot(
             // deparse is re-lexed, so it goes through the zwc entry point
             // that pins the lexer to the spelling `untokenize` produced.
             Some(src) => crate::fusevm_bridge::execute_zwc_program(&src).unwrap_or(1),
-            None => match fs::read_to_string(&path) {
+            // c:1626 — the sourced file is read as RAW BYTES; a non-UTF-8
+            // byte in it is metafied (Src/utils.c:4856), never an error.
+            // `read_to_string` failed the whole read instead, and this arm
+            // turned that into a SILENT `return 126` — a completion file
+            // with one legacy byte sourced to nothing at all.
+            None => match crate::script_bytes::read_script_file(&path) {
                 // c:1626-1627 — `switch (loop(0, 0))`
                 Ok(src) => crate::fusevm_bridge::source_file_per_command(&src).unwrap_or(1),
                 // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.

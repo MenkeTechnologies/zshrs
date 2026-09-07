@@ -884,7 +884,9 @@ pub fn loadautofn(
             // losing the original line numbering for no reason. Same pin the
             // `source` leg uses (vm_helper::execute_zwc_program).
             let _relex = crate::vm_helper::ZwcRelexGuard::enter();
-            match std::fs::read_to_string(&path) {
+            // Raw-byte read (c:Src/exec.c:5745 `getfpfunc` → `metafy`):
+            // an autoload file is not required to be UTF-8.
+            match crate::script_bytes::read_script_file(&path) {
                 // Both sides go through the SAME renderer, so a `.zwc` written
                 // by C zsh (metafied string pool) still compares equal to a
                 // locally parsed source.
@@ -898,7 +900,12 @@ pub fn loadautofn(
                 _ => dump_text,
             }
         }
-        None => match std::fs::read_to_string(&path) {
+        // c:Src/exec.c:5745 `getfpfunc` reads the function file with
+        // `read()` and hands the bytes to `metafy` — there is no encoding
+        // requirement. `read_to_string` rejected the file on the first
+        // non-UTF-8 byte and this arm returned 1, so an $fpath completer
+        // carrying one legacy byte autoloaded to NOTHING, silently.
+        None => match crate::script_bytes::read_script_file(&path) {
             Ok(t) => t,
             Err(_) => return 1,
         },

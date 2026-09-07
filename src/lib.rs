@@ -65,6 +65,8 @@ pub mod extensions;
 pub mod ported;
 /// `pattern_data_escape` submodule (Rust-only; see the module docs).
 pub mod pattern_data_escape;
+/// `script_bytes` submodule (Rust-only; see the module docs).
+pub mod script_bytes;
 /// `subscript_escape` submodule (Rust-only; see the module docs).
 pub mod subscript_escape;
 /// `test_util` submodule.

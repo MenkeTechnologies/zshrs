@@ -1752,7 +1752,9 @@ pub fn source(s: &str) -> i32 {
     let from_zwc = zwc_prog.is_some();
     let contents = match zwc_prog {
         Some(prog) => Ok(crate::ported::text::getpermtext(Box::new(prog), None, 0)),
-        None => std::fs::read_to_string(path),
+        // c:1566/1626 — source() reads the file as raw bytes; a
+        // non-UTF-8 byte is metafied, not an error (Src/utils.c:4856).
+        None => crate::script_bytes::read_script_file(path),
     };
     if let Ok(body) = contents {
         // c:Src/jobs.c:1878-1884 — zsh runs the sourced list through
