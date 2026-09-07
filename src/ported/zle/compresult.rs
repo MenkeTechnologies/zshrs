@@ -4073,16 +4073,24 @@ pub fn ilistmatches(
     if asklist() != 0 {
         return 0;
     }
-    // c:2295 — printlist(0, iprintm, 0).
+    // c:2295 — printlist(0, iprintm, 0). C sets NOTHING after this call:
+    // `asklist` has already zeroed both flags (c:1923 `showinglist =
+    // listshown = 0;`) and `printlist`'s epilogue resolves them from
+    // `clearflag` (c:2166 `showinglist = -1` INSIDE `if (clearflag)`,
+    // c:2174 `listshown = (clearflag ? 1 : -1)`), so the ALWAYS_LAST_PROMPT
+    // case ends at -1/1 and the scrolled case ends at 0/-1.
+    //
+    // An unconditional `showinglist = -1; listshown = 1;` used to sit here,
+    // from before the epilogue was ported (its comment claimed "the Rust
+    // printlist doesn't set these", which stopped being true when c:2160-2174
+    // landed). It broke the scrolled case: `showinglist` came out of the
+    // outer zrefresh as `nlnct` (zle_refresh.c:1775-1776) instead of 0, and
+    // the NEXT completion's `resetvideo` turned that `> 0` back into -2
+    // (zle_refresh.c:787-788) — so the second TAB repainted the whole grid
+    // under the list zsh had already drawn. There is no recursion hazard in
+    // dropping it: with `clearflag` 0 `asklist`'s zero is what terminates
+    // zrefresh's post-list recursion, exactly as in C.
     let _ = printlist(0, 0);
-    // c:2172/2180 — printlist marks the list drawn (`showinglist = -1;
-    // listshown = 1`). The Rust printlist doesn't set these, so do it here:
-    // without it `showinglist` stays -2 and zrefresh's post-list recursive
-    // refresh re-enters listmatches forever → stack overflow → SIGSEGV.
-    // zrefresh converts the -1 to `nlnct` so the next paint is a plain
-    // command-line redraw beneath the list.
-    SHOWINGLIST.store(-1, Relaxed);
-    LISTSHOWN.store(1, Relaxed);
     0 // c:2297
 }
 
@@ -5532,5 +5540,76 @@ mod tests {
     fn list_matches_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = list_matches();
+    }
+
+    /// `ilistmatches` must leave the list-state flags exactly where
+    /// `asklist` (c:1923 `showinglist = listshown = 0;`) and `printlist`
+    /// (c:2161-2174) put them. With ALWAYS_LAST_PROMPT off the epilogue
+    /// takes the `else` branch: `clearflag` stays 0, so `showinglist` is
+    /// NEVER set to -1 (c:2166 is inside `if (clearflag)`) and
+    /// `listshown = (clearflag ? 1 : -1)` (c:2174) is -1.
+    ///
+    /// Pins the second-TAB re-listing bug: a `showinglist > 0` left behind
+    /// here is turned back into -2 by `resetvideo` (zle_refresh.c:787-788)
+    /// on the next completion, and the whole grid is painted a second time.
+    #[test]
+    fn ilistmatches_leaves_flags_per_c_when_clearflag_off() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let mut m1 = Cmatch::default();
+        m1.str = Some("alpha".to_string());
+        m1.orig = Some("alpha".to_string());
+        let mut m2 = Cmatch::default();
+        m2.str = Some("beta".to_string());
+        m2.orig = Some("beta".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![m1, m2];
+        g.mcount = 2;
+        g.lcount = 2;
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![g];
+        }
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default();
+        }
+        onlyexpl.store(0, Relaxed);
+        menuacc.store(0, Relaxed);
+        COMPLISTMAX.store(0, Relaxed);
+        crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+            .map(|mut d| d.valid = 0)
+            .ok();
+        // ALWAYS_LAST_PROMPT off: `dolastprompt` is what asklist reads at
+        // c:1930, and it is the only input that makes `clearflag` 0 here.
+        crate::ported::zle::compcore::dolastprompt.store(0, Relaxed);
+        CLEARFLAG.store(1, Relaxed);
+        SHOWINGLIST.store(-2, Relaxed);
+        LISTSHOWN.store(0, Relaxed);
+
+        let rc = ilistmatches(std::ptr::null_mut(), std::ptr::null_mut());
+        assert_eq!(rc, 0, "c:2297 — a non-empty list returns 0");
+        assert_eq!(
+            CLEARFLAG.load(Relaxed),
+            0,
+            "c:1930 — dolastprompt off means clearflag off"
+        );
+        assert_eq!(
+            SHOWINGLIST.load(Relaxed),
+            0,
+            "c:1923 asklist zeroed it and c:2166 is inside `if (clearflag)`"
+        );
+        assert_eq!(
+            LISTSHOWN.load(Relaxed),
+            -1,
+            "c:2174 — `listshown = (clearflag ? 1 : -1)`"
+        );
     }
 }
