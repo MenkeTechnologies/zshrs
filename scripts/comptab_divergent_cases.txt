@@ -5302,3 +5302,169 @@ gstack
 #     zsh -f -c 'print ${+zle_bracketed_paste}'   zsh 0   zshrs 1
 # Fixed by 132defe3fa (arm moved to `setup_module`). Verified after: plain -c
 # 0/0, after `zmodload zsh/zle` 1/1, `zmodload -e` not-loaded on both.
+
+# ============================================================================
+# CHUNK M1 (2026-09-07) — the SEVEN `menu` combos at `tab1`, the first
+# measurement of any of them that was not a decoy.
+# ============================================================================
+# `1d5ad7ca` is what makes this new ground.  Before it every forced-`menu`
+# combo layered `zstyle ':completion:*' menu <value>` on the FULL fixture,
+# which carries `zstyle ':completion:*:*:*:*:*' menu 'select=0' interactive`
+# — six components against two, so the override lost every lookup
+# (`lookupstyle` returns the first pattern in weight order, c:Src/Modules/
+# zutil.c:91-92, 355-357, 443-459).  The combos were regenerated onto the
+# `minimal` base and `force-menu-yes-select-0` is new.
+#
+# FIXTURE REACHES BOTH SHELLS — verified per combo with zsh arbitrating,
+# not assumed from the harness:
+#
+#   <shell> -f -c "source <combo>; zstyle -a ':completion::complete:ls::' \
+#                  default menu v; print -r -- ${(j:,:)v}"
+#
+#   force-menu-off                 zsh=[no]              zshrs=[no]
+#   force-menu-select              zsh=[select]          zshrs=[select]
+#   force-menu-select-interactive  zsh=[select,interactive] zshrs=[same]
+#   force-menu-select-search       zsh=[select,search]   zshrs=[select,search]
+#   force-menu-yes-eq-2            zsh=[yes=2]           zshrs=[yes=2]
+#   force-menu-yes-select-0        zsh=[yes,select=0]    zshrs=[yes,select=0]
+#   drop-menu                      zsh=[<unset>]         zshrs=[<unset>]
+#
+# PINS: binary sha256 1c3b0cbcd1f2… (target/debug/zshrs at b3682dfc2a, copied
+# to a PRIVATE scratch subdir and `codesign -f -s -`), dump sha256
+# 10ebe0a033… .  Both re-verified after the chunk.  55-buffer corpus of
+# ambiguous multi-match shapes; `zpwr ` is not installed here so every run
+# SKIPs it.
+#
+# VERBATIM totals, `--sequences tab1 --jobs 4 --skip-missing`, one run per
+# combo (`full` included as the baseline that says which failures are
+# menu-specific):
+#
+#   full                            # 52 passed, 2 failed, 55 cell(s)
+#     # categories: PASS=52 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-off                  # 51 passed, 3 failed, 55 cell(s)
+#     # categories: PASS=51 FAIL=3 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select               # 51 passed, 3 failed, 55 cell(s)
+#     # categories: PASS=51 FAIL=3 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-interactive   # 51 passed, 3 failed, 55 cell(s)
+#     # categories: PASS=51 FAIL=3 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-select-search        # 51 passed, 3 failed, 55 cell(s)
+#     # categories: PASS=51 FAIL=3 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-eq-2             # 51 passed, 3 failed, 55 cell(s)
+#     # categories: PASS=51 FAIL=3 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   force-menu-yes-select-0         # 52 passed, 2 failed, 55 cell(s)
+#     # categories: PASS=52 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#   drop-menu                       # 52 passed, 2 failed, 55 cell(s)
+#     # categories: PASS=52 FAIL=2 TIMEOUT=0 SKIP=1 REF-CRASHED=0 TEST-CRASHED=0
+#
+# 440 cells, 1.5-1.7s/cell.  VACUITY (both sides silent on every key, from
+# the `--json` per-key `first_byte`): 10 of 360 PASSes = 2.8%, and every one
+# is the same two buffers under a minimal-base combo — 'ls //usr//' and
+# 'ls | gr'.  Under `full`/`drop-menu` neither is vacuous, so it is the
+# minimal base's missing `squeeze-slashes`/completer statements that make
+# them silent, not the menu axis.  No combo is wholly vacuous; every one of
+# the seven certifies something.
+#
+# ---------------------------------------------------------------------------
+# FINDING M1-A — `menu yes select=0`: zshrs never draws the menu-selection
+# list for a large match set.  EXCLUSIVE to the combo `1d5ad7ca` added.
+# ---------------------------------------------------------------------------
+#   scripts/comptab_parity.py --zstyle scripts/parity_combos/\
+#     force-menu-yes-select-0.zsh --case 'man ' --keys tab
+#
+#   zsh   : row 0 `man 411toppm`, then `-<<manual page>>-` and 34 more rows
+#           of the menu-selection list (411toppm, 4ccconv, 7z, 7za, …)
+#   zshrs : row 0 `man 411toppm`, and NOTHING else.
+#
+# The inserted match agrees; only the LIST is missing.  Confirmed at the raw
+# pty level, outside the harness, so it is not a settle-window artefact:
+# `man <TAB>` under this fixture, 110x40, zshrs writes 17 bytes total, zsh
+# writes 3711.  Reproduced 3/3 serially at `--jobs 1 --key-budget 45`.
+#
+# It is the combo, not the case.  The SAME buffer against all seven:
+#   force-menu-off … force-menu-yes-eq-2, drop-menu, full   1 passed, 0 failed
+#   force-menu-yes-select-0                                 0 passed, 1 failed
+# `menu select` also ends at MENUSELECT=0, so `select=0` alone is not it.
+# What only `yes select=0` reaches is `compstate[insert]=menu` — the truth
+# word gives min=0 at sh:vendor/zsh/functions/_main_complete:256-295, and
+# only then does the `*menu*` test at sh:305 run with a hard `menu` rather
+# than the `automenu` the other combos leave in place.  This is the same
+# entry path `e43acd9414` fixed for the inserted word; the word now lands and
+# the list still does not.
+#
+# CASE-COUNT DEPENDENT, and the threshold is NOT bisected:
+#   'compdef _c'   4079 matches   PASS   (zshrs draws 241 KB)
+#   'ls /opt/homebrew/bin/'  2977 PASS   (zshrs draws 201 KB)
+#   'sudo '        (all commands) PASS   (zshrs draws 373 KB)
+#   'compdef _'   48957 matches   FAIL   (zshrs draws 17 bytes)
+#   'man ', 'which ', 'function '  FAIL  (same shape)
+# `sudo ` passing at a comparable count says it is not a pure count cutoff.
+# Note in passing: on the cells that DO draw, zshrs emits 40-80x the bytes
+# zsh does (373 KB vs 4.6 KB on 'sudo ') — it paints the whole list where zsh
+# paints one screen.  The visible grid still agrees, so it is not a FAIL, but
+# it is the reason a `tab2` cell on a 47k-match menu costs >10 minutes of
+# harness time and had to be dropped from the multi-key corpus.
+#
+# HYPOTHESIS, NOT MEASURED — needs an instrumented build to settle.  C's
+# `domenuselect` bails at c:Src/Zle/complist.c:2399 `if (! hasoldlist) return
+# 2;` and at c:2408-2415 when `dat->num < atoi(MENUSELECT)`.  Neither can
+# explain a NULL draw here: ret==2 would revert the line (c:Src/Zle/
+# compcore.c:520-528) and the line is not reverted, and zshrs passes a NULL
+# `dat` to the hook (src/ported/zle/compcore.rs:729) so the num test cannot
+# fire at all.  So the bail is somewhere after entry.
+#
+# ONE UNRELATED PORT DEVIATION FOUND WHILE READING THAT PATH, recorded so it
+# is not lost: `after_complete` is `if (menucmp && !oldmenucmp)` in C
+# (c:Src/Zle/compcore.c:504) with NO `iforcemenu` term; the Rust port adds
+# `|| iforcemenu == -1` to the bail (src/ported/zle/compcore.rs:707).
+# `iforcemenu` is 0 outside interactive menu-select (c:39), so the added term
+# only suppresses a re-entry from INSIDE it and does not affect the above.
+# Not filed as a defect — recorded as an unstated addition to a port.
+#
+# ---------------------------------------------------------------------------
+# FINDING M1-B — 'zmodload ' is the `$module_path` band.  BENIGN, do not
+# re-file.  It fails under ALL EIGHT configurations, so it is not menu work.
+# ---------------------------------------------------------------------------
+#   --case 'zmodload ' --keys tab    (3/3 serial FAIL under `full`)
+#     zsh   : `zmodload zsh/`
+#     zshrs : `zmodload /`  (or the first fasd path under a menu combo)
+#
+# NOT a completion defect.  `_zmodload` completes its module argument with
+# `_files -W module_path -g '*.(dll|s[ol]|bundle)(:r)'`
+# (sh:vendor/zsh/functions/_zmodload).  The two shells resolve `$module_path`
+# differently BY DESIGN:
+#     zsh   /opt/homebrew/Cellar/zsh/5.9.2/lib      (has zsh/*.bundle)
+#     zshrs /Users/wizard/.zshrs/modules            (does not exist here)
+# src/ported/init.rs:997-1036 states the choice and why: zshrs links its
+# modules statically and reaches runtime cdylibs through `zmodload -R` with
+# an explicit path, so pointing the parameter at a foreign zsh's bundle
+# directory would name files it can never load.
+#
+# The 1340-match fallback is downstream of that and is also not a zshrs bug:
+# his own `_files` override (~/.zpwr/autoload/comp_utils/_files:164-176, which
+# is earlier in $fpath than the stock one on BOTH shells) falls through to
+#     _alternative 'fasd-file:fasd ranked files:__fasd_files_comp' …
+# whenever its inner `__origfiles` returns 1.  zsh never gets there because
+# its module_path has matches.  Captured directly from zshrs's raw pty stream
+# — the group header on screen is literally `-<<fasd ranked files>>-`.
+#
+# `_files -W` itself is byte-identical.  Probed with `--init-extra` so both
+# shells got the same completer: `-W <dir with alpha.so beta.so gamma.txt>`,
+# `-W <empty dir>` and `-W <nonexistent dir>` all PASS.
+#
+# Do NOT try to isolate this by overriding `module_path` in the init: zsh
+# loads zsh/computil and zsh/complist FROM that parameter, so the override
+# makes the reference shell fail to complete at all.
+#
+# ---------------------------------------------------------------------------
+# FINDING M1-C — 'echo $path[' and 'function ' are ask-prompt COUNT cells.
+# ---------------------------------------------------------------------------
+# 'echo $path[' fails only on the minimal-base combos (the six force-menu-*),
+# never under `full`/`drop-menu`.  'function ' fails everywhere.  Both differ
+# only in the "do you wish to see all N possibilities" number and in where
+# the second column of the listing starts as a consequence:
+#     zsh 47339 / 23520 lines   zshrs 47351, 47371 (VARIED BETWEEN RUNS)
+# The zshrs side is not stable across runs at a fixed fixture and binary,
+# which the documented bundled-docs band (HELPDIR/INFOPATH/MANPATH, exactly
+# three names) does not explain — that band is deterministic and worth 3.
+# Classified as UNRESOLVED rather than benign; the name-set diff under
+# LISTMAX=100000 that would settle it was not run in this chunk.
