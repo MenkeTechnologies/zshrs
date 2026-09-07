@@ -81,7 +81,27 @@ pub fn wordcode_pool_str(bytes: &[u8]) -> String {
                 let (valid, after) = rest.split_at(e.valid_up_to());
                 // SAFETY: `valid_up_to` guarantees this prefix is UTF-8.
                 out.push_str(unsafe { std::str::from_utf8_unchecked(valid) });
-                out.push(after[0] as char);
+                let b = after[0];
+                if (0x83..=0xa2).contains(&b) {
+                    // Token / marker byte (`Meta` 0x83, `Pound` 0x84 ..
+                    // `Marker` 0xa2 — zsh_h.rs:128-224): widen to the char
+                    // of the same codepoint, which IS zshrs's marker
+                    // representation.
+                    out.push(b as char);
+                } else {
+                    // A raw byte of the user's TEXT that is not valid
+                    // UTF-8 — a latin-1 glyph in a `zcompile`d file. The
+                    // old widening turned it into the char of the same
+                    // codepoint, so `caf\xe9` in a dump printed
+                    // `caf\xc3\xa9`; C prints the byte back verbatim
+                    // because its pool holds bytes. Use the same
+                    // char-level Meta encoding the rest of the tree uses
+                    // for an unrepresentable byte (`$'\xNN'`,
+                    // `script_bytes::decode_script_bytes`), which
+                    // `utils::unmetafy_str` reverses at the write.
+                    out.push('\u{83}');
+                    out.push(char::from(b ^ 32));
+                }
                 rest = &after[1..];
             }
         }

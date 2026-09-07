@@ -362,7 +362,35 @@ pub fn ecstrcode(s: &str) -> u32 {
     //     0xe2 stays, 0x94 → 0x83 0xb4, 0x81 stays.
     let mut c_bytes: Vec<u8> = Vec::with_capacity(s.len());
     let imeta = |b: u8| -> bool { b == 0 || (0x83..=0xa2).contains(&b) };
-    for ch in s.chars() {
+    let mut it = s.chars().peekable();
+    while let Some(ch) = it.next() {
+        // A `Meta` (U+0083) followed by a scalar in U+0080..=U+00FF is
+        // zshrs's char-level encoding of ONE raw byte — what `$'\xNN'`
+        // emits (lex.rs `getkeystring_dollar_quote`), what
+        // `script_bytes::decode_script_bytes` produces for a non-UTF-8
+        // script byte, and what `utils::unmetafy_str` reverses at the
+        // write boundary. U+0083 is never a token: the token range starts
+        // at `Pound` U+0084 (zsh_h.rs:159), so this cannot swallow a lex
+        // marker. Recover the byte and let the imeta rule below decide,
+        // exactly as C does for a byte read off the file: `caf\xe9`
+        // stores `63 61 66 e9` like zsh, where re-encoding the pair as
+        // text stored `63 61 66 83 c3 83 a9` and read back as garbage.
+        if ch == '\u{83}' {
+            if let Some(&n) = it.peek() {
+                let nu = n as u32;
+                if (0x80..=0xff).contains(&nu) {
+                    it.next();
+                    let b = (nu as u8) ^ 32;
+                    if imeta(b) {
+                        c_bytes.push(0x83);
+                        c_bytes.push(b ^ 0x20);
+                    } else {
+                        c_bytes.push(b);
+                    }
+                    continue;
+                }
+            }
+        }
         let cu = ch as u32;
         if cu < 0x80 {
             // ASCII — single byte unchanged.
@@ -4796,11 +4824,19 @@ pub fn build_dump(
                 return 1;
             }
         };
-        // c:3450 — `file = metafy(file, flen, META_REALLOC);` — keep
-        // raw bytes intact through the &str boundary (see bld_eprog's
-        // from_utf8_unchecked rationale).
-        let raw = unsafe { String::from_utf8_unchecked(bytes) };
-        let file = crate::ported::utils::metafy(&raw);
+        // c:3450 — `file = metafy(file, flen, META_REALLOC);` — C hands
+        // the metafied bytes straight to `parse_string`, because C's lexer
+        // eats metafied bytes. The Rust lexer eats char-form text, and
+        // `utils::metafy` builds a BYTE-form buffer that no `String` can
+        // hold, so it fell back to `from_utf8_lossy` and stamped U+FFFD
+        // into the dump: `zcompile` of `print -r -- a\u{2014}b` wrote the
+        // pool bytes `61 e2 80 83 a3 ef bf bd 62` where zsh writes
+        // `61 e2 80 83 b4 62`, and sourcing that dump printed the
+        // replacement character in BOTH shells. C's byte-level metafy is
+        // applied where it belongs — `ecstrcode` (c:436, parse.rs:346)
+        // converts char-form to C-byte form as the pool is written — so
+        // what the lexer needs here is char-form text.
+        let file = crate::script_bytes::decode_script_bytes(&bytes);
 
         // c:3452-3460 — parse; any error aborts the whole dump.
         let prog = crate::ported::exec::parse_string(&file, 1);
@@ -5078,8 +5114,13 @@ pub fn build_cur_dump(
                         let fnam = crate::ported::utils::unmeta(&path);
                         match fs::read(&fnam) {
                             Ok(bytes) => {
-                                let raw = unsafe { String::from_utf8_unchecked(bytes) };
-                                let file = crate::ported::utils::metafy(&raw);
+                                // Same char-form read as `build_dump`
+                                // above (c:3450): `utils::metafy` cannot
+                                // represent its own byte-form output in a
+                                // `String` and lossily replaced any
+                                // non-ASCII source char.
+                                let file =
+                                    crate::script_bytes::decode_script_bytes(&bytes);
                                 crate::ported::exec::parse_string(&file, 1)
                             }
                             Err(_) => None,

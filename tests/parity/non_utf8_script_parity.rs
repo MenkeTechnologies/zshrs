@@ -300,3 +300,95 @@ fn every_high_byte_round_trips_on_stdin() {
     }
     assert!(bad.is_empty(), "diverging bytes:\n{}", bad.join("\n"));
 }
+
+/// `zcompile` writes the wordcode string pool as C-style BYTES
+/// (`Src/parse.c:3450` metafies the source, `ecstrcode` c:436 packs it),
+/// so a dump either shell writes must run identically under either
+/// shell. zshrs corrupted the pool for ANY non-ASCII source: the
+/// build_dump read fed `utils::metafy`, whose byte-form output no
+/// `String` can hold, so it fell back to `from_utf8_lossy`. Measured on
+/// `print -r -- a—b`: zshrs wrote `61 e2 80 83 a3 ef bf bd 62` where zsh
+/// writes `61 e2 80 83 b4 62`, and sourcing that dump printed U+FFFD in
+/// BOTH shells.
+///
+/// All four maker/runner combinations are asserted, because the two
+/// halves failed for different reasons: the WRITER lost the character,
+/// and the READER (`zwc::wordcode_pool_str`) widened a raw pool byte to
+/// the char of the same codepoint, so even a zsh-written dump of
+/// `caf\xe9` printed `caf\xc3\xa9` under zshrs.
+#[test]
+fn zcompile_dump_round_trips_non_ascii_sources() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    let cases: [(&str, &[u8]); 4] = [
+        ("ascii", b"print -r -- plain\n"),
+        ("emdash", "print -r -- a\u{2014}b\n".as_bytes()),
+        ("cjk", "print -r -- \u{65e5}\u{672c}\u{8a9e}\n".as_bytes()),
+        ("latin1", b"print -r -- caf\xe9\n"),
+    ];
+    for (name, body) in cases {
+        let src = d.path().join(format!("{name}.zsh"));
+        let dump = d.path().join(format!("{name}.zsh.zwc"));
+        std::fs::write(&src, body).expect("write src");
+
+        // The uncompiled run is the reference both dumps must reproduce.
+        let want = Command::new(zsh_path())
+            .arg("-f")
+            .arg(&src)
+            .output()
+            .expect("zsh")
+            .stdout;
+
+        for maker in ["zsh", "zshrs"] {
+            let _ = std::fs::remove_file(&dump);
+            let ok = if maker == "zsh" {
+                Command::new(zsh_path())
+                    .args(["-fc", &format!("zcompile {}", src.display())])
+                    .output()
+            } else {
+                Command::new(zshrs_bin())
+                    .args(["--zsh", "-f", "-c", &format!("zcompile {}", src.display())])
+                    .env_remove("ZSHRS_CACHE")
+                    .output()
+            };
+            assert!(ok.expect("zcompile").status.success(), "{maker} zcompile {name}");
+            assert!(dump.exists(), "{maker} wrote no dump for {name}");
+            // c:Src/parse.c:3762-3784 — the dump is only preferred when it
+            // is at least as new as the source.
+            filetime_touch(&dump);
+
+            for runner in ["zsh", "zshrs"] {
+                let got = if runner == "zsh" {
+                    Command::new(zsh_path())
+                        .args(["-fc", &format!("source {}", src.display())])
+                        .output()
+                } else {
+                    Command::new(zshrs_bin())
+                        .args(["--zsh", "-f", "-c", &format!("source {}", src.display())])
+                        .env_remove("ZSHRS_CACHE")
+                        .output()
+                }
+                .expect("run")
+                .stdout;
+                assert_eq!(
+                    show(&want),
+                    show(&got),
+                    "{name}: dump written by {maker}, run by {runner}"
+                );
+            }
+        }
+    }
+}
+
+/// Push a dump's mtime a couple of seconds ahead of the source so the
+/// `stc.st_mtime >= stn.st_mtime` gate (`Src/parse.c:3762-3784`) picks
+/// it — the two files are written in the same second otherwise. zsh
+/// creates dumps read-only, so open for READ and set the time; futimens
+/// only needs ownership.
+fn filetime_touch(p: &Path) {
+    let f = std::fs::File::open(p).expect("open dump");
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+        .expect("set mtime");
+}
