@@ -10889,11 +10889,23 @@ pub fn intvarsetfn(pm: &mut param, x: i64) {
 pub fn zlevarsetfn(pm: &mut param, x: i64) {
     // c:4226
     pm.u_val = x; // c:4230 *p = x;
+                  // c:4230 — `p` IS `&zterm_lines` / `&zterm_columns`
+                  // (Src/params.c:362-363 `IPDEF5("COLUMNS", &zterm_columns,
+                  // zlevar_gsu)`), so C's single `*p = x` publishes the value
+                  // to the parameter AND to the global every other C reader
+                  // consults. zshrs's param carries its own `u_val` copy, so
+                  // the same write has to be made twice. It belongs HERE and
+                  // not inside `adjustwinsize`, because `adjustwinsize`
+                  // early-returns at c:1900-1901 when `SHTTY == -1` — a
+                  // non-interactive `COLUMNS=40` would otherwise never reach
+                  // the global, while C honours it.
                   // c:4231-4232 — `2 + (p == &zterm_columns)` selects 2 for LINES
                   // (zterm_lines) and 3 for COLUMNS (zterm_columns).
     if pm.node.nam == "LINES" {
+        crate::ported::utils::ZTERM_LINES.store(x as i32, Ordering::SeqCst); // c:4230
         let _ = adjustwinsize(2); // c:4232 LINES path
     } else if pm.node.nam == "COLUMNS" {
+        crate::ported::utils::ZTERM_COLUMNS.store(x as i32, Ordering::SeqCst); // c:4230
         let _ = adjustwinsize(3); // c:4232 COLUMNS path
     }
 }

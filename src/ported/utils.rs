@@ -2421,67 +2421,126 @@ pub fn fdsettyinfo(SHTTY: i32, ti: &()) -> std::io::Result<()> {
     ))
 }
 
-// window size changed                                                     // c:1831
-/// Port of `adjustlines()` from `Src/utils.c:1831`.
+/// Port of the `zterm_lines` global declared at `Src/params.c:105`
+/// (`zterm_lines,	/* $LINES       */`).
 ///
-/// Port of `adjustlines(int signalled)` from Src/utils.c:1831 — TIOCGWINSZ
-/// lookup that seeds `$LINES`. The C variant updates the global
-/// `zterm_lines` and returns whether it changed; this Rust port
-/// returns the row count directly. Falls back to `$LINES` env var,
-/// then 24, mirroring the C source's `tclines > 0 ? tclines : 24`
-/// fallback at line 1844.
+/// C aliases the `$LINES` parameter to this very storage —
+/// `Src/params.c:363` `IPDEF5("LINES", &zterm_lines, zlevar_gsu)` — so
+/// a shell script's `$LINES` and every C reader of `zterm_lines` are
+/// one number, and it changes only where `adjustwinsize` writes it.
+pub static ZTERM_LINES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Port of the `zterm_columns` global declared at `Src/params.c:104`
+/// (`zterm_columns,	/* $COLUMNS     */`), aliased to `$COLUMNS` by
+/// `Src/params.c:362` `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)`.
+/// Same single-storage contract as `ZTERM_LINES` above.
+pub static ZTERM_COLUMNS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+// window size changed                                                     // c:1831
+/// Reads the `zterm_lines` global — `Src/utils.c:1833` `int oldlines =
+/// zterm_lines;` is the shape every C caller uses.
+///
+/// C's `adjustlines(int signalled)` (c:1831) is a FILE-STATIC helper
+/// that only `adjustwinsize` calls; it refreshes `zterm_lines` from the
+/// already-probed `shttyinfo.winsize` and returns whether the value
+/// changed. Every other C site — `Src/Zle/compresult.c:1932`,
+/// `Src/loop.c:375`, `Src/Zle/zle_refresh.c` — just reads the bare
+/// global. This function stands for that read, which is why it returns
+/// the row count rather than C's changed-flag.
+///
+/// The TIOCGWINSZ probe lives in `adjustwinsize` (c:1902) and NOWHERE
+/// else. It used to live here, re-sampling the tty on every call, and
+/// that broke C's single-storage contract: `$LINES`/`$COLUMNS` (updated
+/// only when the SIGWINCH handler runs) and this function (live) gave
+/// two different answers for the whole window between a resize and the
+/// handler — which C blocks SIGWINCH across by default
+/// (`Src/init.c:1458` `winch_block()`). A completion listing built its
+/// display strings from `$COLUMNS` and then had `calclist` count them
+/// against the live width: `git <TAB>` across a 24x80 -> 24x60 resize
+/// asked "see all 164 possibilities (251 lines)?" for 164 one-line
+/// matches.
+///
 /// WARNING: param names don't match C — Rust=() vs C=(signalled)
 pub fn adjustlines() -> usize {
-    // c:1831
+    // c:1833
+    let cached = ZTERM_LINES.load(Ordering::SeqCst);
+    if cached > 0 {
+        return cached as usize;
+    }
+    // c:1841-1845 — `if (zterm_lines <= 0) zterm_lines = tclines > 0 ?
+    //                tclines : 24;`
+    //
+    // !!! RUST-ONLY SEEDING !!! C can reach this with `shttyinfo.winsize`
+    // already filled by `setupvals`'s `adjustwinsize(0)` (Src/init.c:1276);
+    // zshrs has callers that run before that (see prompt.rs:3385), and
+    // for them a one-shot probe is the only source of a real geometry.
+    // Once seeded the value is cached like C's global, so the split
+    // between "what the shell says" and "what the tty says" cannot
+    // reopen.
     #[cfg(unix)]
     {
         unsafe {
+            // c:1902 probes SHTTY, not fd 1; fall back to fd 1 only while
+            // SHTTY is still unset (-1), which is where the previous
+            // always-probe port read from.
+            let shtty = SHTTY.load(Ordering::Relaxed);
+            let fd = if shtty >= 0 { shtty } else { 1 };
             let mut ws: libc::winsize = std::mem::zeroed();
-            if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_row > 0 {
+            if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_row > 0 {
+                ZTERM_LINES.store(ws.ws_row as i32, Ordering::SeqCst);
                 return ws.ws_row as usize;
             }
         }
     }
-    // c:1841-1845 fallback — `if (zterm_lines <= 0) zterm_lines =
-    //                    tclines > 0 ? tclines : 24`. paramtab `$LINES`,
-    //                    not OS env. See adjustcolumns for why the `> 0`
-    //                    filter is load-bearing.
-    getsparam("LINES")
+    // paramtab `$LINES`, not OS env. See adjustcolumns for why the `> 0`
+    // filter is load-bearing.
+    let n = getsparam("LINES")
         .and_then(|s| s.parse().ok())
         .filter(|&n: &usize| n > 0)
-        .unwrap_or(24)
+        .unwrap_or(24); // c:1844
+    ZTERM_LINES.store(n as i32, Ordering::SeqCst);
+    n
 }
 
-/// Port of `adjustcolumns()` from `Src/utils.c:1856`.
+/// Reads the `zterm_columns` global — `Src/utils.c:1858` `int
+/// oldcolumns = zterm_columns;`.
 ///
-/// Port of `adjustcolumns(int signalled)` from Src/utils.c:1856 — TIOCGWINSZ
-/// lookup that seeds `$COLUMNS`. The C variant updates the global
-/// `zterm_columns` and returns whether it changed; this Rust port
-/// returns the column count directly. Falls back to `$COLUMNS` env
-/// var, then 80, mirroring the C source's `tccolumns > 0 ? tccolumns : 80`
-/// fallback at line 1869.
+/// See `adjustlines` above for why this is a cached read and not the
+/// TIOCGWINSZ probe it used to be; C's `adjustcolumns(int signalled)`
+/// (c:1856) is the file-static half that only `adjustwinsize` calls.
+///
 /// WARNING: param names don't match C — Rust=() vs C=(signalled)
 pub fn adjustcolumns() -> usize {
-    // c:1856
+    // c:1858
+    let cached = ZTERM_COLUMNS.load(Ordering::SeqCst);
+    if cached > 0 {
+        return cached as usize;
+    }
+    // c:1866-1870 — `if (zterm_columns <= 0) zterm_columns = tccolumns >
+    //                0 ? tccolumns : 80;`. Same Rust-only seeding note as
+    // `adjustlines`.
     #[cfg(unix)]
     {
         unsafe {
+            let shtty = SHTTY.load(Ordering::Relaxed);
+            let fd = if shtty >= 0 { shtty } else { 1 };
             let mut ws: libc::winsize = std::mem::zeroed();
-            if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
+            if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
+                ZTERM_COLUMNS.store(ws.ws_col as i32, Ordering::SeqCst);
                 return ws.ws_col as usize;
             }
         }
     }
-    // c:1866-1870 fallback — `if (zterm_columns <= 0) zterm_columns =
-    //                    tccolumns > 0 ? tccolumns : 80`. C consults
-    //                    `getsparam("COLUMNS")` (paramtab), not OS env.
+    // C consults `getsparam("COLUMNS")` (paramtab), not OS env.
     // The `> 0` filter is C's `<= 0` clamp: a literal `COLUMNS=0` (what a
     // TERM=dumb pty leaves behind) parses fine, so without it callers that
     // divide by the column count panic instead of falling back to 80.
-    getsparam("COLUMNS")
+    let n = getsparam("COLUMNS")
         .and_then(|s| s.parse().ok())
         .filter(|&n: &usize| n > 0)
-        .unwrap_or(80)
+        .unwrap_or(80); // c:1869
+    ZTERM_COLUMNS.store(n as i32, Ordering::SeqCst);
+    n
 }
 
 // window size changed                                                      // c:1824
@@ -2535,11 +2594,12 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
     // !!! RUST-ONLY SOURCING !!! zshrs's `SHTTYINFO` (utils.rs) holds only
     // the `termios` half of C's `struct ttyinfo`; there is no cached
     // `winsize` to read. The last geometry this function published lives
-    // in `$LINES` / `$COLUMNS` (written unconditionally by the c:1931-1934
-    // arm below), so the previous size is read back from there. Same
-    // values, same comparison.
-    let mut ttyrows: i32 = crate::ported::params::getiparam("LINES") as i32; // c:1893
-    let mut ttycols: i32 = crate::ported::params::getiparam("COLUMNS") as i32; // c:1894
+    // in `ZTERM_LINES` / `ZTERM_COLUMNS`, which the c:1837/c:1862 stores
+    // below keep in lock-step with `shttyinfo.winsize` — C's c:1839/c:1864
+    // else-arms copy the globals straight back into that struct, so the
+    // two are the same number. Same values, same comparison.
+    let mut ttyrows: i32 = ZTERM_LINES.load(Ordering::SeqCst); // c:1893
+    let mut ttycols: i32 = ZTERM_COLUMNS.load(Ordering::SeqCst); // c:1894
     let mut resetzle = 0i32; // c:1896
 
     // c:1898-1917 — TIOCGWINSZ probe.
@@ -2597,34 +2657,66 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
             } else {
                 adjustlines() as i64 // c:1844 — tclines/24 fallback chain
             };
+            // c:1837 — `zterm_lines = shttyinfo.winsize.ws_row;`, the ONE
+            // place the row count is published. It has to land in the
+            // global BEFORE setiparam, because setiparam's zlevarsetfn
+            // recursion (c:1932 → params.c:4232 → this function, from=2)
+            // reads it back.
+            ZTERM_LINES.store(lines as i32, Ordering::SeqCst); // c:1837
+                                                               // c:1847-1850 — `if (zterm_lines > 2) termflags &= ~TERM_SHORT;
+                                                               //                else termflags |= TERM_SHORT;`
+            if lines > 2 {
+                crate::ported::params::TERMFLAGS
+                    .fetch_and(!crate::ported::zsh_h::TERM_SHORT, Ordering::SeqCst); // c:1848
+            } else {
+                crate::ported::params::TERMFLAGS
+                    .fetch_or(crate::ported::zsh_h::TERM_SHORT, Ordering::SeqCst); // c:1850
+            }
             setiparam("LINES", lines); // c:1932
             let cols = if ttycols > 0 {
                 ttycols as i64 // c:1862 — zterm_columns = ws_col
             } else {
                 adjustcolumns() as i64 // c:1869 — tccolumns/80 fallback chain
             };
+            ZTERM_COLUMNS.store(cols as i32, Ordering::SeqCst); // c:1862
+                                                                // c:1872-1875 — the TERM_NARROW half of the same clamp.
+            if cols > 2 {
+                crate::ported::params::TERMFLAGS
+                    .fetch_and(!crate::ported::zsh_h::TERM_NARROW, Ordering::SeqCst); // c:1873
+            } else {
+                crate::ported::params::TERMFLAGS
+                    .fetch_or(crate::ported::zsh_h::TERM_NARROW, Ordering::SeqCst); // c:1875
+            }
             setiparam("COLUMNS", cols); // c:1934
             ADJUSTWINSIZE_GETWINSZ.store(1, Ordering::SeqCst); // c:1935
         }
         2 => {
             // c:1937-1938 — `resetzle = adjustlines(0);`
             //
-            // C's `adjustlines` RETURNS WHETHER the size changed
-            // (Src/utils.c:1852 — `return (zterm_lines != oldlines);`), and
-            // with `signalled == 0` and a positive `zterm_lines` it changes
-            // nothing, so the recursive call from `setiparam` at c:1932
-            // yields 0. This port's `adjustlines()` returns the COUNT
-            // instead, so `resetzle` was the terminal height — always
-            // truthy. That did not matter while the c:1954 branch below was
-            // a no-op; now that it repaints, recover C's boolean by
-            // comparing against the previously published `$LINES`.
-            resetzle = (adjustlines() as i32 != ttyrows) as i32; // c:1938
+            // C arrives here from `zlevarsetfn` (Src/params.c:4232), which
+            // has ALREADY done `*p = x` with `p == &zterm_lines`
+            // (Src/params.c:363 IPDEF5) — that write is mirrored into
+            // `ZTERM_LINES` by the zshrs `zlevarsetfn` port. So `oldlines`
+            // here is the value the assignment just published, and
+            // c:1836's `(signalled && …) || zterm_lines <= 0` is false for
+            // any positive value: the else arm copies the global into
+            // shttyinfo and leaves it alone, making c:1852's
+            // `zterm_lines != oldlines` zero. Only an explicit `LINES=0`
+            // falls through to the ws_row refresh.
+            let oldlines = ZTERM_LINES.load(Ordering::SeqCst); // c:1833
+            if oldlines <= 0 && ttyrows > 0 {
+                ZTERM_LINES.store(ttyrows, Ordering::SeqCst); // c:1837
+            }
+            resetzle = (ZTERM_LINES.load(Ordering::SeqCst) != oldlines) as i32; // c:1852
         }
         3 => {
-            // c:1940-1941 — `resetzle = adjustcolumns(0);` — same
-            // count-vs-changed correction as the LINES arm above
-            // (Src/utils.c:1877 `return (zterm_columns != oldcolumns);`).
-            resetzle = (adjustcolumns() as i32 != ttycols) as i32; // c:1941
+            // c:1940-1941 — `resetzle = adjustcolumns(0);` — the COLUMNS
+            // half of the same shape (Src/utils.c:1858-1877).
+            let oldcolumns = ZTERM_COLUMNS.load(Ordering::SeqCst); // c:1858
+            if oldcolumns <= 0 && ttycols > 0 {
+                ZTERM_COLUMNS.store(ttycols, Ordering::SeqCst); // c:1862
+            }
+            resetzle = (ZTERM_COLUMNS.load(Ordering::SeqCst) != oldcolumns) as i32; // c:1877
         }
         _ => {}
     }
@@ -16853,6 +16945,134 @@ mod tests {
             crate::ported::params::getiparam("COLUMNS"),
             77,
             "COLUMNS must reflect the SHTTY winsize probe"
+        );
+    }
+
+    /// c:Src/utils.c:1858 / c:Src/params.c:362 — `zterm_columns` is ONE
+    /// cell. `$COLUMNS` is that cell (`IPDEF5("COLUMNS", &zterm_columns,
+    /// zlevar_gsu)`), and the TIOCGWINSZ probe that refreshes it lives
+    /// only in `adjustwinsize` (c:1902). So a window that has been
+    /// resized but whose SIGWINCH has not been handled yet — the normal
+    /// state, since C blocks SIGWINCH by default (`Src/init.c:1458`
+    /// `winch_block()`) — must still report the OLD geometry to every
+    /// reader, script-side and C-side alike.
+    ///
+    /// `adjustcolumns()`/`adjustlines()` used to run their own
+    /// `ioctl(1, TIOCGWINSZ)` on every call, so the two answers split:
+    /// `_git`'s `${(r.COLUMNS-4.)…}` (c:Completion/Unix/Command/_git:6890)
+    /// built its display strings at the pre-resize width while
+    /// `calclist` (c:Src/Zle/compresult.c:1646/1701) counted them at the
+    /// post-resize width. `git <TAB>` across a 24x80 -> 24x60 resize
+    /// asked "see all 164 possibilities (251 lines)?" for 164 matches
+    /// that each occupied one line.
+    #[test]
+    fn adjustcolumns_does_not_resample_the_tty_between_adjustwinsize_calls() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_lines = ZTERM_LINES.load(Ordering::SeqCst);
+        let saved_columns = ZTERM_COLUMNS.load(Ordering::SeqCst);
+        let saved_shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let mut published: Option<(usize, usize)> = None;
+        let mut after_resize: Option<(usize, usize)> = None;
+        let mut after_second_probe: Option<(usize, usize)> = None;
+        let mut params_after_resize: Option<(i64, i64)> = None;
+        unsafe {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            let mut ws: libc::winsize = std::mem::zeroed();
+            ws.ws_row = 24;
+            ws.ws_col = 80;
+            if libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut ws,
+            ) != 0
+            {
+                return; // no pty available (sandboxed CI) — skip
+            }
+            // The old implementation probed fd 1, so fd 1 has to BE the
+            // pty for this to pin anything: otherwise a CI runner's piped
+            // stdout makes the stale-fallback path accidentally agree.
+            let saved_stdout = libc::dup(1);
+            libc::dup2(slave, 1);
+            crate::ported::init::SHTTY.store(slave, Ordering::Relaxed);
+
+            let _ = adjustwinsize(1);
+            published = Some((adjustlines(), adjustcolumns()));
+
+            // Resize the window WITHOUT running the SIGWINCH handler.
+            let mut ws2: libc::winsize = std::mem::zeroed();
+            ws2.ws_row = 12;
+            ws2.ws_col = 60;
+            libc::ioctl(master, libc::TIOCSWINSZ, &ws2);
+            after_resize = Some((adjustlines(), adjustcolumns()));
+            params_after_resize = Some((
+                crate::ported::params::getiparam("LINES"),
+                crate::ported::params::getiparam("COLUMNS"),
+            ));
+
+            // c:469 — the handler's `adjustwinsize(1)` is the one thing
+            // that may move the number.
+            let _ = adjustwinsize(1);
+            after_second_probe = Some((adjustlines(), adjustcolumns()));
+
+            if saved_stdout >= 0 {
+                libc::dup2(saved_stdout, 1);
+                libc::close(saved_stdout);
+            }
+            crate::ported::init::SHTTY.store(saved_shtty, Ordering::Relaxed);
+            libc::close(slave);
+            libc::close(master);
+        }
+        ZTERM_LINES.store(saved_lines, Ordering::SeqCst);
+        ZTERM_COLUMNS.store(saved_columns, Ordering::SeqCst);
+
+        assert_eq!(
+            published,
+            Some((24, 80)),
+            "adjustwinsize(1) publishes the probed geometry"
+        );
+        assert_eq!(
+            after_resize,
+            Some((24, 80)),
+            "an unhandled resize must NOT move zterm_lines/zterm_columns — \
+             the probe belongs to adjustwinsize (c:1902), not to the readers"
+        );
+        assert_eq!(
+            params_after_resize,
+            Some((24, 80)),
+            "$LINES/$COLUMNS and the accessors are one cell (c:Src/params.c:362-363)"
+        );
+        assert_eq!(
+            after_second_probe,
+            Some((12, 60)),
+            "the SIGWINCH handler's adjustwinsize(1) is what republishes it (c:469)"
+        );
+    }
+
+    /// c:Src/params.c:4230 — `zlevarsetfn` does `*p = x` where `p` is
+    /// `&zterm_columns` itself, so an explicit `COLUMNS=N` is visible to
+    /// every C-side reader immediately, with no tty involved. The mirror
+    /// has to live in `zlevarsetfn` and not in `adjustwinsize`, which
+    /// early-returns at c:1900-1901 whenever `SHTTY == -1` — exactly the
+    /// non-interactive case where `COLUMNS=N` is most often set.
+    #[test]
+    fn explicit_columns_assignment_reaches_the_zterm_columns_readers() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_columns = ZTERM_COLUMNS.load(Ordering::SeqCst);
+        let saved_shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(-1, Ordering::Relaxed); // c:1900
+
+        setiparam("COLUMNS", 61); // c:4230
+        let seen = adjustcolumns();
+
+        crate::ported::init::SHTTY.store(saved_shtty, Ordering::Relaxed);
+        ZTERM_COLUMNS.store(saved_columns, Ordering::SeqCst);
+
+        assert_eq!(
+            seen, 61,
+            "COLUMNS=61 must be what the zterm_columns readers see (c:Src/params.c:362)"
         );
     }
 }
