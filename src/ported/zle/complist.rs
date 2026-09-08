@@ -2723,14 +2723,60 @@ pub fn compprintlist(showall: i32) -> i32 {
 
                 // c:1611-1674 — grid row/column loop.
                 let mut nl_cnt = nc;
-                // c:1609 — `p = skipnolist(g->matches, showall)`. Must use the
-                // full skipnolist predicate (compresult.rs): besides CMF_HIDE /
+
+                // !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+                //
+                // C walks the grid with two raw pointers into `g->matches`,
+                // advancing them ONE MATCH AT A TIME:
+                //
+                //   c:1649  for (j = (ROWS ? 1 : nc);      j && *q; j--) q = skipnolist(q + 1, showall);
+                //   c:1670  for (j = (ROWS ? g->cols : 1); j && *p; j--) p = skipnolist(p + 1, showall);
+                //
+                // In the default column-major layout one COLUMN step advances
+                // by `g->lins` matches, so the two loops together take
+                // `lcount * lins` pointer steps per paint — 33862 * 3387 =
+                // 114 million for `man <TAB>` against this host's dump. Each
+                // step in C is a compare and an increment. In this port each
+                // step was a bounds-checked re-slice plus a `skipnolist` call,
+                // and the same paint took 22 s where zsh takes 0.9 s (measured
+                // over a raw pty, `zstyle ':completion:*' menu yes select=0`,
+                // TAB after `man `: zshrs emitted the inserted match at 2.6 s
+                // and then nothing until 24.7 s; zsh's first list byte lands
+                // 4 ms after its insert). Byte-for-byte the two streams are
+                // identical — the defect is entirely the time to produce them,
+                // and the parity harness reads it as "zshrs drew no list",
+                // because its settle window closes 300 ms after the last byte.
+                //
+                // `listable` is the sequence of indices C's pointer walk can
+                // ever come to rest on: every index NOT skipped by
+                // `skipnolist`. It is built ONCE per group, from that same
+                // `skipnolist` (so no second copy of the skip rule exists to
+                // drift from it), and `p`/`q` become POSITIONS in it. "Advance
+                // j matches" is then the index arithmetic the pointer walk was
+                // simulating. The sequence of visited matches is unchanged;
+                // only the cost of reaching each one is.
+                //
+                // c:1609 — `p = skipnolist(g->matches, showall)` is the first
+                // element of that sequence, i.e. position 0. Must use the full
+                // skipnolist predicate (compresult.rs): besides CMF_HIDE /
                 // CMF_NOLIST / CMF_MULT it ALSO skips `disp && CMF_DISPLINE`
                 // matches — those are printed by the CGF_HASDL block above, so
                 // the grid must not re-print them (else described matches double-
                 // print and concatenate into the packed group).
-                let mut p_idx: usize =
-                    crate::ported::zle::compresult::skipnolist(&g.matches, showall);
+                let listable: Vec<usize> = {
+                    let mut v: Vec<usize> = Vec::new();
+                    let mut scan = crate::ported::zle::compresult::skipnolist(&g.matches, showall);
+                    while scan < g.matches.len() {
+                        v.push(scan);
+                        scan += 1;
+                        scan += crate::ported::zle::compresult::skipnolist(
+                            &g.matches[scan..],
+                            showall,
+                        );
+                    }
+                    v
+                };
+                let mut p_pos: usize = 0;
                 let mut n = g.dcount;
                 while n > 0 && nl_cnt > 0 && errflag.load(Ordering::SeqCst) == 0 {
                     if last_type == 0 && ml >= mlbeg {
@@ -2743,7 +2789,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                     }
                     let mut i = g.cols; // c:1622
                     mc = 0;
-                    let mut q_idx = p_idx;
+                    let mut q_pos = p_pos;
                     while n > 0 && i > 0 && errflag.load(Ordering::SeqCst) == 0 {
                         i -= 1;
                         let wid = if !g.widths.is_empty() {
@@ -2752,7 +2798,9 @@ pub fn compprintlist(showall: i32) -> i32 {
                         } else {
                             g.width
                         };
-                        let m_at_q = g.matches.get(q_idx); // c:1627
+                        // c:1627 `*q` — NULL once the walk has run past the
+                        // last listable match, which is `q_pos == listable.len()`.
+                        let m_at_q = listable.get(q_pos).map(|&i| &g.matches[i]);
                         match m_at_q {
                             None => {
                                 // c:1627 !m
@@ -2807,17 +2855,11 @@ pub fn compprintlist(showall: i32) -> i32 {
                                     } else {
                                         nc as usize
                                     };
-                                    for _j in 0..step {
-                                        // c:1647
-                                        if q_idx < g.matches.len() {
-                                            q_idx += 1;
-                                        }
-                                        // c:1649 — `q = skipnolist(q+1, showall)`
-                                        q_idx += crate::ported::zle::compresult::skipnolist(
-                                            &g.matches[q_idx..],
-                                            showall,
-                                        );
-                                    }
+                                    // c:1647-1649 — `for (j = step; j && *q; j--)
+                                    // q = skipnolist(q + 1, showall)`: step
+                                    // listable matches forward, stopping at the
+                                    // end of the array (C's `*q` guard).
+                                    q_pos = q_pos.saturating_add(step).min(listable.len());
                                 }
                                 mc += 1; // c:1650
                             }
@@ -2859,16 +2901,9 @@ pub fn compprintlist(showall: i32) -> i32 {
                             } else {
                                 1
                             };
-                            for _j in 0..step {
-                                if p_idx < g.matches.len() {
-                                    p_idx += 1;
-                                }
-                                // c:1670 — `p = skipnolist(p+1, showall)`
-                                p_idx += crate::ported::zle::compresult::skipnolist(
-                                    &g.matches[p_idx..],
-                                    showall,
-                                );
-                            }
+                            // c:1668-1670 — `for (j = step; j && *p; j--)
+                            // p = skipnolist(p + 1, showall)`.
+                            p_pos = p_pos.saturating_add(step).min(listable.len());
                         }
                     }
                     if mnew == 0 && ml > mlend {
@@ -8105,6 +8140,109 @@ mod tests {
     fn compprintlist_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = compprintlist(0);
+    }
+
+    /// c:1647-1649 / c:1670 — the two grid cursors must advance in time
+    /// proportional to the MATCH COUNT, not to `lcount * lins`.
+    ///
+    /// This is a wall-clock test because the defect it pins is wall-clock
+    /// only: the byte stream was already identical to zsh's. C advances `p`
+    /// and `q` one match at a time, so a column step costs `g->lins`
+    /// increments; that is cheap in C and was not in this port, where each
+    /// increment re-sliced `g->matches` and called `skipnolist`. On the
+    /// group below (40000 matches, 2 columns, 20000 lines) the old advance
+    /// performed 20000 * 20000 = 400M of those and took ~20 s; the real
+    /// `man <TAB>` case on this host (33862 matches, 10 columns) took 22 s
+    /// where zsh takes 0.9 s, which the pty parity harness scores as "zshrs
+    /// drew no list" because its settle window closes 300 ms after the last
+    /// byte.
+    ///
+    /// `mnew = 1` is what the FIRST menu-select paint sets (c:2028), and it
+    /// is what disables the `!mnew && ml > mlend` early exit (c:1672) — so
+    /// the whole grid is walked while only row 0 is inside the window. That
+    /// is exactly the shape that was slow.
+    ///
+    /// The bound is 5 s against a post-fix cost of well under a second, so
+    /// load on a busy CI box cannot flip it; only a return to quadratic
+    /// advancing can.
+    #[test]
+    fn compprintlist_grid_advance_cost_is_linear_in_matches() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = crate::ported::zle::zle_main::zle_test_setup();
+
+        const N: i32 = 40000;
+        const COLS: i32 = 2;
+        let lins = N / COLS;
+
+        let mut group = crate::ported::zle::comp_h::Cmgroup {
+            mcount: N,
+            lcount: N,
+            dcount: N,
+            cols: COLS,
+            lins,
+            width: 10,
+            ..Default::default()
+        };
+        group.matches = (0..N)
+            .map(|i| crate::ported::zle::comp_h::Cmatch {
+                str: Some(format!("m{:07}", i)),
+                gnum: i,
+                ..Default::default()
+            })
+            .collect();
+
+        // Save what this test perturbs; sibling tests share these globals.
+        let saved = (
+            MLBEG.load(Ordering::SeqCst),
+            MLEND.load(Ordering::SeqCst),
+            MNEW.load(Ordering::SeqCst),
+            MSELECT.load(Ordering::SeqCst),
+            MHASSTAT.load(Ordering::SeqCst),
+            LAST_TYPE.load(Ordering::SeqCst),
+        );
+
+        MLBEG.store(0, Ordering::SeqCst);
+        MLEND.store(1, Ordering::SeqCst); // only row 0 is on screen
+        MNEW.store(1, Ordering::SeqCst); // first paint: walk every row
+        MSELECT.store(-1, Ordering::SeqCst); // no mtab/mgtab writes
+        MHASSTAT.store(0, Ordering::SeqCst);
+        LAST_TYPE.store(0, Ordering::SeqCst);
+        errflag.store(0, Ordering::SeqCst);
+        if let Some(m) = crate::ported::zle::compcore::listdat.get() {
+            let mut ld = m.lock().unwrap();
+            ld.nlines = lins;
+            ld.onlyexpl = 0;
+        }
+        *crate::ported::zle::compcore::amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![group];
+
+        let t0 = std::time::Instant::now();
+        let _ = compprintlist(0);
+        let elapsed = t0.elapsed();
+
+        crate::ported::zle::compcore::amatches
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .clear();
+        MLBEG.store(saved.0, Ordering::SeqCst);
+        MLEND.store(saved.1, Ordering::SeqCst);
+        MNEW.store(saved.2, Ordering::SeqCst);
+        MSELECT.store(saved.3, Ordering::SeqCst);
+        MHASSTAT.store(saved.4, Ordering::SeqCst);
+        LAST_TYPE.store(saved.5, Ordering::SeqCst);
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "compprintlist over {} matches in {} columns took {:?}; the grid \
+             cursors are advancing one match at a time again (c:1649/c:1670)",
+            N,
+            COLS,
+            elapsed
+        );
     }
 
     /// c:2207 — `complistmatches` returns i32 (compile-time type pin).
