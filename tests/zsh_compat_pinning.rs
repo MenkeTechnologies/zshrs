@@ -1235,3 +1235,62 @@ fn zle_bracketed_paste_follows_module_load() {
         );
     }
 }
+
+/// The `completer` chain in `_main_complete` must survive a completer whose
+/// body runs a command that does not exist, and must stop when a completer
+/// raises a real error. Both directions are `errflag`, and both are pinned
+/// here because the completion side has no cheap headless observable.
+///
+/// `_main_complete` is a shell function upstream, so its
+/// `for tmp in "$_completers[@]"` loop (Completion/Base/Core/_main_complete
+/// sh:182-227) is an ordinary list: `execlist` abandons the remaining
+/// elements once `errflag` is set, and `do_completion` then discards the
+/// whole result — `if ((nmatches || nmessages) && !errflag)`,
+/// c:Src/Zle/compcore.c:1031. zshrs ports that loop natively
+/// (src/compsys/ported/Base/Core/_main_complete.rs), and its `errflag`
+/// break at the top of each iteration stands in for the `execlist` one, so
+/// the chain's fate is decided entirely by which operations raise the flag.
+///
+/// The two operations that decide it:
+///
+/// * `command not found` is `zerr("command not found: %s", arg0)` at
+///   c:Src/exec.c:903 — reached only after `execcmd` has forked, and
+///   followed immediately by `_exit` (c:908). The flag is raised in the
+///   CHILD; the shell that runs the completer chain never sees it, so an
+///   unrunnable command inside a completer — or a completer name that
+///   resolves to nothing at all — is just a non-zero status and the chain
+///   runs on. Routing that diagnostic through `zerr` in-process instead
+///   would kill every later completer, which is the failure this pins.
+/// * A genuine `zerr` in the shell's own process (c:Src/utils.c:184
+///   `errflag |= ERRFLAG_ERROR`) does end the list — assigning to a
+///   readonly is the cheapest one — and zsh then abandons the rest.
+///
+/// Measured on this host, `zsh -fc` and `zshrs --zsh -f -c` byte-identical
+/// on stdout, stderr and exit for all three scripts.
+#[test]
+fn completer_chain_survives_command_not_found_but_not_zerr() {
+    // A completer that EXISTS and whose body hits command-not-found.
+    assert_parity(
+        "_c1() { nosuchcommand_zz9; return 1 }\n\
+         _c2() { print RAN2; return 0 }\n\
+         ret=1\n\
+         for c in _c1 _c2; do if $c; then ret=0; break; fi; done\n\
+         print ret=$ret",
+    );
+    // A completer NAME that resolves to nothing — the `$tmp` call at
+    // sh:218 is an ordinary command word, so this is the same fork.
+    assert_parity(
+        "_c2() { print RAN2; return 0 }\n\
+         ret=1\n\
+         for c in _zznotacompleter_zz9 _c2; do if $c; then ret=0; break; fi; done\n\
+         print ret=$ret",
+    );
+    // A real in-process `zerr`: the loop and everything after it stop.
+    assert_parity(
+        "typeset -r r_zz9=1\n\
+         _c1() { r_zz9=2; return 1 }\n\
+         _c2() { print RAN2; return 0 }\n\
+         for c in _c1 _c2; do $c; done\n\
+         print DONE",
+    );
+}

@@ -5687,3 +5687,64 @@ gstack
 # extra name here, so it cannot be the same mechanism as HELPDIR/INFOPATH/
 # MANPATH — chase it by diffing `${(kv)parameters}` inside a completion
 # widget on both shells before touching anything.
+
+# ============================================================================
+# FINDING 6, half 1 — RE-MEASURED 2026-09-07 with the OTHER fixture. Same
+# verdict: the completer chain does NOT die, and there is still nothing to
+# port.
+# ============================================================================
+# The record above closed the chain-death half on `_zznotacompleter` — a
+# completer NAME that resolves to nothing. A second reproducer was carried
+# separately and is materially different: the completer EXISTS, and its own
+# BODY runs a command that does not:
+#
+#     zstyle ':completion:*:warnings' format 'NOMATCH:%d'
+#     _errfirst() { nosuchcommand_zz9; return 1 }
+#     zstyle ':completion:*' completer _errfirst _complete
+#
+# recorded as deterministic 3/3 on 'ls /nosuchdirzz9/<TAB>', with zshrs
+# showing row 0 (the diagnostic) and neither the redrawn buffer nor the
+# `warnings` line zsh puts under it.
+#
+# Re-measured at 67b71f9f5a, `--case 'ls /nosuchdirzz9/' --keys tab --jobs 1`,
+# pinned+codesigned copy of target/debug/zshrs, same dump on both sides:
+#
+#     10 consecutive runs: PASS 10/10.
+#
+# Three neighbouring fixtures, 3 runs each, same case and geometry:
+#
+#     _errfirst() { nosuchcommand_zz9; return 1 }   PASS 3/3
+#     _errfirst() { return 1 }                      PASS 3/3
+#     completer _complete            (no _errfirst) PASS 3/3
+#
+# The one FAIL seen while re-measuring came from the 21-sequence sweep of the
+# same fixture, where the harness itself labelled the tab1 cell FLAKY — it
+# passed on the harness's own confirm run. It is the FIRST cell of a cold
+# sweep; 13 isolated runs of that exact cell never reproduced it. Under the
+# rule this file already states for `--jobs 4` FAILs, a cell that will not
+# reproduce serially is not a finding.
+#
+# The mechanism argument is unchanged and now covers both fixtures, because
+# both go through the same fork. `command not found` is
+# `zerr("command not found: %s", arg0)` at c:Src/exec.c:903, three lines
+# above `_exit(...)` at c:908 — it is only ever reached in the child
+# `execcmd` forked, so the flag `zerr` raises (c:Src/utils.c:184,
+# `errflag |= ERRFLAG_ERROR`) dies with that child. The shell running the
+# chain never sees it, `_main_complete`'s loop keeps going (sh:218-221), and
+# `do_completion`'s `(nmatches || nmessages) && !errflag`
+# (c:Src/Zle/compcore.c:1031) is never reached with the flag set.
+#
+# zshrs emits the same diagnostic with `eprintln!`, NOT `zerr`
+# (src/vm_helper.rs:5276 / :5428 / :5539 — the comment at :5270 states the
+# reason), so its native chain (src/compsys/ported/Base/Core/_main_complete.rs,
+# whose `errflag` break at the head of each iteration stands in for the
+# `execlist` one) is not tripped either. Both halves of the contract are now
+# pinned headlessly in tests/zsh_compat_pinning.rs
+# (`completer_chain_survives_command_not_found_but_not_zerr`): a
+# command-not-found inside a chain element, an undefined chain element, and a
+# real in-process `zerr` (readonly assignment), each byte-identical to
+# `zsh -fc` on stdout, stderr and exit.
+#
+# There is no `errflag &= ~ERRFLAG_ERROR` to port at this boundary. C does
+# not have one; adding one would be inventing a clear point and would mask
+# the `CC <TAB>` case the native break exists for.
