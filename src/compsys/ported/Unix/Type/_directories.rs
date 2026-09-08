@@ -9,9 +9,11 @@
 //! sh:5  _wanted directories expl directory _files -/ "$@" -
 //! ```
 //!
-//! `_files -/` — _files with the directory-only filter. _files is
-//! a sibling shell fn (not ported); dispatches via `_wanted`'s
-//! action-chunk path which routes through `exec accessors`.
+//! `_files -/` — _files with the directory-only filter. It is reached
+//! through `_wanted`'s action-chunk path, which routes through `exec
+//! accessors` and so lands on whatever the router arbitrates for the name:
+//! the port at `Unix/Type/_files.rs` (`router.rs:317`), or a user's own
+//! `_files` when one sits ahead of the stock slot on `$fpath`.
 
 use crate::compsys::ported::_wanted::_wanted;
 
