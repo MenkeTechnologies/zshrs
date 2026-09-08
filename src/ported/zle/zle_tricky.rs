@@ -864,9 +864,9 @@ pub fn docomplete(lst: i32) -> i32 {
     // the word sits in an unfinished `{a,b`; leaving it latched from a
     // previous completion makes the NEXT completion quote commas.
     //
-    // C's fourth call site, `makecommaspecial(0)` at c:689, has no
-    // counterpart here because the code path around it — the `chline`
-    // history-prepend branch at c:640-653 / c:676-696 — is itself unported.
+    // C's fourth call site, `makecommaspecial(0)` at c:689, sits on the
+    // decline path of the `chline` history-prepend branch (c:640-653 /
+    // c:676-696) and is ported alongside it below.
     crate::ported::utils::makecommaspecial(false);
     tracing::debug!(target: "compsys_args", lst, "docomplete ENTER");
 
@@ -964,6 +964,91 @@ pub fn docomplete(lst: i32) -> i32 {
     // `interactive: /sbin[]`.
     crate::ported::zle::compcore::metafy_line();
 
+    // c:635 — `ocs = zlemetacs;`
+    let mut ocs = ZLEMETACS.load(Ordering::SeqCst);
+    // c:636-639 — `zsfree(origline); origline = ztrdup(zlemetaline);
+    //              origcs = zlemetacs; origll = zlemetall;`
+    // The snapshot is taken HERE, before the c:640-653 prepend, so
+    // do_completion's restore paths (c:861 `spaceinline(origll)` +
+    // `strcpy(zlemetaline, origline)`) put the PHYSICAL line back and never
+    // the one carrying the history prefix. The port used to take it inside
+    // `get_comp_string` instead — harmless while the prepend was unported,
+    // wrong the moment it exists.
+    let ol_snapshot: String = ZLEMETALINE
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+    {
+        if let Ok(mut g) = ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = ol_snapshot.clone(); // c:637
+        }
+        ORIGCS.store(ocs, Ordering::SeqCst); // c:638
+        ORIGLL.store(ol_snapshot.len() as i32, Ordering::SeqCst); // c:639
+    }
+    //
+    // c:603 — `int olst = lst, chl = 0, …`. `chl` is the BYTE length of the
+    // history text the next block splices in front of the physical line, and
+    // c:678-680 subtracts it back out of `zlemetacs`/`wb`/`we`.
+    let mut chl: i32 = 0;
+    //
+    // c:640-653 — `if (!isfirstln && (chline != NULL || zle_chline != NULL))`.
+    //
+    // On a PS2 continuation the line editor holds only the physical line the
+    // user is typing; the lines already entered live in the history
+    // accumulator (`chline`, or the copy `hist_context_save` published as
+    // `zle_chline` when ZLE took over at hist.c:252). The lexer inside
+    // `get_comp_string` must see the WHOLE command or it mis-reads the
+    // context: with
+    //     echo 'first line
+    //     /usr/sh<TAB>
+    // the physical line alone lexes as a command-position word and gets
+    // completed as a path, while the real command has an unterminated single
+    // quote around it and zsh offers nothing at all (c:681-690 below is what
+    // declines).
+    //
+    // `chline != NULL` has no direct Rust counterpart — `hist::chline` is a
+    // `Mutex<String>` that is CLEARED rather than freed — so the
+    // allocated-ness proxy is `hlinesz != 0`, the same one `ihwaddc`
+    // (hist.rs:194) uses for C's `if (chline && …)`.
+    let isfirstln = crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get());
+    let zle_chline_val = crate::ported::hist::zle_chline.lock().ok().and_then(|g| g.clone());
+    let chline_active =
+        crate::ported::hist::hlinesz.load(Ordering::SeqCst) != 0 || zle_chline_val.is_some();
+    let ol: Option<String> = if !isfirstln && chline_active {
+        // c:640
+        let ol = ol_snapshot.clone(); // c:641 `ol = dupstring(zlemetaline);`
+        //
+        // c:642-647 — "Make sure that chline is zero-terminated. zle_chline
+        // always is and hptr doesn't point into it anyway." `*hptr = '\0'`
+        // truncates the live accumulator at the write cursor. chline is
+        // METAFIED bytes, so the cut is a BYTE cut, not a UTF-8 char cut —
+        // `String::truncate` would panic mid-Meta-escape.
+        if zle_chline_val.is_none() {
+            // c:646
+            let pos = crate::ported::hist::hptr.load(Ordering::SeqCst); // c:647
+            if let Ok(mut cl) = crate::ported::hist::chline.lock() {
+                if pos < cl.len() {
+                    unsafe { cl.as_mut_vec().truncate(pos) };
+                }
+            }
+        }
+        ZLEMETACS.store(0, Ordering::SeqCst); // c:648
+        // c:649 — `inststr(zle_chline ? zle_chline : chline);`
+        let prefix = match zle_chline_val {
+            Some(ref s) => s.clone(),
+            None => crate::ported::hist::chline
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default(),
+        };
+        inststr(&prefix); // c:649
+        chl = ZLEMETACS.load(Ordering::SeqCst); // c:650
+        ZLEMETACS.store(chl + ocs, Ordering::SeqCst); // c:651
+        Some(ol)
+    } else {
+        None // c:652-653 `else ol = NULL;`
+    };
+
     // c:654-660 — `inwhat = IN_NOTHING; zsfree(qipre); qipre = ztrdup("");
     //               zsfree(qisuf); qisuf = ztrdup(""); zsfree(autoq);
     //               autoq = NULL;`
@@ -1002,6 +1087,43 @@ pub fn docomplete(lst: i32) -> i32 {
     let s = get_comp_string(); // c:664
     let s_word: String = s.clone().unwrap_or_default();
     tracing::debug!(target: "compsys_args", ?s, wb = WB.load(Ordering::SeqCst), we = WE.load(Ordering::SeqCst), lincmd = LINCMD.load(Ordering::SeqCst), inwhat = crate::ported::zle::compcore::INWHAT.load(Ordering::SeqCst), "get_comp_string result");
+    // c:676-696 — "If we added chline to the line buffer, reset the original
+    // contents." The lexer has now run over `chline + physical line`, so
+    // every offset it produced counts the prefix; take it back out and cut
+    // the prefix off the buffer again.
+    if let Some(ol) = ol {
+        // c:677
+        ZLEMETACS.fetch_sub(chl, Ordering::SeqCst); // c:678
+        WB.fetch_sub(chl, Ordering::SeqCst); // c:679
+        WE.fetch_sub(chl, Ordering::SeqCst); // c:680
+        //
+        // c:681-690 — the word STARTS inside the history prefix, i.e. the
+        // cursor word is a continuation of something opened on an earlier
+        // line (an unterminated quote, a half-written compound). zsh declines
+        // outright: the buffer is restored, `callcompfunc` is never reached,
+        // and docomplete returns 1 without listing a single match.
+        if WB.load(Ordering::SeqCst) < 0 {
+            // c:681
+            if let Some(m) = ZLEMETALINE.get() {
+                if let Ok(mut g) = m.lock() {
+                    *g = ol; // c:682 `strcpy(zlemetaline, ol);`
+                    ZLEMETALL.store(g.len() as i32, Ordering::SeqCst); // c:683
+                }
+            }
+            ZLEMETACS.store(ocs, Ordering::SeqCst); // c:684
+            // c:685 `popheap();` — no Rust counterpart (get_comp_string's
+            // pushheap has none either; see its c:1087 note).
+            crate::ported::zle::compcore::unmetafy_line(); // c:686
+            // c:687 `zsfree(s);` — `s` is owned and dropped at this return.
+            // c:688 `active = 0;` — `_active_guard` clears it on return.
+            crate::ported::utils::makecommaspecial(false); // c:689
+            return 1; // c:690
+        }
+        ocs = ZLEMETACS.load(Ordering::SeqCst); // c:692
+        ZLEMETACS.store(0, Ordering::SeqCst); // c:693
+        crate::ported::zle::zle_utils::foredel(chl, crate::ported::zle::zle_h::CUT_RAW); // c:694
+        ZLEMETACS.store(ocs, Ordering::SeqCst); // c:695
+    }
     // c:701-702 — `if (inwhat == IN_ENV) lincmd = 0;`. Missing from the port:
     // completing the VALUE of an environment assignment (`FOO=<TAB>`) still
     // reported command position, so `_main_complete` dispatched the
@@ -1789,19 +1911,13 @@ pub fn get_comp_string() -> Option<String> {
     };
     let zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
 
-    // c:637-639 — `origline = ztrdup(zlemetaline); origcs = zlemetacs;
-    // origll = zlemetall;`. Snapshot the line BEFORE the addx/lexing so
-    // do_completion's no-match / error path can restore it via
-    // `inststr(origline)`. Without this ORIGLINE stayed empty, so a
-    // completion that found nothing (e.g. `ls -<Tab>` — no files start
-    // with `-`) deleted the whole line instead of leaving it intact.
-    {
-        if let Ok(mut g) = ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock() {
-            *g = meta_snap.clone();
-        }
-        ORIGCS.store(zlemetacs, Ordering::SeqCst);
-        ORIGLL.store(meta_snap.len() as i32, Ordering::SeqCst);
-    }
+    // The origline/origcs/origll snapshot that used to sit here has moved
+    // to its C home, `docomplete` c:636-639 — one statement BEFORE the
+    // c:640-653 chline prepend. Taken here it would have captured the line
+    // WITH the history prefix spliced in, and do_completion's no-match
+    // restore (c:861) would then have pasted the earlier input lines into
+    // the buffer. It is still what makes a completion that finds nothing
+    // (`ls -<Tab>`) leave the line intact instead of deleting it.
 
     // c:1119-1130 — reset brace-info state plus the redirection
     // recorders: `if (rdstrs) freelinklist(...); rdstrs = znewlinklist();
