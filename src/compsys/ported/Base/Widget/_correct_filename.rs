@@ -18,10 +18,12 @@
 //! sh:72  return 1
 //! ```
 //!
-//! The `(#a$approx)` glob qualifier (approximate match within
-//! `$approx` errors) is part of zsh's extended-glob; mimicking it
-//! exactly requires a Levenshtein-aware globber. The port covers
-//! the exact-match emit + bails on approximate fall-through.
+//! The `(#a$approx)` glob qualifier (approximate match within `$approx`
+//! errors) is part of zsh's extended-glob. This port does not call the
+//! globber for it; it mirrors the qualifier with `shared::edit_distance`
+//! over the candidate basenames, which is the one place it departs from
+//! the source. Everything else — the loop's break-at-first-hit, the whole
+//! `trylist` it leaves behind, the compadd and the `print` — is ported.
 
 use crate::ported::params::{getiparam, getsparam, setsparam};
 use crate::ported::zle::compcore::set_compstate_str;
@@ -40,7 +42,7 @@ fn make_ops() -> options {
 
 /// `_correct_filename` — try to correct the misspelled filename
 /// under the cursor (or print correction to stdout when called as
-/// a non-widget). Approximate-match fall-through left as a TODO.
+/// a non-widget).
 pub fn _correct_filename(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_correct_filename");
     let widget = getsparam("WIDGET").unwrap_or_default();
@@ -51,8 +53,8 @@ pub fn _correct_filename(args: &[String]) -> i32 {
     let (mut file, in_widget): (String, bool) = if widget.is_empty() {
         (args.first().cloned().unwrap_or_default(), false)
     } else {
-        let numeric = getiparam("NUMERIC");
-        let _max_approx = if numeric > 1 { numeric } else { 6 };
+        // sh:26's `max_approx=$NUMERIC` is applied where the loop reads it,
+        // below — computing it twice left the copy here dead.
         (format!("{}{}", prefix, suffix), true)
     };
 
@@ -130,36 +132,55 @@ pub fn _correct_filename(args: &[String]) -> i32 {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| file.clone());
-    let mut best: Option<(usize, String)> = None;
+    // The loop runs `approx` upwards and BREAKS at the first level that
+    // matches anything (sh:63), and `(#a$approx)` matches within AT MOST
+    // `$approx` errors — so `trylist` ends up holding EVERY candidate at the
+    // smallest error count, not the single closest one. Keeping only the
+    // first best made `_correct_filename dir/fon` print `dir/foo` where zsh,
+    // with `dir/foo` and `dir/fou` both one error away, prints both.
+    let mut best_d: Option<usize> = None;
+    let mut trylist: Vec<String> = Vec::new();
     for c in &candidates {
         let d = crate::compsys::ported::shared::edit_distance(&target, c);
         if d == 0 || d > max_approx {
             continue;
         }
-        if best.as_ref().map(|(bd, _)| d < *bd).unwrap_or(true) {
-            best = Some((d, c.clone()));
+        match best_d {
+            Some(bd) if d > bd => continue,
+            Some(bd) if d == bd => trylist.push(c.clone()),
+            _ => {
+                best_d = Some(d);
+                trylist.clear();
+                trylist.push(c.clone());
+            }
         }
     }
-    let corrected = match best {
-        Some((_, name)) => name,
-        None => return 1,
-    };
-    let corrected_full = if testcmd {
-        which(&corrected).unwrap_or(corrected)
-    } else if let Some(slash) = file.rfind('/') {
-        format!("{}/{}", &file[..slash], corrected)
-    } else {
-        corrected
-    };
+    // sh:65  (( $#trylist )) || return 1
+    if trylist.is_empty() {
+        return 1;
+    }
+    let full: Vec<String> = trylist
+        .into_iter()
+        .map(|corrected| {
+            if testcmd {
+                which(&corrected).unwrap_or(corrected)
+            } else if let Some(slash) = file.rfind('/') {
+                format!("{}/{}", &file[..slash], corrected)
+            } else {
+                corrected
+            }
+        })
+        .collect();
     if in_widget {
-        let argv: Vec<String> = vec![
+        // sh:68  compadd -QUf -i "$IPREFIX" -I "$ISUFFIX" "${trylist[@]…}"
+        let mut argv: Vec<String> = vec![
             "-QUf".to_string(),
             "-i".to_string(),
             iprefix.clone(),
             "-I".to_string(),
             getsparam("ISUFFIX").unwrap_or_default(),
-            corrected_full,
         ];
+        argv.extend(full);
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         let cur_insert =
             crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();
@@ -167,7 +188,8 @@ pub fn _correct_filename(args: &[String]) -> i32 {
             set_compstate_str("insert", "menu");
         }
     } else {
-        println!("{}", corrected_full);
+        // sh:71  print "$IPREFIX${^trylist[@]}" — one line, space separated.
+        println!("{}", full.join(" "));
     }
     0
 }
