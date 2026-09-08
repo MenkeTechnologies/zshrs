@@ -48,15 +48,31 @@
 //! matched the wrong set against it.
 //!
 //! `$~pfilt` excludes names matching that pattern.
+//!
+//! BOTH arms of sh:23 are ported. Under `extra-verbose` the parameter set is
+//! split in two: sh:25 keeps the ones whose value may be shown and hands them
+//! to `_describe` at sh:36 with `name:value` descriptions built from a real
+//! `typeset -m` listing, and sh:40 keeps the `hideval`/`special` remainder for
+//! the plain `compadd` at sh:55. The two filters partition the same non-local
+//! set the `else` arm at sh:43 offers as one flat group, which is what
+//! `described_and_normal_partition_the_non_local_set` pins.
+//!
+//! zsh 5.9 spells the same two filters with `${(@M)…:#$~pfilt*}` and
+//! `pfilt='[^_.]'`; the `(M)` inversion makes that the identical filter. The
+//! port follows the newer `:#$~pfilt` / `pfilt='[_.]*'` spelling transcribed
+//! above, because sh:18's `pfilt+='|*.*'` only composes with that one.
 
+use crate::compsys::ported::_describe::_describe;
 use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::shared::zstyle_t;
+use crate::compsys::ported::shared::{zstyle_t, LocalScope};
+use crate::ported::builtin::{bin_typeset, BIN_TYPESET};
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, paramtab, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::utils::{gettempfile, quotestring};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{options, MAX_OPS, PM_ARRAY, QT_BACKSLASH_PATTERN};
 
 fn make_ops() -> options {
     options {
@@ -91,6 +107,131 @@ fn enumerate_params() -> Vec<(String, String, i32)> {
         }
     }
     out
+}
+
+/// sh:25's `~*(hideval|local|special)*` — the type strings that reach
+/// `_describe` at sh:36 and so have their VALUE shown.
+///
+/// `~PAT` is EXTENDED_GLOB's pattern exclusion, and the three words are
+/// substrings of the modifier chain `paramtypestr` appends
+/// (`Src/Modules/parameter.c:63-90`), not flag bits: `-hideval` c:87,
+/// `-special` c:89, `-local` c:63. Each is excluded for its own reason —
+/// `hideval` because the user asked for the value to stay hidden, `special`
+/// because reading one can have a side effect, `local` because sh:4's
+/// contract is "completes only non-local parameters".
+fn is_described_type(ty: &str) -> bool {
+    !(ty.contains("hideval") || ty.contains("local") || ty.contains("special"))
+}
+
+/// sh:40's `~^(*(hideval|special)*)~*local*` — the type strings that reach
+/// the plain `compadd` at sh:55 while the `extra-verbose` branch is running.
+///
+/// `~^(…)` excludes what does NOT match, i.e. it KEEPS only the type strings
+/// that do contain `hideval` or `special`; `~*local*` then drops the locals.
+/// Within one `$pattern[2]` set this is the exact complement of
+/// [`is_described_type`] minus the locals both arms already drop — see
+/// `described_and_normal_partition_the_non_local_set`.
+fn is_extra_verbose_normal_type(ty: &str) -> bool {
+    (ty.contains("hideval") || ty.contains("special")) && !ty.contains("local")
+}
+
+/// One element of sh:33's `verbose` array, from one `typeset -m` line.
+///
+/// `${…/=/:}` rewrites the FIRST `=` — the one `printparamnode` puts between
+/// name and value (`Src/params.c:6290`) — so `_describe` reads the line as
+/// `name:description`; a later `=` inside the value is left alone.
+/// `${…//'\'/'\\'}` then doubles every backslash, because the description
+/// reaches `compadd` as a `-d` display string.
+fn verbose_line(line: &str) -> String {
+    let colonised = match line.find('=') {
+        Some(i) => format!("{}:{}", &line[..i], &line[i + 1..]),
+        None => line.to_string(),
+    };
+    colonised.replace('\\', "\\\\")
+}
+
+/// sh:34's `$( typeset -m ${(@b)described} )` — the `name=value` listing
+/// `_describe` turns into descriptions at sh:36.
+///
+/// The `typeset -m` half is kept VERBATIM: this really does run
+/// [`bin_typeset`] with `-m` set in `ops` and the `(b)`-quoted names as its
+/// arguments, so every line is rendered by the same
+/// [`crate::ported::params::printparamnode`] the builtin would reach
+/// (`Src/builtin.c:3090-3095` → `Src/params.c:6123`) and nothing about the
+/// value formatting — the single-quoting of values with spaces, `array=( … )`,
+/// the `PM_UNSET` skip at c:3078-3079, the `hnamcmp` ordering at c:3083 — is
+/// hand-rolled here. A previous revision of this file hand-rolled a
+/// `PM_TYPE`-only type string for a different filter and every upstream test
+/// that keyed on a modifier silently matched the wrong set; the same mistake
+/// on the VALUE side would silently mis-describe every parameter.
+///
+/// Only the `$( … )` plumbing is replaced. Upstream needs a command
+/// substitution because a shell has no other way to get a builtin's stdout
+/// into an array (and needs `-m` because a bare `typeset NAME` inside a
+/// function DECLARES instead of printing — sh:29-32's own comment). The port
+/// points fd 1 at a [`gettempfile`] buffer for the duration of the call
+/// instead, which reaches the identical bytes without the whole-shell-state
+/// clone that `exec::run_command_substitution` performs for every real
+/// `$( … )` — a cost that would otherwise be paid on every keystroke that
+/// completes a parameter name.
+///
+/// A temp FILE rather than a pipe: the listing is unbounded (`$PATH`,
+/// `$fpath`, `$LS_COLORS` are each already kilobytes) and a pipe would
+/// deadlock the moment the output outgrew its 64K buffer with nobody draining
+/// the read end.
+///
+/// Returns the captured text; the empty string if the buffer cannot be
+/// created or fd 1 cannot be redirected, which leaves `verbose` empty and
+/// costs sh:36 its descriptions but adds nothing wrong.
+fn typeset_m_capture(names: &[String]) -> String {
+    // `${(@b)described}` — c:Src/subst.c:2259 sets `QT_BACKSLASH_PATTERN`,
+    // whose body (c:Src/utils.c:6242-6248) backslash-escapes the pattern
+    // metacharacters. Without it a parameter whose name holds one (`*`, `?`,
+    // `#`, `[`) would reach `typeset -m` as a PATTERN and list its neighbours.
+    let quoted: Vec<String> = names
+        .iter()
+        .map(|n| quotestring(n, QT_BACKSLASH_PATTERN))
+        .collect();
+
+    let (fd, path) = match gettempfile(None) {
+        Some(t) => t,
+        None => return String::new(),
+    };
+    // Flush FIRST: `println!` writes through a `LineWriter` over fd 1, and
+    // anything still buffered from before the redirect would otherwise land
+    // in the capture instead of on the terminal.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let saved = unsafe { libc::dup(1) };
+    let redirected = saved >= 0 && unsafe { libc::dup2(fd, 1) } >= 0;
+    if redirected {
+        // `typeset -m` — the `-m` bit is `OPT_MINUS`, i.e. `ind[c] & 1`
+        // (`Src/zsh.h:1402`). `m` is not in `TYPESET_OPTSTR`
+        // (`Src/zsh.h:1947`, "aiEFALRZlurtxUhHT"), so it contributes no
+        // `PM_*` bit to `on`/`off`: the call lands on c:3090-3095's pure
+        // listing arm with `PRINT_INCLUDEVALUE | PRINT_WITH_NAMESPACE`.
+        let mut ops = make_ops();
+        ops.ind[b'm' as usize] = 1;
+        let _ = bin_typeset("typeset", &quoted, &ops, BIN_TYPESET);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        unsafe {
+            libc::dup2(saved, 1);
+        }
+    }
+    if saved >= 0 {
+        unsafe {
+            libc::close(saved);
+        }
+    }
+    unsafe {
+        libc::close(fd);
+    }
+    let text = if redirected {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = std::fs::remove_file(&path);
+    text
 }
 
 /// Call `_parameters` by NAME, the way the upstream shell code does.
@@ -204,56 +345,168 @@ pub fn _parameters(args: &[String]) -> i32 {
         )
     };
 
-    // sh:23-41 — the `extra-verbose` branch is NOT ported.
-    //
-    //   Under it, sh:25 splits the parameter set in two: the plain names go
-    //   through `_describe` at sh:36 carrying `name:value` descriptions built
-    //   by sh:34's `$( typeset -m ${(@b)described} )`, and only the
-    //   hideval/special ones reach the sh:55 `compadd`. A faithful port of
-    //   that split was written and measured against zsh
-    //   (`comptab_parity.py --case 'unset ' --sequences tab1`, stock `$fpath`,
-    //   `extra-verbose on`): zsh offered 148 matches, the port 124, against a
-    //   sh:43-branch baseline of 171 for the same shell. The loss is on the
-    //   `typeset -m` → `_describe` leg, not in the sh:25/sh:40 partition, so
-    //   the branch would have traded a documented gap for a silent
-    //   match-dropping one. It is left unported until that leg is understood
-    //   rather than shipped half-working.
-    //
-    //   sh:43 (the `else` arm) is what runs below, unconditionally.
     let all_params = enumerate_params();
+    let expl = getaparam("expl").unwrap_or_default();
+
+    // `(R)$~pattern[2]` — the assoc subscript matches the VALUE, i.e. the
+    //   `paramtypestr` string, not the parameter name. Shared by sh:25, sh:40
+    //   and sh:43.
+    let val_matches = |ty: &str| match pat_prog.as_ref() {
+        Some(p) => pattry(p, ty),
+        None => ty == pattern_val,
+    };
+    // `:#$~pfilt` — drop the names that MATCH pfilt. Shared by all three.
+    let pfilt_drops = |name: &str| match pfilt_prog.as_ref() {
+        Some(prog) => pattry(prog, name),
+        None => false,
+    };
+
     let mut normal: Vec<String> = Vec::new();
-    for (name, ty, _flags) in all_params {
-        // (R)$~pattern[2] — the assoc subscript matches the VALUE, i.e. the
-        //   `paramtypestr` string, not the parameter name.
-        let val_matches = match pat_prog.as_ref() {
-            Some(p) => pattry(p, &ty),
-            None => ty == pattern_val,
-        };
-        if !val_matches {
-            continue;
-        }
-        // :#$~pfilt — name must NOT match pfilt
-        if let Some(prog) = pfilt_prog.as_ref() {
-            if pattry(prog, &name) {
+    // sh:11's `described`. Empty unless the sh:23 branch runs; sh:55-56's two
+    // `${…:|described}` set-differences read it back.
+    let mut described_final: Vec<String> = Vec::new();
+
+    // sh:23  if zstyle -t ":completion:${curcontext}:parameters" extra-verbose
+    let extra_verbose = zstyle_t(
+        &format!(":completion:{}:parameters", curcontext),
+        "extra-verbose",
+    ) == 0;
+
+    if extra_verbose {
+        // Two of sh:11's `local -a` names have to exist as REAL parameters,
+        // because the builtins they are handed to read their arrays out of
+        // `paramtab` BY NAME: `described` for sh:27's `compadd -D … -a -`,
+        // `verbose` for sh:36's `_describe`. The rest of sh:11's list stays as
+        // Rust locals, which is what the `else` arm already does. `LocalScope`
+        // is what puts the caller's values back on the way out, standing in
+        // for `endparamscope` (`Src/params.c:5867-5933`) — without it a
+        // completion would leave two arrays behind in the user's shell.
+        let _locals = LocalScope::declare(&["described", "verbose"], PM_ARRAY);
+
+        // sh:24-26
+        //   described=(
+        //       ${(k)parameters[(R)$~pattern[2]~*(hideval|local|special)*]:#$~pfilt}
+        //   )
+        // `~PAT` is a pattern EXCLUSION under EXTENDED_GLOB: keep the type
+        // strings that match `$pattern[2]` and contain NONE of the three
+        // modifier words. Those three are exactly the ones whose value must
+        // not be shown — `hideval` by request, `special` because reading one
+        // can have side effects, `local` because sh:4's contract is
+        // "completes only non-local parameters".
+        // (zsh 5.9 spells sh:25 as `"${(@M)${(@k)parameters[…]}:#$~pfilt*}"`
+        // with `pfilt='[^_.]'`; the `(M)` inversion makes that the same
+        // filter, and the port follows the newer `:#$~pfilt` spelling because
+        // sh:18's `pfilt+='|*.*'` only composes with that one.)
+        let mut described: Vec<String> = Vec::new();
+        for (name, ty, _flags) in &all_params {
+            if !val_matches(ty) {
                 continue;
             }
+            if pfilt_drops(name) {
+                continue;
+            }
+            if !is_described_type(ty) {
+                continue;
+            }
+            described.push(name.clone());
         }
-        // sh:43's `~*local*` is a plain substring test against the type
-        //   string. The previous port tested `flags & PM_LOCAL` instead —
-        //   which never matches, because `createparam` CLEARS that bit once
-        //   it has used it to stamp `pm->level` (`Src/params.c:1155`). Locals
-        //   were therefore never filtered at all.
-        if ty.contains("local") {
-            continue;
+        described.sort();
+        setaparam("described", described);
+
+        // sh:27  compadd "$@" "$expl[@]" -D described -a - described
+        //
+        // This call adds NO MATCHES. c:Src/Zle/compcore.c:2178 computes
+        //     doadd = (!dat->apar && !dat->opar && !dat->dpar);
+        // so with `-D` set the walk only decides which words WOULD have
+        // matched: c:2519-2523 and c:2540-2543 advance the dpar cursor past a
+        // rejected word, c:2571-2578 collect the element belonging to a kept
+        // one, and c:2606-2607 writes the survivors back over the named array.
+        // Its entire job is to filter `described` down to the names that match
+        // the current word before sh:33 renders their values.
+        //
+        // Getting this wrong in the "it adds matches too" direction
+        // double-lists every described parameter; getting it wrong in the
+        // "it empties the array" direction makes sh:28 false and silently
+        // drops the whole described group.
+        let mut dcmd: Vec<String> = argv.clone();
+        dcmd.extend(expl.iter().cloned());
+        dcmd.push("-D".to_string());
+        dcmd.push("described".to_string());
+        dcmd.push("-a".to_string());
+        dcmd.push("-".to_string());
+        dcmd.push("described".to_string());
+        let _ = bin_compadd("compadd", &dcmd, &make_ops(), 0);
+        described_final = getaparam("described").unwrap_or_default();
+
+        // sh:28  if (( $#described )); then
+        if !described_final.is_empty() {
+            // sh:33-35
+            //   verbose=(
+            //       ${${${(f@)"$( typeset -m ${(@b)described} )"}/=/:}[@]//'\'/'\\'}
+            //   )
+            // `(f@)` splits the listing on newlines — one element per
+            // parameter, since `printparamnode` ends every entry with one.
+            let verbose: Vec<String> = typeset_m_capture(&described_final)
+                .lines()
+                .map(verbose_line)
+                .collect();
+            setaparam("verbose", verbose);
+
+            // sh:36  _describe -t parameters parameter verbose "$@" "$expl[@]"
+            let mut dsc: Vec<String> = vec![
+                "-t".to_string(),
+                "parameters".to_string(),
+                "parameter".to_string(),
+                "verbose".to_string(),
+            ];
+            dsc.extend(argv.iter().cloned());
+            dsc.extend(expl.iter().cloned());
+            let _ = _describe(&dsc);
         }
-        normal.push(name);
+
+        // sh:39-41
+        //   normal=(
+        //       ${(k)parameters[(R)$~pattern[2]~^(*(hideval|special)*)~*local*]:#$~pfilt}
+        //   )
+        // `~^(…)` excludes what does NOT match, i.e. keeps ONLY the type
+        // strings that DO contain `hideval` or `special`; `~*local*` then
+        // drops the locals. Within the `$pattern[2]` set this is the exact
+        // complement of sh:25, so the two arms partition the same set the
+        // `else` arm at sh:43 would have offered in one flat group — the
+        // described half through `_describe`, the rest through sh:55.
+        for (name, ty, _flags) in &all_params {
+            if !val_matches(ty) {
+                continue;
+            }
+            if pfilt_drops(name) {
+                continue;
+            }
+            if !is_extra_verbose_normal_type(ty) {
+                continue;
+            }
+            normal.push(name.clone());
+        }
+    } else {
+        // sh:43  normal=( ${(k)parameters[(R)${~pattern[2]}~*local*]:#$~pfilt} )
+        for (name, ty, _flags) in &all_params {
+            if !val_matches(ty) {
+                continue;
+            }
+            if pfilt_drops(name) {
+                continue;
+            }
+            // sh:43's `~*local*` is a plain substring test against the type
+            //   string. The previous port tested `flags & PM_LOCAL` instead —
+            //   which never matches, because `createparam` CLEARS that bit once
+            //   it has used it to stamp `pm->level` (`Src/params.c:1155`). Locals
+            //   were therefore never filtered at all.
+            if ty.contains("local") {
+                continue;
+            }
+            normal.push(name.clone());
+        }
     }
     normal.sort();
-
-    let expl = getaparam("expl").unwrap_or_default();
-    // sh:11's `described` is only ever filled by the unported sh:23 branch, so
-    // the sh:55-56 `${…:|described}` set-differences below are no-ops here.
-    let described_final: Vec<String> = Vec::new();
 
     // sh:46-54  fake-parameters
     let fake_vals = lookupstyle(&format!(":completion:{}:", curcontext), "fake-parameters");
@@ -342,5 +595,233 @@ mod tests {
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let _r = _parameters(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
+    }
+
+    /// sh:25 and sh:40 must PARTITION the non-local parameters: every type
+    /// string that is not `-local` belongs to exactly one of the two arms.
+    ///
+    /// This is the invariant the `extra-verbose` branch trades on. Under it
+    /// the described half is offered by `_describe` at sh:36 and the rest by
+    /// `compadd` at sh:55, so the user must still see exactly the set the
+    /// `else` arm at sh:43 would have offered in one flat group. A filter
+    /// that overlaps double-lists a parameter; one that leaves a gap drops it
+    /// silently, which is what "the described group came out short" looked
+    /// like the first time this branch was attempted.
+    ///
+    /// Driven over every string `paramtypestr`
+    /// (`Src/Modules/parameter.c:43`) can produce for the relevant flags,
+    /// not over a hand-written list, so a new modifier suffix cannot slip
+    /// past both filters unnoticed.
+    #[test]
+    fn described_and_normal_partition_the_non_local_set() {
+        use crate::ported::zsh_h::{
+            PM_ARRAY, PM_EXPORTED, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_READONLY,
+            PM_SCALAR, PM_SPECIAL, PM_TIED, PM_UNIQUE,
+        };
+        let _g = crate::test_util::global_state_lock();
+        let types = [PM_SCALAR, PM_ARRAY, PM_INTEGER, PM_HASHED];
+        // `hide` is in the list on purpose: it SHARES the prefix `hide` with
+        // `hideval`, so a filter written as a `contains("hide")` substring
+        // test would wrongly route every `typeset -h` parameter into the
+        // plain group. Only `-hideval` may.
+        let mods = [
+            0,
+            PM_READONLY,
+            PM_EXPORTED,
+            PM_UNIQUE,
+            PM_TIED,
+            PM_HIDE,
+            PM_HIDEVAL,
+            PM_SPECIAL,
+            PM_HIDEVAL | PM_SPECIAL,
+            PM_HIDE | PM_READONLY,
+            PM_SPECIAL | PM_EXPORTED,
+        ];
+        for level in [0u32, 1u32] {
+            for t in types {
+                for m in mods {
+                    let pm = make_probe_param(t | m, level);
+                    let ty = crate::ported::modules::parameter::paramtypestr(&pm);
+                    let d = is_described_type(&ty);
+                    let n = is_extra_verbose_normal_type(&ty);
+                    if level != 0 {
+                        // sh:25 and sh:40 BOTH carry `~*local*`: a local is in
+                        // neither arm, exactly as sh:43 also excludes it.
+                        assert!(
+                            !d && !n,
+                            "local type {:?} must be in neither arm (described={}, normal={})",
+                            ty,
+                            d,
+                            n
+                        );
+                        continue;
+                    }
+                    assert!(
+                        d != n,
+                        "type {:?} must be in EXACTLY one arm (described={}, normal={})",
+                        ty,
+                        d,
+                        n
+                    );
+                }
+            }
+        }
+    }
+
+    /// The two arms route on the modifier SUFFIX, not on the base type. Pins
+    /// the three words sh:25 names, plus the `hide`/`hideval` near-miss.
+    #[test]
+    fn type_filters_route_on_the_modifier_suffix() {
+        // Plain values are described…
+        assert!(is_described_type("scalar"));
+        assert!(is_described_type("array"));
+        assert!(is_described_type("scalar-readonly-export"));
+        // `-hide` is NOT `-hideval`: `typeset -h` hides the parameter from a
+        // bare listing, it does not ask for its value to be withheld.
+        assert!(is_described_type("scalar-hide"));
+        assert!(!is_extra_verbose_normal_type("scalar-hide"));
+        // …and hideval / special are not.
+        assert!(!is_described_type("scalar-hideval"));
+        assert!(is_extra_verbose_normal_type("scalar-hideval"));
+        assert!(!is_described_type("array-special"));
+        assert!(is_extra_verbose_normal_type("array-special"));
+        // A local is excluded from both, whatever else it carries.
+        assert!(!is_described_type("scalar-local"));
+        assert!(!is_extra_verbose_normal_type("scalar-local-special"));
+    }
+
+    /// sh:33's `${${…/=/:}[@]//'\'/'\\'}` on a `typeset -m` line.
+    #[test]
+    fn verbose_line_rewrites_first_equals_and_doubles_backslashes() {
+        // The `=` printparamnode writes becomes the `_describe` separator.
+        assert_eq!(verbose_line("HOME=/root"), "HOME:/root");
+        // Only the FIRST one — a `=` inside the value is part of the
+        // description and must survive.
+        assert_eq!(
+            verbose_line("LS_COLORS=di=34:ln=35"),
+            "LS_COLORS:di=34:ln=35"
+        );
+        // Every backslash doubled.
+        assert_eq!(verbose_line(r"WORDCHARS=a\b"), r"WORDCHARS:a\\b");
+        // A line with no `=` at all (nothing upstream produces one, but the
+        // `(f@)` split can hand us a stray) passes through but is still
+        // backslash-doubled.
+        assert_eq!(verbose_line(r"lone\line"), r"lone\\line");
+    }
+
+    /// sh:34's capture must leave fd 1 exactly where it found it and take its
+    /// scratch file with it.
+    ///
+    /// The failure this guards is loud and permanent: a `dup2` that is not
+    /// undone leaves the user's shell writing every subsequent line of output
+    /// into a deleted file in `$TMPPREFIX` instead of onto the terminal, from
+    /// the first `$<TAB>` onward. `fstat` on fd 1 identifies the open file
+    /// description, so a leaked redirect shows up as a changed `(dev, ino)`.
+    ///
+    /// What this test does NOT assert is the CONTENT of the capture, because
+    /// libtest replaces `println!`'s destination with a per-thread buffer
+    /// (`std::io::set_output_capture`, inherited by spawned threads) — under
+    /// `cargo test`, `printparamnode`'s bytes never reach fd 1 at all, so
+    /// they never reach the redirect either, whatever the redirect does. The
+    /// rendering is measured where it is actually observable, on the PTY:
+    /// `scripts/comptab_parity.py` and the `screen.py` probe compare the
+    /// described group's `NAME -- value` column against real zsh.
+    #[test]
+    fn typeset_m_capture_restores_fd1_and_removes_its_scratch_file() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::setsparam("_ZSHRS_PV_SCALAR", "a value with spaces");
+
+        let ident = || -> (u64, u64) {
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstat(1, &mut st) } != 0 {
+                return (0, 0);
+            }
+            (st.st_dev as u64, st.st_ino as u64)
+        };
+        let before = ident();
+        let tmpdir = crate::ported::params::getsparam("TMPPREFIX")
+            .unwrap_or_else(|| crate::ported::config_h::DEFAULT_TMPPREFIX.to_string());
+        let count_scratch = || -> usize {
+            let (dir, prefix) = match tmpdir.rfind('/') {
+                Some(i) => (tmpdir[..i].to_string(), tmpdir[i + 1..].to_string()),
+                None => (".".to_string(), tmpdir.clone()),
+            };
+            std::fs::read_dir(&dir)
+                .map(|it| {
+                    it.filter_map(|e| e.ok())
+                        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        let files_before = count_scratch();
+
+        let _ = typeset_m_capture(&["_ZSHRS_PV_SCALAR".to_string()]);
+        crate::ported::params::unsetparam("_ZSHRS_PV_SCALAR");
+
+        assert_eq!(
+            before,
+            ident(),
+            "fd 1 must point at the same open file after the capture"
+        );
+        assert_eq!(
+            files_before,
+            count_scratch(),
+            "the capture's scratch file under {:?} must be removed",
+            tmpdir
+        );
+    }
+
+    /// A name holding a glob metacharacter must reach `typeset -m` as a
+    /// LITERAL — that is what sh:34's `${(@b)described}` is for. Without it
+    /// `typeset -m` treats the name as a PATTERN and the capture carries
+    /// every parameter it happened to match, so `_describe` describes the
+    /// wrong names.
+    ///
+    /// Pins the QUOTE TYPE, which is the part that can silently be wrong:
+    /// `QT_BACKSLASH` (`${(q)…}`) escapes shell metacharacters and leaves
+    /// `*`/`?`/`[` alone, so picking it here would look right and glob
+    /// anyway. Only `QT_BACKSLASH_PATTERN` (`${(b)…}`,
+    /// `Src/utils.c:6242-6248`) escapes the pattern set.
+    #[test]
+    fn described_names_are_pattern_quoted_for_typeset_m() {
+        assert_eq!(
+            quotestring("_ZSHRS_PVQ_*", QT_BACKSLASH_PATTERN),
+            r"_ZSHRS_PVQ_\*"
+        );
+        assert_eq!(quotestring("a?b[c]", QT_BACKSLASH_PATTERN), r"a\?b\[c\]");
+        // Ordinary names are untouched, so the common case still reaches
+        // `typeset -m` byte-for-byte.
+        assert_eq!(quotestring("HISTFILE", QT_BACKSLASH_PATTERN), "HISTFILE");
+    }
+
+    /// Bare `param` value for the filter matrix above. Only `flags` and
+    /// `level` are read by `paramtypestr` (`Src/Modules/parameter.c:46`).
+    fn make_probe_param(flags: u32, level: u32) -> crate::ported::zsh_h::param {
+        crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "probe".to_string(),
+                flags: flags as i32,
+            },
+            u_data: 0,
+            u_tied: None,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: level as i32,
+        }
     }
 }
