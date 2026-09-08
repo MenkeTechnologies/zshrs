@@ -1363,54 +1363,52 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         last_branch = br;
     }
 
-    // !!! KNOWN GAP — c:913-917 "check for proper termination" !!!
+    // c:913-917 — "check for proper termination":
     //     if ((paren && *patparse++ != Outpar) ||
     //         (!paren && *patparse &&
     //          !((patflags & PAT_FILE) && *patparse == '/')))
     //         return 0;
-    // The `paren` half IS ported — patcomppiece's `b'('` arm and
-    // patcompnot's paren arm both test for the closing `)` and consume
-    // it. The `!paren` half (a stray top-level `)` is a BAD PATTERN)
-    // is NOT ported, deliberately, and a leftover byte is dropped.
+    // The `paren` half lives at the two call sites that OPEN a group —
+    // patcomppiece's `b'('` arm and patcompnot's paren arm both test for
+    // the closing `)` and consume it — so only the `!paren` half belongs
+    // here: input left over after the top-level switch is a BAD PATTERN.
     //
-    // Why: in C the test is only reachable for a `)` that the LEXER
-    // turned into the Outpar TOKEN, and lex.c makes that decision from
-    // the `sub` flag that zshrs's lexer does not model:
-    //   c:Src/lex.c:989-990  `case LX2_OUTPAR: if ((sub ||
-    //       in_brace_param) && isset(SHGLOB)) break;`  — inside a
-    //       `${...}` body under SHGLOB, `)` stays an ORDINARY char.
-    //   c:Src/lex.c:1007     `case LX2_BAR: if (unset(SHGLOB) ||
-    //       (!sub && !in_brace_param)) c = Bar;`      — ditto for `|`.
-    //   c:Src/lex.c:1079-1081 `case LX2_INPAR: if (isset(SHGLOB)) {
-    //       if (sub || in_brace_param) break; ... }`  — ditto for `(`.
-    // zshrs hands patcompile the same tokenized form for a `[[ ]]` /
-    // `case` pattern and for a `${s//pat/rep}` pattern, so this
-    // function cannot tell the two apart. Enforcing the check makes
-    // `setopt shglob; [[ x = -([AMO]*|[0CRSWnsw]) ]]` error the way
-    // zsh does, but it simultaneously REJECTS patterns zsh accepts in
-    // the substitution contexts (measured: 40 cells fixed, 170 cells
-    // newly over-rejected across `${s//p/r}` / `${s#p}` / `${a:#p}` /
-    // `case`). Over-rejecting is the worse failure, so the check stays
-    // out until the lexer models `sub`; then it can be restored here
-    // verbatim from c:913-917.
+    // What reaches this point. `patcompbranch` (c:950) stops on any of the
+    // first ZPC_SEG_COUNT slots — SLASH, NULL, BAR, OUTPAR. BAR is consumed
+    // by the alternation loop above, NULL is end-of-input, and SLASH is
+    // Marker'd for every non-PAT_FILE compile (patcompile, c:570), which is
+    // why C spells the PAT_FILE escape hatch explicitly. That leaves `)` as
+    // the byte this test actually rejects, and it can only survive to here
+    // when `(` was NOT a grouping character — `isset(SHGLOB)` (c:500-510) or
+    // `disable -p '('` — so the `(` opened no group for it to close:
+    //     setopt shglob; [[ "-A" = -([AMO]*|[0CRSWnsw]) ]]
+    //     zsh: bad pattern: -([AMO]*|[0CRSWnsw])
+    // which is `_arguments`:14 under the option state compsys runs it in.
     //
-    // SECOND SUBSTRATE, measured 2026-09-05 — the lexer is not the only
-    // thing missing. A SCOPED restore (error only on a leftover `)`) was
-    // built and measured green on 13 targeted probes, 781 unit tests,
-    // `--test emulation_parity` 47/47, and a 1250-case zsh-vs-zshrs
-    // differential paren sweep with ZERO diffs. It still had to be reverted,
-    // because it over-rejects a pattern that arrives as a RUNTIME STRING:
-    //     emulate ksh; p='-([AMO]*|[0CRSWnsw])'; [[ "-s" = $~p ]]
-    //     zsh -> no match (rc 1)        zshrs+restore -> `bad pattern`
-    // c:Src/glob.c:3624-3627 — `zshtokenize` SKIPS `(`, `|` and `)` under
-    // ZSHTOK_SHGLOB, so a runtime-string pattern never carries `Outpar`
-    // under SH_GLOB at all. zshrs re-tokenizes the whole cond RHS AFTER
-    // substitution, with flags 0, at `src/ported/cond.rs:487-489`, which
-    // undoes that suppression and makes the two indistinguishable again.
-    // So restoring c:913-917 needs BOTH: a lexer that models `sub`, and a
-    // cond path that stops re-tokenizing substituted content. Visible
-    // symptom while it stays out: `git-cvsserver <TAB>`, where zsh prints
-    // `_arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])` and zshrs does not.
+    // A leftover `)` is NOT the same thing as the c:1294-1298 rule that lets
+    // patcomppiece swallow `)` as an ordinary character: that one fires only
+    // when there is no group to close AND the scan is already inside a
+    // literal run, so `-(a|b)` compiles to `-(a` | `b)` while `-(a|b*)` —
+    // the `*` ends the literal run and hands `)` back to patcompbranch —
+    // is rejected. zshrs reproduces the same split because its input
+    // normalizer (see patcompile) demotes an UNBALANCED `)` to a literal
+    // before the compile starts, leaving exactly the balanced-but-ungrouped
+    // case for this test.
+    if paren == 0 {
+        let off = patparse_off.load(Ordering::Relaxed);
+        let parse = patparse.lock().unwrap();
+        let bytes = parse.as_bytes();
+        if off < bytes.len() {
+            // c:915-916 — `!((patflags & PAT_FILE) && *patparse == '/')`:
+            // a file glob legitimately stops at the component separator,
+            // and its caller (parsecomplist) resumes from there.
+            let is_file_slash =
+                (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0 && bytes[off] == b'/';
+            if !is_file_slash {
+                return -1; // c:917 `return 0`
+            }
+        }
+    }
     let _ = first_branch;
     // c:919-929 — C emits the closing P_GFLAGS restore right here, using
     // this local `gfchanged`. The Rust port emits it from patcomppiece's

@@ -4079,11 +4079,39 @@ pub fn paramsubst(
     let pat_operand = |raw_pat: &str| -> String {
         let saved_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         let saved_carrier = TILDE_GLOBSUBST_CARRIER.with(|c| c.get());
-        let out = literalize_spliced_metas(&singsub(&pretokenize_src_pat(raw_pat))); // c:3412
+        let mut out = literalize_spliced_metas(&singsub(&pretokenize_src_pat(raw_pat))); // c:3412
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) != saved_globsubst {
             crate::ported::options::opt_state_set("globsubst", saved_globsubst);
         }
         TILDE_GLOBSUBST_CARRIER.with(|c| c.set(saved_carrier));
+        // c:Src/subst.c:3371-3393 — before the `singsub` above, the
+        // `%` / `#` / `Pound` / `/` arm re-LEXES the pattern operand:
+        //     haserr = parse_subst_string(s);
+        //     ...
+        //     if (haserr) shtokenize(s);
+        // Both halves settle the pattern's tokenization at RUN time, not
+        // at parse time: `parse_subst_string` runs the lexer with the
+        // option state in force now, and `shtokenize` (c:Src/glob.c:3563)
+        // reads the same state. Under SH_GLOB that means `(`, `|` and `)`
+        // are NOT tokenized — c:Src/lex.c:1079-1081 / :1007 / :989-990 for
+        // the lexer half, c:Src/glob.c:3617-3620 for the `shtokenize` half
+        // — so they stay ordinary characters of the pattern:
+        //     setopt shglob; s='-(a|b*)x'; print -r -- ${s#-(a|b*)}
+        //     zsh -> x        (the whole `-(a|b*)` matched literally)
+        // A `[[ … ]]` or `case` pattern behaves the OPPOSITE way, because
+        // nothing re-lexes it: its tokens are the ones the parser made
+        // before SH_GLOB was set, so `(` there really is a grouping token
+        // that SH_GLOB then disables, leaving the `)` unmatched and the
+        // pattern bad. That asymmetry is real zsh, not a modelling gap.
+        //
+        // zshrs has no runtime re-lex, and `patcompile`'s input encoding
+        // spells "ordinary character" as `\X`, so escape the three here.
+        if crate::pattern_data_escape::shglob_hides_parens() {
+            out = crate::pattern_data_escape::escape_shglob_parens(
+                &out,
+                crate::pattern_data_escape::dropin_keeps_ksh_groups(),
+            );
+        }
         out
     };
 

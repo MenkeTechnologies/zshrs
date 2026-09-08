@@ -286,3 +286,139 @@ mod option_persist_in_subshell {
         assert_parity(r#"(setopt extendedglob); [[ -o extendedglob ]]; echo $?"#);
     }
 }
+
+/// SH_GLOB disables `(` as a pattern grouping character
+/// (c:Src/pattern.c:500-510 `zpc_special[ZPC_INPAR] = Marker`), and the
+/// consequences split by WHERE the pattern's tokenization was decided.
+///
+/// A `[[ … ]]` / `case` pattern is tokenized once, by the parser, before
+/// `setopt shglob` runs. Its `(` is therefore a grouping token that SH_GLOB
+/// then disables, which strands the `)`: `patcompbranch` stops on it and
+/// `patcompswitch`'s c:Src/pattern.c:913-917 termination test rejects the
+/// whole pattern. That is what real zsh prints when compsys runs
+/// `_arguments` (whose line 14 is `while [[ "$1" = -([AMO]*|[0CRSWnsw]) ]]`)
+/// under an option state carrying SH_GLOB:
+///     _arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])
+///
+/// A `${…}` pattern operand is re-lexed at RUN time
+/// (c:Src/subst.c:3382-3393 `parse_subst_string(s)` / `shtokenize(s)`), and a
+/// value spliced in by `${~spec}` / GLOB_SUBST is tokenized at run time too
+/// (c:Src/subst.c:822/830 `if (glbsub) shtokenize(dest)`); both read SH_GLOB
+/// as it stands NOW, and `zshtokenize` declines to tokenize `(`, `|` and `)`
+/// under ZSHTOK_SHGLOB (c:Src/glob.c:3575-3580, :3617-3620). Those patterns
+/// therefore hold three ordinary characters and never fail to compile.
+///
+/// The two halves have to move together: rejecting the stranded `)` without
+/// the run-time-tokenization half turns every `${x#…(…|…)…}` under SH_GLOB
+/// into a spurious "bad pattern".
+mod shglob_paren_grouping {
+    use super::*;
+
+    /// stdout + stderr + exit, because the whole point of these cases is a
+    /// diagnostic on stderr and a status the caller can see.
+    fn assert_full_parity(s: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fc", s])
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", s])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&z.stdout),
+            String::from_utf8_lossy(&r.stdout),
+            "stdout divergence on:\n{s}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&z.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "stderr divergence on:\n{s}"
+        );
+        assert_eq!(
+            z.status.code().unwrap_or(-1),
+            r.status.code().unwrap_or(-1),
+            "exit divergence on:\n{s}"
+        );
+    }
+
+    /// The `_arguments` line 14 pattern, verbatim. zsh:
+    /// `zsh:1: bad pattern: -([AMO]*|[0CRSWnsw])`.
+    #[test]
+    fn cond_stranded_close_paren_is_a_bad_pattern() {
+        assert_full_parity(
+            r#"setopt shglob; [[ "-A" = -([AMO]*|[0CRSWnsw]) ]] && echo M || echo N"#,
+        );
+    }
+
+    /// c:Src/pattern.c:1292-1298 — with `(` disabled and no group open, a `)`
+    /// reached while `patcomppiece` is scanning a LITERAL run is swallowed as
+    /// an ordinary character, so `-(a|b)` compiles to `-(a` | `b)` and matches
+    /// the literal text `-(a`. Only a `)` handed back to `patcompbranch` by a
+    /// metacharacter (the `*` in `-(a|b*)`) strands.
+    #[test]
+    fn cond_close_paren_after_literal_run_stays_ordinary() {
+        assert_full_parity(r#"setopt shglob; [[ "-(a" = -(a|b) ]] && echo M || echo N"#);
+    }
+
+    /// Same split for a `case` arm (c:Src/loop.c:663-667 `zerr("bad pattern")`),
+    /// which is the other consumer of parser-decided tokenization.
+    #[test]
+    fn case_arm_stranded_close_paren_is_a_bad_pattern() {
+        assert_full_parity(r#"setopt shglob; case "-A" in -(a|b*)) echo C1;; *) echo C2;; esac"#);
+    }
+
+    #[test]
+    fn case_arm_close_paren_after_literal_run_stays_ordinary() {
+        assert_full_parity(r#"setopt shglob; case "-A" in -(a|b)) echo C1;; *) echo C2;; esac"#);
+    }
+
+    /// A `${x#pat}` operand is re-lexed at run time, so all three characters
+    /// are ordinary and the whole `-(a|b*)` matches as literal text.
+    #[test]
+    fn brace_param_pattern_parens_are_literal() {
+        assert_full_parity(r#"setopt shglob; s='-(a|b*)x'; print -r -- ${s#-(a|b*)}"#);
+    }
+
+    /// Same for the replace and array-filter operands — these are the shapes
+    /// that a naive rejection breaks.
+    #[test]
+    fn brace_param_replace_and_filter_do_not_error() {
+        assert_full_parity(r#"setopt shglob; s='-a'; print -r -- ${s//-(a|b*)/Y}"#);
+        assert_full_parity(r#"setopt shglob; a=('-a' zz); print -r -- ${a:#-(a|b*)}"#);
+    }
+
+    /// `${~spec}` and GLOB_SUBST splice a VALUE, tokenized by `shtokenize`
+    /// under the run-time option state — no grouping, no diagnostic.
+    #[test]
+    fn tilde_globsubst_value_parens_are_literal() {
+        assert_full_parity(
+            r#"setopt shglob; p='-([AMO]*|[0CRSWnsw])'; [[ "-s" = $~p ]] && echo M || echo N"#,
+        );
+        assert_full_parity(
+            r#"setopt shglob globsubst; p='-(a|b*)'; [[ "-a" = $p ]] && echo M || echo N"#,
+        );
+        assert_full_parity(
+            r#"emulate ksh -c 'p="-([AMO]*|[0CRSWnsw])"; [[ "-s" = $~p ]] && echo M || echo N'"#,
+        );
+    }
+
+    /// Without SH_GLOB nothing changes: `(` still groups, so the same pattern
+    /// matches and no termination test can fire.
+    #[test]
+    fn without_shglob_the_group_still_matches() {
+        assert_full_parity(r#"[[ "-a" = -(a|b) ]] && echo M || echo N"#);
+    }
+
+    /// An UNBALANCED top-level `)` — `(` is a live grouping character here, so
+    /// the `)` closes nothing and is ordinary text (the `_rm` option-filter
+    /// idiom). Pinned so the termination test cannot start rejecting it.
+    #[test]
+    fn unbalanced_close_paren_stays_ordinary_under_normal_glob() {
+        assert_full_parity(r#"a=('x)--y' z); print -r -- ${a:#*)--*}"#);
+    }
+}

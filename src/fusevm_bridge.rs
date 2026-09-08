@@ -6101,7 +6101,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See BUILTIN_PAT_DATA_BACKSLASH docs below for full rationale.
     vm.register_builtin(BUILTIN_PAT_DATA_BACKSLASH, |vm, _argc| {
         let p = vm.pop().to_str();
-        Value::str(crate::pattern_data_escape::escape_data_backslashes(&p))
+        let p = crate::pattern_data_escape::escape_data_backslashes(&p);
+        // c:Src/glob.c:3575-3580 + 3617-3620 — the `shtokenize` this
+        // builtin stands in for adds ZSHTOK_SHGLOB under SH_GLOB, and
+        // that flag makes `(`, `|` and `)` of the VALUE stay ordinary
+        // characters. Without this the value's parens reach patcompile
+        // as live metacharacters and `emulate ksh; p='-([AMO]*|[0CRSWnsw])';
+        // [[ "-s" = $~p ]]` becomes a bad pattern where zsh just fails
+        // to match.
+        if crate::pattern_data_escape::shglob_hides_parens() {
+            return Value::str(crate::pattern_data_escape::escape_shglob_parens(
+                &p,
+                crate::pattern_data_escape::dropin_keeps_ksh_groups(),
+            ));
+        }
+        Value::str(p)
     });
 
     // c:Src/options.c GLOB_SUBST + Src/cond.c:552 cond_match.
@@ -6121,7 +6135,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // those in the normalizer's literal-backslash form; the ones
             // `zshtokenize` WOULD fold into a quote are left alone.
             // docs/BUGS.md #1090.
-            return Value::str(crate::pattern_data_escape::escape_data_backslashes(&p));
+            let p = crate::pattern_data_escape::escape_data_backslashes(&p);
+            // c:Src/glob.c:3575-3580 + 3617-3620 — same `shtokenize` call,
+            // so the ZSHTOK_SHGLOB suppression of `(` / `|` / `)` applies
+            // to the GLOB_SUBST leg exactly as it does to the `${~spec}`
+            // leg above.
+            if crate::pattern_data_escape::shglob_hides_parens() {
+                return Value::str(crate::pattern_data_escape::escape_shglob_parens(
+                    &p,
+                    crate::pattern_data_escape::dropin_keeps_ksh_groups(),
+                ));
+            }
+            return Value::str(p);
         }
         let mut out = String::with_capacity(p.len() * 2);
         for c in p.chars() {
@@ -10818,7 +10843,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             (s, pat)
         };
-        let mut pat_tok = pat.clone();
+        // A bare POSIX-family drop-in reads a source-level `(` by its own
+        // rules, not by zsh's parse-time tokenization — see
+        // `dropin_source_pattern_parens_literal`.
+        let pat_eff = if crate::pattern_data_escape::dropin_source_pattern_parens_literal() {
+            crate::pattern_data_escape::escape_shglob_parens(
+                &pat,
+                crate::pattern_data_escape::dropin_keeps_ksh_groups(),
+            )
+        } else {
+            pat.clone()
+        };
+        let mut pat_tok = pat_eff.clone();
         crate::ported::glob::tokenize(&mut pat_tok);
         if crate::ported::pattern::patcompile(
             &pat_tok,
@@ -10834,7 +10870,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Match via the shared engine so `(#b)`/`(#m)` backref and
         // MATCH-variable population stays in one place.
-        Value::Bool(crate::vm_helper::glob_match_static(&s, &pat))
+        Value::Bool(crate::vm_helper::glob_match_static(&s, &pat_eff))
     });
     vm.register_builtin(BUILTIN_COND_UNKNOWN, |vm, _argc| {
         // c:Src/cond.c:150-188 — `zwarnnam(fromtest, "unknown condition: %s",
@@ -15979,7 +16015,18 @@ impl fusevm::ShellHost for ZshrsHost {
         // doesn't match, and the script aborts at the next command
         // boundary (matching `zsh -fc 'case x in [a-) ...'` printing
         // the diagnostic with exit 0 = untouched lastval).
-        let mut pat_tok = pattern.to_string();
+        // Same drop-in split as the cond path: a bare POSIX-family drop-in
+        // reads a source-level `(` by its own rules, not by zsh's parse-time
+        // tokenization — see `dropin_source_pattern_parens_literal`.
+        let pat_eff = if crate::pattern_data_escape::dropin_source_pattern_parens_literal() {
+            crate::pattern_data_escape::escape_shglob_parens(
+                pattern,
+                crate::pattern_data_escape::dropin_keeps_ksh_groups(),
+            )
+        } else {
+            pattern.to_string()
+        };
+        let mut pat_tok = pat_eff.clone();
         crate::ported::glob::tokenize(&mut pat_tok);
         if crate::ported::pattern::patcompile(
             &pat_tok,
@@ -15991,7 +16038,7 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::ported::utils::zerr(&format!("bad pattern: {}", pattern)); // c:667
             return false;
         }
-        glob_match_static(s, pattern)
+        glob_match_static(s, &pat_eff)
     }
 
     fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[Value]) -> Value {
