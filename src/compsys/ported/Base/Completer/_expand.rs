@@ -53,11 +53,12 @@
 //! fails and its assignment never happened. [`eval_quietly`] is that
 //! wrapper; the glob and `epre` steps run through it.
 //!
+//! Every `exp=( … )` above rebuilds the array from an UNQUOTED expansion,
+//! which drops empty words — see [`elide_empty_words`]. sh:82 is the one
+//! exception, and only because brace expansion protects its own output.
+//!
 //! Deliberately NOT ported (each would be a lie to claim, so it is named
 //! here instead):
-//!   * sh:108/116 `local -a orig_exp=( $exp )` splits its UNQUOTED argument
-//!     on `$IFS`, so an element holding a backslash-escaped space is torn in
-//!     two. This port copies `exp` verbatim instead of reproducing that.
 //!   * sh:89/93 `setopt aliases` / `setopt NO_aliases` around the `eval` —
 //!     no `eval` here, so nothing to guard.
 //!   * sh:10 `setopt localoptions nonomatch` — NOW PORTED, see the guard in
@@ -91,6 +92,32 @@ fn make_ops() -> options {
         argscount: 0,
         argsalloc: 0,
     }
+}
+
+/// Drop empty words, the way an UNQUOTED expansion does.
+///
+/// c:Src/subst.c:165-191 — `prefork`'s final pass walks the word list and
+/// c:Src/subst.c:183-186 `uremnode(list, node)`s every word whose data is
+/// the empty string, unless `PREFORK_SINGLE` (a double-quoted, single-word
+/// context), `PREFORK_KEY_VALUE`, or `keep` applies. `keep` is set at
+/// c:Src/subst.c:174 for words brace expansion produced, which is why
+/// sh:82's `eval exp=( {a,,b} )` keeps its empty field while every later
+/// `exp=( $param )` in `_expand` does not:
+///
+/// ```text
+/// % zsh -f -c 'tmp="{AAA,,BBB}"; eval exp\=\( ${tmp} \); print $#exp
+///              e2=( ${${(e)exp//x/x}//y/y} ); print $#e2'
+/// 3
+/// 2
+/// ```
+///
+/// Every array rebuild in upstream `_expand` — sh:90, sh:95, sh:108,
+/// sh:110, sh:116 — is that unquoted form, so each elides. Skipping this
+/// left an empty match in the list: `echo {AAA,,BBB}<TAB>` listed a blank
+/// cell between `AAA` and `BBB`, and joined all-expansions as `AAA  BBB`
+/// (two spaces) where zsh joins `AAA BBB`.
+fn elide_empty_words(words: Vec<String>) -> Vec<String> {
+    words.into_iter().filter(|w| !w.is_empty()).collect()
 }
 
 /// `_expand` — substitution/glob expansion completer.
@@ -288,15 +315,17 @@ pub fn _expand_with(args: &[String]) -> i32 {
             }
         });
         if parse_ok && !errored {
-            exp = subst
-                .into_iter()
-                .flatten()
-                .map(|x| escape_whitespace(&x))
-                .collect();
+            exp = elide_empty_words(
+                subst
+                    .into_iter()
+                    .flatten()
+                    .map(|x| escape_whitespace(&x))
+                    .collect(),
+            );
         }
     } else {
         // sh:95  exp=( ${exp:s/\\\$/\$} ) — `:s` replaces the FIRST match only.
-        exp = exp.iter().map(|e| e.replacen("\\$", "$", 1)).collect();
+        exp = elide_empty_words(exp.iter().map(|e| e.replacen("\\$", "$", 1)).collect());
     }
 
     // sh:100  [[ -z "$exp" ]] && exp=("$word") — tests the JOINED array.
@@ -310,7 +339,8 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // sh:107-118 — globbing. `${~exp}` is tilde expansion FOLLOWED BY
     // filename generation, and the results are re-quoted with `(q)` so the
     // `compadd -Q` below inserts them verbatim.
-    let orig_exp = exp.clone();
+    // sh:108  local -a orig_exp=( $exp ) — unquoted, so empty words go.
+    let orig_exp = elide_empty_words(exp.clone());
     let mut done_quote = false; // sh:107  integer done_quote
     if force.contains('g') || style_true_or_unset(&ctx, "glob") {
         // sh:110-111. The whole assignment is one `eval … 2>/dev/null`
@@ -323,24 +353,31 @@ pub fn _expand_with(args: &[String]) -> i32 {
                 .flat_map(|e| glob_subst(&unescape_ws_and_quotes(e)))
                 .collect::<Vec<String>>()
         });
-        if !failed && !globbed.is_empty() {
-            exp = globbed
+        // Both `exp=( … )` rebuilds on sh:110-111 are unquoted, so `(( $#exp ))`
+        // counts what SURVIVED the elision, not what the globber returned.
+        let quoted = elide_empty_words(
+            globbed
                 .iter()
                 .map(|s| quotestring(s, QT_BACKSLASH))
-                .collect();
+                .collect(),
+        );
+        if !failed && !quoted.is_empty() {
+            exp = quoted;
             done_quote = true;
         }
     }
     // sh:115-118 — no globbing, or globbing produced nothing: same
     // unescape + `(q)` pass with filename generation simply omitted.
     if !done_quote {
-        exp = eval_quietly(|| {
-            orig_exp
-                .iter()
-                .map(|e| quotestring(&unescape_ws_and_quotes(e), QT_BACKSLASH))
-                .collect::<Vec<String>>()
-        })
-        .0;
+        exp = elide_empty_words(
+            eval_quietly(|| {
+                orig_exp
+                    .iter()
+                    .map(|e| quotestring(&unescape_ws_and_quotes(e), QT_BACKSLASH))
+                    .collect::<Vec<String>>()
+            })
+            .0,
+        );
     }
 
     // sh:126  (( $#exp )) || exp=("$subd[@]")
