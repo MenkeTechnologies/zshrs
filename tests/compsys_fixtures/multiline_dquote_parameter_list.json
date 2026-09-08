@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/2",
  "id": "multiline_dquote_parameter_list",
- "title": "`echo \"a b`<newline>`$HO`: zsh offers nothing inside the unterminated quote, zshrs lists HOME/HOST",
+ "title": "GUARD (fixed in 96382cfb71) — was: `echo \"a b`<newline>`$HO`: zsh offers nothing inside the unterminated quote, zshrs lists HOME/HOST",
  "harness": "compsys_parity",
  "run": {
   "buffer": "echo \"a b\n$HO",
@@ -12,7 +12,7 @@
   "rows": 24,
   "cols": 80
  },
- "expect": "diverges",
+ "expect": "agrees",
  "group": "multiline-buffer",
  "fingerprint": null,
  "observed": {
@@ -53,18 +53,20 @@
   "round-3 compsys_parity --multiline-fuzz"
  ],
  "confirmed": {
-  "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "date": "2026-09-07",
+  "commit": "96382cfb71",
   "harness_sha256_16": {
-   "scripts/compsys_parity.py": "4e07364abc7bf011"
+   "scripts/compsys_parity.py": "4e07364abc7bf011",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
-   "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "size": 104485792,
+   "mtime": "2026-09-07 21:32:34",
+   "version": "zshrs 0.12.59",
+   "sha256_16": "2529a039c305b949",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical, re-codesigned copy of this file, passed with --zshrs; ~16 peer instances rebuild target/debug/zshrs continuously, so only a pinned copy names one binary for a multi-minute sweep"
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -72,10 +74,33 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '2 row(s) differ from step #1 (tab), first row 2 col 0'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "a pinned copy of target/debug/zshrs, passed with --zshrs (zshrs 0.12.59, 104485792 bytes, sha256 2529a039c305b949)",
+  "note": "RETIRED AS A GUARD. `expect` flipped diverges -> agrees on this run: scripts/compsys_regressions.py scored the cell NOW-PASSES three attempts running and its control CONTROL-HOLDS. Attributed, not assumed — the SAME runner, same fixtures, same session, against a pinned build of the parent commit (sha256 6c6f9493cd9a958c) still scored this cell STILL-DIVERGES, 2 row(s) differ from step #1 (tab). The cause is 96382cfb71, which ports docomplete's chline prepend (zle_tricky.c:640-653) and the c:681-690 decline it carries, so completion on a PS2 continuation lexes the lines already entered instead of the physical line alone."
  },
  "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/compsys_parity.py": "4e07364abc7bf011"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '2 row(s) differ from step #1 (tab), first row 2 col 0'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  },
   {
    "date": "2026-08-30",
    "commit": "d1d16a132d",
