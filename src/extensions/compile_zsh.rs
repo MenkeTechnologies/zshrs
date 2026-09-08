@@ -7372,89 +7372,29 @@ impl ZshCompiler {
                 // expansion produces the type string and the outer
                 // applies the subscript to it.
                 if flags.contains('t') {
-                    // Use `:OFFSET:LEN` colon-substring on the type
-                    // string rather than `[KEY]` so the runtime hits
-                    // paramsubst's scalar-substring path (which
-                    // already does 1-indexed char selection) instead
-                    // of the nested-subexp + outer-subscript heuristic
-                    // (subst.rs:4426-4464) which whitespace-splits
-                    // and word-indexes — wrong shape for the scalar
-                    // type tag. KEY is preserved as a sub-arith
-                    // expression `$((KEY-1))` so non-literal subscripts
-                    // (`a[$n]`, `a[1+1]`) still work.
+                    // c:Src/subst.c:2801-2900 — BOTH halves of `(t)`'s
+                    // subscript handling live in paramsubst and nowhere else:
+                    // `fetchvalue` is called with bracket parsing INHIBITED
+                    // (`wantt ? -1`, c:2803) so the subscript never touches the
+                    // parameter, and the c:2868 loop then re-indexes the TYPE
+                    // TAG through a temporary PM_SCALAR carrier (c:2890-2900).
+                    // Hand paramsubst the original `${(t)NAME[KEY]}` text and
+                    // let the port do it.
                     //
-                    // c:Bug #331 — for ASSOC element (`(t)h[k]`), zsh
-                    // returns empty: subscript is treated as a key
-                    // string, not a substring index, so the type tag
-                    // doesn't survive the lookup. The compile path
-                    // can't know at compile-time whether `base` is
-                    // an assoc or indexed array, so emit a runtime
-                    // check via a BUILTIN_PARAM_FLAG `t`-shape on
-                    // the bare name first; if it returns
-                    // "association" and the key isn't a pure-integer
-                    // literal, we want empty rather than substring.
-                    // Cheap approximation: when the key looks like a
-                    // bare identifier (assoc-key shape, no `+`/`-`/
-                    // digits-only), emit the empty form so assoc
-                    // case matches zsh. Indexed-array tests use
-                    // integer literals so they still take the
-                    // substring path.
-                    let key_looks_like_assoc_lit = !key.is_empty()
-                        && key
-                            .chars()
-                            .next()
-                            .map_or(false, |c| c == '_' || c.is_ascii_alphabetic())
-                        && key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
-                    if key_looks_like_assoc_lit {
-                        // c:Src/subst.c:2867-2900 — the assoc-key case
-                        // is NOT a simple empty: zsh runs the post-
-                        // wantt while-loop that createparam(nulstring,
-                        // PM_SCALAR) on `val` (the type tag) and calls
-                        // getindex(&s, v, 0) → getarg → mathevali on
-                        // the key. If the key NAME resolves to a non-
-                        // numeric value (e.g. `[PATH]` substitutes
-                        // /usr/bin:… and fails to parse), zerr fires
-                        // and errflag aborts the print with exit 1.
-                        // If the key name is unset, mathevali yields
-                        // 0 → empty slice (`val[-1:-1]` per
-                        // VALFLAG_EMPTY) → "" + exit 0.
-                        //
-                        // The compile-time LoadConst("") short-cut
-                        // collapsed both into "" + exit 0, losing the
-                        // math-error arm that 73 bulk parity probes
-                        // (`print -r ${(t)parameters[PATH]}` shape)
-                        // depend on. Route through paramsubst via
-                        // BUILTIN_BRIDGE_BRACE_ARRAY so the wantt arm
-                        // (which carries the mathevali port at
-                        // subst.rs:9580+) runs the same math eval as
-                        // C zsh.
-                        if let Some(inner) =
-                            untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
-                        {
-                            let body_const = self
-                                .builder
-                                .add_constant(Value::str(self.brace_array_body(s, inner)));
-                            self.builder.emit(Op::LoadConst(body_const), 0);
-                            // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
-                            // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
-                            // (c:Src/subst.c:1759); it gates off c:3913's `force_split`, so a
-                            // scalar-assignment RHS does NOT split on (s:X:)/(f)/(0), and
-                            // c:3916 joins an array value to one scalar before the c:4041
-                            // quote block. Carried as an extra VM argument, exactly like
-                            // BUILTIN_PARAM_FLAG's argc-3 ssub operand.
-                            self.builder
-                                .emit(Op::LoadInt(self.brace_array_ssub() as i64), 0);
-                            self.builder.emit(
-                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
-                                0,
-                            );
-                        } else {
-                            let idx = self.builder.add_constant(Value::str(""));
-                            self.builder.emit(Op::LoadConst(idx), 0);
-                        }
-                    } else {
-                        let body = format!("${{(t){}}}:$(({}-1)):1", base, key);
-                        let body_const = self.builder.add_constant(Value::str(body));
+                    // The two compile-time rewrites this arm used to emit
+                    // modelled neither: a `${(t)NAME}:$((KEY-1)):1` substring
+                    // for non-identifier keys (which mis-read every negative
+                    // index, every `[N,M]` slice and every `(r)`-flag
+                    // subscript, and applied `[0]` as the LAST character), and
+                    // a bare `${(t)NAME}` for identifier-shaped ones (which
+                    // answered `${(t)h[k]}` with `association` where zsh gives
+                    // the empty string, because mathevalarg("k") on an unset
+                    // name is 0 → c:Src/params.c:2168's empty range).
+                    if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+                    {
+                        let body_const = self
+                            .builder
+                            .add_constant(Value::str(self.brace_array_body(s, inner)));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         // c:Src/exec.c:2546 — `prefork(vl, isstr ? (PREFORK_SINGLE|PREFORK_ASSIGN)
                         // : PREFORK_ASSIGN, …)`. PREFORK_SINGLE is paramsubst's `ssub`
@@ -7469,8 +7409,12 @@ impl ZshCompiler {
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 2),
                             0,
                         );
+                        return;
                     }
-                    return;
+                    // Not a `${…}` word after untokenizing, so there is no body
+                    // to hand the bridge; fall through to the generic path
+                    // below rather than inventing a value here.
+                    let _ = (base, key);
                 }
                 // `(@)` plus sort/uniq/order flags (`o`/`O`/`n`/`i`/`u`)
                 // on a `[(I)…]` / `[(R)…]` / `[(K)…]` subscript — must

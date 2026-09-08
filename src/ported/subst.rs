@@ -18999,41 +18999,136 @@ pub fn paramsubst(
             isarr = 0; // c:2883
             split_parts = None; // c:2883 aval is implicit-cleared by v=NULL
         }
-        // c:Src/subst.c:2867-2900 — after the wantt arm cleared
-        // v=NULL/isarr=0, C re-enters the `while (v || ((inbrace ||
-        // ...) && isbrack(*s)))` loop. With a trailing `[subscript]`,
-        // it createparam(nulstring, PM_SCALAR) holding val (the type
-        // tag) and calls `getindex(&s, v, qt ? SCANPM_DQUOTED : 0)`.
-        // getindex → getarg → mathevali on the subscript text. For
-        // `${(t)parameters[PATH]}` mathevali("PATH") substitutes
-        // $PATH (long colon-list) and fails to parse it as math,
-        // calling zerr("bad math expression: …") + setting errflag.
-        // The print never fires, exit is 1.
+        // c:Src/subst.c:2868-2900 — after the wantt arm cleared
+        // `v = NULL; isarr = 0;` (c:2882-2883), C re-enters
+        //     while (v || ((inbrace || (unset(KSHARRAYS) && vunset)) && isbrack(*s)))
+        // solely because `inbrace` is set and `*s` is `[`, and with `v` NULL
+        // the loop body builds a TEMPORARY carrier over the type tag:
+        //     if (vunset) { val = dupstring(""); isarr = 0; }            c:2886-2889
+        //     pm = createparam(nulstring, isarr ? PM_ARRAY : PM_SCALAR);  c:2890
+        //     pm->u.str = val;                                           c:2895
+        //     v->scanflags = isarr ? SCANPM_ARRONLY : 0;  v->end = -1;   c:2897-2899
+        //     if (getindex(&s, v, qt ? SCANPM_DQUOTED : 0) || s == os) break; c:2900
+        //     … val = getstrvalue(v);                                    c:2966
+        // So the subscript indexes the TYPE STRING, never the parameter:
+        // `${(t)a[1]}` is `a` (character 1 of "array") and `${(t)h[k]}` is
+        // empty — mathevalarg("k") on an unset name is 0, which is c:2168's
+        // empty range — not the association's own tag.
         //
-        // Approximation: run mathevali on the subscript text when
-        // wantt fired with a literal subscript present (skipping
-        // `*`/`@`/flag-prefixed forms, which getindex handles via
-        // separate getarg branches). Numeric / unset-name subscripts
-        // succeed (and the existing downstream scalar-slice path
-        // applies the index); names whose math value can't be
-        // parsed (e.g. PATH expanded to a non-numeric string)
-        // trigger the same zerr + errflag as C zsh.
+        // `isarr` is 0 here, so the carrier is PM_SCALAR: getindex's PM_HASHED
+        // arm is dead and every operand is ARITHMETIC (c:Src/params.c:1618
+        // `r = mathevalarg(s, &s)`), which is also what makes
+        // `${(t)parameters[PATH]}` a "bad math expression" abort rather than a
+        // key read. Inlined rather than routed through `params::getindex` +
+        // `params::getstrvalue` because the temporary has no paramtab entry to
+        // hang a `Value` on and because `getstrvalue` has no counterpart yet to
+        // C's c:2507-2532 scalar-slice tail.
         if wantt && !used_subexp {
             if let Some(sub) = subscript.as_deref() {
                 let s_trim = sub.trim();
-                if !s_trim.is_empty() && !is_splat_txt!(s_trim) && !s_trim.starts_with('(')
-                {
-                    let parts: Vec<&str> = s_trim.splitn(2, ',').collect();
-                    for p in &parts {
-                        if let Err(msg) = crate::ported::math::mathevali(p.trim()) {
-                            zerr(&msg);
-                            errflag.fetch_or(
-                                crate::ported::zsh_h::ERRFLAG_ERROR,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            value = String::new();
-                            break;
+                // c:Src/params.c:2027-2031 — `[*]`/`[@]` set start = 0,
+                // end = -1, i.e. the whole tag.
+                // c:Src/params.c:1391-1483 — a `(flag)` subscript is getarg's
+                // search arm over the carrier read as a one-element array; not
+                // modelled here, so those spellings keep the whole tag.
+                if !s_trim.is_empty() && !is_splat_txt!(s_trim) && !s_trim.starts_with('(') {
+                    // c:Src/params.c:1618 `r = mathevalarg(s, &s)`, with the
+                    // decimal fast path `params::getindex` already uses (a
+                    // matheval of "5" is 5).
+                    //
+                    // c:Src/math.c:1534 `mathevall` — a bad expression is
+                    // reported by `zerr` and leaves `errflag` set, which is how
+                    // `${(t)parameters[PATH]}` (PATH substitutes a colon-list
+                    // that will not parse as math) prints a diagnostic and
+                    // exits 1 instead of substituting. zshrs's `mathevali`
+                    // hands the message back as `Err` and its `mathevalarg`
+                    // caller drops it on the floor (`unwrap_or(0)`), so raise
+                    // it here; the empty operand keeps going through
+                    // `mathevalarg`, which is the one entry point that rejects
+                    // it (c:Src/math.c:1530-1532).
+                    let matherr = std::cell::Cell::new(false);
+                    let evalarg = |t: &str| -> i64 {
+                        let t = t.trim();
+                        if let Ok(n) = t.parse::<i64>() {
+                            return n;
                         }
+                        if t.is_empty() {
+                            return crate::ported::math::mathevalarg(t); // c:Src/math.c:1531
+                        }
+                        match crate::ported::math::mathevali(t) {
+                            // c:Src/params.c:1618
+                            Ok(n) => n,
+                            Err(msg) => {
+                                zerr(&msg); // c:Src/math.c:1534
+                                errflag.fetch_or(
+                                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                matherr.set(true);
+                                0
+                            }
+                        }
+                    };
+                    let (start_str, end_str) = match s_trim.split_once(',') {
+                        Some((a, b)) => (a, Some(b)),
+                        None => (s_trim, None),
+                    };
+                    let mut start = evalarg(start_str); // c:Src/params.c:2036
+                    let mut end = match end_str {
+                        Some(e) => evalarg(e),           // c:Src/params.c:2132
+                        None => start,                   // c:Src/params.c:2134
+                    };
+                    // c:Src/params.c:2144-2145 — `if (start > 0) start -=
+                    // startprevlen;` (one CHARACTER back; the tag is ASCII).
+                    if start > 0 {
+                        start -= 1; // c:Src/params.c:2145
+                    } else if start == 0 && end == 0 {
+                        // c:Src/params.c:2146-2171
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            end = 1; // c:Src/params.c:2161 `end = startnextlen`
+                        } else {
+                            // c:Src/params.c:2168-2169 — VALFLAG_EMPTY plus
+                            // start = -1 is the pair that reads back empty.
+                            start = -1;
+                        }
+                    }
+                    // c:Src/subst.c:2900 — `if (getindex(…) || s == os) break;`
+                    // and then c:Src/subst.c:3846's `if (errflag) return NULL`:
+                    // a subscript that failed to evaluate aborts the whole
+                    // substitution, it does not fall back to the tag.
+                    if matherr.get() {
+                        value = String::new();
+                    } else if !(start == 0 && end == -1) {
+                        // c:Src/params.c:2507-2508 — the early return when the
+                        // range is the whole string is the `if` above; what
+                        // follows is getstrvalue's scalar tail, walked in
+                        // CHARACTERS (C uses MB_METACHARLEN).
+                        let tag: Vec<char> = value.chars().collect();
+                        let len = tag.len() as i64; // c:Src/params.c:2510
+                        if start < 0 {
+                            start += len; // c:Src/params.c:2512
+                            if start < 0 {
+                                start = 0; // c:Src/params.c:2513-2514
+                            }
+                        }
+                        if end < 0 {
+                            end += len; // c:Src/params.c:2517
+                            if end >= 0 && end < len {
+                                // c:Src/params.c:2518-2522 — `if (*eptr)
+                                // v->end += MB_METACHARLEN(eptr);`
+                                end += 1;
+                            }
+                        }
+                        value = if start > len {
+                            String::new() // c:Src/params.c:2525
+                        } else if end <= start {
+                            String::new() // c:Src/params.c:2528-2529
+                        } else {
+                            // c:Src/params.c:2530-2531 — truncate at `end`
+                            // when it lands inside the remaining text.
+                            let hi = if end > len { len } else { end };
+                            tag[start as usize..hi as usize].iter().collect()
+                        };
                     }
                 }
             }
