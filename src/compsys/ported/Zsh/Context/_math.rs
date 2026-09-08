@@ -18,6 +18,7 @@
 //! sh:14      'module-math-functions:math function from zsh/mathfunc: _module_math_func'
 //! ```
 
+use crate::compsys::ported::shared::set_sh_lineno;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 
@@ -59,7 +60,12 @@ pub fn _math() -> i32 {
         let _ = setsparam("SUFFIX", head);
     }
 
-    // sh:12-14
+    // sh:12-14 — the statement STARTS at sh:12, which is the line the callee's
+    //   frame records as its caller line: zsh reads `_math:12` out of
+    //   `$functrace`. A bare `dispatch_function_call` would leave `lineno` at
+    //   the `0` `FnScope::enter` published, and the same value prefixes any
+    //   diagnostic `_alternative` raises (`Src/utils.c:301-305`).
+    set_sh_lineno(12);
     dispatch_function_call(
         "_alternative",
         &[
