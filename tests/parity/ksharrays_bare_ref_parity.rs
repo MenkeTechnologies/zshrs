@@ -621,3 +621,77 @@ mod set_operators {
         both_states("a=(1 2); b=(x y)", "${a[@]:^b}");
     }
 }
+
+/// The colon-modifier chain on an UNBRACED reference is not applied at all
+/// under KSH_ARRAYS — it stays literal text.
+///
+/// c:Src/subst.c:3770-3776, the whole history-style modifier block:
+///
+/// ```c
+/// if (colf) {
+///     s--;
+///     if (unset(KSHARRAYS) || inbrace) {
+///         if (!isarr) modify(&val, &s, inbrace);
+///         else { … per-element modify … }
+/// ```
+///
+/// `inbrace` is 0 for `$var:h`, so with KSH_ARRAYS set the guard is false and
+/// neither `modify` leg runs; `s` is left pointing at the `:` and c:3805's
+/// `if (!inbrace) fstr = s;` hands `:h` back as ordinary text. `${var:h}` is
+/// braced, so `inbrace` carries it through in either option state — that pair
+/// is the whole contract, and both directions are asserted here so a fix to
+/// one cannot be bought by breaking the other.
+mod unbraced_modifier_is_literal_under_ksharrays {
+    use super::*;
+
+    const S: &str = "s=/x/y/z.txt";
+
+    #[test]
+    fn head_on_a_scalar() {
+        both_states(S, "$s:h");
+    }
+
+    #[test]
+    fn tail_on_a_scalar() {
+        both_states(S, "$s:t");
+    }
+
+    #[test]
+    fn root_on_a_scalar() {
+        both_states(S, "$s:r");
+    }
+
+    /// A chain: KSH_ARRAYS must leave the whole `:h:t` run as text, not just
+    /// the first link.
+    #[test]
+    fn chained_modifiers_on_a_scalar() {
+        both_states(S, "$s:h:t");
+    }
+
+    /// The `:s/…/…/` form takes an argument, so a half-applied guard would
+    /// show up as a mangled tail rather than a clean literal.
+    #[test]
+    fn substitution_modifier_on_a_scalar() {
+        both_states("s=abc", "$s:s/b/Z/");
+    }
+
+    /// The braced control: `inbrace` is 1, so the modifier applies in BOTH
+    /// option states.
+    #[test]
+    fn braced_head_still_applies() {
+        both_states(S, "${s:h}");
+    }
+
+    /// Unbraced on an array — with KSH_ARRAYS the bare reference is already
+    /// clamped to element 0 and the modifier is still skipped on top of that.
+    #[test]
+    fn head_on_a_bare_array() {
+        both_states(ARR, "$a:h");
+    }
+
+    /// Positional parameters take the same unbraced path (`$1:h`).
+    #[test]
+    fn head_on_a_positional() {
+        both_states("set -- /p/a.txt /q/b.txt", "$1:h");
+    }
+}

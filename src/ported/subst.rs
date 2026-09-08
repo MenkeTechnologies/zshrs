@@ -24726,6 +24726,21 @@ pub fn apply_bare_modifier_chain(
     if chars.get(start).copied() != Some(':') {
         return (value.to_string(), start, String::new());
     }
+    // c:Src/subst.c:3776 — `if (unset(KSHARRAYS) || inbrace)` guards the
+    // ENTIRE colon-modifier block that c:3770's `if (colf)` opened, both the
+    // scalar `modify(&val, &s, inbrace)` leg and the per-element `aval` loop.
+    // Every caller of this helper is an UNBRACED reference (`$var:h`,
+    // `$1:h`, `$*:h`, `$-:h`), so `inbrace` is 0 and under KSH_ARRAYS the
+    // block is skipped outright: `s` is left pointing at the `:`, c:3805's
+    // `if (!inbrace) fstr = s;` hands the rest back as ordinary text, and
+    //     setopt ksharrays; a=/x/y; print -r -- $a:h
+    // prints `/x/y:h`. Returning `start` unchanged is that: the callers all
+    // build their suffix from `chars[returned_pos..]`, so the `:h` survives
+    // as literal text. Braced `${a:h}` is a different code path and keeps
+    // applying the modifier, exactly as `inbrace` makes it in C.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+        return (value.to_string(), start, String::new()); // c:3776
+    }
     let mut mod_buf = String::new();
     let mut probe = start;
     while probe < chars.len() && chars[probe] == ':' {
