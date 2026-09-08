@@ -3145,6 +3145,11 @@ pub fn clprintm(
             let mm = mcols * ml; // c:1762
             let mut mtab_guard = MTAB.lock().unwrap();
             let mut mgtab_guard = MGTAB.lock().unwrap();
+            // c:1764 splits on `m->flags & CMF_DUMMY` only to choose between
+            // `mtmark(mp)` (c:1767) and the plain `mp` (c:1773); the cell
+            // CONTENT is the same match either way. The Rust mtab has no room
+            // for the MMARK tag, so the flag stays on the stored `Cmatch` and
+            // `skipcell` (above) reads it back — one store covers both arms.
             for i in 0..mcols {
                 // c:1765 / c:1771
                 let idx = (mm + i) as usize;
@@ -3229,6 +3234,10 @@ pub fn clprintm(
             let mut mtab_guard = MTAB.lock().unwrap();
             let mut mgtab_guard = MGTAB.lock().unwrap();
             let n = if width != 0 { width } else { mcols };
+            // c:1820 splits on `m->flags & CMF_DUMMY` only to choose between
+            // `mtmark(mp)` (c:1823) and the plain `mp` (c:1829); the stored
+            // match is the same either way, and `skipcell` reads the flag off
+            // it in place of the lost MMARK tag.
             for i in 0..n {
                 // c:1821 / c:1827
                 let idx = (mx + mm + i) as usize;
@@ -4967,12 +4976,12 @@ pub fn domenuselect(
     }
 
     // ---- mtab/mgtab cell accessors -------------------------------------
-    // C works with `Cmatch **p` pointer arithmetic + the MMARK low-bit tag.
-    // The Rust mtab stores cloned `Cmatch` values (no tag), so the mark is
-    // reconstructed from adjacency: a real-match cell whose in-row left
-    // neighbour shares its `gnum` is a continuation (== `mmarked`). A
-    // `mtmark(NULL)` separator cell is stored as `None`, which the callers
-    // treat exactly like C's `!*p`.
+    // C works with `Cmatch **p` pointer arithmetic + the MMARK low-bit tag
+    // (`mtmark`, c:128). The Rust mtab stores cloned `Cmatch` values with no
+    // room for the tag, so `mmarked` is reconstructed from what the tag
+    // encoded — see `skipcell` below. A `mtmark(NULL)` separator cell
+    // (c:1443) is stored as `None`, which the callers treat exactly like C's
+    // `!*p`.
     let cell = |i: i32| -> Option<Cmatch> {
         if i < 0 {
             return None;
@@ -4986,22 +4995,38 @@ pub fn domenuselect(
         MGTAB.lock().unwrap().get(i as usize).cloned().flatten()
     };
     // Combined `!*p || mmarked(*p)` skip predicate used across navigation.
+    //
+    // C sets the MMARK bit at exactly three sites, and nowhere else: the
+    // explanation rows (c:1443 `mtab[mm + i] = mtmark(NULL)`) and the two
+    // `if (m->flags & CMF_DUMMY)` arms of the match fill (c:1766-1768 for a
+    // CMF_DISPLINE match, c:1822-1824 for a column cell). The unmarked arms
+    // (c:1772-1774, c:1828-1830) store the plain `mp` across the match's
+    // WHOLE width, so a wide match's continuation columns are NOT marked in
+    // C — `forward-char`/`backward-char` step over them with the separate
+    // `(mcol != omcol && *p == *op)` test (c:3189, c:3220), not with
+    // `mmarked`. So the mark reduces to: the cell is empty, or its match
+    // carries `CMF_DUMMY` (comp.h:141).
+    //
+    // This predicate used to reconstruct the mark from adjacency instead — a
+    // cell whose in-row left neighbour shared its `gnum` was called marked —
+    // which is a different set on both sides: it marked the continuation
+    // columns C leaves clear, and it left the `compadd -E` description
+    // dummies clear where C marks them. The second half is what broke
+    // `menu select search`: `msearch` deliberately unmarks before testing
+    // (c:2323 `mtunmark(*p)`) so a description CAN be the search hit, and
+    // c:3392's `adjust_mcol(wishcol, &p, NULL)` is what then walks off that
+    // dummy onto the real match in the same row (c:2134-2135). With the
+    // dummies unmarked, `adjust_mcol` accepted the description cell and
+    // `do_single` inserted the dummy's empty `str`, wiping the typed word.
     let skipcell = |i: i32| -> bool {
         if i < 0 {
             return true; // !*p
         }
-        let mc = MCOLS.load(Ordering::SeqCst);
-        let t = MTAB.lock().unwrap();
-        match t.get(i as usize).cloned().flatten() {
+        match MTAB.lock().unwrap().get(i as usize).cloned().flatten() {
             None => true, // !*p (real NULL or mtmark(NULL) separator)
-            Some(a) => {
-                if mc > 0 && i % mc != 0 {
-                    if let Some(b) = t.get((i - 1) as usize).cloned().flatten() {
-                        return a.gnum == b.gnum; // mmarked(*p)
-                    }
-                }
-                false
-            }
+            // c:1766/1822 — `if (m->flags & CMF_DUMMY)` is the only condition
+            // under which the match fill marks a cell.
+            Some(a) => (a.flags & crate::ported::zle::comp_h::CMF_DUMMY) != 0, // mmarked(*p)
         }
     };
     // `*a == *b` pointer-equality, resolved by unique match `gnum`.
