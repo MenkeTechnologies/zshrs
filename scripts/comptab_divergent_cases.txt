@@ -5837,3 +5837,172 @@ gstack
 # remaining divergence in this cell is BLOCKER 1 (zsh aborts `_arguments` and
 # falls through to `_default`, zshrs completes the option set) plus the
 # `_files:36` cond parse error itself.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-09-09 — BREADTH SWEEP OVER STOCK-COMPLETER COMMANDS
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Corpus: 317 commands installed on this host that have a stock completer,
+# minus a hand-excluded destructive/hanging set, crossed with eight buffer
+# shapes (`cmd `, `cmd -`, `cmd --`, `cmd /usr/`, `cmd -l `, `cmd --h`,
+# `cmd s`, `cmd -a `), interleaved so a truncated run still covers every
+# shape. Two configurations were measured and they do NOT agree, so every
+# entry below says which one it was taken in:
+#
+#   PINNED   fpath=( /usr/share/zsh/5.9/functions ), scratch dump built by
+#            `compinit -u -d`. An isolator: it removes site-functions and the
+#            user's zinit tree, so it compares ports against STOCK completers.
+#   LIVE     the host's real 50-dir fpath and a pinned COPY of
+#            ~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies (hash
+#            10ebe0a033..., verified stable across the run). This is the
+#            configuration whose divergences actually matter.
+#
+# A case that will not reproduce under PINNED is NOT stale — re-run it under
+# LIVE before writing it off.
+#
+# ── FIXED THIS PASS ────────────────────────────────────────────────────────
+#
+# `_values` ((...)) arm split the action on whitespace  — FIXED 688ce686cd
+#   `_values` sh:116 and sh:124 are the same `eval ws\=\( ... \)` construct;
+#   only sh:124 had been ported with `eval_action_words`, and its own comment
+#   said "the sh:116 ((...)) arm above is the same construct" while sh:116
+#   still called split_whitespace(). Reproduces under BOTH configurations.
+#
+#     _tstv() { _values 'thing' 'mode[the mode]:kind:((fast\:go\ very\ fast slow\:take\ it\ easy))' }
+#     compdef _tstv tstv
+#     scripts/comptab_parity.py --case 'tstv mode=' --keys tab --init-extra <file>
+#
+#     zsh     fast -- go very fast / slow -- take it easy
+#     before  fast -- go / slow -- take / easy fast it very
+#
+# comparguments -i left ca_parsed set on cadef failure — FIXED 3380135b26
+#   c:Src/Zle/computil.c:2630-2640 zeroes ca_parsed BEFORE get_cadef and
+#   restores it after; the port stored 0 after the bail-out, so a failed init
+#   let the next -D/-O/-W read the previous command's ca_laststate.
+#
+#     _tstc() {
+#       local d a s
+#       comparguments -i '' '-x[ex]' '*:file:_files'
+#       comparguments -i '' '('
+#       if comparguments -D d a s; then compadd -- STALE-STATE-USED zzz
+#       else compadd -- no-parsed-state zzz; fi
+#     }
+#     zsh: no-parsed-state    before: STALE-STATE-USED
+#
+# ── CONFIRMED, NOT FIXED: TWO VERSION SPLITS, NOT ENGINE BUGS ──────────────
+#
+# These are the dominant failure mode of any PINNED sweep on this host. They
+# are version policy, not compsys defects, so they are recorded rather than
+# "fixed". Filter a corpus against them before reading a sweep as evidence.
+#
+# (A) BUNDLE vs HOST completer split — 318 of 1199 shared files differ.
+#     `is_stock_functions_dir` substitutes ~/.zshrs/functions at the host
+#     tree's fpath index, so a PINNED fixture does not make both shells run
+#     the same completer. Measure with:
+#
+#       BD=~/.zshrs/functions; H=/usr/share/zsh/5.9/functions
+#       comm -12 <(ls $BD) <(ls $H) |
+#         while read f; do cmp -s $BD/$f $H/$f || print -r -- $f; done
+#
+#     Representative (PINNED). zshrs offers -c/-l/-s/-x that zsh 5.9 does not,
+#     because the bundle's _cp adds `darwin` to those OSTYPE patterns:
+#
+#       scripts/comptab_parity.py --case 'cp -' --keys tab
+#
+#     Same cause, same configuration: `ansible --`, `ansible -a `, `cut -`,
+#     `date -`, `tac -`, `irb -`, `ansible-config `. On a 99-cell PINNED sweep
+#     ALL FIVE failures were this split and none was an engine bug.
+#     The router.rs comment that called the bundle "a byte-identical superset
+#     (243 of 244 shared files match)" was corrected in dfa0483e6f.
+#
+# (B) PORT-SPEC vs BUNDLE skew — 23 of 244 ports implement a DIFFERENT
+#     version of the function than the bundle ships under the same name. The
+#     sibling shell file beside each `.rs` is that port's spec; when the port
+#     is active (the default) the shell behaves as the sibling, and if the
+#     port stands down it behaves as the bundled file. Measure with:
+#
+#       for rs in src/compsys/ported/*/*/_*.rs; do
+#         b=${rs:t:r}; cmp -s ${rs:r} ~/.zshrs/functions/$b || print -r -- $b
+#       done
+#
+#     _all_matches _approximate _expand_alias _prefix _main_complete _numbers
+#     _complete_debug _complete_help _jails _date_formats _diff_options
+#     _pspdf _terminals _dynamic_directory_name _parameter _redirect _zcalc
+#     _command_names _globquals _module_math_func _parameters _ps1234
+#     _suffix_alias_files
+#
+#     Representative (PINNED). `_command_names`' port spec is a newer upstream
+#     that adds a `verbose` branch emitting `aliases:alias:(( $verbose ))`, so
+#     zshrs lists aliases WITH their expansions as descriptions where zsh 5.9
+#     lists none:
+#
+#       scripts/comptab_parity.py --case 'exec -' --keys tab
+#       zsh:   -a/-c/-l then `-`
+#       zshrs: additionally `run-help -- man`, `which-command -- whence`
+#
+#     Narrowed: `_tsty() { _command_names }` diverges, while a bare
+#     `compadd -Qk aliases` at the same prefix is byte-identical.
+#
+#     Same cause: `compadd -a ` (the `_parameters` port spec differs from the
+#     bundled `_parameters` in its pfilt semantics and drops the `(@M)`).
+#
+# ── NOT DIVERGENCES: measurement artifacts seen this pass ──────────────────
+#
+# `fs_usage ` / `fs_usage s` / `fs_usage -a ` / `fs_usage -l `
+#   `_fs_usage` completes live PIDs and process names. The two shells are
+#   captured at different instants against different process tables, so the
+#   match set cannot agree. Any completer over the process table (_pids,
+#   _process_names) is unmeasurable by this harness. Do not chase.
+#
+# `a2ps --h` under LIVE only
+#   The user's ~/.zpwr/autoload/comp_utils/_files calls __fasd_files_comp,
+#   which is not defined in the harness's from-scratch env, so real zsh prints
+#   `_alternative:71: command not found` and zshrs (serving its native _files
+#   port) does not. An fpath-override artifact of the harness env, not a bug.
+#
+# `code --h`
+#   FAILed at --jobs 8 and PASSes at --jobs 1. A parallelism false positive;
+#   the rule that a --jobs>1 FAIL is worthless until reproduced serially held
+#   again this pass.
+#
+# `printenv ` / `printenv -l `  (LIVE)
+#   zshrs's three extras are HELPDIR, INFOPATH and MANPATH — the documented
+#   bundled-docs params already recorded as benign. Same cause as the
+#   `do you wish to see all N` count band.
+#
+# ── CONFIRMED, NOT FIXED: `limit ` offers `resident` where zsh does not ────
+#
+#   scripts/comptab_parity.py --case 'limit ' --keys tab        (LIVE)
+#     zsh    addressspace cputime descriptors maxproc stacksize / coredumpsize
+#            datasize filesize memorylocked
+#     zshrs  ... additionally `resident`
+#
+#   Root cause is the rlimit table, not compsys. c:Src/Builtins/rlimits.c:79
+#   guards the entry:
+#
+#     # if defined(HAVE_RLIMIT_RSS) && !defined(RLIMIT_VMEM_IS_RSS) \
+#           && !defined(RLIMIT_RSS_IS_AS)
+#         {RLIMIT_RSS, "resident", ZLIMTYPE_MEMORY, 1024,
+#                     'm', "resident set size (kbytes)"},
+#     # endif
+#
+#   On this host RLIMIT_RSS == RLIMIT_AS == 5 (verified by compiling
+#   <sys/resource.h>), so configure defines RLIMIT_RSS_IS_AS and zsh emits
+#   only `addressspace`. src/ported/builtins/rlimits.rs:157-164 emits the
+#   entry unconditionally, under a comment that reasons about the WRONG
+#   guard:
+#
+#     // c:rlimits.c:78 — RLIMIT_RSS / RLIMIT_VMEM. On macOS VMEM is
+#     // aliased to RLIMIT_AS so this entry's `'m'` opt is the only
+#     // place RSS appears; on Linux RSS is a distinct rlimit.
+#
+#   The relevant guard is RLIMIT_RSS_IS_AS, not RLIMIT_VMEM_IS_RSS: on macOS
+#   RSS *is* AS, so C drops the entry entirely rather than keeping it for its
+#   `'m'` option. Consequence beyond completion: `limit resident` and
+#   `ulimit -m` are accepted by zshrs and rejected by zsh on this platform.
+#
+#   Not fixed here because `known_resources` is a flat slice and the entry is
+#   not last, so a faithful `RLIMIT_RSS == RLIMIT_AS` split is a builtin-table
+#   change with `ulimit -m` regression surface — deliberately left for a pass
+#   that can regression-test the limit builtins rather than bundled into a
+#   compsys sweep.
