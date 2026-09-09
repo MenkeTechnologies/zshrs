@@ -5138,18 +5138,32 @@ pub fn getcurcmd() -> Option<String> {
     //                      of a pipeline segment). This matches the
     //                      common case of `processcmd` invoked in the
     //                      first segment.
-    let snap: String = ZLELINE.lock().unwrap().iter().collect();
-    let cs = ZLECS.load(Ordering::SeqCst).min(snap.len());
-    let prefix = &snap[..cs];
+    //
+    // c:2966-2974 — `zlecs` and `zleline` are CHARACTER-addressed (the wide
+    // `ZLE_STRING_T`), which is why C runs `cmdwb`/`cmdwe` through
+    // `stringaszleline` before using them here: "cmdwb and cmdwe are indices
+    // in zlemetaline, but we need indices into zleline". zshrs keeps the same
+    // split — `zle_main::ZLELINE` is a `Vec<char>`, `ZLECS` a character index
+    // into it (zle_main.rs:4122-4124) — so walk the character vector. The port
+    // had collected it into a `String` and sliced `&snap[..cs]`, applying the
+    // character index as a BYTE offset; the `.min(snap.len())` clamp is
+    // against the BYTE length, which for multibyte input is strictly larger
+    // than the character count, so it never fires. `M-h` / `M-H` (run-help and
+    // which-command, both of which reach here through `processcmd`) then
+    // panicked on `byte index N is not a char boundary` for any command line
+    // holding a multibyte character left of the cursor.
+    let line = ZLELINE.lock().unwrap();
+    let cs = ZLECS.load(Ordering::SeqCst).min(line.len());
+    let prefix = &line[..cs];
     let mut last_seg_start = 0;
-    for (i, b) in prefix.bytes().enumerate() {
-        if matches!(b, b'|' | b';' | b'&') {
+    for (i, c) in prefix.iter().enumerate() {
+        if matches!(c, '|' | ';' | '&') {
             last_seg_start = i + 1;
         }
     }
-    let seg = prefix[last_seg_start..].trim_start();
-    let cmd: String = seg
-        .chars()
+    let cmd: String = prefix[last_seg_start..]
+        .iter()
+        .skip_while(|c| c.is_whitespace())
         .take_while(|c| !c.is_ascii_whitespace())
         .collect();
     if cmd.is_empty() {
@@ -5206,18 +5220,36 @@ pub fn expandcmdpath() -> i32 {
         _ => return 1, // c:3010-3011
     };
 
-    // Compute (cmdwb, cmdwe) — start and end byte offsets of the command
-    // word in the line. Without the C lex substrate, find the word
-    // containing `oldcs` by walking outward to whitespace boundaries.
-    let line: String = ZLELINE.lock().unwrap().iter().collect();
-    let cmdwb = line[..oldcs.min(line.len())]
-        .rfind(|c: char| c.is_ascii_whitespace())
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let cmdwe = line[oldcs.min(line.len())..]
-        .find(|c: char| c.is_ascii_whitespace())
-        .map(|i| i + oldcs)
-        .unwrap_or(line.len());
+    // Compute (cmdwb, cmdwe) — start and end CHARACTER offsets of the command
+    // word in the line. c:3029/3038-3039 consume them as a `zlecs` value and
+    // as a `foredel` count, both character units; c:2966-2974 in `getcurcmd`
+    // exists precisely to convert the lexer's metafied BYTE offsets into
+    // character ones before control reaches here. Without the C lex substrate,
+    // find the word containing `oldcs` by walking outward to whitespace
+    // boundaries — over the `Vec<char>` line, not over a collected `String`.
+    // The port had sliced `line[..oldcs]` on a `String`, applying the
+    // character cursor as a BYTE offset (a panic whenever that landed
+    // mid-sequence, e.g. `éé x` with the cursor at character 3 = byte 3, a
+    // continuation byte), and then fed `rfind`/`find` BYTE offsets straight
+    // back into `ZLECS`, `foredel` and `Vec::insert`, all of which are
+    // character-addressed — so even when the slice happened to survive, the
+    // resolved path was spliced at the wrong offset.
+    let (cmdwb, cmdwe) = {
+        let line = ZLELINE.lock().unwrap();
+        let ll = line.len();
+        let cs = oldcs.min(ll);
+        let b = line[..cs]
+            .iter()
+            .rposition(|c| c.is_ascii_whitespace())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let e = line[cs..]
+            .iter()
+            .position(|c| c.is_ascii_whitespace())
+            .map(|i| i + cs)
+            .unwrap_or(ll);
+        (b, e)
+    };
     // c:3013-3016 — if (cmdwb < 0 || cmdwe < cmdwb) return 1;
     if cmdwe < cmdwb {
         return 1;
@@ -6798,5 +6830,49 @@ mod tests {
             "the Meta escape must never reach the terminal; got {:02x?}",
             out
         );
+    }
+
+    /// c:2966-2974 — `cmdwb`/`cmdwe` come back from the lexer as indices into
+    /// the METAFIED line, and C converts them to `zleline` indices through
+    /// `stringaszleline` before anyone uses them, because `zlecs` and
+    /// `zleline` are CHARACTER-addressed (`ZLE_STRING_T`, a wide array):
+    ///
+    /// ```c
+    ///     /* cmdwb and cmdwe are indices in zlemetaline, but we need indices
+    ///      * into zleline, so do a little trick: ... */
+    /// ```
+    ///
+    /// zshrs keeps the same split — `zle_main::ZLELINE` is a `Vec<char>` and
+    /// `zle_main::ZLECS` a character index into it (zle_main.rs:4122-4124) —
+    /// but `getcurcmd` collected the line into a `String` and then sliced
+    /// `&snap[..cs]`, applying that character index as a BYTE offset. The
+    /// `.min(snap.len())` clamp is against the BYTE length, which for
+    /// multibyte input is strictly larger than the character count, so it
+    /// never fires.
+    ///
+    /// `run-help` / `which-command` (`M-h` / `M-H`) call `processcmd` →
+    /// `getcurcmd` on the live `$BUFFER`, so this killed the editor on any
+    /// command line holding a multibyte character left of the cursor.
+    #[test]
+    fn getcurcmd_indexes_the_line_by_character_not_by_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        // `ls | échó` — 9 characters, 11 bytes.
+        *ZLELINE.lock().unwrap() = "ls | \u{e9}ch\u{f3}".chars().collect();
+        ZLELL.store(9, Ordering::SeqCst);
+
+        // Cursor just past the `\u{e9}`: character 6, byte 7. Byte 6 is the
+        // CONTINUATION byte of `\u{e9}`, so the pre-fix `&snap[..6]` died on
+        // `byte index 6 is not a char boundary`.
+        ZLECS.store(6, Ordering::SeqCst);
+        assert_eq!(getcurcmd(), Some("\u{e9}".to_string()));
+
+        // Cursor at end of line: character 9, byte 11. Byte 9 IS a boundary,
+        // so this arm never panicked — it silently returned the command word
+        // two bytes short (`\u{e9}ch`), one truncation per multibyte character
+        // left of the cursor.
+        ZLECS.store(9, Ordering::SeqCst);
+        assert_eq!(getcurcmd(), Some("\u{e9}ch\u{f3}".to_string()));
     }
 }
