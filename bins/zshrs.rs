@@ -1146,6 +1146,69 @@ fn main() {
     // alike. Must stay the first statement so shell init cannot skew it.
     let _ = zsh::ported::params::shtimer_lock(); // c:1121
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // C cannot panic, so there is nothing to port here; this exists purely to
+    // make a Rust panic diagnosable after the fact.
+    //
+    // Why: a panic inside a completion widget is currently a dead end. The
+    // parity harness scans the pty stream for the `panicked at` marker and
+    // records only that marker, throwing the message, location and backtrace
+    // away — and a completion may run external programs on the same pty (the
+    // user's `_files` falls through to `fasd -f | stryke -e …` whenever
+    // `_path_files` comes back empty, e.g. on a buffer with a leading `//`),
+    // so a panic from a CHILD is indistinguishable from one in this process.
+    // A crash sighted on 2026-09-07 cost ~300 sessions of re-running and was
+    // never reproduced or located, because nothing kept the text.
+    //
+    // This is purely ADDITIVE: it appends to the log and then calls the
+    // previous hook, so stderr output is byte-for-byte unchanged. That matters
+    // beyond politeness — the harness's crash DETECTION keys on the default
+    // hook's `panicked at` line, and swallowing it would silently turn every
+    // future crash into a plain divergence. The `pid=` field is what tells a
+    // zshrs panic apart from a child's.
+    //
+    // The hook must never itself panic: every step is best-effort, and a
+    // failure to open the log is dropped rather than reported, because the
+    // process is already dying and terminal chatter is forbidden.
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown location>".to_string());
+            let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            };
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // force_capture, not capture: this must not depend on
+            // RUST_BACKTRACE being set in the environment that crashed.
+            let bt = std::backtrace::Backtrace::force_capture();
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(zshrs_log_path())
+            {
+                use std::io::Write;
+                let _ = writeln!(
+                    f,
+                    "=== zshrs PANIC epoch={secs} pid={} ===\n\
+                     location: {loc}\n\
+                     message : {msg}\n\
+                     backtrace:\n{bt}",
+                    std::process::id()
+                );
+            }
+            default_hook(info);
+        }));
+    }
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Register the autoload-cache flush as a libc atexit hook. `preprompt()`
     // covers the interactive loop and `zexit` covers a normal unwind, but
     // NEITHER runs on the paths that end a one-shot: `-c` leaves through
