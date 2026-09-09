@@ -478,7 +478,17 @@ fn values_impl(args: &[String]) -> i32 {
     } else if action.starts_with("((") && action.ends_with("))") {
         // sh:111-118 — ((val:descr …)) literal set with descriptions.
         let body = &action[2..action.len() - 2];
-        let ws: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
+        // sh:116 `eval ws\=\( "${action[3,-3]}" \)` — an array-literal eval.
+        // It is the SAME construct as the `(…)` arm's sh:124 below, so it
+        // needs the same reader: `eval` honours quoting and strips escapes,
+        // which `split_whitespace` cannot do. A description written the way
+        // `_values` documents it — `((fast\:go\ very\ fast slow\:…))` — has
+        // its escaped spaces split at, so one value became one match per
+        // WORD: zsh listed `fast -- go very fast` / `slow -- take it easy`,
+        // this listed `fast -- go`, `slow -- take` and four junk matches
+        // (`easy`, `fast`, `it`, `very`). The `\:` separating value from
+        // description also survived unescaped into the value.
+        let ws: Vec<String> = crate::compsys::ported::eval_action_words(body);
         let _ = setaparam("ws", ws);
         let mut d = vec![
             descr.clone(),
