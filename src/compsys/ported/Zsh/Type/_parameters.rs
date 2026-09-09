@@ -37,9 +37,10 @@
 //!
 //! `$parameters` is the shell-side assoc-array mapping param name
 //! to its zsh-type string ("integer", "array", "scalar-export", …).
-//! We enumerate from `paramtab` directly, rendering each value with the
-//! REAL `paramtypestr` (`Src/Modules/parameter.c:43`) — the same function
-//! that backs the `parameter` module's `$parameters` — so the `(R)pattern`
+//! We enumerate it through `scanpmparameters`, the scan that backs
+//! the `parameter` module's own `$parameters` (`Src/Modules/parameter.c:124`),
+//! so the keys are the keys zsh has and the values are the REAL
+//! `paramtypestr` (c:43) — meaning the `(R)pattern`
 //! glob sees the full modifier suffix chain (`-local`, `-readonly`,
 //! `-export`, `-hideval`, `-special`, …). A previous revision hand-rolled a
 //! bare `PM_TYPE`-only string; every upstream filter that keys on a
@@ -67,12 +68,15 @@ use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::shared::{zstyle_t, LocalScope};
 use crate::ported::builtin::{bin_typeset, BIN_TYPESET};
 use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
-use crate::ported::params::{getaparam, getsparam, paramtab, setaparam};
+use crate::ported::modules::parameter::scanpmparameters;
+use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::{gettempfile, quotestring};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
-use crate::ported::zsh_h::{options, MAX_OPS, PM_ARRAY, QT_BACKSLASH_PATTERN};
+use crate::ported::zsh_h::{
+    options, MAX_OPS, PM_ARRAY, PM_READONLY, PM_SCALAR, QT_BACKSLASH_PATTERN, SCANPM_MATCHVAL,
+};
 
 fn make_ops() -> options {
     options {
@@ -83,30 +87,73 @@ fn make_ops() -> options {
     }
 }
 
-/// Iterate paramtab, returning (name, zsh-type-string, flags) triples —
-/// the Rust view of the `$parameters` assoc the shell source reads.
+/// !!! WARNING: RUST-ONLY HELPER !!!
 ///
-/// The type string comes from the REAL
-/// [`crate::ported::modules::parameter::paramtypestr`]
-/// (`Src/Modules/parameter.c:43`), which is what `getpmparameter`
-/// (c:116) stores as each `$parameters` value. The modifier suffixes it
-/// appends (`-local` c:63, `-readonly` c:75, `-export` c:81,
-/// `-hideval` c:87, `-special` c:89, …) are load-bearing: sh:25 and
-/// sh:40 partition the parameter set on exactly those substrings.
+/// C's `ScanFunc` closes over nothing — it is a bare function pointer
+/// (`Src/zsh.h`, `typedef void (*ScanFunc) (HashNode, int)`), and every C
+/// caller that needs the scan's OUTPUT parks it in a file-scope static
+/// while the scan runs (`Src/params.c:4225` `scancount`,
+/// `Src/params.c:4340` `paramvalarr` → `mflags`/`keyfoo`). This is that
+/// static, made thread-local because zshrs runs completion off the main
+/// thread; `scanparamtypes` below is the `ScanFunc`.
+thread_local! {
+    static SCANNED_PARAMS: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The `ScanFunc` [`enumerate_params`] hands to `scanpmparameters` —
+/// c:145's `func(&pm.node, flags)` callee. Collects `(name, value)`, which
+/// for `$parameters` is `(name, paramtypestr(pm))` (c:144).
+fn scanparamtypes(pm: &crate::ported::zsh_h::param, _flags: i32) {
+    let name = pm.node.nam.clone();
+    let ty = pm.u_str.clone().unwrap_or_default();
+    SCANNED_PARAMS.with(|c| c.borrow_mut().push((name, ty)));
+}
+
+/// The `$parameters` assoc sh:25, sh:40 and sh:43 read, as
+/// (name, zsh-type-string, flags) triples.
 ///
-/// c:48 — a PM_UNSET param renders as the empty string; c:49 — a
-/// PM_AUTOLOAD one as "undefined". Both fall out of `paramtypestr`
-/// itself, so no filtering happens here.
+/// This is a SCAN of `$parameters`, so it runs the real
+/// `scanpmparameters` (`Src/Modules/parameter.c:124`) — the `scanfn` the
+/// `parameters` special parameter is declared with at c:2306 — rather than
+/// re-deriving what that scan reports. `SCANPM_MATCHVAL` is the flag the
+/// shell's `[(R)…]` value subscript scans with, and it is what makes
+/// c:140-144 compute each value at all.
+///
+/// That value is c:43 `paramtypestr`. The modifier suffixes it appends
+/// (`-local` c:63, `-readonly` c:75, `-export` c:81, `-hideval` c:87,
+/// `-special` c:89, …) are load-bearing: sh:25 and sh:40 partition the
+/// parameter set on exactly those substrings. The third element is c:129's
+/// `pm.node.flags`, the flags C gives the SCAN's node (`PM_SCALAR |
+/// PM_READONLY`), not the scanned param's own — no caller here reads it.
+///
+/// **Why not `paramtab` directly.** It was, and that dropped c:138's
+/// `if (((Param)hn)->node.flags & PM_UNSET) continue;`. A PM_UNSET param
+/// keeps its `paramtab` node — `unset RANDOM` does not remove `RANDOM`,
+/// it flags it — and c:48 renders such a node's type as the empty string,
+/// which matches sh:43's default `$pattern[2]` of `*` and contains no
+/// `local`, so the name was offered. zsh, whose scan never reaches the
+/// node, offers nothing: after `unset RANDOM`, `echo $RAND<TAB>` completed
+/// to `$RANDOM` here and stayed `$RAND` there. It also dropped c:49-50's
+/// `"undefined"` for a still-untouched `zsh/parameter` autoload stub, which
+/// `scanpmparameters` tracks separately. Reading a table that a builtin or
+/// a special parameter FILTERS, without reproducing the filter, is the same
+/// defect class as `_limits` offering a `resident` that `limit` never prints.
 fn enumerate_params() -> Vec<(String, String, i32)> {
-    let mut out: Vec<(String, String, i32)> = Vec::new();
-    if let Ok(tab) = paramtab().read() {
-        for (name, pm) in tab.iter() {
-            let flags = pm.node.flags as i32;
-            let ty = crate::ported::modules::parameter::paramtypestr(pm);
-            out.push((name.clone(), ty, flags));
-        }
-    }
-    out
+    SCANNED_PARAMS.with(|c| c.borrow_mut().clear());
+    scanpmparameters(
+        std::ptr::null_mut(),
+        Some(scanparamtypes),
+        SCANPM_MATCHVAL as i32,
+    );
+    // c:129 — the flags C stamps on the scan node, for every entry alike.
+    let node_flags = (PM_SCALAR | PM_READONLY) as i32;
+    SCANNED_PARAMS.with(|c| {
+        std::mem::take(&mut *c.borrow_mut())
+            .into_iter()
+            .map(|(name, ty)| (name, ty, node_flags))
+            .collect()
+    })
 }
 
 /// sh:25's `~*(hideval|local|special)*` — the type strings that reach
@@ -587,6 +634,41 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let entries = enumerate_params();
         assert!(!entries.is_empty(), "paramtab unexpectedly empty");
+    }
+
+    /// c:Src/Modules/parameter.c:138 — `scanpmparameters` SKIPS a PM_UNSET
+    /// node, so an unset parameter is not a key of `$parameters` and sh:43
+    /// cannot offer it. `unset` on a param whose node survives (every
+    /// PM_SPECIAL one) is exactly that case, and it is what made
+    /// `echo $RAND<TAB>` complete to `$RANDOM` after `unset RANDOM` while
+    /// zsh left the word alone.
+    #[test]
+    fn unset_parameter_is_not_enumerated() {
+        let _g = crate::test_util::global_state_lock();
+        const NAME: &str = "_ZSHRS_PARAMS_UNSET_PROBE";
+
+        crate::ported::params::setsparam(NAME, "x");
+        assert!(
+            enumerate_params().iter().any(|(n, _, _)| n == NAME),
+            "a set parameter must be enumerated"
+        );
+
+        // Flag the live node PM_UNSET without removing it — the state
+        // `unset` leaves a special parameter in (c:48 then renders its type
+        // as the empty string, which matches sh:43's default `*` pattern).
+        {
+            let mut tab = crate::ported::params::paramtab().write().unwrap();
+            let pm = tab.get_mut(NAME).expect("probe param vanished");
+            pm.node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+        }
+        let entries = enumerate_params();
+        assert!(
+            !entries.iter().any(|(n, _, _)| n == NAME),
+            "PM_UNSET parameter must not be enumerated (c:138)"
+        );
+
+        let mut tab = crate::ported::params::paramtab().write().unwrap();
+        tab.remove(NAME);
     }
 
     #[test]
