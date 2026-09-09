@@ -4125,6 +4125,12 @@ pub fn paramsubst(
     // length, :- :+ := :? defaults, # ## % %% strip, / // replace
     // with anchored # / % variants, :N:M slice, plus a permissive
     // (...)-flag prefix swallow.
+    // c:Src/subst.c:1691/2855 — `vunset` as the `(t)` arm leaves it. C clears
+    // it at c:2855 once a type tag was built, and both the operator block
+    // (c:3081) and the array/scalar dispatch that follows (c:3761/3451) read
+    // that, so the flag has to outlive the braced-name block `wantt` itself
+    // lives in.
+    let mut wantt_typed = false; // c:2855
     if c == Inbrace {
         // c:1885 — paramsubst's `${…}` arm. The leading `{` was
         // tokenized to Inbrace either by the lex pipeline OR by the
@@ -13234,6 +13240,781 @@ pub fn paramsubst(
                 isarr = 1;
             }
         }
+        // c:Src/subst.c:2808-2985 — the `(t)` type arm and the temporary
+        // carrier its leftover subscript indexes both run HERE, before
+        // c:3081's operator block, not after it. C's order is
+        // fetchvalue → `wantt` tag (c:2808-2861) → carrier subscript loop
+        // (c:2868-2985) → join (c:3007-3050) → operators (c:3081+), so
+        // every `${(t)…}` postmodifier — the default/alternate/assign/error
+        // family, the pattern operators, the colon modifiers — reads the
+        // TAG. Running the type arm after the operators instead meant
+        // c:3188-3191's colon NULL test saw the parameter's own value and
+        // never fired: `${(t)h[k]:-D}` and `${(t)a[9]:-D}` substituted
+        // empty where zsh gives `D`, `${(t)a[1]:+P}` gave `a` instead of
+        // `P`, and every pattern operator (`${(t)a#a}`, `${(t)a/rr/XX}`,
+        // `${(t)a:h}`) was applied to the array and then thrown away.
+        // c:Src/subst.c:2764 — `(t)` on a `(P)`-indirect subexp
+        // (`${(t)${(P)n}}`) reports the REFERENCED parameter's type, not
+        // the value: the `aspar` term keeps the type block live even
+        // though the body is a subexp. Redirect var_name to the
+        // referenced param so the type branch below introspects it, and
+        // (via the `subexp_aspar_name.is_none()` guard on the passthrough
+        // arm) suppress the value-passthrough that plain nested subexps
+        // (`${(t)${a}}`) take.
+        if wantt {
+            if let Some(ref aspar) = subexp_aspar_name {
+                var_name = aspar.clone();
+            }
+        }
+        // Apply post-processing flags to the substituted value.
+        // C lines 3950-4070 — case mods, quoting, etc.
+        if wantt && used_subexp && subexp_aspar_name.is_none() {
+            // c:Src/subst.c — `${(t)$(cmdsub)}` and `${(t)$((arith))}`
+            // have no underlying parameter to type-check, so zsh
+            // passes the resolved value through unchanged rather
+            // than emitting "scalar". value here is already the
+            // resolved sub-expression result (raw_value flowed from
+            // subexp_value at c:2730). Bug #173 in docs/BUGS.md.
+            let _ = wantt;
+        } else if wantt && {
+            // c:Src/subst.c:2812 — `if (v && v->pm && ((flags &
+            // PM_DECLARED) || !(flags & PM_UNSET)))`. C skips the
+            // type-tag emit entirely when the parameter is unset
+            // (no v->pm or PM_UNSET set), leaving `val` as whatever
+            // the prior `:-`/`:=` etc. modifier substituted. Bug
+            // #216 in docs/BUGS.md: zshrs unconditionally entered
+            // the wantt arm and overwrote value with `String::new()`
+            // (the "unset → empty tag" fallback below), clobbering
+            // the default that `:-` already substituted.
+            //
+            // c:2812 is a FLAG test, not an existence test: `(flags &
+            // PM_DECLARED) || !(flags & PM_UNSET)`. Testing only "is there a
+            // paramtab entry" over-reports for a parameter that lives in the
+            // table but is registered UNSET and never declared — C's
+            // `IPDEF1("ERRNO", errno_gsu, PM_UNSET)` (c:Src/params.c:298) is
+            // exactly that shape, and zshrs answered `${(t)ERRNO}` with
+            // `integer-special` where zsh gives the empty string, while
+            // agreeing that `${+ERRNO}` is 0 — internally inconsistent.
+            // Consult the flags when the entry exists; "declared but unset"
+            // (`setopt typesettounset; typeset x`) still emits its tag because
+            // that path stamps PM_DECLARED (builtin.rs:8286).
+            // c:2812 — the env probe at the end of this chain stands in for
+            // zsh's eager createparamtable import (zshrs imports lazily), so
+            // it may only speak for names with NO paramtab entry. When the
+            // entry exists and says PM_UNSET, that IS the answer — `_` is the
+            // case that forced this: it keeps its (PM_UNSET-flagged) node
+            // after `unset _` (c:3877 — PM_SPECIAL without PM_REMOVABLE stays
+            // in the table) and C never removed its environ entry (pm->env is
+            // NULL for the PM_DONTIMPORT special, c:326), so the inherited
+            // `_=…` from the parent shell resurrected the type tag.
+            // The other fallbacks (array / assoc side-stores, PARTAB_ARRAY,
+            // positionals) stay live: they are real zshrs value stores that
+            // legitimately hold a parameter whose paramtab stub is stale
+            // (e.g. the default-empty `watch` array).
+            let node_is_unset = paramtab().read().ok().and_then(|tab| {
+                tab.get(&var_name).map(|p| {
+                    let f = p.node.flags as u32;
+                    (f & crate::ported::zsh_h::PM_DECLARED) == 0
+                        && (f & crate::ported::zsh_h::PM_UNSET) != 0
+                })
+            }) == Some(true);
+            let declared = paramtab()
+                .read()
+                .ok()
+                .and_then(|tab| {
+                    tab.get(&var_name).map(|p| {
+                        let f = p.node.flags as u32;
+                        (f & crate::ported::zsh_h::PM_DECLARED) != 0
+                            || (f & crate::ported::zsh_h::PM_UNSET) == 0
+                    })
+                })
+                .unwrap_or(false)
+                || arrays_contains(&var_name)
+                || assoc_contains(&var_name)
+                || crate::ported::modules::parameter::PARTAB_ARRAY
+                    .iter()
+                    .find(|e_| e_.name == var_name.as_str())
+                    .map(|e_| {
+                        e_.flags as u32
+                            | crate::ported::zsh_h::PM_SPECIAL
+                            | crate::ported::zsh_h::PM_HIDE
+                            | crate::ported::zsh_h::PM_HIDEVAL
+                    })
+                    .is_some()
+                || (var_name.chars().all(|c| c.is_ascii_digit()) && !var_name.is_empty())
+                || (!node_is_unset && std::env::var(&var_name).is_ok());
+            is_set || declared
+        } {
+            // c:2807
+            // ${(t)var} — emit type tag. var_attrs takes
+            // precedence (carries typeset flags); fall back to
+            // synthesized tag from the storage table the value
+            // lives in. Direct port of subst.c:2814 wantt arm
+            // which checks paramtab + storage shape.
+            //
+            // PARTAB_ARRAY entries (historywords, funcstack, etc.)
+            // need the dedicated flag lookup FIRST because their
+            // paramtab stub has PM_READONLY stripped at init time
+            // (so internal writes work) — reading from paramtab
+            // would lose the readonly attribute that `(t)` must
+            // report. Check partab_array_flags first; if it hits,
+            // build the tag directly with the full implicit flags
+            // (PM_ARRAY | PM_READONLY | PM_SPECIAL | PM_HIDE |
+            // PM_HIDEVAL).
+            // c:2800-2806 — fetchvalue resolves PM_NAMEREF chains
+            // (getparamnode c:570-575) before the (t) flag read, so
+            // the TARGET's type is reported; an unresolvable ref
+            // reports its own `nameref` type, and a DANGLING ref
+            // (target never defined) emits the empty tag (fetchvalue
+            // NULL → vunset, c:2855-2856).
+            let mut nameref_dangling = false;
+            let var_name: String = if crate::ported::params::is_nameref(&var_name) {
+                match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                    crate::ported::params::nameref_resolution::Target { name: t, pm, .. } => {
+                        if pm.is_none() {
+                            nameref_dangling = true;
+                        }
+                        t
+                    }
+                    crate::ported::params::nameref_resolution::Placeholder(p) => p,
+                    _ => var_name.clone(),
+                }
+            } else {
+                var_name.clone()
+            };
+            let partab_array_tag = crate::ported::modules::parameter::PARTAB_ARRAY
+                .iter()
+                .find(|e_| e_.name == var_name.as_str())
+                // c:Src/params.c:2264-2266 — `(t)` types the node
+                // `fetchvalue` returned; after `unset dirstack` there is
+                // none (c:3874) and C's tag is empty (c:2855-2856). This
+                // by-name reconstruction outranks the paramtab lookup
+                // below, so it needs the same visibility test a `local`
+                // shadow gets.
+                .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))
+                .map(|e_| {
+                    e_.flags as u32
+                        | crate::ported::zsh_h::PM_SPECIAL
+                        | crate::ported::zsh_h::PM_HIDE
+                        | crate::ported::zsh_h::PM_HIDEVAL
+                })
+                .map(|f| {
+                    let mut tag = if f & PM_HASHED != 0 {
+                        "association".to_string()
+                    } else if f & PM_ARRAY != 0 {
+                        "array".to_string()
+                    } else if f & PM_INTEGER != 0 {
+                        "integer".to_string()
+                    } else {
+                        "scalar".to_string()
+                    };
+                    if f & PM_READONLY != 0 {
+                        tag.push_str("-readonly");
+                    }
+                    if f & PM_TAGGED != 0 {
+                        tag.push_str("-tag");
+                    }
+                    if f & PM_TIED != 0 {
+                        tag.push_str("-tied");
+                    }
+                    if f & PM_EXPORTED != 0 {
+                        tag.push_str("-export");
+                    }
+                    if f & PM_UNIQUE != 0 {
+                        tag.push_str("-unique");
+                    }
+                    if f & PM_HIDE != 0 {
+                        tag.push_str("-hide");
+                    }
+                    if f & PM_HIDEVAL != 0 {
+                        tag.push_str("-hideval");
+                    }
+                    if f & PM_SPECIAL != 0 {
+                        tag.push_str("-special");
+                    }
+                    tag
+                });
+            // c:2814 — read PM_* flags directly from paramtab and
+            // synthesize the type tag. Mirrors C `pm->node.flags &
+            // PM_TYPE` dispatch at subst.c:2814-2900.
+            value = if let Some(tag) = partab_array_tag {
+                tag
+            } else {
+                paramtab()
+                    .read() // c:2814
+                    .ok() // c:2814
+                    .and_then(|tab| {
+                        tab.get(&var_name).map(|pm| {
+                            // c:2814
+                            let f = pm.node.flags as u32; // c:2814
+                                                          // c:Src/params.c paramtype-from-flags read.
+                                                          // For PM_SPECIAL params, the pm_type bits aren't
+                                                          // always carried on the paramtab entry (env-
+                                                          // imported specials like SHLVL come in as
+                                                          // PM_SCALAR even though IPDEF5 declares them
+                                                          // PM_INTEGER). Overlay the canonical pm_type
+                                                          // from special_params so (t) reads match zsh
+                                                          // (`integer-export-special` instead of
+                                                          // `scalar-special` for $SHLVL). Also detect
+                                                          // env-presence to set PM_EXPORTED on params
+                                                          // that came in via the environment but whose
+                                                          // paramtab entry didn't carry the flag (set-
+                                                          // before-export sequence loses the flag).
+                            let f_overlay = if (f & PM_SPECIAL) != 0 {
+                                let mut bits = f;
+                                if let Some(sp) = crate::ported::params::special_params
+                                    .iter()
+                                    .find(|sp| sp.name == var_name.as_str())
+                                {
+                                    // Only supply the table's declared type when
+                                    // the live entry carries NONE of its own
+                                    // (PM_SCALAR is 0, so PM_TYPE == 0 means
+                                    // "untyped" — the SHLVL-imported-as-scalar
+                                    // case this overlay exists for). Applying it
+                                    // unconditionally overrode a type that was
+                                    // legitimately CHANGED: SECONDS may switch
+                                    // between integer and float
+                                    // (c:Src/params.c:4630 setsecondstype), so
+                                    // `typeset -F SECONDS` must read
+                                    // `float-special`. It reported
+                                    // `integer-special` — the table's
+                                    // declaration — even though the live flags,
+                                    // $SECONDS itself and `typeset -p` had all
+                                    // correctly become float.
+                                    if crate::ported::zsh_h::PM_TYPE(bits) == 0 {
+                                        bits |= sp.pm_type as u32;
+                                    }
+                                    // c:Src/params.c — overlay the canonical
+                                    // pm_flags too (PM_READONLY for #/?,
+                                    // PM_TIED for path/PATH etc.). Without
+                                    // this, \${(t)?} read "integer-special"
+                                    // instead of "integer-readonly-special".
+                                    bits |= sp.pm_flags as u32;
+                                }
+                                // c:Src/Modules/parameter.c:48-50 +
+                                // c:80-81 — `paramtypestr` builds the tag
+                                // from `pm->node.flags` ALONE; the
+                                // `-export` suffix comes from
+                                // `f & PM_EXPORTED`, never from a probe of
+                                // the process environment. The probe that
+                                // used to be here OR-ed PM_EXPORTED into
+                                // every PM_SPECIAL name that happened to
+                                // exist in environ, which is wrong for the
+                                // PM_DONTIMPORT specials: the parent shell
+                                // exports `_` (c:Src/exec.c:5487 puts the
+                                // command name there for the child), so
+                                // `${(t)_}` reported `scalar-export-special`
+                                // where zsh reports `scalar-special`. The
+                                // live flags are already right — `typeset
+                                // -p _`, `export -p`, `typeset +x -r` and
+                                // `$parameters[_]` all agreed with zsh; only
+                                // the (t) tag was lying.
+                                bits
+                            } else {
+                                f
+                            };
+                            let f = f_overlay;
+                            let val = if f & PM_HASHED != 0 {
+                                "association"
+                            }
+                            // c:2823 case PM_HASHED
+                            else if f & PM_ARRAY != 0 {
+                                "array"
+                            }
+                            // c:2819 case PM_ARRAY
+                            else if f & PM_INTEGER != 0 {
+                                "integer"
+                            }
+                            // c:2820 case PM_INTEGER
+                            else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                                "float"
+                            }
+                            // c:2821-2822 PM_EFLOAT|PM_FFLOAT
+                            else if f & PM_NAMEREF != 0 {
+                                "nameref"
+                            }
+                            // c:2818 case PM_NAMEREF
+                            else {
+                                "scalar"
+                            }; // c:2817 case PM_SCALAR
+                            let val = dupstring(val); // c:2825 val = dupstring(val)
+                            let val = if pm.level != 0
+                            // c:2826
+                            {
+                                dyncat(&val, "-local")
+                            }
+                            // c:2827
+                            else {
+                                val
+                            }; // c:2826
+                            let val = if f & PM_LEFT != 0
+                            // c:2828
+                            {
+                                dyncat(&val, "-left")
+                            }
+                            // c:2829
+                            else {
+                                val
+                            }; // c:2828
+                            let val = if f & PM_RIGHT_B != 0
+                            // c:2830
+                            {
+                                dyncat(&val, "-right_blanks")
+                            }
+                            // c:2831
+                            else {
+                                val
+                            }; // c:2830
+                            let val = if f & PM_RIGHT_Z != 0
+                            // c:2832
+                            {
+                                dyncat(&val, "-right_zeros")
+                            }
+                            // c:2833
+                            else {
+                                val
+                            }; // c:2832
+                            let val = if f & PM_LOWER != 0
+                            // c:2834
+                            {
+                                dyncat(&val, "-lower")
+                            }
+                            // c:2835
+                            else {
+                                val
+                            }; // c:2834
+                            let val = if f & PM_UPPER != 0
+                            // c:2836
+                            {
+                                dyncat(&val, "-upper")
+                            }
+                            // c:2837
+                            else {
+                                val
+                            }; // c:2836
+                            let val = if f & PM_READONLY != 0
+                            // c:2838
+                            {
+                                dyncat(&val, "-readonly")
+                            }
+                            // c:2839
+                            else {
+                                val
+                            }; // c:2838
+                            let val = if f & PM_TAGGED != 0
+                            // c:2840
+                            {
+                                dyncat(&val, "-tag")
+                            }
+                            // c:2841
+                            else {
+                                val
+                            }; // c:2840
+                            let val = if f & PM_TIED != 0
+                            // c:2842
+                            {
+                                dyncat(&val, "-tied")
+                            }
+                            // c:2843
+                            else {
+                                val
+                            }; // c:2842
+                            let val = if f & PM_EXPORTED != 0
+                            // c:2844
+                            {
+                                dyncat(&val, "-export")
+                            }
+                            // c:2845
+                            else {
+                                val
+                            }; // c:2844
+                            let val = if f & PM_UNIQUE != 0
+                            // c:2846
+                            {
+                                dyncat(&val, "-unique")
+                            }
+                            // c:2847
+                            else {
+                                val
+                            }; // c:2846
+                            let val = if f & PM_HIDE != 0
+                            // c:2848
+                            {
+                                dyncat(&val, "-hide")
+                            }
+                            // c:2849
+                            else {
+                                val
+                            }; // c:2848
+                            let val = if f & PM_HIDEVAL != 0
+                            // c:2850
+                            {
+                                dyncat(&val, "-hideval")
+                            }
+                            // c:2851
+                            else {
+                                val
+                            }; // c:2850
+                            let val = if f & PM_SPECIAL != 0
+                            // c:2852
+                            {
+                                dyncat(&val, "-special")
+                            }
+                            // c:2853
+                            else {
+                                val
+                            }; // c:2852
+                            val // c:2854
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        // c:Src/Modules/parameter.c SPECIALPMDEF entries
+                        // (historywords / funcstack / patchars / dirstack /
+                        // …) live in PARTAB_ARRAY, NOT paramtab. Their
+                        // flags include PM_ARRAY plus the implicit
+                        // PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C macro
+                        // adds at zsh.h:2123. Build the type tag from those
+                        // here so `(t)historywords` reads
+                        // `array-readonly-hide-hideval-special` matching
+                        // zsh.
+                        // c:Src/params.c:2264-2266 — `(t)` runs off the
+                        // node `fetchvalue` returned, so once `unset`
+                        // has dropped / PM_UNSET'd the magic row's node
+                        // there is nothing to type and the tag is empty
+                        // (c:2855-2856, same as a dangling nameref).
+                        // Both by-name reconstructions below have to
+                        // honour that or `${(t)funcstack}` keeps
+                        // reporting `array-readonly-hide-hideval-special`
+                        // for a name that no longer has a binding.
+                        let magic_bound = !crate::vm_helper::magic_special_shadowed(&var_name);
+                        if let Some(f) = crate::ported::modules::parameter::PARTAB_ARRAY
+                            .iter()
+                            .find(|e_| e_.name == var_name.as_str())
+                            .filter(|_| magic_bound)
+                            .map(|e_| {
+                                e_.flags as u32
+                                    | crate::ported::zsh_h::PM_SPECIAL
+                                    | crate::ported::zsh_h::PM_HIDE
+                                    | crate::ported::zsh_h::PM_HIDEVAL
+                            })
+                        {
+                            let mut tag = if f & PM_HASHED != 0 {
+                                "association".to_string()
+                            } else if f & PM_ARRAY != 0 {
+                                "array".to_string()
+                            } else if f & PM_INTEGER != 0 {
+                                "integer".to_string()
+                            } else {
+                                "scalar".to_string()
+                            };
+                            if f & PM_READONLY != 0 {
+                                tag.push_str("-readonly");
+                            }
+                            if f & PM_TAGGED != 0 {
+                                tag.push_str("-tag");
+                            }
+                            if f & PM_TIED != 0 {
+                                tag.push_str("-tied");
+                            }
+                            if f & PM_EXPORTED != 0 {
+                                tag.push_str("-export");
+                            }
+                            if f & PM_UNIQUE != 0 {
+                                tag.push_str("-unique");
+                            }
+                            if f & PM_HIDE != 0 {
+                                tag.push_str("-hide");
+                            }
+                            if f & PM_HIDEVAL != 0 {
+                                tag.push_str("-hideval");
+                            }
+                            if f & PM_SPECIAL != 0 {
+                                tag.push_str("-special");
+                            }
+                            return tag;
+                        }
+                        if assoc_contains(&var_name) {
+                            "association".to_string() // c:2814
+                        } else if arrays_contains(&var_name) {
+                            "array".to_string() // c:2814
+                        } else if !var_name.is_empty()
+                            && var_name.chars().all(|c| c.is_ascii_digit())
+                        {
+                            // c:Src/params.c — `$1`/`$2`/... are aliases
+                            // for `${argv[N]}`. The `(t)` flag reads the
+                            // PARENT (argv) type, not the element type,
+                            // so positionals report `array-special`
+                            // matching `(t)@` / `(t)*`. Bug #163 in
+                            // docs/BUGS.md. Empty $0 falls through to
+                            // the standard scalar handling below.
+                            "array-special".to_string()
+                        } else if magic_bound
+                            && matches!(
+                                var_name.as_str(),
+                                "aliases"
+                                    | "galiases"
+                                    | "saliases"
+                                    | "dis_aliases"
+                                    | "dis_galiases"
+                                    | "dis_saliases"
+                                    | "functions"
+                                    | "dis_functions"
+                                    | "builtins"
+                                    | "dis_builtins"
+                                    | "reswords"
+                                    | "dis_reswords"
+                                    | "options"
+                                    | "commands"
+                                    | "modules"
+                                    | "nameddirs"
+                                    | "userdirs"
+                                    | "jobtexts"
+                                    | "jobdirs"
+                                    | "jobstates"
+                                    | "parameters"
+                                    | "dirstack"
+                                    | "errnos"
+                                    | "sysparams"
+                                    | "mapfile"
+                                    | "langinfo"
+                            )
+                        {
+                            // Magic-assoc params — type is association.
+                            // Direct port of subst.c:2814 paramtab
+                            // lookup which finds the magic-assoc entry
+                            // and returns PM_HASHED type tag.
+                            "association".to_string() // c:2814
+                        } else if is_set {
+                            // c:Src/params.c — env-only vars (paramtab
+                            // miss + env::var hit) carry PM_EXPORTED.
+                            // C zsh imports every env var at startup so
+                            // the paramtab path catches them; Rust's
+                            // lazy import means env-only vars miss the
+                            // paramtab arm and land here. Tag with
+                            // `-export` to match zsh.
+                            if std::env::var(&var_name).is_ok() {
+                                "scalar-export".to_string()
+                            } else {
+                                "scalar".to_string()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    })
+            };
+            // c:2855-2856 — dangling nameref: fetchvalue returned
+            // NULL, so the (t) tag is empty.
+            if nameref_dangling {
+                value = String::new();
+            }
+            // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
+            // so the array-splat path at c:3950 doesn't fire on the
+            // type string. Without this, ${(t)arr} would splat the
+            // array's elements after value has been replaced with
+            // "array".
+            // c:Src/subst.c:2855 — `vunset = 0;` closes the type arm, so from
+            // here on the value is "set" no matter what the parameter
+            // itself held. Recorded for the `raw_value`/`is_set` rebind that
+            // hands this shape to c:3081's operator block.
+            wantt_typed = true; // c:2855
+            isarr = 0; // c:2883
+            split_parts = None; // c:2883 aval is implicit-cleared by v=NULL
+        }
+        // c:Src/subst.c:2868-2900 — after the wantt arm cleared
+        // `v = NULL; isarr = 0;` (c:2882-2883), C re-enters
+        //     while (v || ((inbrace || (unset(KSHARRAYS) && vunset)) && isbrack(*s)))
+        // solely because `inbrace` is set and `*s` is `[`, and with `v` NULL
+        // the loop body builds a TEMPORARY carrier over the type tag:
+        //     if (vunset) { val = dupstring(""); isarr = 0; }            c:2886-2889
+        //     pm = createparam(nulstring, isarr ? PM_ARRAY : PM_SCALAR);  c:2890
+        //     pm->u.str = val;                                           c:2895
+        //     v->scanflags = isarr ? SCANPM_ARRONLY : 0;  v->end = -1;   c:2897-2899
+        //     if (getindex(&s, v, qt ? SCANPM_DQUOTED : 0) || s == os) break; c:2900
+        //     … val = getstrvalue(v);                                    c:2966
+        // So the subscript indexes the TYPE STRING, never the parameter:
+        // `${(t)a[1]}` is `a` (character 1 of "array") and `${(t)h[k]}` is
+        // empty — mathevalarg("k") on an unset name is 0, which is c:2168's
+        // empty range — not the association's own tag.
+        //
+        // `isarr` is 0 here, so the carrier is PM_SCALAR: getindex's PM_HASHED
+        // arm is dead and every operand is ARITHMETIC (c:Src/params.c:1618
+        // `r = mathevalarg(s, &s)`), which is also what makes
+        // `${(t)parameters[PATH]}` a "bad math expression" abort rather than a
+        // key read. Inlined rather than routed through `params::getindex` +
+        // `params::getstrvalue` because the temporary has no paramtab entry to
+        // hang a `Value` on and because `getstrvalue` has no counterpart yet to
+        // C's c:2507-2532 scalar-slice tail.
+        if wantt && !used_subexp {
+            if let Some(sub) = subscript.as_deref() {
+                let mut s_trim = sub.trim();
+                // c:Src/params.c:2027-2031 — `[*]`/`[@]` set start = 0,
+                // end = -1, i.e. the whole tag.
+                // c:Src/params.c:1506-1507 — after the flag block the scanner
+                // steps past the `)`, so a flag set with NO search direction
+                // (`(e)ar`, `(p)…`) leaves only the trailing text for the
+                // arithmetic arm at c:1618. `handled_by_search` records the
+                // c:1688 reverse arm having produced the answer outright.
+                let mut handled_by_search = false;
+                if s_trim.starts_with('(') && !is_splat_txt!(s_trim) {
+                    // c:Src/params.c:1410 — `if (v->pm && (*s == '(' || *s ==
+                    // Inpar))`: the carrier DOES have a `pm` (c:Src/subst.c:2890
+                    // `createparam(nulstring, PM_SCALAR)`), so the flag block is
+                    // parsed here exactly as it is for a named scalar.
+                    // c:Src/params.c:1402-1403 — `ishash` is 0 for the PM_SCALAR
+                    // carrier, so `k`/`K` (c:1423/1428 `keymatch = ishash`) keep
+                    // keymatch 0 and reduce to `r`/`R`.
+                    // c:Src/params.c:1731/1782 — `v->scanflags` is 0 (c:2897,
+                    // `isarr` is 0) and `word` is 0 without `(w)`/`(f)`, so the
+                    // reverse arm lands in c:1819's "Searching characters" block,
+                    // which slides the pattern (with its implicit trailing Star,
+                    // c:1698-1704) over the TAG and returns the raw offset AFTER
+                    // the matching character; c:2144-2145 backs that off by
+                    // `startprevlen` so `${(t)a[(r)array]}` is the tag's first
+                    // CHARACTER, `a`, and a miss returns c:2001's `slen + 1`,
+                    // which c:2525-2531 reads back as empty.
+                    // c:Src/params.c:2061-2119 — an `(i)`/`(I)` hit sets
+                    // VALFLAG_INV instead, and c:2336-2340 renders `v->start` as
+                    // the decimal position, so `${(t)a[(i)array]}` is `1`.
+                    // `params::getarg`'s `scalar` arm is that same port, so route
+                    // the carrier through it rather than duplicating the search.
+                    match crate::ported::params::getarg(s_trim, None, None, Some(&value)) {
+                        Some(crate::ported::params::getarg_out::Value(gv)) => {
+                            value = gv.to_str();
+                            handled_by_search = true;
+                        }
+                        // c:Src/params.c:1596-1621 — no direction flag means
+                        // `rev` is 0, so the carrier (not a hash) takes
+                        // `r = mathevalarg(s, &s)` over the text FOLLOWING the
+                        // flag block: `${(t)a[(e)ar]}` evaluates `ar`, which is
+                        // an unset name, i.e. 0, and c:2146-2171's `start == 0 &&
+                        // end == 0` reads back empty.
+                        Some(crate::ported::params::getarg_out::Flags { rest, .. }) => {
+                            s_trim = rest;
+                        }
+                        // c:Src/params.c:1498-1504 `flagerr:` — an unknown flag
+                        // char rewinds `s` to before the `(`, so the whole group
+                        // is re-read as MATH. Leave `s_trim` alone for the
+                        // arithmetic arm below.
+                        None => {}
+                    }
+                }
+                if !handled_by_search && !s_trim.is_empty() && !is_splat_txt!(s_trim) {
+                    // c:Src/params.c:1618 `r = mathevalarg(s, &s)`, with the
+                    // decimal fast path `params::getindex` already uses (a
+                    // matheval of "5" is 5).
+                    //
+                    // c:Src/math.c:1534 `mathevall` — a bad expression is
+                    // reported by `zerr` and leaves `errflag` set, which is how
+                    // `${(t)parameters[PATH]}` (PATH substitutes a colon-list
+                    // that will not parse as math) prints a diagnostic and
+                    // exits 1 instead of substituting. zshrs's `mathevali`
+                    // hands the message back as `Err` and its `mathevalarg`
+                    // caller drops it on the floor (`unwrap_or(0)`), so raise
+                    // it here; the empty operand keeps going through
+                    // `mathevalarg`, which is the one entry point that rejects
+                    // it (c:Src/math.c:1530-1532).
+                    let matherr = std::cell::Cell::new(false);
+                    let evalarg = |t: &str| -> i64 {
+                        let t = t.trim();
+                        if let Ok(n) = t.parse::<i64>() {
+                            return n;
+                        }
+                        if t.is_empty() {
+                            return crate::ported::math::mathevalarg(t); // c:Src/math.c:1531
+                        }
+                        match crate::ported::math::mathevali(t) {
+                            // c:Src/params.c:1618
+                            Ok(n) => n,
+                            Err(msg) => {
+                                zerr(&msg); // c:Src/math.c:1534
+                                errflag.fetch_or(
+                                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                matherr.set(true);
+                                0
+                            }
+                        }
+                    };
+                    let (start_str, end_str) = match s_trim.split_once(',') {
+                        Some((a, b)) => (a, Some(b)),
+                        None => (s_trim, None),
+                    };
+                    let mut start = evalarg(start_str); // c:Src/params.c:2036
+                    let mut end = match end_str {
+                        Some(e) => evalarg(e),           // c:Src/params.c:2132
+                        None => start,                   // c:Src/params.c:2134
+                    };
+                    // c:Src/params.c:2144-2145 — `if (start > 0) start -=
+                    // startprevlen;` (one CHARACTER back; the tag is ASCII).
+                    if start > 0 {
+                        start -= 1; // c:Src/params.c:2145
+                    } else if start == 0 && end == 0 {
+                        // c:Src/params.c:2146-2171
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            end = 1; // c:Src/params.c:2161 `end = startnextlen`
+                        } else {
+                            // c:Src/params.c:2168-2169 — VALFLAG_EMPTY plus
+                            // start = -1 is the pair that reads back empty.
+                            start = -1;
+                        }
+                    }
+                    // c:Src/subst.c:2900 — `if (getindex(…) || s == os) break;`
+                    // and then c:Src/subst.c:3846's `if (errflag) return NULL`:
+                    // a subscript that failed to evaluate aborts the whole
+                    // substitution, it does not fall back to the tag.
+                    if matherr.get() {
+                        value = String::new();
+                    } else if !(start == 0 && end == -1) {
+                        // c:Src/params.c:2507-2508 — the early return when the
+                        // range is the whole string is the `if` above; what
+                        // follows is getstrvalue's scalar tail, walked in
+                        // CHARACTERS (C uses MB_METACHARLEN).
+                        let tag: Vec<char> = value.chars().collect();
+                        let len = tag.len() as i64; // c:Src/params.c:2510
+                        if start < 0 {
+                            start += len; // c:Src/params.c:2512
+                            if start < 0 {
+                                start = 0; // c:Src/params.c:2513-2514
+                            }
+                        }
+                        if end < 0 {
+                            end += len; // c:Src/params.c:2517
+                            if end >= 0 && end < len {
+                                // c:Src/params.c:2518-2522 — `if (*eptr)
+                                // v->end += MB_METACHARLEN(eptr);`
+                                end += 1;
+                            }
+                        }
+                        value = if start > len {
+                            String::new() // c:Src/params.c:2525
+                        } else if end <= start {
+                            String::new() // c:Src/params.c:2528-2529
+                        } else {
+                            // c:Src/params.c:2530-2531 — truncate at `end`
+                            // when it lands inside the remaining text.
+                            let hi = if end > len { len } else { end };
+                            tag[start as usize..hi as usize].iter().collect()
+                        };
+                    }
+                }
+            }
+        }
+        // c:Src/subst.c:2855-2859 — the type arm leaves `val` = the tag,
+        // `v = NULL`, `isarr = 0` and, when the parameter had a node to
+        // type, `vunset = 0`. The operator arms below read `raw_value` for
+        // c:3189's NULL test and `is_set` for c:3205's unset test, so
+        // rebind both to that post-`(t)` shape: `${(t)h[k]:-D}` takes the
+        // default because the TAG indexed by `[k]` is empty, while
+        // `${(t)a[9]-D}` does not, because the parameter still has a type.
+        // A `(t)` over a subexp with no parameter behind it
+        // (`${(t)$(cmdsub)}`) passes its value through untouched, so it
+        // keeps the shape it already had.
+        let (raw_value, is_set) = if wantt && !(used_subexp && subexp_aspar_name.is_none()) {
+            (value.clone(), wantt_typed) // c:2855
+        } else {
+            (raw_value, is_set)
+        };
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {
@@ -15213,7 +15994,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     .or_else(|| {
                         // c:3433 `getmatcharr(&aval, …)` — the array arm is
                         // chosen on `isarr`, and a bare assoc IS an array (of
@@ -16019,7 +16810,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so a single-`/` replace applies per value.
                     .or_else(|| {
@@ -16409,7 +17210,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element_array && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -16682,7 +17493,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element_array && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -16940,7 +17761,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element_array && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -17223,7 +18054,17 @@ pub fn paramsubst(
                     split_parts
                         .clone()
                         .filter(|_| per_element_array && subscript.is_some())
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                     // c:3433 getmatcharr — a bare assoc is an array of its
                     // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
                     // this the assoc fell to the scalar arm and stripped only
@@ -17514,7 +18355,17 @@ pub fn paramsubst(
                     // an operator or subscript produced it, else the raw array.
                     let cur_arr: Vec<String> = split_parts
                         .clone()
-                        .or_else(|| arrays_get(&var_name))
+                        .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                         .unwrap_or_default();
                     // KSHARRAYS bare array → the operand is element 0 only
                     // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps
@@ -17645,6 +18496,13 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), 0, Vec::new()); // c:3791
                 }
+                    // c:Src/subst.c:2858-2859 + c:4533 — the `(t)` arm ends
+                    // with `v = NULL; isarr = 0;`, so c:4533's `if (isarr)`
+                    // cannot fire and modify() runs on the SCALAR tag. The
+                    // by-name re-fetches in this block stand in for C's
+                    // `aval`, which no longer exists once the tag replaced the
+                    // value, so they must not resurrect the parameter's own
+                    // elements: `${(t)a:u}` is the uppercased TAG.
                 if is_modifier {
                     // c:Src/subst.c:4531 modify() entry — apply
                     // history-style modifier chain (`:h`, `:t`, `:r`,
@@ -17672,7 +18530,7 @@ pub fn paramsubst(
                     // :modifier per-element in DQ too, producing
                     // "txt md" instead of "md". Parity bug #28.
                     let sepjoined_for_qt = || -> String {
-                        if let Some(arr) = arrays_get(&var_name) {
+                        if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
                             // c:3032 — `val = sepjoin(aval, sep, 1)`: when
                             // (j:STR:) was given, join with STR; otherwise
                             // sepjoin's NULL sep means `$IFS[1]`
@@ -17761,7 +18619,7 @@ pub fn paramsubst(
                             let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                             value = new_parts.join(" ");
                             split_parts = Some(new_parts);
-                        } else if let Some(arr) = arrays_get(&var_name) {
+                        } else if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
                             // Honor a range subscript (split_parts
                             // would have captured it normally; do the
                             // narrowing here when it didn't).
@@ -17785,7 +18643,7 @@ pub fn paramsubst(
                         } else {
                             value = mod_one(&value);
                         }
-                    } else if qt && arrays_contains(&var_name) && nojoin != 2 {
+                    } else if qt && arrays_contains(&var_name) && !wantt_typed && nojoin != 2 { // c:2859
                         // c:3030-3034 DQ sepjoin cleared isarr → scalar.
                         //   Skip when `(@)` flag is set (nojoin == 2):
                         //   the C path at c:3030 KEEPS isarr=-1 under
@@ -17809,7 +18667,7 @@ pub fn paramsubst(
                         // overwrote `value` after the modifier ran.
                         split_parts = Some(vec![value.clone()]);
                         isarr = 0;
-                    } else if sep.is_some() && arrays_contains(&var_name) {
+                    } else if sep.is_some() && arrays_contains(&var_name) && !wantt_typed { // c:2859
                         // c:Src/subst.c:3906-3907 — `(j:X:)` flag.
                         // Dispatch differs by qt context:
                         //
@@ -17851,7 +18709,7 @@ pub fn paramsubst(
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
-                    } else if let Some(arr) = arrays_get(&var_name) {
+                    } else if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
                         // KSHARRAYS bare array → modifier folds only element 0.
                         let arr: Vec<String> =
                             if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
@@ -18110,7 +18968,17 @@ pub fn paramsubst(
                     } else {
                         split_parts
                             .clone()
-                            .or_else(|| arrays_get(&var_name))
+                            .or_else(|| {
+                            // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                            // `v = NULL; isarr = 0;`, so there is no `aval` behind
+                            // the value any more and c:3451 dispatches on the
+                            // SCALAR leg (`getmatch(&val, …)`, not `getmatcharr`).
+                            // This by-name re-fetch stands in for C's `aval`, so
+                            // it must not resurrect the parameter's array after the
+                            // tag replaced it: `${(t)a/rr/XX}` is `aXXay` — the tag
+                            // with the replacement — never the array's elements.
+                            arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                        })
                             // c:Src/subst.c:3665-3667 — `if (aval && !isarr)
                             // quoted_array_with_offset = 1; if (isarr ||
                             // quoted_array_with_offset) {…}`: an ASSOCIATION is
@@ -18463,748 +19331,6 @@ pub fn paramsubst(
                 // ${(oe)a b}` printed a blank line and exited 0 where zsh exits
                 // 1 and executes nothing further in the script.
                 return (String::new(), new_pos, Vec::new());
-            }
-        }
-        // c:Src/subst.c:2764 — `(t)` on a `(P)`-indirect subexp
-        // (`${(t)${(P)n}}`) reports the REFERENCED parameter's type, not
-        // the value: the `aspar` term keeps the type block live even
-        // though the body is a subexp. Redirect var_name to the
-        // referenced param so the type branch below introspects it, and
-        // (via the `subexp_aspar_name.is_none()` guard on the passthrough
-        // arm) suppress the value-passthrough that plain nested subexps
-        // (`${(t)${a}}`) take.
-        if wantt {
-            if let Some(ref aspar) = subexp_aspar_name {
-                var_name = aspar.clone();
-            }
-        }
-        // Apply post-processing flags to the substituted value.
-        // C lines 3950-4070 — case mods, quoting, etc.
-        if wantt && used_subexp && subexp_aspar_name.is_none() {
-            // c:Src/subst.c — `${(t)$(cmdsub)}` and `${(t)$((arith))}`
-            // have no underlying parameter to type-check, so zsh
-            // passes the resolved value through unchanged rather
-            // than emitting "scalar". value here is already the
-            // resolved sub-expression result (raw_value flowed from
-            // subexp_value at c:2730). Bug #173 in docs/BUGS.md.
-            let _ = wantt;
-        } else if wantt && {
-            // c:Src/subst.c:2812 — `if (v && v->pm && ((flags &
-            // PM_DECLARED) || !(flags & PM_UNSET)))`. C skips the
-            // type-tag emit entirely when the parameter is unset
-            // (no v->pm or PM_UNSET set), leaving `val` as whatever
-            // the prior `:-`/`:=` etc. modifier substituted. Bug
-            // #216 in docs/BUGS.md: zshrs unconditionally entered
-            // the wantt arm and overwrote value with `String::new()`
-            // (the "unset → empty tag" fallback below), clobbering
-            // the default that `:-` already substituted.
-            //
-            // c:2812 is a FLAG test, not an existence test: `(flags &
-            // PM_DECLARED) || !(flags & PM_UNSET)`. Testing only "is there a
-            // paramtab entry" over-reports for a parameter that lives in the
-            // table but is registered UNSET and never declared — C's
-            // `IPDEF1("ERRNO", errno_gsu, PM_UNSET)` (c:Src/params.c:298) is
-            // exactly that shape, and zshrs answered `${(t)ERRNO}` with
-            // `integer-special` where zsh gives the empty string, while
-            // agreeing that `${+ERRNO}` is 0 — internally inconsistent.
-            // Consult the flags when the entry exists; "declared but unset"
-            // (`setopt typesettounset; typeset x`) still emits its tag because
-            // that path stamps PM_DECLARED (builtin.rs:8286).
-            // c:2812 — the env probe at the end of this chain stands in for
-            // zsh's eager createparamtable import (zshrs imports lazily), so
-            // it may only speak for names with NO paramtab entry. When the
-            // entry exists and says PM_UNSET, that IS the answer — `_` is the
-            // case that forced this: it keeps its (PM_UNSET-flagged) node
-            // after `unset _` (c:3877 — PM_SPECIAL without PM_REMOVABLE stays
-            // in the table) and C never removed its environ entry (pm->env is
-            // NULL for the PM_DONTIMPORT special, c:326), so the inherited
-            // `_=…` from the parent shell resurrected the type tag.
-            // The other fallbacks (array / assoc side-stores, PARTAB_ARRAY,
-            // positionals) stay live: they are real zshrs value stores that
-            // legitimately hold a parameter whose paramtab stub is stale
-            // (e.g. the default-empty `watch` array).
-            let node_is_unset = paramtab().read().ok().and_then(|tab| {
-                tab.get(&var_name).map(|p| {
-                    let f = p.node.flags as u32;
-                    (f & crate::ported::zsh_h::PM_DECLARED) == 0
-                        && (f & crate::ported::zsh_h::PM_UNSET) != 0
-                })
-            }) == Some(true);
-            let declared = paramtab()
-                .read()
-                .ok()
-                .and_then(|tab| {
-                    tab.get(&var_name).map(|p| {
-                        let f = p.node.flags as u32;
-                        (f & crate::ported::zsh_h::PM_DECLARED) != 0
-                            || (f & crate::ported::zsh_h::PM_UNSET) == 0
-                    })
-                })
-                .unwrap_or(false)
-                || arrays_contains(&var_name)
-                || assoc_contains(&var_name)
-                || crate::ported::modules::parameter::PARTAB_ARRAY
-                    .iter()
-                    .find(|e_| e_.name == var_name.as_str())
-                    .map(|e_| {
-                        e_.flags as u32
-                            | crate::ported::zsh_h::PM_SPECIAL
-                            | crate::ported::zsh_h::PM_HIDE
-                            | crate::ported::zsh_h::PM_HIDEVAL
-                    })
-                    .is_some()
-                || (var_name.chars().all(|c| c.is_ascii_digit()) && !var_name.is_empty())
-                || (!node_is_unset && std::env::var(&var_name).is_ok());
-            is_set || declared
-        } {
-            // c:2807
-            // ${(t)var} — emit type tag. var_attrs takes
-            // precedence (carries typeset flags); fall back to
-            // synthesized tag from the storage table the value
-            // lives in. Direct port of subst.c:2814 wantt arm
-            // which checks paramtab + storage shape.
-            //
-            // PARTAB_ARRAY entries (historywords, funcstack, etc.)
-            // need the dedicated flag lookup FIRST because their
-            // paramtab stub has PM_READONLY stripped at init time
-            // (so internal writes work) — reading from paramtab
-            // would lose the readonly attribute that `(t)` must
-            // report. Check partab_array_flags first; if it hits,
-            // build the tag directly with the full implicit flags
-            // (PM_ARRAY | PM_READONLY | PM_SPECIAL | PM_HIDE |
-            // PM_HIDEVAL).
-            // c:2800-2806 — fetchvalue resolves PM_NAMEREF chains
-            // (getparamnode c:570-575) before the (t) flag read, so
-            // the TARGET's type is reported; an unresolvable ref
-            // reports its own `nameref` type, and a DANGLING ref
-            // (target never defined) emits the empty tag (fetchvalue
-            // NULL → vunset, c:2855-2856).
-            let mut nameref_dangling = false;
-            let var_name: String = if crate::ported::params::is_nameref(&var_name) {
-                match crate::ported::params::resolve_nameref_name(&var_name, None) {
-                    crate::ported::params::nameref_resolution::Target { name: t, pm, .. } => {
-                        if pm.is_none() {
-                            nameref_dangling = true;
-                        }
-                        t
-                    }
-                    crate::ported::params::nameref_resolution::Placeholder(p) => p,
-                    _ => var_name.clone(),
-                }
-            } else {
-                var_name.clone()
-            };
-            let partab_array_tag = crate::ported::modules::parameter::PARTAB_ARRAY
-                .iter()
-                .find(|e_| e_.name == var_name.as_str())
-                // c:Src/params.c:2264-2266 — `(t)` types the node
-                // `fetchvalue` returned; after `unset dirstack` there is
-                // none (c:3874) and C's tag is empty (c:2855-2856). This
-                // by-name reconstruction outranks the paramtab lookup
-                // below, so it needs the same visibility test a `local`
-                // shadow gets.
-                .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))
-                .map(|e_| {
-                    e_.flags as u32
-                        | crate::ported::zsh_h::PM_SPECIAL
-                        | crate::ported::zsh_h::PM_HIDE
-                        | crate::ported::zsh_h::PM_HIDEVAL
-                })
-                .map(|f| {
-                    let mut tag = if f & PM_HASHED != 0 {
-                        "association".to_string()
-                    } else if f & PM_ARRAY != 0 {
-                        "array".to_string()
-                    } else if f & PM_INTEGER != 0 {
-                        "integer".to_string()
-                    } else {
-                        "scalar".to_string()
-                    };
-                    if f & PM_READONLY != 0 {
-                        tag.push_str("-readonly");
-                    }
-                    if f & PM_TAGGED != 0 {
-                        tag.push_str("-tag");
-                    }
-                    if f & PM_TIED != 0 {
-                        tag.push_str("-tied");
-                    }
-                    if f & PM_EXPORTED != 0 {
-                        tag.push_str("-export");
-                    }
-                    if f & PM_UNIQUE != 0 {
-                        tag.push_str("-unique");
-                    }
-                    if f & PM_HIDE != 0 {
-                        tag.push_str("-hide");
-                    }
-                    if f & PM_HIDEVAL != 0 {
-                        tag.push_str("-hideval");
-                    }
-                    if f & PM_SPECIAL != 0 {
-                        tag.push_str("-special");
-                    }
-                    tag
-                });
-            // c:2814 — read PM_* flags directly from paramtab and
-            // synthesize the type tag. Mirrors C `pm->node.flags &
-            // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = if let Some(tag) = partab_array_tag {
-                tag
-            } else {
-                paramtab()
-                    .read() // c:2814
-                    .ok() // c:2814
-                    .and_then(|tab| {
-                        tab.get(&var_name).map(|pm| {
-                            // c:2814
-                            let f = pm.node.flags as u32; // c:2814
-                                                          // c:Src/params.c paramtype-from-flags read.
-                                                          // For PM_SPECIAL params, the pm_type bits aren't
-                                                          // always carried on the paramtab entry (env-
-                                                          // imported specials like SHLVL come in as
-                                                          // PM_SCALAR even though IPDEF5 declares them
-                                                          // PM_INTEGER). Overlay the canonical pm_type
-                                                          // from special_params so (t) reads match zsh
-                                                          // (`integer-export-special` instead of
-                                                          // `scalar-special` for $SHLVL). Also detect
-                                                          // env-presence to set PM_EXPORTED on params
-                                                          // that came in via the environment but whose
-                                                          // paramtab entry didn't carry the flag (set-
-                                                          // before-export sequence loses the flag).
-                            let f_overlay = if (f & PM_SPECIAL) != 0 {
-                                let mut bits = f;
-                                if let Some(sp) = crate::ported::params::special_params
-                                    .iter()
-                                    .find(|sp| sp.name == var_name.as_str())
-                                {
-                                    // Only supply the table's declared type when
-                                    // the live entry carries NONE of its own
-                                    // (PM_SCALAR is 0, so PM_TYPE == 0 means
-                                    // "untyped" — the SHLVL-imported-as-scalar
-                                    // case this overlay exists for). Applying it
-                                    // unconditionally overrode a type that was
-                                    // legitimately CHANGED: SECONDS may switch
-                                    // between integer and float
-                                    // (c:Src/params.c:4630 setsecondstype), so
-                                    // `typeset -F SECONDS` must read
-                                    // `float-special`. It reported
-                                    // `integer-special` — the table's
-                                    // declaration — even though the live flags,
-                                    // $SECONDS itself and `typeset -p` had all
-                                    // correctly become float.
-                                    if crate::ported::zsh_h::PM_TYPE(bits) == 0 {
-                                        bits |= sp.pm_type as u32;
-                                    }
-                                    // c:Src/params.c — overlay the canonical
-                                    // pm_flags too (PM_READONLY for #/?,
-                                    // PM_TIED for path/PATH etc.). Without
-                                    // this, \${(t)?} read "integer-special"
-                                    // instead of "integer-readonly-special".
-                                    bits |= sp.pm_flags as u32;
-                                }
-                                // c:Src/Modules/parameter.c:48-50 +
-                                // c:80-81 — `paramtypestr` builds the tag
-                                // from `pm->node.flags` ALONE; the
-                                // `-export` suffix comes from
-                                // `f & PM_EXPORTED`, never from a probe of
-                                // the process environment. The probe that
-                                // used to be here OR-ed PM_EXPORTED into
-                                // every PM_SPECIAL name that happened to
-                                // exist in environ, which is wrong for the
-                                // PM_DONTIMPORT specials: the parent shell
-                                // exports `_` (c:Src/exec.c:5487 puts the
-                                // command name there for the child), so
-                                // `${(t)_}` reported `scalar-export-special`
-                                // where zsh reports `scalar-special`. The
-                                // live flags are already right — `typeset
-                                // -p _`, `export -p`, `typeset +x -r` and
-                                // `$parameters[_]` all agreed with zsh; only
-                                // the (t) tag was lying.
-                                bits
-                            } else {
-                                f
-                            };
-                            let f = f_overlay;
-                            let val = if f & PM_HASHED != 0 {
-                                "association"
-                            }
-                            // c:2823 case PM_HASHED
-                            else if f & PM_ARRAY != 0 {
-                                "array"
-                            }
-                            // c:2819 case PM_ARRAY
-                            else if f & PM_INTEGER != 0 {
-                                "integer"
-                            }
-                            // c:2820 case PM_INTEGER
-                            else if f & (PM_EFLOAT | PM_FFLOAT) != 0 {
-                                "float"
-                            }
-                            // c:2821-2822 PM_EFLOAT|PM_FFLOAT
-                            else if f & PM_NAMEREF != 0 {
-                                "nameref"
-                            }
-                            // c:2818 case PM_NAMEREF
-                            else {
-                                "scalar"
-                            }; // c:2817 case PM_SCALAR
-                            let val = dupstring(val); // c:2825 val = dupstring(val)
-                            let val = if pm.level != 0
-                            // c:2826
-                            {
-                                dyncat(&val, "-local")
-                            }
-                            // c:2827
-                            else {
-                                val
-                            }; // c:2826
-                            let val = if f & PM_LEFT != 0
-                            // c:2828
-                            {
-                                dyncat(&val, "-left")
-                            }
-                            // c:2829
-                            else {
-                                val
-                            }; // c:2828
-                            let val = if f & PM_RIGHT_B != 0
-                            // c:2830
-                            {
-                                dyncat(&val, "-right_blanks")
-                            }
-                            // c:2831
-                            else {
-                                val
-                            }; // c:2830
-                            let val = if f & PM_RIGHT_Z != 0
-                            // c:2832
-                            {
-                                dyncat(&val, "-right_zeros")
-                            }
-                            // c:2833
-                            else {
-                                val
-                            }; // c:2832
-                            let val = if f & PM_LOWER != 0
-                            // c:2834
-                            {
-                                dyncat(&val, "-lower")
-                            }
-                            // c:2835
-                            else {
-                                val
-                            }; // c:2834
-                            let val = if f & PM_UPPER != 0
-                            // c:2836
-                            {
-                                dyncat(&val, "-upper")
-                            }
-                            // c:2837
-                            else {
-                                val
-                            }; // c:2836
-                            let val = if f & PM_READONLY != 0
-                            // c:2838
-                            {
-                                dyncat(&val, "-readonly")
-                            }
-                            // c:2839
-                            else {
-                                val
-                            }; // c:2838
-                            let val = if f & PM_TAGGED != 0
-                            // c:2840
-                            {
-                                dyncat(&val, "-tag")
-                            }
-                            // c:2841
-                            else {
-                                val
-                            }; // c:2840
-                            let val = if f & PM_TIED != 0
-                            // c:2842
-                            {
-                                dyncat(&val, "-tied")
-                            }
-                            // c:2843
-                            else {
-                                val
-                            }; // c:2842
-                            let val = if f & PM_EXPORTED != 0
-                            // c:2844
-                            {
-                                dyncat(&val, "-export")
-                            }
-                            // c:2845
-                            else {
-                                val
-                            }; // c:2844
-                            let val = if f & PM_UNIQUE != 0
-                            // c:2846
-                            {
-                                dyncat(&val, "-unique")
-                            }
-                            // c:2847
-                            else {
-                                val
-                            }; // c:2846
-                            let val = if f & PM_HIDE != 0
-                            // c:2848
-                            {
-                                dyncat(&val, "-hide")
-                            }
-                            // c:2849
-                            else {
-                                val
-                            }; // c:2848
-                            let val = if f & PM_HIDEVAL != 0
-                            // c:2850
-                            {
-                                dyncat(&val, "-hideval")
-                            }
-                            // c:2851
-                            else {
-                                val
-                            }; // c:2850
-                            let val = if f & PM_SPECIAL != 0
-                            // c:2852
-                            {
-                                dyncat(&val, "-special")
-                            }
-                            // c:2853
-                            else {
-                                val
-                            }; // c:2852
-                            val // c:2854
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        // c:Src/Modules/parameter.c SPECIALPMDEF entries
-                        // (historywords / funcstack / patchars / dirstack /
-                        // …) live in PARTAB_ARRAY, NOT paramtab. Their
-                        // flags include PM_ARRAY plus the implicit
-                        // PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C macro
-                        // adds at zsh.h:2123. Build the type tag from those
-                        // here so `(t)historywords` reads
-                        // `array-readonly-hide-hideval-special` matching
-                        // zsh.
-                        // c:Src/params.c:2264-2266 — `(t)` runs off the
-                        // node `fetchvalue` returned, so once `unset`
-                        // has dropped / PM_UNSET'd the magic row's node
-                        // there is nothing to type and the tag is empty
-                        // (c:2855-2856, same as a dangling nameref).
-                        // Both by-name reconstructions below have to
-                        // honour that or `${(t)funcstack}` keeps
-                        // reporting `array-readonly-hide-hideval-special`
-                        // for a name that no longer has a binding.
-                        let magic_bound = !crate::vm_helper::magic_special_shadowed(&var_name);
-                        if let Some(f) = crate::ported::modules::parameter::PARTAB_ARRAY
-                            .iter()
-                            .find(|e_| e_.name == var_name.as_str())
-                            .filter(|_| magic_bound)
-                            .map(|e_| {
-                                e_.flags as u32
-                                    | crate::ported::zsh_h::PM_SPECIAL
-                                    | crate::ported::zsh_h::PM_HIDE
-                                    | crate::ported::zsh_h::PM_HIDEVAL
-                            })
-                        {
-                            let mut tag = if f & PM_HASHED != 0 {
-                                "association".to_string()
-                            } else if f & PM_ARRAY != 0 {
-                                "array".to_string()
-                            } else if f & PM_INTEGER != 0 {
-                                "integer".to_string()
-                            } else {
-                                "scalar".to_string()
-                            };
-                            if f & PM_READONLY != 0 {
-                                tag.push_str("-readonly");
-                            }
-                            if f & PM_TAGGED != 0 {
-                                tag.push_str("-tag");
-                            }
-                            if f & PM_TIED != 0 {
-                                tag.push_str("-tied");
-                            }
-                            if f & PM_EXPORTED != 0 {
-                                tag.push_str("-export");
-                            }
-                            if f & PM_UNIQUE != 0 {
-                                tag.push_str("-unique");
-                            }
-                            if f & PM_HIDE != 0 {
-                                tag.push_str("-hide");
-                            }
-                            if f & PM_HIDEVAL != 0 {
-                                tag.push_str("-hideval");
-                            }
-                            if f & PM_SPECIAL != 0 {
-                                tag.push_str("-special");
-                            }
-                            return tag;
-                        }
-                        if assoc_contains(&var_name) {
-                            "association".to_string() // c:2814
-                        } else if arrays_contains(&var_name) {
-                            "array".to_string() // c:2814
-                        } else if !var_name.is_empty()
-                            && var_name.chars().all(|c| c.is_ascii_digit())
-                        {
-                            // c:Src/params.c — `$1`/`$2`/... are aliases
-                            // for `${argv[N]}`. The `(t)` flag reads the
-                            // PARENT (argv) type, not the element type,
-                            // so positionals report `array-special`
-                            // matching `(t)@` / `(t)*`. Bug #163 in
-                            // docs/BUGS.md. Empty $0 falls through to
-                            // the standard scalar handling below.
-                            "array-special".to_string()
-                        } else if magic_bound
-                            && matches!(
-                                var_name.as_str(),
-                                "aliases"
-                                    | "galiases"
-                                    | "saliases"
-                                    | "dis_aliases"
-                                    | "dis_galiases"
-                                    | "dis_saliases"
-                                    | "functions"
-                                    | "dis_functions"
-                                    | "builtins"
-                                    | "dis_builtins"
-                                    | "reswords"
-                                    | "dis_reswords"
-                                    | "options"
-                                    | "commands"
-                                    | "modules"
-                                    | "nameddirs"
-                                    | "userdirs"
-                                    | "jobtexts"
-                                    | "jobdirs"
-                                    | "jobstates"
-                                    | "parameters"
-                                    | "dirstack"
-                                    | "errnos"
-                                    | "sysparams"
-                                    | "mapfile"
-                                    | "langinfo"
-                            )
-                        {
-                            // Magic-assoc params — type is association.
-                            // Direct port of subst.c:2814 paramtab
-                            // lookup which finds the magic-assoc entry
-                            // and returns PM_HASHED type tag.
-                            "association".to_string() // c:2814
-                        } else if is_set {
-                            // c:Src/params.c — env-only vars (paramtab
-                            // miss + env::var hit) carry PM_EXPORTED.
-                            // C zsh imports every env var at startup so
-                            // the paramtab path catches them; Rust's
-                            // lazy import means env-only vars miss the
-                            // paramtab arm and land here. Tag with
-                            // `-export` to match zsh.
-                            if std::env::var(&var_name).is_ok() {
-                                "scalar-export".to_string()
-                            } else {
-                                "scalar".to_string()
-                            }
-                        } else {
-                            String::new()
-                        }
-                    })
-            };
-            // c:2855-2856 — dangling nameref: fetchvalue returned
-            // NULL, so the (t) tag is empty.
-            if nameref_dangling {
-                value = String::new();
-            }
-            // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
-            // so the array-splat path at c:3950 doesn't fire on the
-            // type string. Without this, ${(t)arr} would splat the
-            // array's elements after value has been replaced with
-            // "array".
-            isarr = 0; // c:2883
-            split_parts = None; // c:2883 aval is implicit-cleared by v=NULL
-        }
-        // c:Src/subst.c:2868-2900 — after the wantt arm cleared
-        // `v = NULL; isarr = 0;` (c:2882-2883), C re-enters
-        //     while (v || ((inbrace || (unset(KSHARRAYS) && vunset)) && isbrack(*s)))
-        // solely because `inbrace` is set and `*s` is `[`, and with `v` NULL
-        // the loop body builds a TEMPORARY carrier over the type tag:
-        //     if (vunset) { val = dupstring(""); isarr = 0; }            c:2886-2889
-        //     pm = createparam(nulstring, isarr ? PM_ARRAY : PM_SCALAR);  c:2890
-        //     pm->u.str = val;                                           c:2895
-        //     v->scanflags = isarr ? SCANPM_ARRONLY : 0;  v->end = -1;   c:2897-2899
-        //     if (getindex(&s, v, qt ? SCANPM_DQUOTED : 0) || s == os) break; c:2900
-        //     … val = getstrvalue(v);                                    c:2966
-        // So the subscript indexes the TYPE STRING, never the parameter:
-        // `${(t)a[1]}` is `a` (character 1 of "array") and `${(t)h[k]}` is
-        // empty — mathevalarg("k") on an unset name is 0, which is c:2168's
-        // empty range — not the association's own tag.
-        //
-        // `isarr` is 0 here, so the carrier is PM_SCALAR: getindex's PM_HASHED
-        // arm is dead and every operand is ARITHMETIC (c:Src/params.c:1618
-        // `r = mathevalarg(s, &s)`), which is also what makes
-        // `${(t)parameters[PATH]}` a "bad math expression" abort rather than a
-        // key read. Inlined rather than routed through `params::getindex` +
-        // `params::getstrvalue` because the temporary has no paramtab entry to
-        // hang a `Value` on and because `getstrvalue` has no counterpart yet to
-        // C's c:2507-2532 scalar-slice tail.
-        if wantt && !used_subexp {
-            if let Some(sub) = subscript.as_deref() {
-                let mut s_trim = sub.trim();
-                // c:Src/params.c:2027-2031 — `[*]`/`[@]` set start = 0,
-                // end = -1, i.e. the whole tag.
-                // c:Src/params.c:1506-1507 — after the flag block the scanner
-                // steps past the `)`, so a flag set with NO search direction
-                // (`(e)ar`, `(p)…`) leaves only the trailing text for the
-                // arithmetic arm at c:1618. `handled_by_search` records the
-                // c:1688 reverse arm having produced the answer outright.
-                let mut handled_by_search = false;
-                if s_trim.starts_with('(') && !is_splat_txt!(s_trim) {
-                    // c:Src/params.c:1410 — `if (v->pm && (*s == '(' || *s ==
-                    // Inpar))`: the carrier DOES have a `pm` (c:Src/subst.c:2890
-                    // `createparam(nulstring, PM_SCALAR)`), so the flag block is
-                    // parsed here exactly as it is for a named scalar.
-                    // c:Src/params.c:1402-1403 — `ishash` is 0 for the PM_SCALAR
-                    // carrier, so `k`/`K` (c:1423/1428 `keymatch = ishash`) keep
-                    // keymatch 0 and reduce to `r`/`R`.
-                    // c:Src/params.c:1731/1782 — `v->scanflags` is 0 (c:2897,
-                    // `isarr` is 0) and `word` is 0 without `(w)`/`(f)`, so the
-                    // reverse arm lands in c:1819's "Searching characters" block,
-                    // which slides the pattern (with its implicit trailing Star,
-                    // c:1698-1704) over the TAG and returns the raw offset AFTER
-                    // the matching character; c:2144-2145 backs that off by
-                    // `startprevlen` so `${(t)a[(r)array]}` is the tag's first
-                    // CHARACTER, `a`, and a miss returns c:2001's `slen + 1`,
-                    // which c:2525-2531 reads back as empty.
-                    // c:Src/params.c:2061-2119 — an `(i)`/`(I)` hit sets
-                    // VALFLAG_INV instead, and c:2336-2340 renders `v->start` as
-                    // the decimal position, so `${(t)a[(i)array]}` is `1`.
-                    // `params::getarg`'s `scalar` arm is that same port, so route
-                    // the carrier through it rather than duplicating the search.
-                    match crate::ported::params::getarg(s_trim, None, None, Some(&value)) {
-                        Some(crate::ported::params::getarg_out::Value(gv)) => {
-                            value = gv.to_str();
-                            handled_by_search = true;
-                        }
-                        // c:Src/params.c:1596-1621 — no direction flag means
-                        // `rev` is 0, so the carrier (not a hash) takes
-                        // `r = mathevalarg(s, &s)` over the text FOLLOWING the
-                        // flag block: `${(t)a[(e)ar]}` evaluates `ar`, which is
-                        // an unset name, i.e. 0, and c:2146-2171's `start == 0 &&
-                        // end == 0` reads back empty.
-                        Some(crate::ported::params::getarg_out::Flags { rest, .. }) => {
-                            s_trim = rest;
-                        }
-                        // c:Src/params.c:1498-1504 `flagerr:` — an unknown flag
-                        // char rewinds `s` to before the `(`, so the whole group
-                        // is re-read as MATH. Leave `s_trim` alone for the
-                        // arithmetic arm below.
-                        None => {}
-                    }
-                }
-                if !handled_by_search && !s_trim.is_empty() && !is_splat_txt!(s_trim) {
-                    // c:Src/params.c:1618 `r = mathevalarg(s, &s)`, with the
-                    // decimal fast path `params::getindex` already uses (a
-                    // matheval of "5" is 5).
-                    //
-                    // c:Src/math.c:1534 `mathevall` — a bad expression is
-                    // reported by `zerr` and leaves `errflag` set, which is how
-                    // `${(t)parameters[PATH]}` (PATH substitutes a colon-list
-                    // that will not parse as math) prints a diagnostic and
-                    // exits 1 instead of substituting. zshrs's `mathevali`
-                    // hands the message back as `Err` and its `mathevalarg`
-                    // caller drops it on the floor (`unwrap_or(0)`), so raise
-                    // it here; the empty operand keeps going through
-                    // `mathevalarg`, which is the one entry point that rejects
-                    // it (c:Src/math.c:1530-1532).
-                    let matherr = std::cell::Cell::new(false);
-                    let evalarg = |t: &str| -> i64 {
-                        let t = t.trim();
-                        if let Ok(n) = t.parse::<i64>() {
-                            return n;
-                        }
-                        if t.is_empty() {
-                            return crate::ported::math::mathevalarg(t); // c:Src/math.c:1531
-                        }
-                        match crate::ported::math::mathevali(t) {
-                            // c:Src/params.c:1618
-                            Ok(n) => n,
-                            Err(msg) => {
-                                zerr(&msg); // c:Src/math.c:1534
-                                errflag.fetch_or(
-                                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                                matherr.set(true);
-                                0
-                            }
-                        }
-                    };
-                    let (start_str, end_str) = match s_trim.split_once(',') {
-                        Some((a, b)) => (a, Some(b)),
-                        None => (s_trim, None),
-                    };
-                    let mut start = evalarg(start_str); // c:Src/params.c:2036
-                    let mut end = match end_str {
-                        Some(e) => evalarg(e),           // c:Src/params.c:2132
-                        None => start,                   // c:Src/params.c:2134
-                    };
-                    // c:Src/params.c:2144-2145 — `if (start > 0) start -=
-                    // startprevlen;` (one CHARACTER back; the tag is ASCII).
-                    if start > 0 {
-                        start -= 1; // c:Src/params.c:2145
-                    } else if start == 0 && end == 0 {
-                        // c:Src/params.c:2146-2171
-                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
-                            end = 1; // c:Src/params.c:2161 `end = startnextlen`
-                        } else {
-                            // c:Src/params.c:2168-2169 — VALFLAG_EMPTY plus
-                            // start = -1 is the pair that reads back empty.
-                            start = -1;
-                        }
-                    }
-                    // c:Src/subst.c:2900 — `if (getindex(…) || s == os) break;`
-                    // and then c:Src/subst.c:3846's `if (errflag) return NULL`:
-                    // a subscript that failed to evaluate aborts the whole
-                    // substitution, it does not fall back to the tag.
-                    if matherr.get() {
-                        value = String::new();
-                    } else if !(start == 0 && end == -1) {
-                        // c:Src/params.c:2507-2508 — the early return when the
-                        // range is the whole string is the `if` above; what
-                        // follows is getstrvalue's scalar tail, walked in
-                        // CHARACTERS (C uses MB_METACHARLEN).
-                        let tag: Vec<char> = value.chars().collect();
-                        let len = tag.len() as i64; // c:Src/params.c:2510
-                        if start < 0 {
-                            start += len; // c:Src/params.c:2512
-                            if start < 0 {
-                                start = 0; // c:Src/params.c:2513-2514
-                            }
-                        }
-                        if end < 0 {
-                            end += len; // c:Src/params.c:2517
-                            if end >= 0 && end < len {
-                                // c:Src/params.c:2518-2522 — `if (*eptr)
-                                // v->end += MB_METACHARLEN(eptr);`
-                                end += 1;
-                            }
-                        }
-                        value = if start > len {
-                            String::new() // c:Src/params.c:2525
-                        } else if end <= start {
-                            String::new() // c:Src/params.c:2528-2529
-                        } else {
-                            // c:Src/params.c:2530-2531 — truncate at `end`
-                            // when it lands inside the remaining text.
-                            let hi = if end > len { len } else { end };
-                            tag[start as usize..hi as usize].iter().collect()
-                        };
-                    }
-                }
             }
         }
         // Case mods operate per-element when array-shaped (so
@@ -23918,7 +24044,16 @@ pub fn paramsubst(
                 .clone()
                 .or(slice_arr)
                 .or(assoc_vals)
-                .or_else(|| arrays_get(&var_name))
+                .or_else(|| {
+                    // c:Src/subst.c:2858-2859 — the `(t)` arm ends with
+                    // `v = NULL; isarr = 0;`, so there is no `aval` behind the
+                    // value any more and c:3761 takes the SCALAR leg of the
+                    // colon-modifier block, not c:3764's per-element one. This
+                    // by-name re-fetch stands in for C's `aval`, so it must not
+                    // resurrect the parameter's array after the tag replaced
+                    // it: `${(t)a:u}` is `ARRAY`, never the array's elements.
+                    arrays_get(&var_name).filter(|_| !wantt_typed) // c:2859
+                })
             {
                 // c:Src/subst.c:3764-3776 — the ARRAY leg of the colon-modifier
                 // block. C runs `modify` once PER ELEMENT of `aval`:

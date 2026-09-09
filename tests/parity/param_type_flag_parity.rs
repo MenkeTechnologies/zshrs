@@ -299,3 +299,99 @@ fn search_subscripts_on_an_association_tag() {
 print "[${(t)h[(r)assoc]}]" "[${(t)h[(i)assoc]}]" "[${(t)h[(i)ation]}]" "[${(t)h[(I)i]}]""#,
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// The postmodifiers run AFTER the tag is built, and see the tag
+// ═══════════════════════════════════════════════════════════════════════
+
+/// C's order is `wantt` tag (c:Src/subst.c:2808-2861) → carrier
+/// subscript (c:2868-2985) → operators (c:3081+), so c:3188-3191's colon
+/// NULL test — `vunset = (isarr) ? !*aval : !*val` — is evaluated
+/// against the SUBSCRIPTED TAG. `${(t)h[k]}` and `${(t)a[9]}` are both
+/// empty, so `:-` supplies its default; `${(t)a[1]}` is `a`, so it does
+/// not. Regression pin for the ordering: running the type arm after the
+/// operators makes every one of these read the parameter's own value,
+/// which is non-empty, and the default never fires.
+#[test]
+fn the_colon_default_tests_the_subscripted_tag() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print "[${(t)h[k]:-D}]" "[${(t)arr[9]:-D}]" "[${(t)arr[1]:-D}]" "[${(t)arr:-D}]""#,
+    );
+}
+
+/// `:+` is the same test read the other way (c:3194-3201): the
+/// alternate word appears only when the tag is non-null.
+#[test]
+fn the_colon_alternate_tests_the_subscripted_tag() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print "[${(t)h[k]:+P}]" "[${(t)arr[1]:+P}]" "[${(t)arr[9]:+P}]" "[${(t)arr[2,3]:+P}]""#,
+    );
+}
+
+/// WITHOUT the colon the test is c:3205's `vunset`, which c:2855 already
+/// cleared for any parameter that had a type: `${(t)arr[9]-D}` stays
+/// empty even though the tag indexed by `[9]` is, while a name with no
+/// type at all still takes the default. Pins that the ordering fix did
+/// not turn the plain `-` into the colon form.
+#[test]
+fn the_plain_default_still_tests_whether_the_name_has_a_type() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr[9]-D}]" "[${(t)arr[1]-D}]" "[${(t)nosuchvar_zzz-D}]" "[${(t)nosuchvar_zzz:-D}]""#,
+    );
+}
+
+/// `:=` (c:3246-3322) fires on the same null test and substitutes its
+/// word.
+#[test]
+fn the_colon_assign_fires_on_an_empty_tag() {
+    assert_parity(r#"typeset -a arr=(x y); print "[${(t)arr[9]:=D}]" "[${(t)arr[1]:=D}]""#);
+}
+
+/// The pattern operators are downstream of the tag too (c:3081 is one
+/// block for the whole family), so `#`/`##`/`%`/`%%` strip from the type
+/// string, not from the parameter.
+#[test]
+fn the_strip_operators_run_on_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print "[${(t)arr#a}]" "[${(t)arr##a}]" "[${(t)arr%y}]" "[${(t)arr%%r*}]" "[${(t)h#ass}]""#,
+    );
+}
+
+/// So are `/` and `//` (c:3107-3167) and the `:#` filter (c:3540).
+#[test]
+fn the_replace_operators_run_on_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr/rr/XX}]" "[${(t)arr//a/Z}]" "[${(t)arr:#array}]" "[${(t)arr:#nope}]""#,
+    );
+}
+
+/// And the history-style colon modifiers (c:3761-3776). c:2858-2859's
+/// `isarr = 0` means c:4533's per-element leg is dead, so `:u` upcases
+/// the TAG once — answering `X Y` would mean the modifier found the
+/// parameter's array behind the tag's back.
+#[test]
+fn the_colon_modifiers_run_on_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print "[${(t)arr:u}]" "[${(t)arr:t}]" "[${(t)arr:s/r/R/}]" "[${(t)arr:q}]" "[${(t)h:l}]""#,
+    );
+    assert_parity(r#"typeset -a arr=(x y); print -r -- ${(t)arr:u} ${(t)arr:t} ${(t)arr:h}"#);
+}
+
+/// A `(t)` with no operator at all must still be one word, quoted or
+/// not: c:2858-2859 cleared `isarr`, so nothing splats the parameter's
+/// elements after the tag replaced them.
+#[test]
+fn a_bare_type_flag_stays_one_word_in_either_context() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print -r -- ${(t)arr} ${(t)arr[@]} ${(t)h} ${(t)h[@]}
+print -r -- "${(t)arr}" "${(t)arr[@]}"
+set -- ${(t)arr}; print $#"#,
+    );
+}
