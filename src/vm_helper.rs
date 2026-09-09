@@ -1092,7 +1092,28 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                             for orig in argv.iter().skip(1) {
                                 argv_new.push(orig.clone());
                             }
-                            crate::ported::signals_h::winch_unblock(); // c:565/c:570
+                            // c:565/c:570 — `winch_unblock(); execve(...)`.
+                            // Deliberately NOT ported here. In C that unblock is
+                            // the last statement before `execve` in the FORKED
+                            // CHILD, so all it decides is the mask the new
+                            // program starts with; the parent never sees it.
+                            // This resolver runs in the PARENT (see the c:550
+                            // note above) and RETURNS, so calling it dropped the
+                            // shell's standing `winch_block()`
+                            // (c:Src/init.c:1458) for the rest of the session —
+                            // nothing re-blocks. An unpaired unblock lets
+                            // `adjustwinsize(1)` run inside a widget, which is
+                            // the one thing that block exists to prevent: a
+                            // resize landing mid-completion makes `calclist`
+                            // count display strings against a width they were
+                            // not built at, and repaints over the prompt row.
+                            //
+                            // The new image still gets SIGWINCH unblocked: the
+                            // child-side `zexecve` unblocks at c:527 (ported at
+                            // src/ported/exec.rs:4215), and the spawn-based
+                            // callers of this function go through
+                            // `std::process::Command`, whose child resets the
+                            // signal mask to empty before `execvp`.
                             return Ok((pprog, argv_new)); // c:566/c:571
                         }
                         crate::ported::utils::zwarn(&format!(
@@ -1119,7 +1140,8 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
-                        crate::ported::signals_h::winch_unblock(); // c:580
+                        // c:580 — `winch_unblock()` omitted: child-side in C,
+                        // parent-side here. See the c:565/c:570 note above.
                         return Ok((interp_str, argv_new)); // c:581
                     } else {
                         // c:582
@@ -1127,7 +1149,8 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
-                        crate::ported::signals_h::winch_unblock(); // c:584
+                        // c:584 — `winch_unblock()` omitted: child-side in C,
+                        // parent-side here. See the c:565/c:570 note above.
                         return Ok((interp_str, argv_new)); // c:585
                     }
                 }
@@ -1162,7 +1185,8 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                     for orig in argv.iter() {
                         argv_new.push(orig.clone());
                     }
-                    crate::ported::signals_h::winch_unblock(); // c:626
+                    // c:626 — `winch_unblock()` omitted: child-side in C,
+                    // parent-side here. See the c:565/c:570 note above.
                     return Ok(("/bin/sh".to_string(), argv_new)); // c:627
                 }
             }
@@ -6578,6 +6602,76 @@ mod tests {
         crate::ported::exec::FORKLEVEL.store(3, Ordering::Relaxed);
         assert_eq!(crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed), 3);
         crate::ported::exec::FORKLEVEL.store(prev, Ordering::Relaxed);
+    }
+
+    /// `zexecve_recover` is the PARENT-side half of C's `#!`-recovery block
+    /// (c:Src/exec.c:534-627). Every `execve` in that block is preceded by
+    /// `winch_unblock()` (c:565/570/580/584/626) because C is inside the
+    /// forked child and is about to be replaced. This port returns to the
+    /// caller instead, so those unblocks left the shell's standing
+    /// `winch_block()` (c:Src/init.c:1458) dropped with nothing to re-arm
+    /// it — and a SIGWINCH delivered inside a widget makes `calclist`
+    /// (c:Src/Zle/compresult.c:1495) count display strings against a width
+    /// they were not built at.
+    ///
+    /// The mask is per-thread, so blocking here cannot leak into other
+    /// tests.
+    #[test]
+    #[cfg(unix)]
+    fn zexecve_recover_keeps_sigwinch_blocked_in_the_parent() {
+        fn sigwinch_blocked() -> bool {
+            unsafe {
+                let mut cur: libc::sigset_t = std::mem::zeroed();
+                libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut cur);
+                libc::sigismember(&cur, libc::SIGWINCH) == 1
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "zshrs_winch_recover_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // c:611-627 — shebang-less text file: the `/bin/sh` fallback.
+        let noshebang = dir.join("noshebang");
+        std::fs::write(&noshebang, "echo hi\n").unwrap();
+        // c:576-585 — `#!` line naming an absolute interpreter.
+        let shebang = dir.join("shebang");
+        std::fs::write(&shebang, "#!/bin/cat -v\necho hi\n").unwrap();
+
+        let saved = sigwinch_blocked();
+        crate::ported::signals_h::winch_block(); // c:Src/init.c:1458
+        assert!(sigwinch_blocked(), "precondition: winch_block() holds");
+
+        let argv = vec!["script".to_string()];
+        let sh = zexecve_recover(noshebang.to_str().unwrap(), &argv, libc::ENOEXEC);
+        assert_eq!(
+            sh.as_ref().map(|(p, _)| p.as_str()),
+            Ok("/bin/sh"),
+            "c:625-627 — a shebang-less script re-execs through /bin/sh"
+        );
+        assert!(
+            sigwinch_blocked(),
+            "c:626 — the /bin/sh recovery must not unblock SIGWINCH in the parent"
+        );
+
+        let interp = zexecve_recover(shebang.to_str().unwrap(), &argv, libc::ENOEXEC);
+        assert_eq!(
+            interp.as_ref().map(|(p, _)| p.as_str()),
+            Ok("/bin/cat"),
+            "c:576-585 — the `#!` line names the interpreter"
+        );
+        assert!(
+            sigwinch_blocked(),
+            "c:580/c:584 — the `#!` recovery must not unblock SIGWINCH in the parent"
+        );
+
+        if !saved {
+            crate::ported::signals_h::winch_unblock();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
