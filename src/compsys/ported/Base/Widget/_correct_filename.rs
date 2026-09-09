@@ -161,7 +161,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
 
     // sh:40-49  exact match short-circuit
     let exists = if testcmd {
-        which(&file).is_some()
+        whence_finds(&file)
     } else {
         Path::new(&file).exists()
     };
@@ -346,25 +346,40 @@ fn whence_wm_capture(pattern: &str) -> String {
     })
 }
 
-/// `whence` substitute — search $PATH for `file`.
-fn which(file: &str) -> Option<String> {
-    if file.contains('/') {
-        if Path::new(file).is_file() {
-            return Some(file.to_string());
-        }
-        return None;
-    }
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        if dir.is_empty() {
-            continue;
-        }
-        let candidate = format!("{}/{}", dir, file);
-        if Path::new(&candidate).is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+/// sh:46's `whence "$file" >&/dev/null` — is `$file` a command at all?
+///
+/// Only the exit status is wanted, which is why upstream throws both streams
+/// away, so this runs the REAL [`bin_whence`] with no options and discards
+/// the output the same way.
+///
+/// It used to be a hand-rolled `$PATH` scan, and a `$PATH` scan is not what
+/// `whence` answers. With no options `bin_whence` walks reserved words,
+/// aliases, shell functions, builtins and only THEN `cmdnamtab`/`$PATH`
+/// (c:Src/builtin.c:4030-4073) — so every name that is a command without
+/// being a FILE was reported missing, sh:45's short-circuit was skipped, and
+/// the word fell through to the approximate-match loop. Measured against
+/// zsh 5.9.2 on the Cellar completion tree:
+///
+/// ```text
+/// _correct_filename '=print'      zsh: print       zshrs: =print =printf =printf =zprint
+/// _correct_filename '=setopt'     zsh: setopt      zshrs: =setopt =getopt
+/// _correct_filename '=zmodload'   zsh: zmodload    zshrs: =zmodload
+/// _correct_filename '=while'      zsh: while       zshrs: =while
+/// _correct_filename '=ls'         zsh: ls          zshrs: ls
+/// ```
+///
+/// `ls` agreed because it is the one of the five that is also a file. The
+/// two shells' `whence` and `whence -wm` output was byte-identical
+/// throughout, so the builtin was never the problem — only this substitute
+/// for it.
+fn whence_finds(file: &str) -> bool {
+    let mut found = false;
+    // `>&/dev/null` — both streams. `whence` with no options is funcid 0
+    // (c:Src/builtin.c:132) and every flag bit stays clear.
+    let _ = capture_builtin_stdout(true, || {
+        found = bin_whence("whence", &[file.to_string()], &make_ops(), 0) == 0;
+    });
+    found
 }
 
 #[cfg(test)]
