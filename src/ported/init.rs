@@ -1519,10 +1519,37 @@ pub fn init_signals() {
         #[cfg(not(target_os = "haiku"))]
         {
             install_handler(libc::SIGWINCH); // c:1424
-                                             // c:1425 — `winch_block()`. SIGWINCH unblocked at the
-                                             // prompt-display boundary (preprompt at utils.c). Not
-                                             // yet modeled — leaves SIGWINCH unblocked, the safe
-                                             // default for non-resize-aware redraw paths.
+                                            // c:1425 — `winch_block(); /* See utils.c:preprompt() */`
+                                            //
+                                            // The standing block is the whole delivery policy for
+                                            // SIGWINCH: from here on the handler runs ONLY inside an
+                                            // explicit unblock window — `preprompt` (c:Src/utils.c:1540),
+                                            // `raw_getbyte`'s poll/read (c:Src/Zle/zle_main.c:588/850,
+                                            // ported at zle/zle_main.rs:504/648/757) and `readoutput`
+                                            // (c:Src/input.c:277). C's remaining unblocks
+                                            // (c:Src/exec.c:533/571/576/586/590/632) are not windows at
+                                            // all: they sit in the forked child immediately before
+                                            // `execve`, and only decide the mask the new program
+                                            // inherits. Everywhere else — a widget body, and
+                                            // so the whole of completion — a resize stays PENDING and
+                                            // `zterm_columns`/`zterm_lines` hold the geometry the
+                                            // current redraw started with.
+                                            //
+                                            // Without it the block existed only as a SIDE EFFECT of
+                                            // `raw_getbyte` re-blocking after each read
+                                            // (zle_main.rs:507/654/762): every unblock happened to be
+                                            // paired, so the mask happened to be right. Any UNPAIRED
+                                            // unblock then disarms SIGWINCH for the rest of the
+                                            // session — `zexecve_recover` had four (vm_helper.rs,
+                                            // c:565/570/580/584/626, child-side in C).
+                                            //
+                                            // With the handler free to run inside a widget,
+                                            // `adjustwinsize(1)` lands in the middle of `calclist` and
+                                            // display strings built against 80 columns get counted
+                                            // against the new 60: `git <TAB>` across a 24x80 -> 24x60
+                                            // resize asks "see all 164 possibilities (251 lines)?" for
+                                            // 164 one-line matches (zsh: 153/153).
+            crate::ported::signals_h::winch_block(); // c:1425
         }
 
         // c:1427-1431 — interactive-only handlers.
