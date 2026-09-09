@@ -12027,7 +12027,33 @@ pub fn paramsubst(
                                        // `/pat/rep`/`//pat/rep` substitution, prefix/suffix strip
                                        // `#`/`%`/`##`/`%%`, and any combination — paramsubst
                                        // applies them in their canonical order.
-            let raw_value_for_len = {
+                                       // c:Src/subst.c:2808-2859 + c:3856 — `getlen` is a FLAG parsed at
+                                       // c:2589 and applied at the very END of paramsubst (c:3856), long
+                                       // after the `wantt` arm has replaced `val` with the type tag
+                                       // (c:2853 `val = tag`) and cleared `isarr` (c:2859 `isarr = 0;`).
+                                       // So `${(t)#a}` counts the characters of "array" (5), NOT the two
+                                       // elements of `a`. C reaches the scalar branch at c:3876-3881
+                                       // because `isarr` is 0.
+                                       //
+                                       // The Rust port computes the length EARLY and returns, so obtain
+                                       // the tag by re-entering paramsubst with the same name + subscript
+                                       // + operator chain, keeping `(t)` and dropping the `#` — the same
+                                       // re-entry the modifier chain below already uses. The scalar
+                                       // branch (`is_array_source` forced false via `wantt` below) then
+                                       // counts that string, matching c:3877-3878.
+            let raw_value_for_len = if wantt {
+                // The re-entry body keeps the TOKENIZED tail (`rest_raw`), not
+                // the token-folded `rest`: with `Pound` folded back to a plain
+                // `#`, `:#pat` reads as C's `${PARAM:OFFSET}` arm (c:3622)
+                // instead of the c:3540 filter, so `${(t)#arr:#array}` measured
+                // `${(t)arr:2}` — "ray", 3 — instead of the filtered-away "".
+                if let Some(sub) = subscript.as_deref() {
+                    // c:3878
+                    singsub(&format!("${{(t){}[{}]{}}}", var_name, sub, rest_raw))
+                } else {
+                    singsub(&format!("${{(t){}{}}}", var_name, rest_raw)) // c:3878
+                }
+            } else {
                 let r = rest.as_str();
                 // Pre-modifier shortcuts for the colon-default /
                 // colon-alt operators that work on the raw value
@@ -12201,6 +12227,10 @@ pub fn paramsubst(
             // element count) instead of collapsing to element-0's char
             // length (1). subexp_array_temp is Some only on that path.
             let ksh_scalar_array = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                // c:2859 — the `(t)` arm already cleared `isarr`, so the
+                // KSHARRAYS bare-array scalarization has nothing to clamp;
+                // `raw_value_for_len` is the type tag, not element 1.
+                && !wantt
                 && subscript.is_none()
                 && !flagged_array_subscript
                 && magic_keys.is_none()
@@ -12223,7 +12253,11 @@ pub fn paramsubst(
             } else {
                 raw_value_for_len
             };
+            // c:2859 `isarr = 0;` — after the `(t)` arm the value is a plain
+            // scalar tag, so c:3856's `if (isarr)` element-count branch is
+            // never taken; the scalar char-count arm at c:3876 runs instead.
             let is_array_source = !ksh_scalar_array
+                && !wantt
                 && (((arrays_contains(&var_name)
                     || assoc_contains(&var_name)
                     || magic_keys.is_some())

@@ -394,6 +394,95 @@ set -- ${(t)arr}; print $#"#,
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// `${(t)#…}` — the length operator counts the TYPE STRING
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `getlen` is a FLAG, parsed at `c:2589` and applied at the very END of
+/// `paramsubst` (`c:3856`) — after the `(t)` arm has already replaced
+/// `val` with the tag (`c:2818-2854`) and cleared `isarr` (`c:2859`). So
+/// `${(t)#arr}` reaches c:3876's SCALAR branch and answers 5, the length
+/// of "array", not 2, the element count. Answering the element count
+/// means the length ran on the parameter before `(t)` displaced it.
+#[test]
+fn the_length_operator_counts_the_type_string_not_the_elements() {
+    assert_parity(
+        r#"typeset s=v; typeset -a arr=(x y); typeset -A h=(k v); integer n=1
+print "[${(t)#s}]" "[${(t)#arr}]" "[${(t)#h}]" "[${(t)#n}]""#,
+    );
+    assert_parity(r#"typeset -a arr=(x y); print "[${#${(t)arr}}]" "[${(t)#arr}]""#);
+}
+
+/// The attribute suffixes are part of the counted string: `-export` and
+/// `-readonly` (c:2839-2846) are `dyncat`'d onto the tag BEFORE c:3856
+/// measures it, so an exported scalar is 13 (`scalar-export`) and a
+/// readonly one 15 (`scalar-readonly`).
+#[test]
+fn the_length_operator_counts_the_attribute_suffixes_too() {
+    assert_parity(
+        r#"export EV_ZZZ=q; typeset -r RO_ZZZ=z
+print "[${(t)#EV_ZZZ}]" "[${(t)#RO_ZZZ}]""#,
+    );
+    assert_parity(r#"f() { local lv=1; print "[${(t)#lv}]" }; f"#);
+}
+
+/// c:2859 `isarr = 0` also kills the element-count branch for the splat
+/// and range subscripts, which normally KEEP array shape: `${(t)#arr[@]}`
+/// is 5 (the whole tag) and `${(t)#arr[2,4]}` is 3 (`rra`), where the
+/// non-`(t)` spellings are 2 and 1.
+#[test]
+fn splat_and_range_subscripts_still_count_the_tag() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)#arr[@]}]" "[${(t)#arr[*]}]" "[${(t)#arr[2,4]}]" "[${(t)#arr[1]}]" "[${(t)#arr[9]}]""#,
+    );
+    assert_parity(
+        r#"typeset -A h=(k v)
+print "[${(t)#h[k]}]" "[${(t)#h[nosuch]}]""#,
+    );
+}
+
+/// An EMPTY array still has the type: c:2813's test is on the param's
+/// flags, not on its contents, so `${(t)#arr}` on `arr=()` is 5 while
+/// the plain `${#arr}` is 0.
+#[test]
+fn an_empty_array_still_counts_its_tag() {
+    assert_parity(r#"typeset -a arr=(); print "[${(t)#arr}]" "[${#arr}]""#);
+}
+
+/// The operator block runs BETWEEN the tag and the length (`c:2868`
+/// subscripts, then the c:3000+ operators, then c:3856), so `:u` upcases
+/// the tag and the count is of the RESULT.
+#[test]
+fn operators_apply_before_the_length_is_taken() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print "[${(t)#arr:u}]" "[${(t)#arr[1]:-D}]" "[${(t)#h[k]:-D}]" "[${(t)#arr:#array}]""#,
+    );
+}
+
+/// KSHARRAYS scalarizes a bare array name to element 1 (params.c:1616),
+/// which is why `${#arr}` is 1 there — but `(t)` cleared `isarr` first,
+/// so there is nothing to scalarize and `${(t)#arr}` stays 5.
+#[test]
+fn ksharrays_does_not_scalarize_the_tag() {
+    assert_parity(
+        r#"setopt ksharrays; typeset -a arr=(x y)
+print "[${(t)#arr}]" "[${#arr}]" "[${(t)arr}]""#,
+    );
+}
+
+/// The plain, non-`(t)` length forms must be untouched by all of the
+/// above: element count for an array, char count for a scalar or a
+/// picked element.
+#[test]
+fn the_plain_length_forms_do_not_regress() {
+    assert_parity(
+        r#"typeset s=abc; typeset -a arr=(x yy zzz); typeset -A h=(k v j w)
+print "[${#s}]" "[${#arr}]" "[${#arr[1]}]" "[${#arr[3]}]" "[${#arr[@]}]" "[${#arr[2,3]}]" "[${#h}]" "[${#h[k]}]""#,
+    );
+}
+
 /// c:2859 `isarr = 0` kills the c:3422 per-element leg of the `:#`
 /// filter, so it tests the TAG once and c:3451's scalar `getmatch` runs.
 /// The double-quoted spelling already joined to a scalar and agreed; the
