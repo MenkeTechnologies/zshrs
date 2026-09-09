@@ -54,10 +54,11 @@
 //! branch through the real [`crate::ported::builtin::bin_whence`] (see
 //! [`whence_wm_approx`]).
 
+use crate::compsys::ported::shared::capture_builtin_stdout;
 use crate::ported::builtin::bin_whence;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::params::{getiparam, getsparam, setsparam};
-use crate::ported::utils::{gettempfile, quotestring};
+use crate::ported::utils::quotestring;
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS, QT_BACKSLASH_PATTERN};
@@ -322,42 +323,19 @@ fn whence_wm_approx(approx: usize, file: &str) -> Vec<String> {
 
 /// sh:60's `$( whence -wm "…" 2>/dev/null )`.
 ///
-/// Runs the REAL [`bin_whence`] with fd 1 pointed at a [`gettempfile`] buffer
-/// and fd 2 at `/dev/null` — the idiom `_parameters`' `typeset_m_capture`
-/// establishes (_parameters.rs:186-212) — rather than
-/// `exec::run_command_substitution`, which deep-clones the whole shell state for
-/// every `$( … )`. Going through the builtin keeps the scanned set (aliases,
-/// reserved words, shell functions, builtins, then `cmdnamtab`; c:4030-4073)
-/// in ONE place instead of re-enumerating `$PATH` here with a second, narrower
-/// idea of what a command is.
+/// Runs the REAL [`bin_whence`] through [`capture_builtin_stdout`] — with
+/// `discard_stderr` for sh:60's own `2>/dev/null`, which throws away whatever
+/// the builtin warns about (a pattern that fails to compile, most of all) —
+/// rather than `exec::run_command_substitution`, which deep-clones the whole
+/// shell state for every `$( … )`. Going through the builtin keeps the scanned
+/// set (aliases, reserved words, shell functions, builtins, then `cmdnamtab`;
+/// c:4030-4073) in ONE place instead of re-enumerating `$PATH` here with a
+/// second, narrower idea of what a command is.
 ///
-/// A temp FILE, not a pipe: `whence -m` over a large `$PATH` can outgrow a 64K
-/// pipe buffer with nobody draining the read end.
-///
-/// Returns the captured text, or the empty string if the buffer cannot be
-/// created or fd 1 cannot be redirected — which leaves `trylist` empty and
+/// An empty return (see [`capture_builtin_stdout`]) leaves `trylist` empty and
 /// sends sh:56's loop to the next `approx`, adding nothing wrong.
 fn whence_wm_capture(pattern: &str) -> String {
-    let (fd, path) = match gettempfile(None) {
-        Some(t) => t,
-        None => return String::new(),
-    };
-    // Flush FIRST: `println!` writes through a `LineWriter` over fd 1, and
-    // anything still buffered from before the redirect would land in the
-    // capture instead of on the terminal.
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    let saved_out = unsafe { libc::dup(1) };
-    let saved_err = unsafe { libc::dup(2) };
-    let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
-    let redirected = saved_out >= 0 && unsafe { libc::dup2(fd, 1) } >= 0;
-    if redirected {
-        // `2>/dev/null` — sh:60 discards whatever the builtin warns about
-        // (a pattern that fails to compile, most of all).
-        if devnull >= 0 && saved_err >= 0 {
-            unsafe {
-                libc::dup2(devnull, 2);
-            }
-        }
+    capture_builtin_stdout(true, || {
         // `whence -w -m PATTERN`: both bits are `OPT_MINUS`, i.e. `ind[c] & 1`
         // (c:Src/zsh.h:1402). `whence`'s builtin-table funcid is 0
         // (builtin.rs:17615, c:Src/builtin.c:132).
@@ -365,30 +343,7 @@ fn whence_wm_capture(pattern: &str) -> String {
         ops.ind[b'w' as usize] = 1;
         ops.ind[b'm' as usize] = 1;
         let _ = bin_whence("whence", &[pattern.to_string()], &ops, 0);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        unsafe {
-            libc::dup2(saved_out, 1);
-        }
-        if devnull >= 0 && saved_err >= 0 {
-            unsafe {
-                libc::dup2(saved_err, 2);
-            }
-        }
-    }
-    for f in [saved_out, saved_err, devnull, fd] {
-        if f >= 0 {
-            unsafe {
-                libc::close(f);
-            }
-        }
-    }
-    let text = if redirected {
-        std::fs::read_to_string(&path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let _ = std::fs::remove_file(&path);
-    text
+    })
 }
 
 /// `whence` substitute — search $PATH for `file`.

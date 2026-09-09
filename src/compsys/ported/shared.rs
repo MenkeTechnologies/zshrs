@@ -1079,6 +1079,147 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     127 // c:908 — `_exit((eno == EACCES || eno == ENOEXEC) ? 126 : 127)`
 }
 
+// =====================================================================
+// `$( <builtin> )` — capturing a builtin's stdout without a subshell.
+// =====================================================================
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// The `$( … )` around a BUILTIN, for the ports whose upstream source
+/// reads a builtin's stdout: `_limits` sh:5 `$(limit)`, `_parameters`
+/// sh:34 `$( typeset -m … )`, `_correct_filename` sh:60
+/// `$(whence -wm …)`, `_user_math_func` sh:6 `$(functions -M)`.
+///
+/// C has no counterpart because C never needs one — a shell has no way
+/// to reach a builtin's stdout EXCEPT a command substitution, so
+/// upstream pays for a fork and a full parse to read a table the same
+/// process already holds. `exec::run_command_substitution` reproduces
+/// that faithfully, including the deep clone of all shell state that
+/// every real `$( … )` performs; on a completer that runs per keystroke
+/// the clone is the entire cost. This runs the builtin in-process with
+/// fd 1 pointed at a scratch file instead, which reaches the identical
+/// bytes.
+///
+/// It exists so there is ONE of these. Two hand-rolled copies had
+/// already appeared (`_parameters`, then `_correct_filename` explicitly
+/// copying it), and each got to decide independently whether to restore
+/// fd 1 on the failure path, whether to flush first, and whether to
+/// delete the scratch file.
+///
+/// A temp FILE, not a pipe: these listings are unbounded (`typeset -m`
+/// over `$PATH`/`$LS_COLORS`, `whence -m` over a large `$PATH`) and a
+/// pipe would deadlock the moment the output outgrew its 64K buffer
+/// with nobody draining the read end.
+///
+/// `discard_stderr` is the `2>/dev/null` some of those call sites write.
+///
+/// Returns what the builtin printed, or the empty string if the scratch
+/// file cannot be made or fd 1 cannot be redirected — in which case the
+/// builtin is NOT run, so a failure here adds nothing wrong, it only
+/// leaves the caller with no candidates.
+pub fn capture_builtin_stdout(discard_stderr: bool, run: impl FnOnce()) -> String {
+    let (fd, path) = match crate::ported::utils::gettempfile(None) {
+        Some(t) => t,
+        None => return String::new(),
+    };
+    // Flush FIRST: `println!` writes through a `LineWriter` over fd 1, and
+    // anything still buffered from before the redirect would otherwise land
+    // in the capture instead of on the terminal.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let saved_out = unsafe { libc::dup(1) };
+    let saved_err = if discard_stderr {
+        unsafe { libc::dup(2) }
+    } else {
+        -1
+    };
+    let devnull = if discard_stderr {
+        unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) }
+    } else {
+        -1
+    };
+    let redirected = saved_out >= 0 && unsafe { libc::dup2(fd, 1) } >= 0;
+    if redirected {
+        let err_redirected =
+            devnull >= 0 && saved_err >= 0 && unsafe { libc::dup2(devnull, 2) } >= 0;
+        run();
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        unsafe {
+            libc::dup2(saved_out, 1);
+        }
+        if err_redirected {
+            unsafe {
+                libc::dup2(saved_err, 2);
+            }
+        }
+    }
+    for f in [saved_out, saved_err, devnull, fd] {
+        if f >= 0 {
+            unsafe {
+                libc::close(f);
+            }
+        }
+    }
+    let text = if redirected {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = std::fs::remove_file(&path);
+    text
+}
+
+#[cfg(test)]
+mod capture_builtin_stdout_tests {
+    use super::*;
+
+    /// RUST-ONLY test scaffold: write straight to the fd. A ported builtin
+    /// reaches fd 1 through `println!`, but libtest replaces the `print!`
+    /// macros' sink (`std::io::set_output_capture`), so a `println!` here
+    /// would never reach the redirect and the test would measure libtest
+    /// rather than this function.
+    fn write_fd(fd: i32, s: &str) {
+        unsafe {
+            libc::write(fd, s.as_ptr() as *const libc::c_void, s.len());
+        }
+    }
+
+    /// The captured text is what the builtin printed, and fd 1 is the
+    /// caller's again afterwards.
+    #[test]
+    fn captures_stdout_and_restores_fd1() {
+        let _g = crate::test_util::global_state_lock();
+
+        let text = capture_builtin_stdout(false, || {
+            write_fd(1, "one\ntwo\n");
+        });
+
+        assert_eq!(text, "one\ntwo\n");
+        // fd 1 still writes somewhere valid — a leaked redirect shows up
+        // as an EBADF here, and as vanished output for the rest of the
+        // process.
+        assert!(
+            unsafe { libc::fcntl(1, libc::F_GETFD) } >= 0,
+            "fd 1 was not restored"
+        );
+    }
+
+    /// `2>/dev/null` on the call site must keep stderr OUT of the capture
+    /// and must not leave fd 2 pointing at `/dev/null` afterwards.
+    #[test]
+    fn discard_stderr_leaves_fd2_usable() {
+        let _g = crate::test_util::global_state_lock();
+        let text = capture_builtin_stdout(true, || {
+            write_fd(1, "out\n");
+            write_fd(2, "this must not be captured\n");
+        });
+        assert_eq!(text, "out\n");
+        assert!(
+            unsafe { libc::fcntl(2, libc::F_GETFD) } >= 0,
+            "fd 2 was not restored"
+        );
+    }
+}
+
 #[cfg(test)]
 mod lineno_scope_tests {
     use super::*;

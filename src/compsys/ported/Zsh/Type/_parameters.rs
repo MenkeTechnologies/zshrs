@@ -65,13 +65,13 @@
 
 use crate::compsys::ported::_describe::_describe;
 use crate::compsys::ported::_description::_description;
-use crate::compsys::ported::shared::{zstyle_t, LocalScope};
+use crate::compsys::ported::shared::{capture_builtin_stdout, zstyle_t, LocalScope};
 use crate::ported::builtin::{bin_typeset, BIN_TYPESET};
-use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::modules::parameter::scanpmparameters;
+use crate::ported::modules::zutil::{bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::utils::{gettempfile, quotestring};
+use crate::ported::utils::quotestring;
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{
@@ -215,21 +215,11 @@ fn verbose_line(line: &str) -> String {
 /// Only the `$( … )` plumbing is replaced. Upstream needs a command
 /// substitution because a shell has no other way to get a builtin's stdout
 /// into an array (and needs `-m` because a bare `typeset NAME` inside a
-/// function DECLARES instead of printing — sh:29-32's own comment). The port
-/// points fd 1 at a [`gettempfile`] buffer for the duration of the call
-/// instead, which reaches the identical bytes without the whole-shell-state
-/// clone that `exec::run_command_substitution` performs for every real
-/// `$( … )` — a cost that would otherwise be paid on every keystroke that
-/// completes a parameter name.
-///
-/// A temp FILE rather than a pipe: the listing is unbounded (`$PATH`,
-/// `$fpath`, `$LS_COLORS` are each already kilobytes) and a pipe would
-/// deadlock the moment the output outgrew its 64K buffer with nobody draining
-/// the read end.
-///
-/// Returns the captured text; the empty string if the buffer cannot be
-/// created or fd 1 cannot be redirected, which leaves `verbose` empty and
-/// costs sh:36 its descriptions but adds nothing wrong.
+/// function DECLARES instead of printing — sh:29-32's own comment).
+/// [`capture_builtin_stdout`] reaches the identical bytes in-process; see
+/// there for why that is not a pipe and what an empty return means. Here an
+/// empty return leaves `verbose` empty and costs sh:36 its descriptions,
+/// adding nothing wrong.
 fn typeset_m_capture(names: &[String]) -> String {
     // `${(@b)described}` — c:Src/subst.c:2259 sets `QT_BACKSLASH_PATTERN`,
     // whose body (c:Src/utils.c:6242-6248) backslash-escapes the pattern
@@ -240,17 +230,7 @@ fn typeset_m_capture(names: &[String]) -> String {
         .map(|n| quotestring(n, QT_BACKSLASH_PATTERN))
         .collect();
 
-    let (fd, path) = match gettempfile(None) {
-        Some(t) => t,
-        None => return String::new(),
-    };
-    // Flush FIRST: `println!` writes through a `LineWriter` over fd 1, and
-    // anything still buffered from before the redirect would otherwise land
-    // in the capture instead of on the terminal.
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    let saved = unsafe { libc::dup(1) };
-    let redirected = saved >= 0 && unsafe { libc::dup2(fd, 1) } >= 0;
-    if redirected {
+    capture_builtin_stdout(false, || {
         // `typeset -m` — the `-m` bit is `OPT_MINUS`, i.e. `ind[c] & 1`
         // (`Src/zsh.h:1402`). `m` is not in `TYPESET_OPTSTR`
         // (`Src/zsh.h:1947`, "aiEFALRZlurtxUhHT"), so it contributes no
@@ -259,26 +239,7 @@ fn typeset_m_capture(names: &[String]) -> String {
         let mut ops = make_ops();
         ops.ind[b'm' as usize] = 1;
         let _ = bin_typeset("typeset", &quoted, &ops, BIN_TYPESET);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        unsafe {
-            libc::dup2(saved, 1);
-        }
-    }
-    if saved >= 0 {
-        unsafe {
-            libc::close(saved);
-        }
-    }
-    unsafe {
-        libc::close(fd);
-    }
-    let text = if redirected {
-        std::fs::read_to_string(&path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let _ = std::fs::remove_file(&path);
-    text
+    })
 }
 
 /// Call `_parameters` by NAME, the way the upstream shell code does.
