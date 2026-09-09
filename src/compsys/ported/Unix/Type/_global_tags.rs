@@ -15,6 +15,14 @@ use crate::ported::params::{getsparam, setaparam};
 /// `_global_tags` — complete GNU GLOBAL tags via `global --completion`.
 pub fn _global_tags(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_global_tags");
+    // sh:3 — `local expl tags`, a plain `local`, so kind 0. `tags` is
+    // assigned with `setaparam` at rs:31 and `expl` is filled by
+    // `_description` through the name handed to `_wanted` at rs:36; both
+    // were born at level 0 (shared.rs:16-30). Measured on `lkgtags
+    // <TAB>`: zsh leaves both unset, zshrs left both populated. The name
+    // `tags` is a particularly bad one to leak — it shadows the caller's
+    // own `tags` in any completer that uses that spelling.
+    crate::compsys::ported::shared::declare_locals(&["expl", "tags"], 0);
     // sh:5 — run the helper, split its stdout into words.
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let _ = call_program_capture(&[

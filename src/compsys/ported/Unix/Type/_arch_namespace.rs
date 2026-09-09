@@ -97,6 +97,31 @@ fn strip_before_dashes(s: &str) -> &str {
 /// `_arch_namespace` — entry (sh:105 `_arch_namespace "$@"`).
 pub fn _arch_namespace(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_arch_namespace");
+    // sh:11 — `local suffix expl archive=`$ARCHCMD my-default-archive 2> /d…`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_arch_namespace` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:11 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+    // sh:95 — `local completions c`, inside
+    // `_arch_namespace_revisions`. The Rust `arch_namespace_revisions`
+    // (rs:273) is a plain Rust fn with no param scope of its own, so its
+    // `setaparam("completions", …)` at rs:300 created the name at level 0
+    // (shared.rs:16-30) and it outlived the completion; this frame is the
+    // nearest one that gets unwound. `c` is sh:95's loop variable and
+    // stays Rust-side, and sh:11/50/70's `suffix expl` are never written
+    // by name (rs:86's `expl()` builds the array Rust-side).
+    crate::compsys::ported::shared::declare_locals(&["completions"], 0);
     let Some(archcmd) = args.first().cloned() else {
         return 1;
     };

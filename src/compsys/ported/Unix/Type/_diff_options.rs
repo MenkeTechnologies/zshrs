@@ -119,6 +119,23 @@ pub fn _diff_palette(_args: &[String]) -> i32 {
 /// `_diff_options` — option completion for GNU / BSD / Solaris `diff`.
 pub fn _diff_options(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_diff_options");
+    // sh:3 — `local of ofwuc ouc oss ofwy ofwg ofwl cmd variant ign`, a
+    // plain `local`, so kind 0.
+    //
+    // `variant` is not written by this port directly: sh:28 is
+    // `_pick_variant -r variant -c $cmd gnu=GNU unix -v`, and
+    // `_pick_variant` STORES THROUGH THE NAME its `-r` argument gives it
+    // (rs:133-136 passes "variant"). That store lands wherever the name
+    // lives, so sh:3's `local` is the only thing that confines it. Without
+    // it the name was created at level 0 (shared.rs:16-30). Measured on
+    // `lkdiffopt <TAB>` against a `_diff_options diff` wrapper:
+    //
+    //   zsh  : variant absent
+    //   zshrs: variant present (`gnu` / `unix`)
+    //
+    // The rest of sh:3 and sh:4's `args` stay Rust-side, and sh:11's
+    // `local -a suf` belongs to the nested `_diff_options_*` helper.
+    crate::compsys::ported::shared::declare_locals(&["variant"], 0);
     // sh:6 — first arg is the diff command name; the rest pass through.
     if args.is_empty() {
         return 1;

@@ -38,6 +38,22 @@ const SCRIPT: &str =
 /// `_python_modules` — complete importable Python module names.
 pub fn _python_modules(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_python_modules");
+    // sh:11 — `local update_policy python expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_python_modules` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:11 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:13 — pick the interpreter from the command word.
     let cmd = getaparam("words")
         .unwrap_or_default()

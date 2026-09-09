@@ -124,6 +124,17 @@ fn has(vals: &[String], needle: &str) -> bool {
 /// snapshots, …).
 pub fn _zfs_dataset(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_zfs_dataset");
+    // sh:4 — `local -a typearg datasetlist expl mlist`. `datasetlist` is
+    // assigned with `setaparam` at rs:284 and rs:319, `expl` is filled by
+    // `_description` at rs:281/rs:317; both were born at level 0
+    // (shared.rs:16-30). `typearg` and `mlist` stay Rust-side, and sh:3's
+    // `type`/`suf`/`rsrc`/`rdst`/`paths_allowed` are never written by
+    // name. Measured on `lkzfs <TAB>`: zsh leaves both unset, zshrs left
+    // both populated.
+    crate::compsys::ported::shared::declare_locals(
+        &["datasetlist", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let opts = parse_opts(args);
     let implementation = getsparam("implementation").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();

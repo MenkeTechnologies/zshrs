@@ -70,6 +70,18 @@ fn match1() -> String {
 /// `_urls` — complete URLs from a filesystem URL database and styles.
 pub fn _urls(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_urls");
+    // sh:40 — `local ipre scheme host user uhosts ret=1 expl match glob
+    // suf`, a plain `local`, so kind 0. `uhosts` is assigned with
+    // `setaparam` at rs:392 and `expl` is filled by `_description`
+    // through the name handed to `_wanted` in nine places; both routed
+    // through `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The rest of sh:40 stays Rust-side.
+    //
+    // `urls` (rs:105) is NOT declared here: sh:47's `zstyle -a … urls
+    // urls` writes the caller-visible name upstream too, and the measured
+    // run showed zsh gaining `urls` where zshrs did not — the opposite
+    // direction, and a separate divergence from this one.
+    crate::compsys::ported::shared::declare_locals(&["expl", "uhosts"], 0);
     let curcontext = get("curcontext");
     let ctx = format!(":completion:{}:urls", curcontext);
     let mut ret = 1;

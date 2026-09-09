@@ -155,6 +155,25 @@ fn apply_max_matches(mut rows: i64, limits: &[String], lines: i64) -> i64 {
 /// menu-select.
 pub fn _dates(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_dates");
+    // sh:14 — `local -a disp cand expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_dates` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // PM_ARRAY, as sh:14 spells `local -a`.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let dctx = format!(":completion:{}:dates", curcontext);
 

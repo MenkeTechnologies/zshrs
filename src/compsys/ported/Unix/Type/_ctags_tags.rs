@@ -20,6 +20,13 @@ use crate::ported::params::setaparam;
 /// `_ctags_tags` — complete tag names from a ctags `tags` file in $PWD.
 pub fn _ctags_tags(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ctags_tags");
+    // sh:3 — `local expl tags`, a plain `local`, so kind 0. Same defect
+    // and same names as `_global_tags`: `setaparam` at rs:36 creates
+    // `tags` at level 0 (shared.rs:16-30) and `expl` is filled by
+    // `_description` through the name handed to `_wanted` at rs:41.
+    // Measured on `lkctags <TAB>`: zsh leaves both unset, zshrs left both
+    // populated.
+    crate::compsys::ported::shared::declare_locals(&["expl", "tags"], 0);
     // sh:5  [[ -r tags ]] && tags=( ${${${(f)"$(< tags)"}:#!*}%%[[:blank:]]*} )
     let tags: Vec<String> = std::fs::read_to_string("tags")
         .map(|body| {

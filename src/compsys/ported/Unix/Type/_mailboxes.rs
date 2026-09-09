@@ -322,6 +322,15 @@ pub fn _mua_mailboxes(args: &[String]) -> i32 {
         &["mbox_names"],
         crate::compsys::ported::shared::PM_ARRAY | crate::compsys::ported::shared::PM_UNIQUE,
     );
+    // sh:108 `local -a mbox_short` — the line above sh:109, and missed
+    // by the declaration above. `_multi_parts` reads `mbox_names` by
+    // name, `compadd -a` reads `mbox_short` by name (rs:479), and both
+    // `setaparam` calls route through `createparam(name, PM_SCALAR)` with
+    // no PM_LOCAL (shared.rs:16-30). Plain PM_ARRAY: sh:108 has no `-U`.
+    crate::compsys::ported::shared::declare_locals(
+        &["mbox_short"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
     let maildirectory = tilde(
@@ -490,6 +499,22 @@ pub fn _mua_mailboxes(args: &[String]) -> i32 {
 /// `_mailboxes` — complete mailbox specifications / files for mail clients.
 pub fn _mailboxes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mailboxes");
+    // sh:5 — `local expl ret=1`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_mailboxes` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:5 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let mut ret = 1;
 

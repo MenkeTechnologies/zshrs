@@ -84,6 +84,22 @@ fn slice_1based(v: &[String], first: i32, last: i32) -> Vec<String> {
 /// `_signals` — complete signal names (optionally `-`/`SIG` prefixed).
 pub fn _signals(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_signals");
+    // sh:11 — `local expl minus pre sigs`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_signals` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:11 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:14  zparseopts -D -K -E 'p=minus' 'a=last' 's=pre'
     let has_p = args.iter().any(|a| a == "-p");
     let has_a = args.iter().any(|a| a == "-a");

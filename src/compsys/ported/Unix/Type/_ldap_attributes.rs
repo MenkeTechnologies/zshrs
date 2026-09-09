@@ -126,6 +126,15 @@ fn x_to_lower(v: &[String]) -> Vec<String> {
 /// `_ldap_attributes` — complete LDAP attribute names (non-exhaustive).
 pub fn _ldap_attributes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ldap_attributes");
+    // sh:3 — `local -a expl attrs`. `attrs` is assigned with `setaparam`
+    // at rs:136 and `expl` is filled by `_description` through the name
+    // handed to `_wanted` at rs:132; both were born at level 0
+    // (shared.rs:16-30). Measured on `lkldapattr <TAB>`: zsh leaves both
+    // unset, zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl", "attrs"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:25
     let _ = _description(&[
         "ldap-attributes".to_string(),

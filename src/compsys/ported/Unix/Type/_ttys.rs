@@ -115,6 +115,25 @@ fn compadd_plan(
 /// `_ttys` — complete terminal device names.
 pub fn _ttys(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ttys");
+    // sh:9 — `local -a ttys expl pre`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_ttys` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // PM_ARRAY, as sh:9 spells `local -a`.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:12  zparseopts -D -K -E d=stripdev D=optdev o=open
     let stripdev = args.iter().any(|a| a == "-d");
     let optdev = args.iter().any(|a| a == "-D");

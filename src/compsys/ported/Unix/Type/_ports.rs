@@ -48,6 +48,13 @@ fn parse_services() -> Vec<String> {
 /// `/etc/services`.
 pub fn _ports(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_ports");
+    // sh:3 — `local expl ports`, a plain `local`, so kind 0. `ports` is
+    // assigned with `setaparam` at rs:63, `expl` is filled by
+    // `_description` through the name handed to `_wanted` at rs:66; both
+    // were created at level 0 (shared.rs:16-30). Measured on `lkports
+    // <TAB>`: zsh leaves both unset, zshrs left both populated.
+    // `_cache_ports` stays global — sh:6 declares it `typeset -ga`.
+    crate::compsys::ported::shared::declare_locals(&["expl", "ports"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     // sh:5  zstyle -a ":completion:${curcontext}:" ports ports
     let mut ports = lookupstyle(&format!(":completion:{}:", curcontext), "ports");

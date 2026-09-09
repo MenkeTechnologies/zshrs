@@ -59,6 +59,22 @@ fn parse_syscall_line(line: &str) -> Option<String> {
 /// `_sys_calls` — complete system-call names from `<sys/syscall.h>`.
 pub fn _sys_calls(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_sys_calls");
+    // sh:8 — `local expl all none`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_sys_calls` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:8 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:12  zparseopts -D -K -E a=all n=none
     let all = args.iter().any(|a| a == "-a");
     let none = args.iter().any(|a| a == "-n");

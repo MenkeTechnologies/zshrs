@@ -24,6 +24,12 @@ use crate::ported::params::{getsparam, setaparam};
 /// `_locales` — complete installed locale names.
 pub fn _locales(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_locales");
+    // sh:3 — `local expl locales`, a plain `local`, so kind 0. `locales`
+    // is assigned with `setaparam` at rs:58 and `expl` is filled by
+    // `_description` through the name handed to `_wanted` at rs:61; both
+    // were born at level 0 (shared.rs:16-30). Measured on `lklocales
+    // <TAB>`: zsh leaves both unset, zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(&["expl", "locales"], 0);
     // sh:5-6  $(_call_program locales locale -a) — REPLY carries stdout.
     let _ = call_program_capture(&[
         "locales".to_string(),

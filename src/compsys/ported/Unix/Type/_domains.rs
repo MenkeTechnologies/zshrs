@@ -33,6 +33,22 @@ use crate::ported::params::{getaparam, getsparam, setaparam};
 /// (`domain` / `search` lines), cached in `$_cache_domains`.
 pub fn _domains(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_domains");
+    // sh:3 — `local expl domains tmp`, a plain `local`, so kind 0.
+    // `domains` is assigned with `setaparam` at rs:70 and `expl` is
+    // filled by `_description` through the name this port hands `_wanted`
+    // at rs:73; both routed through `createparam(name, PM_SCALAR)` with
+    // no PM_LOCAL (shared.rs:16-30), so they were born at level 0 and
+    // survived the completion. `tmp` stays Rust-side. Measured on
+    // `lkdomains <TAB>` against a `_domains` wrapper, `${(k)parameters}`
+    // diffed after the completion returned:
+    //
+    //   zsh  : domains absent, expl absent
+    //   zshrs: domains present, expl present
+    //
+    // `_cache_domains` is deliberately NOT here: sh:6's `typeset -ga
+    // _cache_domains` is a cache that zsh keeps global too, and both
+    // shells gained it in the same measurement.
+    crate::compsys::ported::shared::declare_locals(&["expl", "domains"], 0);
     // sh:5
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:domains", curcontext);

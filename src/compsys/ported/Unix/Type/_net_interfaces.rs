@@ -21,6 +21,28 @@ use crate::ported::params::getaparam;
 /// `_net_interfaces` — complete network interface names (ifup/ifdown).
 pub fn _net_interfaces(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_net_interfaces");
+    // sh:3 `local expl` and sh:4 `local -a net_intf_disp net_intf_list`.
+    //
+    // `_find_net_interfaces` is documented upstream as returning through
+    // those two names — "It returns arrays net_intf_disp and
+    // net_intf_list which the caller should make local"
+    // (`Unix/Type/_find_net_interfaces` sh:3-5) — so the callee assigns
+    // them GLOBALLY on purpose and this caller's `local -a` line is the
+    // only thing that confines them. The port skipped that line, so
+    // `_find_net_interfaces.rs:132`'s `setaparam` landed at level 0
+    // (shared.rs:16-30) and `net_intf_list` outlived the completion.
+    // Measured on `lknetif <TAB>` against a `_net_interfaces` wrapper:
+    //
+    //   zsh  : net_intf_list absent
+    //   zshrs: net_intf_list present (the machine's interface list)
+    //
+    // `expl` is sh:3 and is filled by `_description` through the name
+    // handed to `_wanted` at rs:36.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["net_intf_disp", "net_intf_list"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:6  _find_net_interfaces
     let _ = dispatch_function_call("_find_net_interfaces", &[]);
     let disp = getaparam("net_intf_disp").unwrap_or_default();

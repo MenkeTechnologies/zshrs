@@ -155,6 +155,18 @@ pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
 /// `_alternative` with the two helper specs.
 pub fn _absolute_command_paths() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_absolute_command_paths");
+    // sh:10 `local -a matches=( … )` and sh:11 `local -a descs=( … )`,
+    // both inside `_hashed_absolute_command_paths`'s `for` body, which in
+    // zsh still declares at that function's scope. `setaparam` at
+    // rs:104-105 creates them at level 0 (shared.rs:16-30) instead, so
+    // `matches` — the name half of compsys uses for its own working set —
+    // survived the completion. Declared here rather than in the helper
+    // because the helper is a plain Rust fn with no param scope of its
+    // own; this frame is the nearest one that is unwound.
+    crate::compsys::ported::shared::declare_locals(
+        &["matches", "descs"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     dispatch_function_call(
         "_alternative",
         &[

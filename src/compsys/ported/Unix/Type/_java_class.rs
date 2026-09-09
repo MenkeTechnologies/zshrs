@@ -75,6 +75,20 @@ fn walk_classes(dir: &Path, base: &str, out: &mut Vec<String>) {
 /// `_java_class` — complete fully-qualified Java class names from a classpath.
 pub fn _java_class(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_java_class");
+    // sh:6 `local classpath i expl` and sh:7 `local -a c` — two
+    // declaration lines, so two calls with the kinds the shell spells.
+    // `c` is assigned with `setaparam` at rs:116 and `expl` is filled by
+    // `_description` through the name handed to `_wanted` at rs:119; both
+    // were born at level 0 (shared.rs:16-30). `classpath`, `i`, `method`
+    // and `type` stay Rust-side. Measured on `lkjavacls <TAB>`: zsh
+    // leaves both unset, zshrs left both populated — and `c` is a
+    // one-letter name, so leaking it clobbers any caller loop variable
+    // of that spelling.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["c"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:9-11 — classpath = -cp value, else $CLASSPATH, else `.`; `\:` → `:`.
     let (cpval, rest) = parse_opts(args);
     let classpath = cpval

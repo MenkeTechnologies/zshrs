@@ -38,6 +38,19 @@ fn basenames_stripped_app(mac_apps: &[String]) -> Vec<String> {
 /// the `.app` suffix stripped) as completion candidates.
 pub fn _mac_applications(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_mac_applications");
+    // sh:5 — `local expl`, a plain `local`, so kind 0.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted` at rs:52, and `_description` fills it through `setaparam`
+    // — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind. Measured through a pty,
+    // `${(t)expl}` read back at the next prompt after one TAB on a
+    // `_mac_applications` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:3  _retrieve_mac_apps (shell fallback: not yet ported to Rust;
     //   populates the `_mac_apps` global array param).
     let _ = dispatch_function_call("_retrieve_mac_apps", &[]);

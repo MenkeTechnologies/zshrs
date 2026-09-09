@@ -260,6 +260,20 @@ fn _canonical_paths_add_paths(
 /// same-file completions (relative↔absolute, symlink-resolved).
 pub fn _canonical_paths(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_canonical_paths");
+    // sh:71 — `local expl ret=1 tag=$1 desc=$2`, a plain `local`, so kind
+    // 0. The port hands the NAME `expl` to `_description` at rs:334 and
+    // rs:398, and `_description` fills it, so it was created at level 0
+    // (shared.rs:16-30) and survived the completion. Measured on `lkcanon
+    // <TAB>` against a `_canonical_paths cpath 'canonical path' /usr/bin`
+    // wrapper, `${(t)expl}` read back at the prompt:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // sh:62's `__gopts`/`__opts` and sh:81's `matches`/`files` are NOT
+    // declared here: this port already tears those four down by hand
+    // (rs:341-342, rs:410-413) and they measured clean.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:64  zparseopts -D -a __gopts M+: J+: V+: o+: 1 2 n F: x+: X+: A:=__opts N=__opts
     let src = "__compsys_argv";
     crate::compsys::ported::shared::set_bridge_argv(src, args);

@@ -304,6 +304,15 @@ fn email_ldap(args: &[String], curcontext: &str, curtag: &str) -> i32 {
     // sh:71  compstate[insert]=menu
     let _ = set_compstate_str("insert", "menu");
     // sh:72-73  _wanted email-ldap expl 'matching name' compadd -U -i "$IPREFIX" -I "$ISUFFIX" "$@" -a - ali
+    // sh:48 — `local -a expl ali res filter`, in `_email-ldap`. That
+    // function is a plain Rust fn here (`email_ldap`), so it has no param
+    // scope of its own and `setaparam` created `ali` at level 0
+    // (shared.rs:16-30). Declared at the assignment, which is where sh
+    // puts the `local` for this name's own function.
+    crate::compsys::ported::shared::declare_locals(
+        &["ali"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     setaparam("ali", ali);
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
     let isuffix = getsparam("ISUFFIX").unwrap_or_default();
@@ -436,6 +445,35 @@ fn call_email_plugin(
 /// aliases; `-s sep` = a separator-delimited list.
 pub fn _email_addresses(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_email_addresses");
+    // sh:91 `local -a plugins reply list args`, sh:92 `local -A opts
+    // files`, sh:93 `local plugin rcfile muttrc expl sep ret fret`.
+    //
+    // Three names of those reach the shell param table from this port:
+    // `opts` is the `zparseopts -A opts` target seeded at rs:469-477,
+    // `reply` is written at rs:731 (the plugin protocol's return array),
+    // and `expl` is filled by `_description` through the name handed to
+    // `_wanted`. All three routed through `createparam(name, PM_SCALAR)`
+    // with no PM_LOCAL (shared.rs:16-30). Measured on `lkemail <TAB>`
+    // against an `_email_addresses` wrapper:
+    //
+    //   zsh  : opts absent
+    //   zshrs: opts present (the parsed option assoc)
+    //
+    // `opts` is the worst of the three to leak — `_files`, `_description`
+    // and `_sequence` all use that spelling for their own `local`, so a
+    // level-0 `opts` left behind here is read by whatever runs next.
+    // `plugins`, `list`, `args`, `files` and the sh:93 scalars stay
+    // Rust-side; `ali` (sh:48, a different function) is declared at its
+    // own site below.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["reply"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
+    crate::compsys::ported::shared::declare_locals(
+        &["opts"],
+        crate::compsys::ported::shared::PM_HASHED,
+    );
     // sh:96-118 — RFC-822 pattern language, built verbatim.
     let __specialx = "][()<>@,;:\\\".";
     let __spacex = " \t"; // Space, tab

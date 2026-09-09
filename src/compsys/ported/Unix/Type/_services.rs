@@ -59,6 +59,21 @@ fn exec_basenames(dir: &str) -> Vec<String> {
 /// `_services` — complete system service (init/rc) names.
 pub fn _services(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_services");
+    // sh:3 `local -a inits xinetds alls` and sh:4 `local expl ret=1`.
+    // `inits` and `xinetds` are assigned with `setaparam` at rs:127-128
+    // and `expl` is filled by `_description` through the name handed to
+    // `_wanted`; all three routed through `createparam(name, PM_SCALAR)`
+    // with no PM_LOCAL (shared.rs:16-30). `alls` and `ret` stay
+    // Rust-side. The `inits`/`xinetds` half needs an `/etc/init.d` or
+    // `/etc/xinetd.d` to be observable, so on the measured host only the
+    // `expl` half showed; it is the same `setaparam` on the same
+    // declaration lines that `_selinux_users` and `_be_name` leaked
+    // through.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["inits", "xinetds"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let ostype = getsparam("OSTYPE").unwrap_or_default();
 
     // sh:6-11 — FreeBSD `service -l`.

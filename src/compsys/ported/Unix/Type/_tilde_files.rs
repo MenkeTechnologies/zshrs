@@ -117,6 +117,17 @@ pub fn _tilde_files(args: &[String]) -> i32 {
             &make_ops(),
             0,
         );
+        // sh:33 — `local -a expl=( "$@" )`. In zsh this is a plain
+        // `local` inside a `case` arm, which still declares at FUNCTION
+        // scope, so it is declared here, at the same point in the flow.
+        // Without it `setaparam` created the name at level 0
+        // (shared.rs:16-30) and `~<TAB>` left `expl` behind. Measured on
+        // `lktilde ~<TAB>`: zsh leaves `expl` unset, zshrs left it
+        // populated.
+        crate::compsys::ported::shared::declare_locals(
+            &["expl"],
+            crate::compsys::ported::shared::PM_ARRAY,
+        );
         setaparam("expl", args.to_vec());
         return dispatch_function_call(
             "_alternative",

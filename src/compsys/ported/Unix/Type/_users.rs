@@ -22,6 +22,16 @@ use crate::ported::params::{getsparam, setaparam};
 /// from the keys of the `userdirs` association.
 pub fn _users(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_users");
+    // sh:3 — `local expl users`, a plain `local`, so kind 0. `expl` is
+    // filled by `_description` through the name this port hands `_wanted`
+    // at rs:35/rs:49, and `users` is assigned with `setaparam` at rs:32
+    // whenever the `users` style is set; both routed through
+    // `createparam(name, PM_SCALAR)` with no PM_LOCAL (shared.rs:16-30).
+    // Measured on `lkusers <TAB>` with no `users` style, so only the
+    // `expl` half is visible there: zsh leaves it unset, zshrs left it
+    // populated. `users` is the same `setaparam` on the same declaration
+    // line, reached by setting `zstyle ':completion:*:users' users …`.
+    crate::compsys::ported::shared::declare_locals(&["expl", "users"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:users", curcontext);
 
