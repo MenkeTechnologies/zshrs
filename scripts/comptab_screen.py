@@ -41,6 +41,20 @@ ap.add_argument("--buffer", required=True)
 ap.add_argument("--keys", default="tab")
 ap.add_argument("--rows", type=int, default=40)
 ap.add_argument("--cols", type=int, default=110)
+ap.add_argument(
+    "--env",
+    action="append",
+    default=[],
+    metavar="KEY=VAL",
+    help="override or add one child env var; repeatable",
+)
+ap.add_argument(
+    "--lang",
+    default="C",
+    help="LANG/LC_ALL for the child (default C, matching comptab_parity.py). "
+    "Use en_US.UTF-8 only when deliberately testing multibyte behaviour, and "
+    "pass it to BOTH shells.",
+)
 a = ap.parse_args()
 
 import pyte
@@ -86,13 +100,58 @@ def keyseq(name):
     )
 
 
+def child_env():
+    """Build the child environment FROM SCRATCH, mirroring comptab_parity.py.
+
+    Inheriting the parent environment is not neutral. Two zshrs-only knobs
+    decide whether the two shells are even comparable, and both are set by the
+    scored harness (`comptab_parity.py` `child_env`), so a probe that omits
+    them can disagree with the harness on the same case:
+
+      ZSHRS_NATIVE_ZLE_FX=0     zshrs's autosuggest / syntax highlight have no
+                                zsh counterpart. Their ghost text lands on the
+                                screen for any buffer with a history hit --
+                                `zmodload zsh/<TAB>` rendered a recalled
+                                history line here and looked like a divergence.
+                                Silences the fx LAYER only; the completion
+                                engine is untouched.
+      ZSHRS_HIDE_EXT_BUILTINS=1 zshrs ships ~145 builtins zsh lacks (peach,
+                                async, zf_*, dbview...). Any listing that
+                                enumerates $builtins therefore diverges by
+                                construction. Hides them from the `builtins`
+                                table and the compctl namespace dump for the
+                                comparison only; dispatch is unchanged.
+
+    LANG/LC_ALL default to C for the same reason the harness uses it: the
+    locale changes collation and width handling, so it must be pinned and
+    identical on both sides. --lang overrides it when multibyte behaviour is
+    the thing under test.
+    """
+    env = {
+        "PS1": "READY%% ",
+        "TERM": "xterm-256color",
+        "LANG": a.lang,
+        "LC_ALL": a.lang,
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "ZDOTDIR": "/nonexistent-zdotdir",
+        "ZSHRS_NATIVE_ZLE_FX": "0",
+        "ZSHRS_HIDE_EXT_BUILTINS": "1",
+        "RUST_BACKTRACE": "1",
+    }
+    for item in a.env:
+        if "=" not in item:
+            raise SystemExit("comptab_screen: --env needs KEY=VAL, got %r" % item)
+        k, v = item.split("=", 1)
+        env[k] = v
+    return env
+
+
 argv = a.shell.split()
 pid, fd = pty.fork()
 if pid == 0:
-    os.environ["PS1"] = "READY%% "
-    os.environ["TERM"] = "xterm-256color"
-    os.environ["LANG"] = "en_US.UTF-8"
-    os.environ["ZDOTDIR"] = "/nonexistent-zdotdir"
+    os.environ.clear()
+    os.environ.update(child_env())
     os.execvp(argv[0], argv)
 
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", a.rows, a.cols, 0, 0))
