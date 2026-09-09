@@ -5748,3 +5748,92 @@ gstack
 # There is no `errflag &= ~ERRFLAG_ERROR` to port at this boundary. C does
 # not have one; adding one would be inventing a clear point and would mask
 # the `CC <TAB>` case the native break exists for.
+
+# ============================================================================
+# SH_GLOB inside completion — ANSWERED 2026-09-09. NOT a zshrs bug, NOTHING
+# CHANGED. The naming site is git's own `_git`, and it is deliberate.
+# ============================================================================
+# Two earlier blocks in this file (the 2026-09-05 CORRECTION near the top and
+# the `git-cvsserver` root-cause block) both say "the chain runs under
+# `emulate ksh`" and neither says WHO does it. That gap has now cost at least
+# one dispatch. The function and line are:
+#
+#     /opt/homebrew/share/zsh/site-functions/_git:286
+#         elif ((    $+functions[_${service}] )); then
+#                emulate ksh -c _${service}
+#
+# That path is a symlink to Cellar/git/2.55.0/share/zsh/site-functions/_git —
+# git's OWN zsh completion wrapper (the `git-completion.zsh` maintained in
+# git.git), shipped by the Homebrew `git` formula, sitting FIRST in this
+# host's fpath (`/opt/homebrew/share/zsh/site-functions` precedes both
+# `override_src` and the zsh 5.9.2 tree). It is not an upstream zsh completer
+# and it is not anything zshrs does. Sibling sites in the same file, same
+# mechanism: :150 (`emulate ksh -c $completion_func`), :213, :284, :288, plus
+# a scoped `emulate -L ksh` at :159.
+#
+# `emulate ksh -c CMD` is exactly the documented builtin: c:Src/builtin.c:6295
+# saves `opts`, :6298 computes the ksh option set, :6320 installs it, :6366
+# runs `eval(argv)`, :6369-6370 restores `emulation` and `opts` on the way
+# out. So the flip is real, is INTENTIONAL, and is correctly scoped — the
+# options are ksh's for the whole nested call and zsh's again the moment the
+# `-c` command returns. Both shells implement it the same way.
+#
+# MEASURED, both shells, same pinned dump (`~/.zpwr/local/.zcompdump-*`),
+# same fpath, one shared log per shell, probing `$(builtin emulate)` and
+# `$options[...]` on entry to each frame of the live completion for
+# `git-cvsserver <TAB>`:
+#
+#   zsh    ENTER:_git           emu=zsh sh=off ksh=off ka=off ext=on  bgq=on
+#   zsh    ENTER:_git-cvsserver emu=ksh sh=on  ksh=on  ka=on  ext=off bgq=off
+#   zsh    ENTER:_arguments     emu=ksh sh=on  ksh=on  ka=on  ext=off bgq=off
+#   zsh    ENTER:_default       emu=zsh sh=off ksh=off ka=off ext=on  bgq=on
+#   zshrs  ENTER:_git           emu=zsh sh=off ksh=off ka=off ext=on  bgq=on
+#   zshrs  ENTER:_git-cvsserver emu=ksh sh=on  ksh=on  ka=on  ext=off bgq=off
+#   zshrs  ENTER:_default       emu=zsh sh=off ksh=off ka=off ext=on  bgq=on
+#
+# Frame-for-frame identical, including the restore at `_default`. This is
+# case (a): a real completer doing it on purpose. Do not "fix" it.
+#
+# It is NOT a leak past a scoped `emulate -L`. Eight differential probes
+# (`zsh -f -c` vs `zshrs -f -c`) agree byte-for-byte: options restored after
+# `emulate ksh -c`, restored after a FAILING `emulate ksh -c`, `emulate -L`
+# scoped to its function, bare `emulate` inside a function still undone by
+# the function's own option scope, no sticky emulation on a function DEFINED
+# inside an `emulate -c` body, and the ksh options visible in a function
+# called indirectly from the `-c` command.
+#
+# NOT reproducible without this host's fpath and dump. A fixture pinning
+# `fpath=( /usr/share/zsh/5.9/functions )` + `compinit -u -d <scratch>` — the
+# fixture shape this file recommends everywhere else — shows sh=off in every
+# frame including `_arguments`, and completes `git-cvsserver ` with no error
+# in either shell. Two things have to line up: the Homebrew git `_git` ahead
+# of everything in fpath, and a dump that maps the command to it. The zpwr
+# dump maps 18 commands to `_git` (`git`, `gitk`, `tig`, `git-cvsserver`,
+# `git-receive-pack`, `git-shell`, `git-upload-{archive,pack}`, and ten zpwr
+# `g*` aliases), so every one of those cells runs its inner completer — and
+# everything that completer calls, `_arguments` / `_files` / `_describe` /
+# `_alternative` — under SH_GLOB + KSH_GLOB + KSH_ARRAYS, with EXTENDED_GLOB
+# and BARE_GLOB_QUAL OFF. `_comp_options` (compinit sh:159, sh:167) asks for
+# the exact opposite of all four; `emulate ksh -c` overrides it for the
+# duration. That is the mode the git cells have always been scored in.
+#
+# WHY IT MATTERS AND STILL DOES NOT MOVE: under SH_GLOB, `patcompcharsset`
+# masks `zpc_special[ZPC_INPAR]` but leaves ZPC_OUTPAR live
+# (c:Src/pattern.c:500-510), which is the whole mechanism behind BLOCKER 1 of
+# the `git-cvsserver` block above — `_arguments:15`'s
+# `-([AMO]*|[0CRSWnsw])` fails to compile in zsh and does not in zshrs. The
+# option state is the PRECONDITION for that gap, not a second bug. Chasing it
+# further is chasing git's completion wrapper, not zshrs.
+#
+# DRIFT NOTE for the `git-cvsserver` block above (re-measured 2026-09-09,
+# fingerprint 153d738dee, --jobs 1, pinned+codesigned binary, same dump):
+# BLOCKER 3 as written is STALE. It records zshrs emitting TWO
+# `_arguments:36/50` lines mis-attributed to the caller with untokenized raw
+# bytes. Today zshrs emits exactly ONE, attributed to the right function and
+# line, with the token rendered correctly:
+#     only zsh  : _arguments:15: bad pattern: -([AMO]*|[0CRSWnsw])
+#     only zshrs: _files:36: parse error: condition expected: "$glob"
+# Name attribution, error count and untokenization are all fixed; the
+# remaining divergence in this cell is BLOCKER 1 (zsh aborts `_arguments` and
+# falls through to `_default`, zshrs completes the option set) plus the
+# `_files:36` cond parse error itself.
