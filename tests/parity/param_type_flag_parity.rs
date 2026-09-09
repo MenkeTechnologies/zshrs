@@ -483,6 +483,52 @@ print "[${#s}]" "[${#arr}]" "[${#arr[1]}]" "[${#arr[3]}]" "[${#arr[@]}]" "[${#ar
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// `idbeg` — diagnostics name the whole REFERENCE, not the bare name
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `c:2649` sets `idbeg = s` just past the flags and `c:3039` sets
+/// `idend = s` once the subscript loop is done, so `*idend = '\0';
+/// zerr("%s: %s", idbeg, …)` at c:3341-3348 prints the WHOLE reference
+/// text. `${arr[9]:?msg}` is therefore `arr[9]: msg`, not `arr: msg`.
+#[test]
+fn the_error_operator_names_the_subscripted_reference() {
+    assert_parity(r#"typeset -a arr=(x y); print ${arr[9]:?msg}"#);
+    assert_parity(r#"typeset -a arr=(x y); print ${arr[9]?msg}"#);
+    assert_parity(r#"typeset -A h=(k v); print ${h[nosuch]:?msg}"#);
+    assert_parity(r#"typeset -a arr=(x y); print ${(t)arr[9]:?msg}"#);
+}
+
+/// idbeg is a slice of the ORIGINAL string, so the subscript is printed
+/// UNEXPANDED: `${arr[$i]:?m}` reports `arr[$i]`, never `arr[9]`.
+#[test]
+fn the_error_operator_prints_the_unexpanded_subscript() {
+    assert_parity(r#"typeset -a arr=(x y); i=9; print ${arr[$i]:?m}"#);
+    assert_parity(r#"typeset -a arr=(x y); print ${arr[1+8]:?m}"#);
+    assert_parity(r#"typeset -a arr=(x y); print ${arr[(r)zz]:?m}"#);
+    assert_parity(r#"typeset -A h=(k v); print ${h[no key]:?m}"#);
+    assert_parity(r#"print ${nosuchvar_zzz[1][2]:?m}"#);
+}
+
+/// An empty message takes the same identifier (c:3348), and so does the
+/// NO_UNSET abort at c:3617 — all four call sites read `idbeg`.
+#[test]
+fn the_empty_message_and_nounset_aborts_use_the_same_identifier() {
+    assert_parity(r#"typeset -a arr=(x y); print ${arr[9]:?}"#);
+    assert_parity(r#"setopt nounset; typeset -a arr=(x y); print ${nosuchvar_zzz[3]}"#);
+    assert_parity(r#"setopt nounset; print ${(t)#nosuchvar_zzz}"#);
+}
+
+/// An unsubscripted reference has nothing to add, so its diagnostics are
+/// unchanged — the bare name IS the whole idbeg..idend span.
+#[test]
+fn an_unsubscripted_reference_still_names_the_bare_parameter() {
+    assert_parity(r#"print ${nosuchvar_zzz:?m}"#);
+    assert_parity(r#"setopt nounset; print ${nosuchvar_zzz}"#);
+    assert_parity(r#"setopt nounset; print ${nosuchvar_zzz#x}"#);
+    assert_parity(r#"setopt nounset; print ${#nosuchvar_zzz}"#);
+}
+
 /// c:2859 `isarr = 0` kills the c:3422 per-element leg of the `:#`
 /// filter, so it tests the TAG once and c:3451's scalar `getmatch` runs.
 /// The double-quoted spelling already joined to a scalar and agreed; the

@@ -7666,6 +7666,23 @@ pub fn paramsubst(
         // literally named `~`.
         let rest_raw: String = body_chars[idx..].iter().collect();
 
+        // c:Src/subst.c:2649 `idbeg = s;` / c:3039 `idend = s;` — the SOURCE
+        // TEXT of the reference, from just after the flags/`#`/`~`/`+` prefixes
+        // through the end of the subscript loop. Every "parameter not set" and
+        // `:?`/`?` diagnostic prints THAT span (c:3346, c:3348, c:3450, c:3483),
+        // not the bare name: `${a[9]:?msg}` reports `a[9]: msg` and
+        // `${a[$i]:?msg}` reports the UNEXPANDED `a[$i]: msg`, because C writes
+        // `*idend = '\0'` and passes `idbeg` — a slice of the original string.
+        // `post_flags_start` is C's `idbeg` (set right after the same prefix
+        // loop) and `idx` here is C's `idend` (the subscript loop is done).
+        // getindex already untokenized the bracket text in place at
+        // c:Src/params.c:2033-2038, so map tokens back the same way.
+        let idbeg: String = crate::ported::lex::untokenize(
+            &body_chars[post_flags_start.min(idx)..idx]
+                .iter()
+                .collect::<String>(),
+        ); // c:2649/c:3039
+
         // !!! BASH-MODE GATE (no C counterpart) !!! bash case-modification
         // suffixes: `${v^^}` upper-all, `${v,,}` lower-all, `${v^}` upper-
         // first-char, `${v,}` lower-first-char. zsh/ksh lack this syntax
@@ -12196,7 +12213,7 @@ pub fn paramsubst(
                     && !has_default_op
                     && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
                 {
-                    zerr(&format!("{}: parameter not set", var_name)); // c:3483
+                    zerr(&format!("{}: parameter not set", idbeg)); // c:3483 (idbeg, c:2649)
                     errflag_set_error();
                     // c:3480-3484 — no ERRFLAG_HARD here; see the note
                     // on the general nounset guard below. `${#var}`
@@ -14952,7 +14969,7 @@ pub fn paramsubst(
                         singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: %s", idbeg, msg) — Src/subst.c:3337
-                    zerr(&format!("{}: {}", var_name, m));
+                    zerr(&format!("{}: {}", idbeg, m)); // c:3346
                     errflag_set_error();
                     // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`.
                     // `:?` is a FATAL error — non-interactive shell
@@ -14982,7 +14999,7 @@ pub fn paramsubst(
                         singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: parameter not set", idbeg) — Src/subst.c:3472
-                    zerr(&format!("{}: {}", var_name, m));
+                    zerr(&format!("{}: {}", idbeg, m)); // c:3348
                     errflag_set_error();
                     // c:Src/subst.c:3344 — `errflag |= ERRFLAG_HARD;`
                     // (same fatal-abort semantics as `:?`). Bug #193.
@@ -18356,7 +18373,7 @@ pub fn paramsubst(
                     // c:3481-3485 — `if (vunset > 0 && unset(UNSET))` errors
                     // under NO_UNSET; otherwise c:3486 `val = dupstring("")`.
                     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
-                        zerr(&format!("{}: parameter not set", var_name)); // c:3483
+                        zerr(&format!("{}: parameter not set", idbeg)); // c:3483 (idbeg, c:2649)
                         errflag_set_error();
                         return (String::new(), new_pos, vec![]);
                     }
@@ -21467,7 +21484,7 @@ pub fn paramsubst(
                 Some('-') | Some('+') | Some('=') | Some('?')
             );
             if !op_handles_unset {
-                zerr(&format!("{}: parameter not set", var_name)); // c:1689
+                zerr(&format!("{}: parameter not set", idbeg)); // c:1689 (idbeg, c:2649)
                 errflag_set_error();
                 // c:Src/subst.c:3479-3484 —
                 //     if (vunset) {
