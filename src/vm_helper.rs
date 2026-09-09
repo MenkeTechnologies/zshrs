@@ -1100,13 +1100,17 @@ pub fn zexecve_recover(pth: &str, argv: &[String], eno: i32) -> Result<(String, 
                             // This resolver runs in the PARENT (see the c:550
                             // note above) and RETURNS, so calling it dropped the
                             // shell's standing `winch_block()`
-                            // (c:Src/init.c:1458) for the rest of the session —
-                            // nothing re-blocks. An unpaired unblock lets
-                            // `adjustwinsize(1)` run inside a widget, which is
-                            // the one thing that block exists to prevent: a
-                            // resize landing mid-completion makes `calclist`
-                            // count display strings against a width they were
-                            // not built at, and repaints over the prompt row.
+                            // (c:Src/init.c:1458) with nothing here to re-arm
+                            // it. The next re-arm is whenever `raw_getbyte`
+                            // returns from its read (zle_main.rs:507/654/762),
+                            // so the leak spans the REST OF THE CURRENT COMMAND,
+                            // not the session — and a completer that execs a
+                            // shebang-less script therefore finishes its
+                            // completion with the handler live. That is the one
+                            // state c:1458 exists to prevent: `adjustwinsize(1)`
+                            // inside a widget makes `calclist` count display
+                            // strings against a width they were not built at,
+                            // and repaints over the prompt row.
                             //
                             // The new image still gets SIGWINCH unblocked: the
                             // child-side `zexecve` unblocks at c:527 (ported at

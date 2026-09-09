@@ -1538,17 +1538,20 @@ pub fn init_signals() {
                                             // Without it the block existed only as a SIDE EFFECT of
                                             // `raw_getbyte` re-blocking after each read
                                             // (zle_main.rs:507/654/762): every unblock happened to be
-                                            // paired, so the mask happened to be right. Any UNPAIRED
-                                            // unblock then disarms SIGWINCH for the rest of the
-                                            // session — `zexecve_recover` had four (vm_helper.rs,
+                                            // paired, so the mask happened to be right. An UNPAIRED
+                                            // unblock then leaves SIGWINCH live until the next
+                                            // `raw_getbyte` re-block — i.e. for the rest of the
+                                            // current command, a completion included.
+                                            // `zexecve_recover` had four of them (vm_helper.rs,
                                             // c:565/570/580/584/626, child-side in C).
                                             //
-                                            // With the handler free to run inside a widget,
+                                            // Whenever the handler does run inside a widget,
                                             // `adjustwinsize(1)` lands in the middle of `calclist` and
                                             // display strings built against 80 columns get counted
-                                            // against the new 60: `git <TAB>` across a 24x80 -> 24x60
-                                            // resize asks "see all 164 possibilities (251 lines)?" for
-                                            // 164 one-line matches (zsh: 153/153).
+                                            // against the new 60. Measured that way, `git <TAB>`
+                                            // across a 24x80 -> 24x60 resize asks "see all 164
+                                            // possibilities (251 lines)?" for 164 one-line matches
+                                            // where zsh asks 153/153.
             crate::ported::signals_h::winch_block(); // c:1425
         }
 
