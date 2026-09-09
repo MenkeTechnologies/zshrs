@@ -6875,4 +6875,40 @@ mod tests {
         ZLECS.store(9, Ordering::SeqCst);
         assert_eq!(getcurcmd(), Some("\u{e9}ch\u{f3}".to_string()));
     }
+
+    /// c:3029/3038-3039 — `expandcmdpath` consumes `cmdwb`/`cmdwe` as a
+    /// `zlecs` value and as a `foredel` count:
+    ///
+    /// ```c
+    ///     if (cmdwb < 0 || cmdwe < cmdwb) { ... return 1; }
+    ///     ...
+    ///     zlecs = cmdwb;
+    ///     foredel(cmdwe - cmdwb, CUT_RAW);
+    /// ```
+    ///
+    /// Both are CHARACTER units — `getcurcmd(1)`'s c:2966-2974 conversion
+    /// exists to make them so. The port derived them from `rfind`/`find` on a
+    /// `String` collected from the `Vec<char>` line, after first slicing that
+    /// `String` with the character cursor (`line[..oldcs]`). On `éé x` with
+    /// the cursor at character 3 that slice is byte 3 — the continuation byte
+    /// of the second `é` — and the widget took the editor down.
+    ///
+    /// `findcmd` will not resolve `éé`, so C returns 1 at c:3036-3037 with the
+    /// line untouched; that is the whole observable, and it is enough to pin
+    /// the crash.
+    #[test]
+    fn expandcmdpath_indexes_the_line_by_character_not_by_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        *ZLELINE.lock().unwrap() = "\u{e9}\u{e9} x".chars().collect(); // `éé x`
+        ZLELL.store(4, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst); // character 3, byte 3 = continuation
+
+        let ret = expandcmdpath();
+
+        let after: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(ret, 1, "c:3036-3037 — no such command, bail out");
+        assert_eq!(after, "\u{e9}\u{e9} x", "c:3037 returns before touching the line");
+    }
 }
