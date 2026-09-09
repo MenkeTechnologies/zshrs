@@ -6006,3 +6006,59 @@ gstack
 #   change with `ulimit -m` regression surface — deliberately left for a pass
 #   that can regression-test the limit builtins rather than bundled into a
 #   compsys sweep.
+#
+# ── FULL-RUN NUMBERS (the 1013-cell corpus, LIVE, finished) ───────────────
+#
+#   971 passed, 31 failed, 2 timeout, 9 skipped, 1013 cells, 1884.7s
+#
+# Every one of the 31 is classified; none is an unexplained engine bug:
+#
+#   10  count band b29792c9a7  command / exec / exec -l / printenv x3 /
+#                              sched x2 / set x2 / trap
+#    3  count band e8e0447836  vared / vared -l / vared -a  (parameter-name
+#                              listing; see also the _parameters port-spec
+#                              skew in (B) above)
+#    9  live process table     fs_usage x3 / sc_usage x4 / wait x2  — already
+#                              recorded above as the live-`ps` artefact
+#    3  zmodload x3            $module_path content, see below
+#    1  compadd -a             port-spec skew (B)
+#    1  zparseopts -a          the HELPDIR/INFOPATH/MANPATH band — zshrs's
+#                              MANPATH HAS a value, so `manpath` moves out of
+#                              the no-value group and the rows shift by one
+#    1  limit                  the rlimit-table divergence, see below
+#    1  code --h               --jobs 8 false positive; PASSes serially
+#    2  timeouts               neither pass nor divergence
+#
+# ── `zmodload ` / `zmodload -l ` / `zmodload -a ` — NOT a compsys bug ──────
+#
+#   scripts/comptab_parity.py --case 'zmodload ' --keys tab            (LIVE)
+#     zsh    inserts `zsh/`, lists attr cap clone compctl complete ... zutil
+#     zshrs  inserts `/`,    lists /Applications /Users /bin /dev ...
+#
+#   Stock `_zmodload` sh:71-72 sources the default case from FILES:
+#
+#     _requested files expl 'module file' \
+#       _files -W module_path -g '*.(dll|s[ol]|bundle)(:r)'
+#
+#   zsh    module_path = /opt/homebrew/Cellar/zsh/5.9.2/lib, which holds
+#          zsh/attr.bundle, zsh/cap.bundle, ... so the glob yields the module
+#          names with the suffix stripped.
+#   zshrs  module_path = ~/.zshrs/modules, which DOES NOT EXIST — zshrs's
+#          modules are compiled in, there is no .so/.bundle tree at all.
+#
+#   The `/` fallback is NOT a zshrs defect. Verified by isolating it — both
+#   shells are byte-identical on
+#
+#     _tstw() { local expl; _description files expl file
+#               _files -W /nonexistent-dir-xyz -g '*.bundle' }
+#
+#   BOTH complete the filesystem root. So `_files -W <nonexistent>` falling
+#   back to `/` is zsh's own behaviour and the port reproduces it faithfully;
+#   the only variable is what `$module_path` points at.
+#
+#   It is still a real user-visible wart: `zmodload <TAB>` offers filesystem
+#   junk on zshrs where it offers module names on zsh. Fixing it is a DESIGN
+#   call, not a port fix — either give `$module_path` a real tree, or teach
+#   the completion about compiled-in modules (`$modules` already enumerates
+#   them: `zsh/parameter zsh/zle zsh/complete ...`). Recorded rather than
+#   fixed because either choice changes zshrs behaviour beyond compsys.
