@@ -89,6 +89,27 @@ fn scan_external_zsh_cwds() -> Vec<String> {
 /// processes.
 pub fn _external_pwds() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_external_pwds");
+    // sh:7 `local -a expl` and sh:8 `local -au dirs`.
+    //
+    // `dirs` is assigned with `setaparam` at rs:143 and `expl` is filled
+    // by `_description` through the name handed to `_wanted`; both routed
+    // through `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). This one leaked on EVERY completion that fell
+    // through to this completer, because `_external_pwds` runs whenever
+    // the earlier ones produce nothing — 14 of the 44 measured cases
+    // gained `dirs` and `expl` from here alone.
+    //
+    // PM_UPPER carries sh:8's `-u`. That is the uppercase-conversion
+    // attribute, not `-U`/unique: `local -au dirs` reads back as
+    // `array-local-upper` in zsh, and array elements are NOT folded.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
+    crate::compsys::ported::shared::declare_locals(
+        &["dirs"],
+        crate::compsys::ported::shared::PM_ARRAY | crate::ported::zsh_h::PM_UPPER,
+    );
     // sh:11-14  collapse IPREFIX/ISUFFIX
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
     let prefix = getsparam("PREFIX").unwrap_or_default();

@@ -34,6 +34,28 @@ const MAX_DIR: usize = 10;
 /// the current dir or an ancestor (up to 10 levels up).
 pub fn _complete_tag() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_tag");
+    // sh:18 `local curcontext="$curcontext"` and sh:19 `local -a
+    // c_tags_array`.
+    //
+    // The port set `curcontext` with `setsparam` (rs:47) and restored the
+    // saved string by hand on the way out (rs:89/111/130), but the widget
+    // has paths that reach neither, so `^Xt` left the completion context
+    // string behind in the user's shell. Measured with `ls ` + `^Xt`
+    // against `_complete_tag`:
+    //
+    //   zsh  : curcontext absent
+    //   zshrs: curcontext present
+    //
+    // `declare_locals_keeping_value` is the exact spelling of sh:18 —
+    // `local NAME="$NAME"`, i.e. a shadow that starts out holding the
+    // caller's value — so the hand restores become redundant rather than
+    // wrong. `c_tags_array` is sh:19 and is assigned with `setaparam` at
+    // rs:88/110.
+    crate::compsys::ported::shared::declare_locals_keeping_value(&["curcontext"]);
+    crate::compsys::ported::shared::declare_locals(
+        &["c_tags_array"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let cap_tagsfile = getsparam("TAGSFILE").unwrap_or_else(|| "TAGS".to_string());
     let low_tagsfile = getsparam("tagsfile").unwrap_or_else(|| "tags".to_string());
 

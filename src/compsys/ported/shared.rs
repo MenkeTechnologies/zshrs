@@ -582,6 +582,77 @@ mod tests {
         }
     }
 
+    /// The type/attribute bits an upstream `local` line spells have to reach
+    /// `createparam`, and the names have to be GONE after `endparamscope`.
+    ///
+    /// This is the substrate the whole compsys scratch-parameter fix rests on:
+    /// 95 ports call `declare_locals` with the kind their shell source spells
+    /// (`0` for a bare `local`, PM_ARRAY for `local -a`, PM_HASHED for
+    /// `local -A`, PM_HIDE for `local -H`, PM_ARRAY|PM_UNIQUE for
+    /// `local -aU`). Two things can go wrong independently and this pins both:
+    ///
+    ///   * the bits are dropped, so `${(t)name}` reads `scalar-local` where zsh
+    ///     reads `array-local` — the port then works by luck, because the first
+    ///     `setaparam` retypes it, and `_parameters`' type filter still sees a
+    ///     different string than zsh does;
+    ///   * `pm->level` is not stamped, so `endparamscope` leaves the name
+    ///     behind and one TAB puts a completer's working variable in the user's
+    ///     interactive shell.
+    ///
+    /// Names are prefixed so this test cannot collide with a real parameter or
+    /// with another test in the same process.
+    #[test]
+    fn declare_locals_carries_the_shell_kind_and_unwinds() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inc_locallevel();
+        let cases: [(&str, u32, &str); 4] = [
+            ("zzlk_scalar", 0, "scalar"),
+            ("zzlk_array", PM_ARRAY, "array"),
+            ("zzlk_assoc", PM_HASHED, "association"),
+            ("zzlk_uniq", PM_ARRAY | PM_UNIQUE, "unique"),
+        ];
+        let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for (name, kind, want) in cases {
+                declare_locals(&[name], kind);
+                let ty = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(name)
+                            .map(|pm| crate::ported::modules::parameter::paramtypestr(pm))
+                    })
+                    .unwrap_or_default();
+                assert!(
+                    ty.contains(want) && ty.contains("local"),
+                    "declare_locals({name}, {kind:#x}) produced `{ty}`, \
+                     expected it to contain `{want}` and `local`"
+                );
+            }
+        }));
+        crate::ported::params::endparamscope();
+        let survivors: Vec<&str> = cases
+            .iter()
+            .map(|(n, _, _)| *n)
+            .filter(|n| {
+                crate::ported::params::paramtab()
+                    .read()
+                    .map(|t| t.get(*n).is_some())
+                    .unwrap_or(false)
+            })
+            .collect();
+        for (n, _, _) in cases {
+            let _ = crate::ported::params::unsetparam(n);
+        }
+        if let Err(p) = inner {
+            std::panic::resume_unwind(p);
+        }
+        assert!(
+            survivors.is_empty(),
+            "{survivors:?} outlived endparamscope, i.e. pm->level was never \
+             stamped and every port that declares a name this way still leaks it"
+        );
+    }
+
     /// compinit sh:523 — the scan reads `$fpath`, not the `$FPATH` the
     /// process happened to inherit.
     ///

@@ -73,6 +73,22 @@ fn parse_functions_m(text: &str) -> Vec<String> {
 /// (those added via `functions -M`).
 pub fn _user_math_func(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_user_math_func");
+    // sh:3 — `local expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_user_math_func` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:3 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:6 — `functions -M` with no arguments takes c:3478-3484's listing
     //   arm: every `MFF_USERFUNC` entry through `listusermathfunc`. `-M` is
     //   `OPT_MINUS`, i.e. `ind[c] & 1` (c:Src/zsh.h:1402); `functions`'

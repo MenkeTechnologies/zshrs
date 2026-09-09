@@ -128,10 +128,22 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     // param table and survives the completion, so `expl` itself was
     // offered as a parameter name — the same leak `_subscript`'s `ind`
     // had, and `_parameters` filters candidates with `~*local*`.
-    let _locals = crate::compsys::ported::shared::LocalScope::declare(
+    let mut _locals = crate::compsys::ported::shared::LocalScope::declare(
         &["expl"],
         crate::ported::zsh_h::PM_ARRAY,
     );
+    // sh:7's `args` was missed by the line above. sh:50 `args=( "$@" )`
+    // is `setaparam("args", argv)` at rs:235, so the name was created at
+    // level 0 (shared.rs:16-30) and survived the completion. Measured on
+    // `lkcmdnames <TAB>` against a `_command_names -e` wrapper:
+    //
+    //   zsh  : args absent
+    //   zshrs: args present
+    //
+    // Kind 0, as sh:7 spells it — a bare `local`, which becomes
+    // `array-local` when sh:50 assigns an array to it, exactly as
+    // `local x; x=(a b)` does in the shell.
+    _locals.also(&["args"], 0);
     let mut ffilt = String::new();
     let curcontext = getsparam("curcontext").unwrap_or_default();
 

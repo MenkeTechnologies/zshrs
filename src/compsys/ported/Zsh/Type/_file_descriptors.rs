@@ -68,6 +68,24 @@ pub fn _file_descriptors(args: &[String]) -> i32 {
 /// (always 0/1/2 + any fd ≥ 3 currently open for this process).
 pub fn _file_descriptors_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_file_descriptors");
+    // sh:3 `local i fds expl disp link sep` and sh:4 `local -a list proc`
+    // — two declaration lines, each with the kind the shell spells.
+    // `fds` (rs:130) and `list` (rs:121) are assigned with `setaparam`,
+    // and `expl` is filled by `_description` through the name handed to
+    // `_wanted`; all three routed through `createparam(name, PM_SCALAR)`
+    // with no PM_LOCAL (shared.rs:16-30). Measured on `lkfds <TAB>`
+    // against a `_file_descriptors` wrapper:
+    //
+    //   zsh  : fds, list, expl all absent
+    //   zshrs: all three present
+    //
+    // `list` in particular is a name callers use constantly, so leaking
+    // it changes what a later completer sees.
+    crate::compsys::ported::shared::declare_locals(&["fds", "expl"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["list"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:6-7 — scan /dev/fd for fds ≥ 3
     let mut extra: Vec<i64> = Vec::new();
     if let Ok(entries) = fs::read_dir("/dev/fd") {

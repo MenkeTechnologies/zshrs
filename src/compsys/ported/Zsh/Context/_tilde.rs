@@ -38,6 +38,26 @@ pub fn _tilde(args: &[String]) -> i32 {
         return 1;
     }
 
+    // sh:9 — `local expl suf ret=1`, a plain `local`, so kind 0.
+    //
+    // This port never writes `expl` with `setaparam`; it hands the NAME
+    // to `_requested` at rs:79 (sh:24), and `_description` fills it from
+    // there. That is the same mechanism `_hosts` and the other six leaked
+    // through in ddadab02f3 — the declaration is the caller's job either
+    // way. `-tilde-` is the context for ANY word starting with `~`, so
+    // this one fired on ordinary use: `ls ~<TAB>` left `expl` behind.
+    // Measured, `${(t)expl}` read back at the prompt after one TAB:
+    //
+    //   case          zsh      zshrs (before)
+    //   ls ~          [][]     [array][-J|-default-]
+    //   lkb7 ~        [][]     [array][-J|-default-]
+    //
+    // where `lkb7` is a bare `compset -p 1; compadd -k nameddirs`
+    // wrapper — the leak is `_tilde`'s, not the wrapper's.
+    //
+    // `suf` and `ret` stay Rust-side.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
+
     let mut ret: i32 = 1;
 
     // sh:11-17

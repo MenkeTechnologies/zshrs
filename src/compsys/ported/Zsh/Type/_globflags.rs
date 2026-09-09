@@ -40,6 +40,15 @@ fn make_ops() -> options {
 /// glob expression.
 pub fn _globflags() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_globflags");
+    // sh:7 — `local -a flags`. Assigned with `setaparam` at rs:139 and
+    // rs:175, which routes through `createparam(name, PM_SCALAR)` with no
+    // PM_LOCAL (shared.rs:16-30), so the name was born at level 0 and
+    // outlived the completion. Measured on `lkglobflags <TAB>`: zsh
+    // leaves `flags` unset, zshrs left it holding the glob-flag table.
+    crate::compsys::ported::shared::declare_locals(
+        &["flags"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let preprefix_initial = getsparam("IPREFIX").unwrap_or_default();
     let mut ret: i32 = 1;
 

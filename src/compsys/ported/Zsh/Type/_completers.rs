@@ -70,6 +70,25 @@ fn run_zparseopts_p(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// chain). `-p` flag prepends `_` to each name (autoload-style).
 pub fn _completers(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_completers");
+    // sh:5 — `local -a disp list expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_completers` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // PM_ARRAY, as sh:5 spells `local -a`.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:4 — `local us`; sh:5 — `local -a disp list expl`.
     //
     // Both names are published as shell parameters: `us` is the

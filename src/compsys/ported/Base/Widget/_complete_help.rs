@@ -58,7 +58,7 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zformat;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comptry;
@@ -196,7 +196,16 @@ fn zformat_align(sep: &str, specs: &[String]) -> Vec<String> {
     let _ = setaparam(tmp_name, Vec::new());
     let _ = bin_zformat("zformat", &argv, &make_ops(), 0);
     let out = getaparam(tmp_name).unwrap_or_default();
-    let _ = setaparam(tmp_name, Vec::new());
+    // Tear the scratch array DOWN, not merely empty it. sh:56 is `zformat
+    // -a tmp '  (' "$tmp[@]"` against sh:6's `local … tmp`, so upstream
+    // has no parameter left over at all; this port needs a named array to
+    // hand `bin_zformat`, and `.complete_help.zf` is its own invention
+    // with no upstream counterpart. Clearing it left the NAME in
+    // `$parameters`, so `^Xh` put a `.complete_help.zf` in the user's
+    // shell that zsh never has — measured with `ls ` + `^Xh`,
+    // `${(k)parameters}` diffed after the widget returns. Same teardown
+    // the `__compsys_argv` zparseopts bridge does (bug #657).
+    unsetparam(tmp_name);
     out
 }
 
@@ -204,6 +213,34 @@ fn zformat_align(sep: &str, specs: &[String]) -> Vec<String> {
 /// inner completer (default `_main_complete`).
 pub fn _complete_help(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_complete_help");
+    // sh:6 `local _sort_tags=_help_sort_tags text i j k tmp`, sh:7
+    // `typeset -A help_funcs help_tags help_sfuncs help_styles`, sh:9-10
+    // `local -H _help_scan_funcstack=…` / `local -H
+    // _help_filter_funcstack=…`.
+    //
+    // The comment below ("emulate the dynamic scope with global params,
+    // cleared at entry so a re-invocation starts fresh") described a
+    // scope that was never actually entered: clearing at entry keeps a
+    // SECOND `^Xh` honest but does nothing for the shell the user is left
+    // holding. Measured with `ls ` + `^Xh`, `${(k)parameters}` diffed
+    // after the widget returns:
+    //
+    //   zsh  : _sort_tags, help_funcs, help_tags, help_sfuncs,
+    //          help_styles, _help_scan_funcstack, _help_filter_funcstack
+    //          — all seven absent
+    //   zshrs: all seven present
+    //
+    // PM_HASHED for sh:7's `-A`, PM_HIDE for sh:9-10's `-H`, kind 0 for
+    // sh:6's bare `local`. `text`, `i`, `j`, `k` and `tmp` stay Rust-side.
+    crate::compsys::ported::shared::declare_locals(&["_sort_tags"], 0);
+    crate::compsys::ported::shared::declare_locals(
+        &["help_funcs", "help_tags", "help_sfuncs", "help_styles"],
+        crate::compsys::ported::shared::PM_HASHED,
+    );
+    crate::compsys::ported::shared::declare_locals(
+        &["_help_scan_funcstack", "_help_filter_funcstack"],
+        crate::ported::zsh_h::PM_HIDE,
+    );
     // sh:5 — eval "$_comp_setup". The `$_comp_setup` snapshot is
     //   installed and evaluated by the completion entry harness (as the
     //   sibling `_complete_debug` widget also relies on); nothing to do

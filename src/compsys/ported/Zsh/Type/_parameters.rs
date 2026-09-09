@@ -264,6 +264,30 @@ pub fn call_parameters(args: &[String]) -> i32 {
 /// this fn, so an `$fpath` override still wins.
 pub fn _parameters(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_parameters");
+    // sh:11 — `local -a expl pattern=( -g \* ) normal described verbose
+    // faked fakes tmp`. `described` and `verbose` already get a
+    // `LocalScope` at rs:431 (they are written from a nested arm), but
+    // `pattern` and `expl` were missed: rs:345's `setaparam("pattern",
+    // …)` seeds the zparseopts target and rs:336 hands `_description` the
+    // name `expl`, and both routed through `createparam(name, PM_SCALAR)`
+    // with no PM_LOCAL (shared.rs:16-30).
+    //
+    // This one leaks on the most ordinary case there is. Measured on
+    // `echo $<TAB>`, `echo ${<TAB>` and a `_zcalc_line` wrapper, all
+    // three:
+    //
+    //   zsh  : pattern absent
+    //   zshrs: pattern present
+    //
+    // and it is self-inflicted through the very filter this completer
+    // implements — sh:43 drops candidates whose type string matches
+    // `*local*`, so a `pattern` born at level 0 reads plain `array` and
+    // `_parameters` then OFFERS its own scratch name on the next
+    // `echo $<TAB>`.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl", "pattern"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:10  local -i nm=$compstate[nmatches]
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse::<i64>().ok())
