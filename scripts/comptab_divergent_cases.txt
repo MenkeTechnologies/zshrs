@@ -5915,6 +5915,44 @@ gstack
 #     The router.rs comment that called the bundle "a byte-identical superset
 #     (243 of 244 shared files match)" was corrected in dfa0483e6f.
 #
+#     CORRECTION 2026-09-09 (a66b364cb5). The 318 figure is real but it is the
+#     distance to a tree THIS SHELL NEVER LOADS, so (A) as stated above blames
+#     the wrong thing. The reference binary is Homebrew's zsh 5.9.2; its own
+#     default $fpath with FPATH cleared is:
+#
+#         /usr/local/share/zsh/site-functions
+#         /opt/homebrew/share/zsh/site-functions
+#         /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions   <- its stock tree
+#
+#     /usr/share/zsh/5.9 is APPLE's system zsh, a different release, and is not
+#     on that fpath at all. cmp over shared basenames:
+#
+#         bundle vs Cellar 5.9.2      1235 shared, 1234 identical, 1 differs
+#                                     (add-zsh-hook)
+#         bundle vs /usr/share/5.9    1199 shared,  881 identical, 318 differ
+#
+#     So against the tree it actually replaces the bundle IS a byte-identical
+#     superset and the substitution is neutral — the router.rs wording that
+#     dfa0483e6f removed was right in substance; "243 of 244" was the correct
+#     RATIO over a subset.
+#
+#     The HAZARD is real and gets sharper: pinning
+#     `fpath=( /usr/share/zsh/5.9/functions )` makes the two shells run
+#     completers from DIFFERENT zsh RELEASES, because zshrs substitutes its
+#     upstream-tracking bundle while zsh reads Apple's 5.9. That is what
+#     produced the `cp -` / `ansible` / `cut -` / `date -` failures above.
+#
+#     FIX THE FIXTURE, not the expectation: pin
+#     `fpath=( /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions )` and invoke
+#     zsh by absolute path (/opt/homebrew/bin/zsh — otherwise $ZSH_ARGZERO
+#     differs between the sides and has already produced one false report).
+#     Guard any single cell with:
+#
+#       cmp -s ~/.zshrs/functions/_NAME \
+#              /opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_NAME
+#
+
+#
 # (B) PORT-SPEC vs BUNDLE skew — 23 of 244 ports implement a DIFFERENT
 #     version of the function than the bundle ships under the same name. The
 #     sibling shell file beside each `.rs` is that port's spec; when the port
