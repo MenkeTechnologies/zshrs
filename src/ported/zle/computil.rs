@@ -6355,7 +6355,15 @@ pub fn cv_parse_word(d: &mut cvdef) {
             } else {
                 ign = ns_pos.map_or(0, |n| compsuffix.len() - n);
             }
-            more = ns_pos.map(|n| compsuffix[n + 1..].to_string());
+            // c:3461 — `more = (ns ? ns + 1 : NULL);`. `ns` is `strchr`s BYTE
+            // pointer and `d->sep` is one byte (c:3026 `sep = args[1][0]`), so
+            // for a multibyte `_values -s` separator `ns` lands on the LEAD
+            // byte and `ns + 1` is by construction its CONTINUATION byte. The
+            // port sliced `compsuffix[n + 1..]` on a `String` and died on
+            // `byte index N is not a char boundary`; C just carries the raw
+            // bytes on, which is what the lossy rebuild reproduces.
+            more = ns_pos
+                .map(|n| String::from_utf8_lossy(&compsuffix.as_bytes()[n + 1..]).into_owned());
         } else if d.argsep != 0 {
             let as_pos = compsuffix
                 .as_bytes()
@@ -7915,18 +7923,29 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {
         }
         i += 1;
     }
-    let mut add_s: String = String::from_utf8_lossy(&add).into_owned();
 
-    // c:4650-4691 — walk each pattern, cross off chars from `add`.
+    // c:4679-4720 — walk each pattern, crossing bytes off `add`.
+    //
+    // Every cross-off in C is a BYTE walk over `add` closed by `*s = '\0'`
+    // (c:4693, c:4696, c:4707, c:4710, c:4716), so `add` stays a byte buffer
+    // until c:4721 below. The port had converted it to a `String` up front
+    // and then cut it with `String::truncate(byte_offset)`, which PANICS
+    // unless the offset lands on a char boundary — and `$compprefix` is
+    // filesystem/user text, so a multibyte prefix reaches every one of these
+    // scans. It also compared with `str::find(byte as char)`, which for a
+    // byte >= 0x80 searches for the two-byte UTF-8 encoding of U+0080..U+00FF
+    // instead of the single byte C compares, so a byte that IS in `add` was
+    // never found and the prefix survived a cross-off that should have
+    // killed it.
     for p_orig in pats {
-        if add_s.is_empty() {
+        if add.is_empty() {
             break;
         }
         let mut q_bytes: Vec<u8> = p_orig.as_bytes().to_vec();
         if q_bytes.is_empty() {
             continue;
         }
-        // c:4654 — strip trailing alternation `(…|…)` group.
+        // c:4683-4689 — strip trailing alternation `(…|…)` group.
         if let Some(b')') = q_bytes.last().copied() {
             let mut t = q_bytes.len() - 1;
             let mut found = None;
@@ -7946,50 +7965,67 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {
         }
 
         let mut qi = 0usize;
-        while qi < q_bytes.len() && !add_s.is_empty() {
+        while qi < q_bytes.len() && !add.is_empty() {
             let c = q_bytes[qi];
             if c == b'\\' && qi + 1 < q_bytes.len() {
-                // c:4662
-                qi += 1;
+                // c:4691
+                qi += 1; // c:4692 `q++`
                 let target = q_bytes[qi];
-                // c:4663 — cross off `target` from add.
-                if let Some(pos) = add_s.find(target as char) {
-                    add_s.truncate(pos);
+                // c:4692-4693 — `for (s = add; *s && *s != *q; s++); *s = '\0';`
+                // compares ONE BYTE of the pattern against one byte of `add`.
+                if let Some(pos) = add.iter().position(|&b| b == target) {
+                    add.truncate(pos);
                 }
             } else if c == b'<' {
-                // c:4665
-                // c:4666 — cross off any digit.
-                let cut_at = add_s.bytes().position(|b| idigit(b));
-                if let Some(pos) = cut_at {
-                    add_s.truncate(pos);
+                // c:4694
+                // c:4695-4696 — cross off from the first digit BYTE.
+                if let Some(pos) = add.iter().position(|&b| idigit(b)) {
+                    add.truncate(pos);
                 }
             } else if c == b'[' {
-                // c:4668
-                // c:4669-4684 — character class.
-                let mut xi = qi + 1;
-                let not = xi < q_bytes.len() && (q_bytes[xi] == b'!' || q_bytes[xi] == b'^');
-                if not {
-                    xi += 1;
+                // c:4697
+                // c:4698-4712 — character class. C writes `char *x = ++q;`, so
+                // the class cursor and the outer cursor SHARE the one advance
+                // past `[`; the inner walk then runs to the end of the pattern
+                // (`for (; *x; x++)`, c:4702) rather than stopping at `]`, and
+                // the outer loop resumes from the first class byte and
+                // rescans the remainder. Both quirks decide which bytes get
+                // crossed off `add`, so both are ported as written.
+                qi += 1; // c:4698 `++q`
+                let mut xi = qi;
+                if xi < q_bytes.len() && (q_bytes[xi] == b'!' || q_bytes[xi] == b'^') {
+                    xi += 1; // c:4700-4701
                 }
-                let _ = not;
-                while xi < q_bytes.len() && q_bytes[xi] != b']' {
+                while xi < q_bytes.len() {
+                    // c:4702
                     if xi + 2 < q_bytes.len() && q_bytes[xi + 1] == b'-' {
+                        // c:4703-4707 — `char c1 = *x, c2 = x[2];
+                        //   for (s = add; *s && (*x < c1 || *x > c2); s++);
+                        //   *s = '\0';`
+                        // The scan tests `*x` — the PATTERN byte — not `*s`,
+                        // and `c1` IS `*x`, so `*x < c1` can never hold. The
+                        // walk therefore stops on its first test for a
+                        // well-ordered range and clears `add` outright, and
+                        // never advances for a reversed one, leaving `add`
+                        // alone. It reads no byte of `add` at all. The port had
+                        // "corrected" this into a scan for the first `add` byte
+                        // inside `c1..=c2`, which is both a different answer
+                        // and — since that byte offset went to
+                        // `String::truncate` — a panic whenever a multibyte
+                        // `$compprefix`'s continuation byte fell in range.
                         let c1 = q_bytes[xi];
                         let c2 = q_bytes[xi + 2];
-                        let cut_at = add_s.bytes().position(|b| b >= c1 && b <= c2);
-                        if let Some(pos) = cut_at {
-                            add_s.truncate(pos);
+                        if c1 <= c2 {
+                            add.clear(); // c:4707 `*s = '\0'` with s still == add
                         }
-                        xi += 3;
                     } else {
-                        let cut_at = add_s.find(q_bytes[xi] as char);
-                        if let Some(pos) = cut_at {
-                            add_s.truncate(pos);
+                        // c:4708-4710
+                        if let Some(pos) = add.iter().position(|&b| b == q_bytes[xi]) {
+                            add.truncate(pos);
                         }
-                        xi += 1;
                     }
+                    xi += 1; // c:4702 `x++`
                 }
-                qi = xi;
             } else if c != b'?'
                 && c != b'*'
                 && c != b'('
@@ -7997,25 +8033,29 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {
                 && c != b'|'
                 && c != b'~'
                 && c != b'#'
-            // c:4685
+            // c:4713-4714
             {
-                let cut_at = add_s.find(c as char);
-                if let Some(pos) = cut_at {
-                    add_s.truncate(pos);
+                // c:4715-4716 — byte compare, same shape as c:4692.
+                if let Some(pos) = add.iter().position(|&b| b == c) {
+                    add.truncate(pos);
                 }
             }
             qi += 1;
         }
     }
 
-    // c:4693-4700 — prepend `add` to each `*`-leading pattern.
+    // c:4721-4728 — prepend `add` to each `*`-leading pattern. `add` only
+    // becomes text here: C hands the raw bytes straight to `dyncat` (c:4727),
+    // so a cut that landed mid-sequence leaves a partial one, which
+    // `from_utf8_lossy` renders as U+FFFD.
+    let add_s: String = String::from_utf8_lossy(&add).into_owned();
     let mut out: Vec<String> = pats.to_vec();
     if !add_s.is_empty() {
         let final_add = if !matcher.is_empty() {
             let m = cfp_matcher_pats(matcher, &add_s);
             if m.is_empty() {
                 return out;
-            } // c:4694
+            } // c:4722
             m
         } else {
             add_s
@@ -9779,6 +9819,52 @@ mod tests {
         assert!(cv_get_val(&d, "missing").is_none());
     }
 
+    /// c:3453-3461 — `_values -s <sep>` splits `$SUFFIX` on the separator:
+    ///
+    /// ```c
+    ///     char *ns = strchr(compsuffix, d->sep), *as;
+    ///     ...
+    ///     more = (ns ? ns + 1 : NULL);
+    /// ```
+    ///
+    /// `d->sep` is ONE BYTE — `parse_cvdef` takes `sep = args[1][0]`
+    /// (computil.c:3026), so `_values -s 'é'` stores 0xC3 — and `ns + 1` is
+    /// raw pointer arithmetic. The port wrote `compsuffix[n + 1..]` on a
+    /// `String`: `strchr` finds the LEAD byte of the matching character, so
+    /// `n + 1` is by construction its CONTINUATION byte and the slice panics
+    /// with `byte index N is not a char boundary`.
+    #[test]
+    fn cv_parse_word_splits_the_suffix_on_a_multibyte_separator_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let pre = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
+        let suf = COMPSUFFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
+        let isuf = crate::ported::zle::complete::COMPISUFFIX
+            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        *pre.lock().unwrap() = String::new();
+        *suf.lock().unwrap() = "x\u{e9}".to_string(); // `xé` — 78 C3 A9
+        *isuf.lock().unwrap() = String::new();
+
+        // `_values -s 'é'` — c:3026 keeps only the first byte, 0xC3.
+        let mut d = cvdef {
+            hassep: 1,
+            sep: 0xc3,
+            ..Default::default()
+        };
+        cv_parse_word(&mut d);
+
+        let suffix_after = suf.lock().unwrap().clone();
+        let isuffix_after = isuf.lock().unwrap().clone();
+        *suf.lock().unwrap() = String::new();
+        *isuf.lock().unwrap() = String::new();
+
+        // c:3459 `ign = strlen(ns)` = 2 bytes, then c:3472 `ignore_suffix(2)`
+        // moves those two bytes (the whole `é`) into `$ISUFFIX`.
+        assert_eq!(suffix_after, "x");
+        assert_eq!(isuffix_after, "\u{e9}");
+    }
+
     /// c:5126-5131 — setup_ frees every cache slot and zeros
     /// lasttaglevel. Pre-fill all three caches + lasttaglevel, then
     /// call setup_ and verify they're cleared.
@@ -10110,6 +10196,65 @@ mod tests {
         let pats = vec!["*".to_string(), "*.c".to_string()];
         let out = cfp_opt_pats(&pats, "");
         assert_eq!(out, pats);
+    }
+
+    /// c:4703-4707 — the `[c1-c2]` arm of `cfp_opt_pats`' character-class walk:
+    ///
+    /// ```c
+    ///     char c1 = *x, c2 = x[2];
+    ///     for (s = add; *s && (*x < c1 || *x > c2); s++);
+    ///     *s = '\0';
+    /// ```
+    ///
+    /// The scan tests `*x`, the PATTERN byte, not `*s`, and `c1` IS `*x` — so
+    /// `*x < c1` never holds, the walk stops on its first test for any
+    /// well-ordered range, and `add` is cleared outright. It reads no byte of
+    /// `add`. The port had "corrected" that into
+    /// `add_s.bytes().position(|b| b >= c1 && b <= c2)` fed to
+    /// `String::truncate`, which is a different answer AND a panic: both
+    /// endpoints are raw pattern bytes, so a non-ASCII class range spans UTF-8
+    /// continuation bytes (0x80..0xBF), and `$compprefix` is filesystem/user
+    /// text. `中` is `E4 B8 AD`; `[¸-Ã]` yields `c1 = 0xB8`, `c2 = 0xC3`; the
+    /// first byte in range is the CONTINUATION byte at offset 1, so the
+    /// pre-fix code died on `assertion failed: self.is_char_boundary(new_len)`.
+    #[test]
+    fn cfp_opt_pats_class_range_cuts_add_on_a_byte_not_a_char() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = "\u{4e2d}".to_string(); // 中 = E4 B8 AD
+        let pats = vec!["*[\u{b8}-\u{c3}]*".to_string()]; // [¸-Ã] → c1=0xB8 c2=0xC3
+        let out = cfp_opt_pats(&pats, "");
+        *m.lock().unwrap() = String::new();
+        // c:4707 with `s` still at `add` — the prefix is dropped entirely, so
+        // the patterns come back exactly as they went in.
+        assert_eq!(out, pats);
+    }
+
+    /// c:4692 — `for (s = add, q++; *s && *s != *q; s++); *s = '\0';` compares
+    /// ONE BYTE of the pattern against one byte of `add`. The port compared
+    /// `add_s.find(target as char)`, which for `target >= 0x80` searches for
+    /// the two-byte UTF-8 encoding of U+0080..U+00FF instead — a byte that is
+    /// present in `add` is then never found, `add` is never cut, and the
+    /// surviving prefix is glued onto every `*`-leading glob.
+    ///
+    /// `\é` puts 0xC3 in `target`; `$compprefix` of `é` is `C3 A9`, so C cuts
+    /// at offset 0 and emits no prefix at all.
+    #[test]
+    fn cfp_opt_pats_backslash_escape_crosses_off_by_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = "\u{e9}".to_string(); // é = C3 A9
+        let pats = vec!["*\\\u{e9}".to_string()]; // `*\é` → target byte 0xC3
+        let out = cfp_opt_pats(&pats, "");
+        *m.lock().unwrap() = String::new();
+        assert_eq!(
+            out,
+            vec!["*\\\u{e9}".to_string()],
+            "add should have been cut to empty at byte 0, leaving the pattern \
+             unprefixed"
+        );
     }
 
     /// c:4175 — cfp_test_exact returns None when both compprefix and
