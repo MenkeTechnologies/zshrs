@@ -1816,12 +1816,24 @@ pub fn unapplychange(ch: i32) -> i32 {
     }
     ZLECS.store(change.old_cs as usize, Ordering::SeqCst); // c:1649
     ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
-    // c:1651 — return 1 if CH_PREV, else 0.
-    if change.flags & CH_PREV != 0 {
-        1
-    } else {
-        0
-    }
+    // c:1660 — `return 1;`, unconditionally, at the end of the ordinary
+    // (same-history-line) path. C returns 0 from ONE place only: the
+    // `ch->hist != histline` branch at c:1637-1645, which switches the
+    // editor to another history line instead of editing this one — a
+    // branch this port does not have.
+    //
+    // This used to `return change.flags & CH_PREV`, and CH_PREV is not a
+    // return value in C at all: `undo()` reads it directly off
+    // `curchange` in its `while` condition (c:1634) to decide whether to
+    // keep stepping. An ordinary keystroke's change has flags == 0, so the
+    // old form returned 0 for every one of them, `undo()` took its
+    // c:1621 arm, and with no `last_change` argument (plain `undo` /
+    // `^_` / vi `u`) it never ran `curchange = prev`. The undo cursor
+    // therefore never moved: the FIRST `^_` undid the last change, and
+    // every `^_` after it re-undid that same change — a no-op, because
+    // the text it wants to delete is already gone. `echo abc` then `^_`
+    // three times left `echo ab` where zsh walks back to `echo`.
+    1
 }
 
 /// Direct port of `int redo(UNUSED(char **args))` from
@@ -1835,10 +1847,20 @@ pub fn redo() -> i32 {
             return 1;
         } // c:1664
         let cur_idx = CURCHANGE.load(Ordering::SeqCst);
+        // c:1668-1671 — `if (applychange(curchange)) curchange =
+        // curchange->next; else break;`. The advance belongs INSIDE the
+        // loop, on the success arm. It used to sit after the loop as an
+        // unconditional `fetch_add(1)`, which only balanced out because
+        // `applychange` wrongly returned CH_NEXT (0 for an ordinary
+        // change) and so always took the `break` arm without advancing.
+        // With `applychange` returning C's 1, that trailing add would
+        // step the cursor twice per redo.
         if applychange(cur_idx as i32) == 0 {
             break;
-        } // c:1668
+        }
         CURCHANGE.store(cur_idx + 1, Ordering::SeqCst);
+        // c:1676 — `while (curchange->prev->flags & CH_NEXT)`: the
+        // predecessor of the new curchange is the change just applied.
         let has_next = UNDO_STACK
             .lock()
             .unwrap()
@@ -1849,7 +1871,6 @@ pub fn redo() -> i32 {
             break;
         } // c:1670
     }
-    CURCHANGE.fetch_add(1, Ordering::SeqCst); // advance past applied
     setlastline(); // c:1672 — same baseline reset as `undo`
     0 // c:1674
 }
@@ -1885,12 +1906,11 @@ pub fn applychange(ch: i32) -> i32 {
     }
     ZLECS.store(change.new_cs as usize, Ordering::SeqCst); // c:1718
     ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
-    // c:1721 — return 1 if CH_NEXT, else 0.
-    if change.flags & CH_NEXT != 0 {
-        1
-    } else {
-        0
-    }
+    // c:1705 — `return 1;`, the mirror of `unapplychange`'s ending. The
+    // only 0 in C is the `ch->hist != histline` branch (c:1686-1694),
+    // which this port does not have. CH_NEXT is `redo()`'s loop
+    // condition (c:1676), not a return value.
+    1
 }
 
 /// Direct port of `int viundochange(char **args)` from
