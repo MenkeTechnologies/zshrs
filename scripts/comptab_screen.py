@@ -44,7 +44,47 @@ ap.add_argument("--cols", type=int, default=110)
 a = ap.parse_args()
 
 import pyte
-KEYS = {"tab": "\t", "cr": "\r", "down": "\x1b[B", "up": "\x1b[A", "s": "s"}
+# Named keys. A name is only needed for something that is not one literal
+# character; single characters are sent as themselves (so `--keys tab,s`
+# types a TAB then an `s`).
+KEYS = {
+    "tab": "\t",
+    "cr": "\r",
+    "nl": "\n",
+    "esc": "\x1b",
+    "space": " ",
+    "bs": "\x7f",
+    "del": "\x1b[3~",
+    "up": "\x1b[A",
+    "down": "\x1b[B",
+    "right": "\x1b[C",
+    "left": "\x1b[D",
+    "home": "\x1b[H",
+    "end": "\x1b[F",
+    "pgup": "\x1b[5~",
+    "pgdn": "\x1b[6~",
+}
+
+
+def keyseq(name):
+    """Resolve one --keys token, or die.
+
+    Never fall back to sending the token as literal text. An earlier version
+    did (`KEYS.get(k, k)`), so `--keys tab,right` typed the WORD "right" into
+    the buffer and the run looked valid while measuring nothing. A silent
+    wrong measurement is the failure this whole script exists to prevent, so
+    an unknown name is a hard error.
+    """
+    if name in KEYS:
+        return KEYS[name]
+    if len(name) == 1:
+        return name
+    raise SystemExit(
+        "comptab_screen: unknown key %r. Named keys: %s. "
+        "Anything else must be a single literal character."
+        % (name, ", ".join(sorted(KEYS)))
+    )
+
 
 argv = a.shell.split()
 pid, fd = pty.fork()
@@ -90,7 +130,7 @@ pump(0.5)
 os.write(fd, a.buffer.encode())
 pump(0.6)
 for k in a.keys.split(","):
-    os.write(fd, KEYS.get(k, k).encode())
+    os.write(fd, keyseq(k).encode())
     pump(1.2)
 pump(0.8)
 
