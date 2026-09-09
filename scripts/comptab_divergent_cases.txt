@@ -6100,3 +6100,209 @@ gstack
 #   the completion about compiled-in modules (`$modules` already enumerates
 #   them: `zsh/parameter zsh/zle zsh/complete ...`). Recorded rather than
 #   fixed because either choice changes zshrs behaviour beyond compsys.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-09-09 — AXES THE 317x8 DISCOVERED SWEEP CANNOT REACH
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The 1013-cell sweep above types `<cmd><TAB>` and `<cmd> -<TAB>` and pairs it
+# with the DEFAULT_SEQUENCES battery. This run went at what that shape leaves
+# out: quoting/expansion buffers, redirection and other non-argument word
+# positions, non-ASCII match text, the 40 KEY_SEQUENCES entries that are NOT
+# in DEFAULT_SEQUENCES, and answering the `do you wish to see all N` prompt.
+#
+# Binary and dump pinned into a scratch dir and re-signed (`codesign -f -s -`);
+# LIVE fpath; `/opt/homebrew/bin/zsh` absolute; every FAIL re-confirmed at
+# `--jobs 1`.
+#
+#   corpus            cells  axis
+#   ---------------------------------------------------------------------
+#   A quoting/expand    60   "part 'part $VAR/ ${ ~/ ~user/ $(inner ` a=b
+#                            --opt=val \/ "$HOME/ '$HOME/ -- $()  x tab1,tab2
+#   B redirection       50   > >> < 2> 2>& &> <( >( | ; && || & { ( if while
+#                            ! command sudo nohup time            x tab1,tab2
+#   C non-ASCII         24   CJK / Hangul / Greek / Cyrillic / combining /
+#                            fullwidth filenames, LC_ALL=en_US.UTF-8
+#   D multi-key        200   5 buffers x the 40 non-default sequences
+#   E ask-prompt         5   `<dir>/<TAB>` then `y`, diffing the LISTING
+#   G tab,bs,tab        30   the class D turned up, widened
+#
+#   B: 50/50 PASS.  E: 5/5 PASS.  A: 55/60 (both fingerprints are the
+#   recorded bundled-docs band).  D: 195/200.
+#
+# ── FINGERPRINTS ───────────────────────────────────────────────────────────
+#
+#   e8e0447836  x2  `cat ${` / `echo $` tab1 — the recorded ask-prompt count
+#                   band. Measured the parameter namespaces directly:
+#                   zshrs has HELPDIR and INFOPATH, zsh has NOTHING zshrs
+#                   lacks. Exactly the recorded cause. Benign.
+#   02c0f5d215  x2  the tab2 face of the same two cells (the extra names
+#                   shift the grid by one, so row 0 col 0 reads
+#                   ZSH_PATCHLEVEL on zsh and ZSH_VERSION on zshrs).
+#                   ZSH_PATCHLEVEL IS set by zshrs (vm_helper.rs:3108,
+#                   c:params.c:973); it is the row offset, not a missing
+#                   parameter. Benign, same class as e8e0447836.
+#   4a0f2f20b6  x1  `chmod ` tab,bs,tab — SEE "SECOND COMPLETION" BELOW.
+#   ebc8295378  x2  `mkdir ` / `rmdir ` tab,bs,tab — same defect.
+#   6ec692b03c  x1  `ln ` tab,bs,tab — same defect.
+#   3e189505ba  x1  `mv ` tab,bs,tab — same defect.
+#   7146821a43  x6  non-ASCII path completion under UTF-8 — SEE BELOW.
+#   adc41dc98f  x1  `$zsh_eval_context` as description text — SEE BELOW.
+#
+# ── FIXED THIS RUN ─────────────────────────────────────────────────────────
+#
+#   c84b2d68c4  a libc atexit hook logged through tracing, whose thread-local
+#               format buffer was already destroyed. Surfaced as a
+#               TEST-CRASHED cell (`ls '$HOME/.zsh` under --jobs 4) and then
+#               reduced to a deterministic one-liner:
+#
+#                 Z=$(mktemp -d); : > $Z/autoloads.rkyv.tmp.999991.1
+#                 ZSHRS_HOME=$Z zshrs -f -c 'autoload -Uz is-at-least
+#                                            is-at-least 5.0'
+#
+#               prints `panicked at .../thread/local.rs:429` after the
+#               command's own output. The orphan temp is what arms it: the
+#               only tracing call on the atexit path is the one reporting a
+#               reap. Concurrency, not the buffer, is why a completion sweep
+#               found it.
+#
+#   3ea78266da  undo stepped back exactly once. `unapplychange` returned
+#               `flags & CH_PREV` where zle_utils.c:1660 returns a bare
+#               `return 1;` — CH_PREV is `undo()`'s own loop condition
+#               (c:1634), never a return value. With flags == 0 on every
+#               ordinary keystroke's change, `undo()` never ran
+#               `curchange = prev`, so the second `^_` re-undid the change
+#               the first had already undone. `applychange` carried the
+#               identical misport and `redo()` had been bent around it (an
+#               unconditional `fetch_add(1)` after the loop standing in for
+#               the advance c:1668-1671 puts on the success arm).
+#
+#                 echo abc  then ^_ ^_ ^_
+#                   zsh    echo ab -> echo a -> echo
+#                   zshrs  echo ab -> echo ab -> echo ab      (before)
+#
+#               Three D-battery cells were TIMEOUT purely because of it
+#               (`ls /usr/sha`, `cd /u`, `chmod ` with tab,ctrl-_,ctrl-_:
+#               zshrs emitted nothing at all for the second undo). All
+#               three PASS now, and so do tab_undo/tab_undo2/tab_undo_tab/
+#               tab2_undo/tab_down_undo/tab_accept_undo across the battery.
+#
+# ---------------------------------------------------------------------------
+# OPEN — "SECOND COMPLETION": after ANY completion, an edit, then a second
+#        completion, zshrs draws no listing where zsh draws one.
+# ---------------------------------------------------------------------------
+#
+#   scripts/comptab_parity.py --case 'mv ' --keys tab,bs,tab
+#
+#     zsh    @CT@ mv
+#            mv        mview     mvim      mvimdiff  mvimex    mvn ...
+#     zshrs  @CT@ mv
+#            (nothing — the first listing is cleared and none replaces it)
+#
+#   Confirmed serially, 3/3, and unaffected by --settle (300ms and 1200ms
+#   both fail). Affected: `chmod `, `mv `, `mkdir `, `rmdir `, `ln `, `env `.
+#   Not affected: `cp `, `chown `, `grep `, `man `, `which `, `ls `, `find `,
+#   `kill `, `sed `, `awk `, `tar `, `curl `, `ssh `, `make `, `diff `,
+#   `sort `, `head `, `tail `, `wc `, `tr `, `cut `, `date `, `touch `,
+#   `du `, `df `, `ps `, `top `, `who `.
+#
+#   What is NOT the cause, each ruled out by measurement:
+#
+#     * the completer. `compdef _mv cp` leaves `cp ` PASSING and
+#       `compdef _cp mv` leaves `mv ` FAILING — the split follows the
+#       COMMAND NAME, not the function that ran.
+#     * the completion context. A probe completer first in the chain
+#       (`zstyle ':completion:*' completer _dbgf _complete`, appending
+#       $words/$CURRENT to a file so the display is not perturbed) records
+#       IDENTICAL state on both shells for both presses:
+#         [pid] w=mv| C=2      (first TAB, empty argument word)
+#         [pid] w=mv  C=1      (second TAB, command position)
+#       so `_complete` runs on both sides with the same input.
+#     * the cwd's contents. Reproduced in a controlled directory
+#       (26 single-letter-prefixed files + 2 dirs, `--init-extra` doing the
+#       `cd`): `mv ` and `ln ` FAIL there, `cp ` PASSES.
+#     * the editing key. `tab,left,tab` and `ctrl-d,bs,tab` fail the same
+#       way; `tab,ctrl-w,tab` and `tab,s,tab` pass; `bs,tab` (no first
+#       completion) passes.
+#     * timing/parallelism. Reproduces at --jobs 1 every time.
+#
+#   The one intervening key that CLEARS it is `^G`: `tab,ctrl-g,bs,tab`
+#   PASSES on `mv `. `^L` does not (`tab,ctrl-l,bs,tab` still fails). So the
+#   residue is in the set `send-break` resets and `invalidatelist()` does
+#   not — lastambig / menucmp / menuacc / validlist / showinglist / fromcomp
+#   / hasoldlist (compresult.c:2339, complist.c:3437).
+#
+#   Correlates with, but is not explained by, the height of the SECOND
+#   listing: the failures all produce one row or a unique insert (mv 8
+#   matches, ln 2, chmod/mkdir/rmdir 1) while `cp ` produces 13 matches over
+#   two rows and passes — except `wc ` also completes uniquely and passes,
+#   so height alone is not the rule. Next step is to instrument which of the
+#   seven flags above differs at the top of the second `docomplete`.
+#
+#   Related fidelity gap noticed while reading, NOT the cause (COMPWIDGET is
+#   re-set on every completion at zle_main.rs:3785, so a stale one is never
+#   read): `invalidate_list` (compresult.rs:4239) skips c:2348's
+#   `compwidget = NULL` and says so in a comment that reads as a
+#   justification — "The canonical COMPWIDGET static lives in zle_main.rs".
+#   Living elsewhere is not a reason not to clear it.
+#
+# ---------------------------------------------------------------------------
+# OPEN — non-ASCII path completion under a UTF-8 locale is OPEN 1 (the
+#        metafied-vs-raw strcoll split), now with a filename repro.
+# ---------------------------------------------------------------------------
+#
+#   mkdir /tmp/uni && cd /tmp/uni
+#   touch ascii_plain café naïve Ünïcödé αβγ ЖЖЖ 日本語ファイル 한국어 \
+#         ｆｕｌｌｗｉｄｔｈ; mkdir あdir 日dir; touch あいう
+#   scripts/comptab_parity.py --case 'ls /tmp/uni/' --keys tab \
+#     --init-extra <file exporting LC_ALL=en_US.UTF-8>
+#
+#     zsh    ascii_plain  café  naïve | Ünïcödé  αβγ  ЖЖЖ | あdir/ ...
+#     zshrs  αβγ  ascii_plain  café   | naïve  Ünïcödé  ЖЖЖ | あdir/ ...
+#
+#   The COLUMN GEOMETRY is byte-identical — same four columns, same widths,
+#   same members in columns 3 and 4. Only the order differs, and only by
+#   where αβγ lands. So multibyte WIDTH handling is right; this is the sort.
+#
+#   Root cause is already recorded as OPEN 1 above and not re-litigated here.
+#   What is new is the direct measurement of WHY the two disagree on this
+#   input, made through libc rather than inferred:
+#
+#     setlocale(LC_ALL, "en_US.UTF-8"); strcoll(a, b)   [macOS]
+#       αβγ vs ЖЖЖ            -> 0        αβγ vs あいう      -> 0
+#       αβγ vs 日本語ファイル -> 0        αβγ vs 한국어      -> 0
+#       ЖЖЖ vs あいう         -> 0        あdir vs 日dir     -> 0
+#       αβγ vs ascii_plain    -> -55      café  vs naïve     -> -135
+#
+#   macOS collates only the characters it has weights for, so two strings
+#   made entirely of others compare EQUAL. zshrs hands strcoll valid UTF-8
+#   and gets `αβγ < ascii_plain`; zsh hands it metafied bytes (Ü, Ж, 日, 한,
+#   ｆ all contain a byte in 0x83..0xa2) which are not valid UTF-8, and gets
+#   byte order. Under the harness default LC_ALL=C both agree, which is why
+#   no cell has shown this before.
+#
+#   Corollary, and the reason the glob sort looks random on BOTH shells
+#   under UTF-8: with that many ties the surviving order is the sort's tie
+#   permutation, so `print -l *` in that directory differs between the two
+#   shells and between C's qsort and Rust's sort. Same class as the
+#   `getconf `/`ktrace -` entries. Do not chase it separately.
+#
+# ---------------------------------------------------------------------------
+# RECORDED, NOT A COMPSYS BUG — `$zsh_eval_context` as description text.
+# ---------------------------------------------------------------------------
+#
+#   scripts/comptab_parity.py --case 'zsh ' --keys tab,bs,tab
+#   scripts/comptab_parity.py --case 'zsh -' --keys left,left,tab
+#
+#   Both shells complete the parameter `zsh_eval_context` and print its LIVE
+#   VALUE as the description, so the row shows the evaluation stack the
+#   completion system is standing on at that instant:
+#
+#     zsh    shfunc shfunc shfunc eval shfunc loadautofunc shfunc ...
+#     zshrs  shfunc shfunc shfunc shfunc shfunc loadautofunc shfunc ...
+#
+#   zsh has an `eval` frame zshrs does not, because the native compsys ports
+#   evaluate actions in Rust where the shell function reaches `eval`. The
+#   match SET is identical; only this one description's text differs. It is a
+#   direct consequence of porting completers to Rust and cannot be fixed
+#   without un-porting them.
