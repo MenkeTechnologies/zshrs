@@ -32,6 +32,23 @@ use libc::{
     RLIM_INFINITY, RLIM_NLIMITS,
 };
 
+// c:102-126 — the "Linux" block of `known_resources[]`. C guards each
+// entry with a `HAVE_RLIMIT_XXX` that configure.ac's
+// `zsh_LIMIT_PRESENT` derives from whether the host's
+// <sys/resource.h> defines the constant; the Rust equivalent is a
+// `cfg` on the targets whose `libc` defines it. All six are defined
+// for every Linux arch in libc 0.2.186 — generic (x86_64, aarch64,
+// riscv64) at src/unix/linux_like/linux/arch/generic/mod.rs:292-297
+// (target_env gnu/uclibc) and :312-317 (musl/ohos), plus the mips,
+// powerpc and sparc arch modules. NOT `target_os = "android"`:
+// bionic's `RLIMIT_RTTIME` is absent from that libc module
+// (src/unix/linux_like/android/mod.rs:1270-1287 stops at RTPRIO), and
+// `target_os = "linux"` already excludes it.
+#[cfg(target_os = "linux")]
+use libc::{
+    RLIMIT_LOCKS, RLIMIT_MSGQUEUE, RLIMIT_NICE, RLIMIT_RTPRIO, RLIMIT_RTTIME, RLIMIT_SIGPENDING,
+};
+
 use crate::ported::utils::{zstrtol, zwarnnam};
 use crate::ported::zsh_h::{module, options, OPT_ISSET};
 use crate::zsh_h::features;
@@ -91,10 +108,15 @@ pub struct resinfo_T {
 
 /// Table of known resources. C source uses `# ifdef` preprocessor
 /// conditionals per platform; the Rust port limits the table to the
-/// subset libc exposes on macOS / glibc Linux (CPU, FSIZE, DATA,
-/// STACK, CORE, NOFILE, AS, RSS, NPROC, MEMLOCK). The Linux-only tail
-/// of the C table (`RLIMIT_LOCKS` … `RLIMIT_RTTIME`, c:103-126) and the
-/// BSD / AIX / HP-UX / Haiku entries (c:128-185) are not ported.
+/// subset libc exposes on macOS / Linux — the portable head
+/// (CPU, FSIZE, DATA, STACK, CORE, NOFILE, AS, RSS, NPROC, MEMLOCK)
+/// plus, under `cfg(target_os = "linux")`, C's Linux block
+/// (`RLIMIT_LOCKS` … `RLIMIT_RTTIME`, c:102-126). Without that block
+/// `set_resinfo()` synthesized `UNKNOWN-10` … `UNKNOWN-15` for those
+/// six resource numbers and `limit` printed them where zsh prints
+/// `maxfilelocks` … `rt_time`. The BSD / DragonFly / AIX / HP-UX /
+/// Haiku entries (c:128-185) are still unported: no supported target
+/// defines those constants.
 ///
 /// `LazyLock<Vec<…>>` rather than a plain `&[…]` because one of C's
 /// guards — `RLIMIT_RSS_IS_AS` at c:79 — compares two `RLIMIT_*`
@@ -228,6 +250,91 @@ pub static known_resources: LazyLock<Vec<resinfo_T>> = LazyLock::new(|| {
             unit: 1024,
             opt: 'l',
             descr: "locked-in-memory size (kbytes)",
+        },
+    ]);
+
+    // c:102 — /* Linux */
+    //
+    // Six entries, each `# ifdef HAVE_RLIMIT_XXX` in C (c:103-126).
+    // The `cfg` above the `use` of these constants is the port of that
+    // guard: configure.ac tests whether the host header defines the
+    // constant, and `cfg(target_os = "linux")` is where libc does.
+    // Resource numbers 10-15 on Linux, which is exactly the range
+    // `set_resinfo()` (c:203-216) was filling with `UNKNOWN-<n>`.
+    #[cfg(target_os = "linux")]
+    resources.extend([
+        // c:104-105 —
+        //   {RLIMIT_LOCKS, "maxfilelocks", ZLIMTYPE_NUMBER, 1,
+        //              'x', "file locks"},
+        resinfo_T {
+            res: RLIMIT_LOCKS as i32,
+            name: "maxfilelocks",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'x',
+            descr: "file locks",
+        },
+        // c:108-109 —
+        //   {RLIMIT_SIGPENDING, "sigpending", ZLIMTYPE_NUMBER, 1,
+        //              'i', "pending signals"},
+        resinfo_T {
+            res: RLIMIT_SIGPENDING as i32,
+            name: "sigpending",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'i',
+            descr: "pending signals",
+        },
+        // c:112-113 —
+        //   {RLIMIT_MSGQUEUE, "msgqueue", ZLIMTYPE_NUMBER, 1,
+        //              'q', "bytes in POSIX msg queues"},
+        resinfo_T {
+            res: RLIMIT_MSGQUEUE as i32,
+            name: "msgqueue",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'q',
+            descr: "bytes in POSIX msg queues",
+        },
+        // c:116-117 —
+        //   {RLIMIT_NICE, "nice", ZLIMTYPE_NUMBER, 1,
+        //              'e', "max nice"},
+        resinfo_T {
+            res: RLIMIT_NICE as i32,
+            name: "nice",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'e',
+            descr: "max nice",
+        },
+        // c:120-121 —
+        //   {RLIMIT_RTPRIO, "rt_priority", ZLIMTYPE_NUMBER, 1,
+        //              'r', "max rt priority"},
+        resinfo_T {
+            res: RLIMIT_RTPRIO as i32,
+            name: "rt_priority",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'r',
+            descr: "max rt priority",
+        },
+        // c:124-125 —
+        //   {RLIMIT_RTTIME, "rt_time", ZLIMTYPE_MICROSECONDS, 1,
+        //              'N', "rt cpu time (microseconds)"},
+        //
+        // C really does spell this one `'N'`, the same letter
+        // `set_resinfo()` stamps on a synthesized unknown (c:213), so
+        // `ulimit -N` resolves to rt_time on Linux. `find_resource()`
+        // (c:239-247) scans forward from 0, and with this block in
+        // place every slot below `RLIM_NLIMITS` (16) is a real entry,
+        // so 15 is the first — and only — `'N'` it can reach.
+        resinfo_T {
+            res: RLIMIT_RTTIME as i32,
+            name: "rt_time",
+            r#type: zlimtype::ZLIMTYPE_MICROSECONDS,
+            unit: 1,
+            opt: 'N',
+            descr: "rt cpu time (microseconds)",
         },
     ]);
 
@@ -1828,6 +1935,136 @@ mod tests {
                 r.opt,
                 r.res,
                 r.name
+            );
+        }
+    }
+
+    /// c:102-126 — C's `/* Linux */` block. Written as an
+    /// if-and-only-if so it asserts on both supported platforms:
+    /// the six names exist exactly where the constants do, and the
+    /// option letters are the ones C spells. On macOS the assertion is
+    /// that they are ABSENT — `<sys/resource.h>` has no `RLIMIT_LOCKS`
+    /// and the C preprocessor drops the same six entries, so offering
+    /// them there would invent limits the platform has no number for.
+    #[test]
+    #[cfg(unix)]
+    fn linux_tail_entries_present_iff_target_is_linux() {
+        let _g = crate::test_util::global_state_lock();
+        // (name, opt) exactly as C spells them at c:104, 108, 112,
+        // 116, 120, 124.
+        let tail: &[(&str, char)] = &[
+            ("maxfilelocks", 'x'),
+            ("sigpending", 'i'),
+            ("msgqueue", 'q'),
+            ("nice", 'e'),
+            ("rt_priority", 'r'),
+            ("rt_time", 'N'),
+        ];
+        for (name, opt) in tail {
+            let found = known_resources.iter().find(|r| r.name == *name);
+            assert_eq!(
+                found.is_some(),
+                cfg!(target_os = "linux"),
+                "`{}` present={} but target_os=linux is {}",
+                name,
+                found.is_some(),
+                cfg!(target_os = "linux")
+            );
+            if let Some(r) = found {
+                assert_eq!(r.opt, *opt, "`{}` must be `ulimit -{}`", name, opt);
+                assert_eq!(r.unit, 1, "c:104-125 — every Linux entry has unit 1");
+            }
+        }
+    }
+
+    /// c:104-125 — the field-by-field pin for the Linux block. Linux
+    /// only, because it names constants that do not exist elsewhere.
+    /// Not exercised by CI on this workstation (aarch64-apple-darwin);
+    /// it guards the entries on the hosts that do have them.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_tail_entries_match_c_table() {
+        let _g = crate::test_util::global_state_lock();
+        let expect: &[(&str, i32, zlimtype, char, &str)] = &[
+            (
+                "maxfilelocks",
+                RLIMIT_LOCKS as i32,
+                zlimtype::ZLIMTYPE_NUMBER,
+                'x',
+                "file locks",
+            ),
+            (
+                "sigpending",
+                RLIMIT_SIGPENDING as i32,
+                zlimtype::ZLIMTYPE_NUMBER,
+                'i',
+                "pending signals",
+            ),
+            (
+                "msgqueue",
+                RLIMIT_MSGQUEUE as i32,
+                zlimtype::ZLIMTYPE_NUMBER,
+                'q',
+                "bytes in POSIX msg queues",
+            ),
+            (
+                "nice",
+                RLIMIT_NICE as i32,
+                zlimtype::ZLIMTYPE_NUMBER,
+                'e',
+                "max nice",
+            ),
+            (
+                "rt_priority",
+                RLIMIT_RTPRIO as i32,
+                zlimtype::ZLIMTYPE_NUMBER,
+                'r',
+                "max rt priority",
+            ),
+            (
+                "rt_time",
+                RLIMIT_RTTIME as i32,
+                zlimtype::ZLIMTYPE_MICROSECONDS,
+                'N',
+                "rt cpu time (microseconds)",
+            ),
+        ];
+        for (name, res, ty, opt, descr) in expect {
+            let r = known_resources
+                .iter()
+                .find(|r| r.name == *name)
+                .unwrap_or_else(|| panic!("`{}` missing from known_resources", name));
+            assert_eq!(r.res, *res, "`{}` resource number", name);
+            assert_eq!(r.r#type, *ty, "`{}` zlimtype", name);
+            assert_eq!(r.unit, 1, "`{}` unit", name);
+            assert_eq!(r.opt, *opt, "`{}` option letter", name);
+            assert_eq!(r.descr, *descr, "`{}` ulimit description", name);
+        }
+    }
+
+    /// c:203-216 — the synthesized `UNKNOWN-<n>` fallback exists for
+    /// resource numbers C's table does not cover. With the Linux block
+    /// ported, numbers 0 through `RLIMIT_RTTIME` (15) are all covered,
+    /// so `limit` must not print a placeholder anywhere in that range —
+    /// which is the bug this pins: it used to print `UNKNOWN-10` …
+    /// `UNKNOWN-15`. Linux only; not exercised on this workstation.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_limit_prints_no_unknown_placeholder_through_rttime() {
+        let _g = crate::test_util::global_state_lock();
+        set_resinfo();
+        let table = {
+            let lock = RESINFO.get().unwrap();
+            let v = lock.lock().unwrap();
+            v.clone()
+        };
+        for i in 0..=(RLIMIT_RTTIME as usize) {
+            assert!(
+                !table[i].name.starts_with("UNKNOWN-"),
+                "resource {} prints `{}`; C names every number through \
+                 RLIMIT_RTTIME (c:61-125)",
+                i,
+                table[i].name
             );
         }
     }

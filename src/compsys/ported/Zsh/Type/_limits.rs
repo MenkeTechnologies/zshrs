@@ -31,12 +31,16 @@
 //!     table is sound.
 //!   * The converse: `set_resinfo()` also FILLS every resource number
 //!     the table does not cover with a synthetic `UNKNOWN-<n>` name
-//!     (c:206-214), and `limit` prints those too. On Linux
-//!     (`RLIM_NLIMITS` 16) the unported tail of C's table — `RLIMIT_LOCKS`
-//!     … `RLIMIT_RTTIME`, c:103-126 — makes six of them. Real zsh prints
-//!     six real names there, so enumerating `limit`'s output verbatim
-//!     would complete `UNKNOWN-13` where zsh completes `rt_priority`.
-//!     The raw table is a subset of zsh's list; `limit`'s output is not.
+//!     (c:206-214), and `limit` prints those too — so enumerating
+//!     `limit`'s output verbatim can offer a placeholder where zsh
+//!     offers a real name. That is what used to happen on Linux
+//!     (`RLIM_NLIMITS` 16): C's Linux block — `RLIMIT_LOCKS` …
+//!     `RLIMIT_RTTIME`, c:102-126 — was unported, so numbers 10-15 came
+//!     back as `UNKNOWN-10` … `UNKNOWN-15` where zsh has
+//!     `maxfilelocks` … `rt_time`. Those six entries are now in
+//!     `known_resources` under `cfg(target_os = "linux")`, so the two
+//!     lists agree there as well; the raw table stays the safer source
+//!     because it can never contain a placeholder.
 
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::builtins::rlimits::known_resources;
@@ -98,10 +102,13 @@ mod tests {
     /// hiding it from us.
     ///
     /// This asserts the direction that broke: nothing offered here may
-    /// be absent from `limit`'s output. It does NOT assert the reverse —
-    /// on Linux `limit` additionally prints `UNKNOWN-10` … `UNKNOWN-15`
-    /// for the unported c:103-126 entries, and completing those would be
-    /// further from zsh, not closer.
+    /// be absent from `limit`'s output. It does NOT assert the reverse.
+    /// The reverse held only because of the c:102-126 gap — `limit`
+    /// printed six `UNKNOWN-<n>` placeholders on Linux that this
+    /// completer rightly withheld — and those entries are now ported, so
+    /// on both platforms the sets are expected to coincide. Keeping the
+    /// assertion one-directional still catches the failure that matters:
+    /// completing a name `limit NAME` would reject.
     #[test]
     fn every_offered_name_is_one_limit_prints() {
         let _g = crate::test_util::global_state_lock();
