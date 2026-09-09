@@ -5095,6 +5095,21 @@ pub fn bin_comparguments(
             // get_cadef returns 1 on cache hit. Look up the cached cadef
             // from the cadef_cache by argv match and run parse_line.
             let spec = &args[1..];
+            // c:2630 — `int cap = ca_parsed, multi, first = 1, use, ret = 0;`
+            let cap = ca_parsed.load(Ordering::Relaxed);
+            // c:2634 — `ca_parsed = 0;` runs BEFORE get_cadef, so the guard at
+            // c:2622-2625 ("no parsed state") is armed for the whole window in
+            // which the cadef may fail to build. Zeroing it AFTER the bail-out
+            // instead left `ca_parsed` at its previous value on the failure
+            // path, and the next `comparguments -D/-O/-W` then sailed past that
+            // guard and read the PREVIOUS command's `ca_laststate`.
+            //
+            //   comparguments -i '' '-x[ex]' '*:file:_files'   # ok, sets 1
+            //   comparguments -i '' '('                        # cannot parse
+            //   comparguments -D d a s                         # zsh: refuses
+            //
+            // zsh completed `no-parsed-state`, this completed the stale state.
+            ca_parsed.store(0, Ordering::Relaxed); // c:2634
             let _ = get_cadef(nam, spec); // c:2636
                                           // Now find the cadef in the cache.
             let cached: Option<Box<cadef>> = {
@@ -5114,10 +5129,13 @@ pub fn bin_comparguments(
                 })
             };
             let Some(mut def_head) = cached else {
-                return 1;
+                return 1; // c:2637
             };
-            ca_parsed.store(0, Ordering::Relaxed); // c:2634
-            ca_doff.store(0, Ordering::Relaxed);
+            // c:2639 — `ca_parsed = cap;`. The zeroing above covers only the
+            // get_cadef window; a successful init restores the value it found
+            // and c:2689 sets it to 1 once the sets have been walked.
+            ca_parsed.store(cap, Ordering::Relaxed); // c:2639
+            ca_doff.store(0, Ordering::Relaxed); // c:2640
             let all_clone = Box::new(clone_cadef_shallow(&def_head));
 
             // c:2643-2664 — for each set walk: track which parses
