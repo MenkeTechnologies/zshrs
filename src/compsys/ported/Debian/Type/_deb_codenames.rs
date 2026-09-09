@@ -105,6 +105,12 @@ fn tail_root(path: &str) -> String {
 /// from `/usr/share/distro-info/*.csv`.
 pub fn _deb_codenames(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_codenames");
+    // sh:3 — `local distro codenames ret=1`, a plain `local`, so kind 0.
+    // `codenames` is assigned with `setaparam` at rs:124, which routes
+    // through `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30), so it was born at level 0 and outlived the
+    // completion. `distro` and `ret` stay Rust-side.
+    crate::compsys::ported::shared::declare_locals(&["codenames"], 0);
     let _ = args; // sh: the shell fn body never references "$@".
 
     // sh:3

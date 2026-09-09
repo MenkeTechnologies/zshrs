@@ -89,6 +89,22 @@ fn parse_cursor_names(content: &str) -> Vec<String> {
 /// `<X11/cursorfont.h>`'s `XC_*` `#define`s), cached in `$_cursor_cache`.
 pub fn _x_cursor(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_cursor");
+    // sh:3 — `local expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_x_cursor` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:3 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:5 — cache presence check (approx: None == unset).
     if getaparam("_cursor_cache").is_none() {
         // sh:8

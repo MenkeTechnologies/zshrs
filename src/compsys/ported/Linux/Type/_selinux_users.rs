@@ -63,6 +63,22 @@ pub fn _selinux_users(args: &[String]) -> i32 {
 /// falling back to the well-known default identity set.
 pub fn _selinux_users_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_users");
+    // sh:3 — `local -a seusers expl`.
+    //
+    // `setaparam("seusers", …)` below routes through `createparam(name,
+    // PM_SCALAR)` with no PM_LOCAL (shared.rs:16-30), so without this the
+    // name is born at level 0 and `endparamscope` has nothing to unwind.
+    // `expl` is on the same line and is filled by `_description` through
+    // the NAME this port hands `_wanted` at rs:79, so it leaks the same
+    // way. Measured, `lkseusers <TAB>` against a `_selinux_users`
+    // wrapper, `${(k)parameters}` diffed after the completion returns:
+    //
+    //   zsh  : seusers absent, expl absent
+    //   zshrs: seusers present, expl present
+    crate::compsys::ported::shared::declare_locals(
+        &["seusers", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:5  seusers=( ${(f)"$(_call_program selinux-users seinfo --flat -u)"} )
     let _ = call_program_capture(&["selinux-users".to_string(), "seinfo --flat -u".to_string()]);
     let out = getsparam("REPLY").unwrap_or_default();

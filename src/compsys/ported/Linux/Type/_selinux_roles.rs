@@ -50,6 +50,15 @@ pub fn _selinux_roles(args: &[String]) -> i32 {
 /// `seinfo --flat -r`.
 pub fn _selinux_roles_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_roles");
+    // sh:3 — `local -a seroles expl`. Same defect and same shape as
+    // `_selinux_users`: `setaparam` creates at level 0 (shared.rs:16-30),
+    // and `expl` is filled by `_description` through the name passed to
+    // `_wanted` at rs:70. Measured on `lkseroles <TAB>`: zsh leaves both
+    // unset, zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(
+        &["seroles", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:5  seroles=( ${(f)"$(_call_program selinux-roles seinfo --flat -r)"} )
     let _ = call_program_capture(&[
         "selinux-roles".to_string(),

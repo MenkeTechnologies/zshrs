@@ -118,6 +118,23 @@ fn compute_exts(has_c: bool, has_d: bool) -> Vec<String> {
 /// .changes/.dsc under `-c`/`-D`).
 pub fn _deb_files(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_files");
+    // sh:10 — `local -a _expl _fopts _c _D _exts=( deb ddeb udeb )`.
+    //
+    // `run_zparseopts_deb` seeds `_fopts`/`_c`/`_D` with `setaparam`
+    // (rs:56-58) so `bin_zparseopts` has named targets, and `_expl` is
+    // filled by `_description` through the name passed at rs:130. All
+    // four routed through `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30) and outlived the completion. Declared here rather
+    // than inside `run_zparseopts_deb` so the shadow covers the whole
+    // body, which is what the single sh:10 line does. `_exts` stays
+    // Rust-side (`compute_exts`). Measured on `lkdebfiles <TAB>`:
+    //
+    //   zsh  : _expl _fopts _c _D all absent
+    //   zshrs: all four present
+    crate::compsys::ported::shared::declare_locals(
+        &["_expl", "_fopts", "_c", "_D"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:12-13
     let (fopts, c, d) = run_zparseopts_deb(args);
 

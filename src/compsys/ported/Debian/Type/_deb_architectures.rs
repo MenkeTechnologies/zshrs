@@ -82,6 +82,22 @@ fn zparse_a(args: &[String]) -> (Option<String>, Vec<String>) {
 /// `_deb_architectures` — complete Debian architecture names.
 pub fn _deb_architectures(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_deb_architectures");
+    // sh:3 — `local extra expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_deb_architectures` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:3 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:4
     let (extra2, rest) = zparse_a(args);
 

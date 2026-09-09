@@ -143,6 +143,13 @@ fn build_list() -> Vec<String> {
 /// a mount-point display column when the `verbose` style is on).
 pub fn _logical_volumes(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_logical_volumes");
+    // sh:3 — `local expl list names disp sep`, a plain `local`, so kind 0.
+    // `list` is assigned with `setaparam` at rs:163 and `expl` is filled
+    // by `_description` through the name handed to `_wanted` at rs:172;
+    // both were created at level 0 (shared.rs:16-30). `names`, `disp` and
+    // `sep` stay Rust-side. Measured on `lklv <TAB>`: zsh leaves both
+    // unset, zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(&["expl", "list"], 0);
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let bctx = format!(":completion:{}:", curcontext);
 

@@ -102,6 +102,17 @@ fn strip_after_last_colon(s: &str) -> String {
 /// `_jails` — complete FreeBSD jail identifiers via `jls`.
 pub fn _jails(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_jails");
+    // sh:10 — `local -a jails args expl`. `jails` is assigned with
+    // `setaparam` at rs:156 and `expl` is filled by `_description`
+    // through the name handed to `_wanted` at rs:175, so both were born
+    // at level 0 (shared.rs:16-30). `args` stays Rust-side. Measured on
+    // `lkjails <TAB>`: zsh leaves `expl` unset, zshrs left it populated
+    // (`jails` itself needs a host with jails to observe, but it is the
+    // same `setaparam` on the same declaration line).
+    crate::compsys::ported::shared::declare_locals(
+        &["jails", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:11
     let (addhost, param_opt, rest) = zparse_0_o(args);
     // sh:14 — ${param[2]:-name}: default when unset OR empty.

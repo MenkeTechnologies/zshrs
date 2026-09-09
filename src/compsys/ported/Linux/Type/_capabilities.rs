@@ -81,6 +81,16 @@ const CAPLIST: &[&str] = &[
 /// which are forwarded verbatim (sh:65's `"$@"`).
 pub fn _capabilities(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_capabilities");
+    // sh:19 `local -a caplist=( … )` and sh:62 `local -a expl` — one
+    // function, two declaration lines. `caplist` is assigned with
+    // `setaparam` at rs:87 and `expl` is filled by `_description` through
+    // the name handed to `_wanted` at rs:92, so both were created at
+    // level 0 (shared.rs:16-30). Measured on `lkcaps <TAB>`: zsh leaves
+    // both unset, zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(
+        &["caplist", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:19-61 — publish the literal array under the name `caplist` so
     // `compadd -a … caplist` (sh:65) can expand it by reference.
     let caplist: Vec<String> = CAPLIST.iter().map(|s| s.to_string()).collect();

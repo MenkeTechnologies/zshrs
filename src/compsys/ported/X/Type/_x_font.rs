@@ -48,6 +48,22 @@ fn build_font_cache() -> Vec<String> {
 /// global `_font_cache` array.
 pub fn _x_font(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_x_font");
+    // sh:3 — `local expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_x_font` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:3 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:5  _tags fonts || return 1
     if _tags(&["fonts".to_string()]) != 0 {
         return 1;
@@ -111,5 +127,54 @@ mod tests {
     fn returns_one_without_registered_tags() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(_x_font(&[]), 1);
+    }
+
+    /// sh:3's `local expl` must produce a PARAMETER THAT GOES AWAY, even
+    /// though this port never assigns `expl` itself.
+    ///
+    /// This is the shape 60 of the 63 measured leaks had: the port only hands
+    /// the NAME to `_wanted`, and `_description` does the `setaparam`. The
+    /// declaration is still the caller's job — that is exactly what sh:3 is —
+    /// and without it the array `_description` builds is created at level 0
+    /// and survives the completion.
+    #[test]
+    fn expl_is_function_local_and_unwinds() {
+        let _g = crate::test_util::global_state_lock();
+        // `expl` is process-global state shared with every other test in this
+        // binary, and several of them leave one behind. Clear it first so the
+        // absence assertion below measures THIS port, and clear it again after
+        // so the completion state a `_tags` run leaves does not decide the
+        // answer of whichever test cargo schedules next.
+        crate::test_util::reset_completion_state();
+        crate::ported::utils::inc_locallevel();
+        let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = _x_font(&[]);
+            let ty = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get("expl")
+                        .map(|pm| crate::ported::modules::parameter::paramtypestr(pm))
+                })
+                .unwrap_or_default();
+            assert!(
+                ty.contains("local"),
+                "`expl` reads `{ty}`, not `...-local`; sh:3 declares it local"
+            );
+        }));
+        crate::ported::params::endparamscope();
+        let still = crate::ported::params::paramtab()
+            .read()
+            .map(|t| t.get("expl").is_some())
+            .unwrap_or(false);
+        crate::test_util::reset_completion_state();
+        if let Err(p) = inner {
+            std::panic::resume_unwind(p);
+        }
+        assert!(
+            !still,
+            "`expl` survived endparamscope; one TAB leaves it in the shell and \
+             `_parameters` then offers it as a match"
+        );
     }
 }

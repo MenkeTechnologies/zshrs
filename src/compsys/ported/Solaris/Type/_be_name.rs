@@ -80,6 +80,16 @@ fn second_field(line: &str) -> &str {
 /// `beadm list`, optionally including snapshot names too via `-t all`.
 pub fn _be_name(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_be_name");
+    // sh:3 — `local -a type be_names expl`. `be_names` is assigned with
+    // `setaparam` at rs:116, `expl` is filled by `_description` through
+    // the name handed to `_wanted` at rs:111; both were born at level 0
+    // (shared.rs:16-30). `type` is sh:4's `zparseopts` target and stays
+    // Rust-side. Measured on `lkbename <TAB>`: zsh leaves both unset,
+    // zshrs left both populated.
+    crate::compsys::ported::shared::declare_locals(
+        &["be_names", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:5
     let (ty, rest) = zparse_type(args);
 

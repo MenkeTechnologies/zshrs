@@ -90,6 +90,17 @@ pub fn _selinux_types(args: &[String]) -> i32 {
 /// optionally filtered by attribute via repeated `-a ATTR` options.
 pub fn _selinux_types_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_selinux_types");
+    // sh:8 — `local -a setypes expl extra`. `setypes` is assigned with
+    // `setaparam` at rs:131 and `expl` is filled by `_description`
+    // through the name handed to `_wanted` at rs:126; both were born at
+    // level 0 (shared.rs:16-30). `extra` is left out deliberately: it is
+    // sh:10's `zparseopts -a extra` target and this port keeps it
+    // Rust-side, so it never becomes a shell parameter. Measured on
+    // `lksetypes <TAB>`: zsh leaves both unset, zshrs left both set.
+    crate::compsys::ported::shared::declare_locals(
+        &["setypes", "expl"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     // sh:10
     let (extra, rest) = parse_a_opt(args);
 

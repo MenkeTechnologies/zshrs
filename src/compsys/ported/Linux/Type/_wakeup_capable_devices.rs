@@ -70,6 +70,20 @@ fn parse_devline(devline: &str) -> Option<String> {
 /// wakeup-capable, annotated with their current wakeup status.
 pub fn _wakeup_capable_devices(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_wakeup_capable_devices");
+    // sh:4 — `typeset -a desc`. The `setaparam("desc", …)` at rs:95
+    // publishes the array for `_describe` to resolve by name, and that
+    // routes through `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30), so the name outlived the completion. Measured on
+    // `lkwakeup <TAB>`: zsh leaves `desc` unset, zshrs left it set.
+    //
+    // sh:3's `ret item devline expl` are NOT declared here: `ret` and
+    // `devline` stay Rust locals, `item` is built by `zformat -f` into a
+    // Rust string, and this port never hands the NAME `expl` to anything
+    // — it calls `_describe`, whose own `expl` is `_describe`'s local.
+    crate::compsys::ported::shared::declare_locals(
+        &["desc"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
     let mut ret = 1; // sh:3
 
     // sh:6  _call_program wakeup-capable-devices acpitool -w 2> /dev/null

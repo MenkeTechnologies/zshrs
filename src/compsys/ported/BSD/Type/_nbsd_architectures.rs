@@ -91,6 +91,22 @@ const ARCHITECTURES: &[&str] = &[
 /// `_nbsd_architectures` — offer the list of NetBSD MACHINE_ARCH values.
 pub fn _nbsd_architectures(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_nbsd_architectures");
+    // sh:3 — `local expl`.
+    //
+    // This port does not assign `expl` itself; it hands the NAME to
+    // `_wanted`/`_description`, and `_description` fills it through
+    // `setaparam` — `createparam(name, PM_SCALAR)` with no PM_LOCAL
+    // (shared.rs:16-30). The array was therefore born at level 0 and
+    // `endparamscope` had nothing to unwind, so one TAB left `expl`
+    // in the user's shell. Measured through a pty, `${(t)expl}` and
+    // the value read back at the next prompt after a single TAB on a
+    // `_nbsd_architectures` wrapper:
+    //
+    //   zsh  : [][]
+    //   zshrs: [array][-J|-default-]
+    //
+    // kind 0, as sh:3 spells a bare `local`.
+    crate::compsys::ported::shared::declare_locals(&["expl"], 0);
     // sh:5  _description architectures expl 'architecture'
     let _ = _description(&[
         "architectures".to_string(),
