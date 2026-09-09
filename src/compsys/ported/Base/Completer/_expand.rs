@@ -59,8 +59,21 @@
 //!
 //! Deliberately NOT ported (each would be a lie to claim, so it is named
 //! here instead):
-//!   * sh:89/93 `setopt aliases` / `setopt NO_aliases` around the `eval` —
-//!     no `eval` here, so nothing to guard.
+//!   * sh:89/93 `setopt aliases` / `setopt NO_aliases` around sh:90-92 —
+//!     not ported, and the old rationale here ("no `eval` here, so nothing
+//!     to guard") was WRONG: sh:90-92 IS an `eval`, and its `${(e)exp}`
+//!     performs command substitution, which is exactly where an alias would
+//!     apply. The pair is omitted because both of its observable effects
+//!     already hold without it, measured against `/opt/homebrew/bin/zsh -f`
+//!     through a PTY with `_expand` as the sole completer:
+//!       - aliases ON during the expansion (sh:89): buffer `: $(zzfoo)` with
+//!         `alias zzfoo='echo ALIASHIT'` expands to `: ALIASHIT` on BOTH.
+//!       - aliases OFF afterwards (sh:93): with the chain `_expand _zzprobe`
+//!         and `_zzprobe` adding `$options[aliases]` as a match, BOTH report
+//!         `off` to the next completer in the chain.
+//!     So the guard is unobservable here, not absent-because-unneeded. If a
+//!     future change makes the alias state during expansion differ from the
+//!     surrounding context, port sh:89/93 rather than re-deriving this.
 //!   * sh:10 `setopt localoptions nonomatch` — NOW PORTED, see the guard in
 //!     `_expand_with`. It was previously skipped on the rationale that
 //!     `NOMATCH`'s only reader here is `zglob` (`glob.rs:1478`, the
