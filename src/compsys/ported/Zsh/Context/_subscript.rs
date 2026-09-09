@@ -134,23 +134,41 @@ fn index_matches(i: &str, prefix: &str, suffix: &str) -> bool {
     i.len() >= prefix.len() + suffix.len() && i.starts_with(prefix) && i.ends_with(suffix)
 }
 
-/// sh:105 — `$(print -D -- <val>)`. `print -D` performs directory-name
-/// abbreviation (longest named-directory / `$HOME` prefix → `~`).
-/// Approximated here with the `$HOME` prefix case, which covers the
-/// common path; named-directory abbreviation is not reproduced.
+/// sh:105 — `$(print -D -- <val>)`.
+///
+/// `print -D`'s whole body is c:Src/builtin.c:4767-4780:
+///
+/// ```c
+/// if (OPT_ISSET(ops,'D')) {
+///     Nameddir d;
+///     queue_signals();
+///     d = finddir(args[n]);
+///     if (d) { … sprintf(arg, "~%s%s", d->node.nam, args[n] + dirlen); }
+///     unqueue_signals();
+/// }
+/// ```
+///
+/// so it is [`crate::ported::utils::finddir`] (c:Src/utils.c:1127) and
+/// nothing else, and `finddir` already returns the joined `~<nam><rest>`
+/// the sprintf builds.
+///
+/// This used to hand-roll the `$HOME`-prefix case only, with a comment
+/// saying named directories were "not reproduced". `$HOME` is not a
+/// special case in C — c:1139-1141 enters it into the SAME best-`diff`
+/// competition as every `hash -d` entry (c:1164-1165), so a named dir with
+/// a larger diff wins and the hand-rolled version could not express that
+/// even for the paths it did cover. Measured with `hash -d
+/// ZZQD=/opt/homebrew`, `zzqarr=( /opt/homebrew/bin /opt/homebrew/lib )`
+/// and `indexes` verbose, on `echo ${zzqarr[` + TAB:
+///
+/// ```text
+/// zsh    1 -- ~ZZQD/bin           2 -- ~ZZQD/lib
+/// zshrs  1 -- /opt/homebrew/bin   2 -- /opt/homebrew/lib
+/// ```
 fn dir_abbrev(val: &str) -> String {
-    if let Some(home) = getsparam("HOME") {
-        if !home.is_empty() {
-            if val == home {
-                return s("~");
-            }
-            let with_slash = format!("{}/", home);
-            if let Some(rest) = val.strip_prefix(&with_slash) {
-                return format!("~/{}", rest);
-            }
-        }
-    }
-    val.to_string()
+    // c:4772-4779 — `d = finddir(...); if (d) "~<nam><rest>"`, else the
+    // argument unchanged.
+    crate::ported::utils::finddir(val).unwrap_or_else(|| val.to_string())
 }
 
 /// `_subscript` — `-subscript-` context: complete inside `${var[…]}`.
@@ -695,11 +713,48 @@ mod tests {
 
     #[test]
     fn dir_abbrev_replaces_home_prefix() {
-        // sh:105 — print -D $HOME abbreviation approximation.
+        // sh:105 — `print -D` is c:Src/builtin.c:4772's `finddir`, whose
+        // `$HOME` arm is c:Src/utils.c:1139-1141.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("HOME", "/home/u");
         assert_eq!(dir_abbrev("/home/u"), "~");
         assert_eq!(dir_abbrev("/home/u/x/y"), "~/x/y");
         assert_eq!(dir_abbrev("/etc/passwd"), "/etc/passwd");
+    }
+
+    /// `print -D` abbreviates against `hash -d` entries too, not just
+    /// `$HOME` (c:Src/utils.c:1164-1165 scans `nameddirtab`), and a named
+    /// dir with a larger `diff` BEATS `$HOME` because c:1139-1141 enters
+    /// home into the same competition rather than short-circuiting on it.
+    ///
+    /// The hand-rolled `$HOME`-only version this replaced could express
+    /// neither: `echo ${zzqarr[` + TAB with `hash -d ZZQD=/opt/homebrew`
+    /// listed `1 -- /opt/homebrew/bin` where zsh lists `1 -- ~ZZQD/bin`.
+    #[test]
+    fn dir_abbrev_uses_named_directories_and_prefers_the_longer_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("HOME", "/zzq/home");
+        // What `hash -d ZZQD=…` installs: `addnameddirnode`
+        // (c:Src/hashnameddir.c:121), which is also where `diff` is
+        // computed. NOT `adduserdir`, which is `interact()`-gated
+        // (c:Src/utils.c:1193) and no-ops in a test process.
+        crate::ported::hashnameddir::addnameddirnode(
+            "ZZQD",
+            crate::ported::zsh_h::nameddir {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: "ZZQD".to_string(),
+                    flags: 0,
+                },
+                dir: "/zzq/home/deep/tree".to_string(),
+                diff: 0,
+            },
+        );
+
+        assert_eq!(dir_abbrev("/zzq/home/deep/tree/x"), "~ZZQD/x");
+        // Shorter path under $HOME only — the named dir does not prefix it.
+        assert_eq!(dir_abbrev("/zzq/home/other"), "~/other");
+
+        let _ = crate::ported::hashnameddir::removenameddirnode("ZZQD");
     }
 }
