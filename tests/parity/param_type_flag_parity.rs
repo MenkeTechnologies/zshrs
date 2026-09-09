@@ -179,9 +179,7 @@ print "[${(t)s[1,3]}]" "[${(t)s[-2,-1]}]""#,
 /// character" (c:Src/params.c:2160-2161 `end = startnextlen`).
 #[test]
 fn ksh_zero_subscript_makes_index_zero_the_first_character() {
-    assert_parity(
-        r#"setopt kshzerosubscript; typeset -a arr=(x y); print "[${(t)arr[0]}]""#,
-    );
+    assert_parity(r#"setopt kshzerosubscript; typeset -a arr=(x y); print "[${(t)arr[0]}]""#);
 }
 
 /// `[*]` / `[@]` are not arithmetic: c:Src/params.c:2027-2031 sets the
@@ -393,5 +391,26 @@ fn a_bare_type_flag_stays_one_word_in_either_context() {
 print -r -- ${(t)arr} ${(t)arr[@]} ${(t)h} ${(t)h[@]}
 print -r -- "${(t)arr}" "${(t)arr[@]}"
 set -- ${(t)arr}; print $#"#,
+    );
+}
+
+/// c:2859 `isarr = 0` kills the c:3422 per-element leg of the `:#`
+/// filter, so it tests the TAG once and c:3451's scalar `getmatch` runs.
+/// The double-quoted spelling already joined to a scalar and agreed; the
+/// UNQUOTED one re-read the parameter by name and filtered the real
+/// array, answering `x y` for `${(t)arr:#nope}` instead of `array`.
+#[test]
+fn the_filter_tests_the_type_string_unquoted_too() {
+    assert_parity(
+        r#"typeset -a arr=(x y); typeset -A h=(k v)
+print -r -- ${(t)arr:#nope}; print -r -- ${(t)arr:#array}
+print -r -- ${(t)h:#nope}; print -r -- ${(t)arr[@]:#array}
+print -r -- ${(M)(t)arr:#arr*}"#,
+    );
+    // The non-`(t)` filter must keep its per-element behaviour.
+    assert_parity(
+        r#"typeset -a arr=(x y z); typeset -A h=(k v j w)
+print -r -- ${arr:#y}; print -r -- "${arr:#y}"; print -r -- ${(M)arr:#x}
+print -r -- ${(o)h:#v}"#,
     );
 }

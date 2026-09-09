@@ -14131,8 +14131,17 @@ pub fn paramsubst(
                 // way; only the FILTER, which REMOVES elements, shows it.
                 // Bug #1055.
                 let splices_in_dq = matches!(splat_sub!(), Some("@"));
-                let per_element_array =
-                    !has_subscript && (!qt || splices_in_dq || nojoin == 2 || var_name == "@");
+                // c:2859 `isarr = 0;` — the `(t)` arm discarded the parameter
+                // and left a plain scalar tag behind, so c:3422's
+                // `if (!vunset && isarr)` per-element leg is dead and c:3451
+                // runs getmatch on `val`. The two fetches below re-read the
+                // parameter BY NAME, so without this gate an unquoted
+                // `${(t)arr:#nope}` filtered the real array and answered
+                // `x y` instead of `array` (the DQ form already took the
+                // scalar arm, which is why only the unquoted spelling broke).
+                let per_element_array = !has_subscript
+                    && !wantt
+                    && (!qt || splices_in_dq || nojoin == 2 || var_name == "@");
                 // c:Src/subst.c:3417 + Src/glob.c:2727 — empty
                 // pattern. C's `patcompile("")` returns a Patprog
                 // whose body matches only the empty string (no
