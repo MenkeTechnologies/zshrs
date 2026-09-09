@@ -19053,13 +19053,59 @@ pub fn paramsubst(
         // C's c:2507-2532 scalar-slice tail.
         if wantt && !used_subexp {
             if let Some(sub) = subscript.as_deref() {
-                let s_trim = sub.trim();
+                let mut s_trim = sub.trim();
                 // c:Src/params.c:2027-2031 — `[*]`/`[@]` set start = 0,
                 // end = -1, i.e. the whole tag.
-                // c:Src/params.c:1391-1483 — a `(flag)` subscript is getarg's
-                // search arm over the carrier read as a one-element array; not
-                // modelled here, so those spellings keep the whole tag.
-                if !s_trim.is_empty() && !is_splat_txt!(s_trim) && !s_trim.starts_with('(') {
+                // c:Src/params.c:1506-1507 — after the flag block the scanner
+                // steps past the `)`, so a flag set with NO search direction
+                // (`(e)ar`, `(p)…`) leaves only the trailing text for the
+                // arithmetic arm at c:1618. `handled_by_search` records the
+                // c:1688 reverse arm having produced the answer outright.
+                let mut handled_by_search = false;
+                if s_trim.starts_with('(') && !is_splat_txt!(s_trim) {
+                    // c:Src/params.c:1410 — `if (v->pm && (*s == '(' || *s ==
+                    // Inpar))`: the carrier DOES have a `pm` (c:Src/subst.c:2890
+                    // `createparam(nulstring, PM_SCALAR)`), so the flag block is
+                    // parsed here exactly as it is for a named scalar.
+                    // c:Src/params.c:1402-1403 — `ishash` is 0 for the PM_SCALAR
+                    // carrier, so `k`/`K` (c:1423/1428 `keymatch = ishash`) keep
+                    // keymatch 0 and reduce to `r`/`R`.
+                    // c:Src/params.c:1731/1782 — `v->scanflags` is 0 (c:2897,
+                    // `isarr` is 0) and `word` is 0 without `(w)`/`(f)`, so the
+                    // reverse arm lands in c:1819's "Searching characters" block,
+                    // which slides the pattern (with its implicit trailing Star,
+                    // c:1698-1704) over the TAG and returns the raw offset AFTER
+                    // the matching character; c:2144-2145 backs that off by
+                    // `startprevlen` so `${(t)a[(r)array]}` is the tag's first
+                    // CHARACTER, `a`, and a miss returns c:2001's `slen + 1`,
+                    // which c:2525-2531 reads back as empty.
+                    // c:Src/params.c:2061-2119 — an `(i)`/`(I)` hit sets
+                    // VALFLAG_INV instead, and c:2336-2340 renders `v->start` as
+                    // the decimal position, so `${(t)a[(i)array]}` is `1`.
+                    // `params::getarg`'s `scalar` arm is that same port, so route
+                    // the carrier through it rather than duplicating the search.
+                    match crate::ported::params::getarg(s_trim, None, None, Some(&value)) {
+                        Some(crate::ported::params::getarg_out::Value(gv)) => {
+                            value = gv.to_str();
+                            handled_by_search = true;
+                        }
+                        // c:Src/params.c:1596-1621 — no direction flag means
+                        // `rev` is 0, so the carrier (not a hash) takes
+                        // `r = mathevalarg(s, &s)` over the text FOLLOWING the
+                        // flag block: `${(t)a[(e)ar]}` evaluates `ar`, which is
+                        // an unset name, i.e. 0, and c:2146-2171's `start == 0 &&
+                        // end == 0` reads back empty.
+                        Some(crate::ported::params::getarg_out::Flags { rest, .. }) => {
+                            s_trim = rest;
+                        }
+                        // c:Src/params.c:1498-1504 `flagerr:` — an unknown flag
+                        // char rewinds `s` to before the `(`, so the whole group
+                        // is re-read as MATH. Leave `s_trim` alone for the
+                        // arithmetic arm below.
+                        None => {}
+                    }
+                }
+                if !handled_by_search && !s_trim.is_empty() && !is_splat_txt!(s_trim) {
                     // c:Src/params.c:1618 `r = mathevalarg(s, &s)`, with the
                     // decimal fast path `params::getindex` already uses (a
                     // matheval of "5" is 5).

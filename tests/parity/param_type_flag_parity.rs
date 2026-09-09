@@ -217,3 +217,85 @@ fn a_subscript_that_is_not_a_math_expression_is_an_error() {
     assert_parity(r#"zmodload zsh/parameter; print -r -- "[${(t)parameters[PATH]}]""#);
     assert_parity(r#"unset u_zzz; typeset -a arr=(x y); print -r -- "[${(t)arr[$u_zzz]}]""#);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Search subscripts — getarg's reverse arm, run over the tag
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `(r)` is a PATTERN search over the carrier, and the carrier is a
+/// PM_SCALAR (c:Src/subst.c:2890 with `isarr` 0), so `v->scanflags` is 0
+/// and c:Src/params.c:1731/1782 both fall through to c:1819's "Searching
+/// characters" arm. c:1698-1704 appends an implicit `*` to the pattern,
+/// c:1985-1992 returns the raw offset just PAST the matching character
+/// and c:2144-2145 backs it off by one, so the answer is the single
+/// CHARACTER the match started on: `array` matches at position 1 of the
+/// tag "array", giving `a`. A pattern that never matches returns
+/// c:2001's `slen + 1`, which c:2525-2531 reads back as the empty
+/// string. Regression pin: answering the whole tag means the `(…)`
+/// subscript was dropped on the floor instead of being applied.
+#[test]
+fn search_subscripts_match_against_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr[(r)array]}]" "[${(t)arr[(r)nomatch]}]" "[${(t)arr[(r)a*]}]""#,
+    );
+}
+
+/// `(i)` sets `ind` (c:Src/params.c:1432-1435), which c:2061-2119 turns
+/// into VALFLAG_INV, and c:2336-2340 then renders `v->start` as a
+/// DECIMAL POSITION rather than reading the string: the 1-based
+/// character index of the match. A miss walks off the end and reports
+/// `len + 1` — 6 for the five-character "array".
+#[test]
+fn index_search_subscripts_report_a_position_in_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr[(i)array]}]" "[${(t)arr[(i)nomatch]}]" "[${(t)arr[(i)r]}]""#,
+    );
+}
+
+/// The upper-case spellings search BACKWARDS (c:Src/params.c:1418-1421
+/// / 1436-1439 set `down`), so `(I)a` finds the LAST `a` in "array" —
+/// position 4 — and `(R)a` returns the character there. `k`/`K` gate
+/// their key-matching on `ishash` (c:1423/1428), which is 0 for the
+/// scalar carrier, so they collapse onto `r`/`R`.
+#[test]
+fn reverse_and_key_search_spellings_on_the_carrier() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr[(I)a]}]" "[${(t)arr[(R)a]}]" "[${(t)arr[(k)array]}]" "[${(t)arr[(K)a]}]""#,
+    );
+}
+
+/// `(n:N:)` picks the Nth match (c:Src/params.c:1452-1463) and `(b:N:)`
+/// starts the scan at an offset (c:1464-1475); both are counted in
+/// characters of the tag.
+#[test]
+fn match_count_and_begin_offset_flags_apply_to_the_type_string() {
+    assert_parity(
+        r#"typeset -a arr=(x y)
+print "[${(t)arr[(n:2:i)r]}]" "[${(t)arr[(i)r]}]" "[${(t)arr[(R)r]}]""#,
+    );
+}
+
+/// A flag set with NO search direction never sets `rev`, so
+/// c:Src/params.c:1596-1621 takes the ARITHMETIC branch over the text
+/// that follows the flag block: `(e)ar` evaluates the unset name `ar` as
+/// 0, and index 0 is c:2168-2169's empty range. Regression pin for the
+/// carrier path forwarding only the `getarg` search result and falling
+/// back to the tag whole.
+#[test]
+fn a_flag_block_without_a_search_direction_falls_back_to_arithmetic() {
+    assert_parity(r#"typeset -a arr=(x y); print "[${(t)arr[(e)ar]}]" "[${(t)arr[(e)3]}]""#);
+}
+
+/// The same search vocabulary against the eleven-character
+/// "association" tag, so a wrong answer cannot hide behind the shorter
+/// "array".
+#[test]
+fn search_subscripts_on_an_association_tag() {
+    assert_parity(
+        r#"typeset -A h=(k v)
+print "[${(t)h[(r)assoc]}]" "[${(t)h[(i)assoc]}]" "[${(t)h[(i)ation]}]" "[${(t)h[(I)i]}]""#,
+    );
+}

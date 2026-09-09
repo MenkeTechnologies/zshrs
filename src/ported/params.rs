@@ -3793,13 +3793,20 @@ pub(crate) fn getarg<'a>(
         // char position of the first/last match; (r)/(R) return the
         // char at the match. Verified against zsh: `s=ábc; ${s[(i)b]}`
         // → 2 (char pos), not 3 (byte pos).
+        // c:Src/params.c:1422-1431 — `case 'k'` / `case 'K'` set `keymatch =
+        // ishash`, and c:1402-1403 makes `ishash` 0 for a non-hash, so on a
+        // SCALAR they leave only `rev` (and `down` for `K`): they ARE `r`/`R`
+        // here, and c:1707's `if (!keymatch)` still compiles the pattern.
+        // Omitting them left `${s[(k)pat]}` short of the c:1819 char-search arm.
         let any_search = flags.contains('r')
             || flags.contains('R')
             || flags.contains('i')
-            || flags.contains('I');
+            || flags.contains('I')
+            || flags.contains('k') // c:1422-1426 (keymatch = ishash = 0 ⇒ rev)
+            || flags.contains('K'); // c:1427-1431 (keymatch = ishash = 0 ⇒ rev+down)
         if any_search {
             let return_index = seq_ind; // c:1412/1416 ind, sequential
-            let want_last = flags.contains('I') || flags.contains('R');
+            let want_last = flags.contains('I') || flags.contains('R') || flags.contains('K');
             // Negative `num` flips direction (c:1488-1491).
             let want_last = want_last ^ neg_num_flips;
             let s_chars: Vec<char> = s.chars().collect();
