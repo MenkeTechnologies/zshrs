@@ -72,12 +72,32 @@ fn _zcalc_line_escapes() -> i32 {
 /// sh:49-56 — `${${(k)functions:#^zsh_math_func_*}##zsh_math_func_}`:
 /// user math-function names (defined functions whose name begins with
 /// `zsh_math_func_`, with that prefix stripped).
+///
+/// `$functions` is NOT `shfunctab`: it is `scanpmfunctions`
+/// (`Src/Modules/parameter.c:531`) → `scanfunctions(…, dis = 0)`, whose
+/// walk is gated at c:481
+///
+/// ```c
+/// if (dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED)) {
+/// ```
+///
+/// so a `disable -f`'d function is absent from `$functions` and present in
+/// `$dis_functions` (c:538-540) instead. Walking `shfunctab` sees both —
+/// `shfunc_table::iter` has no such filter, unlike its `get`
+/// (`hashtable.rs`, `gethashnode` c:239). Measured with
+/// `zsh_math_func_aaa`, `zsh_math_func_bbb` and
+/// `disable -f zsh_math_func_bbb`, zsh 5.9.2 completes `:function ` inside
+/// `zcalc` to `aaa` outright; offering `bbb` too would make it ambiguous.
+/// Both shells already agree on the shell-level expression, so only this
+/// port diverged.
 fn user_math_functions() -> Vec<String> {
     const PFX: &str = "zsh_math_func_";
     let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() else {
         return Vec::new();
     };
     tab.iter()
+        // c:Src/Modules/parameter.c:481 — `$functions` is the NOT-DISABLED half.
+        .filter(|(_, f)| (f.node.flags & crate::ported::zsh_h::DISABLED) == 0)
         .filter_map(|(k, _)| k.strip_prefix(PFX).map(|s| s.to_string()))
         .collect()
 }
@@ -236,5 +256,57 @@ mod tests {
         assert_eq!(strip_leading_bang(":!ls"), "ls");
         assert_eq!(strip_leading_bang(":\\!ls"), "ls");
         assert_eq!(strip_leading_bang("plain"), "plain");
+    }
+
+    /// sh:53's source is `${(k)functions}`, which is the NOT-DISABLED half
+    /// of `shfunctab` (c:Src/Modules/parameter.c:481). A `disable -f`'d
+    /// math helper belongs to `$dis_functions` and must not be offered —
+    /// zsh completes `:function ` to the one enabled name outright, and an
+    /// extra candidate here makes it ambiguous instead.
+    #[test]
+    fn disabled_math_helper_is_not_offered() {
+        let _g = crate::test_util::global_state_lock();
+        const ON: &str = "zsh_math_func_zzqon";
+        const OFF: &str = "zsh_math_func_zzqoff";
+
+        {
+            let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+            for (nam, disabled) in [(ON, false), (OFF, true)] {
+                tab.add(crate::ported::zsh_h::shfunc {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: nam.to_string(),
+                        flags: if disabled {
+                            crate::ported::zsh_h::DISABLED
+                        } else {
+                            0
+                        },
+                    },
+                    filename: None,
+                    lineno: 0,
+                    funcdef: None,
+                    redir: None,
+                    sticky: None,
+                    body: None,
+                    redir_text: None,
+                });
+            }
+        }
+
+        let names = user_math_functions();
+        assert!(
+            names.iter().any(|n| n == "zzqon"),
+            "enabled helper missing: {:?}",
+            names
+        );
+        assert!(
+            !names.iter().any(|n| n == "zzqoff"),
+            "DISABLED helper offered — `$functions` never lists it (c:481): {:?}",
+            names
+        );
+
+        let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+        tab.remove(ON);
+        tab.remove(OFF);
     }
 }
