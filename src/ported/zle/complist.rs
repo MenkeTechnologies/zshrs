@@ -2545,6 +2545,49 @@ pub fn compprintlist(showall: i32) -> i32 {
                             ml,
                             &mut stop,
                         );
+                        if MSELECT.load(Ordering::SeqCst) >= 0 {
+                            // c:1438
+                            // c:1443-1444 store `mtmark(NULL)` / `mgmark(NULL)`:
+                            // the tagged NULL pointer. Every reader of these
+                            // tables tests `!*p || mmarked(*p)` (c:2134-2135,
+                            // c:2992, c:3027, c:3162, c:3209, c:3244) and
+                            // `mtunmark`/`mgunmark` of a tagged NULL is NULL
+                            // again (c:2323-2325), so a tagged NULL and a plain
+                            // NULL are the same "no match here, skip it" cell.
+                            // The port has no spare pointer bit, so it stores
+                            // `None` — which `skipcell` (`cell.is_none() ||
+                            // CMF_DUMMY`, the read side of MMARK) skips exactly
+                            // as C skips a marked cell.
+                            //
+                            // This runs on EVERY paint, not just the `mnew` one
+                            // that reallocates and zeroes both tables
+                            // (c:2084-2102); a geometry-preserving repaint
+                            // (c:2110 with `mlbeg != molbeg`) otherwise leaves
+                            // the previous paint's match under the explanation
+                            // and `domenuselect` walks onto a description row.
+                            let mcols = MCOLS.load(Ordering::SeqCst);
+                            let mm = mcols * ml; // c:1439
+                            if mm >= 0 {
+                                let mut mtab_guard = MTAB.lock().unwrap();
+                                let mut mgtab_guard = MGTAB.lock().unwrap();
+                                let mut i = mcols; // c:1441
+                                while i > 0 {
+                                    // c:1441 `for (i = mcols; i-- > 0; )`
+                                    i -= 1;
+                                    // c:1442 — DPUTS(mm+i >= mgtabsize) is a
+                                    // debug assertion in C; the port
+                                    // bounds-checks instead so a row past the
+                                    // end of the table cannot panic.
+                                    let idx = (mm + i) as usize;
+                                    if idx < mtab_guard.len() {
+                                        mtab_guard[idx] = None; // c:1443
+                                    }
+                                    if idx < mgtab_guard.len() {
+                                        mgtab_guard[idx] = None; // c:1444
+                                    }
+                                } // c:1445
+                            }
+                        } // c:1446
                         if stop != 0 {
                             break 'outer;
                         } // c:1447
@@ -8633,6 +8676,142 @@ mod tests {
             LISTSHOWN.load(Ordering::SeqCst),
             -1,
             "c:1721 — `listshown = (clearflag ? 1 : -1)`"
+        );
+    }
+
+    /// c:1438-1446 — the explanation-row cells of `mtab`/`mgtab` must be
+    /// reset by EVERY `compprintlist`, not only by the `mnew` realloc.
+    ///
+    /// C clears `mcols` cells at the explanation's first row on every paint:
+    ///
+    /// ```c
+    ///     if (mselect >= 0) {
+    ///         int mm = (mcols * ml), i;
+    ///         for (i = mcols; i-- > 0; ) {
+    ///             mtab[mm + i]  = mtmark(NULL);
+    ///             mgtab[mm + i] = mgmark(NULL);
+    ///         }
+    ///     }
+    /// ```
+    ///
+    /// `mtab`/`mgtab` are only zeroed inside `if (mnew)` (c:2084-2102), and
+    /// `mnew` is 0 for every repaint that keeps the geometry — the scroll
+    /// repaints reached through c:2110 with `mlbeg != molbeg`. Without the
+    /// clear, whatever a previous paint left at those indices survives under
+    /// the explanation, and `domenuselect`'s skip test (C `!*p ||
+    /// mmarked(*p)`, port `skipcell`) then treats the row as navigable — the
+    /// cursor lands on a description row and inserts that stale match.
+    ///
+    /// The test drives that state directly: poison row 0 and row 1 with a
+    /// match, paint one explanation with `MNEW = 0`, and require row 0 (the
+    /// explanation) to come back empty while row 1 is untouched — C clears
+    /// exactly `mcols` cells at `mcols * ml`, not the rows an explanation
+    /// wraps onto.
+    #[test]
+    fn compprintlist_clears_mtab_cells_under_an_explanation_row() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = crate::ported::zle::zle_main::zle_test_setup();
+
+        const COLS: i32 = 4;
+
+        let saved = (
+            MLBEG.load(Ordering::SeqCst),
+            MLEND.load(Ordering::SeqCst),
+            MNEW.load(Ordering::SeqCst),
+            MSELECT.load(Ordering::SeqCst),
+            MHASSTAT.load(Ordering::SeqCst),
+            MCOLS.load(Ordering::SeqCst),
+            LAST_TYPE.load(Ordering::SeqCst),
+        );
+
+        // One group, no matches, one always-shown explanation: the only rows
+        // this paint touches come from the c:1412-1470 explanation loop.
+        let group = Cmgroup {
+            expls: vec![crate::ported::zle::comp_h::Cexpl {
+                always: 0,
+                str: Some("an explanation".to_string()),
+                count: 1,
+                fcount: 0,
+            }],
+            ..Default::default()
+        };
+
+        // c:1435's compprintfmt gets dopr = dolist(ml) = 0 with this window, so
+        // the paint writes nothing to the terminal; the c:1438 mtab reset is
+        // NOT gated on dolist, so it must still happen.
+        MLBEG.store(0, Ordering::SeqCst);
+        MLEND.store(0, Ordering::SeqCst);
+        MNEW.store(0, Ordering::SeqCst); // the repaint that skips the realloc
+        MSELECT.store(0, Ordering::SeqCst); // c:1438 `if (mselect >= 0)`
+        MHASSTAT.store(0, Ordering::SeqCst);
+        MCOLS.store(COLS, Ordering::SeqCst);
+        LAST_TYPE.store(0, Ordering::SeqCst);
+        errflag.store(0, Ordering::SeqCst);
+        if let Some(m) = crate::ported::zle::compcore::listdat.get() {
+            let mut ld = m.lock().unwrap();
+            ld.nlines = 2;
+            ld.onlyexpl = 0;
+        }
+        *crate::ported::zle::compcore::amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = vec![group.clone()];
+
+        // Stale contents from the previous paint, rows 0 and 1.
+        let stale = Cmatch {
+            str: Some("stale".to_string()),
+            gnum: 7,
+            ..Default::default()
+        };
+        let stale_g = std::sync::Arc::new(group);
+        *MTAB.lock().unwrap() = vec![Some(stale.clone()); (COLS * 2) as usize];
+        *MGTAB.lock().unwrap() = vec![Some(stale_g); (COLS * 2) as usize];
+
+        let _ = compprintlist(1);
+
+        let mtab_after: Vec<Option<Cmatch>> = MTAB.lock().unwrap().clone();
+        let mgtab_after_row0_empty = MGTAB.lock().unwrap()[..COLS as usize]
+            .iter()
+            .all(|c| c.is_none());
+        let mgtab_after_row1_full = MGTAB.lock().unwrap()[COLS as usize..]
+            .iter()
+            .all(|c| c.is_some());
+
+        crate::ported::zle::compcore::amatches
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .clear();
+        MTAB.lock().unwrap().clear();
+        MGTAB.lock().unwrap().clear();
+        MLBEG.store(saved.0, Ordering::SeqCst);
+        MLEND.store(saved.1, Ordering::SeqCst);
+        MNEW.store(saved.2, Ordering::SeqCst);
+        MSELECT.store(saved.3, Ordering::SeqCst);
+        MHASSTAT.store(saved.4, Ordering::SeqCst);
+        MCOLS.store(saved.5, Ordering::SeqCst);
+        LAST_TYPE.store(saved.6, Ordering::SeqCst);
+
+        assert!(
+            mtab_after[..COLS as usize].iter().all(|c| c.is_none()),
+            "c:1443 — `mtab[mm + i] = mtmark(NULL)` over the explanation row; \
+             got {:?}",
+            &mtab_after[..COLS as usize]
+        );
+        assert!(
+            mgtab_after_row0_empty,
+            "c:1444 — `mgtab[mm + i] = mgmark(NULL)` must clear the parallel \
+             group table too"
+        );
+        assert!(
+            mtab_after[COLS as usize..].iter().all(|c| c.is_some()),
+            "c:1439 — the reset spans `mcols` cells at `mcols * ml` only; the \
+             next row must be left alone"
+        );
+        assert!(
+            mgtab_after_row1_full,
+            "c:1439 — same bound for mgtab"
         );
     }
 }
