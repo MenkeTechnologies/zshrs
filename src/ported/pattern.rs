@@ -908,8 +908,19 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // capture / substitution layers slice the subject as UTF-8, and the
     // nomultibyte unit is a raw BYTE. An explicit in-pattern `(#U)` still
     // clears it below (c:1116), which the matcher now honours.
+    //
+    // The `0xff` is the `(#aN)` APPROXIMATION BUDGET (c:1054-1066), which C
+    // carries in the low byte of the same word. Masking it off here dropped a
+    // budget that `parsepat` (c:801-807) had set from a PATTERN-LEVEL `(#aN)`
+    // in front of a multi-component path: c:568 leaves `patglobflags` alone for
+    // a PAT_FILE compile precisely so the budget reaches every component, and
+    // the restore at pattern.rs:615 put it back only for this mask to discard
+    // it. `(#i)` survived (its bit is in the mask) while `(#a1)` did not, so
+    // `(#a1)/abs/path/ofo` matched nothing where zsh 5.9.2 answers
+    // `/abs/path/{fo,foo,oof}`. A relative `(#a1)ofo` was unaffected — the flag
+    // sits inside the sole component and this very hoist loop reads it there.
     let mut hoisted_globflags: i32 =
-        GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC));
+        GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC | 0xff));
     // c:953-954 gates BOTH bytes: `*patparse == zpc_special[ZPC_INPAR]`
     // as well as `patparse[1] == zpc_special[ZPC_HASH]`. SHGLOB
     // (c:500-510) and `disable -p '('` mask the INPAR slot to Marker,

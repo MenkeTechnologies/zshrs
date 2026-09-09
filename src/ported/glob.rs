@@ -1588,9 +1588,25 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     // unsafe under zshrs's threading). globdata_glob owns its own
     // globdata; call it directly rather than via the glob_path Vec
     // convenience.
-    let matches = {
+    // c:1254 `gf_nullglob = isset(NULLGLOB);` then c:1567-1569
+    // `case 'N': gf_nullglob = !(sense & 1);` — the `(N)` QUALIFIER raises
+    // the per-glob bit, and c:1873's `else if (!gf_nullglob)` reads THAT, not
+    // the option. The qualifier parse lives inside `globdata_glob`, whose
+    // state this dropped on the floor, so the terminal block below fell back
+    // to the global option and `zglob` treated `PAT(N)` with no match as a
+    // hard NOMATCH error. Only the fusevm path (`vm_helper::expand_glob`)
+    // honoured `(N)`; every programmatic `zglob` caller — `_files`,
+    // `_path_files`, `_terminals`, `_time_zone`, `_correct_filename` — got the
+    // diagnostic and the errflag instead of an empty list.
+    let (matches, gf_nullglob) = {
         let mut st = globdata::new();
-        globdata_glob(&mut st, &ostr)
+        let m = globdata_glob(&mut st, &ostr);
+        let n = st
+            .qualifiers
+            .as_ref()
+            .map(|q| q.nullglob)
+            .unwrap_or(false); // c:1567-1569
+        (m, n)
     };
 
     // c:1871-1875 — badcshglob accounting. Each zglob run updates
@@ -1625,13 +1641,16 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     //           matchct = 1;
     //       }
     //   }
-    // gf_nullglob (c:212) is the per-glob nullglob bit toggled by
-    // qualifier `N`; here we approximate with the global option.
+    // gf_nullglob (c:212) is the PER-GLOB nullglob bit: seeded from the
+    // option at c:1254 and raised by the `(N)` qualifier at c:1567-1569.
     // Parity bug #13: previously this Rust arm fell through to the
     // ordinary-literal path (c:1882-1887) unconditionally, making
     // `echo /never/*` print the literal glob instead of erroring.
     if matches.is_empty() {
-        let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+        // c:1254 + c:1567-1569 — `gf_nullglob = isset(NULLGLOB)` then the
+        // qualifier override. Reading the option ALONE (what this did) made
+        // `(N)` inert for every programmatic caller.
+        let nullglob = gf_nullglob || isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
         let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
                                                                      // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... zerr(
                                                                      // "bad pattern", ostr); return; }`. When the qualifier
@@ -4097,6 +4116,82 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // NUL and never fired. `(sub/)#end` therefore matched only the
     // zero-repetition case (`end`), not `sub/end`, `sub/sub/end`, …
     crate::ported::pattern::patcompstart(); // c:796
+
+    // c:797-807 — `Check for initial globbing flags, so that they don't form
+    // a bogus path component.` This inlined copy of parsepat started at c:809
+    // and skipped the flag strip entirely, which is load-bearing on an
+    // ABSOLUTE pattern: the `/` split below then made the leading `(#…)` a
+    // path component of its own and looked for a directory literally named
+    // `(#a1)`. Measured against zsh 5.9.2:
+    //
+    //   % zsh   -f -c 'setopt extendedglob; print -r -- (#i)/ETC/hosts'
+    //   /etc/hosts
+    //   % zshrs (before)
+    //   zsh:1: no matches found: (#i)/ETC/hosts
+    //
+    // A RELATIVE pattern was unaffected — the flags stay glued to the first
+    // component, where `patcompile`'s own `(#…)` hoist loop picks them up —
+    // so this only ever showed on an absolute path, and every pattern-level
+    // flag was affected, not just `(#a)`: `(#i)`, `(#l)`, `(#b)`, `(#m)`.
+    //
+    // `patgetglobflags` writes the `patglobflags` atomic, and `patcompile`'s
+    // PAT_FILE branch (pattern.rs:615) deliberately leaves it alone, so the
+    // flags reach EVERY path component exactly as c:568 has them.
+    let mut globflags_bad = false;
+    {
+        let cv: Vec<char> = pat_tok.chars().collect();
+        // c:801-803 tests `zpc_special[ZPC_INPAR]` / `[ZPC_HASH]` /
+        // `[ZPC_KSH_AT]`. zshrs seeds those slots with RAW ASCII
+        // (pattern.rs:443-457) while `pat_tok` here is TOKENIZED, so accept
+        // either spelling of the pair.
+        let is_inpar = |c: char| c == '(' || c == crate::ported::zsh_h::Inpar;
+        let is_hash = |c: char| c == '#' || c == crate::ported::zsh_h::Pound;
+        let is_outpar = |c: char| c == ')' || c == crate::ported::zsh_h::Outpar;
+        // c:804 — `str += (*str == Inpar) ? 2 : 3;`. The Rust
+        // `patgetglobflags` consumes the leading `(#` itself (pattern.rs:1927
+        // `s.starts_with("(#")`), so only the ksh `@` is skipped here.
+        let skip = if cv.len() >= 3 && cv[0] == '@' && is_inpar(cv[1]) && is_hash(cv[2]) {
+            Some(1) // c:802-803 ksh `@(#…)`
+        } else if cv.len() >= 2 && is_inpar(cv[0]) && is_hash(cv[1]) {
+            Some(0) // c:801 plain `(#…)`
+        } else {
+            None
+        };
+        if let Some(skip) = skip {
+            // Feed `patgetglobflags` the flag block in the ASCII spelling it
+            // parses, bounded at the closing paren so the rest of the path
+            // is never rewritten. Its loop terminates on a literal `)`
+            // (pattern.rs:1937) and its `consumed` is the BYTE offset just
+            // past it (pattern.rs:2049).
+            let end = cv[skip..].iter().position(|&c| is_outpar(c));
+            let ascii: Option<String> = end.map(|e| {
+                cv[skip..=skip + e]
+                    .iter()
+                    .map(|&c| match c {
+                        x if is_inpar(x) => '(',
+                        x if is_hash(x) => '#',
+                        x if is_outpar(x) => ')',
+                        other => other,
+                    })
+                    .collect()
+            });
+            match ascii
+                .as_deref()
+                .and_then(crate::ported::pattern::patgetglobflags)
+            {
+                Some((_bits, _assertp, consumed)) => {
+                    // c:804-806 — `str` now points past the flag block.
+                    let nchars = ascii.as_deref().unwrap_or("")[..consumed].chars().count();
+                    pat_tok = cv[skip + nchars..].iter().collect();
+                }
+                // c:805-806 — `if (!patgetglobflags(&str, …)) return NULL;`.
+                // parsepat's NULL is the same failure `parsecomplist` reports
+                // below, so route it to the one error path (c:1842-1854).
+                None => globflags_bad = true,
+            }
+        }
+    }
+
     state.pathbufcwd = 0; // c:812 — `DPUTS(pathbufcwd, ...)` invariant
     let parse_src = if let Some(rest) = pat_tok.strip_prefix('/') {
         // c:813-816 — absolute path.
@@ -4107,7 +4202,12 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         // c:817-818 — relative to pwd.
         pat_tok.clone()
     };
-    if let Some(complist) = parsecomplist(&parse_src) {
+    let complist = if globflags_bad {
+        None // c:806 — parsepat returned NULL before parsecomplist ran
+    } else {
+        parsecomplist(&parse_src)
+    };
+    if let Some(complist) = complist {
         scanner(state, Some(&complist), 0, false);
     } else {
         // c:Src/glob.c:1842-1854 — `q = parsepat(str); if (!q || errflag)`.
