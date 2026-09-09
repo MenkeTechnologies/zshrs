@@ -649,7 +649,12 @@ pub fn try_put_many(entries: &[(String, Vec<u8>, String, [u8; 32])]) -> Result<(
 pub fn try_flush_pending() {
     if let Some(cache) = CACHE.as_ref() {
         if let Err(e) = cache.flush_pending() {
-            tracing::warn!(error = %e, "autoload: could not flush cache");
+            // Same TLS hazard as the reap log in `atomic_write`: this runs from
+            // the `atexit` hook below, where `tracing`'s thread-local buffer may
+            // be gone.
+            if !crate::atexit_teardown::active() {
+                tracing::warn!(error = %e, "autoload: could not flush cache");
+            }
         }
     }
 }
@@ -668,7 +673,16 @@ pub fn try_flush_pending() {
 /// and `tracing::*` touches TLS, so the body is wrapped in `catch_unwind`: an
 /// unwinding panic out of an `extern "C"` function aborts the process. Same
 /// hazard and same mitigation as `recorder::atexit_finalize`.
+///
+/// `catch_unwind` alone is not enough, which is why `atexit_teardown::mark()`
+/// comes first. `catch_unwind` runs after the panic hook, so by the time it
+/// catches anything `panicked at ...` is already on the terminal the user is
+/// exiting; the unwind then skips the rest of the flush (`invalidate_mmap`,
+/// and any further work added here later). The mark tells the `tracing` sites
+/// on this path to stay quiet so the panic never happens at all; the
+/// `catch_unwind` stays as the backstop for anything else TLS-backed.
 extern "C" fn atexit_flush_pending() {
+    crate::atexit_teardown::mark();
     let _ = std::panic::catch_unwind(try_flush_pending);
 }
 

@@ -1181,6 +1181,9 @@ extern "C" fn atexit_finalize() {
     // so we must catch the AccessError they raise during destruction —
     // an unwinding panic from an `extern "C"` function aborts the
     // process and swallows the very output the user is here to see.
+    // The mark lets the log sites below the call skip `tracing` entirely
+    // rather than panic and be caught; see `atexit_teardown`.
+    crate::atexit_teardown::mark();
     let _ = std::panic::catch_unwind(|| {
         print_summary();
     });

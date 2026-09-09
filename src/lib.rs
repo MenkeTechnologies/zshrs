@@ -93,6 +93,10 @@ pub mod aot;
 /// `arith_compiler` submodule.
 #[path = "extensions/arith_compiler.rs"]
 pub mod arith_compiler;
+/// `atexit_teardown` submodule — whether a libc `atexit` hook is running,
+/// so the log sites they reach can skip TLS-backed `tracing`.
+#[path = "extensions/atexit_teardown.rs"]
+pub mod atexit_teardown;
 /// `atomic_write` submodule — the shared temp-file-safe shard writer
 /// used by both rkyv caches.
 #[path = "extensions/atomic_write.rs"]

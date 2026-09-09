@@ -104,7 +104,13 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     guard.disarm();
 
     let reaped = reap_orphan_temps(path);
-    if reaped > 0 {
+    // `crate::atexit_teardown::active()` — this function runs from
+    // `autoload_cache::atexit_flush_pending`, a libc `atexit` hook, where
+    // `tracing`'s thread-local format buffer may already be destroyed. Emitting
+    // there panics (AccessError), the panic hook prints to the user's terminal
+    // as the shell exits, and the unwind abandons the remaining shard writes.
+    // Only this branch logs, so only a run that actually reaped saw it.
+    if reaped > 0 && !crate::atexit_teardown::active() {
         tracing::info!(
             path = %path.display(),
             reaped,
