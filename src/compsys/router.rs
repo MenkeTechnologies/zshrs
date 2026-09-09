@@ -146,9 +146,40 @@ fn is_stock_functions_dir(dir: &str) -> bool {
     // The BUNDLED tree IS the stock tree. `normalize_fpath_after_assignment`
     // (vm_helper.rs) deletes every `<prefix>/share/zsh/<ver>/functions` entry
     // and substitutes `~/.zshrs/functions` AT THAT INDEX, and `default_fpath`
-    // omits the versioned host tree for the same reason — the bundle is a
-    // byte-identical superset of it (243 of 244 shared files match the host
-    // tree exactly).
+    // omits the versioned host tree for the same reason: the bundle covers a
+    // SUPERSET of the host tree's names, so nothing the host offered is lost
+    // by the swap.
+    //
+    // It is NOT byte-identical, and the substitution is not observationally
+    // neutral. The bundle tracks upstream zsh master; a host tree tracks its
+    // installed release, so every completer upstream has touched since that
+    // release differs. Re-measured 2026-09-09 against zsh 5.9's tree:
+    //
+    //   BD=~/.zshrs/functions; H=/usr/share/zsh/5.9/functions
+    //   comm -12 <(ls $BD) <(ls $H) |
+    //     while read f; do cmp -s $BD/$f $H/$f || print -r -- $f; done | wc -l
+    //
+    //   bundle 1284 files, host 1203, shared 1199 — 881 identical, 318 DIFFER.
+    //   Restricted to the names this router ports: 240 shared, 216 identical,
+    //   24 differ.
+    //
+    // This comment previously claimed "a byte-identical superset (243 of 244
+    // shared files match the host tree exactly)". No reading of the trees
+    // reproduces those figures, and believing them costs real measurement
+    // time: a `scripts/comptab_parity.py` sweep pins
+    // `fpath=( /usr/share/zsh/5.9/functions )` expecting both shells to run
+    // the same completer, but zshrs substitutes the bundle here, so any cell
+    // whose completer is one of the 318 compares two DIFFERENT completers and
+    // fails for reasons that have nothing to do with the engine. Measured on a
+    // 99-cell sweep 2026-09-09: all 5 failures were that split — `cp -`
+    // (bundle's `_cp` adds `darwin` to the `-l`/`-x`/`-s` OSTYPE patterns and
+    // adds `-c`, so zshrs offered four options zsh 5.9 does not), plus
+    // `ansible --`, `ansible -a `, `cut -`, `date -`. Filter a corpus against
+    // the diff above before reading a sweep as evidence about compsys.
+    //
+    // The 318 are a version split to be decided deliberately, not a defect of
+    // this function: the arbitration below is about fpath POSITION, and it is
+    // correct whichever tree wins that decision.
     //
     // Without this arm nothing on `$fpath` could ever match the
     // `/share/zsh/` string test, so `stock_pos` below was ALWAYS `None` and
