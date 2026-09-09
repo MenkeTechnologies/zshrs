@@ -3412,7 +3412,15 @@ pub fn clprintm(
         // only resets are the conditional ones at c:1884 / c:1892 (non-selected
         // matches switching to COL_TC / COL_SP) and the unconditional c:1898.
 
-        let len_str = display.chars().count() as i32;
+        // c:1878 — `len = ZMB_nicewidth(m->disp ? m->disp : m->str);`.
+        // `ZMB_nicewidth` is `niceztrlen` (Src/Zle/zle.h:128, :57): the DISPLAY
+        // COLUMN count of the nice representation, where a CJK character is 2
+        // and a metafied control byte 2-5. The port counted CHARACTERS here
+        // while the off-window twin at c:1835 (above) already used
+        // `niceztrlen`, so the two arms of the same measurement disagreed: a
+        // listing with any wide match over-padded its cells (c:1890 pads to
+        // `width - len - 2`) and told the scroller the wrong row height.
+        let len_str = crate::ported::utils::niceztrlen(display) as i32; // c:1878
         let lines = if len_str > 0 {
             (len_str - 1) / zterm_columns
         } else {
@@ -8812,6 +8820,89 @@ mod tests {
         assert!(
             mgtab_after_row1_full,
             "c:1439 — same bound for mgtab"
+        );
+    }
+
+    /// c:1835 and c:1878 are the SAME measurement taken on the two sides of
+    /// `clprintm`'s window test:
+    ///
+    /// ```c
+    ///     if (!dolist(ml)) {
+    ///         int nc = ZMB_nicewidth(m->disp ? m->disp : m->str);
+    ///         mlprinted = nc ? (nc-1) / zterm_columns : 0;   /* c:1835-1836 */
+    ///         return 0;
+    ///     }
+    ///     ...
+    ///     len = ZMB_nicewidth(m->disp ? m->disp : m->str);   /* c:1878      */
+    ///     mlprinted = len ? (len-1) / zterm_columns : 0;     /* c:1879      */
+    /// ```
+    ///
+    /// `ZMB_nicewidth` is `niceztrlen` (Src/Zle/zle.h:128 / :57), i.e. the
+    /// DISPLAY COLUMN count of the nice representation — a CJK character is 2,
+    /// a control byte 2-5. The port measured the off-window arm with
+    /// `niceztrlen` (complist.rs, c:1835) but the on-window arm with
+    /// `display.chars().count()`, a CHARACTER count. `len` also drives the
+    /// column padding at c:1890 (`width - len - 2`), so a listing containing
+    /// any wide or metafied match both padded its cells too far and reported a
+    /// row height the scroller then disagreed with.
+    ///
+    /// Comparing the two arms pins the invariant without depending on the
+    /// locale: `niceztrlen` counts whole characters under a UTF-8 locale and
+    /// individual bytes under `C`, and either way both arms must agree.
+    #[test]
+    fn clprintm_measures_the_cell_in_display_columns_like_the_offscreen_arm() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+
+        let saved = (
+            MLBEG.load(Ordering::SeqCst),
+            MLEND.load(Ordering::SeqCst),
+            MSELECT.load(Ordering::SeqCst),
+            MCOLS.load(Ordering::SeqCst),
+            MLINES.load(Ordering::SeqCst),
+            crate::ported::utils::ZTERM_COLUMNS.load(Ordering::SeqCst),
+        );
+
+        // A four-column terminal makes the two candidate widths land on
+        // different row counts for a three-character CJK match: 6 display
+        // columns wraps once, 3 characters does not.
+        crate::ported::utils::ZTERM_COLUMNS.store(4, Ordering::SeqCst);
+        MSELECT.store(-1, Ordering::SeqCst); // c:1761/1817 `if (mselect >= 0)`
+        MCOLS.store(4, Ordering::SeqCst);
+        MLINES.store(4, Ordering::SeqCst);
+
+        let group = std::sync::Arc::new(Cmgroup::default());
+        let m = Cmatch {
+            str: Some("\u{3042}\u{3042}\u{3042}".to_string()), // ああא — 3 chars, 6 columns
+            gnum: 0,
+            ..Default::default()
+        };
+
+        // Off-window arm (c:1834-1840): row 0 outside [mlbeg, mlend).
+        MLBEG.store(1, Ordering::SeqCst);
+        MLEND.store(2, Ordering::SeqCst);
+        let ret_off = clprintm(Some(&group), Some(&m), 0, 0, 1, 0);
+        let off = MLPRINTED.load(Ordering::SeqCst);
+
+        // On-window arm (c:1878-1879): the same row, now inside the window.
+        MLBEG.store(0, Ordering::SeqCst);
+        MLEND.store(2, Ordering::SeqCst);
+        let ret_on = clprintm(Some(&group), Some(&m), 0, 0, 1, 0);
+        let on = MLPRINTED.load(Ordering::SeqCst);
+
+        MLBEG.store(saved.0, Ordering::SeqCst);
+        MLEND.store(saved.1, Ordering::SeqCst);
+        MSELECT.store(saved.2, Ordering::SeqCst);
+        MCOLS.store(saved.3, Ordering::SeqCst);
+        MLINES.store(saved.4, Ordering::SeqCst);
+        crate::ported::utils::ZTERM_COLUMNS.store(saved.5, Ordering::SeqCst);
+
+        assert_eq!(ret_off, 0, "c:1840 — the off-window arm returns 0");
+        assert_eq!(ret_on, 0, "c:1905 — an undismissed cell returns 0");
+        assert_eq!(
+            on, off,
+            "c:1835 and c:1878 are one measurement — the on-window arm counted \
+             characters where C counts display columns"
         );
     }
 }
