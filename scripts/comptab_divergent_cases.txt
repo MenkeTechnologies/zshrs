@@ -6306,3 +6306,20 @@ gstack
 #   match SET is identical; only this one description's text differs. It is a
 #   direct consequence of porting completers to Rust and cannot be fixed
 #   without un-porting them.
+#
+# ---------------------------------------------------------------------------
+# OPEN — undo after MENU NAVIGATION drops the auto-added `/`.
+# ---------------------------------------------------------------------------
+#
+#   scripts/comptab_parity.py --case 'cd /u' --keys tab,down,ctrl-_
+#     zsh    $ cd /usr/
+#     zshrs  $ cd /usr
+#   scripts/comptab_parity.py --case 'ls /usr/sha' --keys tab,down,ctrl-_
+#     same shape.
+#
+#   Pre-dates 3ea78266da and is unchanged by it — both binaries FAIL this
+#   cell identically, so it is not fallout from the unapplychange fix. Plain
+#   `tab,ctrl-_` (no menu step) PASSES on both cases, so it is the DOWN in
+#   the middle: the change record the undo reverses was written before
+#   `do_single` registered the directory `/` as a removable suffix
+#   (compresult.c:1116-1119), and undoing to it takes the slash with it.
