@@ -10014,13 +10014,32 @@ pub fn bin_whence(
                     // PATH-resident command name. Walk the canonical
                     // table (not std::fs::read_dir) so HASHED/non-
                     // HASHED distinction is preserved.
-                    // External cmd-name matches: sort by full path
-                    // (the same printed token) to match C zsh's
-                    // scanmatchtable iteration order. The hashtable
-                    // walk in zsh on /bin/echo + /opt/homebrew/bin/
-                    // ecpg yields /bin/echo first because `/bin` <
-                    // `/opt` lexicographically. zshrs's HashMap walks
-                    // in arbitrary order without an explicit sort.
+                    // The `1` in that call is scanmatchtable's `sorted`
+                    // argument, and c:Src/hashtable.c:402 sorts with
+                    // `qsort(hnsorttab, ct, sizeof(HashNode), hnamcmp)`
+                    // where `hnamcmp` (c:341-346) is
+                    // `ztrcmp(a->nam, b->nam)` — the NODE NAME. The
+                    // printed token (the full path) is not what orders
+                    // the walk; it only happens to agree when the
+                    // matches all live in one directory.
+                    //
+                    // This sorted on the printed path instead, above a
+                    // comment asserting that was C's order. Measured
+                    // against real zsh 5.9 with `gls`/`ls`/`rls` in
+                    // three different directories:
+                    //
+                    //   % zsh   -f -c 'setopt extendedglob
+                    //                  whence -m "(#a1)lls"'
+                    //   /opt/homebrew/bin/gls
+                    //   /bin/ls
+                    //   /Users/…/.cargo/bin/rls
+                    //
+                    // i.e. gls < ls < rls by NAME, while the paths run
+                    // /Users < /bin < /opt. zshrs answered in path
+                    // order (rls, ls, gls) — every `whence -m`,
+                    // `where`, `which -m` with matches spanning
+                    // directories was mis-ordered, and
+                    // `_correct_filename '=lls'` inherited it.
                     let mut cmd_matches: Vec<(String, cmdnam)> = cmdnamtab_lock()
                         .read()
                         .map(|t| {
@@ -10030,29 +10049,8 @@ pub fn bin_whence(
                                 .collect()
                         })
                         .unwrap_or_default();
-                    // printcmdnamnode emits c.value.string (the full
-                    // path) so sort on that to match the printed
-                    // order, not the bare basename `n`.
-                    // printcmdnamnode emits one of:
-                    //   - HASHED entry: cmd (the full path)
-                    //   - non-HASHED entry: name[0] + "/" + nam
-                    // Sort by the same string the print path will
-                    // emit so the output order matches zsh's
-                    // scanmatchtable walk.
-                    let printed_path = |c: &cmdnam| -> String {
-                        if (c.node.flags & HASHED as i32) != 0 {
-                            c.cmd.clone().unwrap_or_default()
-                        } else {
-                            let dir = c
-                                .name
-                                .as_ref()
-                                .and_then(|v| v.first())
-                                .cloned()
-                                .unwrap_or_default();
-                            format!("{}/{}", dir, c.node.nam)
-                        }
-                    };
-                    cmd_matches.sort_by(|a, b| printed_path(&a.1).cmp(&printed_path(&b.1)));
+                    // c:341-346 `hnamcmp` — `ztrcmp(a->nam, b->nam)`.
+                    cmd_matches.sort_by(|a, b| crate::ported::utils::ztrcmp(&a.1.node.nam, &b.1.node.nam));
                     for (n, c) in &cmd_matches {
                         if all {
                             // c:4072 fetchcmdnamnode — accumulates
