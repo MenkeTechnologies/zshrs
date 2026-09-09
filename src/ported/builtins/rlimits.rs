@@ -23,7 +23,7 @@
 // matches — silence clippy's per-platform unnecessary_cast firing.
 #![allow(clippy::unnecessary_cast)]
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 #[cfg(unix)]
 use libc::{
@@ -92,98 +92,150 @@ pub struct resinfo_T {
 /// Table of known resources. C source uses `# ifdef` preprocessor
 /// conditionals per platform; the Rust port limits the table to the
 /// subset libc exposes on macOS / glibc Linux (CPU, FSIZE, DATA,
-/// STACK, CORE, NOFILE, AS).
+/// STACK, CORE, NOFILE, AS, RSS, NPROC, MEMLOCK). The Linux-only tail
+/// of the C table (`RLIMIT_LOCKS` … `RLIMIT_RTTIME`, c:103-126) and the
+/// BSD / AIX / HP-UX / Haiku entries (c:128-185) are not ported.
+///
+/// `LazyLock<Vec<…>>` rather than a plain `&[…]` because one of C's
+/// guards — `RLIMIT_RSS_IS_AS` at c:79 — compares two `RLIMIT_*`
+/// *values*, which is not expressible as a `cfg` attribute on an array
+/// element. Keeping the table in C's source order (rather than sorting
+/// the conditional entry to the end so the slice could be truncated)
+/// preserves the line-by-line correspondence with c:60-101.
 #[cfg(unix)]
-pub static known_resources: &[resinfo_T] = &[
-    resinfo_T {
-        res: RLIMIT_CPU as i32,
-        name: "cputime",
-        r#type: zlimtype::ZLIMTYPE_TIME,
-        unit: 1,
-        opt: 't',
-        descr: "cpu time (seconds)",
-    },
-    resinfo_T {
-        res: RLIMIT_FSIZE as i32,
-        name: "filesize",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 512,
-        opt: 'f',
-        descr: "file size (blocks)",
-    },
-    resinfo_T {
-        res: RLIMIT_DATA as i32,
-        name: "datasize",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 1024,
-        opt: 'd',
-        descr: "data seg size (kbytes)",
-    },
-    resinfo_T {
-        res: RLIMIT_STACK as i32,
-        name: "stacksize",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 1024,
-        opt: 's',
-        descr: "stack size (kbytes)",
-    },
-    resinfo_T {
-        res: RLIMIT_CORE as i32,
-        name: "coredumpsize",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 512,
-        opt: 'c',
-        descr: "core file size (blocks)",
-    },
-    resinfo_T {
-        res: RLIMIT_NOFILE as i32,
-        name: "descriptors",
-        r#type: zlimtype::ZLIMTYPE_NUMBER,
-        unit: 1,
-        opt: 'n',
-        descr: "file descriptors",
-    },
-    resinfo_T {
-        res: RLIMIT_AS as i32,
-        name: "addressspace",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 1024,
-        opt: 'v',
-        descr: "address space (kbytes)",
-    },
-    // c:rlimits.c:78 — RLIMIT_RSS / RLIMIT_VMEM. On macOS VMEM is
-    // aliased to RLIMIT_AS so this entry's `'m'` opt is the only
-    // place RSS appears; on Linux RSS is a distinct rlimit.
-    resinfo_T {
-        res: RLIMIT_RSS as i32,
-        name: "resident",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 1024,
-        opt: 'm',
-        descr: "resident set size (kbytes)",
-    },
-    // c:rlimits.c:95 — RLIMIT_NPROC (`-u`).
-    resinfo_T {
-        res: RLIMIT_NPROC as i32,
-        name: "maxproc",
-        r#type: zlimtype::ZLIMTYPE_NUMBER,
-        unit: 1,
-        opt: 'u',
-        descr: "processes",
-    },
-    // c:rlimits.c:99 — RLIMIT_MEMLOCK (`-l`).
-    resinfo_T {
-        res: RLIMIT_MEMLOCK as i32,
-        name: "memorylocked",
-        r#type: zlimtype::ZLIMTYPE_MEMORY,
-        unit: 1024,
-        opt: 'l',
-        descr: "locked-in-memory size (kbytes)",
-    },
-];
+pub static known_resources: LazyLock<Vec<resinfo_T>> = LazyLock::new(|| {
+    // WARNING: NOT IN RLIMITS.C — local name only. C's array IS
+    // `known_resources`; Rust forbids a `let` binding shadowing the
+    // static of that name, so the builder local is spelled `resources`.
+    let mut resources: Vec<resinfo_T> = vec![
+        resinfo_T {
+            res: RLIMIT_CPU as i32,
+            name: "cputime",
+            r#type: zlimtype::ZLIMTYPE_TIME,
+            unit: 1,
+            opt: 't',
+            descr: "cpu time (seconds)",
+        },
+        resinfo_T {
+            res: RLIMIT_FSIZE as i32,
+            name: "filesize",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 512,
+            opt: 'f',
+            descr: "file size (blocks)",
+        },
+        resinfo_T {
+            res: RLIMIT_DATA as i32,
+            name: "datasize",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 1024,
+            opt: 'd',
+            descr: "data seg size (kbytes)",
+        },
+        resinfo_T {
+            res: RLIMIT_STACK as i32,
+            name: "stacksize",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 1024,
+            opt: 's',
+            descr: "stack size (kbytes)",
+        },
+        resinfo_T {
+            res: RLIMIT_CORE as i32,
+            name: "coredumpsize",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 512,
+            opt: 'c',
+            descr: "core file size (blocks)",
+        },
+        resinfo_T {
+            res: RLIMIT_NOFILE as i32,
+            name: "descriptors",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'n',
+            descr: "file descriptors",
+        },
+        resinfo_T {
+            res: RLIMIT_AS as i32,
+            name: "addressspace",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 1024,
+            opt: 'v',
+            descr: "address space (kbytes)",
+        },
+    ];
+
+    // c:79-82 —
+    //   # if defined(HAVE_RLIMIT_RSS) && !defined(RLIMIT_VMEM_IS_RSS) \
+    //         && !defined(RLIMIT_RSS_IS_AS)
+    //       {RLIMIT_RSS, "resident", ZLIMTYPE_MEMORY, 1024,
+    //                 'm', "resident set size (kbytes)"},
+    //   # endif
+    //
+    // `RLIMIT_RSS_IS_AS` is configure.ac's name for the hosts where
+    // `RLIMIT_RSS` and `RLIMIT_AS` are the SAME resource number — which
+    // is exactly what this comparison tests, so it is the port of that
+    // guard rather than a substitute for it. NOT `config_h::RLIMIT_RSS_IS_AS`
+    // (config_h.rs:1088): that file is one frozen autoconf run on an
+    // aarch64-apple-darwin host and its own header says the `RLIMIT_*`
+    // sentinels are "unread dead code … Do not wire a `HAVE_*` constant
+    // into live code without deriving it first" (config_h.rs:13-17).
+    // Deriving it from `libc` is that derivation. Apple's headers spell the
+    // alias outright (`libc`: `pub const RLIMIT_RSS: c_int = RLIMIT_AS;`,
+    // both 5), so the entry is dropped on macOS just as the C
+    // preprocessor drops it; on Linux x86_64 / aarch64 RSS is 5 and AS
+    // is 9, so it is kept.
+    //
+    // The third condition, `RLIMIT_VMEM_IS_RSS`, cannot fire here: it is
+    // only defined on hosts that HAVE `RLIMIT_VMEM`, and neither macOS
+    // nor glibc Linux defines that constant at all (the whole
+    // `RLIMIT_VMEM` arm, c:83-93, is unported for the same reason).
+    //
+    // Dropping the entry is not cosmetic. `set_resinfo()` (c:200-202)
+    // indexes by resource NUMBER, so a second entry sharing `res` only
+    // shadows the first; the shadowed name stays unreachable from
+    // `limit NAME`, `unlimit NAME` and `ulimit -X`, yet still leaks out
+    // of any consumer that walks this table directly — which is how
+    // `limit <TAB>` came to offer a `resident` that `limit` never
+    // prints and `limit resident` rejects.
+    if RLIMIT_RSS as i32 != RLIMIT_AS as i32 {
+        resources.push(resinfo_T {
+            res: RLIMIT_RSS as i32,
+            name: "resident",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 1024,
+            opt: 'm',
+            descr: "resident set size (kbytes)",
+        });
+    }
+
+    resources.extend([
+        // c:rlimits.c:95 — RLIMIT_NPROC (`-u`).
+        resinfo_T {
+            res: RLIMIT_NPROC as i32,
+            name: "maxproc",
+            r#type: zlimtype::ZLIMTYPE_NUMBER,
+            unit: 1,
+            opt: 'u',
+            descr: "processes",
+        },
+        // c:rlimits.c:99 — RLIMIT_MEMLOCK (`-l`).
+        resinfo_T {
+            res: RLIMIT_MEMLOCK as i32,
+            name: "memorylocked",
+            r#type: zlimtype::ZLIMTYPE_MEMORY,
+            unit: 1024,
+            opt: 'l',
+            descr: "locked-in-memory size (kbytes)",
+        },
+    ]);
+
+    resources
+});
 
 #[cfg(not(unix))]
-pub static known_resources: &[resinfo_T] = &[];
+pub static known_resources: LazyLock<Vec<resinfo_T>> = LazyLock::new(Vec::new);
 
 // =====================================================================
 // Module-static state. Mirrors C `Src/Builtins/rlimits.c` and
@@ -198,7 +250,13 @@ pub static known_resources: &[resinfo_T] = &[];
 /// Port of `static const resinfo_T **resinfo` from rlimits.c:190.
 /// Index by `RLIMIT_*` value to get the matching `resinfo_T`.
 /// Populated by `set_resinfo()`, freed by `free_resinfo()`.
-static RESINFO: OnceLock<Mutex<Vec<resinfo_T>>> = OnceLock::new();
+///
+/// `pub(crate)` so `_limits`' test can compare what that completer
+/// offers against what `limit` would actually print: this — not
+/// `known_resources` — is the table `showlimits()` walks (c:372-374 →
+/// c:311 `resinfo[lim]->name`), so it is the only place a name lost to
+/// a resource-number collision becomes visible.
+pub(crate) static RESINFO: OnceLock<Mutex<Vec<resinfo_T>>> = OnceLock::new();
 
 /// Port of `mod_export struct rlimit current_limits[RLIM_NLIMITS]`
 /// from `Src/exec.c:310`. Snapshot of the shell's resource limits as
@@ -1452,8 +1510,20 @@ pub(crate) fn set_resinfo() {
     v.clear(); // c:194 fresh zshcalloc
     v.reserve(nlimits());
     for i in 0..nlimits() as i32 {
+        // c:200-202 —
+        //     for (i=0; i<sizeof(known_resources)/sizeof(resinfo_T); ++i)
+        //         resinfo[known_resources[i].res] = &known_resources[i];
+        //
+        // C ASSIGNS into the slot, so when two entries share a `res` the
+        // LAST one in table order wins. `.rev().find()` reproduces that;
+        // a plain `.find()` (which this used to be) is first-wins and
+        // silently disagrees with C on any host that compiles a
+        // duplicate. Unobservable as the table stands — the c:79 guard
+        // above is what removes the only duplicate either supported
+        // platform could produce — but the port must not depend on that.
         let entry = known_resources
             .iter()
+            .rev()
             .find(|r| r.res == i)
             .cloned()
             .unwrap_or_else(|| resinfo_T {
@@ -1676,6 +1746,90 @@ mod tests {
         assert!(find_resource('t') >= 0);
         assert!(find_resource('f') >= 0);
         assert_eq!(find_resource('z'), -1);
+    }
+
+    /// c:79 — the `RLIMIT_RSS_IS_AS` guard. Every entry in the table
+    /// must occupy its own resource number, because `set_resinfo()`
+    /// (c:200-202) keys by `res` and a collision erases whichever entry
+    /// loses. A shadowed entry is invisible to `limit NAME` /
+    /// `unlimit NAME` / `ulimit -X` yet still readable by anything that
+    /// walks the raw table, which is exactly how `limit <TAB>` came to
+    /// offer `resident` on macOS (where `RLIMIT_RSS == RLIMIT_AS == 5`).
+    ///
+    /// Platform-independent by construction: on Linux, where RSS (5)
+    /// and AS (9) are distinct, both entries are present and both are
+    /// still unique, so the same assertion holds for a different reason.
+    #[test]
+    #[cfg(unix)]
+    fn known_resources_have_no_duplicate_resource_numbers() {
+        let _g = crate::test_util::global_state_lock();
+        let mut seen: Vec<i32> = known_resources.iter().map(|r| r.res).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            before,
+            "known_resources has a duplicate `res`; \
+             set_resinfo() will silently drop an entry. Table: {:?}",
+            known_resources
+                .iter()
+                .map(|r| (r.name, r.res))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// c:79 — `resident` exists only where RSS is its own rlimit.
+    /// Stated as an if-and-only-if so the test is meaningful on both
+    /// supported platforms rather than asserting a macOS constant.
+    #[test]
+    #[cfg(unix)]
+    fn resident_entry_present_iff_rss_is_not_as() {
+        let _g = crate::test_util::global_state_lock();
+        let has_resident = known_resources.iter().any(|r| r.name == "resident");
+        assert_eq!(
+            has_resident,
+            RLIMIT_RSS as i32 != RLIMIT_AS as i32,
+            "RLIMIT_RSS={} RLIMIT_AS={} but `resident` present={}",
+            RLIMIT_RSS as i32,
+            RLIMIT_AS as i32,
+            has_resident
+        );
+    }
+
+    /// Whatever `known_resources` holds, every name it offers must be
+    /// reachable through the builtins that take a name or an option
+    /// letter — `bin_limit` / `bin_unlimit` resolve names against
+    /// `RESINFO` (c:201) and `find_resource` (c:239) resolves option
+    /// letters against the same table. An entry that fails this is one
+    /// the shell can list but not use.
+    #[test]
+    #[cfg(unix)]
+    fn every_known_resource_is_reachable_by_name_and_by_option() {
+        let _g = crate::test_util::global_state_lock();
+        set_resinfo();
+        let table = {
+            let lock = RESINFO.get().unwrap();
+            let v = lock.lock().unwrap();
+            v.clone()
+        };
+        for r in known_resources.iter() {
+            assert!(
+                table.iter().any(|e| e.name == r.name),
+                "`{}` is in known_resources but not reachable by name \
+                 (shadowed in RESINFO at res {})",
+                r.name,
+                r.res
+            );
+            assert_eq!(
+                find_resource(r.opt),
+                r.res,
+                "`ulimit -{}` should resolve to res {} (`{}`)",
+                r.opt,
+                r.res,
+                r.name
+            );
+        }
     }
 
     #[test]

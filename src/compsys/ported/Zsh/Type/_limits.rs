@@ -9,13 +9,39 @@
 //! sh:5  _wanted limits expl 'process limit' compadd "$@" - ${${(f)"$(limit)"}%% *}
 //! ```
 //!
-//! sh:5's `$(limit)` shell-out enumerates the configured rlimits.
-//! We bypass the fork/parse and read the same authoritative table
-//! (`known_resources`) the real `bin_limit` consults — see
+//! sh:5's `$(limit)` shell-out enumerates the configured rlimits. We
+//! bypass the fork and the `${…%% *}` first-column parse by reading the
+//! same authoritative table `bin_limit` consults — `known_resources`,
 //! `src/ported/builtins/rlimits.rs:92`.
+//!
+//! **Why the raw table and not `limit`'s literal output.** They are not
+//! the same list, and the difference is load-bearing in both directions:
+//!
+//!   * `limit` prints `resinfo[rt]->name` for every resource number
+//!     `0 .. RLIM_NLIMITS` (c:372-374 → c:311). `set_resinfo()`
+//!     (c:200-202) projects `known_resources` onto those numbers, so an
+//!     entry whose `res` COLLIDES with another's vanishes from `limit`'s
+//!     output while surviving in the raw table. Offering such a name
+//!     completes something `limit NAME` then rejects — this is the
+//!     `resident` bug (macOS aliases `RLIMIT_RSS` to `RLIMIT_AS`).
+//!     Fixed at the source: the c:79 guard now keeps the table free of
+//!     duplicate `res`, pinned by
+//!     `rlimits::tests::known_resources_have_no_duplicate_resource_numbers`.
+//!     With no collisions the two name sets agree, so reading the raw
+//!     table is sound.
+//!   * The converse: `set_resinfo()` also FILLS every resource number
+//!     the table does not cover with a synthetic `UNKNOWN-<n>` name
+//!     (c:206-214), and `limit` prints those too. On Linux
+//!     (`RLIM_NLIMITS` 16) the unported tail of C's table — `RLIMIT_LOCKS`
+//!     … `RLIMIT_RTTIME`, c:103-126 — makes six of them. Real zsh prints
+//!     six real names there, so enumerating `limit`'s output verbatim
+//!     would complete `UNKNOWN-13` where zsh completes `rt_priority`.
+//!     The raw table is a subset of zsh's list; `limit`'s output is not.
 
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::builtins::rlimits::known_resources;
+#[cfg(test)]
+use crate::ported::builtins::rlimits::{set_resinfo, RESINFO};
 
 /// `_limits` — `unlimit` command completion: list process-resource
 /// limit names.
@@ -63,10 +89,55 @@ mod tests {
         assert_eq!(r, 0);
     }
 
+    /// sh:5 is `compadd … ${${(f)"$(limit)"}%% *}`, so every candidate
+    /// must be a name the `limit` builtin actually prints. Reading the
+    /// raw table is only equivalent to that while no two entries share a
+    /// resource number — `showlimits()` prints `resinfo[rt]->name`
+    /// (c:372-374 → c:311) and `set_resinfo()` (c:200-202) keys by
+    /// `res`, so a collision hides a name from the builtin without
+    /// hiding it from us.
+    ///
+    /// This asserts the direction that broke: nothing offered here may
+    /// be absent from `limit`'s output. It does NOT assert the reverse —
+    /// on Linux `limit` additionally prints `UNKNOWN-10` … `UNKNOWN-15`
+    /// for the unported c:103-126 entries, and completing those would be
+    /// further from zsh, not closer.
     #[test]
-    fn enumerates_known_resources_nonempty() {
-        // Confirm the authoritative table has entries (platform-
-        //   dependent on Linux; on macOS the table also has values).
-        assert!(!known_resources.is_empty());
+    fn every_offered_name_is_one_limit_prints() {
+        let _g = crate::test_util::global_state_lock();
+
+        let offered: Vec<&str> = known_resources.iter().map(|r| r.name).collect();
+        assert!(!offered.is_empty(), "known_resources is empty");
+
+        // The first column of `limit` with no arguments: one name per
+        // resource number, in the order showlimits() walks them.
+        set_resinfo();
+        let printed: Vec<String> = {
+            let lock = RESINFO.get().unwrap();
+            let v = lock.lock().unwrap();
+            v.iter().map(|r| r.name.to_string()).collect()
+        };
+
+        for name in &offered {
+            assert!(
+                printed.iter().any(|p| p == name),
+                "`{}` would be completed but `limit` never prints it \
+                 (its resource number is taken by another entry). \
+                 limit prints: {:?}",
+                name,
+                printed
+            );
+        }
+
+        // The specific regression: where `RLIMIT_RSS` aliases
+        // `RLIMIT_AS` (macOS) the builtin prints `addressspace` at that
+        // resource number and rejects `limit resident`, so `resident`
+        // must not be offered. Where RSS is distinct (Linux) it must be.
+        assert_eq!(
+            offered.contains(&"resident"),
+            libc::RLIMIT_RSS as i32 != libc::RLIMIT_AS as i32,
+            "offered names: {:?}",
+            offered
+        );
     }
 }
