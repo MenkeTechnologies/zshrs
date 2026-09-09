@@ -34,6 +34,24 @@ die at import; use a real CPython venv.
 """
 import os, pty, sys, time, select, argparse, fcntl, termios, struct
 
+# The `python3` on this host's PATH may be pythonrs, a Rust reimplementation.
+# It is NOT a drop-in: `sys.argv` arrives correctly and `import pyte` succeeds,
+# but `argparse.parse_args()` does not consume the arguments and exits 2, so the
+# script dies claiming its required options are missing while the command line
+# plainly had them. That reads as user error and has cost real time. Fail with
+# the actual reason instead.
+#
+# (`comptab_parity.py` fails differently under the same interpreter: it dies at
+# IMPORT on the PEP 585 `list[str]` annotations, before argparse is reached.)
+if "pythonrs" in sys.version:
+    raise SystemExit(
+        "comptab_screen: refusing to run under pythonrs (%s).\n"
+        "  argparse there does not parse arguments, so this would fail as\n"
+        "  'required arguments missing' no matter what you passed.\n"
+        "  Use a real CPython, e.g. /opt/homebrew/bin/python3, or a venv with pyte."
+        % sys.version.split()[0]
+    )
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--shell", required=True)          # full argv, space separated
 ap.add_argument("--init", required=True)           # file to source
