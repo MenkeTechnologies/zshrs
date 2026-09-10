@@ -6323,3 +6323,60 @@ gstack
 #   the middle: the change record the undo reverses was written before
 #   `do_single` registered the directory `/` as a removable suffix
 #   (compresult.c:1116-1119), and undoing to it takes the slash with it.
+#
+# ---------------------------------------------------------------------------
+# NOT A DEFECT — 'env ' DOES raise the LISTMAX query. Measured 2026-09-10.
+# ---------------------------------------------------------------------------
+#
+# Reported as "zsh raises `do you wish to see all 48279 possibilities (24361
+# lines)?` on the first TAB, zshrs does not", with the practical damage being
+# a STATE split — one shell sits at a query prompt, the other on the command
+# line, so the next BACKSPACE means two different things. Re-measured against
+# the live 50-entry fpath with a copy of the real dump (sha
+# 10ebe0a033...d801df5d) and it does not reproduce: BOTH shells ask.
+#
+#   binary                first TAB -> query      count (lines)
+#   /opt/homebrew/bin/zsh      0.21 s / 0.23 s    52851 (26641) / 52848 (26637)
+#   zshrs target/debug         2.40 s / 2.34 s    52881 (26670) / 52878 (26666)
+#   zshrs target/release       0.57 s / 0.56 s    52883 (26669) / 52884 (26669)
+#
+# The "does not ask" reading is a HARNESS SETTLE-WINDOW artifact, and every
+# screen driver in this tree has one shorter than the debug build's 2.4 s:
+# comptab_screen.py pumps 1.2 s per key plus a 0.8 s tail (:209-212), so it
+# catches zsh at 0.2 s and misses zshrs at 2.4 s and prints an empty screen —
+# indistinguishable from "computed nothing". comptab_parity.py's captures are
+# bounded the same way. A driver that waits for the QUERY TEXT rather than for
+# a fixed interval sees it on both sides, every run, 2/2 each.
+#
+# Nor is the count a defect. It is the DELIBERATE-FEATURE band already
+# recorded for 'command ' and 'read ' above: zshrs exports HELPDIR, INFOPATH
+# and MANPATH (src/extensions/bundled_docs.rs) and zsh does not, and because
+# `_describe` groups by description text those three extra names each add a
+# distinct description, which adds `compadd -E<n>` column-padding dummies to
+# the count. Equalize by turning the padding off and the band collapses:
+#
+#   zstyle ':completion:*' verbose no
+#     zsh    52586 (26256) / 52587 (26257)
+#     zshrs  52590 (26257) / 52591 (26258)     +4, of which +3 are those names
+#
+# The name sets themselves are identical modulo those three. With the pinned
+# init sourced, `${(ok)parameters[(R)*export*]}` is 11 names in zsh and 14 in
+# zshrs (only HELPDIR INFOPATH MANPATH extra, none missing), and $builtins
+# (103), $reswords (31), $functions (46761), $aliases (2) and $commands (5527)
+# are EQUAL on both sides. So `_env`'s two alternatives — `_parameters -g
+# "*export*"` and `_normal -p env` — agree.
+#
+# What is real is the LATENCY, and only in the debug build: 2.4 s vs zsh's
+# 0.2 s, of which the profile puts ~30% in one `qsort_tolerant`/`matchcmp`
+# sort of the 52k-match array inside `permmatches` (`_setup`:3 and
+# `_path_files`:47 both read `$compstate[nmatches]`, which is `get_nmatches`
+# -> `permmatches(0)`, Zle/complete.c:1411-1413). C runs the same sort; the
+# gap is comparator cost, not extra work — the c:3433 `pmatches && !newmatches`
+# memo and the per-group `!g->perm || g->new` reuse arm are both ported and
+# both taken. In release it is 0.56 s.
+#
+# Guarded from here by two unit tests over a socketpair-backed SHTTY, which
+# pin the decision itself rather than a screen: `asklist_queries_when_the_
+# list_outgrows_the_screen` and `asklist_is_silent_when_the_list_fits_the_
+# screen` (src/ported/zle/compresult.rs). Not added to the corpus: the cell
+# passes, and a PTY cell for it would only re-measure the settle window.

@@ -5522,6 +5522,211 @@ mod tests {
         let _: i32 = asklist();
     }
 
+    /// Put the two globals the `asklist` tests below drive back to their
+    /// default state.
+    ///
+    /// `listdat` and `minfo` are process-wide (compcore.rs:6863 / :6947,
+    /// C's `listdat` at Zle/compresult.c:182 and `minfo` at
+    /// Zle/zle_tricky.c), so a test that leaves a 26643-line `listdat`
+    /// standing makes the NEXT test's `asklist()` cross the c:1932
+    /// threshold and query the REAL terminal — `asklist_returns_i32_type`
+    /// printed the question to the test runner's stdout and read a byte
+    /// off the developer's tty before this reset existed.
+    fn reset_asklist_globals() {
+        if let Ok(mut d) = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
+            *d = Default::default();
+        }
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default();
+        }
+    }
+
+    /// c:1929-1953 — the LISTMAX query, driven end to end.
+    ///
+    /// `env <TAB>` on a live fpath builds ~52.8k matches over ~26.6k
+    /// lines. With `LISTMAX` unset (`complistmax == 0`) the third arm of
+    /// the c:1929 test — `listdat.nlines >= zterm_lines` — fires, so zsh
+    /// prints `zsh: do you wish to see all 52856 possibilities (26643
+    /// lines)? ` and BLOCKS in `getzlequery` until the user answers.
+    ///
+    /// What this guards is a STATE divergence, not a missing line. A
+    /// shell that computed the same counts but skipped the query sits on
+    /// the command line while zsh sits at a query prompt, so the very
+    /// next keystroke — a BACKSPACE, say — edits the buffer on one side
+    /// and answers the question on the other, and every key after that
+    /// means something different on the two shells.
+    ///
+    /// Driven over a socketpair standing in for the tty. The answer byte
+    /// is queued on the PEER before the call, so `getzlequery`'s
+    /// `raw_getbyte` reads a real `n` instead of an EOF, and the question
+    /// text is read back off that same peer afterwards.
+    #[test]
+    fn asklist_queries_when_the_list_outgrows_the_screen() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let mut sv = [0 as libc::c_int; 2];
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) },
+            0,
+            "socketpair(2)"
+        );
+        // The keystroke the user answers with. Written to the PEER, so it
+        // is readable on the fd `asklist` treats as the terminal.
+        assert_eq!(
+            unsafe { libc::write(sv[1], b"n".as_ptr() as *const libc::c_void, 1) },
+            1,
+            "queue the answer"
+        );
+
+        let saved_tty = SHTTY.load(Relaxed);
+        let saved_lines = crate::ported::utils::ZTERM_LINES.load(Relaxed);
+        SHTTY.store(sv[0], Relaxed);
+        // c:1932 — `zterm_lines`, and `complistmax` 0 to select that arm.
+        crate::ported::utils::ZTERM_LINES.store(30, Relaxed);
+        COMPLISTMAX.store(0, Relaxed);
+        // c:1925 — `dolastprompt` is the only input here that clears
+        // `clearflag`, which keeps the c:1944/c:1955 cleanup on its
+        // `putc('\n')` branch instead of emitting cursor-motion capabilities.
+        crate::ported::zle::compcore::dolastprompt.store(0, Relaxed);
+        crate::ported::zle::zle_main::KUNGETBUF
+            .lock()
+            .unwrap()
+            .clear();
+
+        // c:1929 — `!minfo.cur || !minfo.asked`; a fresh Menuinfo is both.
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default();
+        }
+        // The two counts `calclist` leaves behind for a real `env <TAB>`.
+        if let Ok(mut d) = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
+            d.nlist = 52856; // c:1937
+            d.nlines = 26643; // c:1937
+        }
+
+        let rc = asklist();
+
+        SHTTY.store(saved_tty, Relaxed);
+        crate::ported::utils::ZTERM_LINES.store(saved_lines, Relaxed);
+        let asked = MINFO
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|m| m.asked)
+            .unwrap_or(0);
+        reset_asklist_globals();
+
+        // Half-close first: if `asklist` wrote nothing the read then
+        // reports EOF instead of blocking the test forever.
+        unsafe { libc::shutdown(sv[0], libc::SHUT_WR) };
+        let mut buf = [0u8; 4096];
+        let n = unsafe { libc::read(sv[1], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe {
+            libc::close(sv[0]);
+            libc::close(sv[1]);
+        }
+        assert!(n > 0, "c:1937 — the query must reach the terminal");
+        let out = String::from_utf8_lossy(&buf[..n as usize]).to_string();
+        assert!(
+            out.contains("zsh: do you wish to see all 52856 possibilities (26643 lines)? "),
+            "c:1937 — wording and BOTH counts, verbatim; got {out:?}"
+        );
+        assert_eq!(rc, 1, "c:1953 — a refusal returns 1 and the list is suppressed");
+        assert_eq!(
+            asked, 2,
+            "c:1952 — `minfo.asked = 2` records the refusal for the next TAB"
+        );
+    }
+
+    /// c:1929-1932 / c:1967 — the same decision the other way round.
+    ///
+    /// A list that FITS the screen (`listdat.nlines < zterm_lines`, no
+    /// `LISTMAX`) must ask nothing and return 0, so the caller lists
+    /// outright. Pinned alongside the query case because "ask always"
+    /// would satisfy that test on its own while breaking every ordinary
+    /// completion.
+    #[test]
+    fn asklist_is_silent_when_the_list_fits_the_screen() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let mut sv = [0 as libc::c_int; 2];
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) },
+            0,
+            "socketpair(2)"
+        );
+
+        let saved_tty = SHTTY.load(Relaxed);
+        let saved_lines = crate::ported::utils::ZTERM_LINES.load(Relaxed);
+        SHTTY.store(sv[0], Relaxed);
+        crate::ported::utils::ZTERM_LINES.store(30, Relaxed); // c:1932
+        COMPLISTMAX.store(0, Relaxed); // c:1932
+        crate::ported::zle::compcore::dolastprompt.store(0, Relaxed); // c:1925
+        crate::ported::zle::zle_main::KUNGETBUF
+            .lock()
+            .unwrap()
+            .clear();
+
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default(); // c:1929
+        }
+        if let Ok(mut d) = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
+            d.nlist = 4; // c:1930
+            d.nlines = 2; // c:1932 — 2 < 30, the arm does not fire
+        }
+
+        let rc = asklist();
+
+        SHTTY.store(saved_tty, Relaxed);
+        crate::ported::utils::ZTERM_LINES.store(saved_lines, Relaxed);
+        let asked = MINFO
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|m| m.asked)
+            .unwrap_or(-1);
+        reset_asklist_globals();
+
+        unsafe { libc::shutdown(sv[0], libc::SHUT_WR) };
+        let mut buf = [0u8; 4096];
+        let n = unsafe { libc::read(sv[1], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe {
+            libc::close(sv[0]);
+            libc::close(sv[1]);
+        }
+        let out = if n > 0 {
+            String::from_utf8_lossy(&buf[..n as usize]).to_string()
+        } else {
+            String::new()
+        };
+        assert!(
+            !out.contains("do you wish to see all"),
+            "c:1929 — a list that fits must not be queried; got {out:?}"
+        );
+        assert_eq!(rc, 0, "c:1967 — `minfo.asked` is 0, so the caller lists");
+        assert_eq!(
+            asked, 0,
+            "c:1952/c:1963 — neither assignment runs when the query is skipped"
+        );
+    }
+
     /// c:1350 — `printlist(0, 0)` returns i32.
     #[test]
     fn printlist_returns_i32_type() {
