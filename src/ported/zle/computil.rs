@@ -7577,7 +7577,14 @@ pub fn cfp_test_exact(
 ///   - CPAT_CCLASS / CPAT_EQUIV / CPAT_CHAR: `[classchar+addchar]`
 ///   - CPAT_ANY: `?`
 pub fn cfp_matcher_range(
-    ms: &[Option<Box<Cmatcher>>], // c:4307
+    // c:4307 — `cfp_matcher_range(Cmatcher *ms, char *add)`. `ms` is C's
+    // `VARARR(Cmatcher, ms, zl)` (c:4561), and `Cmatcher` is a POINTER
+    // typedef (Src/Zle/comp.h:30), so each slot is a BORROWED handle on a
+    // node of the caller's chain — never a node of its own. Taking
+    // `Option<Box<Cmatcher>>` here forced `cfp_matcher_pats` to deep-copy
+    // one matcher per character of `add`; see the note at its `ms[i] = ...`
+    // stores.
+    ms: &[Option<&Cmatcher>],
     add: &str,
 ) -> String {
     // c:4405 — `PATMATCHRANGE(m->line->u.str, addc, &ind, &mt)`. The macro
@@ -7609,7 +7616,7 @@ pub fn cfp_matcher_range(
 
     for (i, (_byte_idx, ch)) in add_chars.iter().enumerate() {
         let addc = *ch as u32;
-        let m_opt = ms.get(i).and_then(|x| x.as_deref());
+        let m_opt = ms.get(i).copied().flatten();
 
         match m_opt {
             None => {
@@ -7752,13 +7759,25 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
 
     // c:4527 — parse_cmatcher returns None on error (the C pcm_err path).
     let m_chain = parse_cmatcher("", matcher);
-    let Some(mut m_chain) = m_chain else {
+    let Some(m_chain) = m_chain else {
         return add.to_string(); // c:4529
     };
 
-    // c:4531-4538 — ms[0..zl] is one matcher slot per character of add.
-    let zl = ztrlen(add); // c:4531
-    let mut ms: Vec<Option<Box<Cmatcher>>> = (0..zl).map(|_| None).collect();
+    // c:4560-4567 — `VARARR(Cmatcher, ms, zl); memset(ms, 0, zl * sizeof(Cmatcher))`:
+    // one matcher slot per character of add. `Cmatcher` is a POINTER typedef
+    // (Src/Zle/comp.h:30), so a slot costs C a pointer store and the nodes stay
+    // owned by the `m_chain` this function parsed.
+    //
+    // The port used to store `Some(Box::new(m.clone()))` in each slot. `Cmatcher`'s
+    // derived `Clone` follows `next`, so cloning the entry that fired dragged the
+    // whole tail of the chain after it — plus that node's four `Cpattern` chains,
+    // themselves recursively cloned with a `Vec<u8>` per character class — and the
+    // stores below sit INSIDE a loop over every character of `add`, run again for
+    // every matcher in the chain. `compfiles -p` (c:4722) asks for this on each
+    // path component of every `_path_files` call, which is most of file completion.
+    // `m_chain` outlives `ms`, so a borrow is both cheaper and what C stores.
+    let zl = ztrlen(add); // c:4560
+    let mut ms: Vec<Option<&Cmatcher>> = vec![None; zl];
     let mut add_owned = add.to_string();
 
     let mut m_opt: Option<&Cmatcher> = Some(&*m_chain);
@@ -7784,7 +7803,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
                             add_owned.truncate(*byte_idx); // c:4553
                             break;
                         } else {
-                            ms[i] = Some(Box::new(m.clone())); // c:4557
+                            ms[i] = Some(m); // c:4586 `*mp = m` — the pointer, not a copy
                         }
                     }
                 }
@@ -7809,7 +7828,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
                             add_owned.truncate(*byte_idx); // c:4573
                             break;
                         } else {
-                            ms[i] = Some(Box::new(m.clone()));
+                            ms[i] = Some(m); // c:4606 `*mp = m` — the pointer, not a copy
                         }
                     }
                 }
@@ -10040,7 +10059,7 @@ mod tests {
     fn cfp_matcher_range_no_matchers_verbatim() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let ms: Vec<Option<Box<Cmatcher>>> = vec![None, None, None];
+        let ms: Vec<Option<&Cmatcher>> = vec![None, None, None];
         let r = cfp_matcher_range(&ms, "abc");
         assert_eq!(r, "abc");
     }
@@ -11216,5 +11235,49 @@ mod tests {
     fn get_cadef_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _: i32 = get_cadef("", &[]);
+    }
+
+    /// c:4561 — `VARARR(Cmatcher, ms, zl)` is an array of POINTERS, and
+    /// c:4586 / c:4606 fill a slot with `*mp = m`. Both stores sit inside a
+    /// loop over every character of `add`, and that loop runs again for every
+    /// matcher in the chain, so in C a slot costs one pointer store.
+    ///
+    /// The port stored `Some(Box::new(m.clone()))`. `Cmatcher`'s derived
+    /// `Clone` follows `next`, so the entry that fired dragged the whole tail
+    /// of the chain after it — and each of those nodes dragged its four
+    /// `Cpattern` chains, recursively cloned with a `Vec<u8>` per character
+    /// class. A chain of N matchers therefore cost N nodes per character
+    /// instead of nothing.
+    ///
+    /// The spec below is 2500 copies of `m:{a}={b}`, all of which take the
+    /// c:4572 `llen == 1 && wlen == 1` arm, against 10000 `a`s: the first
+    /// matcher claims all 10000 slots and the second hits an occupied slot at
+    /// index 0, which truncates `add` (c:4582) and leaves the remaining 2498
+    /// with nothing to walk. So the ONLY difference between the two shapes is
+    /// what a slot store costs — 10000 borrows after, 10000 × 2500 node copies
+    /// before — and the matchers never fire again, which keeps everything else
+    /// identical. Measured by reinstating the clone: 5.97 s, against 0.01 s
+    /// for the borrow. The 5 s bound is therefore crossed by the old shape and
+    /// has ~500x of headroom over the new one, so a loaded box cannot flip it.
+    #[test]
+    fn cfp_matcher_pats_slots_borrow_the_chain_they_do_not_copy_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let spec = vec!["m:{a}={b}"; 2500].join(" ");
+        let add = "a".repeat(10000);
+
+        let t0 = std::time::Instant::now();
+        let _ = cfp_matcher_pats(&spec, &add);
+        let elapsed = t0.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "cfp_matcher_pats over {} characters with a 2500-matcher chain took \
+             {:?}; each slot is copying the chain again instead of borrowing it \
+             (c:4586 `*mp = m`)",
+            add.len(),
+            elapsed
+        );
     }
 }
