@@ -53,14 +53,11 @@ fn make_ops() -> options {
     }
 }
 
-/// sh:5 — assoc lookup helper for the flat key/value layout used in
-/// the Rust port.
-fn assoc_get(name: &str, key: &str) -> Option<String> {
-    let arr = getaparam(name)?;
-    arr.chunks(2)
-        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
-}
+/// sh:19-22 — `$+userdirs[$user]` / `$nameddirs[$user]`. Both are
+/// `zsh/parameter` PM_HASHED magic hashes, so the lookup goes through
+/// `gethkparam`/`gethparam`; see `shared::assoc_get` for why `getaparam`
+/// reads them as absent.
+use crate::compsys::ported::shared::assoc_get;
 
 /// `_tilde_files` — file completion with `~user` / `~name`
 /// expansion. Dispatches `_files` (sibling) for the underlying path

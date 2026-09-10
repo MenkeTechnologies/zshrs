@@ -1601,3 +1601,96 @@ pub fn shfunc_names_with_prefix(prefix: &str) -> Vec<String> {
         .map(|(k, _)| k.clone())
         .collect()
 }
+
+/// `$name[key]` for an ASSOCIATIVE parameter, including the `zsh/parameter`
+/// magic hashes (`aliases`, `galiases`, `dis_aliases`, `dis_galiases`,
+/// `userdirs`, `nameddirs`, `commands`, …).
+///
+/// `getaparam` is the wrong accessor for these and returns `None`, never an
+/// empty result that would be visible as such: C's `getaparam` bails unless
+/// `PM_TYPE(v->pm->node.flags) == PM_ARRAY` (c:Src/params.c:3108), and every
+/// magic hash is `PM_HASHED`. The port mirrors that at
+/// `src/ported/params.rs:6334`, so a hand-rolled
+/// `getaparam(name)?.chunks(2)` helper silently reads EVERY such hash as
+/// absent — the completer then takes its "no such key" branch always.
+/// `gethkparam`/`gethparam` (c:Src/params.c:3117/3131) are the hash
+/// accessors and dispatch through the module's own scan.
+///
+/// The flat key/value fallback stays for assocs a port staged with
+/// `setaparam`, which do arrive as PM_ARRAY.
+pub fn assoc_get(name: &str, key: &str) -> Option<String> {
+    let keys = crate::ported::params::gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        let vals = crate::ported::params::gethparam(name).unwrap_or_default();
+        return keys
+            .iter()
+            .position(|k| k == key)
+            .and_then(|i| vals.get(i).cloned());
+    }
+    crate::ported::params::getaparam(name)
+        .unwrap_or_default()
+        .chunks(2)
+        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
+        .and_then(|kv| kv.get(1).cloned())
+}
+
+/// `${#<assoc>[(I)<prefix>*]}` — how many keys of the associative parameter
+/// `name` begin with `prefix`. Same accessor story as [`assoc_get`].
+pub fn assoc_key_count_with_prefix(name: &str, prefix: &str) -> usize {
+    let keys = crate::ported::params::gethkparam(name).unwrap_or_default();
+    if !keys.is_empty() {
+        return keys.iter().filter(|k| k.starts_with(prefix)).count();
+    }
+    crate::ported::params::getaparam(name)
+        .unwrap_or_default()
+        .chunks(2)
+        .filter_map(|kv| kv.first())
+        .filter(|k| k.starts_with(prefix))
+        .count()
+}
+
+#[cfg(test)]
+mod assoc_accessor_tests {
+    use super::{assoc_get, assoc_key_count_with_prefix};
+    use crate::ported::params::{getaparam, sethparam, unsetparam};
+
+    /// A PM_HASHED parameter is invisible to `getaparam` — c:Src/params.c:3108
+    /// only yields a value for `PM_TYPE(...) == PM_ARRAY`, and the port
+    /// mirrors that (`src/ported/params.rs:6334`). Every completer that read
+    /// an associative parameter with `getaparam(name)?.chunks(2)` therefore
+    /// saw EVERY key as absent and took its "no such key" branch always
+    /// (`_expand_alias` expanded nothing, `_tilde_files` reported
+    /// "unknown user" for every `~name/`). The accessors must be
+    /// `gethkparam`/`gethparam` (c:3117/3131).
+    #[test]
+    fn reads_a_pm_hashed_parameter_that_getaparam_cannot_see() {
+        let _g = crate::test_util::global_state_lock();
+        const NAME: &str = "zzq_shared_assoc_probe";
+        sethparam(
+            NAME,
+            vec![
+                "alpha".to_string(),
+                "one".to_string(),
+                "alpine".to_string(),
+                "two".to_string(),
+                "beta".to_string(),
+                "three".to_string(),
+            ],
+        );
+
+        assert!(
+            getaparam(NAME).is_none(),
+            "premise broken: getaparam now sees a PM_HASHED param, so this \
+             test no longer guards anything"
+        );
+        assert_eq!(assoc_get(NAME, "alpha"), Some("one".to_string()));
+        assert_eq!(assoc_get(NAME, "beta"), Some("three".to_string()));
+        assert_eq!(assoc_get(NAME, "gamma"), None);
+        // `${#assoc[(I)al*]}` — two keys start with `al`.
+        assert_eq!(assoc_key_count_with_prefix(NAME, "al"), 2);
+        assert_eq!(assoc_key_count_with_prefix(NAME, "b"), 1);
+        assert_eq!(assoc_key_count_with_prefix(NAME, "zz"), 0);
+
+        unsetparam(NAME);
+    }
+}

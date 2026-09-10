@@ -878,15 +878,10 @@ fn is_ambiguous_prefix(word: &str) -> bool {
 }
 
 /// `${#<assoc>[(I)<prefix>*]}` — how many keys of the associative array
-/// `name` start with `prefix`.
-fn assoc_keys_with_prefix(name: &str, prefix: &str) -> usize {
-    getaparam(name)
-        .unwrap_or_default()
-        .chunks(2)
-        .filter_map(|kv| kv.first())
-        .filter(|k| k.starts_with(prefix))
-        .count()
-}
+/// `name` start with `prefix`. `userdirs` and `nameddirs` are PM_HASHED
+/// magic hashes, so this goes through `gethkparam`; see
+/// `shared::assoc_get` for why `getaparam` reads them as absent.
+use crate::compsys::ported::shared::assoc_key_count_with_prefix as assoc_keys_with_prefix;
 
 // =====================================================================
 // sh:62-118 — expansion

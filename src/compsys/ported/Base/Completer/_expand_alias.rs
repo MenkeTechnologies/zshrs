@@ -47,13 +47,12 @@ use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 
-/// sh:34-37 — assoc lookup in flat key/value layout.
-fn assoc_get(name: &str, key: &str) -> Option<String> {
-    let arr = getaparam(name)?;
-    arr.chunks(2)
-        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
-}
+/// sh:34-40 — `$aliases[$word]` / `$galiases[$word]` / `$dis_aliases[...]`
+/// / `$dis_galiases[...]`. All four are `zsh/parameter` PM_HASHED magic
+/// hashes, so the lookup must go through `gethkparam`/`gethparam`; see
+/// `shared::assoc_get` for why `getaparam` reads every one of them as
+/// absent.
+use crate::compsys::ported::shared::assoc_get;
 
 /// `_expand_alias` — expand alias under cursor + emit replacement.
 pub fn _expand_alias() -> i32 {
