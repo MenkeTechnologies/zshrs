@@ -15849,3 +15849,150 @@ fn singsub_contexts_are_prefork_single() {
         assert_eq!(out, want, "{script}");
     }
 }
+
+/// c:Src/params.c:736 — `getvaluearr` answers a bare hash reference with
+/// `paramvalarr(v->pm->gsu.h->getfn(v->pm), v->scanflags)`, and for a bare
+/// `${(P)name}` `v->scanflags` is `SCANPM_ARRONLY` (c:2277). `scanparamvals`
+/// stores a KEY only under `SCANPM_WANTKEYS` (c:683-686), which `ARRONLY` is
+/// not, so C never builds one: the values are the whole answer.
+///
+/// zshrs answered this through `assoc_get`, which scans with
+/// `SCANPM_WANTKEYS|SCANPM_WANTVALS` and returns an `IndexMap`, so every
+/// `${(P)h}` allocated a key per entry, hashed it into a map, and then cloned
+/// every value straight back out through `.values().cloned()` — three
+/// whole-table passes to answer a read C answers in one, with the entire key
+/// half discarded one expression later. `$functions` is the parameter this
+/// costs most on: the user's `_parameters` completer runs `${${(P)i}:0:100}`
+/// for every parameter name, `functions` among them.
+///
+/// The pathological shape here makes the discarded work dominate: 400
+/// functions whose NAMES are 30 000 characters each and whose values are the
+/// 19-byte `builtin autoload -X`. Reading the values must not touch 12 MB of
+/// key material, and — with `scanfunctions` now building each value from the
+/// `Shfunc` its walk already holds (c:487-521) instead of calling back through
+/// `getfunction` per entry — must not re-hash those names for a second lookup
+/// either.
+///
+/// The bound is `run_zshrs_parity`'s own 5-second spawn timeout, which the
+/// helper turns into a panic. Measured on this box (debug build): 24.5 s
+/// before the fix against 0.35-0.58 s after, so the guard has roughly an
+/// order of magnitude of headroom on the passing side while a regression
+/// overruns it several times over.
+#[test]
+fn P_deref_of_a_magic_hash_does_not_materialise_its_key_set() {
+    let (status, out, err) = run_zshrs_parity(
+        r#"pad=${(l:30000::x:):-}
+           for j in {1..400}; do autoload -Uz "zz${pad}$j"; done
+           i=functions
+           for r in {1..100}; do : ${${(P)i}:0:1}; done
+           print ok"#,
+    );
+    assert_eq!(status, 0, "stderr: {err}");
+    assert_eq!(out, "ok\n", "stderr: {err}");
+}
+
+/// c:Src/Modules/parameter.c:470 — `scanfunctions` emits an entry only when
+/// `dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED)`, so a `disable -f`d
+/// function is absent from `$functions` and present in `$dis_functions`. That
+/// gate lives in the SCAN, which is the path a whole-hash values read takes, so
+/// routing `${(P)functions}` through a values-only accessor has to keep it.
+///
+/// Checked on the values, not just the keys: the failure this pins is a values
+/// read that enumerates `shfunctab` without re-applying the DISABLED parity
+/// test, which would leak a disabled function's BODY into `$functions` while
+/// its key stayed correctly hidden. The two directions are asserted separately
+/// because a filter inverted rather than dropped passes a one-sided check.
+///
+/// The per-key reads are compared against the scan's own output for the same
+/// names: C builds that text twice, in `getfunction` (c:401-443) and inline in
+/// `scanfunctions` (c:487-521), and the two are byte-identical, so the port's
+/// two copies must agree as well. All four `autoload` suffix states
+/// (c:488-493: `""`, `U`, `t`, `Ut`) and a redirection-carrying definition
+/// (c:497-500, c:517-520) are covered, since those are the branches that differ
+/// between the copies.
+#[test]
+fn functions_values_honour_the_DISABLED_filter_and_match_the_per_key_text() {
+    let (status, out, err) = run_zshrs_parity(
+        r#"zzon()    { print on }
+           zzoff()   { print off }
+           zzredir() { print out } >/dev/null
+           disable -f zzoff
+           autoload -Uz  zzauU
+           autoload -tz  zzauT
+           autoload -Utz zzauUT
+           autoload -z   zzauP
+           typeset -a fv dv m
+           i=functions;     fv=( "${(@P)i}" )
+           i=dis_functions; dv=( "${(@P)i}" )
+           m=( "${(@M)fv:#*print off*}" ); print "fn-body-off=${#m}"
+           m=( "${(@M)fv:#*print on*}" );  print "fn-body-on=${#m}"
+           m=( "${(@M)dv:#*print off*}" ); print "dis-body-off=${#m}"
+           m=( "${(@M)dv:#*print on*}" );  print "dis-body-on=${#m}"
+           typeset -A kv; kv=( "${(@kv)functions}" )
+           for n in zzon zzredir zzauU zzauT zzauUT zzauP; do
+             [[ ${kv[$n]} == ${functions[$n]} ]] || print "MISMATCH $n"
+           done
+           print "auU=${functions[zzauU]}"
+           print "auT=${functions[zzauT]}"
+           print "auUT=${functions[zzauUT]}"
+           print "auP=${functions[zzauP]}"
+           print "off-in-functions=[${functions[zzoff]}]"
+           m=( "${(@M)${(@k)dis_functions}:#zzoff}" ); print "off-in-dis=${#m}"
+           m=( "${(@M)${(@k)functions}:#zzoff}" );     print "off-in-fn-keys=${#m}""#,
+    );
+    assert_eq!(status, 0, "stderr: {err}");
+    assert_eq!(
+        out,
+        "fn-body-off=0\n\
+         fn-body-on=1\n\
+         dis-body-off=1\n\
+         dis-body-on=0\n\
+         auU=builtin autoload -XU\n\
+         auT=builtin autoload -Xt\n\
+         auUT=builtin autoload -XUt\n\
+         auP=builtin autoload -X\n\
+         off-in-functions=[]\n\
+         off-in-dis=1\n\
+         off-in-fn-keys=0\n",
+        "stderr: {err}"
+    );
+}
+
+/// c:Src/Modules/parameter.c:138-139 — `scanpmparameters` skips every node
+/// carrying `PM_UNSET` (`if (((Param)hn)->node.flags & PM_UNSET) continue;`),
+/// and c:114-115 is the per-key mirror: `getpmparameter` reports `""` for one.
+/// A declared-but-unset special such as `TMOUT` or `REPLY` is exactly that node,
+/// so it must be missing from `$parameters` entirely rather than present with an
+/// empty type string.
+///
+/// The keys and the values come out of that ONE filtered walk in C, so the two
+/// arrays have to stay the same length and no value may be empty — an empty
+/// value is precisely what an unskipped `PM_UNSET` node would contribute. Both
+/// arrays are declared before either read so that creating the second one
+/// cannot change the parameter count the first one saw.
+///
+/// This is the correctness side of the values-only read: a values accessor that
+/// enumerated the parameter table directly, instead of through the scanfn,
+/// would pick up the `PM_UNSET` nodes the scanfn drops.
+#[test]
+fn parameters_values_skip_PM_UNSET_nodes() {
+    let (status, out, err) = run_zshrs_parity(
+        r#"i=parameters
+           typeset -a zzk zzv m
+           zzk=( "${(@k)parameters}" )
+           zzv=( "${(@P)i}" )
+           print "agree=$(( ${#zzk} == ${#zzv} ))"
+           m=( "${(@M)zzv:#}" ); print "empty-values=${#m}"
+           m=( "${(@M)zzk:#TMOUT}" ); print "TMOUT-key=${#m} TMOUT-type=[${parameters[TMOUT]}]"
+           m=( "${(@M)zzk:#REPLY}" ); print "REPLY-key=${#m} REPLY-type=[${parameters[REPLY]}]""#,
+    );
+    assert_eq!(status, 0, "stderr: {err}");
+    assert_eq!(
+        out,
+        "agree=1\n\
+         empty-values=0\n\
+         TMOUT-key=0 TMOUT-type=[]\n\
+         REPLY-key=0 REPLY-type=[]\n",
+        "stderr: {err}"
+    );
+}

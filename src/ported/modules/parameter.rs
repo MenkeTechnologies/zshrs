@@ -1012,6 +1012,25 @@ pub fn setpmdisfunctions(pm: Param, ht: &[(String, String)]) {
     setfunctions(pm, ht, DISABLED) // c:377
 }
 
+/// Memo for the `getpermtext` deparse of a function body.
+///
+/// C keeps every function as a compiled `Eprog` (`shf->funcdef`) and deparses
+/// it on demand at c:Src/Modules/parameter.c:419 and again at :493, so a
+/// re-read costs one walk of already-parsed wordcode. zshrs stores the body as
+/// SOURCE TEXT, so reproducing C's output means re-LEXING and re-parsing it
+/// first — far more than C pays. Keyed by `name\0body`, which is
+/// self-invalidating: redefining a function changes the text and so the key.
+///
+/// Module-level rather than per-function because BOTH C copies of the value
+/// construction (`getfunction` c:401-443 and `scanfunctions` c:487-521) are
+/// ported, and a single memo keeps a whole-hash scan and a per-key read from
+/// each re-deparsing what the other already did.
+thread_local! {
+    static FN_DEPARSE_CACHE: std::cell::RefCell<
+        std::collections::HashMap<String, String>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Port of `getfunction()` from `Src/Modules/parameter.c:389` — C decl `getfunction(UNUSED(HashTable ht), const char *name, int dis)`.
 /// C body (c:392-441):
 /// ```c
@@ -1111,11 +1130,6 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                     // raw body text (self-invalidating: a redefinition
                     // changes the text → new key). C never pays this because
                     // it keeps the compiled Eprog and deparses on demand.
-                    thread_local! {
-                        static FN_DEPARSE_CACHE: std::cell::RefCell<
-                            std::collections::HashMap<String, String>,
-                        > = std::cell::RefCell::new(std::collections::HashMap::new());
-                    }
                     // The re-parse above is a LEX, so it resolves quotes
                     // against whatever options are live NOW — but C deparses
                     // wordcode baked at definition time (c:Src/exec.c:5389
@@ -1264,28 +1278,99 @@ pub fn scanfunctions(
     // Now reads the DISABLED bit from each entry and matches against
     // dis per C's c:470 gate. shfunctab.iter() exposes all entries
     // including disabled ones, so the flag check is what discriminates.
-    let names: Vec<String> = if let Ok(g) = shfunctab_lock().read() {
-        // c:468-470 — walk all shfunctab entries; filter by DISABLED.
-        let mut v = Vec::with_capacity(g.len());
-        v.extend(g.iter().filter_map(|(n, shf)| {
-            let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
-            let pass = if dis != 0 { is_disabled } else { !is_disabled };
-            if pass {
-                Some(n.clone())
-            } else {
-                None
-            }
-        }));
-        v
-    } else {
-        Vec::new()
-    };
     // c:484-486 — `if (func != scancountparams && ((flags &
     // (SCANPM_WANTVALS|SCANPM_MATCHVAL)) || !(flags & SCANPM_WANTKEYS)))`:
     // the deparsed body is built ONLY when values were asked for, so
     // `${(k)functions}` never pays getpermtext for every function.
     let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
         || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // c:468-472 + c:487-521 — C reads `hn->nam` AND builds `pm.u.str` from the
+    // very `Shfunc` its bucket walk is standing on, so a whole-hash scan costs
+    // one pass. The port used to collect names here and then call
+    // `getfunction(name)` once per entry, which re-took this same read lock,
+    // re-hashed the (possibly long) name for a second lookup, re-ran the
+    // DISABLED parity test, and heap-allocated a whole `struct param` — with a
+    // second copy of the name inside it — purely so the caller could pull
+    // `u_str` back out and drop the box. C's `scanfunctions` writes this
+    // construction out in full rather than calling `getfunction`, and the two C
+    // copies (c:401-443 and c:487-521) produce byte-identical text; the port now
+    // does the same, sharing only the `FN_DEPARSE_CACHE` memo, which exists
+    // because zshrs stores bodies as text where C stores wordcode.
+    //
+    // !!! WARNING: RUST-ONLY LOCK NOTE (C has no locks here) !!!
+    // C calls `func(&pm.node, flags)` INSIDE the bucket walk (c:523) — its
+    // `shfunctab` is a plain pointer. The Rust walk holds an `RwLock` read
+    // guard, and a `ScanFunc` is free to read `shfunctab` again or take the
+    // write side, which would deadlock. Collect what the walk produces, drop
+    // the guard, then dispatch. The callback still sees exactly the entries C
+    // passes it, in the same order, one at a time.
+    let scanned: Vec<(String, Option<String>)> = if let Ok(g) = shfunctab_lock().read() {
+        let mut out = Vec::with_capacity(g.len());
+        out.extend(g.iter().filter_map(|(n, shf)| {
+            // c:470 — `dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED)`.
+            let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+            if (dis != 0) != is_disabled {
+                return None;
+            }
+            if !want_val {
+                return Some((n.clone(), None)); // c:472 only pm.node.nam
+            }
+            // c:487-521 — the body text, built from the Shfunc in hand. This
+            // mirrors `getfunction`'s copy (c:401-443) line for line; see there
+            // for the provenance of each branch.
+            let v = match shf.body.as_deref() {
+                None => {
+                    // c:488-493 — `dyncat("builtin autoload -X", …)`, suffix
+                    // from PM_UNALIASED + PM_TAGGED.
+                    let f = shf.node.flags as u32;
+                    let suffix = match ((f & PM_UNALIASED) != 0, (f & PM_TAGGED) != 0) {
+                        (true, true) => "Ut",   // c:490
+                        (true, false) => "U",   // c:490
+                        (false, true) => "t",   // c:491
+                        (false, false) => "",   // c:491
+                    };
+                    format!("builtin autoload -X{}", suffix) // c:488
+                }
+                Some(text) => {
+                    // c:495 — `getpermtext(shf->funcdef, NULL, 1)`; zshrs keeps
+                    // source text, so re-parse and deparse, memoized.
+                    let cache_key = format!("{}\0{}", shf.node.nam, text);
+                    let deparsed = if let Some(hit) =
+                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(&cache_key).cloned())
+                    {
+                        hit
+                    } else {
+                        let _pin = crate::vm_helper::funcdef_lex_pin(&shf.node.nam, text);
+                        let o = match crate::ported::exec::parse_string(text, 0) {
+                            Some(prog) => crate::ported::text::getpermtext(Box::new(prog), None, 1),
+                            None => text.to_string(),
+                        };
+                        FN_DEPARSE_CACHE.with(|c| c.borrow_mut().insert(cache_key, o.clone()));
+                        o
+                    };
+                    // c:497-500 — `if (shf->redir) start = "{\n\t"; else "\t";`
+                    let redir: Option<String> = shf
+                        .redir
+                        .as_ref()
+                        .map(|r| crate::ported::text::getpermtext(r.clone(), None, 1)) // c:518
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| shf.redir_text.clone());
+                    let start = if redir.is_some() { "{\n\t" } else { "\t" }; // c:498/500
+                    let mut h = format!("{}{}", start, deparsed); // c:512
+                    if let Some(rt) = redir {
+                        // c:517-520 — `h = zhtricat(h, "\n}", t);`
+                        h.push_str("\n}"); // c:519
+                        h.push_str(&rt); // c:519
+                    }
+                    h
+                }
+            };
+            Some((n.clone(), Some(v)))
+        }));
+        out
+    } else {
+        Vec::new()
+    };
     if let Some(f) = func {
         // c:461 `struct param pm;` — ONE param for the whole walk, rebound per
         // entry by c:472 `pm.node.nam = hn->nam` and c:489/514 `pm.u.str`. The
@@ -1299,16 +1384,8 @@ pub fn scanfunctions(
             },
             ..Default::default()
         };
-        for name in names {
-            // c:487-522 builds the body text inline from the Shfunc; the
-            // identical construction already lives in `getfunction` (c:387),
-            // which is what the per-key `getpmfunction` reads, so route
-            // through it rather than keeping two copies of the deparse.
-            pm.u_str = if want_val {
-                getfunction(std::ptr::null_mut(), &name, dis).and_then(|p| p.u_str)
-            } else {
-                None
-            };
+        for (name, value) in scanned {
+            pm.u_str = value; // c:489/514 pm.u.str
             pm.node.nam = name; // c:472 pm.node.nam = hn->nam
             f(&pm, flags); // c:524
         }

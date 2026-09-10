@@ -4747,6 +4747,76 @@ pub fn paramsubst(
                 valuearr_assoc.as_ref().and_then(|(_, v_)| v_.as_ref()) // c:731
             }};
         }
+        // c:Src/params.c:736 with `v->scanflags == SCANPM_ARRONLY` (c:2277) —
+        // the SAME `v->arr` slot, for the arms that want a bare `$hash`'s
+        // VALUES. C has one `Value` per expansion and one `scanflags` on it, so
+        // an expansion asks for values or for key/value pairs, never both: the
+        // `(k)`/`(v)` flag test that picks between `getvaluearr_assoc!` and this
+        // macro at each site is the same test C uses to set `scanflags`. Two
+        // memo slots rather than one because the two shapes have different
+        // element types; a hypothetical expansion reaching both walks the hash
+        // twice, which is what happened at every site before this existed.
+        let mut valuearr_assoc_vals: Option<(String, Option<Vec<String>>)> = None;
+        // c:Src/params.c:731 `if (v->arr) return v->arr;` — values-only read
+        // through the per-`Value` cache. Macro, not a closure, so each use site
+        // keeps its own borrow and the surrounding locals stay untouched.
+        macro_rules! getvaluearr_assoc_vals {
+            ($name:expr) => {{
+                let n_: &str = $name;
+                if valuearr_assoc_vals
+                    .as_ref()
+                    .map_or(true, |(k_, _)| k_ != n_)
+                {
+                    // c:Src/params.c:570-575 — nameref deref, the same one
+                    // `assoc_get` and `gethparam` each perform, so the branch
+                    // test below picks the arm the chosen accessor will take.
+                    let r_ = match crate::ported::params::resolve_nameref_name(n_, None) {
+                        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+                        _ => n_.to_string(),
+                    };
+                    // True when `assoc_get` would answer from a `zsh/parameter`
+                    // PARTAB row's scanfn rather than from stored contents —
+                    // i.e. exactly the case where it materialises a whole
+                    // `IndexMap` out of a table that has no map behind it.
+                    // Mirrors `assoc_get`'s own branch order: the non-hash
+                    // shadow gate, then `paramtab_hashed_storage`, then PARTAB.
+                    let scanfn_backed_ = !crate::vm_helper::magic_special_shadowed_by_nonhash(&r_)
+                        && !paramtab_hashed_storage()
+                            .lock()
+                            .map_or(false, |s_| s_.contains_key(r_.as_str()))
+                        && crate::ported::modules::parameter::PARTAB
+                            .iter()
+                            .any(|e_| e_.name == r_.as_str());
+                    // c:Src/params.c:3117 `gethparam` — `paramvalarr(v->pm->
+                    // gsu.h->getfn(v->pm), SCANPM_WANTVALS)`, which is c:736's
+                    // call with the key half switched off: `scanparamvals`
+                    // stores a key only under `SCANPM_WANTKEYS` (c:683-686), so
+                    // a values scan never builds one. `assoc_get` scans with
+                    // `WANTKEYS|WANTVALS` and hands back an `IndexMap`, so every
+                    // arm below used to allocate a key for all 46,768 entries of
+                    // `$functions`, hash each one into the map, and then clone
+                    // every value straight back out through `.values().cloned()`
+                    // — three whole-table passes to answer a read C answers in
+                    // one. The scan order is the scanfn's own walk in both, so
+                    // the arrays are element-for-element identical.
+                    let vals_ = if scanfn_backed_ {
+                        crate::ported::params::gethparam(n_) // c:3117
+                    } else {
+                        None
+                    }
+                    // A STORED assoc keeps reading through `assoc_get`: its
+                    // whole-map arm rebuilds zsh's hash-bucket visit order (see
+                    // there), which `gethparam`'s insertion-ordered `.values()`
+                    // walk does not reproduce. The `or_else` also catches a
+                    // magic row `gethparam` declines (no PM_HASHED paramtab
+                    // node), so the fast path can only ever add an answer, never
+                    // remove one.
+                    .or_else(|| assoc_get(n_).map(|m_| m_.values().cloned().collect()));
+                    valuearr_assoc_vals = Some((n_.to_string(), vals_)); // c:736
+                }
+                valuearr_assoc_vals.as_ref().and_then(|(_, v_)| v_.as_ref()) // c:731
+            }};
+        }
         // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
         // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
         // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -6248,7 +6318,7 @@ pub fn paramsubst(
                         // c:Src/params.c:736 — same `v->arr` slot the outer
                         // arms read, so the referenced association is walked
                         // once for the whole expansion.
-                        getvaluearr_assoc!(n).map(|m| m.values().cloned().collect::<Vec<String>>())
+                        getvaluearr_assoc_vals!(n).cloned()
                     }),
                     None => None,
                 }
@@ -11457,8 +11527,8 @@ pub fn paramsubst(
                     {
                         None
                     } else {
-                        getvaluearr_assoc!(&var_name) // c:Src/params.c:736
-                            .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                        getvaluearr_assoc_vals!(&var_name) // c:Src/params.c:736
+                            .map(|vals| vals.join(" "))
                     }
                 })
                 .or_else(|| {
@@ -13144,10 +13214,9 @@ pub fn paramsubst(
                         };
                     value = crate::ported::utils::sepjoin(&arr, sep.as_deref());
                 // c:3032
-                } else if let Some(m) = getvaluearr_assoc!(&var_name) {
+                } else if let Some(vals) = getvaluearr_assoc_vals!(&var_name) {
                     // c:Src/params.c:736
-                    let vals: Vec<String> = m.values().cloned().collect();
-                    value = crate::ported::utils::sepjoin(&vals, sep.as_deref());
+                    value = crate::ported::utils::sepjoin(vals, sep.as_deref());
                     // c:3032
                 }
                 isarr = 0; // c:3034
@@ -18397,7 +18466,13 @@ pub fn paramsubst(
                 // for it; `split_parts`/`isarr` cover the remaining shapes.
                 let lhs_param_set = arrays_get(&var_name).is_some()
                     || vars_get(&var_name).is_some()
-                    || getvaluearr_assoc!(&var_name).is_some();
+                    // MEMBERSHIP test only — `assoc_contains` is the same
+                    // predicate as `assoc_get(..).is_some()` (a
+                    // `paramtab_hashed_storage` key, else a PARTAB row whose
+                    // module is loaded) without materialising the map to throw
+                    // it away. c:3480 only asks whether the LHS names a set
+                    // parameter; it never looks at the elements.
+                    || assoc_contains(&var_name);
                 let vunset = !lhs_param_set && split_parts.is_none() && isarr == 0;
                 if vunset {
                     // c:3481-3485 — `if (vunset > 0 && unset(UNSET))` errors
@@ -18421,8 +18496,8 @@ pub fn paramsubst(
                     let zip: Option<Vec<String>> =
                         crate::ported::subst::arrays_get(other_name)
                         .or_else(|| {
-                            getvaluearr_assoc!(other_name) // c:3491
-                                .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            getvaluearr_assoc_vals!(other_name) // c:3491
+                                .cloned()
                         })
                         .or_else(|| vars_get(other_name).map(|s| vec![s])); // c:3494-3496
                                                                             // c:3030-3037 — the `qt` collapse (`val = sepjoin(aval, sep, 1);
@@ -19085,8 +19160,8 @@ pub fn paramsubst(
                             // and the magic assocs (behind PARTAB, not
                             // `arrays_get`) had no source at all.
                             .or_else(|| {
-                                getvaluearr_assoc!(&var_name) // c:Src/params.c:736
-                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                                getvaluearr_assoc_vals!(&var_name) // c:Src/params.c:736
+                                    .cloned()
                             })
                     };
                     let array_applied = array_source.is_some();
