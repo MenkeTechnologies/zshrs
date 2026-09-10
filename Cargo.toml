@@ -41,6 +41,16 @@ exclude = [
     # ceiling. `zshall.1` carries the same content, and a git or Homebrew
     # build still bundles it. build.rs treats this tree as optional.
     "/vendor/zsh/info/",
+    # zsh's own man pages (zsh.1, zshall.1, zshmisc.1, ... 17 files),
+    # dropped from the PUBLISHED crate only -- 0.44 MiB compressed, and
+    # 0.12.60 packaged at 10.13 MiB against the same 10 MiB ceiling with
+    # every other vendored tree marked required in build.rs. zshrs's OWN
+    # pages live in `/man/man1/` and still ship, so `man zshrs` works on a
+    # crates.io install; `man zsh` needs a git or Homebrew build (both
+    # bundle this tree unchanged) or a zsh installation. build.rs treats
+    # this tree as optional -- restore it to required if crates.io grants
+    # a size-limit increase.
+    "/vendor/zsh/man1/",
     # The differential fuzzer's source, dropped from the PUBLISHED crate
     # only -- 0.57 MiB of it, and the crate is against crates.io's 10 MiB
     # ceiling again (0.12.58 shipped at 9.99 MiB). It is a development
