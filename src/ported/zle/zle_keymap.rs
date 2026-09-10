@@ -715,6 +715,31 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {
     }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// !!! RUST-ONLY DEVIATION: where the thingy refcount is maintained !!!
+//
+// C's `Thingy` is a heap pointer, so a keymap slot IS the reference
+// and the ownership convention is spelled at c:Src/Zle/zle_thingy.c:
+// 131-135 ("When copying a reference to a thingy, wrap the copy in
+// refthingy() ... When removing a reference, unrefthingy() it").
+// The caller makes an owned reference (`rthingy` at
+// c:Src/Zle/zle_keymap.c:1042, `refthingy` at c:1035/c:1328/c:1344/…)
+// and `bindkey` (c:566) CONSUMES it, unreffing whatever the slot held
+// (c:598 `unrefthingy(km->first[f])`, c:609 and c:643
+// `unrefthingy(k->bind)`).
+//
+// zshrs's `Thingy` (zle_thingy.rs) is a VALUE cloned into the slot, so
+// there is no pointer for a caller to hand over and the C convention
+// cannot be transcribed literally. `bindkey` below therefore does the
+// `refthingy` half itself, at the point the slot takes the value,
+// keeping the invariant that `thingytab`'s `rc` counts KEYMAP SLOTS.
+// Whole-keymap copies are refcount-neutral under that invariant,
+// because the copy REPLACES the original and the slot set is unchanged
+// — that covers `newkeymap` (c:330, which is why its c:338 `refthingy`
+// walk stays unported: reffing there without a `deletekeymap` c:369
+// unref walk would leak) and `bin_bindkey_bind`'s clone-mutate-swap.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 /// Port of `bindkey()` from `Src/Zle/zle_keymap.c:566`.
 /// C: `int bindkey(Keymap km, const char *seq, Thingy
 /// bind, char *str)` from `Src/Zle/zle_keymap.c:566`. The single
@@ -746,11 +771,25 @@ pub fn bindkey(km: &mut Keymap, seq: &[u8], bind: Option<Thingy>, str: Option<St
     // `c:631-641` multi-byte arm.
     match (bind, str, seq.len()) {
         (Some(t), None, 1) => {
+            // c:1328 — the caller's `refthingy(...)`, relocated onto the
+            // slot transition (see the RUST-ONLY HELPER note above).
+            crate::ported::zle::zle_thingy::refthingy(&t.nam);
+            // c:598 — `else unrefthingy(km->first[f]);`
+            if let Some(old) = km.first[seq[0] as usize].as_ref() {
+                crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+            }
             // c:600 — `km->first[f] = bind; return 0;`
             km.first[seq[0] as usize] = Some(t);
             0
         }
         (Some(t), None, _) => {
+            // c:1328 caller-side refthingy, relocated (see above).
+            crate::ported::zle::zle_thingy::refthingy(&t.nam);
+            // c:643 — `unrefthingy(k->bind); k->bind = bind;` for the
+            // node this insert is about to overwrite.
+            if let Some(old) = km.multi.get(seq).and_then(|kb| kb.bind.as_ref()) {
+                crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+            }
             // c:631-641 — multi-char Thingy binding. Mark prefixes
             // first (so getkeymapcmd's trie walk knows to keep
             // reading bytes), then insert the full-seq binding.
@@ -783,7 +822,15 @@ pub fn bindkey(km: &mut Keymap, seq: &[u8], bind: Option<Thingy>, str: Option<St
             // `first[]` first for a single char) falls through to the
             // `multi[]` str instead of returning the stale default binding.
             if seq.len() == 1 {
+                if let Some(old) = km.first[seq[0] as usize].as_ref() {
+                    crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+                } // c:598
                 km.first[seq[0] as usize] = None;
+            }
+            // c:643 — the send-string node replaces whatever thingy the
+            // same sequence held.
+            if let Some(old) = km.multi.get(seq).and_then(|kb| kb.bind.as_ref()) {
+                crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
             }
             for i in 1..seq.len() {
                 km.multi
@@ -807,9 +854,20 @@ pub fn bindkey(km: &mut Keymap, seq: &[u8], bind: Option<Thingy>, str: Option<St
         }
         (None, None, _) => {
             // c:574 — `bindkey -r` unbind: bind to t_undefinedkey.
+            // c:1035 — `fn = refthingy(t_undefinedkey);` — the
+            // undefined-key thingy gains a slot here too.
+            let undef = Thingy::builtin("undefined-key");
+            crate::ported::zle::zle_thingy::refthingy(&undef.nam);
             if seq.len() == 1 {
-                km.first[seq[0] as usize] = Some(Thingy::builtin("undefined-key"));
+                if let Some(old) = km.first[seq[0] as usize].as_ref() {
+                    crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+                } // c:598
+                km.first[seq[0] as usize] = Some(undef);
             } else {
+                // c:609 — `unrefthingy(k->bind); k->bind = t_undefinedkey;`
+                if let Some(old) = km.multi.get(seq).and_then(|kb| kb.bind.as_ref()) {
+                    crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+                }
                 for i in 1..seq.len() {
                     km.multi
                         .entry(seq[..i].to_vec())
@@ -823,7 +881,7 @@ pub fn bindkey(km: &mut Keymap, seq: &[u8], bind: Option<Thingy>, str: Option<St
                 km.multi.insert(
                     seq.to_vec(),
                     KeyBinding {
-                        bind: Some(Thingy::builtin("undefined-key")),
+                        bind: Some(undef),
                         str: None,
                         prefixct: 0,
                     },
@@ -1665,7 +1723,7 @@ pub fn bin_bindkey_meta(
     _func: i32,
 ) -> i32 {
     use super::zle_bindings::METABIND;
-    use super::zle_thingy::{refthingy, Thingy};
+    use super::zle_thingy::Thingy;
 
     // c:968 — KM_IMMUTABLE check.
     let target = kmname.unwrap_or(name);
@@ -1693,7 +1751,10 @@ pub fn bin_bindkey_meta(
             continue;
         }
         // c:986 — `bindkey(km, m, refthingy(Th(metabind[i - 128])), NULL);`
-        refthingy(default_name);
+        // The `refthingy` half now happens inside `bindkey` itself (see
+        // the RUST-ONLY DEVIATION note above `bindkey`); the bare call that
+        // used to sit here reffed a thingy nothing ever released, so
+        // every `bindkey -m` leaked one reference per rebound byte.
         let new_thingy = Thingy {
             nam: default_name.to_string(),
             flags: 0,
@@ -1786,8 +1847,21 @@ pub fn bin_bindkey_bind(
                 prefixct: 0,
             },
             _ => KeyBinding {
-                // c:1037 thingy
-                bind: target.map(|n| Thingy::builtin(&n)),
+                // c:1042 — `fn = rthingy(*++argv);`. This is the ONLY
+                // `rthingy` on the bindkey path and the only reason
+                // `bindkey '^Xz' no-such-widget` makes the name appear in
+                // `$widgets`: `rthingy` CREATES a DISABLED, widget-less
+                // node when the name is unknown (c:158-165) and refs it,
+                // handing `bindkey` (c:566) the reference the key slot
+                // then owns. The port used to build a `Thingy` value and
+                // never touch `thingytab`, so the name stayed invisible.
+                // The paired release is the `unrefthingy` on whatever the slot
+                // gave up, below (c:598 / c:609 / c:643) — without it the
+                // node would linger after `bindkey -r`.
+                bind: target.map(|n| {
+                    crate::ported::zle::zle_thingy::rthingy(&n); // c:1042
+                    Thingy::builtin(&n)
+                }),
                 str: None,
                 prefixct: 0,
             },
@@ -1804,6 +1878,9 @@ pub fn bin_bindkey_bind(
                 // Preserve the prefixct if this char is also a prefix. The
                 // previous port stored only `kb_value.bind`, silently DROPPING
                 // the string.
+                if let Some(old) = km.first[c].as_ref() {
+                    crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+                } // c:598
                 km.first[c] = None;
                 km.multi
                     .entry(key)
@@ -1819,6 +1896,13 @@ pub fn bin_bindkey_bind(
                 // for this char, and remove the node if it's now empty (not a
                 // prefix). Without this, `bindkey -s "^A" x; bindkey -r "^A"`
                 // still resolved `^A` to the stale string.
+                // c:598 — `else unrefthingy(km->first[f]);` before the
+                // slot is overwritten. `bindkey -r ^Xz` lands here with
+                // `kb_value.bind == None`, so this is the release that
+                // takes an `rthingy`-created name back out of `$widgets`.
+                if let Some(old) = km.first[c].as_ref() {
+                    crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+                }
                 km.first[c] = kb_value.bind.clone();
                 let remove = if let Some(kb) = km.multi.get_mut(&key) {
                     kb.str = None;
@@ -1831,6 +1915,19 @@ pub fn bin_bindkey_bind(
                 }
             }
         } else {
+            // c:609 / c:643 — `unrefthingy(k->bind)` before the node's
+            // thingy is replaced (by another widget, or by
+            // t_undefinedkey on `bindkey -r`). This is the release
+            // paired with the `rthingy` at c:1042 above; it is what
+            // makes `bindkey '^Xz' zzq; bindkey -r '^Xz'` leave
+            // `$widgets` exactly as it found it.
+            if let Some(old) = km
+                .multi
+                .get(seq_bytes.as_slice())
+                .and_then(|kb| kb.bind.as_ref())
+            {
+                crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
+            }
             km.multi.insert(seq_bytes.to_vec(), kb_value); // c:1054 hashtable
         }
         // PFA-SMR: record the binding so replay can recreate it.
@@ -3300,6 +3397,203 @@ pub(crate) fn keymapnamtab() -> &'static Mutex<crate::ported::hashtable::hashtab
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------- thingytab population by `bindkey` (c:1042) ----------
+
+    /// Set up an empty-ish keymap world plus the fixed thingy table so
+    /// `bin_bindkey_bind` has a "main" keymap to write into. Returns
+    /// the thingytab size once the fixed table is in place, which is
+    /// the baseline every bind/unbind cycle below must return to (the
+    /// unit-level analogue of `${#widgets}` staying at 386).
+    fn thingy_baseline() -> usize {
+        createkeymapnamtab();
+        default_bindings();
+        crate::ported::zle::zle_thingy::init_thingies();
+        thingytab_len()
+    }
+
+    fn bindkey_ops(flag: Option<u8>) -> options {
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        if let Some(f) = flag {
+            ops.ind[f as usize] = 1;
+        }
+        ops
+    }
+
+    fn bind(seq: &str, widget: &str) -> i32 {
+        let ops = bindkey_ops(None);
+        bin_bindkey_bind(
+            "bindkey",
+            Some("main"),
+            None,
+            &[seq.to_string(), widget.to_string()],
+            &ops,
+            0,
+        )
+    }
+
+    fn unbind(seq: &str) -> i32 {
+        let ops = bindkey_ops(Some(b'r'));
+        bin_bindkey_bind(
+            "bindkey",
+            Some("main"),
+            None,
+            &[seq.to_string()],
+            &ops,
+            'r' as i32,
+        )
+    }
+
+    fn thingytab_len() -> usize {
+        crate::ported::zle::zle_thingy::thingytab().lock().unwrap().len()
+    }
+
+    fn thingy_present(nam: &str) -> bool {
+        crate::ported::zle::zle_thingy::thingytab()
+            .lock()
+            .unwrap()
+            .contains_key(nam)
+    }
+
+    /// c:Src/Zle/zle_keymap.c:1042 — `fn = rthingy(*++argv);`. Binding a
+    /// key to a name no widget has ever claimed CREATES the thingy, so
+    /// the name becomes a key of `$widgets` (zsh: `bindkey '^Xz'
+    /// zzq-no-such-widget; ${#widgets[(I)zzq-*]}` → 1). The port used to
+    /// build a `Thingy` value without touching `thingytab`, so the count
+    /// stayed 0. Unbinding must take it straight back out via the paired
+    /// `unrefthingy` (c:609/c:643) — a create without the release would
+    /// leak the name into `$widgets` forever, which is worse than the
+    /// original bug.
+    #[test]
+    fn bindkey_unknown_widget_creates_thingy_and_unbind_removes_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let base = thingy_baseline();
+
+        assert_eq!(bind("^Xz", "zzq-no-such-widget"), 0);
+        assert!(
+            thingy_present("zzq-no-such-widget"),
+            "c:1042 — rthingy must create the node for an unknown name"
+        );
+
+        assert_eq!(unbind("^Xz"), 0);
+        assert!(
+            !thingy_present("zzq-no-such-widget"),
+            "c:609 — unrefthingy at rc 0 must remove the node again"
+        );
+        assert_eq!(
+            thingytab_len(),
+            base,
+            "bind+unbind must be thingytab-neutral (the ${{#widgets}} guard)"
+        );
+    }
+
+    /// c:1042 + c:643 — binding the SAME unknown name to the same key
+    /// twice takes one ref per bind and releases one per displaced slot,
+    /// so a single `bindkey -r` still clears it. If the release were
+    /// missing the second bind would strand a reference and the name
+    /// would survive the unbind; if the release ran before the new ref
+    /// the node would be destroyed and recreated mid-rebind.
+    #[test]
+    fn bindkey_same_unknown_widget_twice_still_unbinds_clean() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let base = thingy_baseline();
+
+        bind("^Xz", "zzq-a");
+        bind("^Xz", "zzq-a");
+        assert!(thingy_present("zzq-a"));
+        unbind("^Xz");
+        assert!(
+            !thingy_present("zzq-a"),
+            "double-bind must not strand an extra reference"
+        );
+        assert_eq!(
+            thingytab_len(),
+            base
+        );
+    }
+
+    /// c:643 — `unrefthingy(k->bind); k->bind = bind;`. Rebinding a key
+    /// from one unknown name to another drops the first name and keeps
+    /// only the second (zsh: `${(k)widgets[(I)zzq-*]}` → `zzq-b`).
+    #[test]
+    fn bindkey_rebind_drops_previous_unknown_widget() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let base = thingy_baseline();
+
+        bind("^Xz", "zzq-a");
+        bind("^Xz", "zzq-b");
+        assert!(
+            !thingy_present("zzq-a"),
+            "c:643 — the displaced binding's thingy must be released"
+        );
+        assert!(thingy_present("zzq-b"));
+        unbind("^Xz");
+        assert_eq!(
+            thingytab_len(),
+            base
+        );
+    }
+
+    /// c:Src/Zle/zle_bindings.c:65-68 — "The initial reference count of
+    /// these thingies is 2: 1 for the widget they name, and 1 extra to
+    /// make sure they never get deleted." A bind/unbind cycle over a
+    /// BUILTIN widget name therefore must never evict it from
+    /// `thingytab`. With the port's old `rc = 0` baseline, one
+    /// `bindkey '^Xz' beginning-of-line; bindkey -r '^Xz'` pair drove
+    /// the count to 0 and deleted a builtin — `${#widgets}` would have
+    /// fallen from 386 to 385.
+    #[test]
+    fn bindkey_cycle_on_builtin_widget_never_evicts_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let base = thingy_baseline();
+
+        for _ in 0..5 {
+            bind("^Xz", "beginning-of-line");
+            unbind("^Xz");
+        }
+        assert!(
+            thingy_present("beginning-of-line"),
+            "an immortal-table builtin must survive repeated bind/unbind"
+        );
+        assert_eq!(
+            thingytab_len(),
+            base,
+            "${{#widgets}} must be unchanged after 5 bind/unbind cycles"
+        );
+    }
+
+    /// c:598 — `else unrefthingy(km->first[f]);` on the single-byte
+    /// slot. The measured bug only showed on a multi-byte sequence, but
+    /// the single-byte store is a separate code path in this port and
+    /// must release its displaced occupant too.
+    #[test]
+    fn bindkey_single_byte_slot_releases_displaced_thingy() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let base = thingy_baseline();
+
+        bind("^A", "zzq-single");
+        assert!(thingy_present("zzq-single"));
+        // Restore the default binding: the displaced `zzq-single` goes.
+        bind("^A", "beginning-of-line");
+        assert!(
+            !thingy_present("zzq-single"),
+            "c:598 — first[] store must unref what it overwrites"
+        );
+        assert_eq!(
+            thingytab_len(),
+            base
+        );
+    }
 
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {

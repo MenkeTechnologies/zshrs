@@ -1940,24 +1940,42 @@ pub fn init_thingies() -> i32 {
             u: WidgetImpl::Internal(f),
         }));
 
-        // Bare `name` thingy — mortal.
-        if !tab.contains_key(*nam) {
-            let mut t = makethingynode();
-            t.nam = nam.to_string(); // c:163 ztrdup(nam)
-            t.widget = w.clone(); // c:229
-            tab.insert(nam.to_string(), t);
-        }
+        // c:Src/Zle/zle_bindings.c:72-78 — the entries `init_thingies`
+        // installs are the STATIC `thingies[]` rows, not `rthingy`
+        // allocations:
+        //   #define T(name, th_flags, w_idget, t_next) \
+        //       { NULL, name, th_flags, 2, w_idget, t_next },
+        // and c:zle_bindings.c:65-68 spells the count out: "The initial
+        // reference count of these thingies is 2: 1 for the widget they
+        // name, and 1 extra to make sure they never get deleted."
+        //
+        // `th_flags` comes from the generated thingies.list, whose rule
+        // at c:Src/Zle/zle.mdd:38-55 emits `0` for the bare `"name"` row
+        // and `TH_IMMORTAL` for the dotted `".name"` row — never
+        // DISABLED. The port previously built both rows with
+        // `makethingynode()`, which is the `rthingy` allocator and sets
+        // `flags = DISABLED` / `rc = 0` (c:108-113). Both were wrong for
+        // the fixed table:
+        //   - DISABLED made every builtin indistinguishable from an
+        //     `rthingy`-created placeholder, so `getpmwidgets` could not
+        //     apply C's `!(th->flags & DISABLED)` gate
+        //     (c:Src/Zle/zleparameter.c:70-76).
+        //   - rc = 0 meant one `unrefthingy` from a keymap slot losing
+        //     its binding would drop a builtin out of `$widgets`.
+        let mut t = Thingy::new(nam); // c:zle_bindings.c:73 `{ NULL, name, ... }`
+        t.flags = 0; // c:zle.mdd:44 bare row → th_flags 0
+        t.rc = 2; // c:zle_bindings.c:73 initial rc is 2
+        t.widget = w.clone(); // c:zle_bindings.c:73 w_idget
+        tab.entry(nam.to_string()).or_insert(t);
         // Dotted `.name` thingy — TH_IMMORTAL, the internal anchor
         // used by `zle -C BASE` lookups (`bin_zle_complete` c:610
         // prepends `.` when looking up the base widget).
         let dotted = format!(".{}", nam);
-        if !tab.contains_key(&dotted) {
-            let mut t = makethingynode();
-            t.nam = dotted.clone();
-            t.flags |= TH_IMMORTAL; // c:1027 — `.NAME` entries are immortal
-            t.widget = w;
-            tab.insert(dotted, t);
-        }
+        let mut t = Thingy::new(&dotted);
+        t.flags = TH_IMMORTAL; // c:zle.mdd:51 dotted row → TH_IMMORTAL
+        t.rc = 2; // c:zle_bindings.c:73 initial rc is 2
+        t.widget = w;
+        tab.entry(dotted).or_insert(t);
     }
     0
 }
@@ -2169,6 +2187,76 @@ mod tests {
             ),
             _ => panic!("c:widgets.list — both bare and dotted thingies must have widgets"),
         }
+    }
+
+    /// c:Src/Zle/zle_bindings.c:65-78 — the fixed `thingies[]` rows are
+    /// `{ NULL, name, th_flags, 2, w_idget, t_next }` and the comment
+    /// above them states why: "The initial reference count of these
+    /// thingies is 2: 1 for the widget they name, and 1 extra to make
+    /// sure they never get deleted." The port used to build these rows
+    /// with `makethingynode()` — the `rthingy` allocator — which sets
+    /// `rc = 0` (c:110, zshcalloc) and `flags = DISABLED` (c:112).
+    /// Both were wrong for the fixed table and both were load-bearing:
+    ///  - `rc = 0` let a single `unrefthingy` from a keymap slot losing
+    ///    its binding evict a builtin from `$widgets`;
+    ///  - `DISABLED` made a builtin indistinguishable from an
+    ///    `rthingy`-created placeholder, so `getpmwidgets` could not
+    ///    apply C's `!(th->flags & DISABLED)` gate
+    ///    (c:Src/Zle/zleparameter.c:71).
+    #[test]
+    fn init_thingies_fixed_table_rows_are_rc2_and_not_disabled() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        thingytab().lock().unwrap().clear();
+        init_thingies();
+        let tab = thingytab().lock().unwrap();
+        for nam in ["accept-line", "self-insert", "undefined-key"] {
+            let t = tab.get(nam).expect("fixed-table row must exist");
+            assert_eq!(t.rc, 2, "c:zle_bindings.c:73 — `{}` starts at rc 2", nam);
+            assert_eq!(
+                t.flags & DISABLED,
+                0,
+                "c:zle.mdd:44 — `{}` th_flags is 0, never DISABLED",
+                nam
+            );
+            let dotted = format!(".{}", nam);
+            let d = tab.get(&dotted).expect("dotted row must exist");
+            assert_eq!(d.rc, 2, "c:zle_bindings.c:73 — `{}` starts at rc 2", dotted);
+            assert_eq!(
+                d.flags & DISABLED,
+                0,
+                "c:zle.mdd:51 — `{}` th_flags is TH_IMMORTAL, never DISABLED",
+                dotted
+            );
+        }
+    }
+
+    /// c:Src/Zle/zle_thingy.c:158-165 vs c:Src/Zle/zle_bindings.c:73 —
+    /// an `rthingy`-created node and a fixed-table node must be
+    /// DISTINGUISHABLE by the DISABLED bit, because `getpmwidgets`
+    /// (c:zleparameter.c:71) is the only thing standing between
+    /// `$widgets[some-unbound-name]` reading empty-and-unset (correct)
+    /// and reading `undefined` (wrong).
+    #[test]
+    fn rthingy_node_is_disabled_where_fixed_table_node_is_not() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        thingytab().lock().unwrap().clear();
+        init_thingies();
+        rthingy("zzq-created-by-rthingy");
+        let tab = thingytab().lock().unwrap();
+        assert_ne!(
+            tab.get("zzq-created-by-rthingy").unwrap().flags & DISABLED,
+            0,
+            "c:112 — makethingynode sets DISABLED"
+        );
+        assert_eq!(
+            tab.get("accept-line").unwrap().flags & DISABLED,
+            0,
+            "c:zle_bindings.c:73 — a fixed-table row is not DISABLED"
+        );
     }
 
     /// `Src/Zle/zle_thingy.c:865-867` — `bin_zle_fd` rejects negative

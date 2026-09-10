@@ -15,26 +15,55 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-/// Format a widget's type label as `$widgets[name]` would show it.
-/// Port of `widgetstr(Widget w)` from Src/Zle/zleparameter.c. The C source
-/// emits "builtin" for `iwidgets.list` entries, "user:fnname" for
-/// `zle -N` widgets, and "completion:fnname" for `zle -C` ones —
-/// matched here verbatim so shell scripts that grep `$widgets`
-/// keep working.
-/// WARNING: param names don't match C — Rust=(name, is_user, is_completion) vs C=(w)
-
-// --- AUTO: cross-zle hoisted-fn use glob ---
-/// `widgetstr` — see implementation.
-#[allow(unused_imports)]
-
-pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
+/// Port of `widgetstr(Widget w)` from `Src/Zle/zleparameter.c:37`.
+/// ```c
+/// static char *
+/// widgetstr(Widget w)
+/// {
+///     if (!w)
+///         return dupstring("undefined");
+///     if (w->flags & WIDGET_INT)
+///         return dupstring("builtin");
+///     if (w->flags & WIDGET_NCOMP) {
+///         char *t = (char *) zhalloc(13 + strlen(w->u.comp.wid) +
+///                                    strlen(w->u.comp.func));
+///         strcpy(t, "completion:");
+///         strcat(t, w->u.comp.wid);
+///         strcat(t, ":");
+///         strcat(t, w->u.comp.func);
+///         return t;
+///     }
+///     return dyncat("user:", w->u.fnnam);
+/// }
+/// ```
+/// Discriminates on the WIDGET FLAGS, exactly as C does. The previous
+/// Rust signature took `(name, is_user, is_completion)` — three
+/// booleans the C function does not have and no production call site
+/// ever supplied, so both `$widgets` readers hand-rolled their own
+/// copy of this logic and drifted apart (`scanpmwidgets` still
+/// compared target-name-vs-key, the exact mistake Bug #264 fixed in
+/// `getpmwidgets`).
+pub fn widgetstr(w: Option<&std::sync::Arc<crate::ported::zle::zle_h::widget>>) -> String {
     // c:37
-    if is_completion {
-        format!("completion:{}", name)
-    } else if is_user {
-        format!("user:{}", name)
-    } else {
-        "builtin".to_string()
+    use crate::ported::zle::zle_h::{WidgetImpl, WIDGET_INT, WIDGET_NCOMP};
+    let Some(w) = w else {
+        return "undefined".to_string(); // c:39-40
+    };
+    if (w.flags & WIDGET_INT) != 0 {
+        return "builtin".to_string(); // c:41-42
+    }
+    if (w.flags & WIDGET_NCOMP) != 0 {
+        // c:43-52 — `"completion:" wid ":" func`.
+        if let WidgetImpl::Comp { wid, func, .. } = &w.u {
+            return format!("completion:{}:{}", wid, func);
+        }
+        return "builtin".to_string();
+    }
+    // c:54 — `dyncat("user:", w->u.fnnam)`.
+    match &w.u {
+        WidgetImpl::Internal(_) => "builtin".to_string(),
+        WidgetImpl::UserFunc(fnnam) => format!("user:{}", fnnam),
+        WidgetImpl::Comp { wid, func, .. } => format!("completion:{}:{}", wid, func),
     }
 }
 
@@ -101,32 +130,21 @@ pub fn getpmwidgets(
     let label_opt = {
         let tab = crate::ported::zle::zle_thingy::thingytab().lock().ok();
         tab.and_then(|t| {
-            t.get(name).cloned().map(|th| {
-                let w_opt = th.widget;
-                match w_opt {
-                    None => "undefined".to_string(),
-                    Some(w) => {
-                        use crate::ported::zle::zle_h::{WidgetImpl, WIDGET_INT, WIDGET_NCOMP};
-                        if (w.flags & WIDGET_INT) != 0 {
-                            "builtin".to_string()
-                        } else if (w.flags & WIDGET_NCOMP) != 0 {
-                            if let WidgetImpl::Comp { wid, func, .. } = &w.u {
-                                format!("completion:{}:{}", wid, func)
-                            } else {
-                                "builtin".to_string()
-                            }
-                        } else {
-                            match &w.u {
-                                WidgetImpl::Internal(_) => "builtin".to_string(),
-                                WidgetImpl::UserFunc(fnnam) => format!("user:{}", fnnam),
-                                WidgetImpl::Comp { wid, func, .. } => {
-                                    format!("completion:{}:{}", wid, func)
-                                }
-                            }
-                        }
-                    }
-                }
-            })
+            // c:Src/Zle/zleparameter.c:70-76 —
+            //   `if ((th = thingytab->getnode(thingytab, name)) &&
+            //        !(th->flags & DISABLED))
+            //        pm->u.str = widgetstr(th->widget);
+            //    else { pm->u.str = dupstring(""); pm->node.flags |= PM_UNSET; }`
+            // A thingy that only exists because something called
+            // `rthingy` on an unknown name (`bindkey ^Xz no-such-widget`,
+            // c:Src/Zle/zle_keymap.c:1042) is DISABLED and has no widget:
+            // it must read back as an UNSET empty scalar, not as
+            // "undefined". `widgetstr`'s `!w -> "undefined"` arm
+            // (c:zleparameter.c:39-40) stays for a bound-but-widgetless
+            // node, which the fixed table never produces.
+            t.get(name)
+                .filter(|th| (th.flags & crate::ported::zsh_h::DISABLED) == 0) // c:71
+                .map(|th| widgetstr(th.widget.as_ref())) // c:72
         })
     };
     match label_opt {
@@ -156,12 +174,32 @@ pub fn scanpmwidgets(
         Some(f) => f,
         None => return,
     };
+    // c:92-98 — `for (i = 0; i < thingytab->hsize; i++)
+    //              for (hn = thingytab->nodes[i]; hn; hn = hn->next) {
+    //                  pm.node.nam = hn->nam;
+    //                  ... pm.u.str = widgetstr(((Thingy) hn)->widget);
+    //                  func(&pm.node, flags); }`
+    // EVERY node is yielded. Unlike `getpmwidgets` (c:70-71) the scan
+    // applies no DISABLED gate, so a name that exists only because
+    // `bindkey '^Xz' no-such-widget` called `rthingy`
+    // (c:Src/Zle/zle_keymap.c:1042) is a key of `$widgets` even though
+    // reading it by subscript gives an unset empty scalar.
+    //
+    // The port used to drop every widget-less thingy (`getwidgettarget`
+    // returns None when `th.widget` is None → `continue`), which is why
+    // `${#widgets[(I)zzq-*]}` read 0 where zsh reads 1: the `rthingy`
+    // nodes were invisible to the ONLY reader that enumerates keys.
+    // The label also hand-rolled a target-name comparison instead of
+    // calling `widgetstr` (c:37), so a `zle -C` widget listed as
+    // `user:_main_complete` instead of `completion:.wid:_main_complete`.
     let names = crate::ported::zle::zle_thingy::listwidgets();
     for name in &names {
-        let label = match crate::ported::zle::zle_thingy::getwidgettarget(name) {
-            Some(t) if t == *name => "builtin".to_string(),
-            Some(t) => format!("user:{}", t),
-            None => continue,
+        let label = {
+            let tab = crate::ported::zle::zle_thingy::thingytab().lock().ok();
+            match tab.as_ref().and_then(|t| t.get(name)) {
+                Some(th) => widgetstr(th.widget.as_ref()), // c:97
+                None => continue,
+            }
         };
         let pm = param {
             node: hashnode {
@@ -471,13 +509,79 @@ pub const DEFAULT_KEYMAPS: &[&str] = &[
 mod tests {
     use super::*;
 
+    // `widgetstr` (c:37) takes a `Widget`, so these build the three
+    // widget shapes C discriminates on: WIDGET_INT (`builtin`),
+    // WIDGET_NCOMP (`completion:wid:func`) and a plain user function
+    // (`user:fnnam`). The wid half of the completion label is fixed at
+    // ".wid" so the expected strings stay readable.
+    fn w_int() -> std::sync::Arc<crate::ported::zle::zle_h::widget> {
+        std::sync::Arc::new(crate::ported::zle::zle_h::widget {
+            flags: crate::ported::zle::zle_h::WIDGET_INT,
+            first: None,
+            u: crate::ported::zle::zle_h::WidgetImpl::Internal(|_| {
+                crate::ported::zle::zle_misc::undefinedkey()
+            }),
+        })
+    }
+
+    fn w_user(fnnam: &str) -> std::sync::Arc<crate::ported::zle::zle_h::widget> {
+        std::sync::Arc::new(crate::ported::zle::zle_h::widget {
+            flags: 0,
+            first: None,
+            u: crate::ported::zle::zle_h::WidgetImpl::UserFunc(fnnam.to_string()),
+        })
+    }
+
+    fn w_comp(func: &str) -> std::sync::Arc<crate::ported::zle::zle_h::widget> {
+        std::sync::Arc::new(crate::ported::zle::zle_h::widget {
+            flags: crate::ported::zle::zle_h::WIDGET_NCOMP,
+            first: None,
+            u: crate::ported::zle::zle_h::WidgetImpl::Comp {
+                fn_: |_| crate::ported::zle::zle_misc::undefinedkey(),
+                wid: ".wid".to_string(),
+                func: func.to_string(),
+            },
+        })
+    }
+
     #[test]
     fn test_widgetstr() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert_eq!(widgetstr("self-insert", false, false), "builtin");
-        assert_eq!(widgetstr("my-widget", true, false), "user:my-widget");
-        assert_eq!(widgetstr("my-comp", false, true), "completion:my-comp");
+        use crate::ported::zle::zle_h::{widget, WidgetImpl, WIDGET_INT, WIDGET_NCOMP};
+        use std::sync::Arc;
+        // c:39-40 — `if (!w) return dupstring("undefined");`
+        assert_eq!(widgetstr(None), "undefined");
+        // c:41-42 — `if (w->flags & WIDGET_INT) return "builtin";`
+        let int_w = Arc::new(widget {
+            flags: WIDGET_INT,
+            first: None,
+            u: WidgetImpl::Internal(|_| crate::ported::zle::zle_misc::undefinedkey()),
+        });
+        assert_eq!(widgetstr(Some(&int_w)), "builtin");
+        // c:54 — `dyncat("user:", w->u.fnnam)`. The label is the bound
+        // FUNCTION name, not the widget name — `zle -N foo foo` and
+        // `zle -N foo bar` are distinguishable in `$widgets`.
+        let user_w = Arc::new(widget {
+            flags: 0,
+            first: None,
+            u: WidgetImpl::UserFunc("my-fn".to_string()),
+        });
+        assert_eq!(widgetstr(Some(&user_w)), "user:my-fn");
+        // c:43-52 — `"completion:" wid ":" func`, BOTH halves.
+        let comp_w = Arc::new(widget {
+            flags: WIDGET_NCOMP,
+            first: None,
+            u: WidgetImpl::Comp {
+                wid: ".complete-word".to_string(),
+                func: "_main_complete".to_string(),
+                fn_: |_| crate::ported::zle::zle_misc::undefinedkey(),
+            },
+        });
+        assert_eq!(
+            widgetstr(Some(&comp_w)),
+            "completion:.complete-word:_main_complete"
+        );
     }
 
     #[test]
@@ -493,6 +597,53 @@ mod tests {
             .expect("getpmwidgets always returns Some(Param)");
         assert!(pm.node.flags & PM_UNSET as i32 != 0, "PM_UNSET set");
         assert_eq!(pm.u_str.as_deref(), Some(""));
+    }
+
+    /// c:Src/Zle/zleparameter.c:92-98 — `scanpmwidgets` walks EVERY
+    /// `thingytab` node and calls `func` on each; unlike `getpmwidgets`
+    /// (c:70-71) it applies no DISABLED gate. So a name that exists
+    /// only because `bindkey '^Xz' no-such-widget` called `rthingy`
+    /// (c:Src/Zle/zle_keymap.c:1042) IS a key of `$widgets`, valued
+    /// `undefined` per `widgetstr`'s `!w` arm (c:39-40), even though
+    /// reading it by subscript yields an unset empty scalar.
+    ///
+    /// The port used to `continue` past any thingy with no widget,
+    /// which made every `rthingy`-created name invisible to the ONLY
+    /// reader that enumerates keys — `${#widgets[(I)zzq-*]}` read 0
+    /// where zsh reads 1.
+    #[test]
+    fn scanpmwidgets_yields_widgetless_thingies_as_undefined() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        crate::ported::zle::zle_thingy::init_thingies();
+        crate::ported::zle::zle_thingy::rthingy("zzq-scan-only");
+
+        // The scan callback is a plain `fn`, so collect through a
+        // process-global the test owns rather than a closure capture.
+        static SEEN: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+        fn collect(pm: &crate::ported::zsh_h::param, _flags: i32) {
+            SEEN.lock()
+                .unwrap()
+                .push((pm.node.nam.clone(), pm.u_str.clone().unwrap_or_default()));
+        }
+        SEEN.lock().unwrap().clear();
+        scanpmwidgets(std::ptr::null_mut(), Some(collect), 0);
+        let seen = SEEN.lock().unwrap();
+
+        let row = seen
+            .iter()
+            .find(|(n, _)| n == "zzq-scan-only")
+            .expect("c:92-98 — the scan yields every node, DISABLED included");
+        assert_eq!(row.1, "undefined", "c:39-40 — `widgetstr(NULL)`");
+        assert!(
+            seen.iter().any(|(n, v)| n == "accept-line" && v == "builtin"),
+            "c:41-42 — an internal widget still reports `builtin`"
+        );
+
+        // Leave the table as we found it so sibling tests keep their
+        // baseline (`unrefthingy` at rc 1 removes the node, c:147-150).
+        drop(seen);
+        crate::ported::zle::zle_thingy::unrefthingy("zzq-scan-only");
     }
 
     #[test]
@@ -519,13 +670,13 @@ mod tests {
     #[test]
     fn widgetstr_user_form_carries_function_name_after_colon() {
         let _g = crate::test_util::global_state_lock();
-        let s = widgetstr("a-fn", true, false);
+        let s = widgetstr(Some(&w_user("a-fn")));
         let (kind, rest) = s.split_once(':').expect("missing colon");
         assert_eq!(kind, "user");
         assert_eq!(rest, "a-fn", "function-name suffix must round-trip");
     }
 
-    /// c:37 — `widgetstr(_, true, true)` — both flags true. The C
+    /// c:37 — `widgetstr(Some(&w_comp(_)))` — both flags true. The C
     /// dispatch order is is_completion FIRST, so this branch yields
     /// "completion:..." not "user:...". Pin the precedence so a
     /// regen flipping branch order gets caught (would silently swap
@@ -533,7 +684,7 @@ mod tests {
     #[test]
     fn widgetstr_completion_wins_over_user_when_both_true() {
         let _g = crate::test_util::global_state_lock();
-        let s = widgetstr("foo", true, true);
+        let s = widgetstr(Some(&w_comp("foo")));
         assert!(
             s.starts_with("completion:"),
             "is_completion must dominate is_user, got: {}",
@@ -639,15 +790,15 @@ mod tests {
     // Additional C-parity tests pinning Src/Zle/zleparameter.c contracts.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:37 — `widgetstr(name, false, false)` returns "builtin"
+    /// c:37 — `widgetstr(Some(&w_int()))` returns "builtin"
     /// regardless of the name. Pins that the builtin branch ignores
     /// the function-name arg (matches C's `return "builtin"`).
     #[test]
     fn widgetstr_builtin_form_ignores_name() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(widgetstr("anything", false, false), "builtin");
-        assert_eq!(widgetstr("", false, false), "builtin");
-        assert_eq!(widgetstr("with spaces", false, false), "builtin");
+        assert_eq!(widgetstr(Some(&w_int())), "builtin");
+        assert_eq!(widgetstr(Some(&w_int())), "builtin");
+        assert_eq!(widgetstr(Some(&w_int())), "builtin");
     }
 
     /// c:37 — completion form preserves the function name suffix
@@ -655,10 +806,10 @@ mod tests {
     #[test]
     fn widgetstr_completion_form_carries_function_name() {
         let _g = crate::test_util::global_state_lock();
-        let s = widgetstr("_complete-foo", false, true);
-        let (kind, rest) = s.split_once(':').expect("missing colon");
-        assert_eq!(kind, "completion");
-        assert_eq!(rest, "_complete-foo");
+        let s = widgetstr(Some(&w_comp("_complete-foo")));
+        // c:43-52 — the label is `"completion:" wid ":" func`, so the
+        // function name is the LAST colon-separated field.
+        assert_eq!(s, "completion:.wid:_complete-foo");
     }
 
     /// c:147 — `setup_()` returns 0 (split out from combined test).
@@ -800,13 +951,13 @@ mod tests {
     // c:147-180 lifecycle.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:37 — `widgetstr(name, false, false)` always returns "builtin"
+    /// c:37 — `widgetstr(Some(&w_int()))` always returns "builtin"
     /// regardless of name (name is ignored in the builtin arm).
     #[test]
     fn widgetstr_builtin_ignores_all_names() {
         for name in &["", "anything", "with spaces", "包含中文", "x\ny"] {
             assert_eq!(
-                widgetstr(name, false, false),
+                widgetstr(Some(&w_int())),
                 "builtin",
                 "builtin arm must ignore name {:?}",
                 name
@@ -818,9 +969,9 @@ mod tests {
     #[test]
     fn widgetstr_output_has_canonical_prefix() {
         let outs = [
-            widgetstr("x", false, false),
-            widgetstr("y", true, false),
-            widgetstr("z", false, true),
+            widgetstr(Some(&w_int())),
+            widgetstr(Some(&w_user("y"))),
+            widgetstr(Some(&w_comp("z"))),
         ];
         for s in &outs {
             assert!(
@@ -831,19 +982,19 @@ mod tests {
         }
     }
 
-    /// c:37 — `widgetstr(name, true, false)` always emits `user:<name>`,
+    /// c:37 — `widgetstr(Some(&w_user(name)))` always emits `user:<name>`,
     /// with colon at position 4 (`user`+`:`).
     #[test]
     fn widgetstr_user_colon_is_position_four() {
-        let s = widgetstr("abc", true, false);
+        let s = widgetstr(Some(&w_user("abc")));
         assert_eq!(s.find(':'), Some(4));
         assert!(s.starts_with("user:"));
     }
 
-    /// c:37 — `widgetstr(name, false, true)` always emits `completion:<name>`.
+    /// c:37 — `widgetstr(Some(&w_comp(name)))` always emits `completion:<name>`.
     #[test]
     fn widgetstr_completion_colon_is_position_ten() {
-        let s = widgetstr("abc", false, true);
+        let s = widgetstr(Some(&w_comp("abc")));
         assert_eq!(s.find(':'), Some(10));
         assert!(s.starts_with("completion:"));
     }
@@ -851,9 +1002,9 @@ mod tests {
     /// c:37 — empty name still produces a well-formed label.
     #[test]
     fn widgetstr_empty_name_each_arm_well_formed() {
-        assert_eq!(widgetstr("", false, false), "builtin");
-        assert_eq!(widgetstr("", true, false), "user:");
-        assert_eq!(widgetstr("", false, true), "completion:");
+        assert_eq!(widgetstr(Some(&w_int())), "builtin");
+        assert_eq!(widgetstr(Some(&w_user(""))), "user:");
+        assert_eq!(widgetstr(Some(&w_comp(""))), "completion:.wid:");
     }
 
     /// c:37 — `widgetstr` is a pure function (no side effects across
@@ -861,9 +1012,9 @@ mod tests {
     #[test]
     fn widgetstr_is_pure() {
         for _ in 0..50 {
-            assert_eq!(widgetstr("x", false, false), "builtin");
-            assert_eq!(widgetstr("y", true, false), "user:y");
-            assert_eq!(widgetstr("z", false, true), "completion:z");
+            assert_eq!(widgetstr(Some(&w_int())), "builtin");
+            assert_eq!(widgetstr(Some(&w_user("y"))), "user:y");
+            assert_eq!(widgetstr(Some(&w_comp("z"))), "completion:.wid:z");
         }
     }
 
@@ -936,7 +1087,7 @@ mod tests {
     #[test]
     fn widgetstr_returns_string_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: String = widgetstr("", false, false);
+        let _: String = widgetstr(Some(&w_int()));
     }
 
     /// c:142 — `keymapsgetfn` returns Vec<String> (compile-time type pin).
@@ -1014,12 +1165,12 @@ mod tests {
     fn widgetstr_builtin_is_pure() {
         let _g = crate::test_util::global_state_lock();
         for name in ["", "a", "fwd", "back-word", "complete-word"] {
-            let first = widgetstr(name, false, false);
+            let first = widgetstr(Some(&w_int()));
             for _ in 0..3 {
                 assert_eq!(
-                    widgetstr(name, false, false),
+                    widgetstr(Some(&w_int())),
                     first,
-                    "widgetstr({:?}, false, false) must be pure",
+                    "widgetstr(builtin widget) must be pure for {:?}",
                     name
                 );
             }
@@ -1038,7 +1189,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for name in ["", "a", "x", "self-insert", "fancy-name"] {
             assert_eq!(
-                widgetstr(name, false, false),
+                widgetstr(Some(&w_int())),
                 "builtin",
                 "builtin mode ignores name; got name={:?}",
                 name
@@ -1052,9 +1203,9 @@ mod tests {
     fn widgetstr_completion_precedence_over_user() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            widgetstr("foo", true, true),
-            "completion:foo",
-            "completion bit dominates user bit"
+            widgetstr(Some(&w_comp("foo"))),
+            "completion:.wid:foo",
+            "WIDGET_NCOMP is checked before the user-function arm"
         );
     }
 
@@ -1063,7 +1214,7 @@ mod tests {
     fn widgetstr_user_format() {
         let _g = crate::test_util::global_state_lock();
         for name in ["", "a", "complete-word", "_complete"] {
-            assert_eq!(widgetstr(name, true, false), format!("user:{}", name));
+            assert_eq!(widgetstr(Some(&w_user(name))), format!("user:{}", name));
         }
     }
 
@@ -1072,7 +1223,7 @@ mod tests {
     fn widgetstr_completion_format() {
         let _g = crate::test_util::global_state_lock();
         for name in ["", "_main_complete", "_complete_help", "x"] {
-            assert_eq!(widgetstr(name, false, true), format!("completion:{}", name));
+            assert_eq!(widgetstr(Some(&w_comp(name))), format!("completion:.wid:{}", name));
         }
     }
 
@@ -1080,9 +1231,9 @@ mod tests {
     #[test]
     fn widgetstr_return_type_is_owned_string() {
         let _g = crate::test_util::global_state_lock();
-        let _: String = widgetstr("x", false, false);
-        let _: String = widgetstr("x", true, false);
-        let _: String = widgetstr("x", false, true);
+        let _: String = widgetstr(Some(&w_int()));
+        let _: String = widgetstr(Some(&w_user("x")));
+        let _: String = widgetstr(Some(&w_comp("x")));
     }
 
     /// c:81 — `scanpmwidgets` with None callback returns void (safe no-op).
@@ -1188,7 +1339,7 @@ mod tests {
     #[test]
     fn widgetstr_empty_name_user_format() {
         assert_eq!(
-            widgetstr("", true, false),
+            widgetstr(Some(&w_user(""))),
             "user:",
             "empty name still gets user: prefix"
         );
@@ -1198,9 +1349,9 @@ mod tests {
     #[test]
     fn widgetstr_empty_name_completion_format() {
         assert_eq!(
-            widgetstr("", false, true),
-            "completion:",
-            "empty + completion → completion: prefix only"
+            widgetstr(Some(&w_comp(""))),
+            "completion:.wid:",
+            "empty func still emits both colons"
         );
     }
 
@@ -1209,33 +1360,33 @@ mod tests {
     #[test]
     fn widgetstr_completion_beats_both_flags() {
         assert_eq!(
-            widgetstr("foo", true, true),
-            "completion:foo",
-            "completion takes precedence when both flags set"
+            widgetstr(Some(&w_comp("foo"))),
+            "completion:.wid:foo",
+            "WIDGET_NCOMP takes precedence over the user-function arm"
         );
     }
 
     /// c:37 — `widgetstr` builtin path: both flags false.
     #[test]
     fn widgetstr_both_flags_false_returns_builtin() {
-        assert_eq!(widgetstr("anything", false, false), "builtin");
+        assert_eq!(widgetstr(Some(&w_int())), "builtin");
     }
 
     /// c:37 — `widgetstr` deterministic across calls.
     #[test]
     fn widgetstr_deterministic_repeated_calls() {
         for _ in 0..10 {
-            assert_eq!(widgetstr("foo", true, false), "user:foo");
-            assert_eq!(widgetstr("bar", false, true), "completion:bar");
-            assert_eq!(widgetstr("baz", false, false), "builtin");
+            assert_eq!(widgetstr(Some(&w_user("foo"))), "user:foo");
+            assert_eq!(widgetstr(Some(&w_comp("bar"))), "completion:.wid:bar");
+            assert_eq!(widgetstr(Some(&w_int())), "builtin");
         }
     }
 
     /// c:37 — `widgetstr` preserves name verbatim (no escaping, no quoting).
     #[test]
     fn widgetstr_preserves_special_chars_in_name() {
-        assert_eq!(widgetstr("a b\tc", true, false), "user:a b\tc");
-        assert_eq!(widgetstr("\\n", true, false), "user:\\n");
+        assert_eq!(widgetstr(Some(&w_user("a b\tc"))), "user:a b\tc");
+        assert_eq!(widgetstr(Some(&w_user("\\n"))), "user:\\n");
     }
 
     /// c:33 — `getpmwidgets("")` empty name doesn't panic.
