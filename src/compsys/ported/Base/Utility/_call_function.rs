@@ -25,7 +25,6 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setsparam;
-use crate::ported::utils::getshfunc;
 use crate::ported::zle::compcore::set_compstate_str;
 
 /// `_call_function` — invoke a named shell function with the rest
@@ -44,12 +43,17 @@ pub fn _call_function(args: &[String]) -> i32 {
     // sh:19  shift
     let rest: &[String] = if args.is_empty() { &[] } else { &args[1..] };
 
-    // sh:21  test fn existence
+    // sh:21  `if (( $+functions[$1] )); then`
     let fn_name = match rest.first() {
         Some(n) => n.clone(),
         None => return 1,
     };
-    if getshfunc(&fn_name).is_none() {
+    // `getshfunc` alone answers this from `shfunctab`, which a natively
+    // routed completer never enters — so `_call_function ret _shadow x`
+    // returned 1 ("no such function") for a name that runs when it is
+    // called directly. `plus_functions` is the router-aware form of the
+    // same `(( $+functions[…] ))` test.
+    if !crate::compsys::ported::shared::plus_functions(&fn_name) {
         // sh:32
         return 1;
     }

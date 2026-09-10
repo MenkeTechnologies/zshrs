@@ -1855,3 +1855,85 @@ mod plus_parameters_tests {
         assert!(!plus_parameters(""));
     }
 }
+
+/// `(( $+functions[<name>] ))` — is there a FUNCTION by this name?
+///
+/// The plain-shell half is `getpmfunction` (c:Src/Modules/parameter.c:444)
+/// → `getfunction(ht, name, 0)` (c:388): the node has to be in `shfunctab`
+/// AND not `DISABLED`, or the Param comes back flagged `PM_UNSET`
+/// (c:399-438). An `autoload -Uz` stub counts — `PM_UNDEFINED` still yields
+/// the `builtin autoload -X…` string, not `PM_UNSET` (c:401-407) — which is
+/// what makes `$+functions[_files]` read 1 after `compinit`.
+///
+/// The second half is zshrs-only, and it exists because C has nothing to
+/// arbitrate: a name the compsys router serves natively
+/// (`compsys::router::try_rust_dispatch`, or a `zmodload -R` plugin
+/// override) RUNS when it is called, yet leaves no `shfunctab` node behind.
+/// Answering this question from `shfunctab` alone therefore contradicts the
+/// shell's own dispatch. Measured with `fpath=(…5.9.2/share/zsh/functions)`
+/// and no `compinit`, where `_shadow` has a port but no definition file:
+///
+/// ```text
+///   _shadow x                      → rc 0   (the port ran)
+///   _call_function rc _shadow foo  → rc 1   ("no such function")
+/// ```
+///
+/// Both arms are needed, in this order: `shfunctab` first so a user's own
+/// body or an `autoload` stub answers for itself, then the router — which
+/// already steps aside for an `$fpath` file or a defined shfunc
+/// (`has_fpath_override` / `has_shfunc_override`, `src/compsys/router.rs:53`
+/// and `:62`), and returns `None` outright when the backend is not `rust`.
+/// So this never claims a name the shell would not actually run.
+pub fn plus_functions(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    // c:Src/Modules/parameter.c:444 → c:399-438
+    let in_shfunctab =
+        match crate::ported::modules::parameter::getpmfunction(std::ptr::null_mut(), name) {
+            Some(pm) => (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0,
+            None => false,
+        };
+    if in_shfunctab {
+        return true;
+    }
+    // zshrs-only: a natively-routed completer has no shfunctab node.
+    crate::compsys::router::try_rust_dispatch(name).is_some()
+        || crate::extensions::plugin_host::compfn_override(name).is_some()
+}
+
+#[cfg(test)]
+mod plus_functions_tests {
+    use super::plus_functions;
+
+    /// A name the compsys router serves has no `shfunctab` node, so the
+    /// plain `getshfunc` test reports it absent while calling it runs the
+    /// port. `_shadow` is the cleanest witness: it landed in
+    /// `Completion/Base/Utility/_shadow` AFTER zsh 5.9, so the reference
+    /// tree the parity harness pins
+    /// (`/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions`) has no file
+    /// for it and nothing can autoload a stub, while the port is live.
+    #[test]
+    fn a_routed_port_with_no_definition_file_counts_as_a_function() {
+        let _g = crate::test_util::global_state_lock();
+        let routed = crate::compsys::router::try_rust_dispatch("_shadow").is_some();
+        let in_table = crate::ported::utils::getshfunc("_shadow").is_some();
+        if !routed {
+            // backend != rust in this build's config — nothing to assert.
+            return;
+        }
+        assert!(
+            plus_functions("_shadow"),
+            "router serves `_shadow` (shfunctab node: {in_table}) so \
+             `$+functions[_shadow]` must not read 0"
+        );
+    }
+
+    /// Neither arm claims a name that does not exist at all.
+    #[test]
+    fn unknown_name_is_not_a_function() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!plus_functions("_zzq_no_such_completer_xyz"));
+        assert!(!plus_functions(""));
+    }
+}

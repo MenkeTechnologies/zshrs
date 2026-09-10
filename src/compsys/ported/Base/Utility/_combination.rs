@@ -6,12 +6,12 @@
 //! sh:  1  #autoload
 //! sh:  5  # Usage: _combination [-s S] TAG STYLE Ki=Pi ... Kj EXPL...
 //! sh: 60  zstyle queries with multi-key matching
-//! sh: 90  if zstyle -a … "$style" tmp; then
-//! sh: 91    filter tmp by all (Ki=Pi) patterns
-//! sh: 96    compadd "$@" -a tmp || _$key "$@"
+//! sh: 92  if zstyle -a ":completion:${curcontext}:$tag" "$style" tmp; then
+//! sh: 93    filter tmp by all (Ki=Pi) patterns
+//! sh: 99    compadd "$@" -a tmp || { (( $+functions[_$key] )) && "_$key" "$@" }
 //! sh:100  else
-//! sh: 99    _$key "$@"
-//! sh:102 fi
+//! sh:101    (( $+functions[_$key] )) && "_$key" "$@"
+//! sh:102  fi
 //! ```
 //!
 //! Multi-field zstyle-key composer. Approximation: read the style
@@ -128,13 +128,31 @@ pub fn _combination_impl(args: &[String]) -> i32 {
     }
     let extras: &[String] = &args[idx..];
 
-    // sh:90  read the style; filter to matching combinations
+    // sh:99/sh:101 — `(( $+functions[_$key] )) && "_$key" "$@"`. BOTH
+    // fallbacks are guarded on the function existing, and the `&&` yields 1
+    // when it does not; the port called it unconditionally. That is not a
+    // no-op: `dispatch_function_call` autoloads a `_`-name it finds in
+    // `$fpath` (`src/vm_helper.rs:4544-4557`), which `(( $+functions[...] ))`
+    // never does. Measured with `fpath=(...5.9.2/share/zsh/functions)` and no
+    // `compinit`, `_combination mytag foo-alias alias`:
+    //   zsh    rc 1, silent, `$+functions[_alias]` still 0
+    //   zshrs  rc 0, `_arguments:comparguments:327: can only be called from
+    //          completion function` on stderr, `$+functions[_alias]` now 1
+    let call_key = |key: &str, extras: &[String]| -> i32 {
+        let f = format!("_{}", key);
+        if !crate::compsys::ported::shared::plus_functions(&f) {
+            return 1; // sh:99/101 — the `&&` short-circuits
+        }
+        dispatch_function_call(&f, extras).unwrap_or(1)
+    };
+
+    // sh:92  read the style; filter to matching combinations
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let style_ctx = format!(":completion:{}:{}", curcontext, tag);
     let style_vals = lookupstyle(&style_ctx, &style);
     if style_vals.is_empty() {
-        // sh:99  fallback dispatch
-        return dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1);
+        // sh:101  fallback dispatch
+        return call_key(&key_arg, extras);
     }
 
     // Build a single combined glob pattern: `pat1{sep}pat2{sep}...`
@@ -179,7 +197,8 @@ pub fn _combination_impl(args: &[String]) -> i32 {
     matches.dedup();
 
     if matches.is_empty() {
-        return dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1);
+        // sh:99 — an empty `tmp` makes `compadd -a tmp` fail, taking the `||`.
+        return call_key(&key_arg, extras);
     }
 
     setaparam("tmp", matches);
@@ -189,7 +208,8 @@ pub fn _combination_impl(args: &[String]) -> i32 {
     if bin_compadd("compadd", &compadd_argv, &make_ops(), 0) == 0 {
         0
     } else {
-        dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1)
+        // sh:99  `compadd ... || { (( $+functions[_$key] )) && "_$key" "$@" }`
+        call_key(&key_arg, extras)
     }
 }
 
@@ -205,6 +225,35 @@ mod tests {
                 "mytag".to_string(),
                 "users-hosts".to_string(),
                 "users".to_string(),
+            ]),
+            1
+        );
+    }
+
+    /// sh:101 — with no style set the fallback is
+    /// `(( $+functions[_$key] )) && "_$key" "$@"`, so a key whose `_$key` is
+    /// neither defined nor routed must return 1 having called NOTHING. The
+    /// port used to reach `dispatch_function_call` unconditionally, which for
+    /// a `_`-name also AUTOLOADS a matching `$fpath` file
+    /// (`src/vm_helper.rs:4544-4557`) — a side effect `(( $+functions[...] ))`
+    /// cannot have. Measured against zsh with
+    /// `fpath=(.../5.9.2/share/zsh/functions)` and no `compinit`:
+    /// `_combination mytag foo-alias alias` gave zsh rc 1 and silence, and
+    /// zshrs rc 0 plus `_arguments:comparguments:327: can only be called from
+    /// completion function` on stderr.
+    #[test]
+    fn absent_key_function_is_not_called() {
+        let _g = crate::test_util::global_state_lock();
+        const KEY: &str = "zzq_no_such_key";
+        assert!(
+            !crate::compsys::ported::shared::plus_functions(&format!("_{KEY}")),
+            "premise: `_{KEY}` is neither a shell function nor a routed port"
+        );
+        assert_eq!(
+            _combination_impl(&[
+                "mytag".to_string(),
+                format!("users-{KEY}"),
+                KEY.to_string(),
             ]),
             1
         );
