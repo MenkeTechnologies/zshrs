@@ -695,15 +695,10 @@ pub fn _expand_with(args: &[String]) -> i32 {
 // sh:22-26 — who called us
 // =====================================================================
 
-/// `[[ "$funcstack[2]" = _prefix ]]` (sh:22). `funcstack[1]` is
-/// `_expand` itself, so the caller is index 1 of the innermost-first list
-/// `funcstackgetfn` builds (`Src/Modules/parameter.c:627`).
-fn caller_is_prefix() -> bool {
-    crate::ported::modules::parameter::funcstackgetfn(std::ptr::null_mut())
-        .get(1)
-        .map(|n| n == "_prefix")
-        .unwrap_or(false)
-}
+// `[[ "$funcstack[2]" = _prefix ]]` (sh:22) lives in `shared`: `_user_expand`
+// sh:18 asks the identical question of the identical caller, and two copies of
+// a funcstack read is how they drift apart.
+use crate::compsys::ported::shared::caller_is_prefix;
 
 // =====================================================================
 // sh:28-52 — the bail-out predicates

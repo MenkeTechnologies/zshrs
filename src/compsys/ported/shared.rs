@@ -1937,3 +1937,24 @@ mod plus_functions_tests {
         assert!(!plus_functions(""));
     }
 }
+
+/// `[[ "$funcstack[2]" = _prefix ]]` — was this completer invoked BY
+/// `_prefix`?
+///
+/// `_prefix` moves the whole `$SUFFIX` out of the way before it re-runs the
+/// completer list — `ISUFFIX="$SUFFIX"` then `SUFFIX=''`
+/// (`Completion/Base/Completer/_prefix` sh:18-23) — so a completer that
+/// rebuilds the word as `$IPREFIX$PREFIX$SUFFIX$ISUFFIX` under `_prefix`
+/// gets the suffix back that `_prefix` just removed. Every completer that
+/// reads the word therefore special-cases this one caller
+/// (`_expand` sh:22, `_expand_alias` sh:9, `_user_expand` sh:18).
+///
+/// `funcstack[1]` is the CALLEE — the completer asking the question — so the
+/// caller is index 1 of the innermost-first list `funcstackgetfn` builds
+/// (`c:Src/Modules/parameter.c:627`).
+pub fn caller_is_prefix() -> bool {
+    crate::ported::modules::parameter::funcstackgetfn(std::ptr::null_mut())
+        .get(1)
+        .map(|n| n == "_prefix")
+        .unwrap_or(false)
+}
