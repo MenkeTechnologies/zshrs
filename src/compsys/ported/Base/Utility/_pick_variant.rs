@@ -97,15 +97,7 @@ fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
 /// `$+builtins[nosuchthing]` evaluate to 0. Go through the same
 /// accessor rather than probing `BUILTINS` directly so the DISABLED /
 /// auto-load-stub semantics `getbuiltin` already models are honoured.
-fn plus_builtins(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    match crate::ported::modules::parameter::getpmbuiltin(std::ptr::null_mut(), name) {
-        Some(pm) => (pm.node.flags as u32 & PM_UNSET) == 0,
-        None => false,
-    }
-}
+use crate::compsys::ported::shared::plus_builtins;
 
 /// Look up `key` in a flat [k, v, k, v, ...] options array.
 fn opt(opts_flat: &[String], key: &str) -> Option<String> {

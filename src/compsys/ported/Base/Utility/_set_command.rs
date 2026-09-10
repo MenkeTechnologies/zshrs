@@ -173,8 +173,16 @@ pub fn _set_command_impl() -> i32 {
 /// every builtin outside it (`print`, `typeset`, `zle`, `setopt`, `zstyle`,
 /// `compadd`, `zmodload`, `whence`, `getopts`, …) as non-builtins, so
 /// `_set_command` failed to recognise them as the command word. Bug #657.
+///
+/// The replacement then over-corrected: `createbuiltintable()` is a static
+/// superset of `$builtins` (`src/ported/builtin.rs:147-180`), so sh:12 was
+/// also true for module builtins the shell reports as unset — `chmod`,
+/// `stat`, `zpty`, `zselect` — which sent an EXTERNAL command down sh:13's
+/// branch and left `_comp_command2` (the `$commands[$command]` full path)
+/// empty. `getpmbuiltin` is the accessor `$+builtins` itself uses; see
+/// `shared::plus_builtins`.
 fn is_known_builtin(name: &str) -> bool {
-    crate::ported::builtin::createbuiltintable().contains_key(name)
+    crate::compsys::ported::shared::plus_builtins(name)
 }
 
 /// `${command:t}` — basename.

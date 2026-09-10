@@ -110,10 +110,14 @@ fn function_defined(name: &str) -> bool {
     getshfunc(name).is_some()
 }
 
-/// `${+builtins[$name]}` (sh:56) — an enabled builtin with this name
-/// exists.
+/// `${+builtins[$name]}` (sh:56) — an ENABLED builtin with this name
+/// exists. Goes through `getpmbuiltin` (c:Src/Modules/parameter.c:799),
+/// not the raw table: see `shared::plus_builtins`. Reading the table
+/// directly made sh:56 true for every module builtin, so `_shadow -s x
+/// chmod` wrote `chmod@x() { builtin chmod "$@" }` — a `builtin` call
+/// dispatch then rejects — instead of sh:61's `command chmod "$@"`.
 fn builtin_defined(name: &str) -> bool {
-    crate::ported::builtin::createbuiltintable().contains_key(name)
+    crate::compsys::ported::shared::plus_builtins(name)
 }
 
 /// `builtin functions -c -- $src $dst` (sh:54, sh:84) — clone the

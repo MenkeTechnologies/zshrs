@@ -1694,3 +1694,76 @@ mod assoc_accessor_tests {
         unsetparam(NAME);
     }
 }
+
+/// `(( $+builtins[<name>] ))` — is there an ENABLED builtin by this name?
+///
+/// Not the same question as "is the name in `builtintab`". C's
+/// `getpmbuiltin` is `getbuiltin(ht, name, 0)`
+/// (c:Src/Modules/parameter.c:799), which flags the Param `PM_UNSET` unless
+/// the node exists AND passes `!(bn->node.flags & DISABLED)`
+/// (c:Src/Modules/parameter.c:784-792) — that is what makes
+/// `$+builtins[nosuchthing]` and `$+builtins[<disabled>]` evaluate to 0.
+///
+/// The port's `createbuiltintable()` is a static superset built once from
+/// the flat `BUILTINS` slice plus every module's bintab and the zshrs-only
+/// builtins (`src/ported/builtin.rs:147-180`), so `contains_key` answers
+/// yes for names `$builtins` reports as unset: the module-loaded gate that
+/// `getbuiltin` applies is the reason `zsh -f` and `zshrs -f` both print 0
+/// for `$+builtins[chmod]`, `[stat]`, `[zpty]`, `[zselect]` while the raw
+/// table holds all four.
+pub fn plus_builtins(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    match crate::ported::modules::parameter::getpmbuiltin(std::ptr::null_mut(), name) {
+        Some(pm) => (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0,
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod plus_builtins_tests {
+    use super::plus_builtins;
+    use crate::ported::builtin::{createbuiltintable, BUILTINS_DISABLED};
+
+    /// `$+builtins[X]` is 0 for a DISABLED builtin (c:Src/Modules/parameter.c:784-792
+    /// gates on `!(bn->node.flags & DISABLED)`), while `createbuiltintable()` is
+    /// an immutable superset that still holds the node — the disabled bit lives
+    /// in the parallel `BUILTINS_DISABLED` set (`src/ported/builtin.rs:18595-18602`).
+    /// Any port that answers sh's `(( $+builtins[...] ))` from the raw table
+    /// therefore says yes where the shell says no.
+    #[test]
+    fn disabled_builtin_is_unset_even_though_the_raw_table_holds_it() {
+        let _g = crate::test_util::global_state_lock();
+        const NAME: &str = "print";
+        assert!(plus_builtins(NAME), "premise: `print` starts enabled");
+
+        let re_enable = {
+            let mut set = BUILTINS_DISABLED.lock().unwrap();
+            set.insert(NAME.to_string())
+        };
+        let while_disabled = plus_builtins(NAME);
+        let raw_table_still_has_it = createbuiltintable().contains_key(NAME);
+        if re_enable {
+            BUILTINS_DISABLED.lock().unwrap().remove(NAME);
+        }
+
+        assert!(
+            raw_table_still_has_it,
+            "premise: the static table keeps the node when a builtin is disabled"
+        );
+        assert!(
+            !while_disabled,
+            "`disable print` must make `$+builtins[print]` 0 (c:parameter.c:784-792)"
+        );
+        assert!(plus_builtins(NAME), "`print` restored after the probe");
+    }
+
+    /// The empty name is not a builtin — sh:12 reaches this with `$words[1]`
+    /// already checked non-empty (sh:10), but `_shadow` sh:56 does not.
+    #[test]
+    fn empty_name_is_not_a_builtin() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!plus_builtins(""));
+    }
+}
