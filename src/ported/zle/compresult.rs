@@ -4236,8 +4236,16 @@ pub fn invalidate_list() -> i32 {
         g.prebr = None; // c:2345-2347
         g.postbr = None;
     }
-    // c:2348 — `compwidget = NULL`. The canonical `COMPWIDGET` static
-    // lives in zle_main.rs.
+    // c:2348 — `compwidget = NULL`. Ported, not just cited: this comment
+    // named the C line and then said where the static lives INSTEAD of
+    // assigning it, while c:2343-2347 above port their counterparts.
+    // `compwidget` is what `completecall` reads to pick the completion
+    // widget to run (c:Src/Zle/zle_tricky.c:206-207), and C clears it on
+    // every list invalidation. Safe here because C orders
+    // `invalidatelist()` BEFORE `compwidget = w` in the key loop
+    // (c:Src/Zle/zle_main.c:1471-1480), so the widget that is about to run
+    // is assigned after this clear, never before it.
+    *crate::ported::zle::zle_main::COMPWIDGET.lock().unwrap() = None; // c:2348
     nmatches_g.store(0, Ordering::SeqCst); // c:2355
     if let Ok(mut g) = amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
