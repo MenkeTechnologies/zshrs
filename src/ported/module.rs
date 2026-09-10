@@ -3994,6 +3994,12 @@ pub fn setup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/zselect" => crate::ported::modules::zselect::setup_(std::ptr::null()),
         "zsh/zutil" => crate::ported::modules::zutil::setup_(std::ptr::null()),
         "zsh/compctl" => crate::ported::zle::compctl::setup_(),
+        // c:Src/Zle/complete.c:1730 setup_ — clears the comp* string globals
+        // and raises `hascompmod` (c:1746), the flag `docomplete` reads at
+        // `zle_tricky.c:712`. Missing from this table, `setup_` never ran on
+        // any load path, so the flag stayed 0 and `=ls<TAB>` under
+        // `expand-or-complete` expanded even when the prefix was ambiguous.
+        "zsh/complete" => crate::ported::zle::complete::setup_(std::ptr::null()),
         // c:Src/Zle/zle_main.c:2246-2288 — zle's `setup_` runs `init_thingies`
         // and assigns `$zle_bracketed_paste` (c:2276-2280). C reaches it from
         // here, the module-LOAD chain, so a shell that loaded `zsh/zle`

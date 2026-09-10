@@ -3493,6 +3493,15 @@ pub fn setup_(m: *const module) -> i32 {
         s.clear();
     }
     // c:1735 — `complistmax = 0`. (LISTMAX read at use-site.)
+    // c:1736 — `hascompmod = 1;`. This is the ONLY place C raises the flag,
+    // and `docomplete` reads it at `zle_tricky.c:712` to decide whether a
+    // `=word` under `expand-or-complete` may expand unconditionally: with no
+    // completion module loaded C expands on the first hashed command, with
+    // one loaded it expands only when exactly one command carries the
+    // prefix. The port never set it, so every zshrs shell looked
+    // module-less and `=ls<TAB>` expanded to `/bin/ls` where zsh listed the
+    // seven `ls*` commands.
+    HASCOMPMOD.store(true, Ordering::SeqCst); // c:1736
     0 // c:1738
 }
 
@@ -3733,6 +3742,9 @@ pub fn finish_(m: *const module) -> i32 {
     {
         g.clear();
     }
+    // c:1821 — `hascompmod = 0;`. The unload half of the c:1736 flag: once
+    // the module is gone `docomplete` is back to the module-less rule.
+    HASCOMPMOD.store(false, Ordering::SeqCst); // c:1821
     0
 }
 
@@ -4774,5 +4786,44 @@ mod tests {
         for active in [true, false, true, true, false] {
             set_compadd_trace(active);
         }
+    }
+
+    /// c:1736 / c:1821 — the two halves of `hascompmod`. `setup_` raises it
+    /// when `zsh/complete` loads, `finish_` lowers it when the module is
+    /// unloaded, and those are the ONLY writes C makes outside ZLE's own
+    /// startup zeroing (`zle_main.c:2271`).
+    ///
+    /// The flag is not bookkeeping: `docomplete` reads it at
+    /// `zle_tricky.c:712` and it selects between two different rules for a
+    /// `=word` under `expand-or-complete` —
+    ///
+    /// | hascompmod | `=lsvfs` (1 command) | `=ls` (7 commands) |
+    /// |---|---|---|
+    /// | 0 | expand → `/usr/bin/lsvfs` | expand → `/bin/ls` |
+    /// | 1 | expand → `/usr/bin/lsvfs` | COMPLETE, word untouched |
+    ///
+    /// so a port that never raises it looks correct on every UNIQUE prefix
+    /// and is wrong on every AMBIGUOUS one. That is exactly how the bug
+    /// survived: `=lsvfs` and `=lsappinfo` agreed with zsh the whole time.
+    #[test]
+    fn setup_raises_hascompmod_and_finish_lowers_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let restore = HASCOMPMOD.load(Ordering::SeqCst);
+
+        HASCOMPMOD.store(false, Ordering::SeqCst);
+        assert_eq!(setup_(std::ptr::null()), 0, "c:1738 — setup_ returns 0");
+        assert!(
+            HASCOMPMOD.load(Ordering::SeqCst),
+            "c:1736 — `hascompmod = 1` is the load half"
+        );
+
+        assert_eq!(finish_(std::ptr::null()), 0, "c:1823 — finish_ returns 0");
+        assert!(
+            !HASCOMPMOD.load(Ordering::SeqCst),
+            "c:1821 — `hascompmod = 0` is the unload half"
+        );
+
+        HASCOMPMOD.store(restore, Ordering::SeqCst);
     }
 }

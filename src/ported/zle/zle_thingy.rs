@@ -1228,14 +1228,41 @@ pub fn bin_zle_new(_name: &str, args: &[String], _ops: &options, _func: i32) -> 
 /// }
 /// ```
 /// `zle -C name comp-widget func` — register a completion widget.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_complete(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+/// WARNING: param names don't match C — Rust=(name, args, _ops, _func) vs
+/// C=(name, args, ops, func); `ops`/`func` are UNUSED in C too.
+pub fn bin_zle_complete(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:600
     // c:600-629 — Load zsh/complete; resolve `args[1]` (or `.args[1]`)
     // to a Thingy; verify it's ZLE_ISCOMP; alloc a widget with
     // WIDGET_NCOMP|MENUCMP|KEEPSUFFIX flags and bind to args[0].
     if args.len() < 3 {
         return 1;
+    }
+    // c:605-608 — `if (require_module("zsh/complete", NULL, 0) == 1) {
+    //                  zwarnnam(name, "can't load complete module"); return 1; }`
+    // This is the load event for `zsh/complete`: `compinit` reaches it from
+    // `Completion/compinit:542` (`zle -C $_i_line .$_i_line _main_complete`),
+    // which is why a compinit'd zsh reports `zmodload -e zsh/complete` true.
+    // The port skipped the call, so the module's `setup_` — and with it
+    // `hascompmod` (complete.c:1736) — never ran, and `docomplete`'s
+    // `=word` arm (zle_tricky.c:712) took its module-less branch forever.
+    // `require_module` is idempotent after the first call (`needs_load`
+    // checks MOD_INIT_B), which matters because compinit issues one `zle -C`
+    // per completion widget.
+    {
+        let ret = match crate::ported::module::MODULESTAB.lock() {
+            Ok(mut tab) => {
+                crate::ported::module::require_module(&mut tab, "zsh/complete", None, 0, false)
+            }
+            // A poisoned MODULESTAB has no C counterpart; treat it as
+            // "already loaded" so `zle -C` still registers the widget
+            // rather than failing the whole compinit.
+            Err(_) => 0,
+        };
+        if ret == 1 {
+            crate::ported::utils::zwarnnam(name, "can't load complete module"); // c:606
+            return 1; // c:607
+        }
     }
     // c:609-611 — `t = rthingy(args[1] starts with '.' ? args[1] : ".args[1]")`.
     let lookup = if args[1].starts_with('.') {
@@ -3237,5 +3264,60 @@ mod tests {
         let _g2 = zle_test_setup();
         let ops = empty_ops_thingy();
         let _: i32 = bin_zle_list("zle", &[], &ops, 0);
+    }
+
+    /// `Src/Zle/zle_thingy.c:605` — `if (require_module("zsh/complete",
+    /// NULL, 0) == 1) { … }`. `zle -C` is the LOAD EVENT for
+    /// `zsh/complete`: `compinit` reaches it once per completion widget
+    /// (`Completion/compinit:542`), which is why a compinit'd zsh answers
+    /// `zmodload -e zsh/complete` true while a bare `zsh -f` does not.
+    ///
+    /// What rides on the load is `hascompmod`, raised by the module's
+    /// `setup_` (`Src/Zle/complete.c:1736`). `docomplete` reads it at
+    /// `zle_tricky.c:712` to pick between the two `=word` rules under
+    /// `expand-or-complete`: flag DOWN, expand as soon as the name is a
+    /// hashed command; flag UP, expand only when exactly one command
+    /// carries the prefix (the c:718-726 count, stopped at two). The port
+    /// skipped this call, so the flag never rose in any shell and `=ls`
+    /// expanded to `/bin/ls` where zsh keeps the word and completes.
+    ///
+    /// c:605 runs BEFORE the widget lookup at c:609-614, so a `zle -C`
+    /// naming a widget that does not exist still loads the module. That is
+    /// what lets this pin the load without standing up a real ZLE_ISCOMP
+    /// widget — and it is the exact ordering the C has.
+    #[test]
+    fn zle_dash_c_loads_the_complete_module_and_raises_hascompmod() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let _g3 = LOCK.lock().unwrap();
+        reset_tab();
+        let restore = HASCOMPMOD.load(Ordering::SeqCst);
+        HASCOMPMOD.store(false, Ordering::SeqCst);
+
+        let ops = empty_ops_thingy();
+        let r = bin_zle_complete(
+            "zle",
+            &[
+                "my-widget".to_string(),
+                "no-such-comp-widget".to_string(),
+                "my-func".to_string(),
+            ],
+            &ops,
+            0,
+        );
+
+        assert_eq!(
+            r, 1,
+            "c:612-614 — `.no-such-comp-widget` is not a ZLE_ISCOMP widget, so bin_zle_complete returns 1"
+        );
+        assert!(
+            HASCOMPMOD.load(Ordering::SeqCst),
+            "c:605 — require_module(\"zsh/complete\") runs BEFORE that rejection, \
+             and complete.c:1736 raises hascompmod; without it docomplete's \
+             zle_tricky.c:712 takes the module-less arm and `=ls<TAB>` expands \
+             an AMBIGUOUS prefix"
+        );
+
+        HASCOMPMOD.store(restore, Ordering::SeqCst);
     }
 }
