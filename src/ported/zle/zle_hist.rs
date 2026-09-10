@@ -1203,59 +1203,206 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
 }
 
 /// Port of `pushline(UNUSED(char **args))` from Src/Zle/zle_hist.c:832.
+///
+/// ```c
+/// int
+/// pushline(UNUSED(char **args))
+/// {
+///     int n = zmult;
+///
+///     if (n < 0)
+///         return 1;
+///     zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
+///     while (--n)
+///         zpushnode(bufstack, ztrdup(""));
+///     if (invicmdmode())
+///         INCCS();
+///     stackcs = zlecs;
+///     *zleline = ZWC('\0');
+///     zlell = zlecs = 0;
+///     clearlist = 1;
+///     return 0;
+/// }
+/// ```
+///
+/// The previous body pushed the line onto the ZLE HISTORY list and set
+/// `done`. Neither is in the C source, and both are wrong: `bufstack` is
+/// the only thing `zleread` drains (c:1297), so a `push-line` line went
+/// into the history nav list and was never seen again; and `done = 1`
+/// accepted the (now empty) line, executing a blank command that zsh
+/// does not run. `run-help` inherited the same `done` by accident —
+/// `processcmd` calls this and relies on its OWN `done = 1` (c:3007).
 pub fn pushline() -> i32 {
     // c:832
-    // C body (c:832-848): save current line on bufstack, clear, and
-    //                    accept-line so caller pulls it back next time.
-    let snapshot: String = ZLELINE.lock().unwrap().iter().collect();
-    if snapshot.is_empty() {
-        return 1;
+    // c:834 — `int n = zmult;`. `zmult` is `zmod.mult` (zle.h:267), the
+    // prefix-argument slot `handleprefixes` promotes into, not the raw
+    // digit accumulator.
+    let mut n = ZMOD.lock().unwrap().mult;
+    if n < 0 {
+        // c:836
+        return 1; // c:837
     }
-    history().lock().unwrap().entries.push(HistEntry {
-        line: snapshot,
-        num: 0,
-        time: None,
-    });
-    ZLELINE.lock().unwrap().clear();
-    ZLECS.store(0, Ordering::SeqCst);
-    DONE.store(1, Ordering::SeqCst);
-    0
+    // One snapshot under one lock: locking `ZLELINE` twice in a single
+    // expression self-deadlocks (std Mutex is not reentrant), and `ZLELL`
+    // is clamped to the buffer that actually backs it rather than
+    // trusted, for the reason spelled out at `zle_utils.rs` `mkundoent`.
+    let (buf, ll) = {
+        let g = ZLELINE.lock().unwrap();
+        let ll = ZLELL.load(Ordering::SeqCst).min(g.len());
+        (g[..ll].to_vec(), ll)
+    };
+    let line = crate::ported::zle::zle_utils::zlelineasstring(&buf, ll, 0, None, None, 0);
+    // c:838 — `zpushnode(bufstack, zlelineasstring(...))`. zpushnode
+    // inserts at the list HEAD (zsh.h:591), which `Vec::insert(0, …)`
+    // matches; `zleread`'s `getlinknode` pops that same head, so stacked
+    // pushes come back newest-first.
+    BUFSTACK.lock().unwrap().insert(0, line); // c:838
+                                              // c:839-840 — `while (--n) zpushnode(bufstack, ztrdup(""));`
+                                              // is a PRE-decrement, so a bare `push-line` (n == 1) stacks
+                                              // nothing extra and `ESC-3 push-line` stacks two blanks above
+                                              // the text.
+    n -= 1;
+    while n != 0 {
+        BUFSTACK.lock().unwrap().insert(0, String::new()); // c:840
+        n -= 1;
+    }
+    // c:841-842 — `if (invicmdmode()) INCCS();` — vi command mode parks
+    // the cursor ON the last character rather than past it, so the saved
+    // column has to be nudged forward to survive the round trip.
+    // The keymap name is CLONED out rather than passed as a live guard:
+    // `curkeymapname()` hands back a `MutexGuard`, and holding it across
+    // the `inccs` call below would keep that lock for no reason.
+    let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+    if crate::ported::zle::zle_h::invicmdmode(&kn) {
+        crate::ported::zle::zle_move::inccs(); // c:842
+    }
+    STACKCS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst); // c:843
+    ZLELINE.lock().unwrap().clear(); // c:844
+    ZLELL.store(0, Ordering::SeqCst); // c:845
+    ZLECS.store(0, Ordering::SeqCst); // c:845
+    CLEARLIST.store(1, Ordering::SeqCst); // c:846
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    0 // c:847
 }
 
 /// Port of `pushlineoredit(char **args)` from Src/Zle/zle_hist.c:852.
+///
+/// ```c
+/// int
+/// pushlineoredit(char **args)
+/// {
+///     int ics, ret;
+///     ZLE_STRING_T s;
+///     char *hline = hgetline();
+///
+///     if (zmult < 0)
+///         return 1;
+///     if (hline && *hline) {
+///         ZLE_STRING_T zhline = stringaszleline(hline, 0, &ics, NULL, NULL);
+///
+///         sizeline(ics + zlell + 1);
+///         /* careful of overlapping copy */
+///         for (s = zleline + zlell; --s >= zleline; s[ics] = *s)
+///             ;
+///         ZS_memcpy(zleline, zhline, ics);
+///         zlell += ics;
+///         zlecs += ics;
+///         zleline[zlell] = ZWC('\0');
+///         free(zhline);
+///     }
+///     ret = pushline(args);
+///     if (!isfirstln) {
+///         errflag |= ERRFLAG_ERROR|ERRFLAG_INT;
+///         done = 1;
+///     }
+///     clearlist = 1;
+///     return ret;
+/// }
+/// ```
+///
+/// The `hgetline()` prefix is what makes this differ from `push-line`
+/// on a CONTINUATION line: the already-accepted physical lines of the
+/// in-flight command are prepended so the whole multi-line construct
+/// gets stacked as one unit, and the abort below tears down the parse
+/// that was waiting for the rest of it.
 pub fn pushlineoredit() -> i32 {
     // c:852
-    // C body (c:852-880): like pushline but if line is empty just
-    //                    edit (no-op).
-    let snapshot: String = ZLELINE.lock().unwrap().iter().collect();
-    if snapshot.is_empty() {
-        return 0;
+    // c:856 — `char *hline = hgetline();`
+    let hline = crate::ported::hist::hgetline().unwrap_or_default();
+    if ZMOD.lock().unwrap().mult < 0 {
+        // c:858
+        return 1; // c:859
     }
-    history().lock().unwrap().entries.push(HistEntry {
-        line: snapshot,
-        num: 0,
-        time: None,
-    });
-    ZLELINE.lock().unwrap().clear();
-    ZLECS.store(0, Ordering::SeqCst);
-    DONE.store(1, Ordering::SeqCst);
-    0
+    if !hline.is_empty() {
+        // c:860
+        // c:861 — `stringaszleline(hline, 0, &ics, NULL, NULL)`.
+        let zhline = crate::ported::zle::zle_utils::stringaszleline(&hline, 0, None, None, None);
+        let ics = zhline.len();
+        // c:863-870 — grow, shift the existing text right by `ics`, then
+        // copy the history prefix in at the front. A `Vec<char>` splice
+        // is the same edit without the overlapping-copy hazard C's manual
+        // backwards loop exists to avoid.
+        {
+            let mut zline = ZLELINE.lock().unwrap();
+            zline.splice(0..0, zhline); // c:865-867
+        }
+        ZLELL.fetch_add(ics, Ordering::SeqCst); // c:868
+        ZLECS.fetch_add(ics, Ordering::SeqCst); // c:869
+    }
+    let ret = pushline(); // c:873
+                          // c:874-877 — off the first physical line of a command, the parse in
+                          // progress has to be abandoned as well as the buffer stacked, or the
+                          // shell would sit at PS2 waiting for the rest of a command whose text
+                          // just moved to the stack.
+    if !crate::ported::lex::LEX_ISFIRSTLN.with(|f| f.get()) {
+        // c:874
+        crate::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT,
+            Ordering::SeqCst,
+        ); // c:875
+        DONE.store(1, Ordering::SeqCst); // c:876
+    }
+    CLEARLIST.store(1, Ordering::SeqCst); // c:878
+    ret // c:879
 }
 
 /// Port of `pushinput(char **args)` from Src/Zle/zle_hist.c:883.
+///
+/// ```c
+/// int
+/// pushinput(char **args)
+/// {
+///     int i, ret;
+///
+///     if (zmult < 0)
+///         return 1;
+///     zmult += i = !isfirstln;
+///     ret = pushlineoredit(args);
+///     zmult -= i;
+///     return ret;
+/// }
+/// ```
+///
+/// The `zmult` bump is what separates `push-input` from
+/// `push-line-or-edit`: on a continuation line it stacks ONE extra blank
+/// entry, so the next prompt reads an empty line first and the recalled
+/// text lands on the line after it, preserving the original layout.
 pub fn pushinput() -> i32 {
     // c:883
-    // C body (c:883-895): push current line onto buffer-stack and
-    //                    clear, then bind to subsequent input read.
-    let snapshot: String = ZLELINE.lock().unwrap().iter().collect();
-    history().lock().unwrap().entries.push(HistEntry {
-        line: snapshot,
-        num: 0,
-        time: None,
-    });
-    ZLELINE.lock().unwrap().clear();
-    ZLECS.store(0, Ordering::SeqCst);
-    0
+    if ZMOD.lock().unwrap().mult < 0 {
+        // c:888
+        return 1; // c:889
+    }
+    // c:890 — `zmult += i = !isfirstln;`
+    let i = if crate::ported::lex::LEX_ISFIRSTLN.with(|f| f.get()) {
+        0
+    } else {
+        1
+    };
+    ZMOD.lock().unwrap().mult += i; // c:890
+    let ret = pushlineoredit(); // c:891
+    ZMOD.lock().unwrap().mult -= i; // c:892
+    ret // c:893
 }
 
 /// Port of `int zgetline(UNUSED(char **args))` from
@@ -2923,7 +3070,7 @@ pub fn push_line() {
         BUFSTACK.lock().unwrap().push(String::new());
         remaining -= 1;
     }
-    STACKCS.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst);
+    STACKCS.store(ZLECS.load(Ordering::SeqCst) as i32, Ordering::SeqCst);
     ZLELINE.lock().unwrap().clear();
     ZLELL.store(0, Ordering::SeqCst);
     ZLECS.store(0, Ordering::SeqCst);
@@ -3410,7 +3557,7 @@ mod tests {
         assert_eq!(ZLECS.load(Ordering::SeqCst), 0);
         // stackcs records where the cursor was so a return-from-push can
         // restore it.
-        assert_eq!(STACKCS.load(Ordering::SeqCst), 4);
+        assert_eq!(STACKCS.load(Ordering::SeqCst), 4i32);
     }
 
     #[test]
@@ -3440,6 +3587,112 @@ mod tests {
         push_line();
         assert!(BUFSTACK.lock().unwrap().is_empty());
         assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "abc");
+    }
+
+    /// `pushline` is the `push-line` WIDGET (c:832), as distinct from the
+    /// Rust-only `push_line` helper above it. Three things about it are
+    /// load-bearing and all three were wrong before:
+    ///
+    ///   * the line goes on `bufstack`, which is the only list `zleread`
+    ///     drains (c:1297) — the previous body appended it to the ZLE
+    ///     history-navigation list, where nothing ever looks for it;
+    ///   * `stackcs` records the column so the restore can put the cursor
+    ///     back (c:843, consumed at c:1301);
+    ///   * `done` stays CLEAR. C's `pushline` never accepts the line
+    ///     (c:832-848 has no `done`); the caller decides. `run-help`
+    ///     (`processcmd`, zle_tricky.c:3007) sets its own, and while
+    ///     `pushline` set one too that omission was invisible.
+    #[test]
+    fn pushline_stacks_the_line_at_the_head_without_accepting() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        BUFSTACK.lock().unwrap().clear();
+        *ZLELINE.lock().unwrap() = "print first".chars().collect();
+        ZLELL.store(11, Ordering::SeqCst);
+        ZLECS.store(6, Ordering::SeqCst);
+        DONE.store(0, Ordering::SeqCst);
+        assert_eq!(pushline(), 0);
+        assert_eq!(*BUFSTACK.lock().unwrap(), vec!["print first".to_string()]);
+        assert_eq!(STACKCS.load(Ordering::SeqCst), 6i32, "c:843 — stackcs = zlecs");
+        assert!(ZLELINE.lock().unwrap().is_empty(), "c:844");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 0, "c:845");
+        assert_eq!(ZLECS.load(Ordering::SeqCst), 0, "c:845");
+        assert_eq!(
+            DONE.load(Ordering::SeqCst),
+            0,
+            "c:832-848 has no `done = 1`; push-line does not accept the line"
+        );
+    }
+
+    /// `zpushnode` inserts at the list HEAD (`zsh.h:591` —
+    /// `zinsertlinknode(X,&(X)->node,Y)`) and `zleread`'s `getlinknode`
+    /// takes that same head off (c:1297), so the stack is LIFO. Appending
+    /// instead would still return both lines, in the wrong order — a
+    /// single push can never tell the two apart.
+    #[test]
+    fn pushline_prepends_so_stacked_lines_pop_newest_first() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        BUFSTACK.lock().unwrap().clear();
+        for line in ["one", "two"] {
+            *ZLELINE.lock().unwrap() = line.chars().collect();
+            ZLELL.store(3, Ordering::SeqCst);
+            ZLECS.store(3, Ordering::SeqCst);
+            assert_eq!(pushline(), 0);
+        }
+        assert_eq!(
+            *BUFSTACK.lock().unwrap(),
+            vec!["two".to_string(), "one".to_string()],
+            "the last line pushed must be the first one popped"
+        );
+    }
+
+    /// c:839-840 — `while (--n) zpushnode(bufstack, ztrdup(""));`. The
+    /// decrement is a PRE-decrement, so `zmult` 3 stacks two blanks and
+    /// not three, and they land ABOVE the text: the next two prompts come
+    /// up empty and the line returns on the third.
+    #[test]
+    fn pushline_numeric_argument_stacks_blank_lines_above_the_text() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        BUFSTACK.lock().unwrap().clear();
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLELL.store(1, Ordering::SeqCst);
+        ZMOD.lock().unwrap().mult = 3;
+        assert_eq!(pushline(), 0);
+        assert_eq!(
+            *BUFSTACK.lock().unwrap(),
+            vec![String::new(), String::new(), "x".to_string()]
+        );
+    }
+
+    /// c:836-837 — a negative `zmult` returns 1 (which feeps) and touches
+    /// nothing. The line must still be there afterwards.
+    #[test]
+    fn pushline_refuses_a_negative_numeric_argument() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        BUFSTACK.lock().unwrap().clear();
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZMOD.lock().unwrap().mult = -1;
+        assert_eq!(pushline(), 1);
+        assert!(BUFSTACK.lock().unwrap().is_empty());
+        assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "abc");
+    }
+
+    /// `stackhist` and `stackcs` are one declaration in C (`int
+    /// stackhist, stackcs;`, zle_main.c:162) and share one INACTIVE
+    /// value, set at module setup (c:2257 — `stackhist = stackcs = -1`).
+    /// `zleread`'s restore tests for exactly `-1` (c:1300, c:1307), so a
+    /// cell that cannot hold it — `stackcs` was an `AtomicUsize` — makes
+    /// the guard unconditionally true and moves the cursor on every pop.
+    #[test]
+    fn stackcs_and_stackhist_start_at_the_inactive_sentinel() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        assert_eq!(STACKCS.load(Ordering::SeqCst), -1i32, "c:2257");
+        assert_eq!(STACKHIST.load(Ordering::SeqCst), -1i32, "c:2257");
     }
 
     #[test]

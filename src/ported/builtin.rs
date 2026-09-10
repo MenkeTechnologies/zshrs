@@ -11696,11 +11696,16 @@ pub fn bin_print(
         // For -f combined with -z or -s, capture output then route
         // through the same dispatch as the non-fmt path.
         if OPT_ISSET(ops, b'z') {
-            // c:5564-5565 — push captured output to bufstack.
+            // c:5548-5549 — `zpushnode(bufstack, stringval)`. zpushnode
+            // inserts at the list HEAD (`zsh.h:591`) and the consumers —
+            // `zleread`'s restore (zle_main.c:1297), `read -z`
+            // (builtin.c:6762) and `get-line` (zle_hist.c:901) — all take
+            // the head back off. Appending made the stack FIFO, so two
+            // queued lines came back in the wrong order.
             crate::ported::zle::zle_main::BUFSTACK
                 .lock()
                 .unwrap()
-                .push(out);
+                .insert(0, out);
             return 0;
         }
         if OPT_ISSET(ops, b's') {
@@ -12156,10 +12161,13 @@ pub fn bin_print(
         // bufstack is consumed by the next zleread call so the
         // string is presented at the prompt — `print -z 'echo foo'`
         // queues `echo foo` for the user to press Enter on.
+        // c:5026 — `zpushnode(bufstack, sepjoin(args, NULL, 0))`, which
+        // inserts at the list HEAD (`zsh.h:591`); every consumer pops the
+        // head, so appending reversed the order of two queued lines.
         crate::ported::zle::zle_main::BUFSTACK
             .lock()
             .unwrap()
-            .push(body); // c:5565
+            .insert(0, body); // c:5026
         return 0;
     }
     if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {

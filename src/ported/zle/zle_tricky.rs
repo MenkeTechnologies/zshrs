@@ -5199,7 +5199,15 @@ pub fn processcmd() -> i32 {
     // c:2986-2987 — `untokenize(s); inststr(quotename(s));`.
     let q = quotename(&s, 0);
     let _ = inststr(&q);
-    0
+    // c:3007 — `done = 1;`. `run-help` / `which-command` REPLACE the line
+    // with `<widget> <cmdword>` and accept it immediately; the original
+    // text comes back from the buffer stack `pushline` just filled, at the
+    // next `zleread` (c:1297). Omitting this left the accept to whatever
+    // `pushline` happened to do, and the moment `pushline` was corrected
+    // to match C (which does NOT set `done`) the widget would have stopped
+    // running at all.
+    crate::ported::zle::zle_misc::DONE.store(1, Ordering::SeqCst); // c:3007
+    0 // c:3008
 }
 
 /// Port of `expandcmdpath(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2997.

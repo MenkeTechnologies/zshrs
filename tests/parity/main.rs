@@ -146,6 +146,7 @@ mod always_break_parity;
 mod terminfo_parity;
 mod vi_multiline_parity;
 mod zsh_arrays_parity;
+mod zle_bufstack_parity;
 mod zle_buffer_state_parity;
 mod zle_editing_parity;
 mod zle_editor_params_parity;

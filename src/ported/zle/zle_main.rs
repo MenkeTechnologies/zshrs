@@ -1382,6 +1382,75 @@ pub fn zleread(
     // would otherwise never reach the key loop.
     selectkeymap("main", 1);
 
+    // c:1297-1312 — drain ONE entry off the buffer stack into the fresh
+    // line, which is the entire mechanism behind `push-line`, `run-help`
+    // (`processcmd`), `accept-and-hold`, `print -z` and `printf -z`: each
+    // of those pushes the text and returns, trusting the NEXT `zleread`
+    // to hand it back. Nothing here ever popped, so every one of them
+    // dropped the line permanently.
+    //
+    // ```c
+    //     if ((s = getlinknode(bufstack))) {
+    //         setline(s, ZSL_TOEND);
+    //         zsfree(s);
+    //         if (stackcs != -1) {
+    //             zlecs = stackcs;
+    //             stackcs = -1;
+    //             if (zlecs > zlell)
+    //                 zlecs = zlell;
+    //             CCLEFT();
+    //         }
+    //         if (stackhist != -1) {
+    //             histline = stackhist;
+    //             stackhist = -1;
+    //         }
+    //         handleundo();
+    //     }
+    // ```
+    //
+    // Position: C runs this after `selectkeymap("main", 1)` (c:1294),
+    // `initundo()` (c:1295) and `fixsuffix()` (c:1296). This port calls
+    // neither of the latter two from `zleread`, so immediately after the
+    // `selectkeymap` above IS C's slot. It must also stay AFTER the
+    // `zleline`/`zlecs`/`zlell` clear at c:1287-1289 (above) — that clear
+    // would otherwise wipe the line we just restored.
+    //
+    // `getlinknode` unlinks the list's FIRST node and `zpushnode` inserts
+    // at the head (`zsh.h:591` — `zinsertlinknode(X,&(X)->node,Y)`), so the
+    // stack is LIFO: two stacked `push-line`s come back newest-first.
+    // `Vec::remove(0)` matches, given pushes use `insert(0, …)`.
+    let stacked = {
+        let mut bs = BUFSTACK.lock().unwrap();
+        if bs.is_empty() {
+            None
+        } else {
+            Some(bs.remove(0)) // c:1297 getlinknode(bufstack)
+        }
+    };
+    if let Some(s) = stacked {
+        crate::ported::zle::zle_utils::setline(&s, crate::ported::zle::zle_h::ZSL_TOEND); // c:1298
+        // c:1299 `zsfree(s)` — `s` is an owned String; Drop covers it.
+        let stackcs = STACKCS.load(SeqCst);
+        if stackcs != -1 {
+            // c:1300
+            // c:1301-1302 — take the saved column, then disarm the slot so a
+            // later pop that carries no cursor (e.g. `print -z`) leaves
+            // `setline`'s end-of-line position alone.
+            STACKCS.store(-1, SeqCst); // c:1302
+            let zlell = ZLELL.load(SeqCst);
+            // c:1303-1304 — `if (zlecs > zlell) zlecs = zlell;`
+            ZLECS.store((stackcs as usize).min(zlell), SeqCst); // c:1301
+            ZLE_RESET_NEEDED.store(1, SeqCst); // c:1305 CCLEFT
+        }
+        let stackhist = STACKHIST.load(SeqCst);
+        if stackhist != -1 {
+            // c:1307
+            crate::ported::zle::zle_hist::histline.store(stackhist, SeqCst); // c:1308
+            STACKHIST.store(-1, SeqCst); // c:1309
+        }
+        crate::ported::zle::zle_utils::handleundo(); // c:1311
+    }
+
     // Sync the ZLE history-navigation list from the LIVE command history
     // (hist.rs `curhist`/`quietgethist`). zle_goto_hist (up/down-line-or-
     // history, history-search) reads `zle_hist::history()`, which is only
@@ -2982,8 +3051,9 @@ pub fn zle_reset() {
         base: 10,
     };
     *STATUSLINE.lock().unwrap() = None;
-    STACKHIST.store(0, SeqCst);
-    STACKCS.store(0, SeqCst);
+    // c:2257 — `stackhist = stackcs = -1;`. The INACTIVE sentinel, not 0.
+    STACKHIST.store(-1, SeqCst);
+    STACKCS.store(-1, SeqCst);
     // c:1286 — `vistartchange = -1`. The INACTIVE sentinel, which the
     // readers spell `u64::MAX` (zle_utils.rs:1907, :1937) because the port
     // holds a signed C `zlong` in an AtomicU64. Storing 0 here said
@@ -4140,10 +4210,26 @@ pub static ZMOD: std::sync::Mutex<modifier> = std::sync::Mutex::new(modifier {
 });
 /// Port of `char *statusline` from `Src/Zle/zle_main.c`.
 pub static STATUSLINE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-/// Port of `zlong stackhist` from `Src/Zle/zle_hist.c`.
-pub static STACKHIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-/// Port of `int stackcs` from `Src/Zle/zle_hist.c`.
-pub static STACKCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int stackhist` from `Src/Zle/zle_main.c:162` — declared
+/// there as `int stackhist, stackcs;` under the comment (c:158-159)
+/// "The current history line and cursor position for the top line
+/// on the buffer stack".
+///
+/// Both members of that pair are INACTIVE at `-1`, set once at module
+/// setup (`c:2257` — `stackhist = stackcs = -1;`), and `zleread`'s
+/// bufstack-pop block tests for exactly that value (c:1300, c:1307)
+/// before restoring. Initialising to 0 claimed "restore to history
+/// event 0" on the first pop of a session.
+pub static STACKHIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+/// Port of `int stackcs` from `Src/Zle/zle_main.c:162`. See `STACKHIST`
+/// above for the shared `-1` sentinel.
+///
+/// Held as an `AtomicI32`, not an `AtomicUsize`: C's type is `int` and
+/// the sentinel is negative, so an unsigned cell cannot represent
+/// "no saved cursor" at all — it made `if (stackcs != -1)` (c:1300)
+/// unconditionally true, which would move the cursor to a stale column
+/// on every restore rather than leaving `setline`'s end-of-line result.
+pub static STACKCS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 /// Port of `zlong vistartchange` from `Src/Zle/zle_vi.c`.
 ///
 /// C's inactive value is `-1`; this port holds it in an `AtomicU64`, so

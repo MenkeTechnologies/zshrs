@@ -600,7 +600,7 @@ pub fn acceptandhold() -> i32 {
     let zlell = ZLELL.load(SeqCst);
     let line: String = ZLELINE.lock().unwrap().iter().take(zlell).collect();
     BUFSTACK.lock().unwrap().insert(0, line); // c:411 zpushnode
-    STACKCS.store(ZLECS.load(SeqCst), SeqCst); // c:412
+    STACKCS.store(ZLECS.load(SeqCst) as i32, SeqCst); // c:412
     DONE.store(1, SeqCst); // c:413
     0 // c:414
 }
@@ -3979,7 +3979,7 @@ mod tests {
         let r = acceptandhold();
         assert_eq!(r, 0);
         assert_eq!(DONE.load(SeqCst), 1);
-        assert_eq!(STACKCS.load(SeqCst), 4, "STACKCS must capture ZLECS");
+        assert_eq!(STACKCS.load(SeqCst), 4i32, "STACKCS must capture ZLECS");
         let bs = BUFSTACK.lock().unwrap();
         assert_eq!(bs[0], "test line", "BUFSTACK[0] must be the pushed line");
     }
