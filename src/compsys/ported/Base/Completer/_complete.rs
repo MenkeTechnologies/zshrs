@@ -161,6 +161,46 @@ pub fn _complete_impl() -> i32 {
     // here can never leak into the next completer in the chain.
     let mut _cc_scope = crate::compsys::ported::shared::LocalScope::declare(&[], 0);
     _cc_scope.also_keeping_value(&["curcontext"]);
+    // …and then the TIE itself, which the port used to skip: it emulated
+    // `ccarray[3]=` by rewriting `$curcontext`'s third `:`-field directly
+    // (`set_ccarray_field` above) and never created the array half at all.
+    // The emulation gets the VALUE right, but `ccarray` is a shell
+    // parameter and `$parameters` reports every one of them. Measured
+    // inside a live `-brace-parameter-` completion, `${(k)parameters}`
+    // filtered to `*local*`, zshrs vs /opt/homebrew/bin/zsh 5.9.2:
+    //
+    //   only in zsh:  ccarray = array-local-tied
+    //                 cname = scalar-local
+    //                 curcontext = scalar-local-tied
+    //   only in zshrs: curcontext = scalar-local
+    //
+    // and that is directly on screen: completing a parameter name renders
+    // each candidate's VALUE as its description, so `print ${(j.:.)pa<TAB>`
+    // listed `parameters -- scalar-local integer-local …` in zsh against
+    // `parameters -- scalar-local …` in zshrs — a one-row screen
+    // divergence caused purely by the missing declarations.
+    //
+    // `bin_typeset` rather than `declare_locals`, because only the real
+    // builtin builds the tie: `${(t)curcontext}` has to read
+    // `scalar-local-tied`, not `scalar-local`, and writing either half has
+    // to update the other. The `LocalScope` above still owns the unwind —
+    // it saved both names' previous `paramtab` entries and restores them on
+    // every exit path, so this does not start depending on `endparamscope`.
+    _cc_scope.also(&["ccarray"], 0);
+    {
+        use crate::ported::builtin::{bin_typeset, BIN_TYPESET};
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // sh:8 `typeset -T curcontext="$curcontext" ccarray`.
+        ops.ind[b'T' as usize] = 1;
+        let seed = getsparam("curcontext").unwrap_or_default();
+        let args = [format!("curcontext={}", seed), "ccarray".to_string()];
+        let _ = bin_typeset("typeset", &args, &ops, BIN_TYPESET);
+    }
 
     let mut ret: i32 = 1;
     // sh:10 `oldcontext="$curcontext"`.
@@ -363,6 +403,12 @@ pub fn _complete_impl() -> i32 {
         //   than one underscore (`brace_parameter`, `array_value`), so
         //   the two spellings agree on every live value.
         let cname = format!("-{}-", context.replacen('_', "-", 1));
+        // sh:122's `local` half. `cname` is a Rust binding above, so the
+        // shell never saw the declaration and `$parameters` was missing the
+        // key — same reason sh:7's five names are declared at the top of
+        // this function.
+        crate::compsys::ported::shared::declare_locals(&["cname"], 0);
+        let _ = setsparam("cname", &cname);
         // sh:124 `ccarray[3]="$cname"` — THE fix: without this the
         //   command field of `curcontext` stays empty for every
         //   non-`command` context, so `:completion:*:*:-subscript-:*`,
@@ -395,6 +441,18 @@ pub fn _complete_impl() -> i32 {
             let _ = setsparam("service", &default_service);
         }
         if !comp.is_empty() {
+            // sh:139 `[[ -n "$comp" ]] && eval "$comp" && ret=0`. Publish the
+            // calling line before entering the completer, the same thing the
+            // `command` branch does for sh:117: without it `FnScope::enter`'s
+            // 0 stands, and every completer reached through this branch saw
+            // `_complete:0` in `$functrace` where zsh reports `_complete:139`.
+            // Measured inside a `-brace-parameter-` completion:
+            //   zsh   (eval):1 _complete:139 _main_complete:218 …
+            //   zshrs           _complete:0   _main_complete:218 …
+            // (the missing `(eval)` frame is the separate, documented
+            // dispatch divergence — docs/COMPLETION_DISPATCH.md, Divergence C
+            // — and is not what this line addresses.)
+            crate::compsys::ported::shared::set_sh_lineno(139);
             if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
                 ret = 0;
             }

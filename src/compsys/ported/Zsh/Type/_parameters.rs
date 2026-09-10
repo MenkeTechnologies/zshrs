@@ -288,10 +288,33 @@ pub fn _parameters(args: &[String]) -> i32 {
         &["expl", "pattern"],
         crate::compsys::ported::shared::PM_ARRAY,
     );
-    // sh:10  local -i nm=$compstate[nmatches]
+    // The rest of sh:14/sh:16's two `local` lines. Every one of these is a
+    // Rust binding in this port, so the shell never saw the declaration and
+    // `$parameters` came back short — and `$parameters` is exactly what
+    // this completer's own candidates carry as their description, so the
+    // gap is on screen. Measured, `print ${(j.:.)pa<TAB>` against
+    // /opt/homebrew/bin/zsh 5.9.2 with a shared dump and fpath:
+    //
+    //   zsh  : parameters  -- scalar-local integer-local association-hideval …
+    //   zshrs: parameters  -- scalar-local association-hideval …
+    //
+    // the missing `integer-local` being sh:15's `nm` and nothing else.
+    // Declared with the same types upstream gives them so `${(t)…}` agrees
+    // too, not merely the key set.
+    crate::compsys::ported::shared::declare_locals(&["i", "pfilt"], 0); // sh:14
+    crate::compsys::ported::shared::declare_locals(
+        &["normal", "faked", "fakes", "tmp"], // sh:16
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
+    // sh:15  local -i nm=$compstate[nmatches]
+    crate::compsys::ported::shared::declare_locals(
+        &["nm"],
+        crate::compsys::ported::shared::PM_INTEGER,
+    );
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
+    let _ = crate::ported::params::setiparam("nm", nm);
     // sh:11
     let mut pattern_seed: Vec<String> = vec!["-g".to_string(), "*".to_string()];
 

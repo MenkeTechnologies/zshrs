@@ -79,6 +79,34 @@ fn describe_format(specs: &[&str]) -> i32 {
 /// `_brace_parameter` — complete inside `${…}`.
 pub fn _brace_parameter() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_brace_parameter");
+    // sh:3-5 — the three unconditional `local` lines at the top of the
+    // function. All eight names are Rust bindings in this port, so the shell
+    // never saw a declaration and `$parameters` was short by exactly them.
+    //
+    // That is observable on screen, because the completer this function ends
+    // in renders each candidate's VALUE as its description and `parameters`
+    // is itself a candidate. Measured, `print ${(j.:.)pa<TAB>` against
+    // /opt/homebrew/bin/zsh 5.9.2 over a shared dump and `$fpath`:
+    //
+    //   zsh  : parameters  -- scalar-local integer-local association-hideval …
+    //   zshrs: parameters  -- scalar-local association-hideval …
+    //
+    // the missing `integer-local` being sh:5's `q_last`/`n_q`. Declared with
+    // the types upstream gives them, so `${(t)…}` agrees and not merely the
+    // key set — `_parameters` filters candidates on `*local*`, so the type
+    // string is load-bearing beyond this one row.
+    crate::compsys::ported::shared::declare_locals(
+        &["char", "delim", "found_percent", "found_m", "exp"], // sh:3
+        0,
+    );
+    crate::compsys::ported::shared::declare_locals(
+        &["flags"], // sh:4  `local -a flags`
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
+    crate::compsys::ported::shared::declare_locals(
+        &["q_last", "n_q"], // sh:5  `integer q_last n_q`
+        crate::compsys::ported::shared::PM_INTEGER,
+    );
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
     // sh:7  if [[ $PREFIX = *'${('[^\)]# ]]  — inside an unterminated
