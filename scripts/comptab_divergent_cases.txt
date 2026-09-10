@@ -6366,14 +6366,17 @@ gstack
 # are EQUAL on both sides. So `_env`'s two alternatives — `_parameters -g
 # "*export*"` and `_normal -p env` — agree.
 #
-# What is real is the LATENCY, and only in the debug build: 2.4 s vs zsh's
-# 0.2 s, of which the profile puts ~30% in one `qsort_tolerant`/`matchcmp`
-# sort of the 52k-match array inside `permmatches` (`_setup`:3 and
-# `_path_files`:47 both read `$compstate[nmatches]`, which is `get_nmatches`
-# -> `permmatches(0)`, Zle/complete.c:1411-1413). C runs the same sort; the
-# gap is comparator cost, not extra work — the c:3433 `pmatches && !newmatches`
-# memo and the per-group `!g->perm || g->new` reuse arm are both ported and
-# both taken. In release it is 0.56 s.
+# What is real is the LATENCY, and mostly in the debug build: 2.4 s against
+# zsh's 0.2 s, and 0.56 s in release.  Of the CPU samples the completion
+# itself accounts for (1490 of a 9 s `sample` window; the rest is the shell
+# already blocked in `getzlequery`'s read), 454 — 30% — are one
+# `qsort_tolerant`/`matchcmp` pass over the 52k-match array inside
+# `permmatches`.  It is reached because `_setup`:3 and `_path_files`:47 both
+# read `$compstate[nmatches]`, which is `get_nmatches` -> `permmatches(0)`
+# (Zle/complete.c:1411-1413).  C runs that same sort, so the gap is
+# comparator cost, not extra work: the c:3431 `pmatches && !newmatches` memo
+# and the c:3452 per-group `!g->perm || g->new` reuse arm are both ported and
+# both taken.
 #
 # Guarded from here by two unit tests over a socketpair-backed SHTTY, which
 # pin the decision itself rather than a screen: `asklist_queries_when_the_
