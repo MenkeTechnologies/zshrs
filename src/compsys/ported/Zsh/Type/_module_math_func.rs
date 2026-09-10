@@ -1,7 +1,10 @@
 //! Port of `_module_math_func` from
 //! `Completion/Zsh/Type/_module_math_func`.
 //!
-//! Full upstream body (12 lines verbatim):
+//! Full body (12 lines verbatim) as it stands in the tree this shell
+//! actually runs against — Homebrew zsh 5.9.2's
+//! `share/zsh/functions/_module_math_func`, byte-identical to the copy
+//! zshrs bundles at `vendor/zsh/functions/_module_math_func`:
 //! ```text
 //! sh: 1  #autoload
 //! sh: 2
@@ -50,6 +53,19 @@ use crate::ported::exec::dispatch_function_call;
 use crate::ported::module::{enables_module, features_module, MODULESTAB};
 
 // sh:5 — local -a modules=( example mathfunc system )
+//
+// zsh AFTER 5.9.2 adds a fourth entry, `random` — upstream
+// `Completion/Zsh/Type/_module_math_func:5` reads
+// `modules=( example mathfunc system random )`, and the newer copy kept
+// beside this file in `src/compsys/ported/Zsh/Type/_module_math_func`
+// has it. `zsh/random` is a real module
+// (`/Users/wizard/forkedRepos/zsh/Src/Modules/random.mdd:1: name=zsh/random`),
+// not an invention. This list tracks the RELEASE, matching both the
+// reference binary and the bundle zshrs installs into
+// `~/.zshrs/functions`; a fourth entry would be inert here anyway, since
+// neither shell can load `zsh/random` (`zmodload -Fl zsh/random` reports
+// "module `zsh/random' is not yet loaded" on both) and sh:8 would leave
+// `funcs` empty.
 const MODULES: &[&str] = &["example", "mathfunc", "system"];
 
 /// sh:8 — reproduce `${${${(f)"$(zmodload -Fl zsh/$mod 2>/dev/null)"}:#^+f:*}##+f:}`.
@@ -176,9 +192,14 @@ mod tests {
                 spec
             );
         }
+        // Tracks the release list (see `MODULES`): zsh 5.9.2 and the zshrs
+        // bundle both stop at `system`. `zsh/random` is a real module that
+        // upstream added to sh:5 after 5.9.2 — if this list is ever moved
+        // forward to the newer spec, update this assertion rather than the
+        // list, and re-measure `echo $((1+<TAB>` against the reference.
         assert!(
             !alts.iter().any(|s| s.contains("random")),
-            "fabricated `random` module must not appear"
+            "MODULES tracks zsh 5.9.2, whose sh:5 stops at `system`"
         );
     }
 }
