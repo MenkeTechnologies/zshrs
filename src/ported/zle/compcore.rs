@@ -4367,8 +4367,28 @@ pub fn addmatches(
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let lipre = compiprefix_s.clone();
-    let lisuf = compisuffix_s.clone();
+    // c:2252-2253 — `if (dat->aflags & CAF_MATCH) { lipre = dupstring(compiprefix);
+    // lisuf = dupstring(compisuffix); … }`. `lipre`/`lisuf` start out NULL
+    // (c:2083) and are ONLY filled in under CAF_MATCH, because they exist to
+    // feed the per-candidate match. `compadd -U` clears CAF_MATCH, so with `-U`
+    // the C match carries no ignored prefix at all and the word on the line is
+    // replaced whole. Reading them unconditionally handed every `-U` match the
+    // live `$IPREFIX`, which c:2278-2282 below then prepends to `dat->ipre`:
+    // `ls ~zzqaa<TAB>` under `completer _expand` with `hash -d zzqaa=/usr/share/zsh`
+    // has IPREFIX=`~`, so `_expand`'s `compadd -UQ` re-inserted the tilde in
+    // front of the expansion and the line became `ls ~/usr/share/zsh/`.
+    // `lpre`/`lsuf` are left read unconditionally: every consumer of them below
+    // is itself CAF_MATCH-gated or reached only through `comp_match` (c:2535).
+    let lipre = if (dat.aflags & CAF_MATCH) != 0 {
+        compiprefix_s.clone()
+    } else {
+        String::new()
+    };
+    let lisuf = if (dat.aflags & CAF_MATCH) != 0 {
+        compisuffix_s.clone()
+    } else {
+        String::new()
+    };
     let mut lpre = compprefix_s.clone();
     let mut lsuf = compsuffix_s.clone();
 
@@ -8699,6 +8719,71 @@ mod tests {
         dat.dummies = 0;
         dat.aflags = 0;
         assert_eq!(addmatches(&mut dat, &[]), 1);
+    }
+
+    /// c:2252-2253 — `lipre`/`lisuf` are read from `compiprefix`/`compisuffix`
+    /// ONLY inside `if (dat->aflags & CAF_MATCH)`. `compadd -U` clears
+    /// CAF_MATCH, so a `-U` match carries NO ignored prefix and replaces the
+    /// word on the line whole; c:2278-2282 then has nothing to prepend.
+    ///
+    /// Reading them unconditionally gave every `-U` match the live `$IPREFIX`.
+    /// Measured on a PTY (`scripts/comptab_screen.py`) with
+    /// `fpath=(/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions)`,
+    /// `zstyle ':completion:*' completer _expand` and
+    /// `hash -d zzqaa=/usr/share/zsh` — both shells report
+    /// `IPREFIX=<~> PREFIX=<zzqaa>`, and the match set is identical:
+    ///
+    /// ```text
+    ///   buffer `ls ~zzqaa` + TAB
+    ///     zsh     ls /usr/share/zsh/
+    ///     zshrs   ls ~/usr/share/zsh/    <- before
+    ///     zshrs   ls /usr/share/zsh/     <- after
+    /// ```
+    #[test]
+    fn addmatches_u_flag_match_carries_no_ignored_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // The `~` `_expand` leaves in `$IPREFIX` when the word is `~zzqaa`.
+        // Seeded on the GLOBAL, not the param: the param->global refresh above
+        // is gated on INCOMPFUNC, which is 0 here.
+        *COMPIPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = "~".to_string();
+
+        let ipre_of_last = |aflags: i32| -> Option<String> {
+            crate::comp_match_handles::matches_arc().lock().unwrap().clear();
+            let mut dat = Cadata::default();
+            dat.dummies = -1;
+            dat.aflags = aflags;
+            let _ = addmatches(&mut dat, &["/usr/share/zsh".to_string()]);
+            let arc = crate::comp_match_handles::matches_arc();
+            let m = arc.lock().unwrap();
+            m.last().and_then(|cm| cm.ipre.clone())
+        };
+
+        // `compadd -U`: no CAF_MATCH, so c:2253 never runs and the match has
+        // no ipre to re-insert in front of the expansion.
+        assert_eq!(
+            ipre_of_last(0),
+            None,
+            "c:2252 — a non-CAF_MATCH (`-U`) match must carry no ignored prefix"
+        );
+
+        // A matching compadd still picks `$IPREFIX` up, which is what keeps
+        // `compset -P`'d completers re-inserting the part they consumed.
+        assert_eq!(
+            ipre_of_last(CAF_MATCH),
+            Some("~".to_string()),
+            "c:2253 — under CAF_MATCH the ignored prefix still reaches the match"
+        );
+
+        *COMPIPREFIX
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap() = String::new();
     }
 
     #[test]
