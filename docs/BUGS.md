@@ -59738,3 +59738,89 @@ pass a `max-matches-width` of 40 (`_describe` defaults it to `$((COLUMNS/2))`,
 `Completion/Base/Utility/_describe:49`): C clamps anything below 4 up to 4
 (c:502-503), and at 4 `cd_group` forms no group at all, so `cd_prep` never
 reaches the branch that sorts.
+
+---
+
+## #1141 — a chained `[N]` after an assoc PATTERN subscript is ignored, so `${A[(K)pat][1]}` returns every match
+
+**Status:** `port-bug` 2026-09-10.
+
+```console
+$ P='typeset -A A; A[zzq*]=_A; A[*aaa]=_B; A[z*a]=_C; print -r -- "${A[(K)zzqaaa][1]}"'
+$ /opt/homebrew/bin/zsh -f -c "$P"
+_B
+$ zshrs --zsh -f -c "$P"
+_B _C _A
+```
+
+The scan itself is right — both shells return `_B _C _A` for the bare
+`${A[(K)zzqaaa]}`, in that order. What is dropped is the SECOND subscript. The
+full matrix, same three keys, measured against `/opt/homebrew/bin/zsh`:
+
+| expression | zsh | zshrs |
+| --- | --- | --- |
+| `${A[(K)zzqaaa]}` | `_B _C _A` | `_B _C _A` |
+| `${A[(K)zzqaaa][1]}` | `_B` | `_B _C _A` |
+| `${A[(K)zzqaaa][2]}` | `_C` | `_B _C _A` |
+| `${A[(K)zzqaaa][4]}` | (empty) | `_B _C _A` |
+| `${A[(K)zzqaaa][-1]}` | `_A` | `_B _C _A` |
+| `${A[(K)zzqaaa][0]}` | (empty) | `_B _C _A` |
+| `${A[(K)zzqaaa][1,2]}` | `_B _C` | `_B _C _A` |
+| `${A[(K)zzqaaa][2,3]}` | `_C _A` | `_B _C _A` |
+| `${A[(R)_*][2]}` | `_C` | `_B _C _A` |
+| `${A[(k)zzq*][2]}` | (empty) | `_A` |
+| `b=( "${(@)A[(K)zzqaaa][2]}" ); print $#b` | `1` | `3` |
+
+**C reference.** `fetchvalue` walks the subscripts in a loop, so the second
+`[…]` is a second `getindex` call on the Value the first one produced. On that
+second call `com` is 0 (no comma) and the scan flags are still set, so
+`Src/params.c:2173-2182` does NOT clear them and simply narrows the range:
+
+```c
+/* Src/params.c:2173-2182 */
+if (s == tbrack) {
+    s++;
+    if (v->scanflags && !com &&
+        (!(v->scanflags & SCANPM_MATCHMANY) ||
+         !(v->scanflags & (SCANPM_MATCHKEY | SCANPM_MATCHVAL |
+                           SCANPM_KEYMATCH))))
+        v->scanflags = 0;
+    v->start = start;
+    v->end = end;
+}
+```
+
+`v->start`/`v->end` then index the SCAN RESULT array, which is why every row
+above behaves like an ordinary array index or slice — including `[0]` and an
+out-of-range index yielding empty, and `(k)`'s single-element result answering
+`[2]` with empty.
+
+**Where the port loses it.** `paramsubst` (`src/ported/subst.rs`) captures the
+second subscript at :7538 and applies it at :11552, but that block is gated on
+`first_slice` — the first subscript being a RANGE on a plain array
+(`arrays_get(&var_name)`). The assoc pattern-scan arm at :9018-9019 sets
+`split_parts`/`isarr` from its own result and returns without ever consulting
+`second_subscript`, so the chained index is silently dropped. Plain-array
+chaining is unaffected: `${arr[1,2][1]}` and `${arr[2,3][2]}` agree with zsh.
+
+**Consumer.** `compinit` sh:311 —
+`func="${${_patcomps[(K)$svc][1]}:-${_postpatcomps[(K)$svc][1]}}"` — so
+`compdef cmd=svc`, where `svc` is not a known command or service and TWO
+`_patcomps` patterns match it, writes a joined string into `_comps[cmd]`:
+
+```console
+$ ... compdef -p _A 'zzq*'; compdef -p _B '*aaa'; compdef zzcmd=zzqaaa
+  zsh    _comps[zzcmd]=<_B>
+  zshrs  _comps[zzcmd]=<_B _A>
+```
+
+**What this is NOT.** It was first reported as an ORDERING difference — that
+`src/compsys/ported/compinit.rs:2696-2718` resolves the same expression with
+`.find()` over an insertion-ordered map where C takes the first of a hash-bucket
+walk. That does not reproduce, and there is nothing to fix there:
+`subst::assoc_get` rebuilds C's bucket layout (`Src/hashtable.c` scanhashtable,
+c:426, with the c:217 prepend and the c:472 rehash walk) before returning its
+`IndexMap`, so a `.find()` over it IS C's first-of-bucket-walk. Measured: the
+key order (`${(k)_patcomps}`) and the scan order (`${_patcomps[(K)$svc]}`) are
+byte-identical between the two shells on the case above, including the
+insertion-order inversion — both say `*aaa` before `zzq*`, and both pick `_B`.
