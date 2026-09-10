@@ -331,4 +331,85 @@ mod tests {
         assert_eq!(getsparam("_comp_command2").as_deref(), Some("runme"));
         assert_eq!(getsparam("_comp_command").as_deref(), Some("runme"));
     }
+
+    /// sh:12 must answer `(( $+builtins[$command] ))` the way the SHELL's
+    /// `$builtins` answers it, not the way the static builtin table does.
+    /// `chmod` is a `zsh/files` builtin (c:Src/Modules/files.c:806-824) and
+    /// that module is not loaded by default, so both shells report
+    /// `$+builtins[chmod]` as 0 and `_set_command` has to fall through to
+    /// sh:27-30, publishing `_comp_command2` from `$commands[chmod]`.
+    ///
+    /// The regression this pins is not cosmetic. sh:13-14 never writes
+    /// `_comp_command2` AND never performs the `$commands[...]` fetch, and
+    /// that fetch is `getpmcommand`, which is what fills `cmdnamtab` from
+    /// `$PATH` under HASH_LIST_ALL (c:Src/Modules/parameter.c:218-222).
+    /// `_normal` calls `_set_command` on every ARGUMENT completion, so with
+    /// `chmod` taking the builtin branch the command table stayed empty; a
+    /// following COMMAND-position completion (`chmod <TAB>`, BACKSPACE,
+    /// `<TAB>`) then matched nothing, `makecomplist` returned its error
+    /// value, and `do_completion`'s error arm set `clearlist`
+    /// (c:Src/Zle/compcore.c:343-348) — wiping a listing zsh still shows.
+    /// Measured on the live fpath before the fix, `--jobs 1`: `chmod `,
+    /// `mv ` and `ln ` lost the listing zsh keeps, `env ` lost the match zsh
+    /// inserts; `cp `, which has no module builtin of that name, was
+    /// byte-identical throughout.
+    #[test]
+    fn module_builtin_name_falls_through_to_the_commands_branch() {
+        let _g = crate::test_util::global_state_lock();
+
+        // A one-entry PATH directory holding an executable named `chmod`,
+        // so the expected value is exact instead of whatever the host's
+        // /bin happens to hold.
+        let dir = std::env::temp_dir().join(format!(
+            "zshrs_set_command_{}_{}",
+            std::process::id(),
+            "chmodbranch"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch PATH dir");
+        let exe = dir.join("chmod");
+        std::fs::write(&exe, b"#!/bin/sh\nexit 0\n").expect("scratch chmod");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod +x the scratch chmod");
+        }
+        let dir_s = dir.to_string_lossy().to_string();
+
+        // Seed cmdnamtab from that directory only, so `$commands[chmod]`
+        // resolves without depending on HASH_LIST_ALL or on the ambient
+        // $PATH of the test process.
+        crate::ported::hashtable::emptycmdnamtable();
+        crate::ported::hashtable::fillcmdnamtable(&[dir_s.clone()]);
+
+        assert!(
+            !is_known_builtin("chmod"),
+            "premise: zsh/files is unloaded, so `$+builtins[chmod]` is 0 \
+             (c:Src/Modules/parameter.c:784-792)"
+        );
+
+        setaparam("words", vec!["chmod".to_string(), "arg".to_string()]);
+        let _ = setsparam("_comp_command1", "");
+        let _ = setsparam("_comp_command2", "");
+        let _ = setsparam("_comp_command", "");
+        let rc = _set_command_impl();
+
+        let c1 = getsparam("_comp_command1").unwrap_or_default();
+        let c2 = getsparam("_comp_command2").unwrap_or_default();
+        let c = getsparam("_comp_command").unwrap_or_default();
+
+        crate::ported::hashtable::emptycmdnamtable();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(rc, 0);
+        assert_eq!(c1, "chmod", "sh:28");
+        assert_eq!(
+            c2,
+            format!("{}/chmod", dir_s),
+            "sh:29 — `_comp_command2` is `$commands[chmod]`; empty here means \
+             sh:12 wrongly claimed `chmod` is a builtin"
+        );
+        assert_eq!(c, "chmod", "sh:30");
+    }
 }
