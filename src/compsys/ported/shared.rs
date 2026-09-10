@@ -1767,3 +1767,91 @@ mod plus_builtins_tests {
         assert!(!plus_builtins(""));
     }
 }
+
+/// `(( $+parameters[<name>] ))` — does a SET parameter by this name exist?
+///
+/// `paramtab` keeps the node of an unset parameter, so `get(name).is_some()`
+/// is not this question: `getpmparameter` flags its Param PM_UNSET unless the
+/// real node exists AND passes `!(rpm->node.flags & PM_UNSET)`
+/// (c:Src/Modules/parameter.c:114-115), and the scan behind
+/// `${(k)parameters[(I)…]}` skips the same nodes outright
+/// (`scanpmparameters`, c:138-139: `if (((Param)hn)->node.flags & PM_UNSET)
+/// continue;`). `unset RANDOM` does not remove `RANDOM` from the table, it
+/// flags it — `$+parameters[RANDOM]` then reads 0 on both shells (measured),
+/// while the raw node is still there.
+pub fn plus_parameters(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    crate::ported::params::paramtab()
+        .read()
+        .map(|t| match t.get(name) {
+            // c:114-115
+            Some(pm) => (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0,
+            None => false,
+        })
+        .unwrap_or(false)
+}
+
+/// `${#parameters[(I)<prefix>*]}` — how many SET parameters begin with
+/// `prefix`. Same PM_UNSET skip as [`plus_parameters`], from the scan side
+/// (c:Src/Modules/parameter.c:138-139).
+pub fn parameter_count_with_prefix(prefix: &str) -> usize {
+    crate::ported::params::paramtab()
+        .read()
+        .map(|t| {
+            t.iter()
+                .filter(|(k, pm)| {
+                    k.starts_with(prefix)
+                        // c:138-139
+                        && (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod plus_parameters_tests {
+    use super::{parameter_count_with_prefix, plus_parameters};
+    use crate::ported::params::{paramtab, setsparam, unsetparam};
+
+    /// An unset parameter KEEPS its `paramtab` node — `unset RANDOM` flags it
+    /// rather than removing it — so `paramtab().get(name).is_some()` answers
+    /// yes where `$+parameters[name]` answers 0
+    /// (c:Src/Modules/parameter.c:114-115), and the `(I)` scan skips the same
+    /// node (c:138-139). Measured on both shells after `unset RANDOM`:
+    /// `$+parameters[RANDOM]` = 0 and `${#parameters[(I)RANDOM*]}` = 0.
+    #[test]
+    fn unset_parameter_is_absent_from_both_the_test_and_the_count() {
+        let _g = crate::test_util::global_state_lock();
+        const NAME: &str = "ZZQ_SHARED_PARAM_PROBE";
+        setsparam(NAME, "value");
+        assert!(plus_parameters(NAME), "premise: the name starts set");
+        assert_eq!(parameter_count_with_prefix(NAME), 1);
+
+        unsetparam(NAME);
+        let node_still_there = paramtab()
+            .read()
+            .map(|t| t.get(NAME).is_some())
+            .unwrap_or(false);
+        assert!(
+            !plus_parameters(NAME),
+            "`$+parameters[{}]` must be 0 once unset (c:parameter.c:114-115); \
+             node still in paramtab: {}",
+            NAME,
+            node_still_there
+        );
+        assert_eq!(
+            parameter_count_with_prefix(NAME),
+            0,
+            "the `(I)` scan skips PM_UNSET nodes (c:parameter.c:138-139)"
+        );
+    }
+
+    #[test]
+    fn empty_name_is_not_a_parameter() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!plus_parameters(""));
+    }
+}

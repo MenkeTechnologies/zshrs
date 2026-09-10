@@ -89,7 +89,7 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::{FnScope, LocalScope, PM_ARRAY};
 use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getiparam, getsparam, paramtab, setaparam};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
 use crate::ported::utils::{errflag, noerrs_lock, quotestring};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
@@ -739,11 +739,12 @@ fn is_param_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
+/// sh:29's `$+parameters[…]`. NOT `paramtab().get(...).is_some()`: an unset
+/// parameter keeps its node and `getpmparameter` gates on
+/// `!(rpm->node.flags & PM_UNSET)` (c:Src/Modules/parameter.c:114-115). See
+/// `shared::plus_parameters`.
 fn parameter_exists(name: &str) -> bool {
-    paramtab()
-        .read()
-        .map(|t| t.get(name).is_some())
-        .unwrap_or(false)
+    crate::compsys::ported::shared::plus_parameters(name)
 }
 
 /// sh:37 — `[[ "$word" = (\~*/*|*\$(|[=~#^+])[a-zA-Z0-9_\[\]]##[^a-zA-Z0-9_\[\]]|*\$\{*\}?) ]]`.
@@ -865,10 +866,10 @@ fn is_ambiguous_prefix(word: &str) -> bool {
     if let Some(i) = word.rfind('$') {
         let stem = &word[i + 1..];
         if !stem.is_empty() && stem.chars().all(is_param_name_char) {
-            let hits = paramtab()
-                .read()
-                .map(|t| t.keys().filter(|k| k.starts_with(stem)).count())
-                .unwrap_or(0);
+            // sh:50 — `${#parameters[(I)${word##*\$}*]}`. The scan behind the
+            // subscript skips PM_UNSET nodes (c:Src/Modules/parameter.c:138-139),
+            // which a raw `paramtab().keys()` walk counted.
+            let hits = crate::compsys::ported::shared::parameter_count_with_prefix(stem);
             if hits != 1 {
                 return true;
             }
