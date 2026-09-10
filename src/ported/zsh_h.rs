@@ -4831,13 +4831,41 @@ pub fn WCWIDTH(wc: char) -> i32 {
         .unwrap_or_else(|| if wc.is_control() { -1 } else { 1 })
 }
 
-/// Port of `WCWIDTH_WINT` from `Src/zsh.h:3311/3369` — C macro `WCWIDTH_WINT(wc)`. Always
-/// 1 in non-multibyte mode; uses WCWIDTH in multibyte mode.
+/// Port of `WCWIDTH_WINT` from `Src/zsh.h:3311/3369` — C macro `WCWIDTH_WINT(wc)`.
+/// `Src/zsh.h:3311` expands it to `zwcwidth(wc)` (`Src/utils.c:729-741`), and
+/// `Src/zsh.h:3371` defines it as the constant `1` in a non-multibyte build:
+///
+///     int
+///     zwcwidth(wint_t wc)
+///     {
+///         int wcw;
+///         /* assume a single-byte character if not valid */
+///         if (wc == WEOF || unset(MULTIBYTE))
+///             return 1;
+///         wcw = WCWIDTH(wc);
+///         /* if not printable, assume width 1 */
+///         if (wcw < 0)
+///             return 1;
+///         return wcw;
+///     }
+///
+/// The two clamps are the whole point of the wrapper and were missing: bare
+/// `WCWIDTH` answers -1 for a control character (per `wcwidth(3)`), so a
+/// caller measuring a string that carries ANSI escapes or a `\n` would have
+/// SUBTRACTED columns for them. Combining marks (width 0) and wide glyphs
+/// (width 2) still report their real width — only the negative case is
+/// clamped. `WEOF` has no `char` spelling in Rust (an undecodable byte never
+/// reaches here as a `char`), so only the `unset(MULTIBYTE)` half of c:734
+/// applies.
+///
+/// `zwcwidth` itself is already ported at `Src/utils.c:729` →
+/// `crate::ported::utils::zwcwidth`; this is the macro that expands to it, so
+/// it delegates rather than carrying a second copy of the two clamps.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCWIDTH_WINT(wc: char) -> i32 {
-    // c:3311
-    WCWIDTH(wc)
+    // c:3311 — `#define WCWIDTH_WINT(wc) zwcwidth(wc)`
+    crate::ported::utils::zwcwidth(wc) as i32
 }
 
 /// Port of `IS_COMBINING` from `Src/zsh.h:3343` — C macro `IS_COMBINING(wc)`. True iff `wc`

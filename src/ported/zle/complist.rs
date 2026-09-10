@@ -2237,10 +2237,33 @@ pub fn compprintfmt(
                 }
             }
         } else {
-            // c:1269 — literal char (ANSI escape bytes included: every byte
-            // counts width 1 toward cc, which is what truncates the whole
-            // prompt at the terminal edge).
-            cc += 1; // c:1270
+            // c:1269-1270 — literal char. `cc` is a COLUMN count, not a
+            // character count:
+            //
+            //     len = MB_METACHARLENCONV(p, &cchar);
+            //     if (cchar == WEOF) { cchar = …; width = 1; }
+            //     else width = WCWIDTH_WINT(cchar);
+            //     …
+            //     cc += width;
+            //
+            // (c:1092-1100 for the width, c:1270 for the add.) The port added
+            // a flat 1 under a comment claiming every byte counts width 1,
+            // which is wrong on both halves — this loop walks CHARS, and a
+            // char's column cost is its display width. `cc` decides the stat
+            // truncation (c:1261), the bottom-row abort (c:1282), the wrap
+            // test (c:1300) and `mlprinted` (c:1330), so a wide `$LISTPROMPT`
+            // or a CJK `format` string desynchronised all four: a two-column
+            // glyph was booked as one column, and the status line ran a column
+            // past the right margin for every wide char it carried.
+            //
+            // `WCWIDTH_WINT` is C's `zwcwidth` (Src/utils.c:730), which clamps
+            // wcwidth(3)'s -1 for a non-printable back to 1 — so the ANSI
+            // escape bytes and control characters a format string carries
+            // still count one column each, exactly as before. What moves is
+            // wide glyphs (2) and combining marks (0). The `cchar == WEOF`
+            // arm at c:1094-1097 has no counterpart: this loop yields decoded
+            // `char`s, so there is no undecodable unit to fall back for.
+            cc += crate::ported::zsh_h::WCWIDTH_WINT(c); // c:1270
                      // c:1272 — once we reach the right margin (or a newline) in stat
                      // mode, downgrade to measure-only so the tail is counted, not printed.
             if (cc >= zterm_columns - 2 || c == '\n') && stat {
@@ -7429,6 +7452,80 @@ mod tests {
         let mut stop = 0i32;
         let cc = compprintfmt("hello", 0, 0, 0, 0, &mut stop);
         assert_eq!(cc, 5);
+    }
+
+    /// c:1092-1100 + c:1270 — `cc` is a COLUMN count. The literal branch adds
+    /// `WCWIDTH_WINT(cchar)`, not 1, so a wide glyph costs two columns.
+    ///
+    /// `cc` decides the stat truncation (c:1261), the bottom-row abort
+    /// (c:1282), the wrap test (c:1300) and `mlprinted` (c:1330); counting a
+    /// CJK `$LISTPROMPT` or `format` string one-per-character under-booked
+    /// every one of them by the number of wide glyphs it carried.
+    #[test]
+    fn compprintfmt_counts_wide_glyphs_as_two_columns() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::options::opt_state_set("multibyte", true);
+        crate::opts_cache::invalidate_all();
+        let mut stop = 0i32;
+        // Three CJK glyphs, six columns. The character count is 3.
+        assert_eq!(compprintfmt("日本語", 0, 0, 0, 0, &mut stop), 6);
+        // Mixed: 5 ASCII + 2 wide = 9 columns from 7 characters.
+        assert_eq!(compprintfmt("hello日本", 0, 0, 0, 0, &mut stop), 9);
+    }
+
+    /// c:1092-1100 — a combining mark has `WCWIDTH` 0 and occupies no column
+    /// of its own, so `e` + U+0301 is one column from two characters.
+    #[test]
+    fn compprintfmt_counts_a_combining_mark_as_zero_columns() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::options::opt_state_set("multibyte", true);
+        crate::opts_cache::invalidate_all();
+        let mut stop = 0i32;
+        assert_eq!(compprintfmt("e\u{301}", 0, 0, 0, 0, &mut stop), 1);
+    }
+
+    /// c:1270 via `WCWIDTH_WINT` = `zwcwidth` (Src/utils.c:730), whose
+    /// `if (wcw < 0) return 1;` clamp is the reason an ANSI escape still
+    /// costs exactly one column each byte. `wcwidth(3)` answers -1 for
+    /// ESC; using it raw would SUBTRACT columns for every escape a
+    /// `list-prompt` / `format` carries, which is how these strings are
+    /// coloured in practice.
+    #[test]
+    fn compprintfmt_counts_control_characters_as_one_column_each() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::options::opt_state_set("multibyte", true);
+        crate::opts_cache::invalidate_all();
+        let mut stop = 0i32;
+        // ESC [ 1 m — four units, four columns. doesc=0 so `%` never applies.
+        assert_eq!(compprintfmt("\x1b[1m", 0, 0, 0, 0, &mut stop), 4);
+    }
+
+    /// c:1330 — `mlprinted = l + (cc / zterm_columns)`. compprintlist reads
+    /// this straight after every compprintfmt (c:1458 / c:1579 / c:1637) to
+    /// step `ml` past a multi-row explanation. A wide explanation that fills
+    /// more than one screen row has to report the row it really used, or the
+    /// grid under it is drawn one row too high — which is what a CJK
+    /// `format` did: the first explanation scrolled off the top.
+    #[test]
+    fn compprintfmt_wide_explanation_reports_the_row_it_wrapped_onto() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::options::opt_state_set("multibyte", true);
+        crate::opts_cache::invalidate_all();
+        // Pin the terminal width so the assertion does not depend on the
+        // window the test happens to run in.
+        let saved = crate::ported::utils::ZTERM_COLUMNS.swap(40, Ordering::SeqCst);
+        // 30 CJK glyphs = 60 columns = one full 40-column row plus 20.
+        let fmt: String = "日".repeat(30);
+        let mut stop = 0i32;
+        let cc = compprintfmt(&fmt, 0, 0, 0, 0, &mut stop);
+        let printed = MLPRINTED.load(Ordering::SeqCst);
+        crate::ported::utils::ZTERM_COLUMNS.store(saved, Ordering::SeqCst);
+        assert_eq!(cc, 60, "30 wide glyphs are 60 columns");
+        assert_eq!(printed, 1, "60 columns at width 40 spills onto a second row");
     }
 
     // ---------- Real-port tests ------------------------------------------
