@@ -67,6 +67,18 @@ ap.add_argument(
     help="override or add one child env var; repeatable",
 )
 ap.add_argument(
+    "--settle",
+    type=float,
+    default=0.5,
+    help="quiet interval that counts as settled, in seconds (default 0.5)",
+)
+ap.add_argument(
+    "--budget",
+    type=float,
+    default=20.0,
+    help="max wait per key before giving up AND SAYING SO (default 20s)",
+)
+ap.add_argument(
     "--lang",
     default="C",
     help="LANG/LC_ALL for the child (default C, matching comptab_parity.py). "
@@ -189,6 +201,39 @@ def pump(seconds):
                 return
             stream.feed(data)
 
+def pump_until_quiet(quiet, budget):
+    """Pump until the shell stops emitting for `quiet` seconds, or `budget` runs out.
+
+    Returns (saw_any_output, quiesced). `quiesced=False` means the budget ran
+    out while bytes were still arriving, so the screen is mid-render.
+
+    A FIXED pump is the wrong tool here and produced three false findings in one
+    session. Debug-build zshrs can be an order of magnitude slower than zsh on
+    the same case -- `env <TAB>` answers in 0.21s on zsh and 2.40s on a debug
+    zshrs -- so a 1.2s-per-key pump caught zsh and missed zshrs, and an empty
+    capture is indistinguishable from "the shell computed nothing". That was
+    filed as "zshrs never raises the LISTMAX query" and as a `ls ` state
+    divergence; both were this timer.
+    """
+    saw = False
+    last = time.time()
+    end = last + budget
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                return saw, True
+            if not data:
+                return saw, True
+            stream.feed(data)
+            saw = True
+            last = time.time()
+        elif time.time() - last >= quiet:
+            return saw, True
+    return saw, False
+
 def wait_prompt(timeout=30.0, need=1):
     """Pump until READY% has appeared `need` times on screen, or timeout."""
     end = time.time() + timeout
@@ -206,12 +251,25 @@ os.write(fd, b"\x0c")          # ctrl-L: clear, so only the probe line remains
 pump(0.5)
 os.write(fd, a.buffer.encode())
 pump(0.6)
+truncated = []
 for k in a.keys.split(","):
     os.write(fd, keyseq(k).encode())
-    pump(1.2)
-pump(0.8)
+    _saw, _quiet = pump_until_quiet(a.settle, a.budget)
+    if not _quiet:
+        truncated.append(k)
+_saw, _quiet = pump_until_quiet(a.settle, a.budget)
+if not _quiet:
+    truncated.append("<tail>")
 
 for line in screen.display:
     if line.strip():
         print(line.rstrip())
+if truncated:
+    print(
+        "comptab_screen: WARNING - still receiving output when the budget ran "
+        "out after key(s) %s. The screen above is MID-RENDER, not settled; a "
+        "missing line may just be a slow shell. Raise --budget."
+        % ", ".join(truncated),
+        file=sys.stderr,
+    )
 os.close(fd)
