@@ -275,9 +275,13 @@ pub(crate) fn freecompcond(cc: Compcond) {
 pub(crate) fn cpcmlist(
     // c:291
     mut l: Option<&Cmlist>,
-) -> Option<Box<Cmlist>> {
-    let mut head: Option<Box<Cmlist>> = None; // c:293 r = NULL
-    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
+) -> Option<std::sync::Arc<Cmlist>> {
+    // c:293-301 — C appends through `p = &(n->next)`. `Cmlist` nodes are
+    // refcounted (comp.h:148) and therefore immutable once linked, so the
+    // port collects the copies front-to-back and links them back-to-front;
+    // the resulting chain is identical and the `*mut` tail cursor (and its
+    // `unsafe`) is gone.
+    let mut nodes: Vec<(Box<crate::ported::zle::comp_h::Cmatcher>, String)> = Vec::new();
     while let Some(src) = l {
         // c:295 while (l)
         let matcher_chain = crate::ported::zle::complete::cpcmatcher(
@@ -285,20 +289,17 @@ pub(crate) fn cpcmlist(
             Some(&*src.matcher),
         )
         .expect("cpcmatcher returned None for non-null source");
-        let n = Box::new(Cmlist {
-            // c:296 zalloc
-            next: None,             // c:297
-            matcher: matcher_chain, // c:298
-            str: src.str.clone(),   // c:299 ztrdup
-        });
-        unsafe {
-            *tail_ref = Some(n);
-            if let Some(ref mut newnode) = *tail_ref {
-                // c:301 p = &(n->next)
-                tail_ref = &mut newnode.next as *mut _;
-            }
-        }
+        nodes.push((matcher_chain, src.str.clone())); // c:298-299 ztrdup
         l = src.next.as_deref(); // c:311 l = l->next
+    }
+    let mut head: Option<std::sync::Arc<Cmlist>> = None; // c:293 r = NULL
+    for (matcher, str) in nodes.into_iter().rev() {
+        head = Some(std::sync::Arc::new(Cmlist {
+            // c:296 zalloc
+            next: head, // c:297
+            matcher,    // c:298
+            str,        // c:299
+        }));
     }
     head // c:311 return r
 }
@@ -324,29 +325,27 @@ thread_local! {
 /// installs the new one via cpcmlist.
 pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {
     // c:311
-    let mut head: Option<Box<Cmlist>> = None; // c:314 l = NULL
-    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
+    // c:314-325 — same back-to-front link as `cpcmlist` above, for the same
+    // reason: an `Arc`-linked node cannot be appended to after it is shared.
+    let mut parsed: Vec<(Box<crate::ported::zle::comp_h::Cmatcher>, String)> = Vec::new();
     for word in argv {
         // c:317 while (*argv)
         let m = match parse_cmatcher(name, word) {
             Some(m) => m,     // c:319 parse_cmatcher
             None => return 1, // c:319 == pcm_err
         };
-        let n = Box::new(Cmlist {
-            // c:320 zhalloc
-            next: None,        // c:321
-            matcher: m,        // c:322
-            str: word.clone(), // c:323
-        });
-        unsafe {
-            *tail_ref = Some(n);
-            if let Some(ref mut newnode) = *tail_ref {
-                // c:325
-                tail_ref = &mut newnode.next as *mut _;
-            }
-        }
+        parsed.push((m, word.clone())); // c:322-323
     }
-    // freecmlist(cmatcher) — Drop on the Box handles the C free path.       // c:336
+    let mut head: Option<std::sync::Arc<Cmlist>> = None; // c:314 l = NULL
+    for (matcher, str) in parsed.into_iter().rev() {
+        head = Some(std::sync::Arc::new(Cmlist {
+            // c:320 zhalloc
+            next: head, // c:321
+            matcher,    // c:322
+            str,        // c:323
+        }));
+    }
+    // freecmlist(cmatcher) — Drop on the Arc handles the C free path.       // c:336
     let new_list = cpcmlist(head.as_deref()); // c:336 cpcmlist(l)
     if let Ok(mut guard) = CMATCHER.write() {
         *guard = new_list;
@@ -4629,7 +4628,8 @@ pub(crate) fn finish_() -> i32 {
 /// PORT_PLAN.md — `compctl -M` writes via `freecmlist + cpcmlist`,
 /// every completion call reads. `RwLock` lets parallel completion
 /// reads proceed without serialising on a mutex.
-pub(crate) static CMATCHER: std::sync::RwLock<Option<Box<Cmlist>>> = std::sync::RwLock::new(None); // c:36
+pub(crate) static CMATCHER: std::sync::RwLock<Option<std::sync::Arc<Cmlist>>> =
+    std::sync::RwLock::new(None); // c:36
 
 /// `compctltab` hash table — name → Compctl.
 /// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.

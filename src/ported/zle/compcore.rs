@@ -3978,7 +3978,7 @@ pub fn addmatches(
     // command name. `hash -<TAB>` offered 1152 candidates where zsh offers the
     // 6 options; the same leak inflates any completion that mixes a matcher-
     // carrying compadd with a later plain one.
-    let oms_saved: Option<Box<Cmlist>> = mstack
+    let oms_saved: Option<std::sync::Arc<Cmlist>> = mstack
         .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
@@ -3988,7 +3988,7 @@ pub fn addmatches(
     }
     // Restores `mstack` on EVERY exit from this function (C restores at the
     // single c:2622 return; the port has several early returns).
-    struct MstackRestore(Option<Box<Cmlist>>);
+    struct MstackRestore(Option<std::sync::Arc<Cmlist>>);
     impl Drop for MstackRestore {
         fn drop(&mut self) {
             if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
@@ -4234,7 +4234,7 @@ pub fn addmatches(
             if let Ok(mut mst) = mstack.get_or_init(|| Mutex::new(None)).lock() {
                 // C restores the saved head; since this frame pushed exactly
                 // one link, dropping it is the same list.
-                *mst = mst.take().and_then(|link| link.next);
+                *mst = mst.take().and_then(|link| link.next.clone());
             }
         }
     }
@@ -4243,7 +4243,7 @@ pub fn addmatches(
         // c:2210
         if let Ok(mut mst) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             // C: mst.next = mstack; mst.matcher = dat->match; mstack = &mst.
-            let new_link = Box::new(Cmlist {
+            let new_link = std::sync::Arc::new(Cmlist {
                 next: mst.take(),
                 matcher: m.clone(),
                 str: String::new(),
@@ -7596,11 +7596,11 @@ fn autoq_set(s: &str) {
 /// File-scope holder for `Cmlist bmatchers` — `Src/Zle/compcore.c:236`.
 /// C linked-list of matchers active for brace-matching, populated by
 /// `add_bmatchers` walking the user-installed `Cmatcher` chain.
-pub static bmatchers: OnceLock<Mutex<Option<Box<Cmlist>>>> = OnceLock::new(); // c:236
+pub static bmatchers: OnceLock<Mutex<Option<std::sync::Arc<Cmlist>>>> = OnceLock::new(); // c:236
 
 /// File-scope holder for `Cmlist mstack` — `Src/Zle/compcore.c:236`.
 /// Matcher-stack — current active matcher list for compadd recursion.
-pub static mstack: OnceLock<Mutex<Option<Box<Cmlist>>>> = OnceLock::new(); // c:236
+pub static mstack: OnceLock<Mutex<Option<std::sync::Arc<Cmlist>>>> = OnceLock::new(); // c:236
 
 // ---- Extern stubs for add_match_data's Cline operations ----
 

@@ -590,7 +590,17 @@ pub struct Cmatch {
 pub struct Cmlist {
     // c:147
     /// Next entry in the list.
-    pub next: Option<Box<Cmlist>>, // c:148
+    ///
+    /// `Cmlist` is a POINTER type in C (`typedef struct cmlist *Cmlist`,
+    /// c:147), and every reader of the `mstack` / `bmatchers` globals just
+    /// copies that pointer. The port originally owned the chain through
+    /// `Box`, so each of those reads became a RECURSIVE DEEP COPY of the
+    /// whole list — `match_str` (c:591) rebuilt it per call, `bld_parts`
+    /// (c:1648) and `join_strs` (c:2013) rebuilt it per CHARACTER. `Arc`
+    /// restores C's cost model: taking a handle is a refcount bump, and
+    /// the nodes are immutable once built (nothing in the port assigns to
+    /// a `Cmlist` field after construction).
+    pub next: Option<std::sync::Arc<Cmlist>>, // c:148
     /// The matcher definition.
     pub matcher: Box<Cmatcher>, // c:149
     /// The string for it.

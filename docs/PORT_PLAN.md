@@ -881,8 +881,12 @@ parity-preserving choice when threading forces shared mutation.
       `pub static OnceLock<Mutex<>>` is single shared instance).
       Call-site migration from `&mut [Job]` params is deferred per
       original plan note ("promote when daemon owns jobs reaping").
-- [x] `zle/compctl.rs:91` `CMATCHER` → `RwLock<Option<Box<Cmlist>>>`
-      ← `Src/Zle/compctl.c:36 static Cmlist cmatcher`. Done.
+- [x] `zle/compctl.rs:91` `CMATCHER` → `RwLock<Option<Arc<Cmlist>>>`
+      ← `Src/Zle/compctl.c:36 static Cmlist cmatcher`. Done. `Arc`, not
+      `Box`: `Cmlist` is a POINTER type in C (`Src/Zle/comp.h:147`) and the
+      `mstack` / `bmatchers` readers copy the pointer per candidate and per
+      character, so an owning `Box` turned each of those reads into a
+      recursive deep copy of the whole matcher chain.
 - [x] `zle/compctl.rs:97` `COMPCTL_TAB` → `RwLock<Option<HashMap<
       String,Arc<Compctl>>>>` ← `Src/Zle/compctl.c:46 HashTable
       compctltab`. Done.

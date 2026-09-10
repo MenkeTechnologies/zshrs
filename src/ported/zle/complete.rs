@@ -73,14 +73,16 @@ use crate::ported::zsh_h::{
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 
-pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {
+pub fn freecmlist(l: Option<std::sync::Arc<crate::ported::zle::comp_h::Cmlist>>) {
     // c:98
     let mut cur = l;
     while let Some(node) = cur {
         // c:101
         // c:103 — `freecmatcher(l->matcher);` — Rust Box drop frees.
         // c:104 — `zsfree(l->str);` — String drop frees.
-        cur = node.next; // c:102 n = l->next
+        // c:102 `n = l->next` — the node is refcounted now (comp.h:148), so
+        // the walk clones the handle and lets the last owner do the freeing.
+        cur = node.next.clone();
     }
 }
 

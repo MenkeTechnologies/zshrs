@@ -1226,8 +1226,19 @@ pub fn u9_iswprint(ucs: char) -> bool {
     // in the C-name index build.rs enforces; build.rs's own remedy for that
     // is "inline the body at every call site".
     let wcwidth9_intable = |table: &[(u32, u32)]| {
-        // c:1264 `if (c < table[0].first) return false;` and the c:1270-1281
-        // bot/top/mid loop, expressed as the equivalent `binary_search_by`.
+        // c:1264-1266 — `if (c < table[0].first) return false;`. C's O(1)
+        // guard ahead of the search, and NOT redundant with it: the port had
+        // dropped it, so every ASCII character ran the full binary search over
+        // `wcwidth9_not_assigned`'s 637 intervals (~10 unpredictable branches
+        // through a cold table) where C answers in ONE comparison, that table
+        // starting at U+0378. `quotestring` asks this per character of every
+        // candidate it quotes, so the missing guard showed up as the top
+        // non-idle leaf of a command-position completion profile.
+        if table.first().is_none_or(|&(first, _)| cp < first) {
+            return false; // c:1265
+        }
+        // c:1270-1281 — the bot/top/mid loop, expressed as the equivalent
+        // `binary_search_by`.
         table
             .binary_search_by(|&(first, last)| {
                 if last < cp {

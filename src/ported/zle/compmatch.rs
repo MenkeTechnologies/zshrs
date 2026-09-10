@@ -205,7 +205,7 @@ pub fn add_bmatchers(m: Option<&Cmatcher>) {
                 || (mat.flags == CMF_RIGHT && mat.wlen < 0 && mat.llen == 0);
         if qual {
             // c:109-112
-            head = Some(Box::new(Cmlist {
+            head = Some(std::sync::Arc::new(Cmlist {
                 next: head,
                 matcher: Box::new(mat.clone()),
                 str: String::new(),
@@ -225,15 +225,13 @@ pub fn update_bmatchers() {
     let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
     let ms_cell = mstack.get_or_init(|| Mutex::new(None));
     let mut p = bm_cell.lock().ok().and_then(|mut g| g.take()); // c:124 Cmlist p = bmatchers
-    let ms_head = ms_cell
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|b| (**b).clone()));
-    let mut new_bmatchers: Option<Box<Cmlist>> = p.as_ref().map(|b| (**b).clone()).map(Box::new);
+    // c:126 `Cmlist ms = mstack` — a pointer copy in C, an `Arc` handle here.
+    let ms_head = ms_cell.lock().ok().and_then(|g| g.clone());
+    let mut new_bmatchers: Option<std::sync::Arc<Cmlist>> = p.clone();
     while let Some(node) = p {
         // c:128 while (p)
         let mut t = false; // c:129 t = 0
-        let mut ms = ms_head.as_ref(); // c:130 ms = mstack
+        let mut ms = ms_head.as_deref(); // c:130 ms = mstack
         while let Some(mscur) = ms {
             if t {
                 break;
@@ -248,10 +246,10 @@ pub fn update_bmatchers() {
             }
             ms = mscur.next.as_deref();
         }
-        p = node.next; // c:134 p = p->next
+        p = node.next.clone(); // c:134 p = p->next
         if !t {
             // c:135 if (!t)
-            new_bmatchers = p.as_ref().map(|b| (**b).clone()).map(Box::new); // c:136 bmatchers = p
+            new_bmatchers = p.clone(); // c:136 bmatchers = p
         }
     }
     if let Ok(mut g) = bm_cell.lock() {
@@ -1204,20 +1202,41 @@ pub fn match_str(
     let mut lm: Option<usize> = None;
     let mut he = 0i32;
 
-    // Snapshot the mstack chain into a Vec for stable iteration.
-    let mstack_snapshot: Vec<Box<Cmatcher>> = {
-        let g = mstack.get_or_init(|| Mutex::new(None)).lock().ok();
+    // c:591-593 — `for (mp = NULL, ms = mstack; !mp && ms; ms = ms->next)`
+    //              `    for (mp = ms->matcher; mp; mp = mp->next)`.
+    //
+    // C walks the live `mstack` chain through two pointers and copies
+    // nothing. The port cannot hold the `mstack` lock across the loop body
+    // (it calls `pattern_match`, `match_parts` and `match_str` itself, all
+    // of which take the same lock), so it takes an `Arc` HANDLE on the chain
+    // — one refcount bump, the cost C pays for `ms = mstack` — and flattens
+    // the two nested pointer walks into borrowed references into that
+    // handle.
+    //
+    // This used to `Box::new(mp.clone())` every matcher. `Cmatcher`'s derived
+    // `Clone` follows `next`, so cloning entry *i* copied the whole tail
+    // after it: an N-matcher chain cost N(N+1)/2 node copies, each dragging
+    // the node's four `Cpattern` chains (themselves recursively cloned, with
+    // a `Vec<u8>` per character class) along with it — per `match_str` call,
+    // and `match_str` runs once per candidate plus once per recursion. The
+    // loop below reads only `mp.flags/llen/wlen/lalen/ralen/line/word/left/
+    // right`; it never follows `mp.next`, so every one of those copies was
+    // waste.
+    let mstack_head: Option<std::sync::Arc<Cmlist>> = mstack
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone()); // c:592 `ms = mstack`
+    let mstack_snapshot: Vec<&Cmatcher> = {
         let mut out = Vec::new();
-        if let Some(g) = g {
-            let mut cur = g.as_deref();
-            while let Some(ms) = cur {
-                let mut mp_cur: Option<&Cmatcher> = Some(&*ms.matcher);
-                while let Some(mp) = mp_cur {
-                    out.push(Box::new(mp.clone()));
-                    mp_cur = mp.next.as_deref();
-                }
-                cur = ms.next.as_deref();
+        let mut cur = mstack_head.as_deref();
+        while let Some(ms) = cur {
+            let mut mp_cur: Option<&Cmatcher> = Some(&*ms.matcher);
+            while let Some(mp) = mp_cur {
+                out.push(mp);
+                mp_cur = mp.next.as_deref();
             }
+            cur = ms.next.as_deref();
         }
         out
     };
@@ -1265,8 +1284,11 @@ pub fn match_str(
 
         // c:591 retry: walk the snapshotted matcher chain looking for
         // a non-* matcher we can apply at the current cursor.
-        let mut matched: Option<Box<Cmatcher>> = None;
-        for (mp_idx, mp) in mstack_snapshot.iter().enumerate() {
+        // c:591 `Cmatcher mp` — C keeps the POINTER to the matcher that
+        // fired; only `mp != NULL` is ever tested after the loop, so the port
+        // keeps a borrowed reference rather than deep-copying the node.
+        let mut matched: Option<&Cmatcher> = None;
+        for (mp_idx, &mp) in mstack_snapshot.iter().enumerate() {
             if lm == Some(mp_idx) {
                 continue; // c:595 — `lm && lm == mp`
             }
@@ -1736,7 +1758,7 @@ pub fn match_str(
                     lm = None;
                     he = 0;
                 }
-                matched = Some(mp.clone());
+                matched = Some(mp);
                 break;
             }
             if ll < mp.llen || lw < mp.wlen {
@@ -1919,7 +1941,7 @@ pub fn match_str(
             ow_pos = w_pos;
             lm = None;
             he = 0;
-            matched = Some(mp.clone());
+            matched = Some(mp);
             break;
         }
 
@@ -3013,6 +3035,17 @@ pub fn bld_parts(
     let mut tail_ref: *mut Option<Box<Cline>> = &mut head;
     let mut last_n: Option<Box<Cline>> = None;
 
+    // c:1648 `for (ms = bmatchers; ms; ms = ms->next)` re-reads the global
+    // inside the per-character loop below, which in C is a free pointer load.
+    // Nothing in the loop body mutates `bmatchers`, so the port takes the
+    // handle ONCE: it used to re-lock and DEEP-COPY the entire chain for
+    // every character of every candidate.
+    let bmatchers_chain = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+
     while remaining > 0 {
         // c:1647
         // c:1648-1685 — walk bmatchers looking for a CMF_RIGHT-anchored
@@ -3020,11 +3053,6 @@ pub fn bld_parts(
         // position. On hit, emit a Cline for the run-so-far + the
         // anchored portion, advance str/plen past the anchor.
         let mut found_anchor = false;
-        let bmatchers_chain = crate::ported::zle::compcore::bmatchers
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .ok()
-            .and_then(|g| g.clone());
         let mut cur = bmatchers_chain.as_deref();
         while let Some(ms) = cur {
             let mp = &*ms.matcher;
@@ -3457,6 +3485,15 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
     let mut b_idx = 0usize;
     let a_bytes = sa.as_bytes();
     let b_bytes = sb.as_bytes();
+    // c:2013 `for (ms = bmatchers; ms; ms = ms->next)` sits inside the
+    // per-character loop below and costs C one pointer load. Taken once here
+    // for the same reason as `bld_parts` (c:1648): re-locking and deep-copying
+    // the chain per character was the port's own cost, not C's.
+    let bmatchers = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
 
     while la > 0 && lb > 0 && a_idx < a_bytes.len() && b_idx < b_bytes.len() {
         if a_bytes[a_idx] == b_bytes[b_idx] {
@@ -3473,11 +3510,6 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
             // input strings; on hit calls bld_line to synthesize a
             // line that matches the OTHER string, copies the result
             // into `out`, and advances both inputs.
-            let bmatchers = crate::ported::zle::compcore::bmatchers
-                .get_or_init(|| Mutex::new(None))
-                .lock()
-                .ok()
-                .and_then(|g| g.clone());
             let mut advanced = false;
             let mut cur = bmatchers.as_deref();
             while let Some(ms) = cur {
@@ -5871,7 +5903,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|[_-]=* r:|=*");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "r:|[_-]=* r:|=*".to_string(),
@@ -5911,7 +5943,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a}={A}");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "m:{a}={A}".to_string(),
@@ -5968,7 +6000,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=*");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "r:|/=*".to_string(),
@@ -6042,7 +6074,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|=*");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "r:|=*".to_string(),
@@ -6133,7 +6165,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=* r:|=*");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "r:|/=* r:|=*".to_string(),
@@ -6198,7 +6230,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|/=* r:|=*");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "r:|/=* r:|=*".to_string(),
@@ -6290,7 +6322,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a-z}={A-Z}");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "m:{a-z}={A-Z}".to_string(),
@@ -6364,7 +6396,7 @@ mod tests {
         let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a-z}={A-Z}");
         assert!(m.is_some(), "matcher spec must parse");
         if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
-            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+            *g = Some(std::sync::Arc::new(crate::ported::zle::comp_h::Cmlist {
                 next: None,
                 matcher: m.unwrap(),
                 str: "m:{a-z}={A-Z}".to_string(),
@@ -6462,7 +6494,7 @@ mod tests {
             ralen: 0,
         };
         let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
-        *bm_cell.lock().unwrap() = Some(Box::new(Cmlist {
+        *bm_cell.lock().unwrap() = Some(std::sync::Arc::new(Cmlist {
             next: None,
             matcher: Box::new(matcher),
             str: String::new(),
@@ -7231,5 +7263,163 @@ mod tests {
         );
         assert_eq!(md.len, 1, "c:2418 — one character left unconsumed");
         assert_eq!(md.str, "a", "c:2420 — consumed from the right");
+    }
+
+    // ---------- matcher-chain COST pins (this session). ----------
+    //
+    // Both tests below pin a COMPLEXITY, not a speed. `mstack` and
+    // `bmatchers` are `Cmlist` — a POINTER type in C (`Src/Zle/comp.h:147`)
+    // — and every reader of them copies the pointer and walks. The port
+    // owned those chains through `Box`, so reading one deep-copied the whole
+    // list (recursively: `Cmlist` → `Cmatcher` → its `next` tail → four
+    // `Cpattern` chains → a `Vec<u8>` per character class). The reads sit in
+    // per-candidate and per-CHARACTER loops, so the copies were multiplied by
+    // the size of the input. `Arc` restores C's cost model.
+    //
+    // The bound is deliberately far above the post-fix cost (milliseconds)
+    // and far below the pre-fix cost (tens of seconds at these sizes), so a
+    // loaded box cannot flip either test; only a return to copying can.
+
+    /// Build one `Cmatcher` whose four pattern slots each carry a
+    /// `pat_len`-node `Cpattern` chain — the shape a real
+    /// `m:{a-z\-}={A-Z\_}` / `r:[^[:alpha:]]||[[:alpha:]]=**` matcher-list
+    /// entry has, and the shape that made a chain copy expensive.
+    #[cfg(test)]
+    fn cost_pin_matcher(next: Option<Box<Cmatcher>>, llen: i32, wlen: i32, pat_len: usize) -> Box<Cmatcher> {
+        let chain = |n: usize| -> Option<Box<Cpattern>> {
+            let mut head: Option<Box<Cpattern>> = None;
+            for _ in 0..n {
+                head = Some(Box::new(Cpattern {
+                    next: head,
+                    tp: CPAT_CCLASS,
+                    str: Some(vec![b'a'; 64]),
+                    chr: 0,
+                }));
+            }
+            head
+        };
+        Box::new(Cmatcher {
+            refc: 1,
+            next,
+            flags: CMF_RIGHT,
+            line: chain(pat_len),
+            llen,
+            word: chain(pat_len),
+            wlen,
+            left: chain(pat_len),
+            lalen: 0,
+            right: chain(pat_len),
+            ralen: 0,
+        })
+    }
+
+    /// c:1648 — `for (ms = bmatchers; ms; ms = ms->next)` is INSIDE
+    /// `bld_parts`' per-character loop (c:1647-1685); in C that costs one
+    /// pointer load per character. The port re-locked the `bmatchers` global
+    /// and DEEP-COPIED the entire chain there, once per character of every
+    /// candidate `add_match_part`/`comp_match` built a Cline for.
+    ///
+    /// 128 chain entries × a 4-matcher chain × four 16-node `Cpattern` chains
+    /// is ~8700 nodes plus ~8200 `Vec<u8>`s per copy; over a 4000-byte
+    /// candidate that is ~35M allocations for work C does with a pointer
+    /// (measured: 9.8 s of copying, against 0.02 s of walking).
+    /// None of the entries can fire (`ralen == 0` fails the c:1650 guard), so
+    /// the loop walks the full string one byte at a time and the only thing
+    /// being measured is what reading the global costs.
+    #[test]
+    fn bld_parts_bmatchers_chain_is_read_not_copied_per_character() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        let saved = bm_cell.lock().ok().and_then(|mut g| g.take());
+
+        let mut head: Option<std::sync::Arc<Cmlist>> = None;
+        for _ in 0..128 {
+            let mut m = cost_pin_matcher(None, 1, 1, 16);
+            for _ in 0..3 {
+                m = cost_pin_matcher(Some(m), 1, 1, 16);
+            }
+            head = Some(std::sync::Arc::new(Cmlist {
+                next: head,
+                matcher: m,
+                str: String::new(),
+            }));
+        }
+        if let Ok(mut g) = bm_cell.lock() {
+            *g = head;
+        }
+
+        let word = "a".repeat(4000);
+        let t0 = std::time::Instant::now();
+        let _ = bld_parts(&word, word.len() as i32, word.len() as i32, None, None);
+        let elapsed = t0.elapsed();
+
+        if let Ok(mut g) = bm_cell.lock() {
+            *g = saved;
+        }
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "bld_parts over {} characters with a 64-entry bmatchers chain took \
+             {:?}; the chain is being copied per character again instead of \
+             walked (c:1648)",
+            word.len(),
+            elapsed
+        );
+    }
+
+    /// c:591-593 — `for (mp = NULL, ms = mstack; !mp && ms; ms = ms->next)` /
+    /// `for (mp = ms->matcher; mp; mp = mp->next)`: C walks the live chain
+    /// through two pointers. `match_str` runs once per candidate and again
+    /// for every recursion through `match_parts`, and the port opened each
+    /// call by cloning EVERY matcher into a `Vec`. `Cmatcher`'s derived
+    /// `Clone` follows `next`, so entry *i* dragged the whole tail after it:
+    /// an N-matcher chain cost N(N+1)/2 node copies (plus their `Cpattern`
+    /// chains) for a walk that reads only each node's own fields.
+    ///
+    /// 192 matchers → 18528 node copies per call; 200 calls is ~3.7M nodes and
+    /// ~237M `Vec<u8>`s pre-fix, against 200 × 192 borrowed pushes after
+    /// (measured: 18 s of copying, against 0.01 s of walking). The
+    /// matchers cannot fire (`llen`/`wlen` exceed the inputs, so c:868
+    /// `if (ll < mp->llen || lw < mp->wlen) continue;` skips each one), which
+    /// keeps the loop itself O(N) on both sides and leaves the snapshot as
+    /// the only difference.
+    #[test]
+    fn match_str_matcher_chain_is_read_not_copied_per_call() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ms_cell = mstack.get_or_init(|| Mutex::new(None));
+        let saved = ms_cell.lock().ok().and_then(|mut g| g.take());
+
+        let mut m = cost_pin_matcher(None, 1000, 1000, 16);
+        for _ in 0..191 {
+            m = cost_pin_matcher(Some(m), 1000, 1000, 16);
+        }
+        if let Ok(mut g) = ms_cell.lock() {
+            *g = Some(std::sync::Arc::new(Cmlist {
+                next: None,
+                matcher: m,
+                str: String::new(),
+            }));
+        }
+
+        let t0 = std::time::Instant::now();
+        for _ in 0..200 {
+            let _ = match_str(b"abcd", b"abcd", None, 0, None, 0, 1, 0);
+        }
+        let elapsed = t0.elapsed();
+
+        if let Ok(mut g) = ms_cell.lock() {
+            *g = saved;
+        }
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "200 match_str calls against a 128-matcher mstack took {:?}; the \
+             chain is being deep-copied per call again (c:591-593)",
+            elapsed
+        );
     }
 }
