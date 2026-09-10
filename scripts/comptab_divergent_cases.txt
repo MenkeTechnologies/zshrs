@@ -5421,8 +5421,9 @@ gstack
 # Not filed as a defect — recorded as an unstated addition to a port.
 #
 # ---------------------------------------------------------------------------
-# FINDING M1-B — 'zmodload ' is the `$module_path` band.  BENIGN, do not
-# re-file.  It fails under ALL EIGHT configurations, so it is not menu work.
+# FINDING M1-B — 'zmodload ' is the `$module_path` band.  RESOLVED, see the
+# RESOLVED block at the end of this finding.  Was: BENIGN, do not re-file.
+# It failed under ALL EIGHT configurations, so it was not menu work.
 # ---------------------------------------------------------------------------
 #   --case 'zmodload ' --keys tab    (3/3 serial FAIL under `full`)
 #     zsh   : `zmodload zsh/`
@@ -5454,6 +5455,34 @@ gstack
 # Do NOT try to isolate this by overriding `module_path` in the init: zsh
 # loads zsh/computil and zsh/complist FROM that parameter, so the override
 # makes the reference shell fail to complete at all.
+#
+# RESOLVED.  The `$module_path` design note above is still true and unchanged
+# — zshrs's module directory stays `~/.zshrs/modules` and nothing was
+# fabricated on disk.  What changed is that the `files` tag no longer asks
+# ONLY the filesystem.  `_zmodload` is now a native port
+# (src/compsys/ported/Zsh/Command/_zmodload.rs); its sh:71 `files` tag feeds
+# `_multi_parts` from the compiled-in registry (`modulestab.linkedmodules`,
+# the names `zmodload NAME` can actually resolve) and then still runs sh:72's
+# `_files -W module_path -g …` for a real `zmodload -R` cdylib.
+#
+#   scripts/comptab_screen.py --init <fpath-pinned fixture> \
+#     --buffer 'zmodload ' --keys tab
+#     zsh          : `zmodload zsh/`
+#     zshrs before : `zmodload`          (nothing offered)
+#     zshrs after  : `zmodload zsh/`     byte-identical
+#
+# `zmodload zsh/<TAB><TAB>` lists 35 names against zsh's 36; the sets differ
+# by construction and cannot be made equal — zshrs registers `zsh/db/gdbm`,
+# which this zsh does not ship, and does not register `zsh/deltochar` or
+# `zsh/newuser`, which it does.  The nested names list as the stubs `net`,
+# `param`, `db` rather than `net/`, `param/`: that is `_multi_parts`'
+# listing, not a defect — real zsh's `_multi_parts / arr` prints the same
+# stubs without the separator, and the separator IS inserted on completion.
+#
+# The other three tags were captured before and after and are unchanged:
+# `-u zsh/` (loadedmodules), `-u -b z` (builtins) and
+# `-F zsh/parameter ` (features) are byte-for-byte what they were, and the
+# first two are byte-identical to zsh.
 #
 # ---------------------------------------------------------------------------
 # FINDING M1-C — 'echo $path[' and 'function ' are ask-prompt COUNT cells.

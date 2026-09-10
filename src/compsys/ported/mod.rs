@@ -676,6 +676,10 @@ pub mod _zfs_pool;
 #[allow(non_snake_case, non_camel_case_types)]
 #[path = "Zsh/Command/_command.rs"]
 pub mod _command;
+/// `_zmodload` submodule.
+#[allow(non_snake_case, non_camel_case_types)]
+#[path = "Zsh/Command/_zmodload.rs"]
+pub mod _zmodload;
 
 // ── Zsh/Context/ ──────────────────────────────────────────────────────
 /// `_assign` submodule.

@@ -584,6 +584,11 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_zargs" => Some(_zargs::_zargs),
         "_zcalc" => Some(_zcalc::_zcalc),
         "_zsh-mime-handler" => Some(_zsh_mime_handler::_zsh_mime_handler),
+        "_zmodload" => Some(_zmodload::_zmodload),
+        // sh:71's action word — this port's own, not an upstream name. It
+        // must be routable because `_requested` reaches it BY NAME through
+        // `_all_labels` sh:39.
+        "_zmodload_module_files" => Some(_zmodload::_zmodload_module_files),
         _ => None,
     }
 }
