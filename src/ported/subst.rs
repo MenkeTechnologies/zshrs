@@ -12193,29 +12193,59 @@ pub fn paramsubst(
             // `${#h[(I)pat]}` counts MATCHED elements, not the chars of
             // the joined scalar (was 7 for "baz bar" instead of 2).
             let flagged_array_subscript = isarr != 0 && split_parts.is_some();
-            // c:Src/subst.c:3480-3483 — NO_UNSET: the length of an unset
-            // parameter aborts like a plain `$var` reference. This length
-            // block returns before the general nounset guard downstream, so
-            // replicate the check here. A default/alt modifier (`-`/`+`/`:-`/
-            // `:+`) supplies a value and suppresses the error.
+            // c:Src/subst.c:3614-3620 — NO_UNSET: the length of an unset
+            // parameter aborts like a plain `$var` reference:
+            //
+            //     } else if (vunset) {
+            //         if (vunset > 0 && unset(UNSET)) {
+            //             *idend = '\0';
+            //             zerr("%s: parameter not set", idbeg);
+            //             return NULL;
+            //         }
+            //         val = dupstring("");
+            //     }
+            //
+            // This length block returns before the general nounset guard
+            // downstream, so replicate the check here. A default/alt modifier
+            // (`-`/`+`/`:-`/`:+`) supplies a value and suppresses the error.
+            //
+            // c:2801-2807 — C's `vunset` comes from the SLOT fetchvalue does
+            // (`getindex` resolves the subscript first), NOT from a bare-name
+            // table probe: `${#nosuch[2]}`, `${#a[9]}`, `${#h[nokey]}` and
+            // `${#nosuch[@]}` are all vunset in C. `is_set` above is that same
+            // slot predicate (it is what the general guard downstream uses), so
+            // use it here too — the old bare-name test answered "set" for every
+            // subscripted shape and returned 0 instead of erroring.
+            //
+            // The one shape `is_set` does not cover is a BARE magic-assoc name
+            // (`${#builtins}`): those live behind PARTAB scanfn dispatch rather
+            // than the arrays/assocs tables, and `magic_keys` above is exactly
+            // the enumeration C's whole-hash fetchvalue would return. A magic
+            // assoc WITH a subscript is a single-key getnode dispatch, which
+            // `is_set` already answers through `partab_key_probe` — so
+            // `${#builtins[nosuchbuiltin]}` must still error.
             {
-                let r = rest.as_str();
-                let has_default_op = r.starts_with('-')
-                    || r.starts_with('+')
-                    || r.starts_with(":-")
-                    || r.starts_with(":+");
-                let var_unset = subscript.is_none()
-                    && magic_keys.is_none()
-                    && !vars_contains(&var_name)
-                    && !arrays_contains(&var_name)
-                    && !assoc_contains(&var_name);
+                // c:3189-3603 — the default/alternate/assign operators supply a
+                // value for the unset case (`=`/`:=` assign it, so the name is
+                // SET by the time the length is taken) and `?`/`:?` raise their
+                // own diagnostic; all of them reach c:3596 with `vunset` already
+                // dealt with. Same operator set as the general nounset guard
+                // downstream — `=`/`:=` were missing here, so `${#nosuch=x}`
+                // started erroring instead of answering 1.
+                let tail = rest.strip_prefix(':').unwrap_or(rest.as_str());
+                let has_default_op = matches!(
+                    tail.chars().next(),
+                    Some('-') | Some('+') | Some('=') | Some('?')
+                );
+                let var_unset =
+                    !is_set && (subscript.is_some() || magic_keys.is_none()); // c:2801-2807
                 if var_unset
                     && !has_default_op
                     && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
                 {
-                    zerr(&format!("{}: parameter not set", idbeg)); // c:3483 (idbeg, c:2649)
+                    zerr(&format!("{}: parameter not set", idbeg)); // c:3617 (idbeg, c:2649)
                     errflag_set_error();
-                    // c:3480-3484 — no ERRFLAG_HARD here; see the note
+                    // c:3614-3620 — no ERRFLAG_HARD here; see the note
                     // on the general nounset guard below. `${#var}`
                     // takes the same `vunset > 0 && unset(UNSET)` arm.
                     return (String::new(), start_pos, vec![String::new()]);
