@@ -2364,6 +2364,68 @@ impl ShellExecutor {
         crate::compsys::ported::compinit::compdef(args)
     }
 
+    /// compinit sh:549-551 — `if [[ $_i_autodump = 1 ]]; then compdump; fi`,
+    /// restricted to an explicit `compinit -d FILE`.
+    ///
+    /// Native mode keeps the rkyv/SQLite cache authoritative: nothing here is
+    /// read back on any fast path and no cache behaviour changes. What it
+    /// repairs is that a caller who NAMES a dump file got no file at all.
+    /// `-d FILE` is a request for FILE to exist — every other zsh writes it,
+    /// zshrs's own `--zsh` mode writes it, and rc files that pass `-d` go on
+    /// to read that path themselves. The DEFAULT dumpfile is
+    /// deliberately not written: with no `-d` nothing named a file, and
+    /// writing one would change native mode's out-of-the-box behaviour.
+    ///
+    /// Not called on the `-C`-sourced-a-dump path, matching sh:518's
+    /// `if [[ -z "$_i_done" ]]`: upstream re-dumps only after a `$fpath`
+    /// scan, never after loading a dump it just read.
+    ///
+    /// Failures are logged, not printed. Upstream's own failure mode is
+    /// compdump sh:24 returning 1 into a caller (sh:550) that ignores it.
+    fn compdump_explicit(&mut self, dump_file: Option<&str>, no_dump: bool) {
+        // sh:549 `[[ $_i_autodump = 1 ]]` — `-D` sets it to 0 (sh:90-92).
+        if no_dump {
+            return;
+        }
+        let Some(path) = dump_file.filter(|f| !f.is_empty()) else {
+            return;
+        };
+        // compdump sh:44-70 reads the five association arrays out of the
+        // shell it is called from, so this must run after they are published.
+        let tables = crate::compsys::ported::compinit::DumpTables {
+            comps: self.assoc("_comps").unwrap_or_default(),
+            services: self.assoc("_services").unwrap_or_default(),
+            patcomps: self.assoc("_patcomps").unwrap_or_default(),
+            postpatcomps: self.assoc("_postpatcomps").unwrap_or_default(),
+            compautos: self.assoc("_compautos").unwrap_or_default(),
+        };
+        // compdump sh:37 stamps `$ZSH_VERSION`, which is what compinit
+        // sh:494 compares a dump's header against — including a real zsh
+        // reading a dump this shell wrote.
+        let version = self
+            .scalar("ZSH_VERSION")
+            .unwrap_or_else(|| crate::ported::patchlevel::ZSH_VERSION.to_string());
+        let t0 = std::time::Instant::now();
+        match crate::compsys::ported::compdump::compdump_live(
+            &tables,
+            std::path::Path::new(path),
+            &version,
+            &self.fpath,
+        ) {
+            Ok(written) => tracing::info!(
+                dump = %written.display(),
+                comps = tables.comps.len(),
+                ms = t0.elapsed().as_millis() as u64,
+                "compinit: wrote explicit -d dump"
+            ),
+            Err(e) => tracing::warn!(
+                dump = %path,
+                error = %e,
+                "compinit: could not write explicit -d dump"
+            ),
+        }
+    }
+
     /// compinit - initialize the completion system
     /// Scans fpath for completion functions and registers them
     #[tracing::instrument(level = "info", skip(self))]
@@ -2661,7 +2723,7 @@ impl ShellExecutor {
 
         // ZSH COMPAT MODE: Use traditional zsh algorithm (fpath scan, .zcompdump, no SQLite)
         if self.zsh_compat {
-            return self.compinit_compat(quiet, no_dump, dump_file, use_cache);
+            return self.compinit_compat(quiet, no_dump, dump_file.clone(), use_cache);
         }
 
         // ZSHRS MODE: Use SQLite cache with function bodies
@@ -2775,6 +2837,11 @@ impl ShellExecutor {
                             result.compautos.into_iter().collect(),
                         );
 
+                        // sh:549-551. Upstream reaches this branch only when
+                        // `-C` found no dump to source, i.e. `_i_done` is
+                        // empty and sh:521-545 scanned `$fpath` — so it
+                        // dumps here.
+                        self.compdump_explicit(dump_file.as_deref(), no_dump);
                         return 0;
                     }
                 }
@@ -3024,6 +3091,11 @@ impl ShellExecutor {
                     comps,
                     "compinit: scan complete, _comps populated"
                 );
+                // sh:549-551 — the cold path is the `$fpath` scan upstream
+                // dumps after. Last statement of the scan branch, matching
+                // upstream's position: every completer is registered and
+                // autoloaded by now, which is what compdump sh:108 reads.
+                self.compdump_explicit(dump_file.as_deref(), no_dump);
                 0
             }
             Err(_) => {

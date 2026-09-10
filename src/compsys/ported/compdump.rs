@@ -181,16 +181,17 @@ use super::compinit::{CompFileDef, CompInitResult};
 ///   so the upstream shell function wins (`src/extensions/compile_zsh.rs:3251-3272`),
 ///   and `IS_ZSH_MODE` is the same predicate (`bins/zshrs.rs:1626`).
 ///
-/// So under `--zsh` the shell `compdump` writes the dump, and in native mode
-/// `builtin_compinit` takes the SQLite/rkyv branch and writes none. Measured
-/// with `fpath=(/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions)` and
+/// So under `--zsh` the shell `compdump` writes the dump. Native mode used
+/// to write none at all; it now writes an explicit `-d FILE` through
+/// [`compdump_live`]. Measured with
+/// `fpath=(/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions)` and
 /// `autoload -Uz compinit; compinit -u -d FILE`:
 ///
 /// ```text
-///   zsh          FILE written, `#files: 998   version: 5.9.2`
-///   zshrs --zsh  FILE written, `#files: 1026  version: 5.9.2`
-///   zshrs        FILE NOT written ($_comp_dumpfile is set correctly);
-///                a following bare `compdump` writes it, again as 5.9.2
+///   zsh          FILE written, `#files: 998   version: 5.9.2`, 52410 bytes
+///   zshrs --zsh  FILE written, `#files: 1026  version: 5.9.2`, 53257 bytes
+///   zshrs (was)  FILE NOT written ($_comp_dumpfile was set correctly)
+///   zshrs (now)  FILE written, byte-identical to the `--zsh` one
 /// ```
 ///
 /// `version:` is the discriminator — this function stamps whatever
@@ -211,6 +212,13 @@ use super::compinit::{CompFileDef, CompInitResult};
 /// upstream `compinit` calls `compdump` last, after `compdef -na` has
 /// autoloaded every completer — so a faithful `typeset +fm '_*'` read at the
 /// current call site would dump an EMPTY list.
+///
+/// [`compdump_live`] below is the entry point native mode actually uses for
+/// an explicit `compinit -d FILE`. It reads the live shell tables rather than
+/// a `CompInitResult`, and `builtin_compinit` calls it from the END of the
+/// scan branch, where upstream sh:549-551 sits — so sh:108's
+/// `typeset +fm '_*'` read is correct there and the list it writes is the
+/// upstream one, not the header-driven subset described above.
 pub fn compdump(
     result: &CompInitResult,
     dump_path: &Path,
@@ -409,6 +417,311 @@ pub(super) fn escape_zsh_string(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
+/// sh:26 — `_d_files=( ${^~fpath:/.}/^([^_]*|*~|*.zwc)(N) )`.
+///
+/// The count the header's `#files:` field carries (sh:37) and the one
+/// `compaudit:62` computes from the identical expression, which is what
+/// `compinit` sh:494 compares the header against. The negated group means
+/// the basename starts with `_`, does not end in `~`, and does not end in
+/// `.zwc`; `${…:/.}` drops a literal `.` element. Nothing is deduplicated —
+/// the expression is one glob per `$fpath` directory, so a name present in
+/// two directories counts twice.
+pub fn dump_file_count(fpath: &[PathBuf]) -> usize {
+    fpath
+        .iter()
+        .filter(|d| d.as_os_str() != ".") // sh:26 `${^~fpath:/.}`
+        .map(|dir| {
+            fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            let n = e.file_name().to_string_lossy().into_owned();
+                            n.starts_with('_') && !n.ends_with('~') && !n.ends_with(".zwc")
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+/// sh:84-94 — the `zle -lL | while read` half of the widget dump.
+///
+/// Reads the live thingy table instead of re-parsing `zle -lL`'s stdout;
+/// `scanlistwidgets` (zle_thingy.rs:949) formats the same three fields from
+/// the same table. sh:86's test is on the `zle -lL` output's word 3 (the
+/// widget name) and word 5 (the completion function) — a `zle -C` line is
+/// `zle -C <name> <.wid> <func>` — so only `WIDGET_NCOMP` widgets can match
+/// at all, and both names must start with `_`.
+///
+/// Returns the emitted lines plus sh:92's `_d_bks` (the widget names), which
+/// sh:97 filters the `bindkey` listing by.
+fn widget_dump_lines() -> (Vec<String>, Vec<String>) {
+    use crate::ported::utils::quotedzputs;
+    use crate::ported::zle::zle_h::{WidgetImpl, WIDGET_INT};
+
+    let mut triples: Vec<(String, String, String)> = Vec::new();
+    if let Ok(tab) = crate::ported::zle::zle_thingy::thingytab().lock() {
+        for (name, t) in tab.iter() {
+            let Some(w) = t.widget.as_ref() else { continue };
+            // zle_thingy.c:514-515 — `zle -l` skips internal widgets.
+            if (w.flags & WIDGET_INT) != 0 {
+                continue;
+            }
+            if let WidgetImpl::Comp { wid, func, .. } = &w.u {
+                // sh:86 `[[ ${_d_line[3]} = _* && ${_d_line[5]} = _* ]]`
+                if name.starts_with('_') && func.starts_with('_') {
+                    triples.push((name.clone(), wid.clone(), func.clone()));
+                }
+            }
+        }
+    }
+    // `zle -lL` emits in sorted order (zle_thingy.rs:1000 sorts what C's
+    // hash walk leaves in addnode order), and the `while read` loop below it
+    // preserves that order.
+    triples.sort();
+
+    let mut lines = Vec::with_capacity(triples.len() + 1);
+    let mut bks = Vec::with_capacity(triples.len());
+    let mut complist = false; // sh:83 `typeset _d_complist=`
+    for (name, wid, func) in triples {
+        // sh:87-90 — the first `.menu-select` binding needs the module that
+        // defines that widget loaded before the dump's `zle -C` line runs.
+        if !complist && wid == ".menu-select" {
+            lines.push("zmodload -i zsh/complist".to_string()); // sh:88
+            complist = true; // sh:89
+        }
+        // sh:91 `print -r - ${_d_line}` — the `zle -lL` line, verbatim.
+        lines.push(format!(
+            "zle -C {} {} {}",
+            quotedzputs(&name),
+            quotedzputs(&wid),
+            quotedzputs(&func)
+        ));
+        bks.push(name); // sh:92
+    }
+    (lines, bks)
+}
+
+/// sh:95-100 — the `bindkey | while read` half.
+///
+/// `bindkey` with no arguments lists the `main` keymap (zle_keymap.c:1094,
+/// `kmname` defaulting to the current keymap); `scankeymap` with `sort=1`
+/// walks it in the same order `bin_bindkey_list` does. sh:98 re-quotes the
+/// listing's `"…"` form as `'…'` by slicing `[2,-2]` off it, which is what
+/// `bindztrdup`'s surrounding double quotes are.
+fn bindkey_dump_lines(bks: &[String]) -> Vec<String> {
+    let Some(km) = crate::ported::zle::zle_keymap::openkeymap("main") else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    crate::ported::zle::zle_keymap::scankeymap(&km, 1, &mut |seq, bind, _str| {
+        let Some(t) = bind else { return };
+        // sh:97 `if [[ ${_d_line[2]} = (${(j.|.)~_d_bks}) ]]`
+        if !bks.iter().any(|b| b == &t.nam) {
+            return;
+        }
+        let quoted = crate::ported::zle::zle_utils::bindztrdup(seq);
+        // sh:98 `${_d_line[1][2,-2]}` — drop `bindztrdup`'s `"` wrapper.
+        let inner = quoted
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(&quoted);
+        lines.push(format!("bindkey '{}' {}", inner, t.nam));
+    });
+    lines
+}
+
+/// sh:108 — `_d_als=($^fpath/(${(o~j.|.)$(typeset +fm '_*')})(N:t))`.
+///
+/// Every currently-DEFINED function whose name starts with `_` that also has
+/// a file somewhere in `$fpath`, basenamed. No `#compdef` / `#autoload`
+/// header is required, which is why the dump's autoload list is a superset
+/// of what a header-driven `$fpath` scan can see (workers/38547, quoted at
+/// sh:105-106). `$^fpath/(a|b|c)` distributes over `$fpath` in order and
+/// each directory's glob comes back sorted, so a name present in two
+/// directories is emitted twice — reproduced here rather than deduplicated.
+///
+/// Note the absence of `:/.` here: unlike sh:26, this expression does not
+/// drop a literal `.` element from `$fpath`.
+fn autoload_dump_names(fpath: &[PathBuf]) -> Vec<String> {
+    let mut defined: Vec<String> = match crate::ported::hashtable::shfunctab_lock().read() {
+        // `typeset +fm '_*'` lists every entry of the function table,
+        // autoload stubs included (bin_typeset's `+f` prints names only).
+        Ok(tab) => tab
+            .iter()
+            .map(|(k, _)| k)
+            .filter(|k| k.starts_with('_'))
+            .cloned()
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+    defined.sort(); // sh:108 `${(o…)…}`
+    let mut out = Vec::new();
+    for dir in fpath {
+        for name in &defined {
+            if dir.join(name).is_file() {
+                out.push(name.clone()); // sh:108 `(N:t)`
+            }
+        }
+    }
+    out
+}
+
+/// Port of `Completion/compdump` (sh:1-141) reading the LIVE shell state,
+/// which is the state upstream reads: sh:44's `${(ok)_comps}`, sh:84's
+/// `zle -lL`, sh:108's `typeset +fm '_*'` and sh:135's `$_comp_assocs` are
+/// all parameters and tables of the shell that is running `compinit`, not
+/// anything a scan carries.
+///
+/// This is the difference from [`compdump`] above, which formats a
+/// `CompInitResult` and therefore has to be called with one in hand. It also
+/// fixes that function's call-ORDER constraint: upstream calls `compdump`
+/// LAST (sh:549-551, after sh:521-545's `compdef -na` has autoloaded every
+/// completer), so reading the live tables is only correct at the very end of
+/// `compinit` — which is where `builtin_compinit` calls this.
+///
+/// `tables` carries the five association arrays (sh:43-72); the caller reads
+/// them from the executor rather than this function reaching back into it.
+///
+/// Returns the path written. `Err` for sh:24's unwritable-directory bail-out
+/// (`[[ -w ${_d_file:h} ]] || return 1`) and for any I/O failure.
+pub fn compdump_live(
+    tables: &super::compinit::DumpTables,
+    dump_path: &Path,
+    zsh_version: &str,
+    fpath: &[PathBuf],
+) -> std::io::Result<PathBuf> {
+    // sh:21-22 — `${_comp_dumpfile}.$HOST.$$`, written aside and renamed
+    // (sh:138) so a concurrent reader never sees a partial dump.
+    let tmp = dump_path.with_file_name(format!(
+        "{}.{}.{}",
+        dump_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        hostname(),
+        std::process::id()
+    ));
+    // sh:24 — `[[ -w ${_d_file:h} ]] || return 1`.
+    let parent = dump_path.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(p) = parent {
+        if !p.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("{}: no such directory", p.display()),
+            ));
+        }
+    }
+
+    {
+        let mut file = BufWriter::new(File::create(&tmp)?);
+
+        // sh:37 — `print "#files: $#_d_files\tversion: $ZSH_VERSION"`.
+        writeln!(
+            file,
+            "#files: {}\tversion: {}",
+            dump_file_count(fpath),
+            zsh_version
+        )?;
+
+        // sh:43-72 — the five tables, each preceded by a blank line
+        // (`print "\n_comps=("`), keys in `${(ok)}` order, both key and
+        // value through `${(qq)}`.
+        for (name, entries) in [
+            ("_comps", &tables.comps),
+            ("_services", &tables.services),
+            ("_patcomps", &tables.patcomps),
+            ("_postpatcomps", &tables.postpatcomps),
+            ("_compautos", &tables.compautos),
+        ] {
+            writeln!(file)?;
+            writeln!(file, "{}=(", name)?;
+            let mut sorted: Vec<(&String, &String)> = entries.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (k, v) in sorted {
+                writeln!(file, "{} {}", qq(k), qq(v))?; // sh:45
+            }
+            writeln!(file, ")")?;
+        }
+
+        // sh:74 — `print >& $_d_fd`.
+        writeln!(file)?;
+
+        // sh:82-100 — widget definitions then the key sequences bound to
+        // them.
+        let (widget_lines, bks) = widget_dump_lines();
+        for line in &widget_lines {
+            writeln!(file, "{}", line)?;
+        }
+        for line in bindkey_dump_lines(&bks) {
+            writeln!(file, "{}", line)?;
+        }
+
+        // sh:102 — `print >& $_d_fd`.
+        writeln!(file)?;
+
+        // sh:112-125 — `autoload -Uz` + the names, five to a line. The
+        // counter only decrements on a name that is actually printed
+        // (sh:115's `_compautos` entries are skipped here and re-emitted
+        // with their own options at sh:128-130), and sh:117's
+        // `$#_d_als > 1` is the length of what is LEFT including the name
+        // just printed, so the last line never gets a continuation.
+        let als = autoload_dump_names(fpath);
+        write!(file, "autoload -Uz")?; // sh:113
+        let mut i = 5; // sh:112 `integer _i=5`
+        for (idx, name) in als.iter().enumerate() {
+            if tables.compautos.contains_key(name) {
+                continue; // sh:115
+            }
+            write!(file, " {}", name)?; // sh:116
+            i -= 1;
+            if i == 0 && als.len() - idx > 1 {
+                i = 5; // sh:118
+                write!(file, " \\\n           ")?; // sh:119
+            }
+        }
+        writeln!(file)?; // sh:125
+
+        // sh:127-130 — one `autoload -Uz <opts> <name>` per `_compautos`
+        // entry, in `${(ok@)}` order.
+        let mut compautos_sorted: Vec<(&String, &String)> = tables.compautos.iter().collect();
+        compautos_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, opts) in compautos_sorted {
+            writeln!(file, "autoload -Uz {} {}", opts, name)?; // sh:129
+        }
+
+        // sh:132 — `print >& $_d_fd`.
+        writeln!(file)?;
+
+        // sh:134-135. `${(qq)_comp_assocs}` inside double quotes joins the
+        // array with spaces, each element quoted; an empty/unset array
+        // yields a single `''`.
+        writeln!(file, "typeset -gUa _comp_assocs")?;
+        let assocs = crate::ported::params::getaparam("_comp_assocs").unwrap_or_default();
+        let joined = if assocs.is_empty() {
+            qq("")
+        } else {
+            assocs
+                .iter()
+                .map(|s| qq(s))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        writeln!(file, "_comp_assocs=( {} )", joined)?;
+
+        file.flush()?;
+        file.into_inner()
+            .map_err(|e| std::io::Error::other(e.to_string()))?
+            .sync_all()?;
+    }
+
+    // sh:138 — `mv -f $_d_file ${_d_file%.$HOST.$$}`.
+    fs::rename(&tmp, dump_path)?;
+    Ok(dump_path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +840,131 @@ mod tests {
             .collect();
         assert!(stray.is_empty(), "temp file leaked: {:?}", stray);
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// sh:26 `_d_files=( ${^~fpath:/.}/^([^_]*|*~|*.zwc)(N) )` — the count
+    /// the `#files:` header carries and the one `compinit` sh:494 compares
+    /// against. The negated glob group is three alternatives, so a name is
+    /// counted only when it starts with `_`, does not end in `~`, and does
+    /// not end in `.zwc`. `${…:/.}` drops a literal `.` element.
+    #[test]
+    fn dump_file_count_matches_the_sh26_glob() {
+        let dir = std::env::temp_dir().join("zshrs_compdump_filecount");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for (name, counted) in [
+            ("_counted", true),
+            ("_also_counted", true),
+            ("notunderscore", false), // `[^_]*`
+            ("_backup~", false),      // `*~`
+            ("_compiled.zwc", false), // `*.zwc`
+        ] {
+            fs::write(dir.join(name), "").unwrap();
+            let _ = counted;
+        }
+        assert_eq!(dump_file_count(&[dir.clone()]), 2);
+        // `.` is dropped before the glob, so it contributes nothing even
+        // when the process cwd is full of `_*` files.
+        assert_eq!(dump_file_count(&[PathBuf::from(".")]), 0);
+        // No dedup: one glob per directory, so the same basename in two
+        // directories counts twice.
+        assert_eq!(dump_file_count(&[dir.clone(), dir.clone()]), 4);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `compdump_live` must write what `compinit -C` reads back: the whole
+    /// point of honouring `-d FILE` is that a later shell loads it. Round
+    /// trip through the two readers `builtin_compinit`'s `-C` branch uses.
+    ///
+    /// Also pins sh:115/sh:129's split, which the `_compautos` bug made
+    /// visible: a name with autoload options must leave the main
+    /// `autoload -Uz …` list and reappear as its own
+    /// `autoload -Uz <opts> <name>` line.
+    #[test]
+    fn compdump_live_round_trips_through_the_dump_readers() {
+        use crate::compsys::ported::compinit::{
+            dump_assoc_tables, dump_autoload_names, DumpTables,
+        };
+        let dir = std::env::temp_dir().join("zshrs_compdump_live_roundtrip");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let dump = dir.join("dumpfile");
+
+        let mut tables = DumpTables::default();
+        tables.comps.insert("zzcmd".to_string(), "_zzcmd".to_string());
+        // `${(qq)}` has to survive an embedded quote (sh:40-41's "quoting
+        // hieroglyphics") — a raw `'` would end the value's quoting and
+        // shift every following word.
+        tables
+            .comps
+            .insert("it's".to_string(), "_apostrophe".to_string());
+        tables
+            .services
+            .insert("-redirect-,<,zzz".to_string(), "zzz".to_string());
+        tables
+            .patcomps
+            .insert("zz*".to_string(), "_zzpat".to_string());
+        tables
+            .postpatcomps
+            .insert("*zz".to_string(), "_zzpost".to_string());
+        tables
+            .compautos
+            .insert("_zzauto".to_string(), "+X".to_string());
+
+        compdump_live(&tables, &dump, "5.9.2", &[dir.clone()]).unwrap();
+        let text = fs::read_to_string(&dump).unwrap();
+
+        assert!(
+            text.starts_with("#files: 0\tversion: 5.9.2\n"),
+            "sh:37 header, got {:?}",
+            text.lines().next()
+        );
+        let read = dump_assoc_tables(&dump).expect("dump must parse");
+        assert_eq!(read.comps.get("zzcmd").map(String::as_str), Some("_zzcmd"));
+        assert_eq!(
+            read.comps.get("it's").map(String::as_str),
+            Some("_apostrophe"),
+            "an embedded `'` must round-trip through ${{(qq)}}"
+        );
+        assert_eq!(
+            read.services.get("-redirect-,<,zzz").map(String::as_str),
+            Some("zzz")
+        );
+        assert_eq!(read.patcomps.get("zz*").map(String::as_str), Some("_zzpat"));
+        assert_eq!(
+            read.postpatcomps.get("*zz").map(String::as_str),
+            Some("_zzpost")
+        );
+        assert_eq!(read.compautos.get("_zzauto").map(String::as_str), Some("+X"));
+
+        // sh:129 — the `_compautos` entry gets its own line, options first.
+        assert!(
+            text.contains("\nautoload -Uz +X _zzauto\n"),
+            "sh:129 line missing from:\n{}",
+            text
+        );
+        // …and sh:115 keeps it out of the bulk list, so the reader sees the
+        // name exactly once.
+        assert_eq!(
+            dump_autoload_names(&dump)
+                .iter()
+                .filter(|n| *n == "_zzauto")
+                .count(),
+            1,
+            "sh:115 must not also list _zzauto in the bulk `autoload -Uz` line"
+        );
+        // sh:134-135 — `compinit -C` reaches these two lines by sourcing the
+        // dump; without them `$_comp_assocs` is undeclared for the session.
+        assert!(text.contains("\ntypeset -gUa _comp_assocs\n"));
+        assert!(text.contains("\n_comp_assocs=( "));
+        // sh:138's rename must leave no `.HOST.PID` sibling behind.
+        let stray: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("dumpfile."))
+            .collect();
+        assert!(stray.is_empty(), "temp file leaked: {:?}", stray);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
