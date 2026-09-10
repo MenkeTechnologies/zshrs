@@ -167,6 +167,50 @@ use super::compinit::{CompFileDef, CompInitResult};
 ///                `_compautos` re-emission with their options)
 ///
 /// Returns the path actually written (the final `dump_path`).
+///
+/// # This function does not run in either shipped mode
+///
+/// Its only caller is `compinit_compat` (`src/extensions/compinit_bg.rs:140`),
+/// whose only caller is `builtin_compinit` behind `if self.zsh_compat`
+/// (`src/extensions/ext_builtins.rs:2663`). Those two conditions are mutually
+/// exclusive:
+///
+/// * `zsh_compat` is `is_zsh_mode()` (`bins/zshrs.rs:2517`), and
+/// * `compinit` is only compiled to `BUILTIN_COMPINIT` when
+///   `!IS_ZSH_MODE` — under `--zsh` the opcode arm returns `None` on purpose
+///   so the upstream shell function wins (`src/extensions/compile_zsh.rs:3251-3272`),
+///   and `IS_ZSH_MODE` is the same predicate (`bins/zshrs.rs:1626`).
+///
+/// So under `--zsh` the shell `compdump` writes the dump, and in native mode
+/// `builtin_compinit` takes the SQLite/rkyv branch and writes none. Measured
+/// with `fpath=(/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions)` and
+/// `autoload -Uz compinit; compinit -u -d FILE`:
+///
+/// ```text
+///   zsh          FILE written, `#files: 998   version: 5.9.2`
+///   zshrs --zsh  FILE written, `#files: 1026  version: 5.9.2`
+///   zshrs        FILE NOT written ($_comp_dumpfile is set correctly);
+///                a following bare `compdump` writes it, again as 5.9.2
+/// ```
+///
+/// `version:` is the discriminator — this function stamps whatever
+/// `zsh_version` it is handed, and `compinit_compat` hands it
+/// `"zshrs-0.1.0"`. Neither measured mode produced a dump carrying that
+/// string; every dump either mode produced carries `$ZSH_VERSION`, which is
+/// what the shell `compdump` writes (sh:37).
+///
+/// Consequence for the sh:108 autoload list below: it is built from
+/// `#compdef`-tagged files, where upstream uses `typeset +fm '_*'`
+/// intersected with `$fpath` basenames (so upstream also lists headerless
+/// helpers such as `_describe`). That divergence is currently unobservable —
+/// the list zshrs actually writes comes from the shell `compdump` and is a
+/// superset of zsh's (1029 names vs 1001, the extra 28 being bundle-only
+/// `_z*`/`_ai`/`_shadow`; nothing zsh lists is missing). Fixing the list here
+/// would also need the call ORDER fixed: `compinit_compat` calls this BEFORE
+/// `register_autoload_stubs` (`compinit_bg.rs:140` vs `:146`), whereas
+/// upstream `compinit` calls `compdump` last, after `compdef -na` has
+/// autoloaded every completer — so a faithful `typeset +fm '_*'` read at the
+/// current call site would dump an EMPTY list.
 pub fn compdump(
     result: &CompInitResult,
     dump_path: &Path,
