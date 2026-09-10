@@ -783,15 +783,30 @@ fn bundle_zsh_docs() {
     // `vendor/zsh/man1/zsh.1` ships as `man/man1/zsh.1`. Emitting the
     // vendored name verbatim put the pages in `~/.zshrs/man1` while
     // MANPATH named `~/.zshrs/man`, which did not exist.
-    // (vendored dir, installed path, required). `info` is the one
-    // OPTIONAL tree: it is excluded from the published crate to keep the
-    // .crate under crates.io's size ceiling, so a crates.io build has no
-    // vendor/zsh/info to read. Every other tree is required -- a missing
-    // one is a build error, never a quiet short bundle. `zshall.1` carries
-    // the same content as the Texinfo manual, which is why info is the
-    // one that gives way; a git or Homebrew build still ships it.
+    // (vendored dir, installed path, required). `info` and `man1` are the
+    // OPTIONAL trees: both are excluded from the published crate to keep
+    // the .crate under crates.io's size ceiling, so a crates.io build has
+    // neither vendor/zsh/info nor vendor/zsh/man1 to read. Every other
+    // tree is required -- a missing one is a build error, never a quiet
+    // short bundle.
+    //
+    // `info` gave way first (0.12.5x): `zshall.1` carries the same content
+    // as the Texinfo manual, so nothing was lost that the man pages did
+    // not already say. `man1` followed at 0.12.60, when the tarball hit
+    // 10.13 MiB against the 10 MiB ceiling with no required tree left to
+    // trade. It is the largest remaining removable tree (0.44 MiB
+    // compressed, vs 0.10 for `help`), and it is the one whose absence is
+    // least load-bearing: these are ZSH's pages, and a host that wants
+    // them can install zsh. zshrs's OWN pages are `man/man1/zshrs.1` and
+    // `zshrsall.1`, a separate tree that still ships. A git or Homebrew
+    // build has both trees and bundles them exactly as before, so this
+    // only affects `cargo install zshrs`.
+    //
+    // Restore `man1` to required the moment crates.io grants this crate a
+    // size-limit increase -- these pages are `run-help`'s deep content and
+    // the crate should carry them whenever it fits.
     let trees = [
-        ("man1", "man/man1", true),
+        ("man1", "man/man1", false),
         ("info", "info", false),
         // `run-help`'s help database. The vendored `run-help` defaults
         // HELPDIR to the <prefix>/share/zsh/<ver>/help of whichever zsh

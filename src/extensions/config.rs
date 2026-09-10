@@ -79,6 +79,70 @@ pub struct ZshrsConfig {
     /// `provenance` field — value-lineage engine master switch. See
     /// [`ProvenanceConfig`].
     pub provenance: ProvenanceConfig,
+    /// `ai` field — provider/model/cost defaults for the `ai` builtin.
+    /// See [`AiConfig`].
+    pub ai: AiConfig,
+}
+
+/// `[ai]` — defaults for the `ai` builtin (`src/extensions/ai.rs`).
+///
+/// Every field here is a DEFAULT: each one has a per-call flag that
+/// overrides it (`-P`, `-m`, `-t`, `-o`, `-n`), so the table only
+/// decides what an unadorned `ai "..."` does. The API key itself is
+/// never stored here — `api_key_env` names the environment variable to
+/// read, so a config file is safe to commit and safe to `cat`.
+///
+/// ```toml
+/// [ai]
+/// provider = "anthropic"
+/// model = "claude-opus-5"
+/// api_key_env = "ANTHROPIC_API_KEY"
+/// cache = true
+/// max_cost_run = 5.0
+/// max_tokens = 4096
+/// timeout = 120
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AiConfig {
+    /// `anthropic` (default), `openai`, `openai_compat` / `compat` /
+    /// `local`, `ollama`, or `gemini` / `google`.
+    pub provider: String,
+    /// Model id passed straight through to the provider.
+    pub model: String,
+    /// Name of the environment variable holding the API key. Only the
+    /// NAME lives in config; the key is read from the environment.
+    pub api_key_env: String,
+    /// In-process response cache, keyed on provider+model+system+prompt.
+    pub cache: bool,
+    /// Hard ceiling in USD on what one shell process may spend. `0`
+    /// disables the ceiling. Refusal is an error, not a prompt.
+    pub max_cost_run: f64,
+    /// Default `max_tokens` for a completion.
+    pub max_tokens: i64,
+    /// Default per-request timeout, in seconds.
+    pub timeout: i64,
+    /// Base URL for the `openai_compat` / `local` and `ollama`
+    /// providers. Empty means "use the provider's own default"
+    /// (`$STRYKE_AI_BASE_URL`-equivalent `$ZSHRS_AI_BASE_URL`, then
+    /// `http://localhost:1234/v1/chat/completions`; `$OLLAMA_HOST`,
+    /// then `http://localhost:11434`).
+    pub base_url: String,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            provider: "anthropic".to_string(),
+            model: "claude-opus-5".to_string(),
+            api_key_env: "ANTHROPIC_API_KEY".to_string(),
+            cache: true,
+            max_cost_run: 5.0,
+            max_tokens: 4096,
+            timeout: 120,
+            base_url: String::new(),
+        }
+    }
 }
 /// Compsys backend selection — Rust port vs upstream shell functions.
 ///

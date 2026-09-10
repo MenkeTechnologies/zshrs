@@ -25,6 +25,7 @@
 //! that reference `crate::aot::`, `crate::completion::`, etc. continue
 //! to resolve. Both paths point at the same file — they are aliases.
 
+pub use crate::ai;
 pub use crate::aot;
 pub use crate::arith_compiler;
 pub use crate::ast_sexp;

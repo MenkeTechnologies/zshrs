@@ -41,6 +41,16 @@ exclude = [
     # ceiling. `zshall.1` carries the same content, and a git or Homebrew
     # build still bundles it. build.rs treats this tree as optional.
     "/vendor/zsh/info/",
+    # zsh's own man pages (zsh.1, zshall.1, zshmisc.1, ... 17 files),
+    # dropped from the PUBLISHED crate only -- 0.44 MiB compressed, and
+    # 0.12.60 packaged at 10.13 MiB against the same 10 MiB ceiling with
+    # every other vendored tree marked required in build.rs. zshrs's OWN
+    # pages live in `/man/man1/` and still ship, so `man zshrs` works on a
+    # crates.io install; `man zsh` needs a git or Homebrew build (both
+    # bundle this tree unchanged) or a zsh installation. build.rs treats
+    # this tree as optional -- restore it to required if crates.io grants
+    # a size-limit increase.
+    "/vendor/zsh/man1/",
     # The differential fuzzer's source, dropped from the PUBLISHED crate
     # only -- 0.57 MiB of it, and the crate is against crates.io's 10 MiB
     # ceiling again (0.12.58 shipped at 9.99 MiB). It is a development
@@ -58,7 +68,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.59"
+version = "0.12.60"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
@@ -185,10 +195,18 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 crossterm = "0.27"
 zstd = "0.13"
-# Optional — enabled together by the `zd` feature for the bins/zd.rs
-# HTTP client. Also re-used by tests/daemon_http.rs (which always
-# enables them via dev-dependencies below).
-ureq = { version = "2", default-features = false, features = ["json"], optional = true }
+# HTTP client. NOT optional: the `ai` builtin (`src/extensions/ai.rs`)
+# reaches provider APIs over HTTPS from the DEFAULT shell build, so the
+# `tls` feature has to be on unconditionally. `tls` resolves to
+# rustls 0.23 — pinned by ureq to the `ring` backend with
+# default-features off — plus webpki-roots, i.e. a pure-Rust root
+# store: no OpenSSL, no cmake, no system certificate store, and a clean
+# cross-compile to macOS aarch64 / Linux x86_64 / Linux aarch64.
+# `bins/zd.rs` and `tests/daemon_http.rs` share the dep for their
+# plain-HTTP localhost traffic.
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+# Optional — enabled by the `zd` feature for bins/zd.rs; also re-listed
+# under dev-dependencies so tests/daemon_http.rs gets it unconditionally.
 base64 = { version = "0.22", optional = true }
 
 [features]
@@ -217,10 +235,11 @@ daemon = ["zshrs-daemon"]
 # daemon at end-of-run via IPC.
 recorder = ["daemon"]
 # `zd` — standalone HTTP CLI for zshrs-daemon. OFF by default so the
-# main `zshrs` build doesn't drag in ureq+base64. Enable via
+# main `zshrs` build doesn't drag in base64. Enable via
 # `cargo install --bin zd --features zd` (Cargo's required-features
-# mechanism enforces the gate).
-zd = ["dep:ureq", "dep:base64"]
+# mechanism enforces the gate). `ureq` left the gate when the `ai`
+# builtin made it a mandatory dep of the shell itself.
+zd = ["dep:base64"]
 # `parity-fuzz` — differential zsh/zshrs fuzzer binary. OFF by default so the
 # fuzz driver never compiles into the shipping shell. `rand` is already a
 # non-optional dep, so this is a pure build gate (required-features on the bin).
@@ -239,11 +258,10 @@ prometheus = ["metrics", "metrics-exporter-prometheus"]
 
 [dev-dependencies]
 tempfile = "3"
-# ureq + base64 are normal optional deps above (gated by `zd` feature
-# for bins/zd.rs); dev-deps re-list them so tests/daemon_http.rs gets
-# them unconditionally without forcing every `cargo test` to enable
-# the `zd` feature flag.
-ureq = { version = "2", default-features = false, features = ["json"] }
+# `ureq` is a plain (non-optional) dep above now that the `ai` builtin
+# needs it, so it is NOT re-listed here. `base64` is still gated by the
+# `zd` feature, and this dev-dep re-listing is what lets
+# tests/daemon_http.rs use it without every `cargo test` enabling `zd`.
 base64 = "0.22"
 
 [build-dependencies]
@@ -260,11 +278,11 @@ members = [".", "daemon", "znative", "runtime"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.12.59" }
+zshrs-daemon = { path = "daemon", version = "0.12.60" }
 # The root package, so the `runtime/` member can depend on it to bundle its
 # objects into libzsh.a. bp.sh rewrites every version literal in this block.
-zshrs = { path = ".", version = "0.12.59" }
-znative = { path = "znative", version = "0.12.59" }
+zshrs = { path = ".", version = "0.12.60" }
+znative = { path = "znative", version = "0.12.60" }
 
 # `cargo install zshrs` always builds with `[profile.release]`, so this profile
 # is what every crates.io user's machine has to survive — not what CI's release

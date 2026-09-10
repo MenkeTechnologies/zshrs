@@ -836,6 +836,7 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
 /// `register_builtins`: both must route a name to the same executor method.
 pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<i32> {
     let s = match name {
+        "ai" => with_executor(|e| e.builtin_ai(argv)),
         "async" => with_executor(|e| e.builtin_async(argv)),
         "await" => with_executor(|e| e.builtin_await(argv)),
         "barrier" => with_executor(|e| e.builtin_barrier(argv)),

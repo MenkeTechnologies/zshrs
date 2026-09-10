@@ -82,6 +82,11 @@ pub mod tolerant_sort;
 // continue to resolve unchanged after the physical move into
 // `src/ported/`. New code should prefer `crate::ported::<name>`.
 pub use ported::*;
+/// `ai` submodule — the `ai` builtin's provider engine (config, cost
+/// accounting, response cache, mock mode, SSE streaming). Ported from
+/// `strykelang/strykelang/ai.rs`.
+#[path = "extensions/ai.rs"]
+pub mod ai;
 /// `alias_input_frames` submodule — per-thread record of popped alias
 /// input-stack frames, restoring the reachability C's manually-indexed
 /// `instack` gives `input_hasalias`.

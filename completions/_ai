@@ -1,0 +1,72 @@
+#compdef ai
+
+# zsh completion for the `ai` builtin (src/extensions/ai.rs).
+# Mirrors the flag table in `HELP` there — keep in sync when a flag is
+# added or renamed.
+
+local -a providers config_keys
+
+providers=(
+    'anthropic:api.anthropic.com — the default'
+    'openai:api.openai.com'
+    'local:any OpenAI-compatible server ($ZSHRS_AI_BASE_URL)'
+    'compat:alias for local'
+    'openai_compat:alias for local'
+    'ollama:local Ollama daemon ($OLLAMA_HOST)'
+    'gemini:Google AI Studio ($GOOGLE_API_KEY)'
+    'google:alias for gemini'
+)
+
+config_keys=(
+    'provider:default provider'
+    'model:default model id'
+    'api_key_env:name of the env var holding the API key'
+    'base_url:base URL for the local and ollama providers'
+    'cache:in-process response cache on or off'
+    'max_cost_run:USD ceiling for this shell process (0 disables)'
+    'max_tokens:default max output tokens'
+    'timeout:default request timeout in seconds'
+)
+
+# The reporting flags each end the command line on their own, so they
+# are mutually exclusive with everything else.
+_arguments -s -S \
+    '(- *)-c[report cost and token counts for this session]' \
+    '(- *)-K[clear the response cache]' \
+    '(- *)-H[show recent call history]' \
+    '(- *)-G[show the session configuration]' \
+    '(- *)'{-h,--help}'[show usage]' \
+    '*-S[set a session default]:key=value:->configkey' \
+    '-M[install a mock response]:pattern=response:' \
+    '-m[model id]:model:(claude-opus-5 claude-sonnet-5 claude-haiku-4-5 claude-fable-5-1 claude-opus-4-8)' \
+    '-s[system prompt]:system prompt:' \
+    '-P[provider]:provider:->provider' \
+    '-t[max output tokens]:tokens:' \
+    '-T[temperature]:temperature:(0 0.2 0.5 0.7 1)' \
+    '-o[request timeout in seconds]:seconds:' \
+    '-n[bypass the response cache]' \
+    '-k[cache the system prefix (Anthropic prompt caching)]' \
+    '-b[buffer the response instead of streaming it]' \
+    '(-a)-v[assign the response to a scalar parameter]:parameter:_parameters -g "scalar*"' \
+    '(-v)-a[assign the response lines to an array parameter]:parameter:_parameters -g "array*"' \
+    '*:prompt:' && return 0
+
+case $state in
+    provider)
+        _describe -t providers 'provider' providers && return 0
+        ;;
+    configkey)
+        # Complete the key half only; the value is free-form.
+        compset -P '*='
+        if [[ $IPREFIX == *= ]]; then
+            case ${IPREFIX%=} in
+                provider) _describe -t providers 'provider' providers && return 0 ;;
+                cache)    _values 'boolean' true false && return 0 ;;
+            esac
+            return 1
+        fi
+        _describe -t config-keys 'config key' config_keys -S = && return 0
+        ;;
+esac
+
+return 1

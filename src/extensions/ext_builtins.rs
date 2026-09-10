@@ -229,6 +229,7 @@ pub fn builtin_in_builtintab(name: &str) -> bool {
 }
 
 pub const EXT_BUILTIN_NAMES: &[&str] = &[
+    "ai",
     "arch",
     "async",
     "await",
@@ -370,6 +371,40 @@ use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 impl ShellExecutor {
+    /// ai - call a language model from the shell
+    ///
+    /// The engine lives in `crate::ai` (`src/extensions/ai.rs`), which
+    /// is deliberately free of any dependency on the parameter table:
+    /// it streams to stdout on its own and returns anything destined
+    /// for a shell variable, because assignment is the one part of the
+    /// job that needs the executor.
+    ///
+    /// That split is what makes `ai -v reply "..."` a zero-fork
+    /// operation — the request and the assignment both happen inside
+    /// this process, where `$(curl ... | jq ...)` would cost two forks,
+    /// two execs and a command substitution.
+    ///
+    /// Exit status: 0 on success, 1 for a call that failed (no API key,
+    /// HTTP error, transport failure, cost ceiling), 2 for bad flags.
+    pub(crate) fn builtin_ai(&mut self, args: &[String]) -> i32 {
+        match crate::ai::run(args) {
+            Ok(crate::ai::Output::Printed) => 0,
+            Ok(crate::ai::Output::Scalar(name, text)) => {
+                self.set_scalar(name, text);
+                0
+            }
+            Ok(crate::ai::Output::Array(name, lines)) => {
+                self.set_array(name, lines);
+                0
+            }
+            Err(e) => {
+                // zsh-format, terse, stderr — no remediation hint.
+                eprintln!("zshrs: ai: {}", e.reason());
+                e.status()
+            }
+        }
+    }
+
     /// caller - display call stack (bash)
     /// caller [N] — bash builtin returning the location of the
     /// current frame N. With no arg or N=0: 'LINE FUNC' (or just
@@ -10944,6 +10979,13 @@ pub fn is_extension_builtin(name: &str) -> bool {
 /// had this problem because fusevm knows them.
 pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     "provenance",
+    // The `ai` builtin. `fusevm` carries `BUILTIN_AI` on `main` but has
+    // not released it yet, so the pinned crate still answers `None` for
+    // the name and a literal `ai` reaches `try_run_registered_builtin`
+    // through the run-time head path. Graduates off this list — and
+    // gains a `reg_ext_overridable!` opcode registration — with the next
+    // fusevm release.
+    "ai",
     // Dispatched by `fusevm_bridge`'s command-name match arms.
     "arch",
     "base64",
