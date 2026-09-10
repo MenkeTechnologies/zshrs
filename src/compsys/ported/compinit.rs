@@ -1941,7 +1941,26 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
             }
             CompFileDef::Autoload(opts) => {
                 let opts_str = opts.join(" ");
-                result.compautos.insert(file.name.clone(), opts_str);
+                // sh:541 `[[ "$_i_line" != \ # ]] && _compautos[$_i_name]="$_i_line"`.
+                // `\ #` is extendedglob (sh:75 `setopt extendedglob`) for a
+                // literal space repeated ZERO or more times, so the test is
+                // "the rest of the `#autoload` line is not empty and not all
+                // spaces" — a bare `#autoload` header registers NOTHING.
+                // sh:540's `autoload -rUz` above it is unconditional; only
+                // this line is guarded, and zshrs was running it for every
+                // `#autoload` file. Measured against the Cellar 5.9.2 tree:
+                // `$#_compautos` came back 178 where `/opt/homebrew/bin/zsh`
+                // ends at 1 (its single entry is `_call_program` → `+X`);
+                // the tree holds 177 files whose first line is `#autoload`.
+                // `${(k)_compautos}` is observable directly, and compdump
+                // branches on it twice — sh:115 drops every `_compautos`
+                // key from the bulk `autoload -Uz` list and sh:129 re-emits
+                // it with its options — so each phantom key both removed a
+                // name from that list and wrote an option-less
+                // `autoload -Uz  _name` line in its place.
+                if !opts_str.is_empty() && opts_str.bytes().any(|b| b != b' ') {
+                    result.compautos.insert(file.name.clone(), opts_str);
+                }
             }
             CompFileDef::None => {}
         }
@@ -2751,10 +2770,16 @@ pub fn compdef(args: &[String]) -> i32 {
             "autoload",
             &["-rUz".to_string(), func.clone()],
         );
-        // Track for the dump file
-        with_state(|s| {
-            s.compautos.insert(func.clone(), "-rUz".to_string());
-        });
+        // sh:333 is the WHOLE of `-a`: `[[ -n "$autol" ]] && autoload -rUz
+        // "$func"`. `_compautos` is written in exactly one place upstream,
+        // compinit sh:541's `#autoload` arm — `compdef` never touches it.
+        // zshrs additionally inserted `_compautos[$func]="-rUz"` here, which
+        // has no counterpart and is observable both ways: `${(k)_compautos}`
+        // gains a key zsh does not have, and compdump then moves that name
+        // out of its `autoload -Uz` list (sh:115) into a bogus
+        // `autoload -Uz -rUz $func` line (sh:129). Verified against
+        // /opt/homebrew/bin/zsh 5.9.2: `compdef -a _mytest mytestcmd` leaves
+        // `$#_compautos` at 1 and `${_compautos[_mytest]}` unset.
     }
 
     // sh:336-425
@@ -3409,8 +3434,19 @@ mod tests {
         assert_eq!(run(&["-an", "_git", "git"]), 0);
         let s = snapshot_compdef_state();
         assert_eq!(s.comps.get("git"), Some(&"_git".to_string()));
-        // -a triggers compautos registration
-        assert_eq!(s.compautos.get("_git"), Some(&"-rUz".to_string()));
+        // sh:333 is the WHOLE of `-a`: `autoload -rUz "$func"`. `_compautos`
+        // is written in exactly one place upstream — compinit sh:541's
+        // `#autoload` arm — and `compdef` never touches it. This assertion
+        // used to require `_compautos[_git] == "-rUz"`, pinning a zshrs
+        // fabrication. Verified against /opt/homebrew/bin/zsh 5.9.2:
+        //   compinit -u -D; print $#_compautos            → 1
+        //   compdef -a _mytest mytestcmd; print $#_compautos → 1
+        //   print ${_compautos[_mytest]-UNSET}            → UNSET
+        assert!(
+            !s.compautos.contains_key("_git"),
+            "compdef -a must not register a _compautos entry, got {:?}",
+            s.compautos
+        );
     }
 
     #[test]
@@ -3712,6 +3748,54 @@ mod tests {
             t.compautos.get("_call_program").map(String::as_str),
             Some("+X")
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// sh:541 `[[ "$_i_line" != \ # ]] && _compautos[$_i_name]="$_i_line"`.
+    ///
+    /// A bare `#autoload` header contributes NOTHING to `$_compautos`; only
+    /// one carrying options does. zshrs registered every `#autoload` file
+    /// with an empty value, so `$#_compautos` came back 178 over the Cellar
+    /// 5.9.2 tree where `/opt/homebrew/bin/zsh` ends at 1. The key set is
+    /// observable directly, and compdump branches on it twice — sh:115
+    /// drops those names from its `autoload -Uz` list and sh:129 re-emits
+    /// each with its options — so every phantom key wrote an option-less
+    /// `autoload -Uz  _name` line.
+    #[test]
+    fn bare_autoload_header_registers_no_compautos_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = std::env::temp_dir().join("zshrs_compinit_compautos_guard");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // sh:539 — all three are `#autoload` files, so all three are
+        // `autoload -rUz`'d (sh:540); only the ones with a non-blank
+        // remainder reach sh:541.
+        fs::write(dir.join("_zzbare"), "#autoload\nprint bare\n").unwrap();
+        fs::write(dir.join("_zzblank"), "#autoload   \nprint blank\n").unwrap();
+        fs::write(dir.join("_zzopts"), "#autoload +X\nprint opts\n").unwrap();
+
+        let result = compinit(&[dir.clone()]);
+        assert_eq!(
+            result.compautos.get("_zzopts").map(String::as_str),
+            Some("+X"),
+            "an `#autoload` line WITH options is what sh:541 records"
+        );
+        assert!(
+            !result.compautos.contains_key("_zzbare"),
+            "bare `#autoload` must not appear in _compautos, got {:?}",
+            result.compautos
+        );
+        assert!(
+            !result.compautos.contains_key("_zzblank"),
+            "all-blank `#autoload` remainder matches sh:541's `\\ #` and must \
+             not appear either, got {:?}",
+            result.compautos
+        );
+        // sh:540 is unconditional — all three still autoload.
+        let names = autoload_stub_names(&result);
+        for n in ["_zzbare", "_zzblank", "_zzopts"] {
+            assert!(names.contains(&n), "sh:540 autoloads every #autoload file");
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }
