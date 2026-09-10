@@ -110,6 +110,13 @@ fn compute_attr(prefix: &str) -> String {
 /// sh:18-19 — `${${(f)"$(...)"}//,/$'\n'}##*=}`: split the captured
 /// text into lines, turn every `,` into an embedded newline, then for
 /// each line keep only the text after the LAST `=`.
+///
+/// sh:17-18 splices the result into `_wanted`'s argument list UNQUOTED,
+/// which drops empty elements (an `attr=` line with no value). Measured
+/// on /opt/homebrew/bin/zsh 5.9.2:
+///
+///   f() { print -r -- "n=$#" }
+///   f ${${(f)"$(print -rn -- 'p=1\nq=\nr=3')"}##*=}   -> n=2
 fn parse_font_attr_text(text: &str) -> Vec<String> {
     text.trim_end_matches('\n')
         .lines()
@@ -120,6 +127,7 @@ fn parse_font_attr_text(text: &str) -> Vec<String> {
                 None => repl,
             }
         })
+        .filter(|s| !s.is_empty())
         .collect()
 }
 
@@ -137,7 +145,10 @@ fn font_attr_values(font: &str, attr: &str) -> Vec<String> {
 /// sh:27 — `${${(u)${(M)${(f)"$(...)"}:#	[a-z]*}%%:*}#?}`: keep only
 /// lines that start with a literal tab followed by a lowercase letter,
 /// strip the suffix from the first `:` onward, dedupe (first
-/// occurrence wins), then drop the leading tab character.
+/// occurrence wins), then drop the leading tab character. The result is
+/// spliced into `_requested`'s argument list UNQUOTED at sh:25-26, so
+/// any element left empty by the `#?` strip is dropped, same rule as
+/// `parse_font_attr_text`.
 fn parse_elements_text(text: &str) -> Vec<String> {
     let filtered: Vec<&str> = text
         .trim_end_matches('\n')
@@ -158,7 +169,8 @@ fn parse_elements_text(text: &str) -> Vec<String> {
     stripped
         .into_iter()
         .filter(|s| seen.insert(s.clone()))
-        .map(|s| s.chars().skip(1).collect())
+        .map(|s| s.chars().skip(1).collect::<String>())
+        .filter(|s| !s.is_empty())
         .collect()
 }
 
@@ -173,13 +185,27 @@ fn compute_elements(font: &str) -> Vec<String> {
     parse_elements_text(&get("REPLY"))
 }
 
-/// sh:40 — `${(us:,:)$(...)}`: split the captured text on `,`, then
-/// dedupe (first occurrence wins).
+/// sh:40 — `${(us:,:)$(...)}`: split the captured text on `,`, drop
+/// every empty field, then dedupe (first occurrence wins).
+///
+/// The empty-field removal is what an unquoted split does in zsh — it
+/// is not a trailing-separator special case. Measured on
+/// /opt/homebrew/bin/zsh 5.9.2 (and matched by zshrs' own expansion
+/// engine, so only this port diverged):
+///
+///   ${(us:,:)$(print -rn -- 'a,,b,')}  -> n=2 [a|b]
+///   ${(us:,:)$(print -rn -- ',a,b')}   -> n=2 [a|b]
+///   ${(us:,:)$(print -rn -- '')}       -> n=0
+///
+/// `fc-list -f '%{family},'` ends every record with `,`, so keeping the
+/// trailing empty added one bogus match to every `fc-list`/`fc-match`
+/// completion (800 in zsh vs 801 here).
 fn parse_fonts_text(text: &str) -> Vec<String> {
     let trimmed = text.trim_end_matches('\n');
     let mut seen = std::collections::HashSet::new();
     trimmed
         .split(',')
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .filter(|s| seen.insert(s.clone()))
         .collect()
@@ -229,7 +255,14 @@ pub fn _xft_fonts(_args: &[String]) -> i32 {
         vec![
             "-S:".to_string(),
             "-r".to_string(),
-            "-: \t\n\\-".to_string(),
+            // sh:7 spells this inside DOUBLE quotes, where zsh does not
+            // interpret `\t`/`\n`: only `$`, `` ` ``, `"`, `\` and a
+            // newline are escapable there, so the value is the nine
+            // literal bytes `-`, `:`, ` `, `\`, `t`, `\`, `n`, `\`, `-`.
+            // Measured on /opt/homebrew/bin/zsh 5.9.2:
+            //   suf=( -S: -r "-: \t\n\-" ); print -rn -- "$suf[3]" | od -c
+            //   0000000    -   :       \   t   \   n   \   -
+            "-: \\t\\n\\-".to_string(),
         ]
     } else {
         Vec::new()
@@ -419,17 +452,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_fonts_text_splits_and_dedupes() {
-        // sh:40 — `${(us:,:)...}`: split on `,`, dedupe first-occurrence.
+    fn parse_fonts_text_splits_dedupes_and_drops_empty_fields() {
+        // sh:40 — `${(us:,:)...}`: split on `,`, drop empty fields,
+        // dedupe first-occurrence. Oracle (/opt/homebrew/bin/zsh 5.9.2):
+        //   a=( ${(us:,:)$(print -rn -- 'DejaVu Sans,Arial,DejaVu Sans,')} )
+        //   -> n=2 [DejaVu Sans|Arial]
         let got = parse_fonts_text("DejaVu Sans,Arial,DejaVu Sans,");
+        assert_eq!(got, vec!["DejaVu Sans".to_string(), "Arial".to_string()]);
+        // Leading and interior empties go too — it is not a
+        // trailing-separator special case.
         assert_eq!(
-            got,
-            vec![
-                "DejaVu Sans".to_string(),
-                "Arial".to_string(),
-                "".to_string(),
-            ]
+            parse_fonts_text(",a,,b"),
+            vec!["a".to_string(), "b".to_string()]
         );
+        assert_eq!(parse_fonts_text(""), Vec::<String>::new());
     }
 
     #[test]
