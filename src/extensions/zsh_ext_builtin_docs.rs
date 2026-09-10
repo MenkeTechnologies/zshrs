@@ -12,6 +12,7 @@
 /// fall through to the hand fallback.
 pub const EXT_BUILTIN_FULL_DOCS: &[(&str, &str)] = &[
     ("add_zsh_hook", "`add-zsh-hook` builtin. Direct port of the shell function at\n`Src/Functions/Misc/add-zsh-hook`, which maintains a paramtab\narray per well-known hook (`chpwd_functions`, `precmd_functions`,\n`preexec_functions`, `periodic_functions`, `zshexit_functions`,\n`zshaddhistory_functions`). This is the SHELL-LEVEL mechanism;\nit is distinct from the C-module hookdef chain in\n`src/ported/module.rs` (`addhookfunc(name, Hookfn)` writes to\n`hooktab` and is consumed by `runhookdef` for C-module\ncallbacks like BEFORECOMPLETEHOOK / AFTERCOMPLETEHOOK)."),
+    ("ai", "ai [-m MODEL] [-s SYSTEM] [-P PROVIDER] [-t MAX_TOKENS] [-T TEMP]\n   [-o TIMEOUT] [-n] [-k] [-b] [-v VAR | -a ARRAY] [--] PROMPT...\nai -c | -K | -H | -G | -S key=value | -M pattern=response\n\nCall a language model. The response streams to stdout as it\narrives; -b buffers it instead, and -v/-a assign it to a shell\nscalar/array with no fork and no command substitution.\n\nThe prompt is read from stdin when no prompt words are given, or\nwhen the only word is `-`. Providers: anthropic (default), openai,\nlocal (any OpenAI-compatible server), ollama, gemini. Defaults come\nfrom the [ai] table in ~/.zshrs/zshrs.toml; -S changes one for the\nrest of the session. Exit 1 on a failed call, 2 on bad flags."),
     ("arch", "arch — print machine architecture name. Coreutils arch(1)\n(a synonym for `uname -m` on most systems). Useful in shell\nscripts that need a quick `[[ $(arch) == arm64 ]]` check."),
     ("async", "async { cmd } — run command on worker pool, return job ID immediately.\nOutput captured in background, retrieve with `await $id`.\n\nUsage:\n  id=$(async 'sleep 2; echo done')\n  ... do other work ...\n  result=$(await $id)"),
     ("await", "await $id — block until async job completes, print its stdout, return its status.\n\nUsage:\n  id=$(async 'expensive_command')\n  await $id    # blocks until done, prints output\n  echo $?      # exit status of the async command"),
@@ -86,6 +87,7 @@ mod tests {
         // generator scrapes: async/parallelism, daemon ipc, AOT,
         // coreutils-shim, completion glue.
         for name in [
+            "ai",
             "async",
             "await",
             "barrier",
