@@ -4133,7 +4133,10 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
             0
         }
         "zsh/compctl" => {
-            for f in ["b:compctl", "b:compcall"] {
+            // c:3295-3296 — `featuresarray` walks `bn_list` IN TABLE ORDER,
+            // and `bintab` (c:Src/Zle/compctl.c:4005-4008) is
+            // `compcall` then `compctl`.
+            for f in ["b:compcall", "b:compctl"] {
                 features.push(f.to_string());
             }
             0
@@ -4181,7 +4184,7 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
 /// MFF_ADDED / pd->pm non-null), 0 otherwise. Used by zmodload -L
 /// to report enabled-vs-disabled features per module.
 /// WARNING: param names don't match C — Rust=(_table, name, enables) vs C=(m, enables)
-pub fn enables_module(_table: &mut modulestab, name: &str, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_module(table: &mut modulestab, name: &str, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1901
     match name {
         "zsh/attr" => crate::ported::modules::attr::enables_(std::ptr::null(), enables),
@@ -4226,6 +4229,27 @@ pub fn enables_module(_table: &mut modulestab, name: &str, enables: &mut Option<
         // `zmodload zsh/complete; zmodload -ac` listed all four where
         // `zsh -f` lists none.
         "zsh/complete" => crate::ported::zle::complete::enables_(std::ptr::null(), enables),
+        // c:1901 — `enables_module` is the `m->u.linked->enables` call, and
+        // EVERY module that answers `features_module` must answer this too:
+        // `bin_zmodload_features` (c:3163-3167) bails out of the listing when
+        // `enables_module` fails, and treats a left-alone `enables` as an
+        // all-zero bitmap. These six fell to `_ => 0` below, so a LOADED
+        // zsh/zle / zsh/computil listed every builtin as `-` where zsh lists
+        // `+`.
+        "zsh/zle" => crate::ported::zle::zle_main::enables_(std::ptr::null(), enables),
+        "zsh/sched" => crate::ported::builtins::sched::enables_(std::ptr::null(), enables),
+        "zsh/rlimits" => crate::ported::builtins::rlimits::enables_(std::ptr::null(), enables),
+        // These three keep their feature list inline in `features_module`
+        // above rather than in a per-module `features_()`, so the enables
+        // half reads it back from there and hands it to the name-keyed
+        // `handlefeatures` (c:3392) that holds the per-feature ADDED bit.
+        "zsh/computil" | "zsh/zleparameter" | "zsh/compctl" => {
+            let mut feats: Vec<String> = Vec::new();
+            if features_module(table, name, &mut feats) != 0 {
+                return 1; // c:3164
+            }
+            handlefeatures(name, &feats, enables) // c:3396
+        }
         _ => 0,
     }
 }
@@ -7688,6 +7712,158 @@ pub fn getfeatureenables(
         enables.push(0);
     }
     enables // c:3340
+}
+
+/// !!! RUST-ONLY REGISTRY — NO C COUNTERPART !!!
+///
+/// The per-feature "is this feature currently ADDED" bit, keyed by module
+/// name and by the feature string `featuresarray` emits (`b:zstyle`,
+/// `p:functions`, `c:prefix`, `f:sin`, …).
+///
+/// C keeps that bit ON THE DESCRIPTOR the module ships. `getfeatureenables`
+/// (c:3330-3337) reads `b->node.flags & BINF_ADDED`, `cd->flags &
+/// CONDF_ADDED`, `mf->flags & MFF_ADDED` and `pd->pm != NULL` straight out of
+/// the module's `static struct features module_features` tables, and
+/// `setfeatureenables` (c:3358-3381) writes them back through `setbuiltins` /
+/// `setconddefs` / `setmathfuncs` / `setparamdefs`. The bit is therefore
+/// per-module storage that outlives a single `zmodload` call.
+///
+/// Most zshrs module ports carry no descriptor table — their `features_()`
+/// returns a hardcoded name list, so there is no `Builtin`/`Paramdef` struct
+/// whose flags could hold the bit. This map is that storage. Modules that DO
+/// ship real `Vec<builtin>` / `Vec<paramdef>` statics (`zsh/datetime`) keep
+/// using the descriptor path and never appear here.
+static MODULE_FEATURE_ENABLES: Lazy<Mutex<HashMap<String, std::collections::HashSet<String>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Port of `setfeatureenables()` from `Src/module.c:3354`. — C decl
+/// `setfeatureenables(Module m, Features f, int *e)`.
+///
+/// C body:
+/// ```c
+/// if (f->bn_size) { if (setbuiltins(m->node.nam, f->bn_list, f->bn_size, e)) ret = 1;
+///                   if (e) e += f->bn_size; }
+/// if (f->cd_size) { if (setconddefs(m->node.nam, f->cd_list, f->cd_size, e)) ret = 1;
+///                   if (e) e += f->cd_size; }
+/// if (f->mf_size) { if (setmathfuncs(m->node.nam, f->mf_list, f->mf_size, e)) ret = 1;
+///                   if (e) e += f->mf_size; }
+/// if (f->pd_size) { if (setparamdefs(m->node.nam, f->pd_list, f->pd_size, e)) ret = 1; }
+/// return ret;
+/// ```
+///
+/// WARNING: param names don't match C — Rust=(modname, features, e) vs
+/// C=(m, f, e). The four per-kind blocks C walks in the fixed order
+/// `bn`/`cd`/`mf`/`pd` are already flattened into that same order by
+/// `featuresarray` (c:3288-3305), so this variant walks the ONE name list
+/// and keys the enable bit off the `b:`/`c:`/`f:`/`p:` prefix instead of the
+/// block it fell in. It is the entry point for the module ports that have no
+/// `Features` descriptor tables — see `MODULE_FEATURE_ENABLES`.
+///
+/// C's contract "If e is NULL, disable everything" (c:3345) is preserved:
+/// `None` clears every bit.
+pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) -> i32 {
+    // c:3354
+    let ret = 0; // c:3356
+                 // Collect the p:-feature transitions while the ledger lock is held, and
+                 // apply them after it is dropped: `mark_module_param_used` re-enters
+                 // this fn through `ensurefeature` -> `require_module` ->
+                 // `do_module_features` -> `enables_module`, and `Mutex` is not
+                 // reentrant.
+    let mut param_on: Vec<String> = Vec::new();
+    let mut param_off: Vec<String> = Vec::new();
+    {
+        let mut tab = MODULE_FEATURE_ENABLES.lock().unwrap();
+        let set = tab.entry(modname.to_string()).or_default();
+        for (n, f) in features.iter().enumerate() {
+            // c:3345 — `If e is NULL, disable everything.`
+            let on = e
+                .map(|a| a.get(n).copied().unwrap_or(0) != 0)
+                .unwrap_or(false);
+            if on {
+                set.insert(f.clone()); // c:515 `b->node.flags |= BINF_ADDED`
+            } else {
+                set.remove(f); // c:524 `b->node.flags &= ~BINF_ADDED`
+            }
+            // c:3377 `setparamdefs` -> c:1060 `addparamdef` / c:1128
+            // `deleteparamdef`: the `p:` block installs the real special Param
+            // over the PM_AUTOLOAD stub, or removes it again. zshrs seeds every
+            // magic parameter eagerly and models PM_AUTOLOAD as vm_helper's
+            // MATERIALIZED_MODULE_PARAMS side set, so `pd->pm` is that set's
+            // membership and this is where it has to move.
+            if let Some(pname) = f.strip_prefix("p:") {
+                if on {
+                    param_on.push(pname.to_string());
+                } else {
+                    param_off.push(pname.to_string());
+                }
+            }
+        }
+    }
+    for p in &param_on {
+        crate::vm_helper::mark_module_param_used(p); // c:1069-1073 createspecialhash/createparam
+    }
+    for p in &param_off {
+        crate::vm_helper::unmark_module_param_used(p); // c:1177 unsetparam_pm
+    }
+    ret // c:3382
+}
+
+/// Port of `handlefeatures()` from `Src/module.c:3392`. — C decl
+/// `handlefeatures(Module m, Features f, int **enables)`.
+///
+/// C body:
+/// ```c
+/// if (!enables || *enables)
+///     return setfeatureenables(m, f, enables ? *enables : NULL);
+/// *enables = getfeatureenables(m, f);
+/// return 0;
+/// ```
+///
+/// WARNING: param names don't match C — Rust=(modname, features, enables) vs
+/// C=(m, f, enables). Rust's `&mut Option<Vec<i32>>` is never NULL, so C's
+/// `*enables` non-NULL is `Some` (SET the given bitmap) and NULL is `None`
+/// (GET the live one). The name-keyed variant for module ports with no
+/// `Features` descriptor tables — see `MODULE_FEATURE_ENABLES`.
+pub fn handlefeatures(
+    modname: &str,
+    features: &[String],
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    // c:3392
+    if let Some(e) = enables.as_ref() {
+        // c:3394-3395
+        let e = e.clone();
+        return setfeatureenables(modname, features, Some(&e));
+    }
+    // c:3396 — `*enables = getfeatureenables(m, f);`
+    let tab = MODULE_FEATURE_ENABLES.lock().unwrap();
+    let set = tab.get(modname);
+    *enables = Some(
+        features
+            .iter()
+            .map(|f| match f.strip_prefix("p:") {
+                // c:3337 — `*enablep++ = (pdp++)->pm ? 1 : 0;`. For a module
+                // whose `.mdd` declares the parameter autoloadable, `pd->pm`
+                // is set by `addparamdef` from EITHER the module load or
+                // `loadparamnode`'s single-feature `ensurefeature` (c:Src/
+                // params.c:568) — the second is what leaves a plain
+                // `compinit` with `+p:commands` and every sibling `-`. zshrs
+                // routes both through `mark_module_param_used`, so the
+                // materialized set is the authority here, not the ledger.
+                Some(pname)
+                    if crate::vm_helper::AUTOLOAD_PARAMS
+                        .iter()
+                        .any(|(n, owner)| *n == pname && *owner == modname) =>
+                {
+                    i32::from(!crate::vm_helper::module_param_is_autoload_stub(pname))
+                }
+                // c:3331-3335 — the BINF_ADDED / CONDF_ADDED / MFF_ADDED
+                // reads, plus any `p:` row whose module declares no autoload.
+                _ => i32::from(set.is_some_and(|s| s.contains(f))),
+            })
+            .collect(),
+    );
+    0 // c:3397
 }
 
 /// Port of `Hookdef hooktab;` from `Src/module.c:843` — the file-static

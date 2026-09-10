@@ -3551,10 +3551,13 @@ static COTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::conddef>>> = Lazy::new(|| {
 /// `[[ -prefix … ]]` installs `prefix` ALONE and leaves the other three
 /// listed by `zmodload -ac`, exactly as `zsh -f` does.
 ///
-/// The `bn_size` arm (`setbuiltins`, c:3359) is not replayed: zshrs
-/// links `compadd`/`compset` into `builtintab` statically, so there is
-/// nothing to add or remove. Its bits are still consumed off the front
-/// of `e` so the `c:` rows line up.
+/// The `bn_size` arm (`setbuiltins`, c:3359) has nothing to insert:
+/// zshrs links `compadd`/`compset` into `builtintab` statically. Its
+/// BINF_ADDED bookkeeping still has to happen, because `getfeatureenables`
+/// (c:3331) reports exactly that bit — hardcoding the two to 0 made a
+/// LOADED zsh/complete list `-b:compadd -b:compset` where `zsh -f` lists
+/// both `+`. The bit lives in the name-keyed ledger behind
+/// `module.rs::handlefeatures` (c:3392).
 #[allow(unused_variables)]
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1751
@@ -3568,7 +3571,14 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
         // c:3396 — `*enables = getfeatureenables(m, f); return 0;`
         // (c:3330-3336: 1 for a feature already added, else 0.)
         None => {
-            let mut bits = vec![0i32; BN_SIZE];
+            // c:3330-3331 — the `bn` block's BINF_ADDED bits.
+            let mut bn_bits: Option<Vec<i32>> = None;
+            crate::ported::module::handlefeatures(
+                "zsh/complete",
+                &[String::from("b:compadd"), String::from("b:compset")],
+                &mut bn_bits,
+            );
+            let mut bits = bn_bits.unwrap_or_else(|| vec![0i32; BN_SIZE]);
             for c in cotab.iter() {
                 bits.push(i32::from(
                     (c.flags & crate::ported::module::CONDF_ADDED) != 0,
@@ -3579,6 +3589,14 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
         }
         // c:3395 — `setfeatureenables(m, f, *enables)`.
         Some(e) => {
+            // c:3359 — `setbuiltins(m->node.nam, f->bn_list, f->bn_size, e)`,
+            // recorded in the name-keyed ledger (see the note above).
+            let mut bn_set = Some(e.iter().take(BN_SIZE).copied().collect::<Vec<i32>>());
+            crate::ported::module::handlefeatures(
+                "zsh/complete",
+                &[String::from("b:compadd"), String::from("b:compset")],
+                &mut bn_set,
+            );
             let cd_bits: Vec<i32> = e.iter().skip(BN_SIZE).copied().collect(); // c:3362 `e += bn_size`
             crate::ported::module::setconddefs("zsh/complete", &mut cotab, Some(&cd_bits))
             // c:3365

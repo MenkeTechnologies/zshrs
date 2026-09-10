@@ -7822,6 +7822,22 @@ fn materialize_module_param(name: &str) {
     LOADING.with(|f| f.set(false));
 }
 
+/// Undo [`mark_module_param_used`] — the `pd->pm = NULL` half of C's
+/// `deleteparamdef` (`Src/module.c:1128-1179`), reached from
+/// `setparamdefs` (`c:1176-1180`) whenever a module feature is turned OFF
+/// (`zmodload -F zsh/parameter -p:functions`, or a single-feature load
+/// leaving the siblings disabled).
+///
+/// !!! WARNING: RUST-ONLY HELPER !!!
+/// C has no separate function: `deleteparamdef` removes the node from
+/// `paramtab` outright. zshrs seeds every magic parameter eagerly and models
+/// PM_AUTOLOAD as the [`MATERIALIZED_MODULE_PARAMS`] side-set, so "removed"
+/// is "back to being an unmaterialized stub".
+pub fn unmark_module_param_used(name: &str) {
+    let set = MATERIALIZED_MODULE_PARAMS.get_or_init(|| Mutex::new(HashSet::new()));
+    set.lock().remove(name);
+}
+
 /// True when `name` is still an untouched module-parameter stub — i.e. zsh
 /// would report it as PM_AUTOLOAD ("undefined") when enumerating
 /// `$parameters`. See [`MATERIALIZED_MODULE_PARAMS`].

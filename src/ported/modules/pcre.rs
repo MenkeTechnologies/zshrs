@@ -1116,7 +1116,10 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
         "b:pcre_compile".to_string(),
         "b:pcre_match".to_string(),
         "b:pcre_study".to_string(),
-        "c:pcre-match".to_string(),
+        // c:3298-3299 — `dyncat((cdp->flags & CONDF_INFIX) ? "C:" : "c:", …)`.
+        // `cotab` (c:Src/Modules/pcre.c:505-507) is
+        // `CONDDEF("pcre-match", CONDF_INFIX, …)`, so the prefix is `C:`.
+        "C:pcre-match".to_string(),
     ]
 }
 
@@ -1124,11 +1127,11 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 4]);
-    }
-    0
+fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:3392 — the name-keyed variant in src/ported/module.rs; this
+    // module ships no `Features` descriptor tables for the per-feature
+    // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
+    crate::ported::module::handlefeatures("zsh/pcre", &featuresarray(m, f), enables)
 }
 
 // WARNING: NOT IN PCRE.C — Rust-only module-framework shim.

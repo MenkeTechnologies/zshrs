@@ -667,24 +667,20 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    // c:Src/module.c:3370-3377 — `if (!enables || !*enables)
-    // *enables = getfeatureenables(m, f); else return
-    // setfeatureenables(m, f, *enables);`. The Some arm COMMITS the
-    // bits: do_module_features' final enables_module call lands here
-    // and must register/deregister the mftab entries in the global
-    // MATHFUNCS list. Previously a no-op — `zmodload zsh/mathfunc`
-    // never populated MATHFUNCS, so getmathfunc's post-autoload
-    // re-query (module.c:1298) always missed and `zmodload -af
+    // c:3392 — the name-keyed variant in src/ported/module.rs holds the
+    // per-feature ADDED bit; this module ships no `Features` descriptor
+    // table for it to live on (see MODULE_FEATURE_ENABLES there).
+    let set = enables.as_ref().map(|e| e.to_vec());
+    let ret = crate::ported::module::handlefeatures("zsh/mathfunc", &featuresarray(m, f), enables);
+    // c:3395 — the SET arm must also COMMIT the bits through this module's
+    // own `setfeatureenables` -> c:1374 `setmathfuncs`, which registers /
+    // deregisters the mftab entries in the global MATHFUNCS list. Without
+    // it `zmodload zsh/mathfunc` never populated MATHFUNCS, so getmathfunc's
+    // post-autoload re-query (c:1298) always missed and `zmodload -af
     // zsh/mathfunc sin; $(( sin(0) ))` errored.
-    match enables.as_deref() {
-        None => {
-            *enables = Some(vec![1; 48]); // c:3372 getfeatureenables
-            0
-        }
-        Some(e) => {
-            let e_owned: Vec<i32> = e.to_vec();
-            setfeatureenables(m, f, Some(&e_owned)) // c:3375
-        }
+    match set {
+        Some(e) => setfeatureenables(m, f, Some(&e)),
+        None => ret,
     }
 }
 

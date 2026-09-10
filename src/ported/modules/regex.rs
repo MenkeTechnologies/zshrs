@@ -383,18 +383,24 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
-    vec!["c:regex-match".to_string()]
+    // c:3298-3299 — `dyncat((cdp->flags & CONDF_INFIX) ? "C:" : "c:", …)`.
+    // `cotab` (c:Src/Modules/regex.c:213-215) declares its single conddef
+    // `CONDDEF("regex-match", CONDF_INFIX, …)`, so the prefix is the
+    // UPPERCASE `C:`. Spelling it `c:` made `zmodload -F zsh/regex
+    // C:regex-match` fail with "has no such feature" and the listing report
+    // a feature name zsh never emits.
+    vec!["C:regex-match".to_string()]
 }
 
 // WARNING: NOT IN REGEX.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 1]);
-    }
-    0
+fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:3392 — the name-keyed variant in src/ported/module.rs; this
+    // module ships no `Features` descriptor tables for the per-feature
+    // ADDED bit to live on (see MODULE_FEATURE_ENABLES there).
+    crate::ported::module::handlefeatures("zsh/regex", &featuresarray(m, f), enables)
 }
 
 // WARNING: NOT IN REGEX.C — Rust-only module-framework shim.

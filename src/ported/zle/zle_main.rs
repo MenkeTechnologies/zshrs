@@ -2726,43 +2726,22 @@ pub fn setup_(m: *const module) -> i32 {
 /// from `Src/Zle/zle_main.c:2286`. Returns the module's
 /// feature-name array via `featuresarray(m, &module_features)`,
 /// matching the C body line-for-line.
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     // c:2286
     // c:2287-2288 — `*features = featuresarray(m, &module_features); return 0`.
-    // zle_main.c registers builtins ("zle", "bindkey", "vared"), conddefs
-    // (when binding-keymap conditions are loaded), and param defs. Each
-    // contributes "b:<name>" / "c:<name>" / "p:<name>" entries — matching
-    // the format C's featuresarray() emits.
+    // `module_features` (c:2234-2240) carries `bintab` ALONE — `NULL, 0` for
+    // the cd/mf/pd blocks — and `bintab` (c:2209-2213) is the three builtins
+    // below. The 25 `p:` rows a prior port added here have no counterpart:
+    // ZLE's special parameters are created by `zle`'s own setup (the
+    // `zleparams` table, c:Src/Zle/zle_params.c), NOT by the module feature
+    // interface, so `zsh -f -c "zmodload zsh/zle; zmodload -lF zsh/zle"`
+    // lists exactly `+b:bindkey +b:vared +b:zle`.
+    let _ = m;
     features.clear();
     features.extend([
-        "b:bindkey".to_string(),
-        "b:vared".to_string(),
-        "b:zle".to_string(),
-        "p:KEYMAP".to_string(),
-        "p:CONTEXT".to_string(),
-        "p:KEYS".to_string(),
-        "p:NUMERIC".to_string(),
-        "p:PREDISPLAY".to_string(),
-        "p:POSTDISPLAY".to_string(),
-        "p:BUFFER".to_string(),
-        "p:CURSOR".to_string(),
-        "p:CUTBUFFER".to_string(),
-        "p:HISTNO".to_string(),
-        "p:KILLRING".to_string(),
-        "p:LASTSEARCH".to_string(),
-        "p:LASTWIDGET".to_string(),
-        "p:MARK".to_string(),
-        "p:PREBUFFER".to_string(),
-        "p:RBUFFER".to_string(),
-        "p:LBUFFER".to_string(),
-        "p:REGION_ACTIVE".to_string(),
-        "p:UNDO_CHANGE_NO".to_string(),
-        "p:UNDO_LIMIT_NO".to_string(),
-        "p:WIDGET".to_string(),
-        "p:WIDGETSTYLE".to_string(),
-        "p:WIDGETFUNC".to_string(),
-        "p:registers".to_string(),
-        "p:ZLE_LINE_ABORTED".to_string(),
+        "b:bindkey".to_string(), // c:2210
+        "b:vared".to_string(),   // c:2211
+        "b:zle".to_string(),     // c:2212
     ]);
     0 // c:2288
 }
@@ -2770,10 +2749,15 @@ pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/zle_main.c:2294.
 #[allow(unused_variables)]
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    // c:zle_main.c enables_ — `return handlefeatures(m, &module_features, enables)`.
-    // Module-features substrate is shared across all module loaders;
-    // returns the feature-mask handler.
-    0
+    // c:2294 — `return handlefeatures(m, &module_features, enables);`.
+    // Returning 0 without touching `enables` left the caller's
+    // `unwrap_or(vec![0; …])` fallback in place, so a LOADED zsh/zle
+    // reported `-b:bindkey -b:vared -b:zle` where zsh reports all three
+    // `+`. The name-keyed handlefeatures in module.rs holds the per-feature
+    // ADDED bit for the ports with no `Features` descriptor table.
+    let mut feats: Vec<String> = Vec::new();
+    features_(m, &mut feats); // c:2287 featuresarray(m, &module_features)
+    crate::ported::module::handlefeatures("zsh/zle", &feats, enables)
 }
 
 // ===========================================================
