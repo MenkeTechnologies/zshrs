@@ -87,7 +87,10 @@
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
-use crate::compsys::ported::shared::{FnScope, LocalScope, PM_ARRAY};
+use crate::compsys::ported::shared::{
+    expansion_description_args as description_args, expansion_partition_argv,
+    right_pad_or_truncate, FnScope, LocalScope, PM_ARRAY,
+};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
 use crate::ported::utils::{errflag, noerrs_lock, quotestring};
@@ -594,7 +597,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
                 setaparam("dir", dir);
                 let _ = bin_compadd(
                     "compadd",
-                    &partition_argv(&expl, &pref, "/", "dir"),
+                    &expansion_partition_argv(&expl, Some(&pref), "/", "dir"),
                     &make_ops(),
                     0,
                 );
@@ -604,7 +607,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
                 setaparam("space", space);
                 let _ = bin_compadd(
                     "compadd",
-                    &partition_argv(&expl, &pref, " ", "space"),
+                    &expansion_partition_argv(&expl, Some(&pref), " ", "space"),
                     &make_ops(),
                     0,
                 );
@@ -614,7 +617,7 @@ pub fn _expand_with(args: &[String]) -> i32 {
                 setaparam("normal", normal);
                 let _ = bin_compadd(
                     "compadd",
-                    &partition_argv(&expl, &pref, "", "normal"),
+                    &expansion_partition_argv(&expl, Some(&pref), "", "normal"),
                     &make_ops(),
                     0,
                 );
@@ -1287,47 +1290,11 @@ fn replace_first(s: &str, pat: &str, rep: &str) -> String {
 // =====================================================================
 // sh:184-243 — emit helpers
 // =====================================================================
-
-/// sh:185-189 / sh:198-202 / sh:225-229 — the same three-way
-/// `_description` call, with `-V` (keep insertion order) unless the `sort`
-/// style asked for a menu.
-fn description_args(sort: &str, tag: &str, descr: &str, word: &str) -> Vec<String> {
-    let mut args: Vec<String> = Vec::new();
-    if sort != "menu" {
-        args.push("-V".to_string());
-    }
-    args.push(tag.to_string());
-    args.push("expl".to_string());
-    args.push(descr.to_string());
-    args.push(format!("o:{}", word));
-    args
-}
-
-/// sh:218-220 — `compadd "$expl[@]" -fW "$pref" -UQ -qS <suf> -a <array>`.
-fn partition_argv(expl: &[String], pref: &str, suf: &str, array: &str) -> Vec<String> {
-    let mut argv: Vec<String> = expl.to_vec();
-    argv.extend([
-        "-fW".to_string(),
-        pref.to_string(),
-        "-UQ".to_string(),
-        "-qS".to_string(),
-        suf.to_string(),
-        "-a".to_string(),
-        array.to_string(),
-    ]);
-    argv
-}
-
-/// `${(r:n:)s}` — pad on the right with spaces to `n` characters, or cut
-/// to the first `n` when it is already longer.
-fn right_pad_or_truncate(s: &str, n: usize) -> String {
-    let len = s.chars().count();
-    if len >= n {
-        s.chars().take(n).collect()
-    } else {
-        format!("{}{}", s, " ".repeat(n - len))
-    }
-}
+//
+// `description_args`, `partition_argv` and `right_pad_or_truncate` now live in
+// `shared`: `_user_expand` sh:87-145 is this same block with the `${opre}` /
+// `${pre}` rewrite and the `-fW $pref` removed, so a second copy here is how
+// the two would drift.
 
 // =====================================================================
 // zstyle helpers (Src/Modules/zutil.c:700-724)

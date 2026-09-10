@@ -1958,3 +1958,65 @@ pub fn caller_is_prefix() -> bool {
         .map(|n| n == "_prefix")
         .unwrap_or(false)
 }
+
+// =====================================================================
+// `_expand` / `_user_expand` emit helpers
+// =====================================================================
+//
+// `_user_expand` sh:87-145 is `_expand` sh:184-243 with the `${opre}`/`${pre}`
+// keep-prefix rewrite and the `-fW $pref` taken out — upstream duplicated the
+// block rather than factoring it. The two ports share these three pieces so
+// they cannot drift the way two copies of `caller_is_prefix` would have.
+
+/// `_expand` sh:185-189 / sh:198-202 / sh:225-229, `_user_expand`
+/// sh:88-92 / sh:101-105 / sh:127-131 — the same `_description` call, with
+/// `-V` (keep insertion order) unless the `sort` style asked for a menu.
+pub fn expansion_description_args(sort: &str, tag: &str, descr: &str, word: &str) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if sort != "menu" {
+        args.push("-V".to_string());
+    }
+    args.push(tag.to_string());
+    args.push("expl".to_string());
+    args.push(descr.to_string());
+    args.push(format!("o:{}", word));
+    args
+}
+
+/// `_expand` sh:218-220 — `compadd "$expl[@]" -fW "$pref" -UQ -qS <suf> -a <array>`.
+///
+/// `_user_expand` sh:120-122 is the same call WITHOUT `-fW "$pref"`: it never
+/// computes a `$pref`, because a user expansion is an arbitrary string and not
+/// necessarily a path that `-W` could stat against. `pref: None` is that call.
+pub fn expansion_partition_argv(
+    expl: &[String],
+    pref: Option<&str>,
+    suf: &str,
+    array: &str,
+) -> Vec<String> {
+    let mut argv: Vec<String> = expl.to_vec();
+    if let Some(pref) = pref {
+        argv.push("-fW".to_string());
+        argv.push(pref.to_string());
+    }
+    argv.extend([
+        "-UQ".to_string(),
+        "-qS".to_string(),
+        suf.to_string(),
+        "-a".to_string(),
+        array.to_string(),
+    ]);
+    argv
+}
+
+/// `${(r:n:)s}` — pad on the right with spaces to `n` characters, or cut
+/// to the first `n` when it is already longer. `_expand` sh:232,
+/// `_user_expand` sh:134.
+pub fn right_pad_or_truncate(s: &str, n: usize) -> String {
+    let len = s.chars().count();
+    if len >= n {
+        s.chars().take(n).collect()
+    } else {
+        format!("{}{}", s, " ".repeat(n - len))
+    }
+}
