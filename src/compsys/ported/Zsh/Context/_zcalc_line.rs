@@ -74,15 +74,15 @@ fn _zcalc_line_escapes() -> i32 {
 /// `zsh_math_func_`, with that prefix stripped).
 ///
 /// `$functions` is NOT `shfunctab`: it is `scanpmfunctions`
-/// (`Src/Modules/parameter.c:531`) → `scanfunctions(…, dis = 0)`, whose
-/// walk is gated at c:481
+/// (`Src/Modules/parameter.c:530`) → `scanfunctions(…, dis = 0)`, whose
+/// walk is gated at c:482
 ///
 /// ```c
 /// if (dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED)) {
 /// ```
 ///
 /// so a `disable -f`'d function is absent from `$functions` and present in
-/// `$dis_functions` (c:538-540) instead. Walking `shfunctab` sees both —
+/// `$dis_functions` (c:537-541) instead. Walking `shfunctab` sees both —
 /// `shfunc_table::iter` has no such filter, unlike its `get`
 /// (`hashtable.rs`, `gethashnode` c:239). Measured with
 /// `zsh_math_func_aaa`, `zsh_math_func_bbb` and
@@ -92,13 +92,12 @@ fn _zcalc_line_escapes() -> i32 {
 /// port diverged.
 fn user_math_functions() -> Vec<String> {
     const PFX: &str = "zsh_math_func_";
-    let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() else {
-        return Vec::new();
-    };
-    tab.iter()
-        // c:Src/Modules/parameter.c:481 — `$functions` is the NOT-DISABLED half.
-        .filter(|(_, f)| (f.node.flags & crate::ported::zsh_h::DISABLED) == 0)
-        .filter_map(|(k, _)| k.strip_prefix(PFX).map(|s| s.to_string()))
+    // The `$functions` scan itself (with the c:482 NOT-DISABLED gate) is
+    // shared with the two other call sites that spell it the same way;
+    // only the `##zsh_math_func_` strip is local to sh:55.
+    crate::compsys::ported::shared::shfunc_names_with_prefix(PFX)
+        .iter()
+        .filter_map(|k| k.strip_prefix(PFX).map(|s| s.to_string()))
         .collect()
 }
 
@@ -259,7 +258,7 @@ mod tests {
     }
 
     /// sh:53's source is `${(k)functions}`, which is the NOT-DISABLED half
-    /// of `shfunctab` (c:Src/Modules/parameter.c:481). A `disable -f`'d
+    /// of `shfunctab` (c:Src/Modules/parameter.c:482). A `disable -f`'d
     /// math helper belongs to `$dis_functions` and must not be offered —
     /// zsh completes `:function ` to the one enabled name outright, and an
     /// extra candidate here makes it ambiguous instead.
@@ -301,7 +300,7 @@ mod tests {
         );
         assert!(
             !names.iter().any(|n| n == "zzqoff"),
-            "DISABLED helper offered — `$functions` never lists it (c:481): {:?}",
+            "DISABLED helper offered — `$functions` never lists it (c:482): {:?}",
             names
         );
 

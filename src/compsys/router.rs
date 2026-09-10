@@ -456,7 +456,8 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_value" => Some(_value::_value),
         "_values" => Some(_values::_values),
         "_vars" => Some(_vars::_vars),
-        "_vcs_info_hooks" => Some(_vcs_info_hooks::_vcs_info_hooks),
+        // sh:2 takes no arguments: the hook names come from `$functions`.
+        "_vcs_info_hooks" => Some(|_: &[String]| _vcs_info_hooks::_vcs_info_hooks()),
         "_wanted" => Some(_wanted::_wanted_impl),
         "_widgets" => Some(_widgets::_widgets),
         // Zero-arg ports, adapted to the router sig via closure coercion.

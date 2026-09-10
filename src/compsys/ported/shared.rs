@@ -1566,3 +1566,38 @@ mod zstyle_bool_tests {
         del_style();
     }
 }
+
+/// Keys of `$functions` whose name starts with `prefix` — the scan behind
+/// every upstream `${(k)functions[(I)<prefix>*]}` / `${(k)functions:#^<prefix>*}`.
+///
+/// The upstream spelling matters: those subscripts go through the
+/// `zsh/parameter` module's own scan, and that scan is the NOT-DISABLED half
+/// of `shfunctab` (c:Src/Modules/parameter.c:482):
+///
+/// ```c
+/// if (dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED)) {
+/// ```
+///
+/// `$functions` is the `dis == 0` caller (`scanpmfunctions`, c:530-534);
+/// `$dis_functions` is the other one (c:537-541). A port that walks
+/// `shfunctab` itself without that test offers names `disable -f` has taken
+/// out of `$functions`, which is the whole reason this lives in one place:
+/// three call sites want this scan (`_zcalc_line`, `_email_addresses`,
+/// `_vcs_info_hooks`) and each one that hand-rolled it was one more chance
+/// to drop the filter.
+///
+/// Returns the FULL names in `shfunctab` order — the prefix strip differs
+/// per call site (`##zsh_math_func_` is literal, `#*-` cuts at the first
+/// dash) so it stays with the caller, and no sort is applied because the
+/// upstream subscripts do not sort either.
+pub fn shfunc_names_with_prefix(prefix: &str) -> Vec<String> {
+    let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() else {
+        return Vec::new();
+    };
+    tab.iter()
+        // c:Src/Modules/parameter.c:482 — `$functions` is the NOT-DISABLED half.
+        .filter(|(_, f)| (f.node.flags & crate::ported::zsh_h::DISABLED) == 0)
+        .filter(|(k, _)| k.starts_with(prefix))
+        .map(|(k, _)| k.clone())
+        .collect()
+}

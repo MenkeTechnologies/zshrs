@@ -38,7 +38,6 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
 use crate::ported::utils::getshfunc;
@@ -622,14 +621,22 @@ pub fn _email_addresses(args: &[String]) -> i32 {
     }
     // The rest of `${(k)functions[(I)_email-*]}` — plugins that only
     // exist as shell functions.
+    //
+    //   `$functions` is NOT `shfunctab`: the subscript goes through
+    //   `scanpmfunctions` (c:Src/Modules/parameter.c:530) ->
+    //   `scanfunctions(..., dis = 0)`, gated at c:482 by
+    //   `if (dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED))`, so a
+    //   `disable -f _email-foo` plugin is absent from `$functions` (it is in
+    //   `$dis_functions`, c:537-541) and must not become a tag here — the
+    //   plugin name feeds `_tags email-$plugin` and then
+    //   `_call_function _email-$plugin`, which would fail on a disabled
+    //   function. The filtered scan lives in `shared`.
     let mut fn_plugins: Vec<String> = Vec::new();
-    if let Ok(tab) = shfunctab_lock().read() {
-        for (k, _) in tab.iter() {
-            // `(I)_email-*` then `#*-`
-            if let Some(name) = k.strip_prefix("_email-") {
-                if !name.is_empty() {
-                    fn_plugins.push(name.to_string());
-                }
+    for k in crate::compsys::ported::shared::shfunc_names_with_prefix("_email-") {
+        // `(I)_email-*` then `#*-`
+        if let Some(name) = k.strip_prefix("_email-") {
+            if !name.is_empty() {
+                fn_plugins.push(name.to_string());
             }
         }
     }
