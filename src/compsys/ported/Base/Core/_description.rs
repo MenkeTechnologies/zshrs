@@ -138,6 +138,7 @@
 //! `(#b)` capture groups; our `pattern.rs::patcompile` doesn't
 //! expose them. Marked inline.
 
+use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -353,24 +354,29 @@ pub fn _description_impl(args: &[String]) -> i32 {
     // sh:21  name="$2"
     let name: String = argv.get(1).cloned().unwrap_or_default();
 
-    // sh:23-24
-    let mut format: String = lookupstyle(&ctx1, "format")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if format.is_empty() {
-        let ctx_descr = format!(":completion:{}:descriptions", curcontext);
-        format = lookupstyle(&ctx_descr, "format")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-    }
+    // sh:23-24  zstyle -s ":…:$1" format format ||
+    //               zstyle -s ":…:descriptions" format format
+    //
+    // The `||` runs on `zstyle -s`'s STATUS (`zutil.c:648` tests `vals[0]`, a
+    // pointer), not on whether the value came back non-empty. A tag-specific
+    // `format ''` is SET, so upstream stops there and the tag gets NO header —
+    // that is the documented way to suppress one tag's description while a
+    // global `:descriptions` format stays in force. Falling through on an
+    // empty value made the global format apply to the very tag that had
+    // turned it off.
+    let mut format: String = match zstyle_s(&ctx1, "format") {
+        Some(f) => f,
+        None => {
+            let ctx_descr = format!(":completion:{}:descriptions", curcontext);
+            zstyle_s(&ctx_descr, "format").unwrap_or_default()
+        }
+    };
 
-    // sh:26-30
-    let hidden_val = lookupstyle(&ctx1, "hidden")
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    // sh:26-30  zstyle -s … hidden hidden && [[ "$hidden" = (all|yes|true|1|on) ]]
+    //
+    // The test is against the JOINED value (`zutil.c:649`), so a two-element
+    // `hidden all yes` is the string `all yes` and matches nothing.
+    let hidden_val = zstyle_s(&ctx1, "hidden").unwrap_or_default();
     if matches!(hidden_val.as_str(), "all" | "yes" | "true" | "1" | "on") {
         if hidden_val == "all" {
             format.clear();
@@ -378,12 +384,13 @@ pub fn _description_impl(args: &[String]) -> i32 {
         opts = vec!["-n".to_string()];
     }
 
-    // sh:31-32
-    let matcher_style = lookupstyle(&ctx1, "matcher")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if !matcher_style.is_empty() {
+    // sh:31-32  zstyle -s … matcher match && opts=($opts -M "$match")
+    //
+    // `&&` is again the STATUS: `matcher ''` appends `-M ''` rather than
+    // being skipped. And a matcher spec written unquoted — `matcher
+    // 'm:{a-z}={A-Z}' 'r:|=*'` — is several elements that `zutil.c:649`
+    // joins into one `-M` argument.
+    if let Some(matcher_style) = zstyle_s(&ctx1, "matcher") {
         opts.push("-M".to_string());
         opts.push(matcher_style);
     }
@@ -430,12 +437,12 @@ pub fn _description_impl(args: &[String]) -> i32 {
         // sh:52-53
         let mut comp_ignore = lookupstyle(&ctx1, "ignored-patterns");
 
-        // sh:55-67  ignore-line
-        let ignore_line_val = lookupstyle(&ctx1, "ignore-line")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        if !ignore_line_val.is_empty() {
+        // sh:55-67  if zstyle -s … ignore-line hidden; then case "$hidden" in
+        //
+        // The branch is `zstyle -s`'s STATUS and the `case` runs against the
+        // JOINED value, so `ignore-line current other` is the single string
+        // `current other` and falls out of the `case` having done nothing.
+        if let Some(ignore_line_val) = zstyle_s(&ctx1, "ignore-line") {
             let words = getaparam("words").unwrap_or_default();
             let current_idx = getsparam("CURRENT")
                 .and_then(|s| s.parse::<usize>().ok())

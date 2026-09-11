@@ -56,7 +56,8 @@
 
 use super::_next_label::_next_label_impl;
 use super::_tags::_tags_impl;
-use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
+use crate::compsys::ported::shared::zstyle_s;
+use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{bin_compadd, bin_compadd_body};
@@ -257,20 +258,24 @@ pub fn _message_impl(args: &[String]) -> i32 {
         };
         (true, f)
     } else {
-        // sh:37-38
+        // sh:37-38  zstyle -s ":…:messages" format format ||
+        //               zstyle -s ":…:descriptions" format format
+        //
+        // Same shape as `_description` sh:23-24: the `||` runs on the STATUS
+        // (`zutil.c:648` tests `vals[0]`, a pointer), so `messages format ''`
+        // is SET and stops the chain — a global `:descriptions` format must
+        // NOT leak into messages that were deliberately silenced. And
+        // `zutil.c:649` joins the whole value array, so a format written
+        // unquoted keeps all of its words.
         let curcontext = getsparam("curcontext").unwrap_or_default();
         let ctx_msg = format!(":completion:{}:messages", curcontext);
-        let mut f = lookupstyle(&ctx_msg, "format")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        if f.is_empty() {
-            let ctx_desc = format!(":completion:{}:descriptions", curcontext);
-            f = lookupstyle(&ctx_desc, "format")
-                .first()
-                .cloned()
-                .unwrap_or_default();
-        }
+        let f = match zstyle_s(&ctx_msg, "format") {
+            Some(f) => f,
+            None => {
+                let ctx_desc = format!(":completion:{}:descriptions", curcontext);
+                zstyle_s(&ctx_desc, "format").unwrap_or_default()
+            }
+        };
         (false, f)
     };
 
