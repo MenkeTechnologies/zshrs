@@ -116,27 +116,25 @@ fn bang_dollar_expands_and_runs_without_hist_verify() {
 // HIST_VERIFY — the expansion must land in the buffer, unrun
 // ═══════════════════════════════════════════════════════════════════════
 
-/// zshrs gap: under `HIST_VERIFY` the expanded line is DROPPED instead
-/// of being left in the buffer for confirmation.
+/// Under `HIST_VERIFY` the expanded line is left in the buffer for
+/// confirmation, not dropped.
 ///
 ///     setopt hist_verify
 ///     print MARKONE          # runs
 ///     !!  <Return>
 ///       zsh    buffer becomes `print MARKONE`, nothing runs
-///       zshrs  buffer is EMPTY, nothing runs, the line is gone
 ///
-/// Measured both ways. By buffer: zsh `BUF=[print MARKONE] CUR=[8]`,
-/// zshrs `BUF=[] CUR=[0]`. By marker count: zsh 3 (echo, output, and
-/// the expansion sitting in the buffer), zshrs 2 (the expansion never
-/// appears at all).
+/// The mechanism spans two files: `hend` pushes the expansion onto the
+/// buffer stack (c:Src/hist.c:1562-1563 `zpushnode(bufstack, ptr)`), and
+/// the next `zleread` pops it into the line (c:Src/Zle/zle_main.c
+/// `getlinknode(bufstack)`). With either half missing the line is
+/// simply gone: `BUF=[] CUR=[0]` and a marker count of 2 instead of 3.
 ///
 /// The control is the NO_HIST_VERIFY pair above, where both shells
-/// score 4 — so history expansion itself is correct and this is the
-/// verify path specifically. `setopt hist_verify` is in this repo's
-/// daily-driver config, so the effect is that `!!` silently does
-/// nothing there.
+/// score 4 — so these isolate the verify path. `setopt hist_verify` is
+/// in this repo's daily-driver config, so a regression here means `!!`
+/// silently does nothing there.
 #[test]
-#[ignore = "zshrs gap: HIST_VERIFY drops the expanded line instead of leaving it in the buffer"]
 fn hist_verify_leaves_bang_bang_in_the_buffer() {
     assert_same_dump(
         &buffer_driver("setopt hist_verify", "!!"),
@@ -144,9 +142,8 @@ fn hist_verify_leaves_bang_bang_in_the_buffer() {
     );
 }
 
-/// Same gap for a word designator rather than a whole line.
+/// The same for a word designator rather than a whole line.
 #[test]
-#[ignore = "zshrs gap: HIST_VERIFY drops the expanded line instead of leaving it in the buffer"]
 fn hist_verify_leaves_bang_dollar_in_the_buffer() {
     assert_same_dump(
         &buffer_driver("setopt hist_verify", "print !$"),
@@ -154,13 +151,57 @@ fn hist_verify_leaves_bang_dollar_in_the_buffer() {
     );
 }
 
-/// The same divergence counted rather than dumped, so the gap is pinned
-/// on both measurements: 3 (buffered) versus 2 (vanished).
+/// The same behaviour counted rather than dumped, so it is pinned on
+/// both measurements: 3 (buffered) versus 2 (vanished).
 #[test]
-#[ignore = "zshrs gap: HIST_VERIFY drops the expanded line instead of leaving it in the buffer"]
 fn hist_verify_does_not_lose_the_expansion() {
     assert_same_dump(
         &count_driver("setopt hist_verify", "!!"),
         "HIST_VERIFY kept the expansion visible",
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// `^old^new` quick substitution, closing delimiter omitted
+// ═══════════════════════════════════════════════════════════════════════
+//
+// `^old^new` is `!!:s^old^new^` with the trailing `^` left off, which is
+// how it is normally typed. The replacement is read up to the delimiter
+// OR a newline, and the newline has to be put back (c:Src/hist.c:2606-
+// 2607 in `hdynread2`) because it is what ends the command. A reader
+// that swallows it leaves the expanded line unterminated: the lexer
+// takes the NEXT line as more of the same command, so at a prompt the
+// substitution echoes nothing, runs nothing, and the shell sits in a
+// continuation read. That is independent of HIST_VERIFY, so both
+// settings are pinned.
+
+/// Without HIST_VERIFY the substituted line runs. Counted on MARKONE:
+/// the first line's echo and output, then the substituted line's echo
+/// and output — 4. An unterminated line scores 2.
+#[test]
+fn quick_substitution_runs_without_hist_verify() {
+    assert_same_dump(
+        &count_driver("unsetopt hist_verify", "^print^print -r --"),
+        "^old^new substituted and ran with NO_HIST_VERIFY",
+    );
+}
+
+/// With HIST_VERIFY the substituted line is left in the buffer, exactly
+/// as `!!` is.
+#[test]
+fn hist_verify_leaves_quick_substitution_in_the_buffer() {
+    assert_same_dump(
+        &buffer_driver("setopt hist_verify", "^ONE^TWO"),
+        "HIST_VERIFY left the ^old^new substitution in the buffer",
+    );
+}
+
+/// `:s` shares the reader, so `!!:s/old/new` with its closing `/`
+/// omitted lost its terminator the same way.
+#[test]
+fn hist_verify_leaves_open_s_modifier_in_the_buffer() {
+    assert_same_dump(
+        &buffer_driver("setopt hist_verify", "!!:s/ONE/TWO"),
+        "HIST_VERIFY left the unclosed :s substitution in the buffer",
     );
 }

@@ -3832,39 +3832,10 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {
         Some(c) => c,
         None => return 1,
     };
-    // c:525-528 — `ptr1 = hdynread2(del); if (!ptr1) return 1;`
-    // Inline hdynread2: read until del or '\n', honoring backslash escapes.
-    let read_until = |stop: char| -> Option<String> {
-        // c:hdynread2 inline
-        let mut out = String::new();
-        loop {
-            match ingetc() {
-                None => return None,
-                Some('\n') => return Some(out),
-                Some(c) if c == stop => return Some(out),
-                // c:2597-2599 — `if (c == '\\') c = ingetc(); *ptr++ = c;`
-                // The backslash is ALWAYS dropped and only the character
-                // after it is stored — C does not care whether that
-                // character is the delimiter. The port kept the backslash
-                // for a non-delimiter follower, so every escape in the
-                // replacement survived one round too many: `:s/,/\\\\?/`
-                // stored `\\\\?` where zsh stores `\\?` (`convamps`,
-                // c:2408-2410, then halves it once more), and the recalled
-                // line globbed instead of quoting.
-                Some('\\') => {
-                    if let Some(n) = ingetc() {
-                        out.push(n); // c:2599
-                    }
-                }
-                Some(c) => out.push(c),
-            }
-        }
-    };
-    let ptr1 = match read_until(del) {
-        Some(p) => p,
-        None => return 1,
-    }; // c:525
-    let ptr2 = read_until(del).unwrap_or_default(); // c:529
+    let ptr1 = hdynread2(del); // c:524
+    // c:525-526 — `if (!ptr1) return 1;` cannot fire: hdynread2 always
+    // returns the buffer it zalloc's at c:2593, never NULL.
+    let ptr2 = hdynread2(del); // c:527
     if !ptr1.is_empty() {
         // c:530
         *hsubl.lock().unwrap() = Some(ptr1); // c:531-532 zsfree(hsubl); hsubl = ptr1
@@ -3894,28 +3865,49 @@ pub fn getsubsargs(_subline: &str, gbalp: &mut i32, cflagp: &mut i32) -> i32 {
 }
 
 /// Port of `hdynread2()` from `Src/hist.c:2590`. — C decl `hdynread2(int stop)`.
-pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
-    let mut out = String::new();
-    let mut consumed = 0usize;
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        consumed += c.len_utf8();
-        if c == stop || c == '\n' {
-            if c == '\n' {
-                consumed -= c.len_utf8();
-            }
-            return (out, consumed);
+///
+/// Read one `:s` / `^foo^bar` argument from the INPUT STREAM, up to the
+/// delimiter `stop`, a newline, or end of input.
+///
+/// A newline ends the argument but is NOT consumed: c:2606-2607 puts it
+/// back. That is what lets the closing delimiter be omitted —
+/// `^old^new<Return>` reads `new` up to the newline, and that newline
+/// still has to be in the stream afterwards to end the command. The
+/// reader `getsubsargs` used to carry inline swallowed it, so the
+/// expanded line had no terminator and the lexer read the NEXT line as
+/// more of the same command: at a prompt `^old^new` echoed nothing, ran
+/// nothing and sat in a continuation read; under `-s` it glued
+/// `print new xx` onto the following line.
+pub fn hdynread2(stop: char) -> String {
+    // c:2590
+    let mut buf = String::with_capacity(256); // c:2592-2593 bsiz = 256, zalloc
+    let mut c: Option<char>; // c:2592 int c
+    loop {
+        // c:2596 — `while ((c = ingetc()) != stop && c != '\n' && !lexstop)`.
+        // The port's `ingetc` reports lexstop as None (c:Src/input.c:322).
+        c = ingetc(); // c:2596
+        let Some(mut ch) = c else { break };
+        if ch == stop || ch == '\n' {
+            break;
         }
-        if c == '\\' {
-            if let Some(esc) = chars.next() {
-                consumed += esc.len_utf8();
-                out.push(esc);
+        if ch == '\\' {
+            // c:2597
+            // c:2598 — `c = ingetc();` The backslash is ALWAYS dropped and
+            // only the character after it is stored — C does not care
+            // whether that character is the delimiter.
+            match ingetc() {
+                Some(n) => ch = n, // c:2598
+                None => break,
             }
-        } else {
-            out.push(c);
         }
+        buf.push(ch); // c:2599 *ptr++ = c (c:2600-2603 realloc = String growth)
     }
-    (out, consumed)
+    // c:2605 *ptr = 0 — a Rust String needs no terminator.
+    if c == Some('\n') {
+        // c:2606
+        inungetc('\n'); // c:2607
+    }
+    buf // c:2608
 }
 
 /// Port of `inithist()` from `Src/hist.c:2613`. — C decl `inithist(void)`.
