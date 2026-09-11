@@ -348,8 +348,6 @@ pub struct SubshellSnapshot {
     pub paramtab_hashed_storage: crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
     /// `positional_params` field.
     pub positional_params: Vec<String>,
-    /// `env_vars` field.
-    pub env_vars: HashMap<String, String>,
     /// Values of the special parameters whose backing store is a process
     /// GLOBAL rather than the parameter table — `Src/params.c`'s `char *ifs`
     /// (IFS), `wordchars`, `home`, `histsiz`, … — each reached through a GSU

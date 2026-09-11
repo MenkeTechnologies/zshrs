@@ -16447,7 +16447,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 special_globals: special_globals_snap,
                 positional_params: exec.pparams(),
-                env_vars: env::vars().collect(),
                 // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
                 // symlink-resolved path. zsh's subshell isolation per
                 // Src/exec.c at the `entersubsh` path treats `pwd` (the
@@ -16937,21 +16936,6 @@ impl fusevm::ShellHost for ZshrsHost {
                     *m = snap.paramtab_hashed_storage;
                 }
                 exec.set_pparams(snap.positional_params);
-                // Restore the OS env to its pre-subshell state.
-                // Removes any `export` writes the subshell made, and
-                // restores any vars the subshell unset. Without this
-                // `(export y=sub)` would leak `y` to the parent shell.
-                let current: HashMap<String, String> = env::vars().collect();
-                for k in current.keys() {
-                    if !snap.env_vars.contains_key(k) {
-                        env::remove_var(k);
-                    }
-                }
-                for (k, v) in &snap.env_vars {
-                    if current.get(k) != Some(v) {
-                        env::set_var(k, v);
-                    }
-                }
                 if let Some(cwd) = snap.cwd {
                     let _ = env::set_current_dir(&cwd);
                     // Resync $PWD env so a parent `pwd` doesn't read
@@ -16976,9 +16960,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 // subshells so child option changes die with the
                 // child; we run in-process and must restore.
                 crate::ported::options::opt_state_restore(snap.opts);
-                // c:Src/exec.c:2880 — fork() means alias mutations in a
-                // subshell die with the child. Bug #209 in docs/BUGS.md.
-                // See SubshTables.
+                // c:Src/exec.c:2880 — fork() means alias, hash-table and
+                // `environ` writes in a subshell die with the child: the
+                // parent never sees `(alias x=y)` (Bug #209 in docs/BUGS.md)
+                // or `(export y=sub)`. See SubshTables.
                 snap.tables.restore();
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. Restore parent's function

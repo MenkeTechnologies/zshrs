@@ -13143,6 +13143,111 @@ pub fn delenv(name: &str) {
     }
 }
 
+/// The process environment as it stood on entry to an in-process
+/// subshell, for the subshell's exit to put back.
+///
+/// !!! WARNING: RUST-ONLY TYPE — C forks, and the child's `environ` dies
+/// with it !!!
+/// Every export writes the live `environ` array: `zputenv` (c:5320) is
+/// `setenv(3)`, `delenvvalue` (c:5537) / `delenv` (c:5558) are
+/// `unsetenv(3)`. In C those writes happen in the child `getoutput`
+/// forked (`Src/exec.c:4816`), so `x=$(export v=1); env` never shows `v`.
+/// zshrs runs `$( … )` in process, and the paramtab snapshot cannot undo
+/// a `setenv`: the export reached every later child of the parent.
+///
+/// The image is taken rather than a journal of writes because `setenv`
+/// is reached from far more places than the three above (`cd` exporting
+/// `PWD`, `allexport`, module code, locale handling). One contiguous copy
+/// of the bytes costs a single allocation, sized by the environment and
+/// not by the number of variables; `restore` does nothing further unless
+/// the body actually changed the environment.
+#[allow(non_camel_case_types)]
+pub struct environ_image {
+    /// Every `NAME=VALUE` string of `environ`, in array order, each
+    /// followed by a NUL.
+    bytes: Vec<u8>,
+}
+
+impl environ_image {
+    /// Visit every entry of the live `environ` array, in order — the
+    /// same array `zexecve` hands to `execve(2)` (`crate::ported::exec`).
+    /// The bytes are only valid until the next `setenv`/`unsetenv`, so
+    /// they are lent to `f` rather than returned.
+    fn walk_live(mut f: impl FnMut(&[u8])) {
+        extern "C" {
+            static environ: *const *const libc::c_char;
+        }
+        unsafe {
+            let mut p = environ;
+            while !p.is_null() && !(*p).is_null() {
+                f(std::ffi::CStr::from_ptr(*p).to_bytes());
+                p = p.add(1);
+            }
+        }
+    }
+
+    /// Split `NAME=VALUE` at its first `=`. An entry without one, or with
+    /// an empty name, is not a variable `setenv` could have made.
+    fn split(entry: &[u8]) -> Option<(&[u8], &[u8])> {
+        let eq = entry.iter().position(|b| *b == b'=')?;
+        (eq > 0).then(|| (&entry[..eq], &entry[eq + 1..]))
+    }
+
+    /// Copy the live environment: one buffer, no per-variable allocation.
+    pub fn save() -> Self {
+        let mut bytes = Vec::new();
+        Self::walk_live(|entry| {
+            bytes.extend_from_slice(entry);
+            bytes.push(0);
+        });
+        environ_image { bytes }
+    }
+
+    /// Make the live environment equal the image again — same entries,
+    /// same order (`env` lists them in array order).
+    pub fn restore(self) {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let saved: Vec<&[u8]> = self
+            .bytes
+            .split(|b| *b == 0)
+            .filter(|e| !e.is_empty())
+            .collect();
+        let mut live: Vec<Vec<u8>> = Vec::new();
+        Self::walk_live(|entry| live.push(entry.to_vec()));
+        if live.len() == saved.len() && live.iter().zip(&saved).all(|(l, s)| l == s) {
+            return; // the body left the environment alone
+        }
+        let set = |entry: &[u8]| {
+            if let Some((name, value)) = Self::split(entry) {
+                env::set_var(OsStr::from_bytes(name), OsStr::from_bytes(value));
+            }
+        };
+        let name_of = |e: &[u8]| Self::split(e).map(|(n, _)| n.to_vec());
+        let same_names = live.len() == saved.len()
+            && live.iter().zip(&saved).all(|(l, s)| name_of(l) == name_of(s));
+        if same_names {
+            // Only values changed: rewrite those in place, order intact.
+            for (l, s) in live.iter().zip(&saved) {
+                if l.as_slice() != *s {
+                    set(s);
+                }
+            }
+            return;
+        }
+        // A variable was added or removed. `setenv` appends, so the saved
+        // order only comes back by clearing and re-adding in that order.
+        for entry in &live {
+            if let Some((name, _)) = Self::split(entry) {
+                env::remove_var(OsStr::from_bytes(name));
+            }
+        }
+        for entry in saved {
+            set(entry);
+        }
+    }
+}
+
 /// Port of `convbase_ptr()` from `Src/params.c:5586`. C body
 /// converts `v` into base `base` (negative `base` suppresses the
 /// "0x"/"N#" discriminator), writing the digits into `s` and
@@ -16570,6 +16675,43 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::Pound;
     use crate::zsh_h::hashnode;
+
+    /// `environ_image` hands back exactly the environment it took: an
+    /// added variable goes, a removed one returns AT ITS OLD POSITION
+    /// (`env` prints the array in order), and a changed value is
+    /// rewritten. The fork this stands in for leaves all three untouched.
+    #[test]
+    fn environ_image_restores_values_membership_and_order() {
+        let _g = crate::test_util::global_state_lock();
+        let names = ["ZQ_ENVIMG_A", "ZQ_ENVIMG_B", "ZQ_ENVIMG_C"];
+        for n in names {
+            env::set_var(n, "outer");
+        }
+        let position = |name: &str| env::vars_os().position(|(k, _)| k == name);
+        let before: Vec<_> = names.iter().map(|n| position(n)).collect();
+
+        let img = environ_image::save();
+        env::set_var("ZQ_ENVIMG_B", "inner-and-longer");
+        env::remove_var("ZQ_ENVIMG_A");
+        env::set_var("ZQ_ENVIMG_NEW", "inner");
+        img.restore();
+
+        for n in names {
+            assert_eq!(env::var(n).as_deref(), Ok("outer"), "{n}");
+        }
+        assert!(env::var_os("ZQ_ENVIMG_NEW").is_none());
+        let after: Vec<_> = names.iter().map(|n| position(n)).collect();
+        assert_eq!(before, after, "environ order changed");
+
+        // A body that changed nothing leaves the array alone.
+        let img = environ_image::save();
+        img.restore();
+        let again: Vec<_> = names.iter().map(|n| position(n)).collect();
+        assert_eq!(before, again);
+        for n in names {
+            env::remove_var(n);
+        }
+    }
 
     /// `setscope_base` pushes the param name onto `SCOPEREFS[base]`
     /// when `base > pm.level` (c:6440). Grows the SCOPEREFS Vec as

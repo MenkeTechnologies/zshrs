@@ -4989,8 +4989,8 @@ impl Drop for SubshStateGuard {
     }
 }
 
-/// The hash tables a forked subshell owns a private copy of, taken on
-/// entry to an in-process subshell and put back on exit.
+/// The hash tables (and the environment) a forked subshell owns a private
+/// copy of, taken on entry to an in-process subshell and put back on exit.
 ///
 /// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
 /// `getoutput` (`Src/exec.c:4816`) and `( … )` (`c:2880`) run the body in
@@ -5004,6 +5004,8 @@ impl Drop for SubshStateGuard {
 ///
 /// Every table is copy-on-write: `save` is a refcount bump per table,
 /// and only a body that actually writes a table pays for copying it.
+/// The environment is one byte copy (`environ_image`), sized by the
+/// environment rather than by any table.
 pub struct SubshTables {
     /// `aliastab` (`Src/hashtable.c:1177`) — `alias`, `unalias`,
     /// `disable -a`, `aliases[x]=…`.
@@ -5023,10 +5025,15 @@ pub struct SubshTables {
     /// `pathchecked` (`Src/hashtable.c:595`) — how far a fill has walked
     /// `$path`; it describes `cmdnamtab`, so it travels with it.
     pathchecked: usize,
+    /// `environ` — every `export`, `unset` of an exported name, `cd`
+    /// (`PWD`/`OLDPWD`) and `allexport` assignment writes it with
+    /// `setenv`/`unsetenv` (`Src/params.c:5320`, `c:5537`).
+    environ: crate::ported::params::environ_image,
 }
 
 impl SubshTables {
-    /// Take the parent's tables. O(1) per table.
+    /// Take the parent's tables. O(1) per table; see `environ_image` for
+    /// the environment.
     pub fn save() -> Self {
         SubshTables {
             aliastab: crate::ported::hashtable::aliastab_lock()
@@ -5047,6 +5054,7 @@ impl SubshTables {
                 .map(|t| t.snapshot())
                 .unwrap_or_default(),
             pathchecked: pathchecked.load(Ordering::SeqCst),
+            environ: crate::ported::params::environ_image::save(),
         }
     }
 
@@ -5067,6 +5075,7 @@ impl SubshTables {
             t.restore(self.cmdnamtab);
         }
         pathchecked.store(self.pathchecked, Ordering::SeqCst);
+        self.environ.restore();
     }
 }
 
