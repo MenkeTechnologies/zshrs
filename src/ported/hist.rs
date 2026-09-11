@@ -4466,7 +4466,21 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
     };
 
     let mut ret: i32 = 0;
-    if let Some(mut out) = out {
+    if let Some(out) = out {
+        // c:2965/2969/2998 — C hands the descriptor to `fdopen(..., "a"/"w")`,
+        // so `out` is a stdio `FILE *`. Every `fprintf`/`fputc` in the
+        // c:3030-3074 write loop therefore lands in stdio's buffer and reaches
+        // the kernel one BUFSIZ block at a time; C's only explicit boundaries
+        // are the `fflush` at c:3077 and the `fclose` at c:3086.
+        //
+        // The port wrote each entry straight to the `File`, i.e. one `write(2)`
+        // per history line. With `share_history` (or `inc_append_history`)
+        // `hend` calls this on EVERY accepted command (c:1193, c:1639), so a
+        // large `$HISTFILE` turned each prompt into one syscall per saved line.
+        // Profiled with a 100k-entry ring, `repeat 40 { fc -AI }`:
+        // `savehistfile` was 10447 samples, of which 8826 — 85% — were inside
+        // `write(2)` itself. `BufWriter` is the stdio buffer C already had.
+        let mut out = std::io::BufWriter::new(out);
         crate::ported::mem::pushheap(); // c:3021
 
         // c:3018-3027 — compile the $HISTORY_IGNORE pattern once.
@@ -4592,7 +4606,7 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
         // c:3075-3085 — final size/mtime + last-written text (USE_OPTIONS).
         if ret >= 0 && start.is_some() && writeflags & HFILE_USE_OPTIONS as i32 != 0 {
             let _ = out.flush(); // c:3077 fflush(out)
-            if let Ok(md) = out.metadata() {
+            if let Ok(md) = out.get_ref().metadata() {
                 let mut lh = lasthist.lock().unwrap();
                 lh.fsiz = md.len() as i64; // c:3079
                 lh.mtim = md.mtime(); // c:3080
@@ -4600,7 +4614,16 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
             lasthist.lock().unwrap().text = start.clone(); // c:3082-3083
         }
 
-        // c:3086 — fclose(out).
+        // c:3086 — fclose(out). C caught a failed write at the `fputc` that hit
+        // it (c:3065/3072); buffering defers the error to the flush, so surface
+        // it here instead, and only when the loop itself had not already
+        // failed. `BufWriter`'s own drop-flush discards errors, so the flush is
+        // explicit.
+        if let Err(_e) = out.flush() {
+            if ret >= 0 {
+                ret = -1;
+            }
+        }
         drop(out);
 
         if ret >= 0 {

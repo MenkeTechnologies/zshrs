@@ -15996,3 +15996,99 @@ fn parameters_values_skip_PM_UNSET_nodes() {
         "stderr: {err}"
     );
 }
+
+/// c:Src/hist.c:2965/2969/2998 — `savehistfile` writes through a stdio
+/// `FILE *` obtained from `fdopen`, so the `fprintf`/`fputc` calls in the
+/// c:3030-3074 loop accumulate in stdio's buffer and reach the kernel one
+/// block at a time. C's only explicit boundaries are `fflush` (c:3077) and
+/// `fclose` (c:3086).
+///
+/// The port wrote each history line straight to the `File`, which is one
+/// `write(2)` per saved entry — Θ(entries) syscalls where C issues
+/// Θ(bytes / BUFSIZ). That is not a background cost: with `share_history`
+/// or `inc_append_history`, `hend` saves on EVERY accepted command
+/// (c:1193, c:1639), so the whole history was re-emitted a line at a time
+/// at each prompt. Profiling a 100k-entry ring under `repeat 40 { fc -AI }`
+/// put 8826 of `savehistfile`'s 10447 samples — 85% — inside `write(2)`.
+///
+/// The assertion is on the shell's own SYSTEM CPU time, read back with the
+/// `times` builtin, not on wall clock. Kernel time is what a syscall per
+/// entry actually costs, and unlike elapsed time it does not move with the
+/// load on the machine running the suite — the same workload measured here
+/// at load average 36 took 11.05 s of wall clock for 1.02 s of CPU, so a
+/// wall-clock bound would flake by design.
+///
+/// The workload is shaped to let the syscall count, not the formatting,
+/// decide: 40 000 one-to-five-character entries with `extended_history`
+/// off, so each entry renders in a few bytes but still costs one write per
+/// entry under the regression. Measured on the same binary either side of
+/// the one-line change, `repeat 30 { fc -W }` over that ring:
+///
+///     unbuffered   shell sys 7.12 s
+///     buffered     shell sys 0.11 s
+///
+/// The 1.5 s bound therefore passes with ~14x headroom and a regression
+/// overruns it ~5x. Validated in both directions before being committed.
+///
+/// The line count is asserted too: buffering must change how often the
+/// bytes are handed to the kernel, never which bytes.
+#[test]
+fn savehistfile_buffers_its_writes_instead_of_one_syscall_per_entry() {
+    let dir = tempdir_for_test();
+    let hist = format!("{dir}/hist");
+    let out = format!("{dir}/out");
+    // `-i` is required: savehistfile returns immediately when INTERACTIVE
+    // is off (c:2931), so a plain `-c` script never reaches the write loop.
+    let code = format!(
+        r#"print -rl -- {{1..40000}} > {hist}
+           HISTFILE={hist}
+           HISTSIZE=999999999
+           SAVEHIST=99999999
+           fc -R $HISTFILE
+           print -r -- ring=${{#history}}
+           repeat 30 {{ fc -W {out} }}
+           print -r -- written=$(wc -l < {out})
+           times"#
+    );
+    // Deliberately NOT `run_zshrs_with_args`: its 5 s spawn timeout is a
+    // wall-clock bound, and this test must survive a loaded box. The
+    // verdict comes from `times` instead.
+    let proc_out = Command::new(zshrs_bin())
+        .args(["-f", "-i", "-c", &code])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to spawn zshrs");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&proc_out.stdout).to_string();
+    let err = String::from_utf8_lossy(&proc_out.stderr).to_string();
+    assert_eq!(proc_out.status.code().unwrap_or(-1), 0, "stderr: {err}");
+
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("ring=40000"), "stderr: {err}");
+    assert_eq!(
+        lines.next().map(str::trim),
+        Some("written=40000"),
+        "the saved file must still hold every entry; stdout: {stdout:?} stderr: {err}"
+    );
+
+    // `times` line 1 is the shell's own "<user> <sys>", each `<m>m<s>s`.
+    let times = lines.next().unwrap_or_default();
+    let sys_field = times
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_else(|| panic!("no sys field in times output {times:?}; stdout: {stdout:?}"));
+    let (mins, secs) = sys_field
+        .trim_end_matches('s')
+        .split_once('m')
+        .unwrap_or_else(|| panic!("unparsable times field {sys_field:?}"));
+    let sys: f64 = mins.parse::<f64>().unwrap() * 60.0 + secs.parse::<f64>().unwrap();
+    assert!(
+        sys < 1.5,
+        "savehistfile burnt {sys:.2}s of KERNEL time writing 30 x 40000 entries. \
+         C buffers through stdio and spends ~0.1s here; one write(2) per entry \
+         spends ~7s. The BufWriter around `out` in savehistfile has regressed. \
+         times: {times:?}"
+    );
+}
