@@ -145,6 +145,7 @@ mod time_keyword_parity;
 mod trap_parity;
 mod typeset_parity;
 mod umask_parity;
+mod unbraced_slice_parity;
 mod unset_deep_parity;
 mod whence_parity;
 mod wordcode_parity;

@@ -24325,6 +24325,9 @@ pub fn paramsubst(
         // captured from getarg's array-shaped result so the unquoted splat below
         // can emit one word per match. c:Src/params.c:1724-1734.
         let mut flag_multi_parts: Option<Vec<String>> = None;
+        // The evaluated `[lo,hi]` bounds of an array slice, kept for the
+        // unquoted splat below so it does not evaluate them a second time.
+        let mut range_bounds: Option<(i64, i64)> = None;
         let value = if let Some(sub) = subscript_str.as_deref() {
             // c:1625
             // Array / assoc element lookup. Port of zsh's
@@ -24453,8 +24456,13 @@ pub fn paramsubst(
                     // edge cases right (start > len, start < -len,
                     // resolve(0)→1, etc.) per the bug-for-bug
                     // port of getarrvalue's range arm.
-                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
-                    let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
+                    // c:Src/params.c:1618 + c:2120-2133 — each bound is its own
+                    // `getarg`, i.e. `mathevalarg`: `$a[n,$#a]` and
+                    // `$a[i+1,-1]` are arithmetic. A `parse()` with a default
+                    // read any non-literal bound as 1 / the length.
+                    let lo = crate::ported::math::mathevalarg(lo); // c:1618
+                    let hi = crate::ported::math::mathevalarg(hi); // c:2133
+                    range_bounds = Some((lo, hi));
                     getarrvalue(&arr, lo, hi).join(" ") // c:1625
                 } else if let Some(idx) = sub.parse::<i32>().ok().or_else(|| {
                     // c:Src/params.c:1419-1432 — getarg routes a
@@ -24645,8 +24653,9 @@ pub fn paramsubst(
                     // Reuse the canonical slice helper for
                     // scalar substring — chars_v is treated as a
                     // 1-element-per-char "array".
-                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
-                    let hi: i64 = hi.trim().parse().unwrap_or(chars_v.len() as i64); // c:1625
+                    // c:Src/params.c:1618 + c:2133 — arithmetic bounds, as above.
+                    let lo = crate::ported::math::mathevalarg(lo); // c:1618
+                    let hi = crate::ported::math::mathevalarg(hi); // c:2133
                     let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
                     getarrvalue(&chars_arr, lo, hi).concat()
                 // c:1625
@@ -24828,10 +24837,18 @@ pub fn paramsubst(
             // splat uses the slice elements (not the full arr).
             let slice_arr: Option<Vec<String>> = if splat_range {
                 if let Some(sub) = subscript_str.as_deref() {
-                    if let Some((lo, hi)) = sub.split_once(',') {
+                    if let Some((lo_s, hi_s)) = sub.split_once(',') {
                         // c:3950
-                        let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
-                        let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                        // The bounds were already evaluated by the array arm
+                        // above; evaluating them again would run a side
+                        // effect (`$a[i++,2]`) twice. C evaluates once, in
+                        // getindex (c:Src/params.c:2120-2133).
+                        let (lo, hi) = range_bounds.unwrap_or_else(|| {
+                            (
+                                crate::ported::math::mathevalarg(lo_s), // c:1618
+                                crate::ported::math::mathevalarg(hi_s), // c:2133
+                            )
+                        });
                                                                       // c:Src/params.c — KSH_ARRAYS shifts positive
                                                                       // 0-based slice bounds to 1-based for getarrvalue.
                                                                       // Sibling of #610-#613. Bug #614.
@@ -24926,7 +24943,23 @@ pub fn paramsubst(
                     nodes.push(s); // c:3950
                 } // c:3950
                 let first = nodes.first().cloned().unwrap_or_default(); // c:3950
-                return (first, prefix.chars().count(), nodes); // c:3950
+                // Where the caller resumes scanning. c:Src/subst.c:323-329 —
+                // paramsubst hands stringsubst back the LAST node with `str` left
+                // just past the value, i.e. "the suffix offset within the last
+                // node": that node is `last element + suffix`,
+                // so the suffix starts after the element. A single node is
+                // `prefix + element + suffix`. This returned the prefix
+                // length in both cases, which pointed the scan back at the
+                // START of the last element and expanded its value a second
+                // time: `w=(a 'b$c'); print $w[1,$#w]` printed `a b`, and an
+                // element holding `${#${(f)"…` aborted with "bad substitution".
+                // The braced arm has always returned the suffix offset.
+                let resume = match arr.len() {
+                    0 => prefix.chars().count(),
+                    1 => prefix.chars().count() + arr[0].chars().count(),
+                    _ => arr[arr.len() - 1].chars().count(),
+                };
+                return (first, resume, nodes); // c:3950
             } // c:3950
         } // c:3950
 
