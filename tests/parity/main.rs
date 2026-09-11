@@ -43,6 +43,7 @@ mod cd_options_parity;
 mod cmdsubst_parity;
 mod command_builtin_parity;
 mod command_precedence_parity;
+mod compsys_local_leak_parity;
 mod completion_keys_parity;
 mod completion_continuation_parity;
 mod completion_suffix_parity;
