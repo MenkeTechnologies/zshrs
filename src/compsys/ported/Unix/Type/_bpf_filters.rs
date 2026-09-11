@@ -22,7 +22,7 @@
 //! `\#` grouping tokens become the words `(`/`)`/`|`/`#`.
 
 use crate::compsys::ported::_regex_arguments::{_regex_arguments, dispatch_registered};
-use crate::compsys::ported::shared::LocalScope;
+use crate::compsys::ported::shared::{LocalScope, PM_ARRAY, PM_HASHED};
 use crate::ported::params::{getsparam, setaparam, sethparam, setsparam};
 use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -502,6 +502,30 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
 
     // sh:8 — `local suf=']'`, gone again when `_bpf_filters` returns.
     let mut _locals = LocalScope::declare(&["suf"], 0);
+    // sh:5-7 — the rest of the declaration block. Every one of these names is
+    // referenced from the regex spec BY NAME and written while this frame is
+    // live: `subtypes`/`flags` by the two `sethparam`s below, and `proto`,
+    // `packet`, `repeat`, `values`, `dir`, `wlantype`, `skip` by the spec's own
+    // guard actions (`-proto=0` sh:215, `-'repeat=1'` sh:92, `-packet=tcp`
+    // sh:76, `-'values=${values:-hosts};dir=$match'` sh:137,
+    // `-'wlantype=${match%?}'` sh:119). With no shadow they were created at the
+    // caller's level: measured with `tcpdump <TAB>`, /opt/homebrew/bin/zsh
+    // 5.9.2 leaves `flags`, `subtypes` and `proto` unset where zshrs left the
+    // two tables populated and `proto=2`.
+    _locals.also(&["networks", "fields", "dirs", "protos", "relop"], PM_ARRAY);
+    _locals.also(&["subtypes", "flags"], PM_HASHED);
+    _locals.also(
+        &[
+            "values", "dir", "wlantype", "skip", "repeat", "packet", "proto",
+        ],
+        0,
+    );
+    // sh:7 — `repeat=1` and `proto=0` carry INITIAL VALUES, and the spec does
+    // arithmetic on both (`${=flags[$packet]}` guards, `-proto=0` resets). A
+    // bare declaration would leave them empty strings, which is exactly the
+    // `bad math expression: empty string` this file already documents below.
+    setsparam("repeat", "1");
+    setsparam("proto", "0");
 
     let ostype = getsparam("OSTYPE").unwrap_or_default();
     let tables = bpf_tables(&ostype);
