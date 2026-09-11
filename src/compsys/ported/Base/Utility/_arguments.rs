@@ -404,12 +404,16 @@ fn run_help(cmd: &str, use_locale: bool) -> String {
     // sh:26-33 (via _call_program) — style key `${1}` is "options".
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let style_ctx = format!(":completion:{}:options", curcontext);
-    let styled = crate::ported::modules::zutil::lookupstyle(&style_ctx, "command")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    // `_call_program` sh:26 branches on `zstyle -s`'s STATUS, and `zstyle -s`
+    // is `zutil.c:648-649`: `vals[0]` is a POINTER test and `sepjoin(vals,
+    // " ")` joins the WHOLE array. Reading element 1 and branching on
+    // emptiness lost both — a `command` style written unquoted (the ordinary
+    // spelling) kept only its first word, and `command ''`, the documented
+    // way to disable the `--help` probe, ran the probe anyway. Same defect
+    // and same fix as `_call_program` itself; see [`zstyle_s`].
+    let styled = crate::compsys::ported::shared::zstyle_s(&style_ctx, "command");
     // sh:98 argv[2,-1] == `${~words[1]} --help`.
-    let cmdline = if !styled.is_empty() {
+    let cmdline = if let Some(styled) = styled {
         if let Some(rest) = styled.strip_prefix('-') {
             // sh:28 — eval "$tmp[2,-1]" "$argv[2,-1]"
             format!("{} {} --help", rest, cmd)
