@@ -144,7 +144,8 @@ fn prepend_search_path(var: &str, dir: &Path) {
 
 /// The search-path directories to publish, once materialised. `HELPDIR`
 /// is not among them: it is a plain scalar naming ONE directory, not a
-/// colon list, so it is set outright by [`publish_helpdir`].
+/// colon list, and it is a shell parameter rather than an environment
+/// entry, so it is set outright by [`seed_helpdir_param`].
 fn published_dirs() -> Vec<(&'static str, PathBuf)> {
     let mut out = Vec::new();
     if let Some(d) = man_dir() {
@@ -174,6 +175,33 @@ fn helpdir_value() -> Option<String> {
     d.is_dir().then(|| d.to_string_lossy().into_owned())
 }
 
+/// Point `$HELPDIR` at the bundled help tree as a PLAIN SHELL PARAMETER.
+///
+/// `run-help` is a shell function — `local HELPDIR="${HELPDIR:-<compiled
+/// default>}"` at `vendor/zsh/functions/run-help:13` — so it reads the
+/// shell's own parameter table and never the process environment. Putting
+/// `HELPDIR` in the environment therefore bought the feature nothing and
+/// leaked the name into EVERY child process: with `$HOME` set, a child of
+/// zshrs saw `HELPDIR`, `MANPATH` and `INFOPATH` where a child of zsh saw
+/// only `MANPATH`, and `env rm <TAB>` (which lists exported names via
+/// `_parameters -g "*export*"`) offered a name zsh does not have.
+/// `MANPATH` / `INFOPATH` stay exported because `man` and `info` are
+/// separate PROCESSES and read them from their environment.
+///
+/// Must be called AFTER the environment-import loop has built paramtab:
+/// c:Src/params.c:893 `createparamtable` imports `environ` exactly as it
+/// was at process entry, so a user's exported `HELPDIR` is already in the
+/// table by then and the `getsparam` guard below leaves it alone —
+/// value and `PM_EXPORTED` both intact, since it came in exported.
+pub fn seed_helpdir_param() {
+    if crate::ported::params::getsparam("HELPDIR").is_some_and(|v| !v.is_empty()) {
+        return; // a user-set value always wins; this only fills an empty slot
+    }
+    if let Some(v) = helpdir_value() {
+        crate::ported::params::setsparam("HELPDIR", &v);
+    }
+}
+
 /// Materialise the pages and put them on `MANPATH` / `INFOPATH` in the OS
 /// environment, so any child process (`man`, `info`) inherits them.
 ///
@@ -183,15 +211,14 @@ fn helpdir_value() -> Option<String> {
 /// process-entry `environ` snapshot taken in `main`, which a later
 /// `setenv` cannot reach. The binary entry calls [`publish_into`] on that
 /// snapshot for the shell-visible half.
+///
+/// `HELPDIR` is not published here, or anywhere else in the environment:
+/// it is a shell parameter only, seeded by [`seed_helpdir_param`] once
+/// paramtab exists.
 pub fn install_and_publish() {
     let _ = ensure_installed();
     for (var, dir) in published_dirs() {
         prepend_search_path(var, &dir);
-    }
-    if let Some(v) = helpdir_value() {
-        if std::env::var_os("HELPDIR").is_none() {
-            unsafe { std::env::set_var("HELPDIR", v) };
-        }
     }
 }
 
@@ -227,11 +254,6 @@ pub fn publish_into(env: &mut Vec<(String, String)>) {
             .unwrap_or_default();
         unsafe { std::env::set_var(var, val) };
     }
-    if let Some(v) = helpdir_value() {
-        if !env.iter().any(|(k, val)| k == "HELPDIR" && !val.is_empty()) {
-            env.retain(|(k, _)| k != "HELPDIR");
-            env.push(("HELPDIR".to_string(), v.clone()));
-            unsafe { std::env::set_var("HELPDIR", v) };
-        }
-    }
+    // `HELPDIR` is deliberately absent: it is a shell parameter, not an
+    // environment entry — see [`seed_helpdir_param`].
 }

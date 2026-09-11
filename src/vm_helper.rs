@@ -3122,6 +3122,20 @@ impl ShellExecutor {
                 crate::ported::patchlevel::ZSHRS_VERSION,
             );
         }
+        // `$HELPDIR` points at the bundled help tree that
+        // `bundled_docs::install_and_publish` (top of this constructor)
+        // materialised, so `run-help` works on a host with no zsh install.
+        // It is seeded HERE, after the environment-import loop above, for
+        // two reasons: the table has to exist to hold it, and an exported
+        // `HELPDIR` the user supplied is already imported by now, so the
+        // seed's own guard leaves that value (and its PM_EXPORTED) alone.
+        //
+        // The parameter is NOT exported. `run-help` is a shell function
+        // that reads `${HELPDIR:-…}` out of the shell's own table, so the
+        // environment entry this used to create bought nothing and leaked
+        // the name into every child process — `env <TAB>`, which lists
+        // exported names, offered a name zsh does not have.
+        crate::bundled_docs::seed_helpdir_param();
         // c:Src/params.c:974-979 — `setaparam("signals", …)`.
         {
             use crate::ported::signals_h::SIGS;

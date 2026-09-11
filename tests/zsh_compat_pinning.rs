@@ -1006,6 +1006,120 @@ fn bundled_docs_materialise_and_publish_search_paths() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// `$HELPDIR` names the bundled help tree, but as a SHELL PARAMETER only:
+/// it must never reach a child process's environment.
+///
+/// `run-help` is a shell function -- `local HELPDIR="${HELPDIR:-<compiled
+/// default>}"` at `vendor/zsh/functions/run-help:13` -- so it reads the
+/// shell's own parameter table and has never needed the variable in the
+/// environment. Exporting it shipped anyway, and it leaked into every
+/// child: with `$HOME` set, `<shell> -f -c '/usr/bin/env'` listed HELPDIR,
+/// MANPATH and INFOPATH under zshrs where zsh listed only MANPATH.
+///
+/// Directly user-visible through completion: `env <TAB>` completes
+/// EXPORTED parameter names (`_env` -> `_parameters -g "*export*"`), so
+/// zshrs offered a name zsh does not have.
+///
+/// `MANPATH` / `INFOPATH` stay exported on purpose -- `man` and `info` are
+/// separate processes that read them from their environment -- which is
+/// why the MANPATH assertion below doubles as a check that the child-env
+/// probe still sees what it is supposed to see.
+#[test]
+fn helpdir_is_a_shell_parameter_never_exported() {
+    let tmp = std::env::temp_dir().join(format!("zshrs-helpdir-pin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("mkdir temp HOME");
+
+    // A throwaway `$HOME`, so the bundled tree materialises there instead
+    // of in the user's. `--zsh` is passed only to zshrs; zsh rejects it.
+    let exec = |bin: &str, zsh_flag: bool, script: &str, helpdir: Option<&str>| -> String {
+        let mut cmd = Command::new(bin);
+        if zsh_flag {
+            cmd.arg("--zsh");
+        }
+        cmd.args(["-f", "-c", script])
+            .env("HOME", &tmp)
+            .env_remove("ZSHRS_CACHE");
+        match helpdir {
+            Some(v) => cmd.env("HELPDIR", v),
+            None => cmd.env_remove("HELPDIR"),
+        };
+        let out = cmd.output().expect("invoke shell");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let zshrs_path = zshrs_bin();
+    let zshrs = zshrs_path.to_str().expect("zshrs path is not UTF-8");
+
+    // The feature itself: `run-help`'s database is reachable by name.
+    let help = tmp.join(".zshrs").join("help");
+    assert_eq!(
+        exec(zshrs, true, "print -r -- $HELPDIR", None),
+        help.display().to_string(),
+        "HELPDIR must still name the bundled help tree"
+    );
+    assert!(
+        help.join("zmodload").is_file(),
+        "the help tree must have materialised in {}",
+        help.display()
+    );
+
+    // Set, but a PLAIN scalar -- `scalar-export` is the bug.
+    assert_eq!(
+        exec(zshrs, true, "print -r -- ${(t)HELPDIR}", None),
+        "scalar",
+        "HELPDIR must not carry PM_EXPORTED"
+    );
+
+    // The observable half: nothing downstream of the shell sees the name.
+    assert_eq!(
+        exec(zshrs, true, "/usr/bin/env | grep -c '^HELPDIR='", None),
+        "0",
+        "HELPDIR must not be in a child process's environment"
+    );
+    // The same probe on a variable that IS meant to be exported, so a
+    // silently-broken probe cannot make the assertion above pass.
+    assert_eq!(
+        exec(zshrs, true, "/usr/bin/env | grep -c '^MANPATH='", None),
+        "1",
+        "MANPATH is published for child `man` processes and must stay exported"
+    );
+
+    // A user-set value wins, and keeps the export it arrived with: it came
+    // in through the environment, so stripping it would be a second bug.
+    assert_eq!(
+        exec(
+            zshrs,
+            true,
+            r#"print -r -- "$HELPDIR ${(t)HELPDIR}""#,
+            Some("/tmp/zshrs-pin-helpdir"),
+        ),
+        "/tmp/zshrs-pin-helpdir scalar-export",
+        "an explicit HELPDIR must survive with its export intact"
+    );
+    assert_eq!(
+        exec(
+            zshrs,
+            true,
+            "/usr/bin/env | grep -c '^HELPDIR='",
+            Some("/tmp/zshrs-pin-helpdir"),
+        ),
+        "1",
+        "a user's exported HELPDIR must still reach children"
+    );
+
+    // The oracle: zsh puts nothing of its own into a child's environment
+    // here, which is the behaviour the assertions above pin zshrs to.
+    if zsh_available() {
+        assert_eq!(
+            exec(zsh_path(), false, "/usr/bin/env | grep -c '^HELPDIR='", None),
+            "0",
+            "zsh exports no HELPDIR, so neither may zshrs"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// `add-zsh-hook` accepts zshrs's own `async_precmd` hook.
 ///
 /// `async_precmd` functions run on a POOL WORKER THREAD instead of
