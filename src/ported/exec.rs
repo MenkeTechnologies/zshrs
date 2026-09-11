@@ -5017,6 +5017,12 @@ pub struct SubshTables {
     /// `fillnameddirtable` that ran in the body; the parent's table
     /// never got those user entries, so its flag must not claim it did.
     allusersadded: i32,
+    /// `cmdnamtab` (`Src/hashtable.c:590`) — `hash`, `unhash`, `hash -r`,
+    /// `commands[x]=…`, and a fill run by reading `$commands`.
+    cmdnamtab: crate::ported::hashtable::cmdnam_table,
+    /// `pathchecked` (`Src/hashtable.c:595`) — how far a fill has walked
+    /// `$path`; it describes `cmdnamtab`, so it travels with it.
+    pathchecked: usize,
 }
 
 impl SubshTables {
@@ -5036,6 +5042,11 @@ impl SubshTables {
                 .map(|t| t.clone())
                 .unwrap_or_default(),
             allusersadded: crate::ported::hashnameddir::allusersadded.load(Ordering::Relaxed),
+            cmdnamtab: crate::ported::hashtable::cmdnamtab_lock()
+                .read()
+                .map(|t| t.snapshot())
+                .unwrap_or_default(),
+            pathchecked: pathchecked.load(Ordering::SeqCst),
         }
     }
 
@@ -5052,6 +5063,10 @@ impl SubshTables {
             *t = self.nameddirtab;
         }
         crate::ported::hashnameddir::allusersadded.store(self.allusersadded, Ordering::Relaxed);
+        if let Ok(mut t) = crate::ported::hashtable::cmdnamtab_lock().write() {
+            t.restore(self.cmdnamtab);
+        }
+        pathchecked.store(self.pathchecked, Ordering::SeqCst);
     }
 }
 

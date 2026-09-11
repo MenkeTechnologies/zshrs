@@ -469,11 +469,29 @@ impl cmdnam_table {
             // hashtable.c:603 — `cmdnamtab = newhashtable(201, "cmdnamtab", NULL)`.
             // The bucket count is observable: `${(k)commands}` and
             // `compadd -k commands` emit the raw bucket walk.
-            table: hashtable_nodes::newhashtable(201), // c:603
+            table: crate::cow_map::CowArc::new(hashtable_nodes::newhashtable(201)), // c:603
             path_checked_index: 0,
             path: Vec::new(),
             hash_executables_only: false,
         }
+    }
+    /// `snapshot` — the table as the parent had it, for an in-process
+    /// subshell to hand back at its end. Same contract and the same C
+    /// reasoning as `alias_table::snapshot`: the forked child's `hash`,
+    /// `unhash`, `hash -r` and `commands[x]=…` write a private copy.
+    ///
+    /// O(1) for the table (`CowArc`). `path` is copied, but nothing sets
+    /// it (`set_path` has no callers), so it is always empty.
+    ///
+    /// !!! RUST-ONLY METHOD — no C counterpart (C forks) !!!
+    pub fn snapshot(&self) -> cmdnam_table {
+        self.clone()
+    }
+    /// `restore` — put back a table taken by `snapshot`.
+    ///
+    /// !!! RUST-ONLY METHOD — no C counterpart (C forks) !!!
+    pub fn restore(&mut self, snap: cmdnam_table) {
+        *self = snap;
     }
     /// `set_path` — see implementation.
     pub fn set_path(&mut self, path: Vec<String>) {
@@ -3531,7 +3549,7 @@ pub struct dircache_entry {
 
 /// Command name hash table
 // hash table containing external commands                                  // c:587
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// `$cmdtab` table of cached executable lookups.
 /// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
 /// (line 601), `emptycmdnamtable()` (line 623), and `hashdir()`
@@ -3550,7 +3568,11 @@ pub struct cmdnam_table {
     /// (`Src/hashtable.c:603`). Was a `std::collections::HashMap`,
     /// whose per-process-seeded order made `${(k)commands)` /
     /// `compadd -k commands` differ on every run.
-    table: hashtable_nodes<cmdnam>,
+    ///
+    /// COPY-ON-WRITE, like `alias_table::table`: `$( … )` snapshots it on
+    /// every substitution (see `snapshot`), and a filled table holds an
+    /// entry per executable on `$PATH` — thousands.
+    table: crate::cow_map::CowArc<hashtable_nodes<cmdnam>>,
     /// `path_checked_index` field.
     path_checked_index: usize,
     /// `path` field.
@@ -3965,6 +3987,23 @@ mod tests {
         assert!(live.get("inner").is_none());
         assert!(live.get("a1").is_some());
         assert_eq!(live.len(), 2000);
+    }
+
+    /// Same pin for `cmdnamtab`: a snapshot shares the (possibly
+    /// thousands-strong, after a `$PATH` fill) bucket array.
+    #[test]
+    fn cmdnam_snapshot_is_shared_until_a_hash_splits_it() {
+        let mut live = cmdnam_table::new();
+        live.add(cmdnam_hashed("ls", "/bin/ls"));
+        let snap = live.snapshot();
+        assert!(crate::cow_map::CowArc::ptr_eq(&live.table, &snap.table));
+        assert!(live.get("ls").is_some());
+        assert!(crate::cow_map::CowArc::ptr_eq(&live.table, &snap.table));
+
+        live.add(cmdnam_hashed("zq", "/bin/echo"));
+        assert!(snap.get("zq").is_none());
+        live.restore(snap);
+        assert!(live.get("zq").is_none() && live.get("ls").is_some());
     }
 
     #[test]
