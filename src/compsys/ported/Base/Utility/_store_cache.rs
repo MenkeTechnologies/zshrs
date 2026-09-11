@@ -43,7 +43,7 @@
 
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::shared::zstyle_t;
-use crate::ported::modules::zutil::lookupstyle;
+use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::params::{getaparam, getsparam};
 use std::fs;
 use std::path::Path;
@@ -81,17 +81,29 @@ pub fn _store_cache_impl(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:10-11
-    let cache_dir = lookupstyle(&ctx, "cache-path")
-        .first()
-        .cloned()
-        .unwrap_or_else(|| {
+    // sh:10-11  zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
+    //            : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
+    //
+    // Two things `.first()` got wrong here. `zutil.c:649` joins the WHOLE
+    // value array, so a cache directory whose path contains a space — which
+    // a user writes unquoted at least as often as quoted — was truncated at
+    // the first word and the cache went to a different directory. And the
+    // `:=` on sh:11 is an EMPTINESS test, so it has to run on the joined
+    // value rather than be folded into the lookup: `zstyle -s` returning an
+    // empty string is still a hit, and the default then applies because the
+    // value is empty, not because the style was unset.
+    let cache_dir = {
+        let styled = zstyle_s(&ctx, "cache-path").unwrap_or_default();
+        if styled.is_empty() {
             let home = getsparam("ZDOTDIR")
                 .filter(|s| !s.is_empty())
                 .or_else(|| getsparam("HOME"))
                 .unwrap_or_default();
             format!("{}/.zcompcache", home)
-        });
+        } else {
+            styled
+        }
+    };
 
     // sh:12-22  ensure cache_dir exists
     let dir_path = Path::new(&cache_dir);

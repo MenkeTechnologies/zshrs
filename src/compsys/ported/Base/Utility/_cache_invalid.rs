@@ -22,7 +22,7 @@
 
 use crate::compsys::ported::shared::zstyle_t;
 use crate::ported::exec::{dispatch_function_call, execute_script_zsh_pipeline};
-use crate::ported::modules::zutil::lookupstyle;
+use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::params::getsparam;
 use crate::ported::utils::quotestring;
 use crate::ported::zsh_h::QT_SINGLE;
@@ -108,24 +108,34 @@ pub fn _cache_invalid_impl(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:12-14
-    let cache_dir = lookupstyle(&ctx, "cache-path")
-        .first()
-        .cloned()
-        .unwrap_or_else(|| {
+    // sh:12-14  zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
+    //            : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
+    //
+    // `zutil.c:649` joins the whole value array, so a cache directory whose
+    // path contains a space survives instead of being cut at the first word.
+    // sh:13's `:=` is a separate EMPTINESS test applied to the joined value:
+    // `zstyle -s` succeeding with an empty string still takes the default,
+    // but for the reason sh:13 gives rather than because the style was unset.
+    let cache_dir = {
+        let styled = zstyle_s(&ctx, "cache-path").unwrap_or_default();
+        if styled.is_empty() {
             let home = getsparam("ZDOTDIR")
                 .filter(|s| !s.is_empty())
                 .or_else(|| getsparam("HOME"))
                 .unwrap_or_default();
             format!("{}/.zcompcache", home)
-        });
+        } else {
+            styled
+        }
+    };
     let cache_path = format!("{}/{}", cache_dir, cache_ident);
 
-    // sh:18-19
-    let policy = lookupstyle(&ctx, "cache-policy")
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    // sh:18-19  zstyle -s … cache-policy _cache_policy
+    //           [[ -n "$_cache_policy" ]] && "$_cache_policy" "$_cache_path"
+    //
+    // sh:19 tests the VALUE for emptiness, so that test stays; what changes
+    // is that the value is now `zutil.c:649`'s join rather than element 1.
+    let policy = zstyle_s(&ctx, "cache-policy").unwrap_or_default();
     if !policy.is_empty() && call_cache_policy(&policy, &cache_path) == 0 {
         return 0;
     }
