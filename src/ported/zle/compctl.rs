@@ -5618,6 +5618,20 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Start from an empty compctl registry. Whatever spec an earlier
+        // test in the same binary left behind is reachable from the nested
+        // `makecomplistcmd` dispatch this function ends with (c:3013), and a
+        // spec that fires runs `makecomplistflags`, whose first act is to
+        // move the cursor to the end of the word (c:3066-3068) — a move C
+        // makes too, and deliberately does not undo. The saved-state
+        // assertions below are about what `sep_comp_string` ITSELF restores
+        // (c:2887-2891), so the dispatch has to have nothing to dispatch to
+        // for them to mean anything.
+        createcompctltable();
+        *CC_DEFAULT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *CC_FIRST.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *CC_COMPOS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+
         // Pre-set zle_tricky.c globals; sep_comp_string must restore them
         // on exit (C compctl.c:2810-2813 save / 2941-2950 restore).
         use crate::ported::zle::compcore::{WB, WE, ZLEMETACS as CS_G, ZLEMETALINE as LINE_G};
