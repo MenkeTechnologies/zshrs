@@ -267,13 +267,18 @@ pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {
 /// the file at `fname` and returns its contents.
 ///
 /// DIVERGENCE from C: the c:195/202 `metafy(buf, size, META_HEAPDUP)`
-/// step is deliberately SKIPPED — zshrs param strings are native
-/// UTF-8 `String`s, and a metafied byte stream (Meta + byte^32 pairs,
-/// not valid UTF-8) can't round-trip through `String` without
-/// corruption. Binary file content goes through `from_utf8_lossy`
-/// instead (U+FFFD for invalid sequences). Revisit when a byte-string
-/// param substrate lands. Returns `None` on the C short-circuit
-/// failure paths (open, fstat, mmap all return NULL).
+/// step is applied at the CHAR level, not the byte level — zshrs param
+/// strings are native UTF-8 `String`s, so a C-style metafied byte
+/// stream (Meta + byte^32 pairs for every `imeta` byte, including the
+/// UTF-8 tails of ordinary characters) cannot be held by one.
+/// `crate::script_bytes::decode_script_bytes` is that char-level
+/// metafy: valid UTF-8 stays as `char`s and only bytes that cannot be
+/// part of a UTF-8 sequence are Meta-encoded, so
+/// `utils::unmetafy_str` reproduces the file byte-for-byte on output.
+/// This replaced a `from_utf8_lossy` that stamped U+FFFD over every
+/// such byte, which made `$mapfile[f]` unable to read any file that
+/// was not valid UTF-8. Returns `None` on the C short-circuit failure
+/// paths (open, fstat, mmap all return NULL).
 ///
 /// C signature: `static char *get_contents(char *fname)`. Returns
 /// `char *` (NULL on failure); Rust port returns `Option<String>`.
@@ -355,23 +360,23 @@ pub fn get_contents(fname: &str) -> Option<String> {
     };
 
     if mmptr == libc::MAP_FAILED {
-        // c:199-202 — `#else /* don't USE_MMAP */` arm. No metafy:
-        // zshrs strings are native UTF-8 (see empty-file comment).
+        // c:199-202 — `#else /* don't USE_MMAP */` arm. Char-level metafy
+        // (see the fn doc) rather than C's byte-level one.
         let mut contents = Vec::new();
         let mut file = file;
         if file.read_to_end(&mut contents).is_err() {
             return None;
         }
-        return Some(String::from_utf8_lossy(&contents).into_owned()); // c:202
+        return Some(crate::script_bytes::decode_script_bytes(&contents)); // c:202
     }
 
     // c:190-195 — Comment quoted: "Sadly, we need to copy the thing
     // even if metafying doesn't change it.  We just don't know when
     // we might get a chance to munmap it, otherwise."
     // val = metafy((char *)mmptr, sbuf.st_size, META_HEAPDUP);
-    // (Rust port: skip the metafy step per the empty-file comment.)
+    // (Rust port: char-level metafy — see the fn doc.)
     let slice = unsafe { std::slice::from_raw_parts(mmptr as *const u8, size) };
-    let val = String::from_utf8_lossy(slice).into_owned();
+    let val = crate::script_bytes::decode_script_bytes(slice);
 
     // c:197 — `munmap(mmptr, sbuf.st_size);`
     unsafe {

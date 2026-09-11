@@ -3847,7 +3847,15 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     // already drifted once: the getoutput copy (:619) had silently lost the
     // c:4868-4869 `isset(GLOBSUBST)` → `shtokenize` step, so `setopt
     // globsubst; echo $(echo '*')` did not glob while `$(< f)` did.
-    let s = String::from_utf8_lossy(&buf);
+    // c:4835-4849 — this is where C's `metafy` lands the read bytes. The
+    // byte-level loop stays dropped (see the deviation note at :3799), but
+    // the CONVERSION must still be lossless: `String::from_utf8_lossy` here
+    // turned every byte that is not valid UTF-8 into U+FFFD, so `$(< f)` on
+    // a latin-1 file printed `caf\xef\xbf\xbd` where zsh prints `caf\xe9`.
+    // `decode_script_bytes` keeps valid UTF-8 as `char`s and Meta-encodes
+    // only the bytes that cannot be, which `utils::unmetafy_str` turns back
+    // into the original byte at the output boundary.
+    let s = crate::script_bytes::decode_script_bytes(&buf);
     // c:4858-4859 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`
     let s = s.trim_end_matches('\n');
     // c:4861-4863 — qt branch: empty → Nularg sentinel; else single elem.

@@ -4070,7 +4070,10 @@ impl ShellExecutor {
         let _ = tmp.seek(SeekFrom::Start(0));
         let mut bytes = Vec::new();
         if tmp.read_to_end(&mut bytes).is_ok() {
-            output = String::from_utf8_lossy(&bytes).into_owned();
+            // Lossless for the same reason as the `$( cmd )` capture above:
+            // a captured byte that is not valid UTF-8 is a byte the script
+            // really wrote, not an encoding error to paper over.
+            output = crate::script_bytes::decode_script_bytes(&bytes);
         }
         // Match `$(…)`: one trailing newline is an artifact of the last `echo`,
         // not part of the output.
@@ -6409,7 +6412,15 @@ impl ShellExecutor {
         // (c:Src/utils.c:2137).
         let bytes = reader_handle.join().unwrap_or_default();
         crate::ported::utils::zclose(read_fd);
-        let mut output = String::from_utf8_lossy(&bytes).into_owned();
+        // This is the `$( cmd )` counterpart of `readoutput`'s c:4835-4849
+        // conversion, and it has to be just as lossless: with
+        // `String::from_utf8_lossy` a helper that emitted a latin-1 byte —
+        // which is routine for the legacy completion corpus, where
+        // `_call_program` shells out to tools whose descriptions predate
+        // UTF-8 — had that byte replaced by U+FFFD before any completer saw
+        // it. `decode_script_bytes` Meta-encodes only what is not valid
+        // UTF-8, and `utils::unmetafy_str` restores the byte on output.
+        let mut output = crate::script_bytes::decode_script_bytes(&bytes);
 
         // POSIX: trailing newlines stripped from cmd-sub result.
         while output.ends_with('\n') {

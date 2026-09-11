@@ -14681,7 +14681,7 @@ pub fn bin_read(
                 }
                 out.push(b);
             }
-            buf = String::from_utf8_lossy(&out).into_owned();
+            buf = crate::script_bytes::decode_script_bytes(&out);
         } else {
             let mut out = Vec::<u8>::new();
             let bytes = zbuf.as_bytes();
@@ -14704,7 +14704,7 @@ pub fn bin_read(
                 out.push(b);
                 i += 1;
             }
-            buf = String::from_utf8_lossy(&out).into_owned();
+            buf = crate::script_bytes::decode_script_bytes(&out);
         }
         // c:7102-7109 — -e/-E echo, -e suppresses assignment.
         let opt_e = OPT_ISSET(ops, b'e');
@@ -14784,7 +14784,12 @@ pub fn bin_read(
         }
         // EOF mid-character: keep the debris, as c:6892-6898 does.
         got.extend_from_slice(&pending);
-        buf = String::from_utf8_lossy(&got).into_owned();
+        // "Keep the debris" is only true if the conversion keeps it:
+        // `String::from_utf8_lossy` collapsed every MB_INVALID byte the loop
+        // above deliberately preserved into a single U+FFFD, which is the
+        // opposite of what c:6690-6693 asks for. `read -k` on a latin-1
+        // stream now yields the byte itself.
+        buf = crate::script_bytes::decode_script_bytes(&got);
     } else if OPT_HASARG(ops, b'd') {
         // c:Src/builtin.c:6538 — `-d DELIM`: read until the first
         // CHARACTER of DELIM. EOF mid-record returns what was read so
@@ -14895,7 +14900,9 @@ pub fn bin_read(
         // c:6892-6898 — "We can only get here if there is an EOF in the
         // middle of a character... safest to keep the debris, I suppose."
         buf_bytes.extend_from_slice(&pending);
-        buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+        // Lossless, for the same reason as the `-k` arm: the bytes this loop
+        // preserved on purpose must survive the String conversion.
+        buf = crate::script_bytes::decode_script_bytes(&buf_bytes);
         // c:Src/builtin.c:6418 — `read -d ''` (NUL delimiter) strips
         // trailing newlines from the captured content. This matches
         // the `find -print0 | while read -d ''` idiom which expects
@@ -14984,7 +14991,9 @@ pub fn bin_read(
             // partial_eof { return 1; }` (line 8628) preserves the
             // EOF status code.
         } else {
-            buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+            // `read line < latin1-file` handed the variable a U+FFFD where
+            // zsh assigns the raw byte; lossless decode keeps them equal.
+            buf = crate::script_bytes::decode_script_bytes(&buf_bytes);
             partial_eof = !saw_newline;
         }
     }

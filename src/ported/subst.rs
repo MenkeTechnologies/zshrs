@@ -12713,7 +12713,16 @@ pub fn paramsubst(
                             raw_value_for_len.len(),
                         )
                     } else {
-                        raw_value_for_len.len()
+                        // c:Src/utils.c:5662-5663 — the `MB_CUR_MAX == 1`
+                        // arm returns `ztrlen(ptr)`, the length of the
+                        // DEMETAFIED byte stream. `raw_value_for_len.len()`
+                        // is the UTF-8 length of the METAFIED `String`,
+                        // which is the same defect the MULTIBYTE sibling
+                        // arm above was already fixed for: under `LC_ALL=C`
+                        // `${#$(printf 'caf\xe9')}` reported 7 (`caf` plus
+                        // the two chars, four bytes, that encode the one
+                        // byte) against zsh's 4.
+                        crate::ported::utils::unmetafy_str(&raw_value_for_len).len()
                     }
                 } else {
                     // c:3869 word count
