@@ -43,6 +43,7 @@ mod builtin_module_surface_parity;
 mod call_program_parity;
 mod case_parity;
 mod cd_options_parity;
+mod cmdsubst_isolation_parity;
 mod cmdsubst_parity;
 mod command_builtin_parity;
 mod command_precedence_parity;

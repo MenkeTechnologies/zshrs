@@ -60049,3 +60049,58 @@ Pinned by `tests/parity/assoc_type_change_discard_parity.rs`: six tests for the
 conversion (every access path, the bare declaration, `-g`, a local conversion,
 a local conversion under a global association, and `-g` from inside a function)
 plus eight controls for the transitions that always agreed.
+
+## #1143 — `$( … )` leaked what its forked child owns: aliases, named dirs, the command hash, exports, cwd, umask, rlimits, zstyles, modules, `sched`, `SECONDS`, traps and descriptors — fixed
+
+A command substitution is a fork in C: `getoutput` (`Src/exec.c:4816`
+`zfork`) runs the body in a child, `entersubsh` (`c:1123-1261`) resets only
+traps, job control and the subshell counters, and the child `_realexit()`s
+(`c:4843`) — so everything else it wrote, in any table or in the process,
+dies with it. zshrs runs `$( … )` in process. `run_command_substitution`
+snapshotted paramtab, the hashed-parameter storage, the function tables,
+options, traps and jobs, and nothing else, so each of these reached the
+parent (zsh -f in brackets):
+
+    x=$(alias q=echo); alias q            # printed q=echo       [nothing]
+    x=$(hash -d n=/tmp); print ~n         # /tmp                 [error]
+    x=$(hash c=/bin/echo); c hi           # ran /bin/echo        [not found]
+    x=$(export v=1); /usr/bin/env | grep v   # v=1 in every later child
+    cd /usr; d=$(cd /bin && pwd); /bin/pwd   # /bin              [/usr]
+    x=$(umask 077); umask                 # 077                  [022]
+    x=$(zstyle :x s v); zstyle -s :x s r  # found it             [status 1]
+    x=$(exec 3>&1; print in)              # hung: fd 3 kept the capture pipe open
+    trap 'print p' USR1; print "$(trap)"  # listed the trap      [nothing]
+
+The same held for backticks and nested substitutions, and several of
+them for `( … )` too, which took its own, different snapshot
+(no `sufaliastab`, `nameddirtab`, `cmdnamtab`, dirstack, `sched` or
+`SECONDS`; aliases re-added one by one, which reversed each bucket chain
+and reordered `${(k)aliases}`).
+
+Both in-process subshells now take one `SubshForkCopy`
+(`src/ported/exec.rs`) on entry and restore it on exit: `aliastab`,
+`sufaliastab`, `nameddirtab` (+ `allusersadded`), `cmdnamtab` (+
+`pathchecked`), the `environ` array (`environ_image` in
+`src/ported/params.rs`: one byte copy, rewritten only when the body changed
+it, removed variables returned to their old position), the working
+directory, the dirstack, the umask, `limits[]`/`current_limits[]`,
+`zstyletab`, the module table, the disabled builtins and reserved words,
+`schedcmds` and `shtimer`. The hash tables and `zstyletab` are
+copy-on-write, so `save` is a refcount bump per table whatever their size;
+`alias::inuse` became atomic so that expanding an alias inside the body
+does not copy the table. Descriptors a bare `exec` redirection moves are
+saved on first touch (`SubshFdFrame`) instead of dup'ing all of 0-9 on
+every `( … )`. `$( … )` also runs `entersubsh`'s trap reset now, restores
+the parent's `sigtrapped[]` and dispositions afterwards, and replays a
+signal the parent traps that arrived meanwhile — the machinery `( … )`
+already had.
+
+Measured by instructions retired (debug build, 1000 `$(:)`): the marginal
+cost of one substitution was 10,234,654 instructions with empty tables and
+10,258,410 with 3000 aliases, 3000 named directories, 500 zstyles and a
+filled command hash (+0.23%).
+
+Pinned by `tests/parity/cmdsubst_isolation_parity.rs`: every case sets
+state inside `$( … )` (or a backtick, `( … )`, `<( … )` or pipeline
+spelling) and reads it back in the parent; the expected text is the
+oracle's own answer. Against a pre-fix binary 75 of them fail.
