@@ -1375,7 +1375,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
 
     // condtab = NULL; wrappers = NULL;                                      // c:1272-1273
 
-    let (_cols, _lines) = crate::ported::utils::adjustwinsize(0); // c:1276
+    crate::ported::utils::adjustwinsize(0); // c:1276
 
     // getrlimit loop                                                        // c:1286-1289
 

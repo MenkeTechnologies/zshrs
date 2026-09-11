@@ -2580,8 +2580,29 @@ pub fn adjustcolumns() -> usize {
 ///     if (interact && resetzle) zleentry(ZLE_CMD_REFRESH);
 /// }
 /// ```
-pub fn adjustwinsize(from: i32) -> (usize, usize) {
+pub fn adjustwinsize(from: i32) {
     // c:1889
+    //
+    // Returns nothing, like C's `void adjustwinsize(int from)` (c:1888-1889).
+    // This used to return `(usize, usize)`, and it built that pair by calling
+    // `adjustcolumns()` / `adjustlines()` again on the way out — a Rust-only
+    // return value that no caller ever read (every call site is `let _ =`).
+    // Those trailing re-entries DEADLOCKED the shell: `assignnparam` holds the
+    // paramtab write guard across the c:2874 gsu setfn dispatch
+    // (params.rs:9944 → params.rs:9998), and the setfn for `$LINES` is
+    // `zlevarsetfn`, which calls back in here with from=2 (c:4232). Exiting
+    // through `adjustcolumns()` then reached `getsparam("COLUMNS")`
+    // (utils.rs:2538), which wants a READ lock on the very table the caller
+    // still holds for writing. std's `RwLock` is not reentrant, so the shell
+    // parked in `lock_contended` forever. C cannot hit this: `adjustcolumns`
+    // (c:1856-1878) reads `shttyinfo.winsize` and `tccolumns` and never once
+    // touches the parameter table.
+    //
+    // The window it needed was a terminal reporting 0x0, because only then
+    // does `adjustcolumns` fall past its ioctl to the parameter fallback. A
+    // pty allocated without an explicit `TIOCSWINSZ` is exactly that, which is
+    // why it took out every `zsh/zpty`-spawned shell and left them producing
+    // no prompt and no output at all.
 
     // c:1891 — `static int getwinsz = 1;`
     let getwinsz = ADJUSTWINSIZE_GETWINSZ.load(Ordering::SeqCst);
@@ -2608,7 +2629,18 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
         let shtty = SHTTY.load(Ordering::Relaxed);
         if shtty == -1 {
             // c:1900
-            return (adjustcolumns(), adjustlines()); // c:1901
+            // !!! RUST-ONLY SEEDING !!! C's c:1901 is a bare `return;`, because
+            // by the time anything can reach this branch `setupvals`'s own
+            // `adjustwinsize(0)` (Src/init.c:1276) has already filled
+            // `shttyinfo.winsize`, so `zterm_lines`/`zterm_columns` are
+            // positive no matter which way the probe went. zshrs has no cached
+            // `winsize` struct, so without these two calls a shell with no tty
+            // leaves both globals at 0 and `zlevargetfn` (params.rs:10947,
+            // c:362-363) answers `$LINES`/`$COLUMNS` with 0. Seed, then return
+            // as C does — the results are deliberately discarded.
+            let _ = adjustcolumns();
+            let _ = adjustlines();
+            return; // c:1901
         }
         #[cfg(unix)]
         unsafe {
@@ -2756,8 +2788,12 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
             ADJUSTWINSIZE_IN_ZLE.store(false, Ordering::SeqCst);
         }
     }
-
-    (adjustcolumns(), adjustlines())
+    // c:1962 — C falls off the end here. The `(adjustcolumns(), adjustlines())`
+    // that used to stand in this spot was the deadlock described on the
+    // signature above; nothing needs it, because every arm that can leave a
+    // geometry unpublished is followed by a caller that seeds it (the from=0/1
+    // arm stores both globals itself, and the SHTTY==-1 branch seeds both
+    // before returning).
 }
 
 /// Port of `static int getwinsz` from `Src/utils.c:1891`. Local

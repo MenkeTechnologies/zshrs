@@ -58,12 +58,6 @@ pump
     )
 }
 
-#[ignore = "blocked: `zpty -b w zshrs -f -i` yields a completely silent inner shell \
-(`print MARKER_ALIVE` never executes, zero bytes read back) while the same \
-probe against /opt/homebrew/bin/zsh works. That takes out this whole harness, \
-not this case: every test in zle_editor_params_parity fails the same way \
-(10/10). The probe itself is sound -- zsh reports PENDING=10 through it. \
-Un-ignore once zpty spawns a live shell."]
 /// With bytes still unread on the tty, `$PENDING` must report them.
 ///
 /// Before the fix this returned 0 on zshrs and 10 on zsh. The assertion is a
@@ -75,7 +69,6 @@ fn pending_counts_bytes_waiting_on_the_terminal() {
     assert_same_dump(&driver("$PENDING"), "PENDING-with-queued-input");
 }
 
-#[ignore = "blocked on the same dead zpty harness as the case above."]
 /// `$PENDING` and `$KEYS_QUEUED_COUNT` are separate queues, and the bug was
 /// reading the wrong one. Dump both together so a future change that wires
 /// `$PENDING` back to `kungetct` shows up here: that would make the two move
