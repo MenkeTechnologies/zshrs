@@ -151,22 +151,6 @@ pub fn _regex_arguments_impl(args: &[String]) -> i32 {
     0
 }
 
-/// The compiled completion function body (upstream sh:63-83). Runs the
-/// real `zregexparse` state machine over the current command line and
-/// drives `_message` / `compset` / `_alternative` off the result.
-///
-/// WIRING GAP (surfaced honestly, not faked): upstream `eval`-defines a
-/// real shell function named `funcname`, so the completion system finds
-/// it by name. This Rust port stores `funcname` in a private registry
-/// and this function is the body, but nothing yet routes a completion
-/// call for `funcname` here — the compsys router
-/// (`src/compsys/router.rs`) resolves names through a STATIC fn-pointer
-/// table that can't carry a dynamically-registered `funcname` (a plain
-/// `fn(&[String]) -> i32` pointer has no way to carry the name back to
-/// this dispatcher). Wiring requires a registry-consulting hook in the
-/// router / `callcompfunc` path, out of scope for this file. Until then
-/// this entry is reachable via [`_regex_arguments`]-registered names in
-/// tests but not through live `Tab` completion.
 /// Route a call to a `_regex_arguments`-generated completion function.
 ///
 /// `_regex_arguments funcname regex…` compiles `funcname` into the
@@ -204,6 +188,24 @@ pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
     }
 }
 
+/// The compiled completion function body (upstream sh:63-83). Runs the real
+/// `zregexparse` state machine over the current command line and drives
+/// `_message` / `compset` / `_alternative` off the result.
+///
+/// RESIDUE, measured: upstream sh:63-83 `eval`-defines a REAL shell function
+/// named `funcname`; this port keeps the compiled spec in the registry and
+/// puts the body here instead. Live `Tab` completion reaches it either way
+/// (`vm_helper` consults the registry — see [`dispatch_if_registered`]), but
+/// anything that observes the generated name AS a function does not:
+///
+///     _regex_arguments _t \( "/\(!/" \)
+///     print "defined=${+functions[_t]} len=${#functions[_t]}"
+///       zsh   -> defined=1 len=708
+///       zshrs -> defined=0 len=0
+///
+/// so `${+functions[…]}`, `functions[…]`, `whence`, `unfunction` and any
+/// consumer that re-evals the body see nothing here. Recorded in
+/// `scripts/comptab_divergent_cases.txt` under the `ldapsearch ` cell.
 pub fn dispatch_registered(funcname: &str) -> i32 {
     let regex = {
         let g = registry();
