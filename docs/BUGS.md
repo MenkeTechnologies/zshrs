@@ -60104,3 +60104,31 @@ Pinned by `tests/parity/cmdsubst_isolation_parity.rs`: every case sets
 state inside `$( … )` (or a backtick, `( … )`, `<( … )` or pipeline
 spelling) and reads it back in the parent; the expected text is the
 oracle's own answer. Against a pre-fix binary 75 of them fail.
+
+## #1144 — exporting a special parameter wrote an EMPTY value, so a child of an interactive shell got `TERM=` — fixed
+
+`export_param` (`Src/params.c:2645`) ends in `val = pm->gsu.s->getfn(pm)`
+(c:2670) — the parameter's OWN getfn. The port called `strgetfn`
+(c:4031 `return pm->u.str`) instead. A PM_SPECIAL scalar keeps its value
+in a process global reached through its GSU — `term`, `home`,
+`wordchars`, `ifs`, `keyboardhackchar` (`c:5185` and neighbours) — and
+its `u.str` stays empty, so the export wrote `TERM=` into the
+environment. `$TERM` itself still read `xterm-256color` out of the
+global, which is why nothing inside the shell looked wrong while every
+child got an empty one and `clear` answered "TERM environment variable
+not set".
+
+It took an interactive shell to see it, twice over: a `-c` shell keeps
+the value in `u.str`, and only a prompt loop replays the parent's
+specials (`setsparam` per name) when a `( … )` ends, which is the
+assignment that re-exported the empty string. Before #1143 the
+`( … )` environment restore ran AFTER that replay and quietly put the
+right value back; the fork copy now restores the environment BEFORE
+paramtab — a module rollback has to look its parameters up in the live
+paramtab — so from the second command of an interactive session onward
+the empty export stood.
+
+Pinned by `a_child_of_the_parent_still_sees_term_after_a_subshell` in
+`tests/parity/cmdsubst_isolation_parity.rs`, which drives an interactive
+shell through `zsh/zpty` and asks a child what it sees. A `-c` probe
+passes vacuously, so the pin has to go through a pty.

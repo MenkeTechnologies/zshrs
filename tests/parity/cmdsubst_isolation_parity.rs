@@ -1358,3 +1358,46 @@ fn trap_exit_parent_not_fired_by_subst() {
         0,
     );
 }
+
+// ── The environment a child of the PARENT sees, INTERACTIVELY ──
+//
+// Every case above runs `-c`, and a `-c` shell cannot show this one: the
+// value of a PM_SPECIAL scalar like `TERM` only moves out of `pm->u.str`
+// and into its GSU global once an interactive shell has assigned it, and
+// only a prompt loop replays the parent's specials at the end of a
+// subshell. Measured with the real config: the parameter kept reading
+// `xterm-256color` while every child from the second command onward got
+// an empty `TERM`, so `clear` said "TERM environment variable not set".
+//
+// Driven through `zsh/zpty` like the rest of the interactive suite, so
+// both shells drive an interactive copy of themselves.
+
+use crate::zpty_probe::{assert_same_verdict, DRAIN, OPEN};
+
+/// Assign `TERM` (which routes through its GSU, leaving `u.str` empty),
+/// run a subshell — whose exit replays the parent's specials — then ask
+/// a CHILD what it sees. The marker is assembled at run time so the
+/// echoed command line cannot satisfy the match.
+const TERM_ENV: &str = r#"
+zpty -w w 'TERM=$TERM; ( : )'
+sleep 1
+zpty -w w 'x=$(:); print "TE${:-}RM=[$(/usr/bin/printenv TERM)]"'
+sleep 2
+"#;
+
+fn term_env_driver() -> String {
+    format!(
+        "{OPEN}{TERM_ENV}{DRAIN}
+if [[ $all == *'TERM=[xterm-256color]'* ]]; then print \"TERMENV=yes\"; else print \"TERMENV=no\"; fi
+"
+    )
+}
+
+#[test]
+fn a_child_of_the_parent_still_sees_term_after_a_subshell() {
+    assert_same_verdict(
+        &term_env_driver(),
+        "TERMENV",
+        "a child still got $TERM from the environment after a subshell",
+    );
+}

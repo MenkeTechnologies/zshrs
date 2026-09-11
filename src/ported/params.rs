@@ -5176,8 +5176,28 @@ pub fn export_param(pm: &mut param) {
         //                     pm->node.flags, NULL)`.
         convfloat(floatgetfn(pm), pm.base, pm.node.flags as u32)
         // c:2668
+    } else if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+        // c:2670 — `val = pm->gsu.s->getfn(pm)`, the param's OWN getfn.
+        //
+        // A PM_SPECIAL scalar keeps its value in a process global reached
+        // through that getfn — `term`, `home`, `wordchars`, `ifs`,
+        // `keyboardhackchar` (`Src/params.c:5185` and neighbours) — and
+        // NOT in `pm->u.str`, which stays empty for them. Calling
+        // `strgetfn` (c:4031 `return pm->u.str`) unconditionally exported
+        // an EMPTY string for every one of them: an assignment to `TERM`
+        // wrote `TERM=` into the environment, so `clear`, `tput`, `less`
+        // and `vim` in the next child reported no terminal while `$TERM`
+        // itself still read `xterm-256color` out of the global.
+        //
+        // `lookup_special_var` is the same getfn dispatch `getsparam`
+        // (c:3163 `getstrvalue`) uses, so the exported text and the text
+        // the shell reports for the parameter cannot disagree. It answers
+        // `None` for a PM_UNSET special and for a PM_SPECIAL whose value
+        // really does live in `u.str` (`PATH`, …) — both fall back to
+        // `strgetfn`, which is that param's getfn.
+        lookup_special_var(&pm.node.nam).unwrap_or_else(|| strgetfn(pm))
     } else {
-        strgetfn(pm)
+        strgetfn(pm) // c:2670
     };
     addenv(&pm.node.nam, &val);
     pm.env = Some(val);
