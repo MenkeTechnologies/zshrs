@@ -21934,25 +21934,6 @@ pub fn paramsubst(
                     let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
                     value = new_parts.join(" ");
                     split_parts = Some(new_parts);
-                    // c:649-661 + c:752-767 — a lone digit that starts the
-                    // token, then `&>`, is the redirection's fd (`2&>x`).
-                    '&' if chars_v.get(p + 1) == Some(&'>')
-                        && cur.chars().count() == 1
-                        && cur.starts_with(|c: char| c.is_ascii_digit()) =>
-                    {
-                        // c:752-767 — AMPOUTANG and its `>>`/`!`/`|` forms.
-                        let (tok, n) = z_ampoutang(&chars_v, p); // c:752-767
-                        let fd = std::mem::take(&mut cur);
-                        words.push(format!("{fd}{tok}")); // c:Src/hist.c:3563-3566
-                        oldpos_z = incmdpos_z; // c:363
-                        incmdpos_z = false; // c:364
-                        inredir = true; // c:362
-                        pct = 0; // c:941 — fresh gettokstr() locals
-                        bct = 0; // c:939
-                        in_brace_param = 0; // c:940
-                        p += n;
-                        continue;
-                    }
                 } else if let Some(arr) = arrays_get(&var_name) {
                     let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
                     value = new_arr.join(" ");
@@ -21999,9 +21980,6 @@ pub fn paramsubst(
         // containing spaces.
         let b_one = |s: &str| -> String {
             // c:6242
-                    // c:991 — `if (!in_brace_param && !pct--)`: inside an open
-                    // `${…}` a `)` is text and does not touch `pct`.
-                    ')' if in_brace_param != 0 => cur.push(ch), // c:998
             let mut out = String::with_capacity(s.len() * 2);
             for ch in s.chars() {
                 // c:6244 `if (ipattern(*u)) *v++ = '\\';` — chars in
@@ -22020,9 +21998,6 @@ pub fn paramsubst(
         //     if (isarr > 0 && !plan9 && (!aval || !aval[0])) {
         //         val = dupstring("");
         //         isarr = 0;
-                    // c:1087 — `if (!in_brace_param) { … pct++ … }`: the LX2_INPAR
-                    // bookkeeping is skipped inside an open `${…}`.
-                    '(' if in_brace_param != 0 => cur.push(ch), // c:1135
         //     }
         // A ZERO-element array becomes the empty SCALAR before every
         // remaining transformation, so the quoting flags below operate on a
@@ -22091,8 +22066,6 @@ pub fn paramsubst(
         // getkeystring), and standalone backslash escapes.
         // (Q) unquote per-element on arrays. Direct port of
         // subst.c:2261 quotemod-- which iterates aval per-element.
-                                bct = 0; // c:939
-                                in_brace_param = 0; // c:940
         let unquote_one = |s: &str| -> String {
             // c:Src/subst.c:4863-4874 — `parse_subst_string + remnulargs
             // + untokenize`. The C path runs the input through the
@@ -22109,95 +22082,6 @@ pub fn paramsubst(
             while i < chars_v.len() {
                 let c = chars_v[i];
                 if c == '$' && i + 1 < chars_v.len() && chars_v[i + 1] == '\'' {
-                    // c:1049-1057 — LX2_STRING: `${` opens a brace parameter.
-                    // `++bct`, and the outermost one sets `in_brace_param`.
-                    '$' if chars_v.get(p + 1) == Some(&'{') => {
-                        cur.push(ch); // c:1050 — add(c)
-                        cur.push('{'); // c:1051 — c = Inbrace
-                        bct += 1; // c:1052
-                        if in_brace_param == 0 {
-                            in_brace_param = bct; // c:1054-1056
-                        }
-                        p += 1;
-                    }
-                    // c:1137-1150 — LX2_INBRACE. A `{` that starts a word in
-                    // command position is its own STRING (c:1141-1145) and is
-                    // left to the plain push below; anywhere else it counts.
-                    '{' if !isset(crate::ported::zsh_h::IGNOREBRACES)
-                        && !(cur.is_empty() && incmdpos_z) =>
-                    {
-                        bct += 1; // c:1149
-                        cur.push(ch);
-                    }
-                    // c:1152-1165 — LX2_OUTBRACE: closing the `{` that opened the
-                    // brace parameter ends it.
-                    '}' if bct != 0 => {
-                        if bct == in_brace_param {
-                            in_brace_param = 0; // c:1160-1163
-                        }
-                        bct -= 1; // c:1160
-                        cur.push(ch); // c:1165 — c = Outbrace
-                    }
-                    // Redirection operators. Gated on `pct == 0`: in this
-                    // tokenizer an open `(` is almost always the body of a
-                    // `$(`, `<(` or `>(`, which C consumes whole (skipcomm) so a
-                    // `>` inside it never reaches the arms below.
-                    '<' | '>' if pct == 0 => {
-                        let d = chars_v.get(p + 1).copied();
-                        // c:649-668 — a lone digit that starts the token is the
-                        // operator's fd (`2>x`, `2<&3`); c:831-835 `unpeekfd`
-                        // hands it back to the word when no operator follows.
-                        let fd_digit = cur.chars().count() == 1
-                            && cur.starts_with(|c: char| c.is_ascii_digit());
-                        if !cur.is_empty() && !fd_digit {
-                            // gettokstr() level — c:1171-1211, LX2_OUTANG /
-                            // LX2_INANG. `>(`/`<(` and a `<N-M>` numeric glob stay
-                            // in the word; anything else ends it.
-                            if in_brace_param != 0 || d == Some('(') {
-                                cur.push(ch); // c:1172 / c:1209 / c:1177 / c:1192
-                                p += 1;
-                                continue;
-                            }
-                            if ch == '<' {
-                                if let Some(end) = z_isnumglob(&chars_v, p + 1) {
-                                    cur.extend(&chars_v[p..=end]); // c:1201-1206
-                                    p = end + 1;
-                                    continue;
-                                }
-                            }
-                            z_push_word!(); // c:1180 / c:1211 — goto brk
-                        }
-                        match z_redirop(&chars_v, p) {
-                            Some((tok, n)) => {
-                                // c:Src/hist.c:3563-3566 — a redirection with an fd
-                                // is printed `"%d%s"`, fd then operator.
-                                let fd = std::mem::take(&mut cur);
-                                words.push(format!("{fd}{tok}"));
-                                pct = 0; // c:941 — fresh gettokstr() locals
-                                bct = 0; // c:939
-                                in_brace_param = 0; // c:940
-                                // c:361-364 — IS_REDIROP: `inredir = 1; oldpos =
-                                // incmdpos; incmdpos = 0;`.
-                                oldpos_z = incmdpos_z; // c:363
-                                incmdpos_z = false; // c:364
-                                inredir = true; // c:362
-                                p += n;
-                                continue;
-                            }
-                            None => {
-                                // c:828-836 / c:858-861 — process substitution or a
-                                // numeric glob: a STRING that begins here.
-                                cur.push(ch);
-                                if ch == '<' {
-                                    if let Some(end) = z_isnumglob(&chars_v, p + 1) {
-                                        cur.extend(&chars_v[p + 1..=end]); // c:1201-1206
-                                        p = end + 1;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
                     // c:2261 — `$'…'` ANSI-C decoder.
                     let body_start = i + 2;
                     let mut j = body_start;
