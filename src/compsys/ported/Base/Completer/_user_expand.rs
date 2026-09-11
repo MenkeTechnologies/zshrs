@@ -88,10 +88,17 @@ pub fn _user_expand() -> i32 {
     // Upstream declares them local, and none of them may survive into the next
     // completer.
     //
-    // The rest of sh:15-16 (`exp`, `expl`, `reply`, `specs`, `word`, `sort`,
-    // `suf`, `asp`, `tmp`, `spec`) is left as this port already had it — those
-    // writes predate this change and scoping them is its own edit.
-    let mut _scope = LocalScope::declare(&["dir", "space", "normal", "dstr"], PM_ARRAY);
+    // The rest of sh:15-16 (`exp`, `reply`, `specs`, `word`, `sort`, `suf`,
+    // `asp`, `tmp`, `spec`) is left as this port already had it — those writes
+    // predate this change and scoping them is its own edit.
+    //
+    // `expl` is in the list even though this port never writes it: sh:89/91,
+    // sh:102/104 and sh:128/130 hand the NAME to `_description`, whose last
+    // statement is `set -A "$name" …` (`_description` sh:100/102), so the array
+    // is born at whatever level is current. Measured with a `user-expand` style
+    // and `ls foo<TAB>`, /opt/homebrew/bin/zsh 5.9.2 leaves `expl` unset where
+    // zshrs left `expl=(-J -default-)` behind for the next completer.
+    let mut _scope = LocalScope::declare(&["dir", "space", "normal", "dstr", "expl"], PM_ARRAY);
     _scope.also(&["REPLY"], 0);
 
     let iprefix = getsparam("IPREFIX").unwrap_or_default();
