@@ -14035,10 +14035,11 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 ///
 /// !!! WARNING: RUST-ONLY HELPER !!!
 /// C does this inline inside `entersubsh` (c:Src/exec.c:1088-1092), which
-/// every subshell — `( … )` AND each forked pipeline stage — funnels
-/// through. zshrs has two separate places that enter a subshell context
-/// (the in-process `subshell_begin` and the pipeline stage fork), so the
-/// reset lives here to keep them from drifting apart.
+/// every subshell — `( … )`, `$( … )` AND each forked pipeline stage —
+/// funnels through. zshrs enters a subshell context in three separate
+/// places (the in-process `subshell_begin`, the in-process
+/// `run_command_substitution`, and the pipeline stage fork), so the reset
+/// lives here to keep them from drifting apart.
 ///
 /// ```c
 /// if (!(flags & ESUB_KEEPTRAP))
@@ -14054,7 +14055,7 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// IGNORED trap survives too. The loop bound stops below the pseudo
 /// signals (c:Src/signals.h:34-35), so ERR/ZERR and DEBUG survive while
 /// SIGEXIT (sig 0) is cleared.
-fn entersubsh_reset_traps() {
+pub(crate) fn entersubsh_reset_traps() {
     let posixtraps = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS);
     if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
         tbl.retain(|name, body| {
@@ -14185,13 +14186,14 @@ pub fn subshell_defer_signal(sig: libc::c_int) -> i32 {
 }
 
 /// Arm parent-side signal delivery for the duration of an in-process
-/// `( … )`. Must run BEFORE `entersubsh_reset_traps` clears the table.
+/// `( … )` or `$( … )`. Must run BEFORE `entersubsh_reset_traps` clears
+/// the table.
 ///
 /// !!! WARNING: RUST-ONLY HELPER !!!
 /// See `subshell_defer_signal`. Only the OUTERMOST subshell records the
 /// snapshot: `$$` names the top-level shell at every nesting level, so
 /// a nested `( ( … ) )` still routes deliveries to the same table.
-fn subshell_signal_enter() {
+pub(crate) fn subshell_signal_enter() {
     if SUBSH_SIGNAL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
         let snap = crate::ported::signals::sigtrapped
             .lock()
@@ -14215,7 +14217,7 @@ fn subshell_signal_enter() {
 /// (`Src/signals.c:1043-1047`): `while (trap_queue_front !=
 /// trap_queue_rear) handletrap(trap_queue[…])`, run at the point
 /// `zwaitjob` reaches after the child is reaped (`Src/jobs.c:1751`).
-fn subshell_signal_leave() {
+pub(crate) fn subshell_signal_leave() {
     if SUBSH_SIGNAL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
         return;
     }
@@ -14245,7 +14247,7 @@ fn subshell_signal_leave() {
 /// (`Src/signals.c:801-815`) for the "parent had no trap" case, and
 /// `settrap`'s two installs (`Src/signals.c:713-719` ignored,
 /// `Src/signals.c:724-732` trapped) for the others.
-fn subshell_restore_signal_dispositions(parent: &[i32], child: &[i32]) {
+pub(crate) fn subshell_restore_signal_dispositions(parent: &[i32], child: &[i32]) {
     let count = crate::ported::signals_h::SIGCOUNT;
     for sig in 1..=count {
         let i = sig as usize;

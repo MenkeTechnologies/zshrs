@@ -6013,6 +6013,21 @@ impl ShellExecutor {
                 // SubshForkCopy.
                 // A funsub/valsub runs in the current shell and keeps it all.
                 let tables_snap = (!shared_state).then(crate::ported::exec::SubshForkCopy::save);
+                // c:Src/exec.c:1127-1131 — the child's `entersubsh` unsets
+                // every trap that is not function-form (`$(trap)` lists
+                // nothing), in ITS copy of `sigtrapped[]`. Keep the
+                // parent's for the restore, and route signals that arrive
+                // meanwhile to it — same as `( … )`, see
+                // fusevm_bridge::subshell_defer_signal.
+                let sigtrapped_snap = (!shared_state).then(|| {
+                    let parent = crate::ported::signals::sigtrapped
+                        .lock()
+                        .map(|g| g.clone())
+                        .unwrap_or_default();
+                    crate::fusevm_bridge::subshell_signal_enter();
+                    crate::fusevm_bridge::entersubsh_reset_traps();
+                    parent
+                });
                 // c:Src/exec.c:4782 — getoutput's child runs
                 // `entersubsh(ESUB_PGRP|ESUB_NOMONITOR)`, and c:1219
                 // `if (flags & ESUB_PGRP) clearjobtab(monitor)` hands
@@ -6243,6 +6258,15 @@ impl ShellExecutor {
                     if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                         *t = traps_snap;
                     }
+                    // The trap flags, and the `sigaction`s the body installed
+                    // for its own traps, go back to the parent's.
+                    if let Some(parent) = &sigtrapped_snap {
+                        let child = match crate::ported::signals::sigtrapped.lock() {
+                            Ok(mut st) => std::mem::replace(&mut *st, parent.clone()),
+                            Err(_) => Vec::new(),
+                        };
+                        crate::fusevm_bridge::subshell_restore_signal_dispositions(parent, &child);
+                    }
                     // Restore function tables (parallel to the trap/param
                     // restore above). Bug #455.
                     if let Ok(mut t) = crate::ported::hashtable::shfunctab_lock().write() {
@@ -6283,6 +6307,11 @@ impl ShellExecutor {
                         if let Ok(mut g) = t.lock() {
                             *g = pj;
                         }
+                    }
+                    // Now that the parent's traps are back, run the ones
+                    // whose signal arrived during the body.
+                    if sigtrapped_snap.is_some() {
+                        crate::fusevm_bridge::subshell_signal_leave();
                     }
                 } // if !shared_state
             }

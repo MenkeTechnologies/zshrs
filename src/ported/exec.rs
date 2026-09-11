@@ -4874,9 +4874,11 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
 ///
 /// DELIBERATELY SKIPPED — each would be wrong, or is already handled
 /// elsewhere on the in-process path:
-///   * c:1088-1092 `unsettrap(sig)` — the trap table is not scalar state
-///     (trap bodies/dispositions), and with no fork there is no child exit
-///     for an EXIT trap to fire at. Restoring it is not a swap.
+///   * c:1127-1131 `unsettrap(sig)` — APPLIED, but not here: the trap table is
+///     not scalar state (trap bodies and `sigaction` dispositions), so
+///     `run_command_substitution` resets it with the same helper `( … )`
+///     uses (`fusevm_bridge::entersubsh_reset_traps`) and puts the parent's
+///     flags and dispositions back on exit.
 ///   * c:1095 `exit_val = 0` — ALREADY DONE on this path:
 ///     `vm_helper.rs:3893` swaps `EXIT_VAL` to 0 before the nested VM runs
 ///     and restores it at `vm_helper.rs:4004`.
