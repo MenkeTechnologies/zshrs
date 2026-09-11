@@ -595,6 +595,33 @@ filter for the structured log written to
 .TP
 .B ZSHRS_LONG_CMD_PRE_THRESHOLD
 Seconds before a long-running command warning fires.
+.TP
+.BR ANTHROPIC_API_KEY ", " OPENAI_API_KEY ", " GOOGLE_API_KEY ", " GEMINI_API_KEY
+Provider keys for the
+.B ai
+builtin, which calls a language model from inside the shell process and
+streams the answer or assigns it with
+.BR \-v / \-a .
+Defaults live in
+.B [ai]
+in
+.IR ~/.zshrs/zshrs.toml ;
+.B ai \-h
+lists the flags and
+.BR zshrsall (1)
+documents them.
+.TP
+.BR ZSHRS_AI_BASE_URL ", " ZSHRS_AI_LOCAL_KEY ", " OLLAMA_HOST
+Endpoints (and key) for
+.BR "ai \-P local" " and " "ai \-P ollama" .
+.TP
+.B ZSHRS_AI_MODE
+.B mock-only
+makes an
+.B ai
+prompt that no
+.B \-M
+mock matches an error instead of a live call.
 .SH FILES
 .TP
 .I ~/.zshrs/

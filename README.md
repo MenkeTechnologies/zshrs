@@ -460,6 +460,68 @@ long lists are truncated with `…`.
 Reading a name that was never armed is an error, not an empty chain —
 `provenance -f greet` on its own answers `not tracked: greet()`.
 
+### Language Model (`ai`, port of [`strykelang`](https://github.com/MenkeTechnologies/strykelang)'s `ai`)
+
+`ai` calls a language model from inside the shell process. The answer streams
+to stdout as it arrives, or lands in a parameter with `-v`/`-a` — the request
+and the assignment happen in-process, where `reply=$(curl … | jq …)` costs two
+forks, two execs, a pipe and a command substitution.
+
+```zsh
+ai explain the difference between '$@' and '$*'     # streamed to stdout
+git diff --cached | ai -v msg -s 'Write a one-line commit message.'
+ai -a steps list the steps to rotate a TLS cert     # one array element per line
+ai -m claude-haiku-4-5 -t 256 -T 0 summarise: $text
+ai -c                                               # cost + token report
+```
+
+With no prompt words, or a lone `-`, the prompt is read from stdin — so a
+piped diff is the prompt only when no words follow `ai`; use `-s` for the
+instruction.
+
+| Flag | Meaning |
+|------|---------|
+| `-m MODEL` / `-P PROVIDER` / `-s SYSTEM` | model id, provider, system prompt |
+| `-t N` / `-T FLOAT` / `-o SECS` | max output tokens, temperature, request timeout |
+| `-v VAR` / `-a ARRAY` | assign to a scalar, or to an array one line per element (mutually exclusive) |
+| `-b` | buffer instead of streaming |
+| `-n` | bypass the response cache |
+| `-k` | mark the system prompt `cache_control` (Anthropic prompt caching) |
+| `-c` / `-H` / `-G` / `-K` | cost and token report, recent call history, current config, clear the cache |
+| `-S key=value` | change a session default (the `[ai]` keys below) |
+| `-M pattern=response` | install a mock: a prompt matching the regex answers `response` without a request |
+
+Defaults come from `[ai]` in `~/.zshrs/zshrs.toml`:
+
+```toml
+[ai]
+provider = "anthropic"            # anthropic | openai | local | ollama | gemini
+model = "claude-opus-5"
+api_key_env = "ANTHROPIC_API_KEY" # the NAME of the variable; the key itself stays in the environment
+base_url = ""                     # local/ollama endpoint override
+cache = true                      # in-process response cache
+max_cost_run = 5.0                # USD ceiling for the shell process; 0 disables
+max_tokens = 4096
+timeout = 120
+```
+
+| Provider | Key | Endpoint |
+|----------|-----|----------|
+| `anthropic` (streams) | `$ANTHROPIC_API_KEY` (or whatever `api_key_env` names) | `api.anthropic.com` |
+| `openai` | `$OPENAI_API_KEY` | `api.openai.com` |
+| `local` / `compat` / `openai_compat` | `$ZSHRS_AI_LOCAL_KEY` | `base_url`, else `$ZSHRS_AI_BASE_URL`, else `localhost:1234` |
+| `ollama` | — | `base_url`, else `$OLLAMA_HOST`, else `localhost:11434` |
+| `gemini` / `google` | `$GOOGLE_API_KEY` or `$GEMINI_API_KEY` | `generativelanguage.googleapis.com` |
+
+Every call is billed against `max_cost_run`, from a price table built into the
+binary; once the process has spent that much, `ai` refuses rather than
+calling. The buffered Anthropic path retries 429, 500, 502, 503 and 504 up to four
+attempts with exponential backoff. `ZSHRS_AI_MODE=mock-only` makes a prompt
+that no `-M` mock matches an error instead of a live call — what a test suite
+wants. Exit status: 0 on success, 1 when the call failed (no key, HTTP or
+transport error, cost ceiling), 2 for bad flags; the reason goes to stderr as
+`zshrs: ai: <reason>`.
+
 Nothing is recorded until `provenance -m` arms it — or until something
 turns on track-everything mode, which arms every parameter write and
 every function with no `-m` at all: `provenance -a` at runtime,

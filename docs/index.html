@@ -1248,6 +1248,35 @@ Every subsequent call (client path, ZERO daemon RTT):
           <tr><td><code>profile</code></td><td>In-process command profiling. Nanosecond accuracy. No fork overhead in measurement.</td></tr>
         </table>
 
+        <h3>Language Model (<code>ai</code>)</h3>
+        <p>Port of <a href="https://github.com/MenkeTechnologies/strykelang">strykelang</a>&rsquo;s <code>ai</code>.
+        The request and the assignment happen inside the shell process: the answer streams to stdout as it arrives,
+        or <code>-v</code>/<code>-a</code> put it in a parameter, where <code>reply=$(curl &hellip; | jq &hellip;)</code>
+        costs two forks, two execs, a pipe and a command substitution. With no prompt words, or a lone <code>-</code>,
+        the prompt is read from stdin.</p>
+        <div class="code-block"><span class="keyword">ai</span> explain the difference between <span class="string">'$@'</span> and <span class="string">'$*'</span>   <span class="comment"># streamed to stdout</span>
+git diff --cached | <span class="keyword">ai</span> -v msg -s <span class="string">'Write a one-line commit message.'</span>
+<span class="keyword">ai</span> -a steps list the steps to rotate a TLS cert  <span class="comment"># one array element per line</span>
+<span class="keyword">ai</span> -c                                             <span class="comment"># cost + token report</span></div>
+        <table class="arch-table">
+          <tr><th>Flag</th><th>Meaning</th></tr>
+          <tr><td><code>-m</code> / <code>-P</code> / <code>-s</code></td><td>Model id, provider (<code>anthropic</code>, <code>openai</code>, <code>local</code>, <code>ollama</code>, <code>gemini</code>), system prompt</td></tr>
+          <tr><td><code>-t</code> / <code>-T</code> / <code>-o</code></td><td>Max output tokens, temperature, request timeout in seconds</td></tr>
+          <tr><td><code>-v VAR</code> / <code>-a ARRAY</code></td><td>Assign to a scalar, or to an array one line per element (mutually exclusive)</td></tr>
+          <tr><td><code>-b</code> / <code>-n</code> / <code>-k</code></td><td>Buffer instead of streaming; bypass the response cache; mark the system prompt <code>cache_control</code></td></tr>
+          <tr><td><code>-c</code> / <code>-H</code> / <code>-G</code> / <code>-K</code></td><td>Cost and token report, recent call history, current config, clear the cache</td></tr>
+          <tr><td><code>-S key=value</code></td><td>Change a session default (any <code>[ai]</code> key)</td></tr>
+          <tr><td><code>-M pattern=response</code></td><td>Install a mock &mdash; a prompt matching the regex answers without a request</td></tr>
+        </table>
+        <p>Defaults come from <code>[ai]</code> in <code>~/.zshrs/zshrs.toml</code>: <code>provider = "anthropic"</code>,
+        <code>model = "claude-opus-5"</code>, <code>api_key_env = "ANTHROPIC_API_KEY"</code> (the variable&rsquo;s name;
+        the key stays in the environment), <code>cache = true</code>, <code>max_cost_run = 5.0</code> (USD ceiling for
+        the shell process, <code>0</code> disables), <code>max_tokens = 4096</code>, <code>timeout = 120</code>,
+        <code>base_url</code> for the local/ollama endpoint. Other providers read <code>$OPENAI_API_KEY</code>,
+        <code>$ZSHRS_AI_LOCAL_KEY</code> + <code>$ZSHRS_AI_BASE_URL</code>, <code>$OLLAMA_HOST</code>, and
+        <code>$GOOGLE_API_KEY</code>/<code>$GEMINI_API_KEY</code>. <code>ZSHRS_AI_MODE=mock-only</code> turns an unmatched
+        prompt into an error instead of a live call. Exit status 0 on success, 1 when the call failed, 2 for bad flags.</p>
+
         <h3>Unit Test Framework</h3>
         <p>Port of the <a href="https://github.com/MenkeTechnologies/strykelang">strykelang</a> test framework
         (<code>stryke test</code> &rarr; <code>zshrs --ztest</code>). Worker-pool runner &mdash; one persistent

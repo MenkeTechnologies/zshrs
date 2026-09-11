@@ -1204,6 +1204,66 @@ and
 .B "whence -m"
 output. See
 .IR src/extensions/builtins/ .
+.SS "Language model: ai"
+.B ai
+[\fB\-m\fR \fImodel\fR] [\fB\-s\fR \fIsystem\fR] [\fB\-P\fR \fIprovider\fR]
+[\fB\-t\fR \fImax-tokens\fR] [\fB\-T\fR \fItemp\fR] [\fB\-o\fR \fItimeout\fR]
+[\fB\-nkb\fR] [\fB\-v\fR \fIvar\fR | \fB\-a\fR \fIarray\fR] [\fB\-\-\fR] \fIprompt\fR...
+.br
+.B ai
+\fB\-c\fR | \fB\-K\fR | \fB\-H\fR | \fB\-G\fR | \fB\-S\fR \fIkey\fR=\fIvalue\fR |
+\fB\-M\fR \fIpattern\fR=\fIresponse\fR
+.PP
+Calls a language model from inside the shell process (a port of strykelang's
+.BR ai ).
+The response streams to stdout as it arrives;
+.B \-b
+buffers it,
+.B \-v
+assigns it to a scalar and
+.B \-a
+to an array, one line per element.  With no prompt words, or a lone
+.BR \- ,
+the prompt is read from stdin.
+.B \-n
+bypasses the in-process response cache and
+.B \-k
+marks the system prompt for Anthropic prompt caching.
+.B \-c
+prints the cost and token totals,
+.B \-H
+the recent calls (tab-separated),
+.B \-G
+the current configuration;
+.B \-K
+clears the cache,
+.B \-S
+changes a session default, and
+.B \-M
+installs a mock: a prompt matching the regex answers without a request.
+.PP
+Defaults come from
+.B [ai]
+in
+.IR ~/.zshrs/zshrs.toml :
+.B provider
+(anthropic, openai, local, ollama, gemini; default anthropic),
+.B model
+(\%claude-opus-5),
+.B api_key_env
+(ANTHROPIC_API_KEY \(em the variable's name, not the key),
+.BR base_url ,
+.B cache
+(true),
+.B max_cost_run
+(5.0 USD for the shell process; 0 disables),
+.B max_tokens
+(4096) and
+.B timeout
+(120 seconds).  Exit status 0 on success, 1 when the call failed (no key,
+HTTP or transport error, cost ceiling), 2 for bad flags; the reason is written
+to stderr as
+.BR "zshrs: ai: " \fIreason\fR.
 .SH "OPTIONS"
 .B setopt
 turns options on;
@@ -1884,6 +1944,38 @@ Seconds. Commands taking longer fire the preexec long-cmd hook.
 .TP
 .B ZSHRS_NO_DAEMON
 Suppress daemon connection (per-invocation override of full mode).
+.TP
+.B ANTHROPIC_API_KEY
+Key for the
+.B ai
+builtin's default provider (the variable named by
+.BR [ai]\ api_key_env ).
+.TP
+.BR OPENAI_API_KEY ", " GOOGLE_API_KEY ", " GEMINI_API_KEY
+Keys for
+.B ai \-P openai
+and
+.BR "ai \-P gemini" .
+.TP
+.BR ZSHRS_AI_BASE_URL ", " ZSHRS_AI_LOCAL_KEY
+Endpoint and key for
+.B ai \-P local
+(an OpenAI-compatible server; default endpoint
+.IR http://localhost:1234/v1/chat/completions ).
+.TP
+.B OLLAMA_HOST
+Endpoint for
+.B ai \-P ollama
+(default
+.IR http://localhost:11434 ).
+.TP
+.B ZSHRS_AI_MODE
+.B mock-only
+makes an
+.B ai
+prompt that no
+.B \-M
+mock matches an error instead of a live call.
 .SH "FILES"
 .TP
 .I ~/.cache/zshrs/
