@@ -651,6 +651,39 @@ fn probe_socket() -> bool {
     false
 }
 
+/// Side-effect-free twin of [`probe`], for reports drawn on request
+/// (`zbanner`, `zshrs --banner`): the same `[daemon].enabled` gate and the
+/// same socket connect, but nothing is stored and `skip_configs` is not
+/// re-decided — a report run mid-session must not change how the shell
+/// treats the daemon.
+/// zshrs-original — no C counterpart.
+pub fn check() -> Mode {
+    if read_config_full().daemon == ConfigSetting::Off {
+        return Mode::Disabled;
+    }
+    if probe_socket() {
+        Mode::Present
+    } else {
+        Mode::Absent
+    }
+}
+
+/// Where the daemon socket lives, or `None` when the cache paths do not
+/// resolve.
+/// zshrs-original — no C counterpart.
+#[cfg(feature = "daemon")]
+pub fn socket_path() -> Option<PathBuf> {
+    crate::daemon::paths::CachePaths::resolve()
+        .ok()
+        .map(|paths| paths.socket)
+}
+
+/// Stub-mode build: there is no daemon, so there is no socket.
+#[cfg(not(feature = "daemon"))]
+pub fn socket_path() -> Option<PathBuf> {
+    None
+}
+
 /// O(1) read of the cached probe result. Returns `Unknown` until
 /// `probe()` has run.
 /// zshrs-original — no C counterpart.

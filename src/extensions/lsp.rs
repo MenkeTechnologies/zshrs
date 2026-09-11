@@ -5843,6 +5843,7 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--help",     "Print the full usage message (every flag, dumper, parity mode) and exit 0."),
     ("--version",  "Print the zsh version string baked into the binary and exit 0."),
     ("--doctor",   "Full diagnostic report of shell health, caches, plugin load timings, and performance counters."),
+    ("--banner",   "Print the ZSHRS logo, a box with the version and the builtin and extension totals, and whether the daemon answers on its socket. The `zbanner` builtin prints the same inside a shell, plus that shell's function, alias, parameter and job counts."),
     // Editor / IDE integration
     ("--lsp",      "Run the Language Server on stdio. Serves completion / hover / definition / references / rename / documentSymbol / foldingRange / semanticTokens / formatting / diagnostics. Consumed by the IntelliJ plugin, Helix, Neovim, VS Code, etc."),
     ("--dap",      "`--dap HOST:PORT` — Debug Adapter Protocol server. Connects back to the IDE's listener at HOST:PORT and drives breakpoints / step / variables / evaluate."),
@@ -6268,6 +6269,7 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("wc", "Count newlines, words, bytes. `-l` lines, `-w` words, `-c` bytes. coreutils drop-in."),
     ("whoami", "Print the effective user name. coreutils drop-in."),
     ("yes", "Repeatedly output a line. `yes` prints `y` forever; `yes STR` prints STR. coreutils drop-in."),
+    ("zbanner", "Print the ZSHRS logo, a box with the version and the builtin and extension totals, and a live line: the daemon socket and whether it answers, then this shell's function, alias, parameter and job counts. `zshrs --banner` prints the same from outside a shell, without the counts."),
     ("zbuild", "Bytecode-compile a zsh source file ahead of time. `zbuild script.zsh` writes `script.zwc` next to it; subsequent `source`s skip the lexer/parser. Same on-disk format as `zcompile` but uses fusevm bytecode."),
     // ── Daemon-backed `z*` builtins (Unix-socket RPC to zshrs-daemon) ──
     ("zask", "Send an ask-style request to the daemon and print the JSON response. Used by tools/agents that want a single synchronous query against the shared catalog."),
@@ -9497,12 +9499,7 @@ pub fn dump_reference_html() -> String {
     // These are the ported zsh-faithful builtins. Distinct from the
     // Extension chapter (which lists zshrs-only additions). Together
     // they cover every builtin the user can call.
-    let mut compat: Vec<String> = crate::ported::builtin::BUILTINS
-        .iter()
-        .map(|b| b.node.nam.clone())
-        .collect();
-    compat.sort();
-    compat.dedup();
+    let compat = crate::ext_builtins::compat_builtin_names();
     write_chapter(
         &mut out,
         "ch-lsp-compat",
@@ -9623,17 +9620,7 @@ pub fn dump_reference_html() -> String {
     );
 
     // ── extension builtins (ext + daemon z* builtins) ────────────────
-    let mut ext_names: Vec<String> = crate::ext_builtins::EXT_BUILTIN_NAMES
-        .iter()
-        .map(|s| s.to_string())
-        .chain(
-            crate::daemon::builtins::ZSHRS_BUILTIN_NAMES
-                .iter()
-                .map(|s| s.to_string()),
-        )
-        .collect();
-    ext_names.sort();
-    ext_names.dedup();
+    let ext_names = crate::ext_builtins::extension_builtin_names();
     write_chapter(
         &mut out,
         "ch-lsp-extensions",

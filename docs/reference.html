@@ -7921,7 +7921,7 @@ echo done
 
       <h2>Extension Builtin Index</h2>
 
-      <p class="chapter-meta">114 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
+      <p class="chapter-meta">115 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
 
       <article class="doc-entry" id="doc-lsp-extension-ai">
 
@@ -8470,6 +8470,13 @@ echo done
 
         <h3><code>zassert_true</code> <a class="doc-anchor" href="#doc-lsp-extension-zassert_true">¶</a></h3>
         <p><code>zassert_true V [MSG]</code> — alias of <code>zassert_ok</code>.</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-zbanner">
+
+        <h3><code>zbanner</code> <a class="doc-anchor" href="#doc-lsp-extension-zbanner">¶</a></h3>
+        <p>zbanner — the ZSHRS logo, a boxed summary (version, builtin and extension totals), and a live line: the daemon socket and whether it answers, then this shell's functions, aliases, parameters and jobs. <code>zshrs --banner</code> prints the same from outside a shell, without the shell counts. Ported from ztmux's <code>banner</code> verb.</p>
+        <p>Usage:   zbanner</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-zbuild">

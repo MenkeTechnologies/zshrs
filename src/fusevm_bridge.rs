@@ -849,6 +849,7 @@ pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<
         "dbview" => with_executor(|e| e.builtin_dbview(argv)),
         "profile" => with_executor(|e| e.builtin_profile(argv)),
         "provenance" => with_executor(|e| e.builtin_provenance(argv)),
+        "zbanner" => with_executor(|e| e.builtin_zbanner(argv)),
         "caller" => with_executor(|e| e.builtin_caller(argv)),
         "help" => with_executor(|e| e.builtin_help(argv)),
         "cdreplay" => with_executor(|e| e.builtin_cdreplay(argv)),

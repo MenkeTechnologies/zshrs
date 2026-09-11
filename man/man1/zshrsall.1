@@ -1204,6 +1204,22 @@ and
 .B "whence -m"
 output. See
 .IR src/extensions/builtins/ .
+.SS "Status banner: zbanner"
+.B zbanner
+prints the ZSHRS logo, a box with the version and the builtin and
+extension totals, and one live line: the daemon socket and whether it
+answers (\fB// up\fR, \fB// no daemon running\fR or
+\fB// daemon disabled\fR), then this shell's function, alias, parameter
+and job counts \(em the counts zsh's own
+.BR $functions ,
+.BR $aliases " + " $galiases ,
+.B $parameters
+and
+.B $jobstates
+report.  It takes no arguments (exit status 2 if given one) and never
+prints at startup.
+.B "zshrs \-\-banner"
+prints the same from outside a shell, without the shell counts.
 .SS "Language model: ai"
 .B ai
 [\fB\-m\fR \fImodel\fR] [\fB\-s\fR \fIsystem\fR] [\fB\-P\fR \fIprovider\fR]

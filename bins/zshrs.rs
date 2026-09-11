@@ -537,6 +537,7 @@ Special options:
   --help       show this message, then exit
   --version    show zsh version number, then exit
   --doctor     full diagnostic report of shell health, caches, and performance
+  --banner     print the ZSHRS logo, version and builtin totals, and daemon status
 
 Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
   --dump-tokens   FILE   one TOKNAME<tab>TOKSTR line per lexer token
@@ -1904,6 +1905,19 @@ pub fn zshrs_main() {
             run_doctor();
         } else {
             eprintln!("zshrs: --doctor is only available in zshrs mode (not --zsh or --posix)");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Handle --banner: the `zbanner` builtin's output from outside a shell
+    // (zshrs-exclusive, like --doctor). No shell has started, so the live
+    // line reports the daemon alone.
+    if args.iter().any(|a| a == "--banner") {
+        if is_zshrs_mode() {
+            zsh::banner::print_banner(None);
+        } else {
+            eprintln!("zshrs: --banner is only available in zshrs mode (not --zsh or --posix)");
             std::process::exit(1);
         }
         return;

@@ -391,6 +391,7 @@ dbview history docker         # search history
 | `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
 | `provenance` | Value lineage — where a parameter's bytes came from and every bytecode op that touched them, each stamped with file, line and wall clock; shell functions carry the same chain ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)) |
+| `zbanner` | ZSHRS logo, a box with the version and builtin totals, and a live line: daemon socket status plus this shell's function, alias, parameter and job counts. `zshrs --banner` prints it from outside a shell, daemon status only |
 
 `ZSHRS_STARTUP_TRACE=1` turns on the startup phase timer: every startup phase
 prints `[startup <ms since process start>] <label>` to stderr, ending with

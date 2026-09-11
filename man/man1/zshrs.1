@@ -67,6 +67,14 @@ Print the zshrs version and exit.
 Full diagnostic report of shell health, cache state, daemon presence,
 worker pool, and integrity scan results.
 .TP
+.B \-\-banner
+Print the ZSHRS logo, a box with the version and the builtin and
+extension totals, and whether the daemon answers on its socket, then exit.
+Inside a shell the
+.B zbanner
+builtin prints the same, plus that shell's function, alias, parameter and
+job counts.
+.TP
 .BI \-\-prewarm\-autoloads " [DIR ...]"
 Compile every
 .B _*

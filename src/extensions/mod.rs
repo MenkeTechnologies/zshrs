@@ -30,6 +30,7 @@ pub use crate::aot;
 pub use crate::arith_compiler;
 pub use crate::ast_sexp;
 pub use crate::autoload_cache;
+pub use crate::banner;
 pub use crate::bash_arrays;
 pub use crate::bash_prompt;
 pub use crate::canonical_apply;

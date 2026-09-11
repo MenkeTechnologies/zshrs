@@ -228,6 +228,32 @@ pub fn builtin_in_builtintab(name: &str) -> bool {
     module_builtin_available(name)
 }
 
+/// The ported builtin table's distinct names, sorted — what the
+/// reference's Compat Builtin Index lists and `zbanner` totals.
+pub fn compat_builtin_names() -> Vec<String> {
+    let mut names: Vec<String> = crate::ported::builtin::BUILTINS
+        .iter()
+        .map(|b| b.node.nam.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Every zshrs-only builtin — [`EXT_BUILTIN_NAMES`] plus the daemon-backed
+/// `z*` builtins — sorted and deduplicated. What the reference's Extension
+/// Builtin Index lists and `zbanner` totals.
+pub fn extension_builtin_names() -> Vec<String> {
+    let mut names: Vec<String> = EXT_BUILTIN_NAMES
+        .iter()
+        .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter())
+        .map(|s| s.to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "ai",
     "arch",
@@ -317,6 +343,7 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "zassert_near",
     "zassert_ok",
     "zassert_true",
+    "zbanner",
     "zbuild",
     "ztest_run",
     "ztest_skip",
@@ -403,6 +430,23 @@ impl ShellExecutor {
                 e.status()
             }
         }
+    }
+
+    /// zbanner — the ZSHRS logo, a boxed summary (version, builtin and
+    /// extension totals), and a live line: the daemon socket and whether it
+    /// answers, then this shell's functions, aliases, parameters and jobs.
+    /// `zshrs --banner` prints the same from outside a shell, without the
+    /// shell counts. Ported from ztmux's `banner` verb.
+    ///
+    /// Usage:
+    ///   zbanner
+    pub(crate) fn builtin_zbanner(&self, args: &[String]) -> i32 {
+        if let Some(arg) = args.first() {
+            eprintln!("zshrs: zbanner: bad argument: {arg}");
+            return 2;
+        }
+        crate::banner::print_banner(Some(crate::banner::ShellCounts::read()));
+        0
     }
 
     /// caller - display call stack (bash)
@@ -11051,6 +11095,9 @@ pub fn is_extension_builtin(name: &str) -> bool {
 /// had this problem because fusevm knows them.
 pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     "provenance",
+    // zshrs-original (`src/extensions/banner.rs`); fusevm has no ID for it,
+    // so a literal `zbanner` reaches `try_run_registered_builtin`.
+    "zbanner",
     // The `ai` builtin. `fusevm` carries `BUILTIN_AI` on `main` but has
     // not released it yet, so the pinned crate still answers `None` for
     // the name and a literal `ai` reaches `try_run_registered_builtin`

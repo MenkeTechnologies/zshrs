@@ -1246,6 +1246,7 @@ Every subsequent call (client path, ZERO daemon RTT):
           <tr><td><code>doctor</code></td><td>Full diagnostic: worker pool metrics, cache stats, bytecode coverage, startup health.</td></tr>
           <tr><td><code>dbview</code></td><td>Browse the daemon's catalog.db mirror without SQL. Tables: autoloads, comps, executables, history, plugins. Hot path uses rkyv mmap directly.</td></tr>
           <tr><td><code>profile</code></td><td>In-process command profiling. Nanosecond accuracy. No fork overhead in measurement.</td></tr>
+          <tr><td><code>zbanner</code></td><td>ZSHRS logo, a box with the version and builtin totals, and a live line: daemon socket status plus this shell&rsquo;s function, alias, parameter and job counts. <code>zshrs --banner</code> prints it from outside a shell, daemon status only.</td></tr>
         </table>
 
         <h3>Language Model (<code>ai</code>)</h3>
