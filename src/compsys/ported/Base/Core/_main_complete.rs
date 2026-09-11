@@ -552,10 +552,19 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let mut curcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:60-68  pending-tab short-circuit
-    let insert_tab = lookupstyle(&format!(":completion:{}:", curcontext), "insert-tab")
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "yes".to_string());
+    //
+    // sh:60 is `zstyle -s … insert-tab tmp || tmp=yes`, and `zstyle -s` joins
+    // the WHOLE value array (`zutil.c:649`). This style is meant to be
+    // multi-word: sh:62-63 and sh:71 match `$tmp` against patterns that
+    // explicitly allow blank-separated neighbours — `*pending(|[[:blank:]]*)`,
+    // `(|*[[:blank:]])(yes|true|on|1)(|[[:blank:]]*)` — so `insert-tab
+    // pending=2 yes` is a supported spelling. Reading element 1 alone made
+    // every word after the first invisible to those patterns.
+    let insert_tab = crate::compsys::ported::shared::zstyle_s(
+        &format!(":completion:{}:", curcontext),
+        "insert-tab",
+    )
+    .unwrap_or_else(|| "yes".to_string());
     let pending = getiparam("PENDING");
     let pending_match = if insert_tab.contains("pending") {
         if let Some(eq_pos) = insert_tab.find("pending=") {
@@ -745,17 +754,23 @@ pub fn _main_complete(args: &[String]) -> i32 {
             0,
         );
     };
-    if let Some(v) = lookupstyle(&ctx_default, "list-prompt").first() {
-        let _ = setsparam("LISTPROMPT", v);
-        load_complist(); // sh:128
-    }
-    if let Some(v) = lookupstyle(&ctx_default, "select-prompt").first() {
-        let _ = setsparam("MENUPROMPT", v);
-        load_complist(); // sh:132
-    }
-    if let Some(v) = lookupstyle(&ctx_default, "select-scroll").first() {
-        let _ = setsparam("MENUSCROLL", v);
-        load_complist(); // sh:136
+    // sh:126-137 — three `if zstyle -s …:default <style> tmp; then
+    //                        <PARAM>="$tmp"; zmodload -i zsh/complist; fi`
+    //
+    // Each of these carries a PROMPT, which is the kind of value a user
+    // writes unquoted more often than not: `zstyle ':completion:*:default'
+    // list-prompt %S at %p%s` is four elements, and `zutil.c:649` joins them
+    // into the one string that becomes `$LISTPROMPT`. Element 1 alone left
+    // `%S` in the prompt and dropped the rest.
+    for (style, param) in [
+        ("list-prompt", "LISTPROMPT"),
+        ("select-prompt", "MENUPROMPT"),
+        ("select-scroll", "MENUSCROLL"),
+    ] {
+        if let Some(v) = crate::compsys::ported::shared::zstyle_s(&ctx_default, style) {
+            let _ = setsparam(param, &v);
+            load_complist(); // sh:128 / sh:132 / sh:136
+        }
     }
 
     // sh:31-33  global tag-tracking state init
@@ -1183,11 +1198,15 @@ pub fn _main_complete(args: &[String]) -> i32 {
             m + fm
         };
         let lastdescr = getaparam("_lastdescr").unwrap_or_default();
-        let warn_format = lookupstyle(&format!(":completion:{}:warnings", curcontext), "format")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        if live_pending == 0 && !lastdescr.is_empty() && !warn_format.is_empty() {
+        // sh:357-359 — the `warnings` arm is entered on `zstyle -s`'s STATUS,
+        // which `zutil.c:648` takes from `vals[0]`, a pointer. `zstyle
+        // ':completion:*:warnings' format ''` is SET: upstream still forces
+        // the listing and suppresses the insert, it just renders an empty
+        // warning. Gating on the value being non-empty skipped the whole arm.
+        let warn_format =
+            crate::compsys::ported::shared::zstyle_s(&format!(":completion:{}:warnings", curcontext), "format");
+        if live_pending == 0 && !lastdescr.is_empty() && warn_format.is_some() {
+            let warn_format = warn_format.unwrap_or_default();
             set_compstate_str("list", "list force");
             set_compstate_str("insert", "");
             // sh:360 — `tmp=( "\`${(@)^_lastdescr:#}'" )`. The `:#` with an

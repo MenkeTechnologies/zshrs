@@ -29,6 +29,7 @@
 //! list-colors). Called by `_description` per tag-spec.
 
 use crate::compsys::ported::shared::zstyle_t;
+use crate::compsys::ported::shared::zstyle_s;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -93,12 +94,17 @@ pub fn _setup_impl(args: &[String]) -> i32 {
         unsetparam("ZLS_COLOURS");
     }
 
-    // sh:25-29  show-ambiguity
-    let sa = lookupstyle(&ctx, "show-ambiguity")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if !sa.is_empty() {
+    // sh:27-30  if zstyle -s ":…:$1" show-ambiguity val; then
+    //             [[ $val = (yes|true|on) ]] && _ambiguous_color=4 ||
+    //                 _ambiguous_color=$val
+    //
+    // The `if` is `zstyle -s`'s STATUS (`zutil.c:648` tests `vals[0]`, a
+    // pointer), so `show-ambiguity ''` is SET and sh:29 assigns the empty
+    // string to `_ambiguous_color` — which is how the style is turned off
+    // for a narrower context than the one that switched it on. Gating on the
+    // value being non-empty left the broader context's colour in place.
+    // sh:29's `(yes|true|on)` test is against the JOINED value.
+    if let Some(sa) = zstyle_s(&ctx, "show-ambiguity") {
         let val = if matches!(sa.as_str(), "yes" | "true" | "on") {
             "4".to_string()
         } else {
