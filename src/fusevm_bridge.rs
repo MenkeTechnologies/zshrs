@@ -16470,20 +16470,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Snapshot option store so `(set -e)` /
                 // `(setopt extendedglob)` don't leak to parent.
                 opts: crate::ported::options::opt_state_snapshot(),
-                // c:Src/exec.c — fork() copies the alias table to
-                // the subshell. `(alias x=y)` inside the subshell
-                // dies with the child; the parent doesn't see x.
-                // Snapshot here so subshell_end can restore.
-                // Bug #209 in docs/BUGS.md.
-                aliases: crate::ported::hashtable::aliastab_lock()
-                    .read()
-                    .ok()
-                    .map(|t| {
-                        t.iter()
-                            .map(|(k, v)| (k.clone(), v.text.clone(), v.node.flags))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                // c:Src/exec.c:2880 — fork() copies the alias tables to
+                // the subshell. `(alias x=y)` inside the subshell dies
+                // with the child; the parent doesn't see x. Bug #209.
+                tables: crate::ported::exec::SubshTables::save(),
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. `(f() { ... })` defined
                 //   inside the subshell dies with the child; parent's
@@ -16986,27 +16976,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 // subshells so child option changes die with the
                 // child; we run in-process and must restore.
                 crate::ported::options::opt_state_restore(snap.opts);
-                // c:Src/exec.c — fork() means alias mutations in a
-                // subshell die with the child. Restore parent's
-                // alias table from snapshot. Clear current entries
-                // then re-add parent's. Bug #209 in docs/BUGS.md.
-                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                    tab.clear();
-                    for (name, text, flags) in snap.aliases {
-                        tab.add(crate::ported::zsh_h::alias {
-                            node: crate::ported::zsh_h::hashnode {
-                                next: None,
-                                nam: name,
-                                // ALIAS_GLOBAL / DISABLED must survive the
-                                // round-trip — flags:0 turned every global
-                                // alias regular on ANY subshell exit.
-                                flags,
-                            },
-                            text,
-                            inuse: 0,
-                        });
-                    }
-                }
+                // c:Src/exec.c:2880 — fork() means alias mutations in a
+                // subshell die with the child. Bug #209 in docs/BUGS.md.
+                // See SubshTables.
+                snap.tables.restore();
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. Restore parent's function
                 //   table from snapshot so `(f() { ... })` definitions
@@ -17707,7 +17680,10 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::ported::hashtable::aliastab_lock()
                 .read()
                 .ok()
-                .and_then(|tab| tab.get(name).map(|a| a.inuse != 0))
+                .and_then(|tab| {
+                    tab.get(name)
+                        .map(|a| a.inuse.load(std::sync::atomic::Ordering::Relaxed) != 0)
+                })
                 .unwrap_or(false)
         } else {
             true // suppress lookup entirely in non-interactive mode
@@ -17731,15 +17707,19 @@ impl fusevm::ShellHost for ZshrsHost {
                 format!("{} {}", body, quoted.join(" "))
             };
             // Bump inuse → run → clear, matching C's lexer behavior.
-            if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                if let Some(a) = tab.get_mut(name) {
-                    a.inuse += 1;
+            if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
+                if let Some(a) = tab.get(name) {
+                    a.inuse.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             let status = with_executor(|exec| exec.execute_script(&combined).unwrap_or(1));
-            if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                if let Some(a) = tab.get_mut(name) {
-                    a.inuse = (a.inuse - 1).max(0);
+            if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
+                if let Some(a) = tab.get(name) {
+                    let _ = a.inuse.fetch_update(
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                        |n| Some((n - 1).max(0)),
+                    );
                 }
             }
             return Some(status);

@@ -1159,7 +1159,7 @@ impl alias_table {
     /// builds its table inline rather than going through here.
     pub fn new() -> Self {
         Self {
-            table: hashtable_nodes::newhashtable(23), // c:1210
+            table: crate::cow_map::CowArc::new(hashtable_nodes::newhashtable(23)), // c:1210
         }
     }
     /// `with_defaults` — `new()` plus the two aliases
@@ -1184,6 +1184,32 @@ impl alias_table {
         table.add(createaliasnode("run-help", "man", 0)); // c:1215
         table.add(createaliasnode("which-command", "whence", 0)); // c:1216
         table
+    }
+    /// `snapshot` — the table as the parent had it, for a subshell to
+    /// hand back at its end.
+    ///
+    /// C never needs this: `getoutput` and `( … )` fork
+    /// (`Src/exec.c:4816`, `c:2880`) and `entersubsh` (`c:1123-1261`)
+    /// leaves `aliastab`/`sufaliastab` alone, so the child mutates a
+    /// private copy that dies with it. zshrs runs both forms in process,
+    /// so the parent's table is taken here and put back by `restore`.
+    ///
+    /// O(1): the bucket array is `CowArc`-shared. The deep copy happens
+    /// only if the body adds, removes, disables or enables an alias.
+    /// Expanding one does not count — `alias::inuse` is atomic.
+    ///
+    /// !!! RUST-ONLY METHOD — no C counterpart (C forks) !!!
+    pub fn snapshot(&self) -> alias_table {
+        alias_table {
+            table: self.table.clone(),
+        }
+    }
+    /// `restore` — put back a table taken by `snapshot`, bucket order
+    /// and all (`${(k)aliases}` walks the buckets directly).
+    ///
+    /// !!! RUST-ONLY METHOD — no C counterpart (C forks) !!!
+    pub fn restore(&mut self, snap: alias_table) {
+        self.table = snap.table;
     }
     /// `add` — `addhashnode2` (`Src/hashtable.c:168`). C's `addnode`
     /// for this table is `addhashnode` (`c:1194`), which is
@@ -2869,7 +2895,7 @@ pub fn createaliasnode(name: &str, text: &str, flags: u32) -> alias {
             flags: flags as i32,
         },
         text: text.to_string(),
-        inuse: 0,
+        inuse: std::sync::atomic::AtomicI32::new(0),
     }
 }
 
@@ -3628,7 +3654,11 @@ pub struct alias_table {
     /// with the most recently added key at the head (`c:214-215`).
     /// That is neither insertion order nor sorted order, so
     /// `${(k)aliases}` diverged from zsh for every alias set.
-    table: hashtable_nodes<alias>,
+    ///
+    /// COPY-ON-WRITE, for the same reason as `shfunc_table::table`:
+    /// `$( … )` snapshots both alias tables on every substitution (see
+    /// `snapshot`), and a user table runs to thousands of aliases.
+    table: crate::cow_map::CowArc<hashtable_nodes<alias>>,
 }
 
 // Mirrors C's file-statics at hashtable.c:1517:
@@ -3785,7 +3815,7 @@ pub fn sufaliastab_lock() -> &'static std::sync::RwLock<alias_table> {
     // a Rust-only fn with no C counterpart.
     SUFALIASTAB.get_or_init(|| {
         std::sync::RwLock::new(alias_table {
-            table: hashtable_nodes::newhashtable(11), // c:1221
+            table: crate::cow_map::CowArc::new(hashtable_nodes::newhashtable(11)), // c:1221
         })
     })
 }
@@ -3902,6 +3932,40 @@ mod tests {
     use std::cmp::Ordering;
 
     use super::*;
+
+    /// Complexity pin for the `$( … )` alias snapshot. Taking it must not
+    /// copy the table, and EXPANDING an alias inside the body — which
+    /// flips `inuse` on every use (`Src/lex.c:1929`, `Src/input.c:773`) —
+    /// must not copy it either. Only a real definition pays, once, and
+    /// `restore` then drops the body's table whole.
+    #[test]
+    fn alias_snapshot_is_shared_until_a_definition_splits_it() {
+        let mut live = alias_table::new();
+        for i in 0..2000 {
+            live.add(createaliasnode(&format!("a{i}"), "print", 0));
+        }
+        let snap = live.snapshot();
+        assert!(crate::cow_map::CowArc::ptr_eq(&live.table, &snap.table));
+
+        // What the lexer does for every expansion.
+        let a = live.get("a7").unwrap();
+        a.inuse.store(1, std::sync::atomic::Ordering::Relaxed);
+        a.inuse.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            crate::cow_map::CowArc::ptr_eq(&live.table, &snap.table),
+            "expanding an alias split the table"
+        );
+
+        live.add(createaliasnode("inner", "echo", 0));
+        live.remove("a1");
+        assert!(!crate::cow_map::CowArc::ptr_eq(&live.table, &snap.table));
+        assert!(snap.get("inner").is_none() && snap.get("a1").is_some());
+
+        live.restore(snap);
+        assert!(live.get("inner").is_none());
+        assert!(live.get("a1").is_some());
+        assert_eq!(live.len(), 2000);
+    }
 
     #[test]
     fn test_hasher() {

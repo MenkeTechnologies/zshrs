@@ -411,20 +411,15 @@ pub struct SubshellSnapshot {
     /// so child options die with the child. We run in-process, so we
     /// must restore the option store on subshell_end.
     pub opts: HashMap<String, bool>,
-    /// Parent's alias entries at subshell entry. zsh forks for
-    /// `(...)` so `(alias x=y)` inside a subshell dies with the
-    /// child and doesn't leak to the parent. zshrs runs subshells
-    /// in-process, so we must restore the alias table on
-    /// subshell_end. Bug #209 in docs/BUGS.md. Stored as a flat
-    /// Vec<(name, text, flags)> snapshot. The node FLAGS must
-    /// round-trip: ALIAS_GLOBAL / DISABLED distinguish global and
-    /// disabled aliases in the shared aliastab — the previous
-    /// (name, text) shape restored every entry with flags=0, so ANY
-    /// subshell (`(true)`, zsh-z's `(zshz --add … &)` precmd)
-    /// reflagged every global alias to REGULAR in the parent:
-    /// `alias -g` listed nothing and `${+galiases[x]}` went 0 one
-    /// prompt after every define.
-    pub aliases: Vec<(String, String, i32)>,
+    /// The fork-copied hash tables — `aliastab`, `sufaliastab`, … — at
+    /// subshell entry (see `crate::ported::exec::SubshTables`). zsh forks
+    /// for `(...)` so `(alias x=y)` inside a subshell dies with the child
+    /// and doesn't leak to the parent. Bug #209 in docs/BUGS.md. The
+    /// tables are restored whole — node flags (ALIAS_GLOBAL / DISABLED)
+    /// and bucket order included — which the `(name, text, flags)` list
+    /// this replaced got only partly right, and it never covered
+    /// `sufaliastab` at all: `(alias -s x=y)` leaked.
+    pub tables: crate::ported::exec::SubshTables,
     /// Parent's shell-function table at subshell entry. C zsh's
     /// `entersubsh` (`Src/exec.c`) forks before running the
     /// subshell body so `(f() { ... })` defining a function dies
@@ -6064,6 +6059,9 @@ impl ShellExecutor {
                     .unwrap_or_default();
                 let functions_compiled_snap = self.functions_compiled.clone();
                 let function_source_snap = self.function_source.clone();
+                // c:Src/exec.c:4816 — the fork-copied hash tables
+                // (aliases, …); see SubshTables.
+                let tables_snap = crate::ported::exec::SubshTables::save();
                 // c:Src/exec.c:4782 — getoutput's child runs
                 // `entersubsh(ESUB_PGRP|ESUB_NOMONITOR)`, and c:1219
                 // `if (flags & ESUB_PGRP) clearjobtab(monitor)` hands
@@ -6296,6 +6294,7 @@ impl ShellExecutor {
                     }
                     self.functions_compiled = functions_compiled_snap;
                     self.function_source = function_source_snap;
+                    tables_snap.restore();
                     // Discard anything the substitution added to the completion
                     // arena — the in-process stand-in for the forked child's
                     // address space going away (see comp_arena_save above).

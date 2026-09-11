@@ -818,12 +818,37 @@ pub struct reswd {
 
 /// Port of `struct alias` from `Src/zsh.h:1253-1257`.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct alias {
     // c:1253
     pub node: hashnode, // c:1254
     pub text: String,   // c:1255
-    pub inuse: i32,     // c:1256
+    /// c:1256 `int inuse;`
+    ///
+    /// !!! WARNING: ATOMIC, NOT A PLAIN `int` !!!
+    /// The alias tables are copy-on-write (`crate::cow_map::CowArc`) so
+    /// that `$( … )` can snapshot them in O(1). The lexer flips this
+    /// flag on EVERY alias expansion (`Src/lex.c:1929`, `Src/input.c:773`);
+    /// if that write needed `&mut` it would split — deep-copy — the whole
+    /// table the first time any substitution body expanded an alias.
+    /// Interior mutability lets the flag change through a shared node.
+    /// The flag is balanced within one expansion (set at c:1929, cleared
+    /// at c:773), so the snapshot sharing the node is left as it was.
+    pub inuse: std::sync::atomic::AtomicI32,
+}
+
+/// `inuse` is an atomic, so `Clone` is written out: every other field is
+/// a plain copy, exactly as `derive` produced before.
+impl Clone for alias {
+    fn clone(&self) -> Self {
+        alias {
+            node: self.node.clone(),
+            text: self.text.clone(),
+            inuse: std::sync::atomic::AtomicI32::new(
+                self.inuse.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 /// Port of `struct asgment` from `Src/zsh.h:1267-1275`. Note the C

@@ -1017,10 +1017,12 @@ pub fn inpoptop() {
             // buffer (`entry.buf` is the frame being restored; the
             // drained alias text was in `inbuf`).
             let alias_text: Option<String> = {
-                let mut tab = aliastab_lock().write().expect("aliastab poisoned");
-                match tab.get_mut(name) {
+                // READ guard: `inuse` is atomic, so clearing it never
+                // splits the copy-on-write table (see `alias::inuse`).
+                let tab = aliastab_lock().read().expect("aliastab poisoned");
+                match tab.get(name) {
                     Some(a) => {
-                        a.inuse = 0; // c:773
+                        a.inuse.store(0, std::sync::atomic::Ordering::Relaxed); // c:773
                         Some(a.text.clone())
                     }
                     None => None,

@@ -115,9 +115,93 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for CowHashMap<K, V> {
     }
 }
 
+/// Copy-on-write box around any cloneable store — the same sharing
+/// discipline as [`CowHashMap`], for the tables that are not a plain
+/// `HashMap` (the `hashtable_nodes` bucket arrays behind `aliastab`,
+/// `sufaliastab`, `cmdnamtab`, `reswdtab` and `nameddirtab`).
+///
+/// Reads go through `Deref` and touch the shared value. Every `&mut`
+/// access goes through `DerefMut` → `Arc::make_mut`, so the first write
+/// while a snapshot is alive pays one deep copy and every later write is
+/// free. `clone()` is the snapshot operation and stays O(1).
+#[derive(Debug, Default)]
+pub struct CowArc<T> {
+    inner: Arc<T>,
+}
+
+impl<T> CowArc<T> {
+    /// Wrap `value`, sharing nothing.
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: Arc::new(value),
+        }
+    }
+
+    /// True while another handle (a live subshell snapshot) shares the
+    /// value, i.e. while the next write will pay for a deep copy.
+    pub fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.inner) > 1
+    }
+
+    /// True when both handles point at the same allocation — a snapshot
+    /// that no write has split away from its source.
+    pub fn ptr_eq(a: &Self, b: &Self) -> bool {
+        Arc::ptr_eq(&a.inner, &b.inner)
+    }
+}
+
+/// O(1) — a refcount bump, NOT a deep copy. This is the snapshot
+/// operation; see the module docs.
+impl<T> Clone for CowArc<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T> Deref for CowArc<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T: Clone> DerefMut for CowArc<T> {
+    /// Splits the value away from any snapshot sharing it, then hands out
+    /// the `&mut`. A caller that takes `&mut` only to read still pays the
+    /// split — a cost bug, never a correctness one.
+    fn deref_mut(&mut self) -> &mut T {
+        Arc::make_mut(&mut self.inner)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `CowArc` keeps the `CowHashMap` contract for an arbitrary value:
+    /// sharing until the first write, and the snapshot frozen at the
+    /// pre-write contents.
+    #[test]
+    fn cow_arc_snapshot_is_shared_until_a_write_splits_it() {
+        let mut live: CowArc<Vec<String>> = CowArc::new(vec!["outer".into()]);
+        let snap = live.clone();
+        assert!(CowArc::ptr_eq(&live, &snap), "clone must share, not copy");
+
+        // A read never splits.
+        assert_eq!(live.len(), 1);
+        assert!(CowArc::ptr_eq(&live, &snap));
+
+        live.push("inner".into());
+        assert!(!CowArc::ptr_eq(&live, &snap), "the write must split");
+        assert_eq!(*snap, vec!["outer".to_string()]);
+
+        live = snap;
+        assert_eq!(*live, vec!["outer".to_string()]);
+        assert!(!live.is_shared());
+    }
 
     /// The whole point: a snapshot must not walk the map, and must not
     /// see writes made after it was taken.

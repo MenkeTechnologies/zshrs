@@ -3705,7 +3705,7 @@ fn checkalias(lextext: &str) -> bool {
         // ALIAS_GLOBAL) || (incmdpos && tok == STRING) || inalmore))`
         // — `inalmore` extends eligibility to the word following a
         // trailing-space alias body (`alias sudo='sudo '` chaining).
-        if alias.inuse == 0
+        if alias.inuse.load(std::sync::atomic::Ordering::Relaxed) == 0
             && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX) || LEX_INALMORE.get() != 0)
         {
             // c:1918-1927 — `if (!lexstop) { int c = hgetc();
@@ -3827,10 +3827,11 @@ fn checkalias(lextext: &str) -> bool {
             if !is_global && alias.text.starts_with(' ') {
                 LEX_ALIAS_SPACE_FLAG.set(1);
             }
-            // c:1929 — `an->inuse = 1;`.
-            let mut guard = aliastab_lock().write().expect("aliastab poisoned");
-            if let Some(a) = guard.get_mut(lextext) {
-                a.inuse = 1;
+            // c:1929 — `an->inuse = 1;`. Through a READ guard: `inuse` is
+            // atomic so the flag never splits a copy-on-write table.
+            let guard = aliastab_lock().read().expect("aliastab poisoned");
+            if let Some(a) = guard.get(lextext) {
+                a.inuse.store(1, std::sync::atomic::Ordering::Relaxed);
             }
             drop(guard);
             LEX_LEXSTOP.set(false);
@@ -3850,7 +3851,7 @@ fn checkalias(lextext: &str) -> bool {
                     guard.get(suffix).cloned()
                 };
                 if let Some(alias) = alias_clone {
-                    if alias.inuse == 0 {
+                    if alias.inuse.load(std::sync::atomic::Ordering::Relaxed) == 0 {
                         // c:1938-1940 — three inpush calls in order:
                         // the original word, a space, the alias text.
                         // inpush stacks LIFO so the original word is
@@ -3861,9 +3862,9 @@ fn checkalias(lextext: &str) -> bool {
                         inpush(" ", INP_ALIAS, None);
                         inpush(&alias.text, INP_ALIAS, None);
                         // c:1941 — `an->inuse = 1;`.
-                        let mut guard = sufaliastab_lock().write().expect("sufaliastab poisoned");
-                        if let Some(a) = guard.get_mut(suffix) {
-                            a.inuse = 1;
+                        let guard = sufaliastab_lock().read().expect("sufaliastab poisoned");
+                        if let Some(a) = guard.get(suffix) {
+                            a.inuse.store(1, std::sync::atomic::Ordering::Relaxed);
                         }
                         drop(guard);
                         LEX_LEXSTOP.set(false);

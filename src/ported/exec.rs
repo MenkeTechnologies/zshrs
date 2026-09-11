@@ -4989,6 +4989,56 @@ impl Drop for SubshStateGuard {
     }
 }
 
+/// The hash tables a forked subshell owns a private copy of, taken on
+/// entry to an in-process subshell and put back on exit.
+///
+/// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
+/// `getoutput` (`Src/exec.c:4816`) and `( … )` (`c:2880`) run the body in
+/// a `zfork()` child. `entersubsh` (`c:1123-1261`) resets traps, job
+/// control, `subsh` and `zsh_subshell`, but it does not touch these
+/// tables at all: the child simply mutates its fork-copied tables, and
+/// they die at `_realexit()` (`c:4843`). The parent never sees
+///     x=$(alias a=b)
+/// because nothing it owns was written. zshrs runs both forms IN
+/// PROCESS, so each table the body can write must be handed back here.
+///
+/// Every table is copy-on-write: `save` is a refcount bump per table,
+/// and only a body that actually writes a table pays for copying it.
+pub struct SubshTables {
+    /// `aliastab` (`Src/hashtable.c:1177`) — `alias`, `unalias`,
+    /// `disable -a`, `aliases[x]=…`.
+    aliastab: crate::ported::hashtable::alias_table,
+    /// `sufaliastab` (`Src/hashtable.c:1182`) — `alias -s`, `unalias -s`.
+    sufaliastab: crate::ported::hashtable::alias_table,
+}
+
+impl SubshTables {
+    /// Take the parent's tables. O(1) per table.
+    pub fn save() -> Self {
+        SubshTables {
+            aliastab: crate::ported::hashtable::aliastab_lock()
+                .read()
+                .map(|t| t.snapshot())
+                .unwrap_or_default(),
+            sufaliastab: crate::ported::hashtable::sufaliastab_lock()
+                .read()
+                .map(|t| t.snapshot())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Put the parent's tables back, discarding whatever the subshell
+    /// body did to them — the in-process stand-in for the child exiting.
+    pub fn restore(self) {
+        if let Ok(mut t) = crate::ported::hashtable::aliastab_lock().write() {
+            t.restore(self.aliastab);
+        }
+        if let Ok(mut t) = crate::ported::hashtable::sufaliastab_lock().write() {
+            t.restore(self.sufaliastab);
+        }
+    }
+}
+
 /// Port of `getpipe()` from `Src/exec.c:5119` — C decl `getpipe(char *cmd, int nullexec)`.
 ///
 /// C body executes `<(cmd)` / `>(cmd)` process substitution via a
