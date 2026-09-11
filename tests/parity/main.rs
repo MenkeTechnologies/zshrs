@@ -108,6 +108,7 @@ mod printf_format_parity;
 mod printf_percent_q_parity;
 mod prompt_escapes_parity;
 mod prompt_features_corpus_parity;
+mod quoted_command_word_parity;
 mod quoting_parity;
 mod read_advanced_parity;
 mod read_parity;

@@ -20,8 +20,6 @@
 //! `-n <max>` limits count; `-d` allows dupes.
 
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::glob::remnulargs;
-use crate::ported::lex::{parse_subst_string, untokenize};
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::utils::quotestring;
@@ -83,19 +81,6 @@ fn q(s: &str) -> String {
 fn remove_chars(end: &str, qsep: &str) -> String {
     let qsep1 = q(&qsep.chars().next().map(String::from).unwrap_or_default());
     format!("{}{} \\t\\n\\-", end, qsep1)
-}
-
-/// `${(Q)s}` — `parse_subst_string + remnulargs + untokenize`
-/// (`Src/subst.c:4863`). On a parse error C keeps the original
-/// (noerrs-tolerant); mirror that.
-fn dequote_q(s: &str) -> String {
-    match parse_subst_string(s) {
-        Ok(mut r) => {
-            remnulargs(&mut r);
-            untokenize(&r)
-        }
-        Err(_) => s.to_string(),
-    }
 }
 
 /// sh:13-14 — bridge zparseopts with the dense spec list.
@@ -283,7 +268,10 @@ pub fn _sequence(args: &[String]) -> i32 {
             .unwrap_or_default()
             .is_empty()
         {
-            dd = dd.iter().map(|e| dequote_q(e)).collect();
+            dd = dd
+                .iter()
+                .map(|e| crate::compsys::ported::shared::dequote_q(e))
+                .collect();
         }
         dd
     } else {

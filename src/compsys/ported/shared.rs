@@ -572,6 +572,30 @@ pub fn get_ignored_patterns(context: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// `_dispatch:51` is handed `$words[1]` verbatim, so the `$_comps` key it
+    /// needs is only reachable through `${(Q)}`. These are the exact word
+    /// shapes the completion line produces.
+    #[test]
+    fn dequote_q_recovers_the_command_name_from_a_quoted_word() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dequote_q("\"env\""), "env");
+        assert_eq!(dequote_q("'rm'"), "rm");
+        assert_eq!(dequote_q("\\rm"), "rm");
+        assert_eq!(dequote_q("/usr/bin/ls"), "/usr/bin/ls");
+        assert_eq!(dequote_q("-default-"), "-default-");
+    }
+
+    /// c:Src/subst.c:4139-4140 runs the `(Q)` parse under `noerrs = 1`, so an
+    /// UNBALANCED quote is kept as a literal rather than deleted. A
+    /// hand-rolled "drop every quote character" walker returns `xy` here and
+    /// would turn the command word `a"b` into a key that matches nothing.
+    #[test]
+    fn dequote_q_keeps_an_unbalanced_quote_as_a_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(dequote_q("x\"y"), "x\"y");
+        assert_eq!(dequote_q("x'y"), "x'y");
+    }
+
     /// The zparseopts bridge array must be a FUNCTION LOCAL, not a global.
     ///
     /// `__compsys_argv` is written by 18 `run_*` helpers under
@@ -1676,6 +1700,51 @@ pub fn assoc_get(name: &str, key: &str) -> Option<String> {
         .chunks(2)
         .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
         .and_then(|kv| kv.get(1).cloned())
+}
+
+/// `${(Q)s}` — remove one level of shell quoting from `s`.
+///
+/// Faithful port of the scalar `(Q)` arm of `paramsubst`'s quote block,
+/// c:Src/subst.c:4136-4153: `parse_subst_string` to re-lex the word,
+/// `remnulargs` to drop the null markers that leaves behind, `untokenize`
+/// to turn the tokens back into text.
+///
+/// Every port that needs `(Q)` calls THIS. Hand-rolled "drop every quote
+/// character" walkers get the common case right and the rest wrong: they
+/// delete an unbalanced `'`/`"` that the C path keeps as a literal, and
+/// they do not decode `$'...'`.
+pub fn dequote_q(s: &str) -> String {
+    use std::sync::atomic::Ordering;
+    // c:4137 `int one = noerrs, oef = errflag, haserr;`
+    let one = *crate::ported::utils::noerrs_lock().lock().unwrap();
+    let oef = crate::ported::utils::errflag.load(Ordering::Relaxed);
+    // c:4139-4140 `if (!quoteerr) noerrs = 1;`. Without this the re-lex
+    // REPORTS a malformed word — `zshrs: 1: unmatched "` on the terminal
+    // mid-completion — where zsh swallows it. `(X)` is the flag that sets
+    // `quoteerr` and asks for the diagnostic, and no caller here passes it.
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
+    // c:4141 `haserr = parse_subst_string(val);`
+    let parsed = crate::ported::lex::parse_subst_string(s);
+    // c:4142 `noerrs = one;`
+    *crate::ported::utils::noerrs_lock().lock().unwrap() = one;
+    // c:4143-4146 — "Retain any user interrupt error status", and drop
+    // everything the parse raised. Leaving a parse error set here would
+    // abort the completer that called us, several frames up. The
+    // `else if (haserr || errflag)` arm at c:4147 belongs to `quoteerr`
+    // and is unreachable with `noerrs` on.
+    let int_bit =
+        crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
+    crate::ported::utils::errflag.store(oef | int_bit, Ordering::Relaxed);
+    match parsed {
+        Ok(mut r) => {
+            crate::ported::glob::remnulargs(&mut r); // c:4151
+            crate::ported::lex::untokenize(&r) // c:4152
+        }
+        // C parses IN PLACE and keeps whatever the failed parse left in
+        // `val`; the port's `parse_subst_string` hands back an Err instead,
+        // so the untouched input is what survives.
+        Err(_) => s.to_string(),
+    }
 }
 
 /// `${#<assoc>[(I)<prefix>*]}` — how many keys of the associative parameter

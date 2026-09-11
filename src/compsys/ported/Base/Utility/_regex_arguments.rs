@@ -31,8 +31,6 @@
 
 use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_message::_message;
-use crate::ported::glob::remnulargs;
-use crate::ported::lex::{parse_subst_string, untokenize};
 use crate::ported::modules::zutil::bin_zregexparse;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -57,19 +55,6 @@ fn make_ops() -> options {
         args: Vec::new(),
         argscount: 0,
         argsalloc: 0,
-    }
-}
-
-/// zsh `${(@)…:Q}` per-element unquote — the (Q) modifier maps to
-/// `parse_subst_string + remnulargs + untokenize` (Src/subst.c:4863).
-/// On a parse error C keeps the original (noerrs-tolerant); mirror that.
-fn dequote_q(s: &str) -> String {
-    match parse_subst_string(s) {
-        Ok(mut r) => {
-            remnulargs(&mut r);
-            untokenize(&r)
-        }
-        Err(_) => s.to_string(),
     }
 }
 
@@ -232,7 +217,11 @@ pub fn dispatch_registered(funcname: &str) -> i32 {
         .unwrap_or(0);
     let words = getaparam("words").unwrap_or_default();
     let upto = current.saturating_sub(1); // number of leading words
-    let dequoted: Vec<String> = words.iter().take(upto).map(|w| dequote_q(w)).collect();
+    let dequoted: Vec<String> = words
+        .iter()
+        .take(upto)
+        .map(|w| crate::compsys::ported::shared::dequote_q(w))
+        .collect();
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let mut _ra_line = dequoted.join("\0");
     _ra_line.push('\0');

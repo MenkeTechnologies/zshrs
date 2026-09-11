@@ -15,7 +15,7 @@
 //! sh:26      for i in "${(@)_patcomps[(K)$str]}"; do … patterns dispatch …
 //! sh:38  fi
 //! sh:45  ret=1
-//! sh:44  for str in "$@"; do … look up $_comps[$str] …
+//! sh:44  for str in "$@"; do str=${(Q)str}; … look up $_comps[$str] …
 //! sh:57  done
 //! sh:61  if [[ -n "$comp" && "$name" != "${argv[-1]}" ]]; then
 //! sh:62    _compskip=patterns
@@ -188,11 +188,31 @@ pub fn _dispatch(args: &[String]) -> i32 {
         if str_arg.is_empty() {
             continue;
         }
-        // sh:48 `${(Q)str}` — quote-strip (no-op here; our argv has no
-        //   shell-quoting layer)
-        name = str_arg.clone();
-        comp = assoc_get("_comps", str_arg).unwrap_or_default();
-        let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+        // sh:48-51 — "The following means we look up the names of commands
+        //   after stripping quotes."  `str=${(Q)str}`.
+        //
+        // The candidates `_normal:39` passes here are `$_comp_command{,1,2}`,
+        // and `_set_command:8` sets those from `$words[1]` VERBATIM — `words`
+        // holds the line as typed, quotes included. So for
+        // `"env" PATH=/tmp rm ...` this loop is handed the literal
+        // five-character string `"env"`, and only sh:51 turns it back into the
+        // key `$_comps` is filled with.
+        //
+        // The previous port skipped the dequote and justified it with the
+        // claim that "our argv has no shell-quoting layer". It does: measured
+        // on the oracle and on zshrs with a completer registered for `zzqcmd`,
+        // `$words[1]` reads `"zzqcmd"` in BOTH shells. Without sh:51 every
+        // quoted command word missed `$_comps` and fell through to
+        // `-default-`, so `"env" ...<TAB>` offered plain files where zsh runs
+        // `_env`, and `"sudo" ...<TAB>` never reached `_sudo`/`_precommand`.
+        //
+        // Only this loop dequotes: sh:27's `_patcomps` walk, sh:71's
+        // `_postpatcomps` walk and the `${argv[-1]}` comparisons below all
+        // read the RAW argument, exactly as upstream does.
+        let dq = crate::compsys::ported::shared::dequote_q(str_arg);
+        name = dq.clone();
+        comp = assoc_get("_comps", &dq).unwrap_or_default();
+        let service = assoc_get("_services", &dq).unwrap_or_else(|| dq.clone());
         let _ = setsparam("service", &service);
         if !comp.is_empty() {
             break;
