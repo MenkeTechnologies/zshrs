@@ -11,10 +11,11 @@
 //!     (`Src/Modules/sched.c`), and `$TMOUT` arms the alarm that fires
 //!     `TRAPALRM` while the line editor sits idle.
 //!
-//! Measured here: zshrs runs the first group and none of the second. A
-//! shell in that state looks completely healthy from a script — `sched
-//! +5 …; sched` lists the entry, the builtin returns 0, `TMOUT=1`
-//! assigns fine — and silently never executes any of it.
+//! Measured here: zshrs runs the first group, and of the second it now runs
+//! `sched` (7c3bcf0a58) but still not `$TMOUT`. A shell in that state
+//! looks completely healthy from a script — `sched +5 …; sched` lists the
+//! entry, the builtin returns 0, `TMOUT=1` assigns fine — and, until that
+//! fix, silently never executed any of it.
 //!
 //! Why it matters far beyond `sched` itself: **zinit's turbo mode is
 //! built on it.** Every `zinit ice wait'0a'` plugin is deferred to
@@ -228,36 +229,56 @@ mod sched_bookkeeping {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// SIGALRM-driven work — neither of these runs in zshrs
+// SIGALRM-driven work — `sched` runs since 7c3bcf0a58; `$TMOUT` still does not
 // ═══════════════════════════════════════════════════════════════════════
 
-/// zshrs gap: a due `sched` entry is never executed. It IS registered —
-/// the `sched` listing still shows it, timestamped in the past, after
-/// several prompts have gone by — but the prompt loop never runs it,
-/// where zsh prints the scheduled command's output just before the next
-/// prompt and unlinks the entry. Deterministic, 2/2 runs each side.
+/// Regression pin for the two-part `sched` break: an entry registered,
+/// listed, and unlinked on time, whose command was then thrown away.
 ///
-/// Fix location: the port's equivalent of C's `preprompt()` schedule
-/// walk (`Src/init.c` → `Src/Modules/sched.c`). Drop the `#[ignore]`
-/// when it lands; the test then becomes the regression pin.
+/// Both halves were substrate, not `sched.c`'s own port:
+///
+///   * `execstring` (`Src/exec.c:1228`) reached the fusevm executor only
+///     through `try_with_executor`, whose `.unwrap_or(Ok(0))` reported
+///     success when no per-command execution context was in scope.
+///     `checksched` fires BETWEEN commands, where there never is one, so
+///     `execstring(sch->cmd, 0, 0, "sched")`
+///     (`Src/Builtins/sched.c:122`) compiled nothing and returned 0.
+///   * `boot_module` had no `zsh/sched` arm, so `boot_` — whose entire
+///     body is `addprepromptfn(&checksched)`
+///     (`Src/Builtins/sched.c:421`) — had zero callers, and nothing
+///     consulted the schedule between commands at all.
+///
+/// The deadline here is a REAL one: `sched +3` is three seconds in the
+/// future when it is registered, so the entry must survive in the queue
+/// and then be noticed, not merely be due the instant it is filed. A
+/// probe using `sched +0` would still have passed with the schedule walk
+/// hard-wired to "run everything immediately on registration", which is
+/// not what either shell does.
 #[test]
-#[ignore = "zshrs gap: a due `sched` entry never runs at the prompt (blocks zinit turbo)"]
 fn a_due_sched_entry_runs_at_the_next_prompt() {
     let driver = format!(
         "{OPEN}
 zpty -w w 'zmodload zsh/sched'
 zpty -w w 'zzfire(){{ print SCHEDM${{:-}}ARK }}'
-zpty -w w 'sched +0 zzfire'
+zpty -w w 'sched +3 zzfire'
 zpty -w w 'print TURN1'
-sleep 2
+sleep 5
 zpty -w w 'print TURN2'
-sleep 2
+sleep 3
 {DRAIN}
 if [[ $all == *SCHEDMARK* ]]; then print \"SCHED=yes\"; else print \"SCHED=no\"; fi
 "
     );
     assert_same_verdict(&driver, "SCHED", "a due sched entry ran at the prompt");
 }
+
+// There is deliberately no `unsetopt zle` twin of the case above. One was
+// written to pin the `addprepromptfn` half on its own, and it could not be
+// made valid: under this harness the REFERENCE zsh does not fire the entry
+// with ZLE off either. Its transcript lists `zzfire` as queued, then runs
+// three further commands over ten seconds without ever calling it. A pin
+// whose reference does not exhibit the behaviour asserts nothing, so it was
+// dropped rather than committed.
 
 /// zshrs gap, same family: `$TMOUT` arms no alarm, so `TRAPALRM` never
 /// runs while the editor is idle. Over five idle seconds zsh fires it
