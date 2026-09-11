@@ -252,6 +252,54 @@ fi";
     );
 }
 
+/// A candidate is QUOTED before it is matched, and the quoting counts.
+///
+/// The line is `zzrun |-` — cursor inside the word, `COMPLETE_IN_WORD` set,
+/// so `$PREFIX` is empty and `$SUFFIX` is `-`. The `r:|=*` match spec is
+/// what lets a candidate carry text the word does not have at its right
+/// edge, which is the only reason `-a` matches `-` at all. `-?` reaches the
+/// matcher as `-\?`, because `compadd` runs every candidate through
+/// `multiquote` first (compmatch.c:1172), and the backslash stops it
+/// matching. So exactly one candidate survives, TAB inserts it, and the
+/// function echoes what it was given.
+///
+/// zshrs kept both. `match_str`'s backslash skip (compmatch.c:1001) compares
+/// `w[ind+1]` against `l[0]`; the port compared it against `l[ind]`, which is
+/// the same byte only on the prefix pass — on the suffix pass the two
+/// pointers walk backwards and `l[0]` is the line byte just consumed. With
+/// two matches instead of one there was nothing unambiguous to insert, the
+/// line stayed `zzrun -`, and `lsof -i :22 |-<TAB>` asked "do you wish to see
+/// all 114 possibilities" where zsh lists 38.
+#[test]
+fn a_quoted_candidate_does_not_match_through_its_backslash() {
+    const SETUP: &str = r#"zzrun() { print "RAN:$1" }; _zzc() { compadd -M 'r:|=*' - '-a' '-?' }; zle -C zzc complete-word _zzc; bindkey '^I' zzc"#;
+    let setup_q = sq(SETUP);
+    let driver = format!(
+        "{OPEN}
+zpty -w w 'unsetopt beep'
+zpty -w w 'bindkey -e'
+zpty -w w 'setopt completeinword'
+zpty -w w {setup_q}
+sleep 2
+zpty -w -n w 'zzrun -'
+sleep 2
+zpty -w -n w $'\\C-b'
+sleep 1
+zpty -w -n w $'\\t'
+sleep 3
+zpty -w -n w $'\\r'
+sleep 3
+{DRAIN}
+if [[ $all == *'RAN:-a'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+"
+    );
+    assert_same_verdict(
+        &driver,
+        "K",
+        "a backslash-quoted candidate was rejected and the plain one inserted",
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // compsys — the same case after `compinit`
 // ═══════════════════════════════════════════════════════════════════════

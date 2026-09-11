@@ -1958,10 +1958,29 @@ pub fn match_str(
             if l_idx < l_bytes.len() && w_idx < w_bytes.len() {
                 let l_ch = l_bytes[l_idx];
                 let w_ch = w_bytes[w_idx];
+                // c:1001 — `bslash = (lw > 1 && w[ind] == '\\' &&
+                //                     w[ind+1] == l[0])`.
+                //
+                // `l[0]` and `l[ind]` are the same byte only while `ind` is 0,
+                // i.e. on the PREFIX pass. On the suffix pass `ind` is -1 and
+                // the two pointers walk backwards, so C compares the byte the
+                // backslash escapes against the line byte just CONSUMED, while
+                // this port compared it against the line byte still to be
+                // matched. C also reads through the string terminator here —
+                // at the first iteration both `w[ind+1]` and `l[0]` are the
+                // `'\0'` at the end, which is how a trailing backslash gets
+                // skipped at all — so the reads are NUL-filled past the end
+                // rather than guarded away.
+                let at = |b: &[u8], i: i32| -> u8 {
+                    if i < 0 {
+                        0
+                    } else {
+                        b.get(i as usize).copied().unwrap_or(0)
+                    }
+                };
                 let bslash = lw > 1
                     && w_ch == b'\\'
-                    && (w_idx + 1) < w_bytes.len()
-                    && w_bytes[w_idx + 1] == l_bytes[l_idx];
+                    && at(w_bytes, w_pos + ind + 1) == at(l_bytes, l_pos);
                 if l_ch == w_ch || bslash {
                     let advance_w = if bslash { 2 } else { 1 };
                     l_pos += add;
