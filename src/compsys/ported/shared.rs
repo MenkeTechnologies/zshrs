@@ -135,15 +135,45 @@ pub fn declare_locals(names: &[&str], kind: u32) {
 /// context.
 pub struct LocalScope {
     saved: Vec<(String, Option<Box<crate::ported::zsh_h::param>>)>,
+    /// The parallel assoc backing for each saved name.
+    ///
+    /// A PM_HASHED parameter keeps its key/value pairs in
+    /// `paramtab_hashed_storage` — a map keyed by NAME with no scope
+    /// dimension (`params.rs`, the `copyparam` PM_HASHED note in
+    /// `typeset_single`) — not in the `param` struct. Putting the
+    /// `paramtab` node back is therefore only half an unwind: a name
+    /// declared through this scope and then filled by `sethparam` kept
+    /// its row for the rest of the process, and `${(t)name}` /
+    /// `${#name}` / `${(k)name}` all still answered from that row with
+    /// the node long gone.
+    ///
+    /// `endparamscope` does the same two-sided restore for the scopes it
+    /// unwinds, so this is the parallel-storage half of the same unwind,
+    /// saved and replayed by name.
+    saved_hash: Vec<(String, Option<indexmap::IndexMap<String, String>>)>,
 }
 
 impl LocalScope {
     /// Declare `names` local (see [`declare_locals`]) and remember what
     /// each one looked like beforehand.
     pub fn declare(names: &[&str], kind: u32) -> Self {
-        let mut scope = LocalScope { saved: Vec::new() };
+        let mut scope = LocalScope {
+            saved: Vec::new(),
+            saved_hash: Vec::new(),
+        };
         scope.also(names, kind);
         scope
+    }
+
+    /// Remember the parallel assoc backing (see [`LocalScope::saved_hash`])
+    /// for each name about to be declared.
+    fn remember_hash(&mut self, names: &[&str]) {
+        if let Ok(store) = crate::ported::params::paramtab_hashed_storage().lock() {
+            for name in names {
+                self.saved_hash
+                    .push(((*name).to_string(), store.get(*name).cloned()));
+            }
+        }
     }
 
     /// Add more names to an existing scope — the port equivalent of a
@@ -155,6 +185,7 @@ impl LocalScope {
                     .push(((*name).to_string(), tab.get(*name).cloned()));
             }
         }
+        self.remember_hash(names);
         declare_locals(names, kind);
     }
 
@@ -166,6 +197,7 @@ impl LocalScope {
                     .push(((*name).to_string(), tab.get(*name).cloned()));
             }
         }
+        self.remember_hash(names);
         declare_locals_keeping_value(names);
     }
 }
@@ -180,6 +212,21 @@ impl Drop for LocalScope {
                     }
                     None => {
                         tab.remove(name);
+                    }
+                }
+            }
+        }
+        // The assoc half of the same unwind — see [`LocalScope::saved_hash`].
+        // Taken after the `paramtab` lock is released: nothing here needs both,
+        // and holding one across the other is how a port deadlocks itself.
+        if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+            for (name, prev) in self.saved_hash.iter().rev() {
+                match prev {
+                    Some(map) => {
+                        store.insert(name.clone(), map.clone());
+                    }
+                    None => {
+                        store.remove(name);
                     }
                 }
             }
