@@ -60005,3 +60005,47 @@ Every row of the matrix above now matches `/opt/homebrew/bin/zsh`, as do
 Pinned by `tests/parity/assoc_array_deep_parity.rs`
 `chained_subscript_after_scan` (18 tests, including
 `plain_array_chaining_unchanged` as the no-regression guard).
+
+---
+
+## #1142 — re-declaring an association with `-a` kept the old pairs, so the new array could not be read back by index — fixed
+
+```sh
+$ /opt/homebrew/bin/zsh -f -c 'typeset -A H; H[x]=1; typeset -a H; H=(p q); print "[${H[1]}][${H[2]}] t=${(t)H} n=${#H} k=[${(k)H}]"'
+[p][q] t=array n=2 k=[p q]
+$ ./target/debug/zshrs --zsh -f -c '…same…'   # before
+[][] t=array n=2 k=[x]
+```
+
+The type flipped correctly, the elements were stored, and `${H[@]}`, `${H[*]}`,
+`$H`, `print -l $H` and `${#H}` all read them back — only the SUBSCRIPTED forms
+(`${H[1]}`, `${H[-1]}`, `${H[1,2]}`) came back empty, and `${(k)H}` / `${(v)H}`
+answered with the dead `x` / `1` pair. Setting an array and being unable to
+index it is silent data loss, not a cosmetic type mismatch.
+
+C handles the whole thing inside `typeset_single`: `chflags` scores the
+PM_HASHED→PM_ARRAY difference (`Src/builtin.c:2117-2119`), so `tc` is set and
+`Src/builtin.c:2351-2374` runs `unsetparam_pm(pm, 0, 1)` on the old parameter
+before building the new one. That reaches `stdunsetfn`'s
+`case PM_HASHED: pm->gsu.h->setfn(pm, NULL)` (`Src/params.c:3922-3925`), and
+`hashsetfn` does `deleteparamtable(pm->u.hash)` (`Src/params.c:4045-4049`). The
+pairs die with the Param because in C they live INSIDE it.
+
+zshrs keeps them in `paramtab_hashed_storage`, a map keyed by NAME with no type
+and no scope dimension, so flipping the node's type bits left the row in place
+and every subscripted read kept resolving through it. The declaration arm in
+`bin_typeset` now discards the row when `-a` lands on a parameter that is
+currently PM_HASHED — the one direction C treats as a conversion. `-A` over
+`-A` leaves `on & ~pm->node.flags` empty, so `tc` stays 0 and the pairs are
+kept; `+A`, `-i`, `-F` and a plain scalar re-declare already dropped them
+through other arms.
+
+Inside a function the stale row also outlived its scope (`endparamscope` reads
+the node's type, and the node was no longer PM_HASHED by then), so
+`f(){ typeset -A H; H[x]=1; typeset -a H; H=(p q) }; f` left `H` an
+`association` at top level. That falls out with the discard.
+
+Pinned by `tests/parity/assoc_type_change_discard_parity.rs`: six tests for the
+conversion (every access path, the bare declaration, `-g`, a local conversion,
+a local conversion under a global association, and `-g` from inside a function)
+plus eight controls for the transitions that always agreed.

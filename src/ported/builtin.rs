@@ -7164,6 +7164,46 @@ pub fn bin_typeset(
                 }
             }
         } else if is_hashed || is_array {
+            // c:Src/builtin.c:2117-2119 — `chflags = ((off & pm->node.flags) |
+            // (on & ~pm->node.flags)) & (…|PM_HASHED|PM_ARRAY|…); tc = chflags
+            // && chflags != (PM_EFLOAT|PM_FFLOAT);`. Re-declaring an existing
+            // association with `-a` turns PM_ARRAY on where the node has it
+            // off, so `tc` is set and c:2351-2374 runs `unsetparam_pm(pm, 0,
+            // 1)` on the old parameter before the new one is built. That
+            // reaches `stdunsetfn`'s PM_HASHED arm (c:Src/params.c:3922-3925),
+            // whose `pm->gsu.h->setfn(pm, NULL)` is `hashsetfn`
+            // (c:Src/params.c:4045-4049) — `deleteparamtable(pm->u.hash)`.
+            // Re-declaring with `-A` leaves `on & ~pm->node.flags` empty, so
+            // `tc` stays 0 and the pairs survive; that is why only the
+            // away-from-association direction discards.
+            //
+            // !!! WARNING: RUST-ONLY HAZARD (the structures do NOT match) !!!
+            // In C the pairs live INSIDE the Param (`pm->u.hash`), so dropping
+            // the Param inherently drops them. zshrs keeps them in the
+            // parallel `paramtab_hashed_storage` map keyed by NAME, with no
+            // type and no scope dimension, so flipping the node's type bits
+            // left the row in place and every SUBSCRIPTED read kept resolving
+            // through it:
+            //     typeset -A H; H[x]=1; typeset -a H; H=(p q)
+            // answered `${H[1]}` / `${H[-1]}` / `${H[1,2]}` empty and
+            // `${(k)H}` / `${(v)H}` with the dead `x` / `1` pair, while
+            // `${(t)H}`, `${#H}`, `${H[@]}` and plain `$H` were already
+            // correct — the array was stored, it just could not be read back
+            // by index. The row therefore has to be discarded by hand here.
+            if is_array && !is_hashed {
+                let was_hashed = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arg).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED))
+                    .unwrap_or(false);
+                if was_hashed {
+                    // c:Src/params.c:4048 deleteparamtable(pm->u.hash)
+                    crate::ported::exec::unset_assoc(arg);
+                    if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                        m.remove(arg);
+                    }
+                }
+            }
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
             // assoc/array.
             if is_hashed {
