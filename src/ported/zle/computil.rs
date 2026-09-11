@@ -5136,7 +5136,35 @@ pub fn bin_comparguments(
             // and c:2689 sets it to 1 once the sets have been walked.
             ca_parsed.store(cap, Ordering::Relaxed); // c:2639
             ca_doff.store(0, Ordering::Relaxed); // c:2640
-            let all_clone = Box::new(clone_cadef_shallow(&def_head));
+            // c:2660 — `if (!(def = all = get_cadef(nam, args + 1)))`: C's `all`
+            // IS `def`, the head of the FULL set chain, so `ca_foreign_opt`
+            // (c:1815 `for (d = all; d; d = d->snext)`) can see every set's
+            // options. The port used to hand it `clone_cadef_shallow(&def_head)`,
+            // whose `snext` is `None` (c:8954) — so the walk only ever reached
+            // SET 1 and an option belonging to set 2..N matched nothing. Only a
+            // set-1 option could eliminate the other sets; with
+            //     _arguments -s -S - set1 '-a[..]' '-x[..]' - set2 '-b[..]' '-y[..]'
+            // `cmd -a -<TAB>` narrowed correctly to `-x`, while `cmd -b -<TAB>`
+            // listed `-a -x -y` where zsh inserts `-y`. On this host it showed up
+            // as `netstat -a -<TAB>` offering the display selectors `-g -m -q -r
+            // -s` from the sets `_netstat` builds (Completion/Unix/Command/
+            // _netstat sh:94-100, sh:344-354) that zsh withholds.
+            //
+            // `all_sets` is that chain, snapshotted: the port takes each set
+            // OUT of the chain by value to hand `ca_parse_line` a `&mut cadef`,
+            // so the chain has to be copied before the walk starts.
+            // `ca_foreign_opt` reads only `opts[].name` (c:1819-1822) and
+            // ignores the `active` flags `ca_parse_line` mutates, so a snapshot
+            // taken here is equivalent to C's live chain.
+            let all_sets: Vec<cadef> = {
+                let mut out = Vec::new();
+                let mut cur = Some(&*def_head);
+                while let Some(d) = cur {
+                    out.push(clone_cadef_shallow(d));
+                    cur = d.snext.as_deref();
+                }
+                out
+            };
 
             // c:2643-2664 — for each set walk: track which parses
             // succeeded ("use"). When a set succeeds AND more sets
@@ -5155,10 +5183,40 @@ pub fn bin_comparguments(
             }
             let mut states: Vec<castate> = Vec::new(); // c:2632
             let mut ret = 0i32;
+            let mut set_idx = 0usize;
 
             while let Some(mut current) = def_opt {
                 let next = current.snext.take();
-                let parse_ret = ca_parse_line(&mut current, &all_clone, multi, first);
+                // c:1816-1817 — `if (d == curset) continue;`. C identifies the
+                // set being parsed by POINTER, because `curset` is a node of the
+                // very chain `all` walks. Here `current` is an owned `Box` that
+                // has been unlinked from the chain, so no pointer in `all` can
+                // ever equal it and the skip would never fire — which matters,
+                // since `ca_get_opt` only returns ACTIVE options (c:1736/1746)
+                // and an option of the current set that a previous exclusion
+                // deactivated would otherwise be reported as foreign and reject
+                // its own set. Handing `ca_foreign_opt` a chain that already
+                // OMITS the current set gives C's result without the pointer
+                // identity: the `continue` arm simply has nothing to skip.
+                let all_others: Box<cadef> = {
+                    let mut head: Option<Box<cadef>> = None;
+                    for (i, sd) in all_sets.iter().enumerate().rev() {
+                        if i == set_idx {
+                            continue;
+                        }
+                        let mut node = clone_cadef_shallow(sd);
+                        node.snext = head;
+                        head = Some(Box::new(node));
+                    }
+                    // Only reachable with a single set, where `multi` is 0
+                    // (c:2663) and guards the sole call site (c:2280).
+                    head.unwrap_or_else(|| {
+                        let mut empty = clone_cadef_shallow(&all_sets[set_idx]);
+                        empty.opts = None;
+                        Box::new(empty)
+                    })
+                };
+                let parse_ret = ca_parse_line(&mut current, &all_others, multi, first);
                 let use_state = parse_ret == 0; // c:2644
                 let has_next = next.is_some();
                 if use_state && has_next {
@@ -5181,6 +5239,7 @@ pub fn bin_comparguments(
                 }
                 first = 0; // c:2663
                 def_opt = next;
+                set_idx += 1;
             }
             ca_parsed.store(1, Ordering::Relaxed); // c:2665
 
@@ -9043,6 +9102,74 @@ mod tests {
             def_type
         );
         assert_eq!(def_action.as_deref(), Some("->args"));
+    }
+
+    /// c:Src/Zle/computil.c:2660 + c:1815 — `comparguments -i` passes the head
+    /// of the FULL set chain as `all`, so `ca_foreign_opt` can spot an option
+    /// belonging to ANY other set and reject the set being parsed (c:2280-2282).
+    ///
+    /// The port handed it `clone_cadef_shallow(&def_head)`, whose `snext` is
+    /// `None`, so the walk only ever reached SET 1: an option unique to set
+    /// 2..N eliminated nothing and every set survived. `_arguments` then offered
+    /// the union of all sets — `netstat -a -<TAB>` listed the display selectors
+    /// `-g -m -q -r -s` that zsh withholds.
+    ///
+    /// Asserted on `ca_laststate.snext`, which c:2690 fills with the sets that
+    /// survived BESIDES the winner: `None` means exactly one set is left.
+    #[test]
+    fn comparguments_sets_narrow_on_an_option_from_a_later_set() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zle::complete::INCOMPFUNC;
+
+        let spec: Vec<String> = [
+            "-i", "", "-s", "-S", ":", "-", "set1", "-a[opt a]", "-x[opt x]", "-", "set2",
+            "-b[opt b]", "-y[opt y]",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let mut surviving = |words: &[&str]| -> (i32, bool) {
+            // c:2586-2592 — `bin_comparguments` re-reads `$words` / `$CURRENT`
+            // from the shell params on entry, so seeding the ZLE globals alone
+            // is not enough: `CURRENT` would read back 0 and the c:2670 guard
+            // would reject every line.
+            crate::ported::params::setaparam(
+                "words",
+                words.iter().map(|w| w.to_string()).collect(),
+            );
+            crate::ported::params::setiparam("CURRENT", words.len() as i64);
+            ca_parsed.store(0, Ordering::Relaxed);
+            let rc = bin_comparguments("comparguments", &spec, &ops, 0);
+            let more = ca_laststate
+                .lock()
+                .map(|ls| ls.snext.is_some())
+                .unwrap_or(true);
+            (rc, more)
+        };
+
+        // `-a` is unique to set1 — narrowing on a FIRST-set option worked even
+        // before the fix, because the truncated `all` still held set1.
+        let (rc_a, more_a) = surviving(&["cmd", "-a", "-"]);
+        // `-b` is unique to set2 — this is the case the truncated chain missed.
+        let (rc_b, more_b) = surviving(&["cmd", "-b", "-"]);
+        // Nothing on the line discriminates, so BOTH sets have to survive.
+        let (rc_n, more_n) = surviving(&["cmd", "-"]);
+
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+
+        assert_eq!((rc_a, rc_b, rc_n), (0, 0, 0), "every line must parse");
+        assert!(!more_a, "`-a` must leave only set1");
+        assert!(!more_b, "`-b` must leave only set2");
+        assert!(more_n, "an undiscriminated line must keep both sets");
     }
 
     use super::*;
