@@ -466,16 +466,14 @@ pub struct SubshellSnapshot {
     pub maxjob: usize,
     /// `thisjob` at subshell entry (Src/jobs.c:77 global).
     pub thisjob: i32,
-    /// User-range fds (0-9) at subshell entry: `(fd, saved_dup)`
-    /// pairs where `saved_dup` is an `F_DUPFD >= 10` copy, or -1 when
-    /// the fd was closed at entry. C zsh forks for `(...)` so a bare
-    /// `exec >file` / `exec 3<&-` inside the child dies with it
-    /// (Src/exec.c entersubsh fork semantics); the in-process
-    /// subshell must restore the parent's fd table on End. Without
+    /// The descriptors 0-9 a bare `exec` redirection in the body moves
+    /// are saved here on first touch and put back when this is dropped
+    /// (see `crate::ported::exec::SubshFdFrame`). C zsh forks for `(...)`
+    /// so the child's `exec >file` / `exec 3<&-` dies with it; without
     /// this, `(exec >t.log; ...); cat t.log` left the PARENT's fd 1
-    /// pointing at t.log and `cat` looped forever copying the file
-    /// into itself.
-    pub saved_fds: Vec<(i32, i32)>,
+    /// pointing at t.log and `cat` looped forever copying the file into
+    /// itself.
+    pub fd_frame: crate::ported::exec::SubshFdFrame,
     /// `sigtrapped[]` at subshell entry (Src/signals.c:39). C's
     /// `entersubsh` clears per-signal trap STATE via `unsettrap(sig)`
     /// (c:Src/exec.c:1088-1092), which zeroes both the body and the
@@ -6013,6 +6011,7 @@ impl ShellExecutor {
                 // SubshForkCopy.
                 // A funsub/valsub runs in the current shell and keeps it all.
                 let tables_snap = (!shared_state).then(crate::ported::exec::SubshForkCopy::save);
+                let fd_frame = (!shared_state).then(crate::ported::exec::SubshFdFrame::enter);
                 // c:Src/exec.c:1127-1131 — the child's `entersubsh` unsets
                 // every trap that is not function-form (`$(trap)` lists
                 // nothing), in ITS copy of `sigtrapped[]`. Keep the
@@ -6231,6 +6230,8 @@ impl ShellExecutor {
                     if let Some(snap) = tables_snap {
                         snap.restore();
                     }
+                    // Before fd 1 and 2 go back to the parent below.
+                    drop(fd_frame);
                     if let Ok(mut t) = crate::ported::params::paramtab().write() {
                         *t = paramtab_snap;
                     }

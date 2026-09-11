@@ -16481,16 +16481,9 @@ impl fusevm::ShellHost for ZshrsHost {
                     .get_or_init(|| std::sync::Mutex::new(-1))
                     .lock()
                     .unwrap(),
-                // c:Src/exec.c entersubsh — fork copies the fd table;
-                // the child's `exec >file` / `exec N<&-` mutations die
-                // with it. Dup each user-range fd to >= 10 so
-                // subshell_end can restore the parent's exact table.
-                saved_fds: (0..10)
-                    .map(|fd| {
-                        let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
-                        (fd, dup)
-                    })
-                    .collect(),
+                // c:Src/exec.c:2880 — fork copies the fd table; the
+                // child's `exec >file` / `exec N<&-` die with it.
+                fd_frame: crate::ported::exec::SubshFdFrame::enter(),
                 // c:Src/signals.c:39 `sigtrapped` — saved so End restores the
                 // parent's per-signal trap flags (see the field docs).
                 sigtrapped: crate::ported::signals::sigtrapped
@@ -16791,29 +16784,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Ok(mut t) = crate::ported::zle::zle_keymap::keymapnamtab().lock() {
                     *t = snap.keymapnamtab;
                 }
-                // c:Src/exec.c entersubsh fork semantics — restore the
-                // parent's user-range fd table. A bare `exec >file` /
-                // `exec N>&-` inside `(...)` died with the C child;
-                // the in-process subshell must undo it here. Flush
-                // Rust's stdout buffer FIRST so bytes the subshell
-                // printed drain to the SUBSHELL's fd 1, not the
-                // restored parent fd.
-                {
-                    use std::io::Write;
-                    let _ = std::io::stdout().flush();
-                }
-                for (fd, saved) in snap.saved_fds {
-                    unsafe {
-                        if saved >= 0 {
-                            libc::dup2(saved, fd);
-                            libc::close(saved);
-                        } else {
-                            // fd was closed at entry; close whatever
-                            // the subshell opened on that slot.
-                            libc::close(fd);
-                        }
-                    }
-                }
+                // c:Src/exec.c:2880 — a bare `exec >file` / `exec N>&-`
+                // inside `(...)` died with the C child; put the parent's
+                // descriptors back (see SubshFdFrame).
+                drop(snap.fd_frame);
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
@@ -17617,6 +17591,9 @@ impl ShellExecutor {
     /// is parked for it.
     pub fn save_fd_for_scope(&mut self, fd: i32) {
         if self.exec_redirs_permanent {
+            // Permanent — except inside an in-process subshell, whose
+            // fd table C forks away (see SubshFdFrame).
+            crate::ported::exec::SubshFdFrame::touch(fd);
             return;
         }
         // c:2425 `movefd(fd1)` — zshrs keeps the original fd open and
@@ -17783,14 +17760,14 @@ impl ShellExecutor {
         // into `redirect_scope_stack.last_mut()` here (the enclosing
         // group's scope) made `{ exec 1>&-; … } 2>/dev/null` restore
         // stdout at group end — diverging from zsh, which keeps fd 1
-        // closed for the rest of the script.
-        if !self.exec_redirs_permanent {
-            self.save_fd_for_scope(fd);
-            // For `&>` / `&>>` also save fd 2 so the scope restores it after
-            // the body. Otherwise stderr stays redirected past the command.
-            if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
-                self.save_fd_for_scope(2);
-            }
+        // closed for the rest of the script. `save_fd_for_scope` makes
+        // that call (it parks nothing for a bare `exec` outside an
+        // in-process subshell).
+        self.save_fd_for_scope(fd);
+        // For `&>` / `&>>` also save fd 2 so the scope restores it after
+        // the body. Otherwise stderr stays redirected past the command.
+        if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+            self.save_fd_for_scope(2);
         }
         // c:Src/exec.c:3722-3724 + 2447-2480 — MULTIOS split when this
         // command's stdout IS the pipeline output. C registers the pipe

@@ -5269,6 +5269,80 @@ impl SubshForkCopy {
     }
 }
 
+/// The descriptors 0-9 a bare `exec` redirection moved inside an
+/// in-process subshell, each with a copy of what it was before.
+///
+/// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
+/// `exec 3>file` / `exec 3>&-` with no command is permanent — c:4035
+/// "specifically *don't* restore the original fd's" — but inside
+/// `$( … )` or `( … )` it is permanent only for the forked child
+/// (`Src/exec.c:4816`, `c:2880`), whose fd table dies with it. zshrs runs
+/// the body in process, so the parent's descriptors are saved here the
+/// first time the body's permanent redirection touches each one, and put
+/// back when the frame is dropped. A body that redirects nothing
+/// permanently costs nothing.
+pub struct SubshFdFrame {
+    /// Only `enter` builds one, so every frame on `SUBSH_FD_FRAMES` has
+    /// exactly one owner to pop it.
+    _entered: (),
+}
+
+thread_local! {
+    /// `(fd, copy)` per frame, innermost last; a copy of -1 means the fd
+    /// was closed on entry. Thread-local: a frame is entered and left on
+    /// the thread that runs the body.
+    static SUBSH_FD_FRAMES: std::cell::RefCell<Vec<Vec<(i32, i32)>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl SubshFdFrame {
+    /// Open a frame for a subshell body.
+    pub fn enter() -> Self {
+        SUBSH_FD_FRAMES.with(|f| f.borrow_mut().push(Vec::new()));
+        SubshFdFrame { _entered: () }
+    }
+
+    /// Called before a permanent redirection changes `fd`: keep a copy
+    /// (at fd >= 10, where shell-internal descriptors live — see `mpipe`)
+    /// unless the innermost frame already has one. Outside any frame
+    /// the redirection really is permanent and nothing is kept.
+    pub fn touch(fd: i32) {
+        if !(0..10).contains(&fd) {
+            return;
+        }
+        SUBSH_FD_FRAMES.with(|f| {
+            if let Some(frame) = f.borrow_mut().last_mut() {
+                if !frame.iter().any(|(saved_fd, _)| *saved_fd == fd) {
+                    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+                    frame.push((fd, copy));
+                }
+            }
+        });
+    }
+}
+
+impl Drop for SubshFdFrame {
+    /// Put the parent's descriptors back, most recent first.
+    fn drop(&mut self) {
+        let frame = SUBSH_FD_FRAMES.with(|f| f.borrow_mut().pop().unwrap_or_default());
+        if frame.is_empty() {
+            return;
+        }
+        // Bytes the body printed belong to the body's fd 1.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        for (fd, copy) in frame.into_iter().rev() {
+            unsafe {
+                if copy >= 0 {
+                    libc::dup2(copy, fd);
+                    libc::close(copy);
+                } else {
+                    libc::close(fd);
+                }
+            }
+        }
+    }
+}
+
 /// Port of `getpipe()` from `Src/exec.c:5119` — C decl `getpipe(char *cmd, int nullexec)`.
 ///
 /// C body executes `<(cmd)` / `>(cmd)` process substitution via a
