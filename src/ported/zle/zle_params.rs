@@ -1031,13 +1031,38 @@ pub fn get_bufferlines() -> usize {
         + 1
 }
 
-/// `$PENDING` accessor — bytes waiting in the input queue.
-/// Port of `get_pending(UNUSED(Param pm))` from Src/Zle/zle_params.c which
-/// returns `kungetct` (the unget-buffer fill).
+/// `$PENDING` accessor — bytes waiting on the terminal, unread.
+///
+/// Port of `get_pending(UNUSED(Param pm))` from `Src/Zle/zle_params.c:531-535`:
+/// ```c
+/// static zlong
+/// get_pending(UNUSED(Param pm))
+/// {
+///     return noquery(0);
+/// }
+/// ```
+/// `noquery(0)` (`c:utils.c:2992-3011`) is a `FIONREAD` ioctl on `SHTTY`, so
+/// this is the TTY's unread byte count — NOT `kungetct`, which is what
+/// `$KEYS_QUEUED_COUNT` reports (`c:470`, `get_keys_queued_count`). The two are
+/// different queues and zsh exposes both separately.
+///
+/// This used to `return 0` with the note "unget_buf is private; future
+/// expansion can expose its len". That was wrong about the data source, not
+/// just incomplete: `unget_buf` is `$KEYS_QUEUED_COUNT`'s queue, and
+/// `utils::noquery` — a faithful port including the ioctl — was already sitting
+/// there with nothing calling it.
+///
+/// A permanently-zero `$PENDING` is visible to scripts. zsh-autosuggestions
+/// guards its recompute with
+/// `if (( $PENDING > 0 || $KEYS_QUEUED_COUNT > 0 ))` — "don't fetch a new
+/// suggestion if there's more input to be read immediately". With `$PENDING`
+/// pinned at 0 that guard can never fire on typed-ahead input, so every fast
+/// keystroke fell through into the recompute path instead of deferring.
+///
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_pending() -> usize {
-    // c:528
-    0 // unget_buf is private; future expansion can expose its len
+    // c:534 — `return noquery(0)`; purge=0, so the queue is measured, not drained.
+    crate::ported::utils::noquery(false).max(0) as usize
 }
 
 /// Port of `get_recursive(UNUSED(Param pm))` from `Src/Zle/zle_params.c:535`.
