@@ -1285,7 +1285,7 @@ pub fn zlecore() {
         // Post-widget processing matches zle_main.c:1156-1167:
         //   handleprefixes()  → promote TMULT, otherwise reset
         //   vi cursor adjust  → don't sit on '\n' in vi cmd mode
-        //   handleundo()      → done in execute_widget
+        //   handleundo()      → record what the widget changed
         //   redrawhook()      → queue zle-line-pre-redraw
         handleprefixes();
         if in_vi_cmd_mode()
@@ -1296,6 +1296,13 @@ pub fn zlecore() {
         {
             ZLECS.fetch_sub(1, SeqCst);
         }
+        // c:1161 — `handleundo();`, here in the key loop and nowhere else on
+        // the per-key path. It used to be split across `execute_widget` as a
+        // `setlastline()` BEFORE the widget and a `mkundoent()` after it; the
+        // pre-call snapshot silently discarded anything that changed the line
+        // outside a widget, and the natively handled keys above (zle_fx)
+        // skipped the capture entirely.
+        crate::ported::zle::zle_utils::handleundo(); // c:1161
         // Native ZLE effects recompute (extensions/zle_fx.rs): autosuggestion +
         // syntax highlight refresh on every widget, before the repaint — the
         // fish reader does the same per readline command (reader.rs
@@ -1398,6 +1405,10 @@ pub fn zleread(
     // between lines (which relinks the name `main` to a different keymap)
     // would otherwise never reach the key loop.
     selectkeymap("main", 1);
+    // c:1295 — `initundo();`: a fresh change list and `undo_changeno = 0` for
+    // every line. Never called before, so undo history (and the change
+    // counter) carried over from every earlier line.
+    crate::ported::zle::zle_utils::initundo(); // c:1295
 
     // c:1297-1312 — drain ONE entry off the buffer stack into the fresh
     // line, which is the entire mechanism behind `push-line`, `run-help`
@@ -1427,8 +1438,8 @@ pub fn zleread(
     //
     // Position: C runs this after `selectkeymap("main", 1)` (c:1294),
     // `initundo()` (c:1295) and `fixsuffix()` (c:1296). This port calls
-    // neither of the latter two from `zleread`, so immediately after the
-    // `selectkeymap` above IS C's slot. It must also stay AFTER the
+    // `initundo` just above and has no `fixsuffix` call here, so the slot
+    // right after them IS C's. It must also stay AFTER the
     // `zleline`/`zlecs`/`zlell` clear at c:1287-1289 (above) — that clear
     // would otherwise wipe the line we just restored.
     //
@@ -1714,6 +1725,8 @@ pub fn zleread(
     // ZLE is no longer editing; clear zleactive so a later trashzle (e.g.
     // from output/precmd) doesn't try to redraw an inactive line.
     zleactive.store(0, SeqCst);
+    // c:1386 — `freeundo();` — the change list belongs to this line only.
+    crate::ported::zle::zle_utils::freeundo(); // c:1386
 
     // Native ZLE effects teardown (extensions/zle_fx.rs): drop the highlight
     // overlay, ghost text, and any active history search so nothing bleeds
@@ -3735,9 +3748,9 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
 ///   * `lastcmd = widget.flags` unless the widget is `NOTCOMMAND`
 ///     (zle_main.c:1497). The yank-pop widget consults this to know
 ///     whether the previous widget was a yank.
-///   * `handleundo()` snapshot pre-call + `mkundoent()` capture
-///     post-call (zle_main.c calls `handleundo()` from the zlecore
-///     loop after each widget).
+/// The undo capture is NOT here: C records it once per key from the
+/// zlecore loop (`handleundo()` at zle_main.c:1161), which is where this
+/// port calls it too.
 fn execute_widget(widget: &widget) -> i32 {
     // c:1423-1424 — `int nestedvichg = vichgflag; int isrepeat =
     // (viinrepeat == 3);` — vi-change bookkeeping for `.` repeat.
@@ -3791,10 +3804,6 @@ fn execute_widget(widget: &widget) -> i32 {
         LASTCOL.store(-1, SeqCst);
     }
 
-    // Snapshot the line so mkundoent can diff it post-widget.
-    // Port of setlastline()/handleundo() framing in zle_main.c:1161.
-    handleundo();
-
     // c:1151 — the widget's return value propagates to zlecore, which rings
     // the bell (handlefeep) when it is non-zero. e.g. an ambiguous completion
     // returns 1 (LISTBEEP) and must beep; the value was previously discarded.
@@ -3831,10 +3840,6 @@ fn execute_widget(widget: &widget) -> i32 {
     if (widget.flags & ZLE_NOTCOMMAND) == 0 {
         LASTCMD.store(widget.flags as u32, SeqCst);
     }
-
-    // Capture the change (if any) into the undo stack. undo/redo widgets
-    // call mkundoent themselves, so a no-op diff here is harmless.
-    mkundoent();
 
     // c:1579-1595 — if this widget constituted the vi change, end it.
     crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, ret);

@@ -161,6 +161,7 @@ mod zle_buffer_state_parity;
 mod zle_editing_parity;
 mod zle_editor_params_parity;
 mod zle_pending_parity;
+mod zle_undo_parity;
 mod zle_widget_parity;
 mod zsh_compat_parity_gaps;
 mod zsh_idioms_parity;

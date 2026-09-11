@@ -69,3 +69,21 @@ zpty -w -n w $'\r'"#,
     );
 }
 
+/// The whole `bracketed-paste-magic` round trip: capture, keystroke replay,
+/// `zle .undo` of the replay, re-insert. The pasted command must run once,
+/// as pasted. zshrs replayed it into the line, failed to undo the replay,
+/// and inserted the paste a second time behind it.
+#[test]
+fn bracketed_paste_magic_inserts_the_paste_once() {
+    assert_same_verdict(
+        &driver(
+            r#"autoload -Uz bracketed-paste-magic; zle -N bracketed-paste bracketed-paste-magic"#,
+            r#"zpty -w -n w $'\e[200~print -r -- PAS${:-}TED-$((6*7))-END\e[201~'
+sleep 2
+zpty -w -n w $'\r'"#,
+            "\nPASTED-42-END\r",
+        ),
+        "K",
+        "a paste through bracketed-paste-magic ran exactly once",
+    );
+}

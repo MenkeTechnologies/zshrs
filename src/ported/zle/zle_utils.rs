@@ -1577,18 +1577,37 @@ pub fn handlesuffix(c: i32) -> i32 {
 }
 
 /// Port of `initundo()` from Src/Zle/zle_utils.c:1446.
+///
+/// Called once per line edit from `zleread` (c:Src/Zle/zle_main.c:1295).
+/// The body used to be an empty `freeundo()` under a comment saying the
+/// undo chain "isn't a Rust struct yet" — it is (`UNDO_STACK` +
+/// `CURCHANGE`), and nothing called this anyway, so the change list and
+/// `undo_changeno` ran on across every line the shell ever read:
+/// `$UNDO_CHANGE_NO` started a fresh line at 127 instead of 0.
 pub fn initundo() {
-    // c:1446
-    // C body c:1448-1459 — `nextchanges = endnextchanges = NULL;
-    //                       lastline = ...; freeundo()`.
-    //                      Undo chain isn't a Rust struct yet; no-op.
-    freeundo();
+    // c:1455 — `nextchanges = NULL;` (the port records changes straight
+    // onto UNDO_STACK, so there is no pending chain to drop).
+    // c:1456-1459 — a fresh `changes` list whose only node is the empty
+    // head `curchange` points at. UNDO_STACK holds the nodes AFTER that
+    // head, so "only the head" is the empty stack at index 0.
+    UNDO_STACK.lock().unwrap().clear(); // c:1456
+    CURCHANGE.store(0, Ordering::SeqCst); // c:1456
+    // c:1460 — `curchange->changeno = undo_changeno = undo_limitno = 0;`
+    UNDO_CHANGENO.store(0, Ordering::SeqCst); // c:1460
+    UNDO_LIMITNO.store(0, Ordering::SeqCst); // c:1460
+    // c:1461-1463 — `lastline` := a copy of `zleline`; `lastcs = zlecs;`
+    setlastline(); // c:1461-1463
 }
 
-/// Port of `freeundo()` from Src/Zle/zle_utils.c:1461.
-pub fn freeundo() { // c:1461
-                    // C body c:1463-1470 — `freechanges(curchange); freechanges(...)
-                    //                      etc. for the whole undo chain`. Drop covers.
+/// Port of `freeundo()` from Src/Zle/zle_utils.c:1468.
+/// Called once per line edit, when `zleread` finishes (c:Src/Zle/zle_main.c:1386).
+pub fn freeundo() {
+    // c:1470-1471 — `freechanges(changes); freechanges(nextchanges);`
+    UNDO_STACK.lock().unwrap().clear();
+    CURCHANGE.store(0, Ordering::SeqCst);
+    // c:1472-1474 — `zfree(lastline, lastlinesz); lastline = NULL;`
+    LASTLINE.lock().unwrap().clear();
+    LASTLL.store(0, Ordering::SeqCst);
 }
 
 /// Port of `freechanges(struct change *p)` from Src/Zle/zle_utils.c:1472.
@@ -1598,17 +1617,29 @@ pub fn freechanges() { // c:1472
                        //                      strings + the Change node. Drop covers it.
 }
 
-// register pending changes in the undo system                            // c:1488
-/// Pre-widget hook. Port of `handleundo` (zle_utils.c) — the
-/// Rust port collapses to `setlastline()` because zshrs uses a
-/// one-change-per-widget model. C's `handleundo` body
-/// (zle_utils.c:1488) flushes the in-flight `nextchanges`
-/// chain that accumulates across multi-key vi operations; that
-/// chain is unnecessary when each widget produces exactly one
-/// undo entry via `mkundoent` post-call.
+// register pending changes in the undo system                            // c:1490
+/// Port of `handleundo()` from Src/Zle/zle_utils.c:1494 — commit whatever
+/// changed since `lastline` as a change record, then make the current line
+/// the new baseline.
+///
+/// C runs it AFTER each top-level widget (c:Src/Zle/zle_main.c:1161), at
+/// the start of `undo`/`redo`/`vi-undo-change`/`split-undo`, and from
+/// complist. It used to be a bare `setlastline()`, which threw the pending
+/// edit away instead of recording it; nested widget code (a `zle` call
+/// from a shell widget, `BUFFER=` assignments) never reaches the per-widget
+/// capture, so `zle .undo N` then had no record of what that widget had
+/// done and could not take it back. `bracketed-paste-magic` depends on
+/// exactly that to clear its keystroke replay before inserting the paste.
+///
+/// C's `mkundoent` queues onto `nextchanges` and this function splices the
+/// queue onto `curchange`, dropping any redo tail (c:1511-1527). The port's
+/// `mkundoent` pushes onto UNDO_STACK directly and truncates the redo tail
+/// itself, so the splice collapses to the `setlastline()` that goes with it.
 pub fn handleundo() {
-    // c:1488
-    setlastline();
+    // c:1500-1506 — the metafied-line dance has no counterpart: the port
+    // keeps ZLELINE as chars.
+    mkundoent(); // c:1510
+    setlastline(); // c:1512
 }
 
 // add an entry to the undo system, if anything has changed              // c:1532
@@ -1742,6 +1773,11 @@ pub fn undo(args: &[String]) -> i32 {
         -1
     };
 
+    // c:1617 — `handleundo();`. Without it the edit made since the last
+    // commit was never recorded, so it could not be undone: a widget that
+    // rewrote the line and then ran `zle .undo $UNDO_CHANGE_NO_at_entry`
+    // got its line back unchanged.
+    handleundo(); // c:1617
     loop {
         // c:1614 — `prev = curchange->prev`; in Rust we step the
         // index down.
@@ -1842,6 +1878,7 @@ pub fn unapplychange(ch: i32) -> i32 {
 /// on success, 1 when nothing to redo.
 pub fn redo() -> i32 {
     // c:1661
+    handleundo(); // c:1670 — same pending-edit commit as `undo`
     loop {
         if CURCHANGE.load(Ordering::SeqCst) >= UNDO_STACK.lock().unwrap().len() {
             return 1;
