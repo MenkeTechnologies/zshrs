@@ -657,12 +657,13 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             // signal (SIGCHLD from p10k's per-prompt subprocesses) can return
             // 0 with errno=EINTR — Linux returns -1. Treating that 0 as hard
             // EOF aborted the read mid-escape-sequence, so arrow keys (\e[A …)
-            // self-inserted. Retry BOTH the -1 and the spurious-0 EINTR case,
-            // bounded to 20 (C's getbyte icnt guard) so a genuine hangup EOF
-            // still terminates.
+            // self-inserted. Retry BOTH the -1 and the spurious-0 EINTR case.
+            // Only the zero-byte case is bounded (to 20, C's getbyte icnt
+            // guard) — see the simple-read path below for why the -1 case
+            // must not be.
             if (n == -1 || n == 0)
                 && errno == Some(libc::EINTR)
-                && eintr_retries < 20
+                && (n == -1 || eintr_retries < 20)
                 // c:917 — `if (!errflag && …)`: the WHOLE errflag, not just
                 // ERRFLAG_ERROR. A user interrupt sets ERRFLAG_INT
                 // (signals.c:457), so masking with ERRFLAG_ERROR retried the
@@ -674,7 +675,8 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
                 && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
             {
-                eintr_retries += 1;
+                // c:914 — `icnt = 0;`: a real interruption resets the count.
+                eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
                 continue; // c:917 — retry the interrupted read
             }
             // c:929-936 — EIO means the shell lost the terminal's foreground
@@ -766,11 +768,19 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // errno=EINTR — Linux returns -1. Treating that spurious 0 as hard EOF
         // aborted the read mid-escape-sequence, so arrow keys (\e[A, \e[B, …)
         // self-inserted as literal `^[[A`. Retry BOTH the -1 and the 0 EINTR
-        // case, bounded to 20 (C's getbyte icnt guard) so a genuine hangup EOF
-        // still terminates. This was the "all arrow keys broken" regression.
+        // case. This was the "all arrow keys broken" regression.
+        //
+        // Only the zero-byte case is bounded — to 20, C's getbyte icnt guard
+        // (c:907), so a genuine hangup EOF still terminates. A real
+        // interruption (-1/EINTR) is retried without limit, exactly as C's
+        // getbyte `continue`s at c:917-918 with no counter (and resets icnt at
+        // c:914). Bounding it too made every 21st consecutive signal during
+        // one idle read end the read as EOF, and the shell exited: under
+        // `TMOUT=1` with a TRAPALRM, zshrs died after 21 alarms (about 21
+        // idle seconds) while zsh ran the trap indefinitely.
         if (n == -1 || n == 0)
             && errno == Some(libc::EINTR)
-            && eintr_retries < 20
+            && (n == -1 || eintr_retries < 20)
             // c:917 — the WHOLE errflag, as in the poll-path read above:
             // ERRFLAG_INT (a user interrupt, signals.c:457) has to end the
             // read too, otherwise ^C leaves the editor blocked.
@@ -779,7 +789,8 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
             && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
         {
-            eintr_retries += 1;
+            // c:914 — `icnt = 0;`: a real interruption resets the count.
+            eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
             continue; // c:917 — retry the interrupted read
         }
         // c:929-936 — `else if (errno == EIO && !die) { ret = opts[MONITOR];
@@ -1332,6 +1343,12 @@ pub fn zleread(
     *RAW_LP.lock().unwrap() = lprompt.to_string();
     *RAW_RP.lock().unwrap() = rprompt.to_string();
     // c:1250 — `keytimeout = (time_t)getiparam("KEYTIMEOUT");`. The
+    // c:1220 — `int tmout = getiparam("TMOUT");`. Read once on entry; the
+    // alarm it arms is set further down (c:1323-1324), and a TMOUT the
+    // user changes while this line is being edited takes effect on the
+    // next line or at the next SIGALRM re-arm (handletrap, c:1002-1003),
+    // exactly as in C.
+    let tmout = crate::ported::params::getiparam("TMOUT") as i32; // c:1220
     // ZLE-side global is refreshed from the parameter once per edit
     // session, so a `KEYTIMEOUT=1` in .zshrc (or a mid-session change)
     // takes effect on the NEXT line, not retroactively. Without this
@@ -1559,6 +1576,22 @@ pub fn zleread(
     // carries VCS/VLN across frames within a single line edit).
     //
     // MUST precede the `zle-line-init` hook below (C: c:1337 `zleactive = 1`,
+    // c:1323-1324 — `if (tmout) alarm(tmout);`. This is the ONLY place
+    // `$TMOUT` starts the clock: SIGALRM then reaches zhandler
+    // (Src/signals.c:474-491), which runs TRAPALRM via handletrap — whose
+    // tail re-arms `alarm(tmout)` for the next period (c:1002-1003) — or,
+    // with no trap, logs the shell out once the tty has been idle for
+    // TMOUT seconds. Without this call nothing ever armed the first alarm,
+    // so TRAPALRM never ran at an idle prompt and an untrapped TMOUT never
+    // timed the shell out. C arms it before `zleactive = 1` (c:1337); it
+    // sits after `zsetterm()` here only so that function's early `?`
+    // return cannot leave an alarm running with no matching `alarm(0)`.
+    if tmout != 0 {
+        unsafe {
+            libc::alarm(tmout as libc::c_uint); // c:1324
+        }
+    }
+
     // then c:1356 `zlecallhook(init, NULL)`). Calling the hook first left
     // `zle_usable()` (zle_thingy.c:634) false for the whole widget, so any
     // wrapper that re-dispatches with `zle .widget` — every
@@ -1692,6 +1725,12 @@ pub fn zleread(
     // EOF (^D on an empty line), an error, or a pending `exit` yield NULL
     // so the caller (inputline) sees end-of-input; otherwise the accepted
     // line gets a trailing newline appended — matching shingetline, which
+    // c:1384 — `alarm(0);`. The TMOUT clock only runs while the editor
+    // waits for input; cancel it before the accepted line executes, so a
+    // command that runs longer than TMOUT is never interrupted by it.
+    unsafe {
+        libc::alarm(0); // c:1384
+    }
     // returns "…\n" — so a bare Enter is an empty COMMAND ("\n"), not EOF.
     // The Rust entry returns the empty string for the NULL case; inputline
     // treats an empty (no-newline) result as EOF, a "\n" result as an

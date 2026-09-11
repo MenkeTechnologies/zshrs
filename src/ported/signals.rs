@@ -579,15 +579,22 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                     unsafe {
                         libc::alarm((tmout - idle) as u32); // c:481
                     }
-                } else if tmout == 0 {
-                    // No timeout configured — bail out silently
-                    // (C falls into the else branch which would
-                    // emit "timeout" and zexit even with tmout==0,
-                    // but that's a degenerate setup; matching
-                    // common-case behavior here).
                 } else {
+                    // c:482-489 — every other case exits, INCLUDING
+                    // `TMOUT` unset or 0: an untrapped SIGALRM in an
+                    // interactive shell (`kill -ALRM $$`, no TRAPALRM) logs
+                    // it out with "timeout" in zsh. A Rust-only
+                    // `tmout == 0` arm used to swallow that signal and keep
+                    // the shell running.
+                    //
                     // c:486 — `errflag = noerrs = 0;`
                     errflag.store(0, Ordering::Relaxed);
+                    // `try_lock`, not `lock`: this runs in signal context,
+                    // and the interrupted code may hold the guard. Leaving
+                    // noerrs set then only mutes the "timeout" line.
+                    if let Ok(mut g) = crate::ported::utils::noerrs_lock().try_lock() {
+                        *g = 0; // c:486
+                    }
                     // c:487 — `zwarn("timeout");`
                     zwarn("timeout"); // c:487
                     STOPMSG.store(1, Ordering::Relaxed); // c:488

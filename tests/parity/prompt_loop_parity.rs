@@ -11,11 +11,11 @@
 //!     (`Src/Modules/sched.c`), and `$TMOUT` arms the alarm that fires
 //!     `TRAPALRM` while the line editor sits idle.
 //!
-//! Measured here: zshrs runs the first group, and of the second it now runs
-//! `sched` (7c3bcf0a58) but still not `$TMOUT`. A shell in that state
-//! looks completely healthy from a script — `sched +5 …; sched` lists the
-//! entry, the builtin returns 0, `TMOUT=1` assigns fine — and, until that
-//! fix, silently never executed any of it.
+//! Measured here: zshrs runs the first group, and both halves of the
+//! second — `sched` since 7c3bcf0a58, `$TMOUT` since the `zleread` alarm
+//! fix. A shell missing them looks completely healthy from a script —
+//! `sched +5 …; sched` lists the entry, the builtin returns 0, `TMOUT=1`
+//! assigns fine — and silently never executes any of it.
 //!
 //! Why it matters far beyond `sched` itself: **zinit's turbo mode is
 //! built on it.** Every `zinit ice wait'0a'` plugin is deferred to
@@ -58,7 +58,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN};
+use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN, OPEN_PUMPED};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Hook functions — these DO run, and must keep running
@@ -229,7 +229,7 @@ mod sched_bookkeeping {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// SIGALRM-driven work — `sched` runs since 7c3bcf0a58; `$TMOUT` still does not
+// SIGALRM-driven work — `sched` and `$TMOUT`
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Regression pin for the two-part `sched` break: an entry registered,
@@ -280,16 +280,21 @@ if [[ $all == *SCHEDMARK* ]]; then print \"SCHED=yes\"; else print \"SCHED=no\";
 // whose reference does not exhibit the behaviour asserts nothing, so it was
 // dropped rather than committed.
 
-/// zshrs gap, same family: `$TMOUT` arms no alarm, so `TRAPALRM` never
-/// runs while the editor is idle. Over five idle seconds zsh fires it
-/// twice and zshrs zero times (deterministic, 2/2 runs each side).
+/// Regression pin, same family: `$TMOUT` armed no alarm, so `TRAPALRM`
+/// never ran while the editor was idle.
+///
+/// `zleread` never ported `if (tmout) alarm(tmout);`
+/// (`Src/Zle/zle_main.c:1323-1324`) or its `alarm(0)` (c:1384). Everything
+/// downstream was already correct — `zhandler`'s SIGALRM arm
+/// (`Src/signals.c:474`) ran the trap, and `handletrap` re-armed the next
+/// period (c:1002-1003), so ONE external `kill -ALRM` started a chain that
+/// then ran every second — but nothing ever sent the first one.
 ///
 /// This probe gets its OWN pty session on purpose: with `TRAPALRM`
 /// unhonoured, a `TMOUT` that IS honoured would kill the inner shell
 /// and make every later probe in a shared session report "no" for the
 /// wrong reason — which is exactly what happened while writing these.
 #[test]
-#[ignore = "zshrs gap: $TMOUT arms no alarm, so TRAPALRM never runs at the prompt"]
 fn tmout_drives_trapalrm_while_idle_at_the_prompt() {
     let driver = format!(
         "{OPEN}
@@ -301,4 +306,74 @@ if [[ $all == *ALRMMARK* ]]; then print \"ALRM=yes\"; else print \"ALRM=no\"; fi
 "
     );
     assert_same_verdict(&driver, "ALRM", "TRAPALRM ran while idle under $TMOUT");
+}
+
+/// Regression pin for what the `$TMOUT` fix exposed: a shell sitting at
+/// the prompt under `TMOUT=1` with a `TRAPALRM` is interrupted once a
+/// second, forever, and each interruption lands in the SAME blocked
+/// `read()` of the SAME keystroke.
+///
+/// C's `getbyte` retries an interrupted read with no counter
+/// (`Src/Zle/zle_main.c:915-918`) and only bounds a zero-byte read
+/// (c:907). `raw_getbyte` bounded both at 20, so the 21st consecutive
+/// signal ended the read as EOF and the shell exited — about 21 idle
+/// seconds after `TMOUT=1`, while zsh kept running the trap.
+///
+/// Thirty signals are sent from the driver rather than waited out
+/// through `$TMOUT`, which keeps the probe to a few seconds and makes it
+/// independent of the alarm path pinned above.
+#[test]
+fn a_long_run_of_trapped_signals_does_not_end_the_prompt() {
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w 'TRAPALRM(){{ : }}'; pump
+zpty -w w 'print PID${{:-}}IS=$$'; pump
+local pid=${{all##*PIDIS=}}
+pid=${{pid%%[^0-9]*}}
+repeat 30; do kill -ALRM $pid 2>/dev/null; sleep 0.15; done
+zpty -w w 'print SURV${{:-}}IVED'; pump
+zpty -d w 2>/dev/null
+if [[ $all == *SURVIVED* ]]; then print \"ALIVE=yes\"; else print \"ALIVE=no\"; fi
+"
+    );
+    assert_same_verdict(&driver, "ALIVE", "the prompt survived 30 trapped signals");
+}
+
+/// An UNTRAPPED SIGALRM logs an interactive shell out even when `$TMOUT`
+/// is unset: `zhandler` (`Src/signals.c:474-491`) re-arms only while
+/// `idle < tmout`, and with `tmout == 0` that never holds, so it prints
+/// "timeout" and exits. zshrs had a Rust-only `tmout == 0` arm that
+/// swallowed the signal and kept the shell alive.
+///
+/// The verdict is POSITIVE on purpose: the shell must have answered
+/// before the signal and then printed "timeout", which only the exit
+/// path prints. A probe that merely looked for a missing marker would
+/// also report "exited" for an inner shell that never started.
+///
+/// Nothing is written to the pty after the signal. Once the inner shell
+/// has gone, zshrs's own `zpty -w` spins forever in `ptywritestr` on the
+/// dead child (`checkptycmd` probes it with `kill(pid, 0)`, which still
+/// succeeds on the unreaped zombie), and a driver that wrote a
+/// "still alive?" line hung the whole test.
+///
+/// There is deliberately no pin for the `TMOUT=N`, no-trap logout. That
+/// path compares `N` against `$TTYIDLE`, the tty's access time, and on
+/// macOS the reference zsh under a pty harness does not log out
+/// reliably: over repeated runs it exited in some and stayed alive in
+/// others, so a pin would assert nothing.
+#[test]
+fn an_untrapped_alarm_logs_the_shell_out() {
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w 'print BEF${{:-}}ORE'; pump
+zpty -w w 'kill -ALRM $$'; pump
+zpty -d w 2>/dev/null
+if [[ $all == *BEFORE* && $all == *timeout* ]]; then
+  print \"EXITED=yes\"
+else
+  print \"EXITED=no\"
+fi
+"
+    );
+    assert_same_verdict(&driver, "EXITED", "an untrapped SIGALRM logged the shell out");
 }
