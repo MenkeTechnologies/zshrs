@@ -3214,19 +3214,16 @@ pub fn zlesetkeymap(mode: i32) {
 /// }
 /// ```
 pub fn readcommand() -> i32 {
-    // c:1814
-    // Read a single key + look up its bound thingy via the existing
-    // ZLE input path. Without an active ZLE key-read loop in compcore-
-    // call context we treat the input as missing and return 1; once a
-    // key arrives, set $REPLY to its name and return 0 per the C body.
-    // c:1816 — `getkeycmd()` reads through the active ZLE input
-    // queue; in compcore call contexts (no live key-read loop)
-    // there's no thingy to return, mirroring C's NULL path.
-    let Some(name): Option<String> = None else {
-        return 1;
-    }; // c:1816
-    let _ = crate::ported::params::setsparam("REPLY", &name); // c:1818
-    0 // c:1819
+    // c:1815 — `Thingy thingy = getkeycmd();`. The body used to be a
+    // hardwired `None`, so `zle .read-command` failed on every call even
+    // with keys queued. `bracketed-paste-magic` drives its whole replay
+    // loop through it (`while [[ -n $PASTED ]] && zle .read-command`), so
+    // nothing pasted was ever re-inserted.
+    let Some(thingy) = getkeycmd() else {
+        return 1; // c:1817-1818
+    };
+    let _ = crate::ported::params::setsparam("REPLY", &thingy.nam); // c:1820
+    0 // c:1821
 }
 
 /// Port of `mod_export char *curkeymapname` from `Src/Zle/zle_keymap.c:126`.

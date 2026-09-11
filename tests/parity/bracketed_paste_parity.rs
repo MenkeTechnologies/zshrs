@@ -48,3 +48,24 @@ zpty -w -n w $'\r'"#,
         "`zle .bracketed-paste NAME` captured the pasted text",
     );
 }
+
+/// `zle .read-command` reads one key sequence through the keymap and
+/// names the widget bound to it in `$REPLY` (c:Src/Zle/zle_keymap.c:1813-1821).
+/// zshrs hardwired its lookup to "nothing read", so it failed on every call
+/// even with keys queued by `zle -U` — which is how bracketed-paste-magic
+/// replays a paste.
+#[test]
+fn read_command_reads_a_queued_key_and_names_its_widget() {
+    assert_same_verdict(
+        &driver(
+            r#"rcq(){ zle -U q; zle .read-command; BUFFER="print RC\${:-}:$?:$REPLY:$KEYS" }; zle -N rcq; bindkey "^G" rcq"#,
+            r#"zpty -w -n w $'\C-g'
+sleep 2
+zpty -w -n w $'\r'"#,
+            "RC:0:self-insert:q",
+        ),
+        "K",
+        "`zle .read-command` read a `zle -U` key and set REPLY",
+    );
+}
+
