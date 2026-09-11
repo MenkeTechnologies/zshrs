@@ -402,3 +402,210 @@ mod assignment_subscript_expansion {
         assert_parity(r#"typeset -A h; h[k2]=v; h[(e)*]=w; print -r -- ${(ok)h}"#);
     }
 }
+
+/// Bug #1141 — a chained `[N]` after an ASSOC pattern-scan subscript.
+///
+/// C never special-cases the second subscript: `paramsubst`'s
+/// `while (v || …)` loop packs the first subscript's ARRAY result into a
+/// temporary `PM_ARRAY` parameter (`Src/subst.c:2890-2893`) carrying the scan
+/// mask (`:2897`) and runs an ordinary `getindex` on it (`:2900`). So
+/// `${A[(K)pat][2]}` is an ordinary array index over the match list, and the
+/// carried `SCANPM_WANTKEYS`/`SCANPM_WANTVALS` bits decide (`Src/params.c:1513-
+/// 1531`) whether the chained subscript reads an ELEMENT or is an INVERSE
+/// subscript that yields the index itself.
+///
+/// The port used to apply the second subscript only when the FIRST one was a
+/// range on a plain array, so every row below returned the whole match list.
+mod chained_subscript_after_scan {
+    use super::*;
+
+    /// Three keys that all match `zzqaaa` as patterns, so `(K)` returns a
+    /// three-element list and the chained index has something to pick from.
+    const A: &str = r#"typeset -A A; A[zzq*]=_A; A[*aaa]=_B; A[z*a]=_C; "#;
+
+    fn p(expr: &str) {
+        assert_parity(&format!(r#"{A}print -r -- {expr}"#));
+    }
+
+    /// The scan itself: the baseline both shells already agreed on.
+    #[test]
+    fn bare_scan_is_the_whole_match_list() {
+        p(r#""${A[(K)zzqaaa]}""#);
+    }
+
+    /// `[1]`/`[2]`/`[3]` pick single matches out of the scan result.
+    #[test]
+    fn positive_index_picks_one_match() {
+        p(r#""${A[(K)zzqaaa][1]}""#);
+        p(r#""${A[(K)zzqaaa][2]}""#);
+        p(r#""${A[(K)zzqaaa][3]}""#);
+    }
+
+    /// Past the end is empty, not "the whole list".
+    #[test]
+    fn out_of_range_index_is_empty() {
+        p(r#""${A[(K)zzqaaa][4]}""#);
+        p(r#""${A[(K)zzqaaa][99]}""#);
+    }
+
+    /// Negative indices count from the end of the MATCH LIST.
+    #[test]
+    fn negative_index_counts_from_the_end() {
+        p(r#""${A[(K)zzqaaa][-1]}""#);
+        p(r#""${A[(K)zzqaaa][-2]}""#);
+        p(r#""${A[(K)zzqaaa][-3]}""#);
+    }
+
+    /// `[0]` is the KSH_ZERO_SUBSCRIPT empty range (`Src/params.c:2162-2171`).
+    #[test]
+    fn zero_index_is_empty() {
+        p(r#""${A[(K)zzqaaa][0]}""#);
+    }
+
+    /// A chained RANGE slices the match list.
+    #[test]
+    fn range_slices_the_match_list() {
+        p(r#""${A[(K)zzqaaa][1,2]}""#);
+        p(r#""${A[(K)zzqaaa][2,3]}""#);
+        p(r#""${A[(K)zzqaaa][2,-1]}""#);
+        p(r#""${A[(K)zzqaaa][3,9]}""#);
+    }
+
+    /// `[@]`/`[*]` is the whole temp array (`Src/params.c:2048-2053`), not an
+    /// index — the one chained subscript that keeps every match.
+    #[test]
+    fn splat_keeps_every_match() {
+        p(r#""${A[(K)zzqaaa][@]}""#);
+        p(r#""${A[(K)zzqaaa][*]}""#);
+    }
+
+    /// `(R)` matches VALUES and returns them all, so it chains identically.
+    #[test]
+    fn value_scan_chains_the_same_way() {
+        p(r#""${A[(R)_*]}""#);
+        p(r#""${A[(R)_*][2]}""#);
+        p(r#""${A[(R)_*][-1]}""#);
+    }
+
+    /// Lowercase `(k)`/`(r)` clear SCANPM_MATCHMANY (`Src/params.c:1528-1529`),
+    /// so the list holds ONE match and `[2]` is empty.
+    #[test]
+    fn single_match_scan_has_no_second_element() {
+        p(r#""${A[(k)zzq*]}""#);
+        p(r#""${A[(k)zzq*][1]}""#);
+        p(r#""${A[(k)zzq*][2]}""#);
+        p(r#""${A[(r)_*][1]}""#);
+        p(r#""${A[(r)_*][2]}""#);
+    }
+
+    /// A scan with no match chains to empty rather than erroring.
+    #[test]
+    fn empty_scan_chains_to_empty() {
+        p(r#""${A[(K)nomatch]}""#);
+        p(r#""${A[(K)nomatch][1]}""#);
+        p(r#""${A[(K)nomatch][1,2]}""#);
+    }
+
+    /// `(i)`/`(I)` set SCANPM_WANTKEYS and clear WANTVALS, so the chained
+    /// subscript is INVERSE: it yields the index itself, undereferenced
+    /// (`Src/params.c:2114-2118` then `:2336-2339`).
+    #[test]
+    fn index_scan_makes_the_chain_inverse() {
+        p(r#""${A[(i)zzq*][2]}""#);
+        p(r#""${A[(i)zzq*][9]}""#);
+        p(r#""${A[(i)zzq*][0]}""#);
+        p(r#""${A[(I)*][2]}""#);
+    }
+
+    /// A negative inverse index is folded against the match count first
+    /// (`Src/subst.c:2945-2948`), so it can still land out of range.
+    #[test]
+    fn negative_inverse_index_folds_against_the_match_count() {
+        p(r#""${A[(I)*][-1]}""#);
+        p(r#""${A[(I)*][-3]}""#);
+        p(r#""${A[(I)*][-9]}""#);
+    }
+
+    /// A chained FLAG subscript searches the match list: `(r)`/`(R)` return the
+    /// element, `(i)`/`(I)` the position — and the carried WANTKEYS from an
+    /// `(i)` first subscript flips even `(r)` to the inverse reading.
+    #[test]
+    fn chained_flag_subscript_searches_the_match_list() {
+        p(r#""${A[(K)zzqaaa][(r)_C]}""#);
+        p(r#""${A[(K)zzqaaa][(R)_*]}""#);
+        p(r#""${A[(K)zzqaaa][(i)_C]}""#);
+        p(r#""${A[(K)zzqaaa][(I)_C]}""#);
+        p(r#""${A[(I)*][(i)z*a]}""#);
+        p(r#""${A[(I)*][(I)*]}""#);
+        p(r#""${A[(i)zzq*][(r)x]}""#);
+    }
+
+    /// An outer `(k)`/`(v)`/`(kv)` supplies the mask instead, overriding what
+    /// the subscript flag would have set (`Src/params.c:1513-1516`).
+    #[test]
+    fn outer_key_value_flags_decide_the_chain_mask() {
+        p(r#""${(k)A[(R)_*][1]}""#);
+        p(r#""${(v)A[(I)*][1]}""#);
+        p(r#""${(kv)A[(K)zzqaaa][1]}""#);
+        p(r#""${(kv)A[(K)zzqaaa][2]}""#);
+    }
+
+    /// The chained subscript changes the WORD COUNT, not just the text: the
+    /// pre-fix port produced three words where zsh produces one.
+    #[test]
+    fn chained_index_narrows_the_word_count() {
+        assert_parity(&format!(
+            r#"{A}b=( "${{(@)A[(K)zzqaaa][2]}}" ); print $#b"#
+        ));
+        assert_parity(&format!(r#"{A}b=( ${{A[(K)zzqaaa][2]}} ); print $#b"#));
+        assert_parity(&format!(
+            r#"{A}b=( "${{(@)A[(K)zzqaaa][1,2]}}" ); print $#b"#
+        ));
+        assert_parity(&format!(
+            r#"{A}b=( "${{(@)A[(K)zzqaaa][@]}}" ); print $#b"#
+        ));
+    }
+
+    /// Unquoted spelling takes a different arm of `paramsubst` than the
+    /// double-quoted one, so both are pinned (cf. 8246d6889b).
+    #[test]
+    fn unquoted_spelling_chains_too() {
+        p(r#"${A[(K)zzqaaa][1]}"#);
+        p(r#"${A[(K)zzqaaa][-1]}"#);
+        p(r#"${A[(K)zzqaaa][1,2]}"#);
+        p(r#"${A[(R)_*][2]}"#);
+        p(r#"${A[(i)zzq*][2]}"#);
+    }
+
+    /// The `_patcomps` shape `compinit` reads at sh:311 —
+    /// `${_patcomps[(K)$svc][1]}` must be the FIRST matching handler, not the
+    /// joined list of all of them.
+    #[test]
+    fn compinit_patcomps_first_match() {
+        assert_parity(
+            r#"typeset -A pc; pc[zzq*]=_A; pc[*aaa]=_B; svc=zzqaaa; print -r -- "${pc[(K)$svc][1]}""#,
+        );
+        assert_parity(
+            r#"typeset -A pc ppc; ppc[zzq*]=_A; ppc[*aaa]=_B; svc=zzqaaa; print -r -- "${${pc[(K)$svc][1]}:-${ppc[(K)$svc][1]}}""#,
+        );
+    }
+
+    /// Guards for the plain-array chaining this fix routes through: the shared
+    /// path must keep answering these exactly as before.
+    #[test]
+    fn plain_array_chaining_unchanged() {
+        let a = "a=(one two three four); ";
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,2][1]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,3][2]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,3][2,3]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1][2]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,4][(I)three]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,(r)four][(I)three]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,4][(i)zzz]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,4][(I)zzz]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,4][(r)zzz]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1,3][@]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[(R)*o*][1]}}""#));
+        assert_parity(&format!(r#"{a}print -r -- "${{a[1]}}" "${{a[-1]}}" "${{a[2,4]}}""#));
+    }
+}

@@ -59741,9 +59741,9 @@ reaches the branch that sorts.
 
 ---
 
-## #1141 — a chained `[N]` after an assoc PATTERN subscript is ignored, so `${A[(K)pat][1]}` returns every match
+## #1141 — a chained `[N]` after an assoc PATTERN subscript is ignored, so `${A[(K)pat][1]}` returns every match — fixed
 
-**Status:** `port-bug` 2026-09-10.
+**Status:** FIXED 2026-09-10.
 
 ```console
 $ P='typeset -A A; A[zzq*]=_A; A[*aaa]=_B; A[z*a]=_C; print -r -- "${A[(K)zzqaaa][1]}"'
@@ -59824,3 +59824,34 @@ c:426, with the c:217 prepend and the c:472 rehash walk) before returning its
 key order (`${(k)_patcomps}`) and the scan order (`${_patcomps[(K)$svc]}`) are
 byte-identical between the two shells on the case above, including the
 insertion-order inversion — both say `*aaa` before `zzq*`, and both pick `_B`.
+
+**Fix.** `src/ported/subst.rs`. The port had TWO chaining implementations where
+C has one, and only the plain-array one ran. C never special-cases the second
+subscript: `paramsubst`'s `while (v || …)` loop packs the first subscript's
+array result into a temporary `PM_ARRAY` parameter (`Src/subst.c:2890-2893`
+`pm = createparam(nulstring, PM_ARRAY); pm->u.arr = aval`) carrying the scan
+mask (`:2897`) and runs an ORDINARY `getindex` on it (`:2900`). The assoc
+pattern-scan arm now feeds that same temp array, so both first-subscript shapes
+chain through one path:
+
+- the scan arm records its match list plus the mask `Src/params.c:1513-1531`
+  hands to a chained subscript — `(k)`/`(v)` when the caller gave them, else
+  `WANTKEYS` for an `i`/`I` subscript flag (c:1520-1521) and `WANTVALS` for the
+  rest (c:1523, `rev` is 1 for every letter that reaches the arm);
+- the chaining block takes that array (or, unchanged, the plain-array
+  `getarrvalue` sub-array) and applies the second subscript to it;
+- the mask decides `*inv` (c:1513-1531), which is what makes `${A[(K)p][2]}`
+  read an ELEMENT while `${A[(i)p][2]}` is an INVERSE subscript yielding `2`
+  undereferenced (c:2114-2118 then c:2336-2339), with a negative one folded
+  against the match count first (`Src/subst.c:2945-2948`).
+
+Also picked up on the shared path, for the plain-array arm too: `[@]`/`[*]` as
+the chained subscript is the whole temp array (c:2048-2053), not index 1; and a
+comma under an inverse subscript is `invalid subscript` (c:2120-2124).
+
+Every row of the matrix above now matches `/opt/homebrew/bin/zsh`, as do
+`[@]`/`[*]`, `[-2]`, `[2,-1]`, `[3,9]`, `(kv)`/`(k)`/`(v)` outer flags, chained
+`(r)`/`(R)`/`(i)`/`(I)`, both quoted and unquoted spellings, and the word counts.
+Pinned by `tests/parity/assoc_array_deep_parity.rs`
+`chained_subscript_after_scan` (18 tests, including
+`plain_array_chaining_unchanged` as the no-regression guard).
