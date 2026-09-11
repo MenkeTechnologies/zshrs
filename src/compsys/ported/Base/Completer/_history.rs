@@ -80,12 +80,19 @@ pub fn _history() -> i32 {
         format!("{}V", opt_prefix)
     };
 
-    // sh:33-40  range style
-    let range_val = lookupstyle(&ctx, "range")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    let (mut max, slice): (usize, usize) = if !range_val.is_empty() {
+    // sh:33-44  if zstyle -s ":completion:${curcontext}:" range max; then … else
+    //              max=$hmax; slice=$max; fi
+    //
+    // The branch is `zstyle -s`'s STATUS (`zutil.c:648` tests `vals[0]`, a
+    // pointer), not whether the value is non-empty. `range ''` is SET: sh:34's
+    // `*:*` test fails, `slice=$max=""`, sh:40's `max -gt hmax` evaluates the
+    // empty string as arithmetic 0 — so the search window is ZERO and the
+    // completer offers nothing. Reading it as "unset" took the sh:42-43 arm
+    // instead and searched the whole history. `zutil.c:649` also joins the
+    // whole value array before the `max:slice` split.
+    let (mut max, slice): (usize, usize) = if let Some(range_val) =
+        crate::compsys::ported::shared::zstyle_s(&ctx, "range")
+    {
         let (m_str, s_str) = if range_val.contains(':') {
             let mut parts = range_val.splitn(2, ':');
             let m = parts.next().unwrap_or("0").to_string();
@@ -94,8 +101,12 @@ pub fn _history() -> i32 {
         } else {
             (range_val.clone(), range_val)
         };
-        let m = m_str.parse::<usize>().unwrap_or(hmax);
-        let s = s_str.parse::<usize>().unwrap_or(m);
+        // sh:40 `[[ max -gt hmax ]]` and sh:50's `beg < max` are ARITHMETIC
+        // contexts. zsh evaluates a non-numeric word there as a parameter
+        // name, and an empty or unset one is 0 — so an unparseable `range`
+        // gives a zero-width window, not the whole history.
+        let m = m_str.parse::<usize>().unwrap_or(0);
+        let s = s_str.parse::<usize>().unwrap_or(0);
         (m.min(hmax), s)
     } else {
         (hmax, hmax)

@@ -62,10 +62,12 @@ pub fn _all_matches() -> i32 {
     // sh:6
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
-    let old = lookupstyle(&ctx, "old-matches")
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    // sh:6  zstyle -s ":completion:${curcontext}:" old-matches old
+    //
+    // sh:8 tests `$old` against `(only|true|yes|1|on)`, and `$old` is
+    // `zutil.c:649`'s join of the whole value array — a two-element
+    // `old-matches only yes` is the string `only yes` and matches neither.
+    let old = crate::compsys::ported::shared::zstyle_s(&ctx, "old-matches").unwrap_or_default();
 
     // sh:8
     if matches!(old.as_str(), "only" | "true" | "yes" | "1" | "on") {

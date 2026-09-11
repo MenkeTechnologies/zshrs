@@ -142,10 +142,13 @@ pub fn _complete_debug(args: &[String]) -> i32 {
     // sh:29  if (( debug_fd != -1 )); then — only when a file was created.
     if debug_fd != -1 {
         // sh:30  zstyle -s ':completion:complete-debug::::' pager pager
-        let style_pager = lookupstyle(":completion:complete-debug::::", "pager")
-            .into_iter()
-            .next()
-            .unwrap_or_default();
+        // sh:30  zstyle -s ':completion:complete-debug::::' pager pager
+        //
+        // sh:31 interpolates `${pager:-…}` straight into a command line, so the
+        // value is a COMMAND with its options — `pager less -R` is the ordinary
+        // spelling and `zutil.c:649` joins it. Element 1 alone ran `less`
+        // without its flags.
+        let style_pager = crate::compsys::ported::shared::zstyle_s(":completion:complete-debug::::", "pager").unwrap_or_default();
         // sh:31  ${pager:-${PAGER:-${VISUAL:-${EDITOR:-more}}}}
         let pager = first_nonempty(&[
             style_pager,

@@ -90,11 +90,17 @@ pub fn _ignored() -> i32 {
         }
         if dispatch_function_call(bare, &[]).unwrap_or(1) == 0 {
             // sh:39-55  single-ignored handling
+            // sh:46  if zstyle -s ":completion:${curcontext}:" single-ignored tmp &&
+            //
+            // `zutil.c:649` joins the whole value array, so sh:49's `case` sees
+            // the joined string: `single-ignored show menu` matches neither arm
+            // rather than being read as a bare `show`.
             let single_ignored =
-                lookupstyle(&format!(":completion:{}:", curcontext), "single-ignored")
-                    .first()
-                    .cloned()
-                    .unwrap_or_default();
+                crate::compsys::ported::shared::zstyle_s(
+                    &format!(":completion:{}:", curcontext),
+                    "single-ignored",
+                )
+                .unwrap_or_default();
             let old_list = get_compstate_str("old_list").unwrap_or_default();
             let nmatches: i64 = get_compstate_str("nmatches")
                 .and_then(|s| s.parse().ok())

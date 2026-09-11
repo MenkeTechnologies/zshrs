@@ -97,10 +97,11 @@ pub fn _oldlist() -> i32 {
 
     // sh:7
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let list = lookupstyle(&format!(":completion:{}:", curcontext), "old-list")
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    // sh:7  zstyle -s ":completion:${curcontext}:" old-list list
+    //
+    // sh:16/sh:18 test `$list` against `never` / `always` / `shown`, against
+    // `zutil.c:649`'s join of the whole value array rather than element 1.
+    let list = crate::compsys::ported::shared::zstyle_s(&format!(":completion:{}:", curcontext), "old-list").unwrap_or_default();
 
     let old_list = get_compstate_str("old_list").unwrap_or_default();
     let widget = getsparam("WIDGET").unwrap_or_default();

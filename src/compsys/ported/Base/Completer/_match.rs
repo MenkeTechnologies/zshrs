@@ -92,16 +92,14 @@ pub fn _match() -> i32 {
 
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
-    // sh:22
-    let orig = lookupstyle(&ctx, "match-original")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    // sh:23
-    let ins = lookupstyle(&ctx, "insert-unambiguous")
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    // sh:27-28  zstyle -s ":completion:${curcontext}:" match-original orig
+    //            zstyle -s ":completion:${curcontext}:" insert-unambiguous ins
+    //
+    // sh:32 tests `[[ -n "$orig" ]]` and sh:39 tests `[[ "$orig" = only ]]`,
+    // both against `zutil.c:649`'s join of the whole value array. Element 1
+    // alone turned `match-original only yes` into a bare `only`.
+    let orig = crate::compsys::ported::shared::zstyle_s(&ctx, "match-original").unwrap_or_default();
+    let ins = crate::compsys::ported::shared::zstyle_s(&ctx, "insert-unambiguous").unwrap_or_default();
 
     // sh:32
     if !orig.is_empty() {

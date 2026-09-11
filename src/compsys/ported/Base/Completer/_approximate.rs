@@ -38,7 +38,6 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::zstyle_t;
-use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::{
@@ -146,6 +145,22 @@ fn approximate_compadd_shadow(argv: &[String]) -> Option<Vec<String>> {
     Some(expl)
 }
 
+/// sh:23-24 — `zstyle -s ":completion:${curcontext}:" max-errors cfgacc ||
+/// cfgacc='2 numeric'`.
+///
+/// `zstyle -s` is `zutil.c:648-649`, and c:649's `sepjoin(vals, " ", 0)`
+/// joins the WHOLE value array. This style in particular is MEANT to be
+/// several words: its own default is the two-word string `2 numeric`, and
+/// sh:29 / sh:32 test `$cfgacc` with `*numeric*` / `*not-numeric*`. Written
+/// the ordinary unquoted way — `zstyle ':completion:*' max-errors 2 numeric`
+/// — the style is two elements, and reading element 1 alone reduced it to
+/// `2`, so the `numeric` half stopped applying and a numeric prefix argument
+/// no longer changed the error budget.
+fn max_errors_style(curcontext: &str) -> String {
+    crate::compsys::ported::shared::zstyle_s(&format!(":completion:{}:", curcontext), "max-errors")
+        .unwrap_or_else(|| "2 numeric".to_string())
+}
+
 /// `_approximate` — spell-correction completer.
 pub fn _approximate(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_approximate");
@@ -171,16 +186,10 @@ pub fn _approximate(args: &[String]) -> i32 {
                 "2 numeric".to_string()
             }
         } else {
-            lookupstyle(&format!(":completion:{}:", curcontext), "max-errors")
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "2 numeric".to_string())
+            max_errors_style(&curcontext)
         }
     } else {
-        lookupstyle(&format!(":completion:{}:", curcontext), "max-errors")
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "2 numeric".to_string())
+        max_errors_style(&curcontext)
     };
 
     // sh:32-44
@@ -297,6 +306,20 @@ pub fn _approximate(args: &[String]) -> i32 {
                     .unwrap_or(0);
                 // sh:94 — `zstyle -t`, a VALUE test; see [`zstyle_t`].
                 if nm > 1 || zstyle_t(&format!(":completion:{}:", new_ctx), "original") == 0 {
+                    // sh:91  local expl
+                    //
+                    // The port never assigns `expl`; `_description` does, and
+                    // its last statement is `set -A "$name" …`
+                    // (`_description` sh:100/102), so without a shadow the
+                    // array is created at the caller's level and survives the
+                    // completion. Measured with `completer _complete
+                    // _approximate` and `ls /usr/lbi<TAB>`,
+                    // /opt/homebrew/bin/zsh 5.9.2 leaves `expl` unset where
+                    // zshrs left `expl=(-o nosort -J -default-)`.
+                    let _expl_scope = crate::compsys::ported::shared::LocalScope::declare(
+                        &["expl"],
+                        crate::compsys::ported::shared::PM_ARRAY,
+                    );
                     // sh:93
                     let _ = _description(&[
                         "-V".to_string(),

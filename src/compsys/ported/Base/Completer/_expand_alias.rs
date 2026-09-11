@@ -99,10 +99,11 @@ pub fn _expand_alias() -> i32 {
     let ctx = format!(":completion:{}:", curcontext);
 
     // sh:26-31  build sel string
-    let regular = lookupstyle(&ctx, "regular")
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "yes".to_string());
+    // sh:28  zstyle -s ":completion:${curcontext}:" regular tmp || tmp=yes
+    //
+    // The `||` default applies on `zstyle -s`'s STATUS (`zutil.c:648`), and
+    // the value compared below is `zutil.c:649`'s join of the whole array.
+    let regular = crate::compsys::ported::shared::zstyle_s(&ctx, "regular").unwrap_or_else(|| "yes".to_string());
     let current = getiparam("CURRENT");
     let mut sel = String::new();
     if regular == "always" {
