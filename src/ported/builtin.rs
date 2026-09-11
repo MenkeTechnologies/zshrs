@@ -7750,7 +7750,18 @@ pub fn bin_typeset(
                         || crate::ported::exec::assoc(arg).is_some();
                     if !is_array_or_hashed {
                         if let Some(val) = saved_val.as_deref().or(Some("")) {
-                            env::set_var(arg, val);
+                            // c:Src/builtin.c typeset_single -> export_param
+                            // (c:Src/params.c:2670) -> zputenv (c:5325), which
+                            // hands the value to `setenv` as a NUL-TERMINATED C
+                            // string: an embedded NUL simply ends it.
+                            // `env::set_var` PANICS on one instead, and the
+                            // panic is reachable from a bare `export IFS` —
+                            // zsh's default $IFS is " \t\n\0" (c:Src/params.c
+                            // ifs default), so the NUL is not an exotic value,
+                            // it is the stock one. Route through the ported
+                            // zputenv so this site inherits C's truncation
+                            // instead of re-deriving it.
+                            crate::ported::params::zputenv(&format!("{arg}={val}"));
                         }
                     }
                 }

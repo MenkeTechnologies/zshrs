@@ -227,3 +227,50 @@ mod export_in_pipeline {
         assert_parity(r#"export X=val | cat; echo "outer:$X""#);
     }
 }
+
+/// Exporting a PM_SPECIAL scalar whose value legitimately contains a NUL.
+///
+/// C's `export_param` (`Src/params.c:2670`) ends in
+/// `zputenv` → `setenv(name, value, 1)`, and `setenv` reads the value as a
+/// NUL-TERMINATED C string: an embedded NUL simply ends it. `env::set_var`
+/// PANICS on one instead, and the panic was reachable from a bare
+/// `export IFS`, because zsh's stock `$IFS` is `" \t\n\0"` — the NUL is
+/// the DEFAULT value, not an exotic one.
+///
+/// It stayed hidden while `export_param` read every scalar through
+/// `strgetfn`: a PM_SPECIAL keeps its value in a process global reached
+/// through its GSU, so `u.str` was empty and the export wrote nothing.
+/// Routing specials through their own getfn (which fixed `$TERM`
+/// disappearing from child environments) made the real value — NUL and
+/// all — reach the environment writer for the first time.
+mod export_special_with_nul {
+    use super::*;
+
+    /// The crash case. `export IFS` must not abort the shell, and the
+    /// child must see the value truncated at the NUL exactly as C's
+    /// `setenv` truncates it.
+    #[test]
+    fn exporting_ifs_truncates_at_the_nul_instead_of_panicking() {
+        assert_parity(r#"export IFS; print "child=[$(/usr/bin/printenv IFS)]"; print rc=$?"#);
+    }
+
+    /// The same truncation for an ordinary parameter, so the fix is the
+    /// C rule rather than a special-case for `IFS`.
+    #[test]
+    fn an_embedded_nul_ends_the_exported_value() {
+        assert_parity(
+            r#"zqnul=$'a\0b'; export zqnul; print "child=[$(/usr/bin/printenv zqnul)]""#,
+        );
+    }
+
+    /// The siblings that reach their value through a GSU global rather
+    /// than `u.str`. These are what regressed when `$TERM` stopped
+    /// reaching children; pin them together so a future change to
+    /// `export_param`'s getfn dispatch cannot quietly empty one.
+    #[test]
+    fn special_scalars_export_their_real_value() {
+        assert_parity(
+            r#"export TERM HOME WORDCHARS; for v in TERM HOME WORDCHARS; do print "$v=[$(/usr/bin/printenv $v)]"; done"#,
+        );
+    }
+}
