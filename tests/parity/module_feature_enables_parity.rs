@@ -374,3 +374,55 @@ fn invalid_feature_name_warns_without_aborting() {
         ));
     }
 }
+
+// ---------------------------------------------------------------------------
+// zsh/mathfunc's one STRMATHFUNC entry.
+// ---------------------------------------------------------------------------
+
+/// `mftab` (c:Src/Modules/mathfunc.c:114-168) is all `NUMMATHFUNC` except
+/// `STRMATHFUNC("rand48", math_string, MS_RAND48)` at c:154, guarded by
+/// `#ifdef HAVE_ERAND48` and positioned between `nextafter` (c:152) and
+/// `rint` (c:156). zshrs calls `libc::erand48` unconditionally, so the guard
+/// holds; the entry was nonetheless missing from both the feature array and
+/// the descriptor table, so `zmodload -F zsh/mathfunc f:rand48` failed with
+/// `has no such feature` even though `$(( rand48() ))` evaluated fine (math.rs
+/// dispatches that name before consulting MATHFUNCS).
+///
+/// These cases are scoped to rand48 rather than comparing the whole listing:
+/// Homebrew's zsh 5.9.2 predates `isinf`/`isnan` (c:140-141), so a full
+/// `-lF zsh/mathfunc` diff would be measuring the reference build's vintage,
+/// not zshrs.
+#[test]
+fn mathfunc_rand48_is_a_selectable_feature() {
+    // c:3252-3259 — naming it builds a one-element `enablesarr`; the name has
+    // to resolve or c:2099-2105 rejects the whole call.
+    assert_feature_parity("zmodload -F zsh/mathfunc f:rand48; print -r -- \"rc=$?\"");
+    assert_feature_parity(
+        "zmodload zsh/mathfunc; zmodload -eF zsh/mathfunc f:rand48; print -r -- \"rc=$?\"",
+    );
+    // Position in the array is what the enables bitmap is indexed against
+    // (c:3283 featuresarray ↔ c:3318 getfeatureenables), so pin the sign that
+    // comes back for each load path.
+    assert_feature_parity(
+        "zmodload zsh/mathfunc; zmodload -lFP a zsh/mathfunc; print -rl -- ${(M)a:#*rand48}",
+    );
+    assert_feature_parity(
+        "zmodload -F zsh/mathfunc f:rand48; zmodload -lFP a zsh/mathfunc; \
+         print -rl -- ${(M)a:#*rand48}",
+    );
+    // c:3358-3381 setfeatureenables runs in both directions.
+    assert_feature_parity(
+        "zmodload zsh/mathfunc; zmodload -F zsh/mathfunc -f:rand48; \
+         zmodload -lFP a zsh/mathfunc; print -rl -- ${(M)a:#*rand48}",
+    );
+    // The neighbours decide whether the entry landed at the right index.
+    // RELATIVE offsets only: the reference build is short two earlier entries
+    // (`isinf`/`isnan`, c:140-141), so its absolute indices sit two low and an
+    // absolute compare would score that vintage gap instead of rand48.
+    assert_feature_parity(
+        "zmodload zsh/mathfunc; zmodload -lFP a zsh/mathfunc; \
+         i=${a[(i)+f:rand48]}; \
+         print -r -- \"after_nextafter=$(( i - ${a[(i)+f:nextafter]} )) \
+before_rint=$(( ${a[(i)+f:rint]} - i ))\"",
+    );
+}

@@ -595,9 +595,10 @@ static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 /// Entry order MUST match `featuresarray` below — enables bitmaps are
 /// positional (module.c:3284 featuresarray ↔ c:3319 getfeatureenables).
 ///
-/// `STRMATHFUNC("rand48", math_string, MS_RAND48)` (c:153) is omitted
-/// to match this module's existing 48-name feature surface (rand48
-/// dispatches through `math_string` directly in math.rs).
+/// `STRMATHFUNC("rand48", math_string, MS_RAND48)` (c:154, inside
+/// `#ifdef HAVE_ERAND48`) sits between `nextafter` (c:152) and `rint`
+/// (c:156). zshrs calls `libc::erand48` unconditionally (`math_string`
+/// above), so the guard holds and the entry belongs in both tables.
 /// Initialized inline by `setfeatureenables` below via
 /// `MFTAB.get_or_init` (single consumer; the src/ported/ build gate
 /// forbids a Rust-only named accessor fn).
@@ -648,6 +649,10 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
         "f:log2".to_string(),
         "f:logb".to_string(),
         "f:nextafter".to_string(),
+        // c:154 `STRMATHFUNC("rand48", math_string, MS_RAND48)`, under
+        // `#ifdef HAVE_ERAND48` (c:153). Positional between nextafter and
+        // rint; the enables bitmap is indexed against this order.
+        "f:rand48".to_string(),
         "f:rint".to_string(),
         "f:scalb".to_string(),
         "f:signgam".to_string(),
@@ -699,10 +704,11 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>)
     // func, NULL, NULL, min, max, id }` (zsh.h:133) — flags 0, module
     // NULL. Entry order MUST match `featuresarray` above — enables
     // bitmaps are positional (module.c:3284 featuresarray ↔ c:3319
-    // getfeatureenables). `STRMATHFUNC("rand48", math_string,
-    // MS_RAND48)` (c:153) is omitted to match this module's existing
-    // 48-name feature surface (rand48 dispatches through `math_string`
-    // directly in math.rs).
+    // getfeatureenables). The one STRMATHFUNC entry, `rand48` (c:154),
+    // is built by `strf` below; `math.rs`'s own name-keyed shortcut
+    // (math.rs:3153) evaluates rand48 without consulting MATHFUNCS, so
+    // the table entry is what `zmodload -F zsh/mathfunc f:rand48` and
+    // `zmodload -lF` read, not what `$(( rand48() ))` dispatches on.
     let tab_mutex = MFTAB.get_or_init(|| {
         // NUMMATHFUNC expansion — zsh.h:133.
         let num = |name: &str, min: i32, max: i32, id: i32| mathfunc {
@@ -716,6 +722,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>)
             maxargs: max,
             funcid: id,
         };
+        // STRMATHFUNC expansion — zsh.h:135: `{ NULL, name, MFF_STR,
+        // NULL, func, NULL, 0, 0, id }`, already ported in zsh_h.
+        let strf = crate::ported::zsh_h::STRMATHFUNC;
         Mutex::new(vec![
             num("abs", 1, 1, MF_ABS | tflag(TF_NOCONV | TF_NOASS)), // c:115
             num("acos", 1, 1, MF_ACOS),                             // c:117
@@ -754,6 +763,7 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>)
             num("log2", 1, 1, MF_LOG2),                             // c:150
             num("logb", 1, 1, MF_LOGB),                             // c:151
             num("nextafter", 2, 2, MF_NEXTAFTER),                   // c:152
+            strf("rand48", math_string, MS_RAND48),                 // c:154
             num("rint", 1, 1, MF_RINT),                             // c:156
             num("scalb", 2, 2, MF_SCALB | tflag(TF_INT2)),          // c:157
             num("signgam", 0, 0, MF_SIGNGAM | tflag(TF_NOASS)),     // c:159
