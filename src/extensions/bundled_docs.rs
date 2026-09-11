@@ -161,6 +161,28 @@ fn published_dirs() -> Vec<(&'static str, PathBuf)> {
     out
 }
 
+/// `$HOME` exactly as the process INHERITED it, empty treated as absent.
+///
+/// Not `std::env::var("HOME")`: by the time [`seed_helpdir_param`] runs,
+/// `ShellExecutor::new` has already synthesised a `$HOME` from the
+/// password database for a shell launched without one (c:Src/init.c:
+/// 1237-1250, ported beside the env-import loop) and `addenv`'d it, so
+/// the live environment can no longer tell the two cases apart. The
+/// process-entry snapshot can — it is `environ` as `main` froze it, which
+/// is the same source c:Src/params.c:893 `createparamtable` imports from.
+/// The fallback is for lib tests, which never run `main` and so never
+/// fill the snapshot.
+fn inherited_home() -> Option<String> {
+    match crate::ported::params::environ.get() {
+        Some(env) => env
+            .iter()
+            .find(|(k, _)| k == "HOME")
+            .map(|(_, v)| v.clone()),
+        None => std::env::var("HOME").ok(),
+    }
+    .filter(|h| !h.is_empty())
+}
+
 /// `HELPDIR`, if the user has not chosen one.
 ///
 /// zsh does not export `HELPDIR`; `run-help` falls back to a default
@@ -169,9 +191,13 @@ fn published_dirs() -> Vec<(&'static str, PathBuf)> {
 /// does not exist on a host without that exact install. Pointing it at the
 /// bundled tree is what makes `run-help` work with no zsh on the machine.
 ///
+/// Resolved against [`inherited_home`] rather than [`help_dir`], so a
+/// shell launched with NO `$HOME` at all gets no `HELPDIR` — see the
+/// scrubbed-environment note on [`seed_helpdir_param`].
+///
 /// A user-set value always wins: this only fills an empty slot.
 fn helpdir_value() -> Option<String> {
-    let d = help_dir()?;
+    let d = PathBuf::from(inherited_home()?).join(".zshrs").join("help");
     d.is_dir().then(|| d.to_string_lossy().into_owned())
 }
 
@@ -193,6 +219,15 @@ fn helpdir_value() -> Option<String> {
 /// was at process entry, so a user's exported `HELPDIR` is already in the
 /// table by then and the `getsparam` guard below leaves it alone —
 /// value and `PM_EXPORTED` both intact, since it came in exported.
+///
+/// Nothing is seeded when the process inherited NO `$HOME`. Running after
+/// the import loop also means running after `$HOME` has been synthesised
+/// from the password database, and resolving the tree against THAT would
+/// give a scrubbed `env -i` shell a `$HELPDIR` — a name the oracle does
+/// not have there (`env -i zsh -f -c 'print ${+HELPDIR}'` says 0), and a
+/// silent one, since `${(k)parameters}` is what the completion system
+/// reads. [`inherited_home`] is the test that keeps the two shells equal
+/// in both arms.
 pub fn seed_helpdir_param() {
     if crate::ported::params::getsparam("HELPDIR").is_some_and(|v| !v.is_empty()) {
         return; // a user-set value always wins; this only fills an empty slot

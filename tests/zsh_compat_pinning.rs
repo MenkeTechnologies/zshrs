@@ -1117,6 +1117,46 @@ fn helpdir_is_a_shell_parameter_never_exported() {
         );
     }
 
+    // ---- the other arm: NO $HOME at all ----
+    //
+    // A shell launched from cron, a launchd/systemd unit, a container
+    // entrypoint or plain `env -i` inherits no $HOME, and zsh has no
+    // $HELPDIR there. zshrs synthesises a $HOME from the password
+    // database (c:Src/init.c:1237-1250) and seeds HELPDIR after that has
+    // happened, so resolving the bundled tree against the SYNTHESISED
+    // home would invent a parameter the oracle does not have -- invisible
+    // to the export probes above, but `${(k)parameters}` is exactly what
+    // the completion system reads.
+    let scrubbed = |bin: &str, zsh_flag: bool, script: &str| -> String {
+        let mut cmd = Command::new(bin);
+        if zsh_flag {
+            cmd.arg("--zsh");
+        }
+        cmd.env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("TERM", "dumb")
+            .env("LANG", "C")
+            .args(["-f", "-c", script]);
+        let out = cmd.output().expect("invoke shell");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    // Reported as `<is HELPDIR set> <is HOME non-empty>`: the second field
+    // keeps the arm from passing vacuously, since a shell that failed to
+    // start at all would also report no HELPDIR.
+    let probe = r#"print -r -- "${+HELPDIR} $(( ${#HOME} > 0 ))""#;
+    assert_eq!(
+        scrubbed(zshrs, true, probe),
+        "0 1",
+        "a scrubbed shell must synthesise $HOME but NOT a $HELPDIR"
+    );
+    if zsh_available() {
+        assert_eq!(
+            scrubbed(zsh_path(), false, probe),
+            scrubbed(zshrs, true, probe),
+            "with no $HOME, zshrs must report HELPDIR set-or-not exactly as zsh does"
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
