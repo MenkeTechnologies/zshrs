@@ -202,7 +202,14 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {
 // before this change:
 //   hash -d aa=/tmp bb=/usr cc=/var dd=/etc ee=/opt
 //   print -rl -- ${(k)nameddirs}   # zsh: aa dd bb cc ee
-static NAMEDDIRTAB_INNER: OnceLock<Mutex<hashtable_nodes<nameddir>>> = OnceLock::new();
+//
+// Copy-on-write (`crate::cow_map::CowArc`): `$( … )` and `( … )` snapshot
+// this table on entry (see `crate::ported::exec::SubshTables`), so the
+// snapshot must be a refcount bump. A `hash -d`, a `~name` lookup that
+// adds a node (`adduserdir`, Src/utils.c:1184) or a `fillnameddirtable`
+// inside the body is what pays for the copy.
+static NAMEDDIRTAB_INNER: OnceLock<Mutex<crate::cow_map::CowArc<hashtable_nodes<nameddir>>>> =
+    OnceLock::new();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
@@ -230,10 +237,12 @@ static NAMEDDIRTAB_INNER: OnceLock<Mutex<hashtable_nodes<nameddir>>> = OnceLock:
 /// dereference (`nameddirtab->...`) by returning the underlying
 /// mutex; callers `.lock()` and operate on the map directly.
 #[allow(non_snake_case)]
-pub fn nameddirtab() -> &'static Mutex<hashtable_nodes<nameddir>> {
+pub fn nameddirtab() -> &'static Mutex<crate::cow_map::CowArc<hashtable_nodes<nameddir>>> {
     // c:48
     // c:61 — `newhashtable(201, "nameddirtab", NULL)`.
-    NAMEDDIRTAB_INNER.get_or_init(|| Mutex::new(hashtable_nodes::newhashtable(201)))
+    NAMEDDIRTAB_INNER.get_or_init(|| {
+        Mutex::new(crate::cow_map::CowArc::new(hashtable_nodes::newhashtable(201)))
+    })
 }
 
 #[cfg(test)]

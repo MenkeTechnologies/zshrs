@@ -5010,6 +5010,13 @@ pub struct SubshTables {
     aliastab: crate::ported::hashtable::alias_table,
     /// `sufaliastab` (`Src/hashtable.c:1182`) — `alias -s`, `unalias -s`.
     sufaliastab: crate::ported::hashtable::alias_table,
+    /// `nameddirtab` (`Src/hashnameddir.c:48`) — `hash -d`, `unhash -d`,
+    /// `nameddirs[x]=…`, and the nodes a `~name` lookup adds.
+    nameddirtab: crate::cow_map::CowArc<crate::ported::hashtable::hashtable_nodes<crate::ported::zsh_h::nameddir>>,
+    /// `allusersadded` (`Src/hashnameddir.c:53`) — set by a
+    /// `fillnameddirtable` that ran in the body; the parent's table
+    /// never got those user entries, so its flag must not claim it did.
+    allusersadded: i32,
 }
 
 impl SubshTables {
@@ -5024,6 +5031,11 @@ impl SubshTables {
                 .read()
                 .map(|t| t.snapshot())
                 .unwrap_or_default(),
+            nameddirtab: crate::ported::hashnameddir::nameddirtab()
+                .lock()
+                .map(|t| t.clone())
+                .unwrap_or_default(),
+            allusersadded: crate::ported::hashnameddir::allusersadded.load(Ordering::Relaxed),
         }
     }
 
@@ -5036,6 +5048,10 @@ impl SubshTables {
         if let Ok(mut t) = crate::ported::hashtable::sufaliastab_lock().write() {
             t.restore(self.sufaliastab);
         }
+        if let Ok(mut t) = crate::ported::hashnameddir::nameddirtab().lock() {
+            *t = self.nameddirtab;
+        }
+        crate::ported::hashnameddir::allusersadded.store(self.allusersadded, Ordering::Relaxed);
     }
 }
 
