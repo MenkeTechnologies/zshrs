@@ -143,6 +143,20 @@ pub fn _extensions() -> i32 {
         Vec::new()
     };
 
+    // sh:11  local -a expl suf mfiles
+    //
+    // `suf` is a Rust binding above, but `expl` and `mfiles` have to be real
+    // parameters — `_description` fills `expl` by name (its last statement is
+    // `set -A "$name" …`, `_description` sh:100/102) and `compadd -O mfiles`
+    // below writes `mfiles` by name. Neither had a shadow, so both were born
+    // at the caller's level and outlived the completion: measured with
+    // `ls *.<TAB>`, /opt/homebrew/bin/zsh 5.9.2 leaves both unset where zshrs
+    // left `expl=(-J -default-)` and `mfiles=(.py .zsh .txt)` behind.
+    crate::compsys::ported::shared::declare_locals(
+        &["expl", "mfiles"],
+        crate::compsys::ported::shared::PM_ARRAY,
+    );
+
     // sh:27
     let _ = _description(&[
         "extensions".to_string(),
