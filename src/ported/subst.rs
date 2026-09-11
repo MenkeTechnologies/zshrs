@@ -492,7 +492,19 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
             end += 1; // c:209
             continue; // c:209
         }
-        if chars[end] == '\\' {
+        // c:Src/utils.c:7241-7251 — a Bnull quotes the character after it
+        // ("Bnull is a backslash which quotes a couple of special
+        // characters that always appear literally next"): the lexer spells
+        // `\'` inside `$'…'` as Bnull + `'` (c:Src/lex.c:1303-1304), and
+        // getkeystring copies that `'` through instead of stopping on it.
+        // Treating only a raw `\` as the escape let the escaped quote close
+        // the string early whenever `$'…'` was not the start of its word,
+        // and everything after it was expanded as live text:
+        //     v=$'\'${x}'      zsh: '${x}    was: the value of $x
+        // (powerlevel10k's instant-prompt `__p9k_instant_prompt_param_sig`
+        // assignment then ran `${CONDA_PROMPT_MODIFIER#\\(}` and printed
+        // "bad pattern: \\(" at every startup).
+        if chars[end] == '\\' || chars[end] == Bnull {
             // c:209
             escaped = true; // c:209
             end += 1; // c:209
@@ -516,7 +528,22 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     // length consumed. Rust calls getkeystring on the captured
     // content slice; consumed count is the slice length plus the
     // wrapping `$'` and `'`.
-    let content: String = chars[start..end].iter().collect();
+    //
+    // c:Src/utils.c:7241-7251 — getkeystring copies the character after a
+    // Bnull through literally. The only Bnull payloads inside `$'…'` are
+    // `\` and `'` (c:Src/lex.c:1303-1304), which this getkeystring spells
+    // `\\` / `\'`; passing the bare Bnull let a quoted backslash start an
+    // escape of its own (`x$'\\u0041'` gave `xA`, zsh `x\u0041`).
+    let mut content = String::with_capacity(end - start);
+    let mut k = start;
+    while k < end {
+        if chars[k] == Bnull && k + 1 < end {
+            content.push('\\');
+            k += 1;
+        }
+        content.push(chars[k]);
+        k += 1;
+    }
     let (strsub, _) = getkeystring(&content); // c:211
 
     // C: `len += 2;` — caller's len now includes the leading `$'`
@@ -3701,6 +3728,115 @@ pub fn paramsubst(
             Bang, Bar, Bnull, Bnullkeep, Dash, Hat, Inang, Inbrace, Inbrack, Inpar, Outang,
             Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde,
         };
+        // A character the user quoted or escaped must stay literal. The
+        // output below spells that `\X` — patcompile's own literal form
+        // after the downstream `tokenize` — for the backslash, the pattern
+        // metacharacters this pass and `literalize_spliced_metas` act on,
+        // and the quote characters this pass reads as quoting.
+        let needs_backslash = |c: char| {
+            matches!(
+                c,
+                '\\' | '#' | '^' | '*' | '?' | '~' | '(' | ')' | '[' | ']' | '|' | '<' | '>'
+                    | '!' | '-' | '\'' | '"'
+            )
+        };
+        // `$` and `` ` `` take the lexer's Bnull pair instead (c:Src/lex.c:1268
+        // `add(Bnull)`): the singsub that follows skips a Bnull-marked
+        // character, but still opens a substitution after a plain `\`.
+        let push_literal = |out: &mut String, c: char| {
+            if c == '$' || c == '`' {
+                out.push(Bnull);
+                out.push(c);
+            } else if needs_backslash(c) {
+                out.push('\\');
+                out.push(c);
+            } else {
+                out.push(c);
+            }
+        };
+        // Index just past the `$…` substitution at `chars[i]` (`$name`,
+        // `$?`-style specials, `${…}`, `$(…)`, `$((…))`, `$'…'`). Nested
+        // `${…}` bodies may carry Inbrace/Outbrace tokens (kept by the rest
+        // fold), so the brace balance counts both raw and token forms; a
+        // Bnull pair is a quoted character and balances nothing.
+        let dollar_span_end = |chars: &[char], i: usize| -> usize {
+            let n = chars.len();
+            let next = chars.get(i + 1).copied().unwrap_or('\0');
+            if next == '{' || next == Inbrace {
+                let mut bd = 0i32;
+                let mut j = i + 1;
+                while j < n {
+                    let d = chars[j];
+                    if (d == Bnull || d == Bnullkeep) && j + 1 < n {
+                        j += 2;
+                        continue;
+                    }
+                    if d == '{' || d == Inbrace {
+                        bd += 1;
+                    } else if d == '}' || d == Outbrace {
+                        bd -= 1;
+                        if bd == 0 {
+                            return j + 1;
+                        }
+                    }
+                    j += 1;
+                }
+                n
+            } else if next == '(' {
+                // `$(…)` / `$((…))` — balanced raw parens.
+                let mut pd = 0i32;
+                for (j, &d) in chars.iter().enumerate().skip(i + 1) {
+                    if d == '(' {
+                        pd += 1;
+                    } else if d == ')' {
+                        pd -= 1;
+                        if pd == 0 {
+                            return j + 1;
+                        }
+                    }
+                }
+                n
+            } else if next == '\'' {
+                // `$'…'` — through the closing quote, for singsub to decode.
+                let mut j = i + 2;
+                while j < n {
+                    if chars[j] == '\\' {
+                        j += 2;
+                        continue;
+                    }
+                    if chars[j] == '\'' {
+                        return j + 1;
+                    }
+                    j += 1;
+                }
+                n
+            } else if matches!(next, '?' | '#' | '$' | '!' | '@' | '*' | '-')
+                || next.is_ascii_digit()
+            {
+                i + 2 // special single-char parameter
+            } else {
+                let mut j = i + 1;
+                while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                    j += 1;
+                }
+                j
+            }
+        };
+        // Index just past the backquote substitution at `chars[i]`.
+        let tick_span_end = |chars: &[char], i: usize| -> usize {
+            let mut j = i + 1;
+            while j < chars.len() {
+                if chars[j] == '\\' {
+                    j += 2;
+                    continue;
+                }
+                if chars[j] == '`' {
+                    return j + 1;
+                }
+                j += 1;
+            }
+            chars.len()
+        };
         let chars: Vec<char> = s.chars().collect();
         let mut out = String::with_capacity(s.len());
         let mut depth = 0i32;
@@ -3708,34 +3844,47 @@ pub fn paramsubst(
         let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
-            // Source `\X` escape — both chars verbatim.
+            // Source `\X` escape — both chars verbatim, except an escaped
+            // `$` / `` ` ``: C's lexer makes `\$` the pair Bnull `$`
+            // (c:Src/lex.c:1268 `add(Bnull)`), and stringsubst opens a
+            // substitution only on the String/Qstring token, so the `$`
+            // is never an opener. The raw `\$` that `${x//\$v/…}`'s
+            // separator scan hands us was expanded by the singsub below
+            // (`x='a$vb' v=b; print ${x//\$v/Q}` gave `a$vQ`, zsh `aQb`);
+            // re-mark it so singsub skips it.
             if c == '\\' && i + 1 < chars.len() {
-                out.push(c);
-                out.push(chars[i + 1]);
+                let x = chars[i + 1];
+                if x == '$' || x == '`' {
+                    out.push(Bnull);
+                } else {
+                    out.push(c);
+                }
+                out.push(x);
                 i += 2;
                 continue;
             }
             // Lexer quote markers Bnull/Bnullkeep — payload is
-            // user-literal; pass the pair through untouched.
+            // user-literal.
             //
-            // EXCEPTION: Bnull + `\` (source `\\` — a QUOTED literal
-            // backslash) is rewritten to the parser's raw-ASCII
-            // literal form `\\` HERE, before singsub: stringsubst's
-            // Bnull arm (subst.rs:696) DROPS the marker and keeps the
-            // payload raw, which turned the quoted backslash into an
-            // ACTIVE escape prefix for patcompile — `${s/\\./X}`
-            // matched a plain dot instead of backslash+dot. C never
-            // loses the marker (Bnull survives the whole subst walk;
-            // remnulargs strips it only at the value boundary, and
-            // patcompile reads Bnull-marked chars as literal —
-            // Src/lex.c:1508 add(Bnull) + Src/pattern.c Bnull
-            // contract). Other payloads must KEEP the marker pair:
-            // raw `$` / `` ` `` would re-substitute inside
-            // stringsubst, and raw glob chars are already literalized
-            // downstream. Bug #296.
-            if c == Bnull && i + 1 < chars.len() && chars[i + 1] == '\\' {
+            // Bnull + `\` (source `\\` — a QUOTED literal backslash) and
+            // Bnull + a pattern metacharacter are rewritten to the
+            // parser's raw-ASCII literal form `\X` HERE, before singsub:
+            // stringsubst's Bnull arm (subst.rs:696) DROPS the marker and
+            // keeps the payload raw, which turned the quoted backslash
+            // into an ACTIVE escape prefix for patcompile (`${s/\\./X}`
+            // matched a plain dot instead of backslash+dot, bug #296), and
+            // left a quoted metacharacter for literalize_spliced_metas to
+            // re-activate under GLOBSUBST as if it had been spliced
+            // (`setopt globsubst; x='a(b'; print ${x#a\(}` → "bad
+            // pattern"; zsh `b`). C never loses the marker (Bnull
+            // survives the whole subst walk; remnulargs strips it only at
+            // the value boundary, and patcompile reads Bnull-marked chars
+            // as literal — c:Src/lex.c:1268 add(Bnull) + Src/pattern.c
+            // Bnull contract). Other payloads KEEP the marker pair: a raw
+            // `$` / `` ` `` would re-substitute inside stringsubst.
+            if c == Bnull && i + 1 < chars.len() && needs_backslash(chars[i + 1]) {
                 out.push('\\');
-                out.push('\\');
+                out.push(chars[i + 1]);
                 i += 2;
                 continue;
             }
@@ -3745,78 +3894,88 @@ pub fn paramsubst(
                 i += 2;
                 continue;
             }
-            // Backtick span — copy verbatim so singsub sees the
-            // raw command substitution.
-            if c == '`' {
-                out.push(c);
-                i += 1;
-                while i < chars.len() {
-                    let d = chars[i];
-                    out.push(d);
-                    i += 1;
-                    if d == '\\' && i < chars.len() {
-                        out.push(chars[i]);
-                        i += 1;
-                        continue;
+            // c:Src/subst.c:3387 `parse_subst_string(s)` re-lexes the
+            // pattern after `untokenize(s)` (c:Src/lex.c:1805), so a quote
+            // character that reached the operand as a plain byte — the
+            // `'` of `"${x//'('/Q}"`, which dquote_parse leaves raw inside
+            // the double-quoted word (c:Src/lex.c:1591-1598), or any quote
+            // in a body the bridge passes untokenized — still quotes. A
+            // quote left unclosed is a lexer error there, after which
+            // c:3392-3393 `shtokenize(s)` keeps it an ordinary character,
+            // so it falls through to the arms below.
+            if c == '\'' {
+                // c:Src/lex.c:1290-1311 — everything up to the next `'`.
+                if let Some(p) = chars[i + 1..].iter().position(|&d| d == '\'') {
+                    for &d in &chars[i + 1..i + 1 + p] {
+                        push_literal(&mut out, d);
                     }
-                    if d == '`' {
+                    i += p + 2;
+                    continue;
+                }
+            }
+            if c == '"' {
+                // c:Src/lex.c:1486 dquote_parse — literal text, but a `$…`
+                // substitution or a backquote stays live, and `\` escapes
+                // only `$` `\` `"` `` ` `` (c:1501-1507) or joins a line
+                // (c:1513); before anything else it is itself literal
+                // (c:1510 `add('\\'); goto cont`).
+                let mut buf = String::new();
+                let mut j = i + 1;
+                let mut closed = false;
+                while j < chars.len() {
+                    let d = chars[j];
+                    if d == '"' {
+                        closed = true;
                         break;
                     }
+                    if d == '\\' && j + 1 < chars.len() {
+                        let e = chars[j + 1];
+                        if matches!(e, '$' | '\\' | '"' | '`') {
+                            push_literal(&mut buf, e);
+                            j += 2;
+                        } else if e == '\n' {
+                            j += 2;
+                        } else {
+                            push_literal(&mut buf, '\\');
+                            j += 1;
+                        }
+                        continue;
+                    }
+                    if (d == Bnull || d == Bnullkeep) && j + 1 < chars.len() {
+                        buf.push(d);
+                        buf.push(chars[j + 1]);
+                        j += 2;
+                        continue;
+                    }
+                    if d == '$' || d == '`' {
+                        let end = if d == '$' {
+                            dollar_span_end(&chars, j)
+                        } else {
+                            tick_span_end(&chars, j)
+                        };
+                        buf.extend(&chars[j..end]);
+                        j = end;
+                        continue;
+                    }
+                    push_literal(&mut buf, d);
+                    j += 1;
                 }
-                continue;
+                if closed {
+                    out.push_str(&buf);
+                    i = j + 1;
+                    continue;
+                }
             }
-            // `$…` substitution span — copy verbatim. Nested
-            // `${…}` bodies may carry Inbrace/Outbrace tokens
-            // (preserved by the rest walker at subst.rs:4698), so
-            // the brace balance counts both raw and token forms.
-            if c == '$' {
-                out.push(c);
-                i += 1;
-                let next = chars.get(i).copied().unwrap_or('\0');
-                if next == '{' || next == Inbrace {
-                    let mut bd = 0i32;
-                    while i < chars.len() {
-                        let d = chars[i];
-                        out.push(d);
-                        i += 1;
-                        if d == '{' || d == Inbrace {
-                            bd += 1;
-                        } else if d == '}' || d == Outbrace {
-                            bd -= 1;
-                            if bd == 0 {
-                                break;
-                            }
-                        }
-                    }
-                } else if next == '(' {
-                    // `$(…)` / `$((…))` — balanced raw parens.
-                    let mut pd = 0i32;
-                    while i < chars.len() {
-                        let d = chars[i];
-                        out.push(d);
-                        i += 1;
-                        if d == '(' {
-                            pd += 1;
-                        } else if d == ')' {
-                            pd -= 1;
-                            if pd == 0 {
-                                break;
-                            }
-                        }
-                    }
-                } else if matches!(next, '?' | '#' | '$' | '!' | '@' | '*' | '-')
-                    || next.is_ascii_digit()
-                {
-                    // Special single-char parameter — copy so the
-                    // metachar map below never sees it.
-                    out.push(next);
-                    i += 1;
+            // Backtick / `$…` substitution span — copy verbatim so
+            // singsub sees the raw substitution.
+            if c == '`' || c == '$' {
+                let end = if c == '$' {
+                    dollar_span_end(&chars, i)
                 } else {
-                    while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                        out.push(chars[i]);
-                        i += 1;
-                    }
-                }
+                    tick_span_end(&chars, i)
+                };
+                out.extend(&chars[i..end]);
+                i = end;
                 continue;
             }
             // `<N-N>` numeric range — Src/glob.c:3605-3614 shape:
@@ -7628,105 +7787,237 @@ pub fn paramsubst(
         // paramsubst_to_value) hands us TOKEN-form bytes for chars
         // that lex tokenized at parse time (Pound \u{84} for `#`,
         // Equals \u{86}, Inbrack \u{91}, etc.). To match C's
-        // invariant — operators-ASCII-but-braces-token — walk the
-        // body inline: convert ITOK bytes via the canonical
-        // untokenize map (lex.rs:4499) BUT pass Inbrace/Outbrace
-        // through unchanged so they stay as ITOK bytes for the inner
-        // brace scanner at subst.rs:2896.
+        // invariant — operators-ASCII-but-braces-token — walk the body:
+        // token bytes become the characters they spell (the ztokens[]
+        // map of c:Src/exec.c:2134 `untokenize`), except that Inbrace/
+        // Outbrace stay tokens so the inner brace scanner at
+        // subst.rs:2896 can tell a nested `${…}` from literal braces in
+        // a replacement like `${var/pat/{X}}`.
         //
-        // No private-use-area placeholders, no sentinels — direct
-        // char-by-char walk mirroring C's ztokens[c - Pound] mapping
-        // with the brace pair skipped. `$'…'` segments (Qstring/
-        // Stringg + Snull … Snull) get delegated to `crate::lex::
-        // untokenize` on just that slice, which calls
-        // `getkeystring_dollar_quote` internally for the escape
-        // decode.
+        // A character the user QUOTED must also stay literal. The lexer
+        // marks a quoted span with Snull (`'…'`, c:Src/lex.c:1284-1334
+        // LX2_QUOTE) or Dnull (`"…"`, c:1336 LX2_DQUOTE → dquote_parse,
+        // c:1486) and leaves the characters inside as plain bytes; the
+        // pattern operand is then re-lexed (c:Src/subst.c:3387
+        // `parse_subst_string(s)`), so a quoted `(` reaches patcompile as
+        // an ordinary character while an unquoted one is the Inpar token.
+        // Dropping the markers made the two byte-identical, and the
+        // pattern pre-tokenizer turned both into Inpar:
+        //     x="a(b"; print ${x//"("/Q}      zsh: aQb   was: bad pattern: (
+        //     x='a$vb' v=b; print ${x//'$v'/Q}  zsh: aQb   was: a$vQ
+        // So each quoted character that some consumer of `rest` would
+        // otherwise read as syntax — a pattern metacharacter, `\`, a quote,
+        // `$`, a backquote, a brace, the `%`/`#` anchors — is emitted as
+        // `Bnull` + character, the lexer's own spelling of a user-literal
+        // character (c:Src/lex.c:1268 `add(Bnull)`), which every consumer
+        // already reads as literal. `/` is left bare: zsh 5.9.2 still
+        // splits `${x/'/'}` at a quoted `/` (upstream changed that later,
+        // workers/52202), and zshrs matches the release. Inside `"…"` a
+        // `$…` substitution and a backquote stay live (dquote_parse emits
+        // Qstring / Qtick for them, c:1519-1590) and are copied unmarked,
+        // together with the `[…]` subscript of a `$name[…]` reference,
+        // whose brackets dquote_parse leaves as plain bytes; the body of a
+        // nested `${…}` follows the unquoted rules again (the `Brace`
+        // frame). A quote right after a `$name` reference ends the name
+        // (`"$v"x` is `${v}x`), so such a reference is braced. The decoded
+        // text of a `$'…'` is literal too — C decodes it only after the
+        // re-lex (c:Src/lex.c:1838-1864) — and is marked the same way; its
+        // decode is delegated to the canonical `crate::lex::untokenize`,
+        // which owns the escape table. The Snull/Dnull markers themselves
+        // drop, and so does Nularg (c:Src/exec.c:2143 `if (c != Nularg)`):
+        // C's untokenize would spell the markers `'`/`"` for the re-lex to
+        // read as quotes again, and the Bnull pairs carry that instead.
         let rest: String = {
-            let raw_chars: Vec<char> = body_chars[idx..].to_vec();
-            let mut out = String::with_capacity(raw_chars.len());
-            let mut i = 0usize;
-            while i < raw_chars.len() {
-                let c = raw_chars[i];
-                let cu = c as u32;
-                if (0x84..=0xa1).contains(&cu) {
-                    // `$'…'` ANSI-C string region — find closing Snull
-                    // and let canonical untokenize handle the decode
-                    // (it owns the escape table at lex.rs:4279).
-                    if (c == Qstring || c == Stringg)
-                        && i + 1 < raw_chars.len()
-                        && raw_chars[i + 1] == Snull
-                    {
-                        let mut j = i + 2;
-                        while j < raw_chars.len() && raw_chars[j] != Snull {
-                            j += 1;
+            // One quoting level of the walk: the unquoted top level, a
+            // `"…"` span, or the body of a nested `${…}` (with its count of
+            // plain Inbrace tokens still open).
+            enum RestFrame {
+                Unquoted,
+                Dquote,
+                Brace(i32),
+            }
+            let raw: &[char] = &body_chars[idx..];
+            let fold = |c: char| -> Option<char> {
+                Some(match c {
+                    x if x == Pound => '#',
+                    x if x == Stringg || x == Qstring => '$',
+                    x if x == Hat => '^',
+                    x if x == Star => '*',
+                    x if x == Inpar || x == Inparmath => '(',
+                    x if x == Outpar || x == Outparmath => ')',
+                    x if x == Equals => '=',
+                    x if x == crate::ported::zsh_h::Bar => '|',
+                    x if x == Inbrack => '[',
+                    x if x == Outbrack => ']',
+                    x if x == Tick || x == Qtick => '`',
+                    x if x == Inang => '<',
+                    x if x == Outang || x == OutangProc => '>',
+                    x if x == Quest => '?',
+                    x if x == Tilde => '~',
+                    x if x == crate::ported::zsh_h::Comma => ',',
+                    x if x == Dash => '-',
+                    x if x == Bang => '!',
+                    x if x == Snull || x == Dnull || x == Nularg => return None,
+                    // Inbrace/Outbrace, Bnull/Bnullkeep and every ordinary
+                    // character pass through.
+                    other => other,
+                })
+            };
+            // Index of the closer balancing the opener at `raw[open]`.
+            let closer = |open: usize, opens: &[char], closes: &[char]| -> Option<usize> {
+                let mut depth = 0i32;
+                for (j, c) in raw.iter().enumerate().skip(open) {
+                    if opens.contains(c) {
+                        depth += 1;
+                    } else if closes.contains(c) {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(j);
                         }
-                        let end = if j < raw_chars.len() { j + 1 } else { j };
-                        let segment: String = raw_chars[i..end].iter().collect();
-                        out.push_str(&crate::lex::untokenize(&segment));
+                    }
+                }
+                None
+            };
+            // Append a quoted character, Bnull-marked when it is syntax to
+            // some consumer (see the block comment above). A backslash
+            // right before `/` stays bare even when quoted: the `/`
+            // separator scan reads that pair as an escaped slash whatever
+            // the quoting (c:Src/subst.c:3150-3153, `c == '\\'` →
+            // `chuck(ptr)`), which p10k's `"${1//(#m)[^…"\/:_.-!'()~"]/…}"`
+            // URL encoder relies on.
+            let mark = |out: &mut String, c: char, next: Option<char>| {
+                if matches!(
+                    c,
+                    '#' | '^' | '*' | '?' | '~' | '(' | ')' | '[' | ']' | '|' | '<' | '>' | '!'
+                        | '-' | '%' | '\\' | '\'' | '"' | '$' | '`' | '{' | '}'
+                ) && !(c == '\\' && next == Some('/'))
+                {
+                    out.push(Bnull);
+                }
+                out.push(c);
+            };
+            let mut out = String::with_capacity(raw.len());
+            let mut frames = vec![RestFrame::Unquoted];
+            let mut i = 0usize;
+            while i < raw.len() {
+                let c = raw[i];
+                // A substitution opens the same way at every level.
+                if c == Stringg || c == Qstring {
+                    let next = raw.get(i + 1).copied();
+                    if next == Some(Snull) {
+                        let end = raw[i + 2..]
+                            .iter()
+                            .position(|&d| d == Snull)
+                            .map_or(raw.len(), |p| i + 2 + p + 1);
+                        let segment: String = raw[i..end].iter().collect();
+                        for d in crate::lex::untokenize(&segment).chars() {
+                            mark(&mut out, d, None);
+                        }
                         i = end;
                         continue;
                     }
-                    match c {
-                        x if x == Pound => out.push('#'),
-                        x if x == Stringg => out.push('$'),
-                        x if x == Hat => out.push('^'),
-                        x if x == Star => out.push('*'),
-                        x if x == Inpar => out.push('('),
-                        x if x == Outpar => out.push(')'),
-                        x if x == Inparmath => out.push('('),
-                        x if x == Outparmath => out.push(')'),
-                        x if x == Qstring => out.push('$'),
-                        x if x == Equals => out.push('='),
-                        x if x == crate::ported::zsh_h::Bar => out.push('|'),
-                        // Deliberate divergence from canonical
-                        // untokenize: preserve brace tokens so the
-                        // inner skipparens-equivalent at
-                        // subst.rs:2896 counts nested `${…}` via
-                        // Inbrace/Outbrace as C does. Folding them
-                        // to raw `{`/`}` makes inner braces
-                        // indistinguishable from literal replacement
-                        // braces like `${var/pat/{X}}` and the
-                        // scanner mis-counts depth.
-                        x if x == Inbrace => out.push(Inbrace),
-                        x if x == Outbrace => out.push(Outbrace),
-                        x if x == Inbrack => out.push('['),
-                        x if x == Outbrack => out.push(']'),
-                        x if x == Tick => out.push('`'),
-                        x if x == Inang => out.push('<'),
-                        x if x == Outang => out.push('>'),
-                        x if x == OutangProc => out.push('>'),
-                        x if x == Quest => out.push('?'),
-                        x if x == Tilde => out.push('~'),
-                        x if x == Qtick => out.push('`'),
-                        x if x == crate::ported::zsh_h::Comma => out.push(','),
-                        x if x == Dash => out.push('-'),
-                        x if x == Bang => out.push('!'),
-                        // c:Src/exec.c:2098 — `if (c != Nularg)` —
-                        // Snull/Dnull/Nularg drop silently on the
-                        // value-stream path (subst.rs caller). See
-                        // lex.rs:4569 for the full rationale.
-                        x if x == Snull || x == Dnull || x == Nularg => {}
-                        // Preserve Bnull / Bnullkeep — these are the
-                        // lex's escape markers ("next char is user-
-                        // literal"). Downstream consumers of the
-                        // `rest` body include singsub() calls on the
-                        // replacement string (subst.rs:7202-7203 for
-                        // `:/` and 7232+ for `//`/`///`), and singsub
-                        // → stringsubst recognizes Bnull at
-                        // c:Src/subst.c:301 (`else if (c == Bnull)
-                        // … skip; goto cont;`) to skip the marked
-                        // char without treating it as a `$` opener.
-                        // Folding Bnull → `\\` would lose this
-                        // escape semantic — stringsubst's check
-                        // works on Bnull byte, not on the raw
-                        // backslash that follows.
-                        x if x == Bnull => out.push(Bnull),
-                        x if x == Bnullkeep => out.push(Bnullkeep),
-                        _ => out.push(c),
+                    out.push('$');
+                    i += 1;
+                    match next {
+                        Some(b) if b == Inbrace => {
+                            out.push(Inbrace);
+                            frames.push(RestFrame::Brace(0));
+                            i += 1;
+                        }
+                        // `$(…)` / `$((…))` / `$[…]` are parsed again on
+                        // their own: fold them flat.
+                        Some(p) if p == Inpar || p == Inparmath || p == Inbrack => {
+                            let end = if p == Inbrack {
+                                closer(i, &[Inbrack], &[Outbrack])
+                            } else {
+                                closer(i, &[Inpar, Inparmath], &[Outpar, Outparmath])
+                            }
+                            .map_or(raw.len(), |close| close + 1);
+                            out.extend(raw[i..end].iter().filter_map(|&d| fold(d)));
+                            i = end;
+                        }
+                        Some(d) if d.is_alphanumeric() || d == '_' => {
+                            let start = i;
+                            while i < raw.len() && (raw[i].is_alphanumeric() || raw[i] == '_') {
+                                i += 1;
+                            }
+                            // `$name[…]` — the subscript belongs to the
+                            // reference, tokenized or not.
+                            while matches!(raw.get(i), Some(&b) if b == '[' || b == Inbrack) {
+                                i = closer(i, &['[', Inbrack], &[']', Outbrack])
+                                    .map_or(raw.len(), |close| close + 1);
+                            }
+                            let reference = raw[start..i].iter().filter_map(|&d| fold(d));
+                            if matches!(raw.get(i), Some(&q) if q == Dnull || q == Snull) {
+                                out.push(Inbrace);
+                                out.extend(reference);
+                                out.push(Outbrace);
+                            } else {
+                                out.extend(reference);
+                            }
+                        }
+                        Some(d)
+                            if matches!(d, '?' | '#' | '$' | '!' | '@' | '*' | '-')
+                                || [Quest, Pound, Stringg, Qstring, Bang, Star, Dash].contains(&d) =>
+                        {
+                            out.extend(fold(d));
+                            i += 1;
+                        }
+                        _ => {}
                     }
-                } else {
-                    out.push(c);
+                    continue;
                 }
+                if c == Tick || c == Qtick {
+                    let end = raw[i + 1..]
+                        .iter()
+                        .position(|&d| d == Tick || d == Qtick)
+                        .map_or(raw.len(), |p| i + 1 + p + 1);
+                    out.extend(raw[i..end].iter().filter_map(|&d| fold(d)));
+                    i = end;
+                    continue;
+                }
+                if matches!(frames.last(), Some(RestFrame::Dquote)) {
+                    if c == Dnull {
+                        frames.pop();
+                    } else if (c == Bnull || c == Bnullkeep) && i + 1 < raw.len() {
+                        // c:Src/lex.c:1501-1507 — `\$` `\\` `\"` `` \` ``
+                        // are already a Bnull pair.
+                        out.push(c);
+                        out.push(raw[i + 1]);
+                        i += 1;
+                    } else if (0x84..=0xa1).contains(&(c as u32)) {
+                        out.extend(fold(c));
+                    } else {
+                        mark(&mut out, c, raw.get(i + 1).copied());
+                    }
+                    i += 1;
+                    continue;
+                }
+                if c == Snull {
+                    // c:Src/lex.c:1290-1311 — everything up to the next `'`.
+                    if let Some(p) = raw[i + 1..].iter().position(|&d| d == Snull) {
+                        for k in i + 1..i + 1 + p {
+                            mark(&mut out, raw[k], raw.get(k + 1).copied());
+                        }
+                        i += p + 2;
+                        continue;
+                    }
+                } else if c == Dnull {
+                    frames.push(RestFrame::Dquote);
+                } else if c == Inbrace {
+                    if let Some(RestFrame::Brace(open)) = frames.last_mut() {
+                        *open += 1;
+                    }
+                } else if c == Outbrace {
+                    match frames.last_mut() {
+                        Some(RestFrame::Brace(open)) if *open > 0 => *open -= 1,
+                        Some(RestFrame::Brace(_)) => {
+                            frames.pop();
+                        }
+                        _ => {}
+                    }
+                }
+                out.extend(fold(c));
                 i += 1;
             }
             out
