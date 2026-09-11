@@ -17,7 +17,8 @@
 //! - bin_comptry       → crate::compsys::state::comptry()
 
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 
 use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
 use crate::ported::lex::untokenize;
@@ -1827,7 +1828,7 @@ pub struct cadef {
     // c:905
     pub next: Option<Box<cadef>>,                // c:906 Cadef next
     pub snext: Option<Box<cadef>>,               // c:907 Cadef snext
-    pub opts: Option<Box<caopt>>,                // c:908 Caopt opts
+    pub opts: Option<Arc<caopt>>,                // c:908 Caopt opts
     pub nopts: i32,                              // c:909
     pub ndopts: i32,                             // c:909
     pub nodopts: i32,                            // c:909
@@ -1836,7 +1837,7 @@ pub struct cadef {
     pub defs: Option<Vec<String>>,               // c:912 char **defs
     pub ndefs: i32,                              // c:913
     pub lastt: i64,                              // c:914 time_t lastt
-    pub single: Option<Vec<Option<Box<caopt>>>>, // c:915 Caopt *single (188-slot)
+    pub single: Option<Vec<Option<Arc<caopt>>>>, // c:915 Caopt *single (188-slot)
     pub r#match: Option<String>,                 // c:916 char *match
     pub argsactive: i32,                         // c:917
     pub set: Option<String>,                     // c:919 char *set
@@ -1844,24 +1845,61 @@ pub struct cadef {
     pub nonarg: Option<String>,                  // c:921 char *nonarg
 }
 /// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
-pub type Caopt = Box<caopt>; // c:900
+/// C's `Caopt` is a POINTER, and the same node is reachable from three
+/// places at once — the `d->opts` chain that owns it, `d->single[]`
+/// (c:1596 `ret->single[sidx] = opt`) and `state.curopt` / the `sopts`
+/// queue. `Arc` is what that pointer costs: taking a handle is a
+/// refcount bump and every reader borrows the ONE node.
+pub type Caopt = Arc<caopt>; // c:900
 
 /// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
 /// Description for one `_arguments` option spec.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
 pub struct caopt {
     // c:928
-    pub next: Option<Box<caopt>>, // c:929 Caopt next
+    pub next: Option<Arc<caopt>>, // c:929 Caopt next
     pub name: Option<String>,     // c:930 char *name
     pub descr: Option<String>,    // c:931 char *descr
     pub xor: Option<Vec<String>>, // c:932 char **xor
     pub r#type: i32,              // c:933 int type (CAO_*)
     pub args: Option<Box<caarg>>, // c:934 Caarg args
-    pub active: i32,              // c:935 int active
-    pub num: i32,                 // c:936 int num
-    pub gsname: Option<String>,   // c:937 char *gsname
-    pub not: i32,                 // c:938 int not
+    // c:935 `int active` — written through WHATEVER alias the caller
+    // holds: c:1888 / c:1912 walk `d->opts`, c:2398 writes through
+    // `state.curopt`, c:2415 through `wasopt`, and c:1780 READS it
+    // through `d->single[sidx]`, which is an alias of an opts-chain
+    // node. A shared `Arc` cannot hand out `&mut`, so the field carries
+    // its own mutability. `Relaxed` is the whole contract: C is
+    // single-threaded here and every access is already serialised by
+    // the mutex on the cache/`ca_laststate` that reaches the node.
+    pub active: AtomicI32, // c:935 int active
+    pub num: i32,          // c:936 int num
+    pub gsname: Option<String>, // c:937 char *gsname
+    pub not: i32,          // c:938 int not
+}
+
+// !!! WARNING: RUST-ONLY HELPER !!!
+// No counterpart in Src/Zle/computil.c. C frees the `opts` chain with
+// the `for (p = d->opts; p; p = n)` loop at c:1026-1034, so chain
+// length never touches the C stack. Rust's derived drop glue for
+// `Option<Arc<caopt>>` recurses once per node, which overflowed a
+// 2 MiB thread stack at ~17000 options (debug build). Unlink the tail
+// iteratively so the node that is about to be dropped always has
+// `next == None`.
+impl Drop for caopt {
+    fn drop(&mut self) {
+        let mut cur = self.next.take();
+        while let Some(node) = cur {
+            match Arc::try_unwrap(node) {
+                // Sole owner: steal its tail, then let it drop with
+                // `next == None`.
+                Ok(mut n) => cur = n.next.take(),
+                // Still aliased (`d->single[]`, `state.curopt`, ...).
+                // The last holder runs this same loop for the rest.
+                Err(_) => break,
+            }
+        }
+    }
 }
 /// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
 pub type Caarg = Box<caarg>; // c:901
@@ -1884,6 +1922,35 @@ pub struct caarg {
     pub direct: i32,              // c:959 int direct
     pub active: i32,              // c:960 int active
     pub gsname: Option<String>,   // c:961 char *gsname
+}
+
+// !!! WARNING: RUST-ONLY HELPER !!!
+// No counterpart in C, for the same reason as `impl Drop for caopt`:
+// c:1019-1042 walks `snext` with `while (d)` and c:1001-1010 walks
+// `next` with `for (; a; a = n)`, so neither chain length reaches the
+// C stack. Rust's derived drop glue recurses per node.
+impl Drop for cadef {
+    fn drop(&mut self) {
+        let mut cur = self.snext.take();
+        while let Some(mut node) = cur {
+            cur = node.snext.take();
+        }
+        let mut cur = self.next.take();
+        while let Some(mut node) = cur {
+            cur = node.next.take();
+        }
+    }
+}
+
+// !!! WARNING: RUST-ONLY HELPER !!!
+// See `impl Drop for cadef`. c:1001-1010 (`freecaargs`) is the C loop.
+impl Drop for caarg {
+    fn drop(&mut self) {
+        let mut cur = self.next.take();
+        while let Some(mut node) = cur {
+            cur = node.next.take();
+        }
+    }
 }
 
 /// Port of `CDF_SEP` from `Src/Zle/computil.c:924`. `-S` flag — `--`
@@ -1999,21 +2066,36 @@ pub fn freecadef(mut d: Option<Box<cadef>>) {
         node.set = None;
         node.defs = None;
 
+        // c:1037-1038 — `if (d->single) zfree(d->single, 188 * sizeof(Caopt))`
+        // frees the ARRAY, not the entries: every slot is an alias of a node
+        // the `d->opts` chain owns (c:1596). Dropping the 188 `Arc` handles
+        // first is the same thing — it releases the aliases and leaves the
+        // chain's own refcount to the loop below.
+        node.single = None;
+
         // c:1025-1033 — for each opt: zsfree name/descr, freearray xor,
-        // freecaargs(opt->args), zfree opt.
+        // freecaargs(opt->args), zfree opt. An entry is only reclaimable
+        // when nothing else still aliases it, which is exactly what
+        // `Arc::try_unwrap` tests; anything still held (a live
+        // `ca_laststate.curopt`, say) stays alive, as it does in C where
+        // the pointer simply outlives the free — minus C's dangling read.
         let mut p = node.opts.take();
-        while let Some(mut popt) = p {
-            p = popt.next.take();
-            popt.name = None;
-            popt.descr = None;
-            popt.xor = None;
-            freecaargs(popt.args.take()); // c:1031
-            drop(popt); // c:1032
+        while let Some(popt) = p {
+            match Arc::try_unwrap(popt) {
+                Ok(mut popt) => {
+                    p = popt.next.take();
+                    popt.name = None;
+                    popt.descr = None;
+                    popt.xor = None;
+                    freecaargs(popt.args.take()); // c:1031
+                    drop(popt); // c:1032
+                }
+                Err(_) => break,
+            }
         }
         freecaargs(node.args.take()); // c:1034
         freecaargs(node.rest.take()); // c:1035
         node.nonarg = None; // c:1036
-        node.single = None; // c:1037-1038
         drop(node); // c:1039 zfree(d, sizeof(*d))
     }
 }
@@ -2449,6 +2531,13 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
     // are collected in parallel Vecs and linked into the cadef at the end.
     let mut sets: Vec<Box<cadef>> = vec![first_def];
     let mut opts_per_set: Vec<Vec<Box<caopt>>> = vec![Vec::new()];
+    // c:1596 `ret->single[sidx] = opt` stores an ALIAS of the node the
+    // `opts` chain owns. The chain is only linked at the end of this
+    // function (Rust cannot append through a `*mut` tail cursor), so
+    // record WHICH node claimed each slot and resolve the aliases once
+    // the `Arc`s exist. Same nodes, same slots, same order.
+    let mut single_slots_per_set: Vec<Vec<Option<usize>>> =
+        vec![if single != 0 { vec![None; 188] } else { Vec::new() }];
     let mut args_per_set: Vec<Vec<Box<caarg>>> = vec![Vec::new()];
     let mut rest_per_set: Vec<Option<Box<caarg>>> = vec![None];
 
@@ -2498,6 +2587,11 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
                 flags,
             ));
             opts_per_set.push(Vec::new());
+            single_slots_per_set.push(if single != 0 {
+                vec![None; 188]
+            } else {
+                Vec::new()
+            });
             args_per_set.push(Vec::new());
             rest_per_set.push(None);
             anum = 1; // c:1283
@@ -2941,32 +3035,15 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
                         if nb.len() == 2 && nb[1] != b'-' {
                             let sidx = single_index(nb[0], nb[1]);
                             if sidx >= 0 {
-                                if let Some(ref mut s) = cur.single {
-                                    if (sidx as usize) < s.len() {
-                                        // c:1596 — `ret->single[sidx] = opt;`
-                                        // aliases the SAME Caopt, so the
-                                        // single-letter table entry carries
-                                        // the option's `args` and shares its
-                                        // `active` flag. The port stored a
-                                        // copy with `args: None, active: 0`,
-                                        // so `ca_get_sopt` (c:1780, which
-                                        // requires `p->active && p->args`)
-                                        // never matched a clumped flag that
-                                        // takes an argument: `tar -xzf <TAB>`
-                                        // completed nothing.
-                                        s[sidx as usize] = Some(Box::new(caopt {
-                                            next: None,
-                                            name: opt_box.name.clone(),
-                                            descr: opt_box.descr.clone(),
-                                            xor: opt_box.xor.clone(),
-                                            r#type: opt_box.r#type,
-                                            args: opt_box.args.clone(),
-                                            active: 1,
-                                            num: opt_box.num,
-                                            gsname: opt_box.gsname.clone(),
-                                            not: opt_box.not,
-                                        }));
-                                    }
+                                let slots = single_slots_per_set.last_mut().unwrap();
+                                if (sidx as usize) < slots.len() {
+                                    // c:1596 — `ret->single[sidx] = opt;`
+                                    // aliases the SAME Caopt, so the slot
+                                    // shares the option's `args` AND its live
+                                    // `active` flag, which c:1780 reads. Note
+                                    // the index, alias it below.
+                                    slots[sidx as usize] =
+                                        Some(opts_per_set.last().unwrap().len());
                                 }
                             }
                         }
@@ -3094,14 +3171,31 @@ pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {
     // ---- finalize: link opts/args/rest per set, then snext-chain ----
     let n_sets = sets.len();
     for i in 0..n_sets {
-        // opts — append order.
-        let mut head: Option<Box<caopt>> = None;
-        for o in opts_per_set[i].drain(..).rev() {
+        // opts — append order. Linking runs back-to-front, so the `Arc`
+        // for entry k only exists once k+1..n are linked; collect them
+        // in source order to resolve `single[]` against.
+        let mut head: Option<Arc<caopt>> = None;
+        let mut by_index: Vec<Option<Arc<caopt>>> = vec![None; opts_per_set[i].len()];
+        for (k, o) in opts_per_set[i].drain(..).enumerate().rev() {
             let mut o = o;
             o.next = head;
-            head = Some(o);
+            let node = Arc::from(o);
+            by_index[k] = Some(Arc::clone(&node));
+            head = Some(node);
         }
         sets[i].opts = head;
+        // c:1596 — fill the 188-slot table with ALIASES of those nodes.
+        if !single_slots_per_set[i].is_empty() {
+            if let Some(ref mut tbl) = sets[i].single {
+                for (sidx, slot) in single_slots_per_set[i].iter().enumerate() {
+                    if let Some(k) = *slot {
+                        if sidx < tbl.len() {
+                            tbl[sidx] = by_index[k].clone();
+                        }
+                    }
+                }
+            }
+        }
         // args was already linked in the per-set finalize step above for
         // every set except possibly the last (which is now done). Walk
         // any still-present Vec entries into the linked list for safety.
@@ -3214,56 +3308,39 @@ pub fn get_cadef(nam: &str, args: &[String]) -> i32 {
 /// the option's argument (handles `=` / `--name=value` shapes per
 /// `CAO_OEQUAL` / `CAO_EQUAL`). Sets `*end` to the byte offset past
 /// the option text (and past the `=` separator when applicable).
-/// Returns a cloned shallow copy of the matched `caopt` (without its
-/// `next` chain) — Rust ownership artifact, equivalent to C returning
-/// the aliased `Caopt` pointer.
+/// Returns the matched node itself (c:1717 / c:1738 `return p`), so the
+/// caller sees its live `args` and writes to its live `active` — which
+/// is what c:1912 (`ca_inactive`) and c:2398 do with the result.
 pub fn ca_get_opt(
     d: &cadef,
     line: &str,
     full: i32, // c:1706
     end: &mut usize,
-) -> Option<Box<caopt>> {
+) -> Option<Arc<caopt>> {
     let line_bytes = line.as_bytes();
 
     // c:1712-1718 — exact match against an active option name.
-    let mut cur = d.opts.as_deref();
+    let mut cur = d.opts.as_ref();
     while let Some(p) = cur {
         // c:1712
-        if p.active != 0 {
+        if p.active.load(Ordering::Relaxed) != 0 {
             // c:1713
             if let Some(name) = p.name.as_deref() {
                 if name == line {
                     *end = line_bytes.len(); // c:1715
-                    return Some(Box::new(caopt {
-                        // c:1717 — C returns the aliased `p` (WITH its args);
-                        // the clone must carry `p->args` so option-argument
-                        // completion (`-f <TAB>`) sees `state.def`. Dropping
-                        // args here makes every arg-taking option look like a
-                        // bare flag, so `_arguments` completes options instead
-                        // of the option's argument.
-                        next: None,
-                        name: p.name.clone(),
-                        descr: p.descr.clone(),
-                        xor: p.xor.clone(),
-                        r#type: p.r#type,
-                        args: p.args.clone(),
-                        active: p.active,
-                        num: p.num,
-                        gsname: p.gsname.clone(),
-                        not: p.not,
-                    }));
+                    return Some(Arc::clone(p)); // c:1717 return p
                 }
             }
         }
-        cur = p.next.as_deref();
+        cur = p.next.as_ref();
     }
 
     if full == 0 {
         // c:1720
         // c:1722-1739 — prefix-match path for `name=value` / `nameSPC value`.
-        let mut cur = d.opts.as_deref();
+        let mut cur = d.opts.as_ref();
         while let Some(p) = cur {
-            if p.active != 0 {
+            if p.active.load(Ordering::Relaxed) != 0 {
                 // c:1723
                 if let Some(name) = p.name.as_deref() {
                     // c:1723-1724 — short args/NEXT → exact match, else strpfx.
@@ -3280,7 +3357,7 @@ pub fn ca_get_opt(
                             && l < line_bytes.len()
                             && line_bytes[l] != b'='
                         {
-                            cur = p.next.as_deref();
+                            cur = p.next.as_ref();
                             continue; // c:1728
                         }
                         // c:1731-1736 — set end past the option (+= 1 for `=`).
@@ -3292,25 +3369,11 @@ pub fn ca_get_opt(
                             at += 1; // c:1734
                         }
                         *end = at; // c:1736
-                        return Some(Box::new(caopt {
-                            // c:1738 — as above (c:1717), preserve `p->args`
-                            // so the prefix-match path (`--opt=val`) also
-                            // carries the option's argument spec.
-                            next: None,
-                            name: p.name.clone(),
-                            descr: p.descr.clone(),
-                            xor: p.xor.clone(),
-                            r#type: p.r#type,
-                            args: p.args.clone(),
-                            active: p.active,
-                            num: p.num,
-                            gsname: p.gsname.clone(),
-                            not: p.not,
-                        }));
+                        return Some(Arc::clone(p)); // c:1738 return p
                     }
                 }
             }
-            cur = p.next.as_deref();
+            cur = p.next.as_ref();
         }
     }
     None // c:1741
@@ -3322,13 +3385,14 @@ pub fn ca_get_opt(
 /// for clumped flags like `-abc`. Walks `line[1..]` consulting
 /// `d->single[]` for each char; CAO_NEXT matches accumulate in `lp`,
 /// the first non-NEXT match terminates and sets `*end` past it.
-/// Returns the terminating Caopt (cloned, no chain) or None.
+/// Returns the terminating Caopt (the node itself, c:1803 `return pp`)
+/// or None.
 pub fn ca_get_sopt(
     d: &cadef,
     line: &str, // c:1747
     end: &mut usize,
-    lp: &mut Option<Vec<Box<caopt>>>,
-) -> Option<Box<caopt>> {
+    lp: &mut Option<Vec<Arc<caopt>>>,
+) -> Option<Arc<caopt>> {
     let line_bytes = line.as_bytes();
     if line_bytes.is_empty() {
         *lp = None;
@@ -3344,64 +3408,39 @@ pub fn ca_get_sopt(
         None => return None,
     };
 
-    let mut p_cur: Option<&caopt> = None; // c:1755 p = NULL
-    let mut pp_cur: Option<&caopt> = None;
-    let mut list_acc: Option<Vec<Box<caopt>>> = None;
+    let mut p_cur: Option<&Arc<caopt>> = None; // c:1755 p = NULL
+    let mut pp_cur: Option<&Arc<caopt>> = None;
+    let mut list_acc: Option<Vec<Arc<caopt>>> = None;
 
     while idx < line_bytes.len() {
         // c:1755 for (;*line;line++)
         let ch = line_bytes[idx];
         let sidx = single_index(pre, ch); // c:1756
 
-        // c:1780 — `p = d->single[sidx]`. In C `single[]` holds ALIASES of
-        // the entries in `d->opts` (c:1596), so `p->active` tracks whatever
-        // `ca_parse_line`/`ca_inactive` last set and `p->args` is the live
-        // argument spec. The Rust `single[]` is a snapshot taken at parse
-        // time, so resolve back through `d.opts` by `num` to read the live
-        // node; without this, `p->active` was frozen and clumped options
-        // stayed matchable after being excluded.
-        let snap_num: Option<i32> = if sidx >= 0 && (sidx as usize) < single.len() {
-            single[sidx as usize].as_ref().map(|o| o.num)
+        // c:1780 — `p = d->single[sidx]`, one array read. The slot holds an
+        // alias of the `d->opts` node (c:1596), so `p->active` is whatever
+        // `ca_parse_line` / `ca_inactive` last wrote and `p->args` is the
+        // live argument spec.
+        let lookup: Option<&Arc<caopt>> = if sidx >= 0 && (sidx as usize) < single.len() {
+            single[sidx as usize].as_ref()
         } else {
             None
         };
-        let lookup: Option<&caopt> = snap_num.and_then(|n| {
-            let mut c = d.opts.as_deref();
-            while let Some(o) = c {
-                if o.num == n {
-                    return Some(o);
-                }
-                c = o.next.as_deref();
-            }
-            None
-        });
         if lookup.is_some() {
             p_cur = lookup;
         }
-        let active_with_args = lookup.filter(|p| p.active != 0 && p.args.is_some());
+        let active_with_args =
+            lookup.filter(|p| p.active.load(Ordering::Relaxed) != 0 && p.args.is_some());
 
         if let Some(p) = active_with_args {
             // c:1757
             if p.r#type == CAO_NEXT {
                 // c:1758
                 let list = list_acc.get_or_insert_with(Vec::new);
-                list.push(Box::new(caopt {
-                    // c:1784 — `addlinknode(l, p)` queues the LIVE Caopt;
-                    // `ca_parse_line` pops it at c:2153/c:2239 and reads
-                    // `->args` to drive the argument completion. Cloning
-                    // with `args: None` made every queued clumped option a
-                    // bare flag, so `tar -xzf <TAB>` never completed a file.
-                    next: None,
-                    name: p.name.clone(),
-                    descr: p.descr.clone(),
-                    xor: p.xor.clone(),
-                    r#type: p.r#type,
-                    args: p.args.clone(),
-                    active: p.active,
-                    num: p.num,
-                    gsname: p.gsname.clone(),
-                    not: p.not,
-                }));
+                // c:1784 — `addlinknode(l, p)` queues the LIVE Caopt;
+                // `ca_parse_line` pops it at c:2153/c:2239 and reads
+                // `->args` to drive the argument completion.
+                list.push(Arc::clone(p));
             } else {
                 // c:1762
                 idx += 1; // c:1764 line++
@@ -3414,7 +3453,8 @@ pub fn ca_get_sopt(
                 pp_cur = Some(p); // c:1770
                 break; // c:1771
             }
-        } else if p_cur.is_none() || p_cur.map_or(true, |p| p.active == 0) {
+        } else if p_cur.is_none() || p_cur.map_or(true, |p| p.active.load(Ordering::Relaxed) == 0)
+        {
             // c:1773
             return None; // c:1774
         }
@@ -3437,23 +3477,9 @@ pub fn ca_get_sopt(
 
     *lp = list_acc;
 
-    pp_cur.map(|p| {
-        Box::new(caopt {
-            // c:1803 — C returns the live `pp` pointer; the caller reads
-            // `->args` at c:2244. Preserve `args` for the same reason as
-            // the queued clones above.
-            next: None,
-            name: p.name.clone(),
-            descr: p.descr.clone(),
-            xor: p.xor.clone(),
-            r#type: p.r#type,
-            args: p.args.clone(),
-            active: p.active,
-            num: p.num,
-            gsname: p.gsname.clone(),
-            not: p.not,
-        })
-    })
+    // c:1803 — `return pp`, the live node; the caller reads `->args`
+    // at c:2244.
+    pp_cur.map(Arc::clone)
 }
 
 /// Direct port of `static int ca_foreign_opt(Cadef curset, Cadef all,
@@ -3665,7 +3691,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
 
         // c:1881 — excludeall or `-` alone: kill options.
         if excludeall != 0 || (xb.len() == 1 && xb[0] == b'-') {
-            let mut cur_opt = d.opts.as_deref_mut();
+            let mut cur_opt = d.opts.as_deref();
             while let Some(p) = cur_opt {
                 let grp_ok = grp.map_or(true, |g| {
                     p.gsname.as_deref().map_or(false, |gn| {
@@ -3678,9 +3704,9 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
                         nb.len() >= 3 && nb[0] != 0
                     });
                 if grp_ok && !single_skip {
-                    p.active = 0; // c:1888
+                    p.active.store(0, Ordering::Relaxed); // c:1888
                 }
-                cur_opt = p.next.as_deref_mut();
+                cur_opt = p.next.as_deref();
             }
         }
 
@@ -3741,16 +3767,14 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
                             nb.len() >= 3 && nb[0] != 0
                         });
                     if grp_ok && !single_skip {
-                        // Walk d.opts to find the actual node and clear its active.
-                        let target_name = matched.name.clone();
-                        let mut cur_opt = d.opts.as_deref_mut();
-                        while let Some(p) = cur_opt {
-                            if p.name == target_name {
-                                p.active = 0; // c:1912
-                                break;
-                            }
-                            cur_opt = p.next.as_deref_mut();
-                        }
+                        // c:1912 — `p->active = 0` on the node `ca_get_opt`
+                        // just returned. The port could not do that with a
+                        // detached copy, so it re-walked `d.opts` for the
+                        // first node of the same NAME — and that walk had no
+                        // `active` test where c:1712's does, so with two
+                        // same-named entries it could clear a different node
+                        // from the one that matched.
+                        matched.active.store(0, Ordering::Relaxed);
                     }
                 }
             }
@@ -3783,8 +3807,8 @@ pub struct castate {
     pub nopts: i32,                  // c:1931
     pub def: Option<Box<caarg>>,     // c:1932 Caarg def
     pub ddef: Option<Box<caarg>>,    // c:1933 Caarg ddef
-    pub curopt: Option<Box<caopt>>,  // c:1934 Caopt curopt
-    pub dopt: Option<Box<caopt>>,    // c:1935 Caopt dopt
+    pub curopt: Option<Arc<caopt>>,  // c:1934 Caopt curopt
+    pub dopt: Option<Arc<caopt>>,    // c:1935 Caopt dopt
     pub opt: i32,                    // c:1936
     pub arg: i32,                    // c:1937
     pub argbeg: i32,                 // c:1938
@@ -3892,7 +3916,7 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {
 /// - `napat` (the `-A` "non-arg" pattern) is also compiled via
 ///   `patcompile`.
 /// - The `sopts` (clumped single-letter remainders) LinkList is
-///   represented as a `Vec<Box<caopt>>` queue.
+///   represented as a `Vec<Arc<caopt>>` queue.
 /// - C's `memcpy(&ca_laststate, &state, sizeof(state))` checkpoints
 ///   (c:2056, 2314, 2346, 2363) copy the `LinkList args` / `LinkList
 ///   *oargs` POINTERS, so `ca_laststate.args` ALIASES the live
@@ -3915,10 +3939,10 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
     }
 
     // c:2030-2036 — mark everything active.
-    let mut p = d.opts.as_deref_mut();
+    let mut p = d.opts.as_deref();
     while let Some(o) = p {
-        o.active = 1;
-        p = o.next.as_deref_mut();
+        o.active.store(1, Ordering::Relaxed); // c:2054 ptr->active = 1
+        p = o.next.as_deref();
     }
     d.argsactive = 1;
     if let Some(r) = d.rest.as_deref_mut() {
@@ -3999,12 +4023,15 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
         // c:2068 — walk words.
         let mut cur = 2i32;
         let mut argxor: Option<Vec<String>> = None;
-        let mut sopts: Vec<Box<caopt>> = Vec::new();
-        let mut wasopt_idx: Option<usize> = None;
+        let mut sopts: Vec<Arc<caopt>> = Vec::new();
+        // c:2030 `Caopt wasopt = NULL` — a POINTER to the node whose
+        // `active` c:2415 restores. The port carried the option's `num` and
+        // re-walked `d.opts` for it; the node itself is now holdable.
+        let mut wasopt: Option<Arc<caopt>> = None;
         let mut doff: i32 = 0;
         let mut adef: Option<Box<caarg>> = None;
         let mut ddef: Option<Box<caarg>> = None;
-        let mut dopt: Option<Box<caopt>> = None;
+        let mut dopt: Option<Arc<caopt>> = None;
         state.curopt = None;
         state.def = None;
 
@@ -4166,7 +4193,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             }
 
             let mut pe_off: i32 = 0;
-            wasopt_idx = None;
+            wasopt = None; // c:2176
 
             // c:2156 — option lookup.
             let opt_match = if !goto_cont && state.opt == 2 {
@@ -4220,7 +4247,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             // `_arguments`' `*:: :->args` state never fired — so `_cargo`
             // listed its TOP-LEVEL options instead of descending into `build`.
             let mut sopt_end = 0usize;
-            let sopt_arm: Option<Box<caopt>> = if !goto_cont
+            let sopt_arm: Option<Arc<caopt>> = if !goto_cont
                 && opt_match.is_none()
                 && state.opt == 2
                 && d.single.is_some()
@@ -4230,7 +4257,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     .copied()
                     .map_or(false, |b| b == b'-' || b == b'+')
             {
-                let mut tmp_sopts: Option<Vec<Box<caopt>>> = None;
+                let mut tmp_sopts: Option<Vec<Arc<caopt>>> = None;
                 let s_match = ca_get_sopt(d, &line, &mut sopt_end, &mut tmp_sopts); // c:2206
                 if let Some(queued) = tmp_sopts {
                     sopts.extend(queued);
@@ -4329,7 +4356,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                     if d.single.is_none()
                         || (co_name.as_bytes().len() >= 3 && co_name.as_bytes()[1] != 0)
                     {
-                        wasopt_idx = Some(co_num as usize); // c:2201
+                        wasopt = state.curopt.clone(); // c:2225
                     }
                     state.curopt = None;
                 }
@@ -4636,17 +4663,10 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                             ls.dopt = dopt.clone();
                             ls.def = None;
                             ls.opt = 1;
-                            // Mark curopt active again in d.
-                            if let Some(co) = state.curopt.as_deref() {
-                                let target_name = co.name.clone();
-                                let mut p = d.opts.as_deref_mut();
-                                while let Some(op) = p {
-                                    if op.name == target_name {
-                                        op.active = 1;
-                                        break;
-                                    }
-                                    p = op.next.as_deref_mut();
-                                }
+                            // c:2398 — `state.curopt->active = 1` writes
+                            // through the alias the lookup returned.
+                            if let Some(co) = state.curopt.as_ref() {
+                                co.active.store(1, Ordering::Relaxed);
                             }
                         } else {
                             ca_doff.store(doff, Ordering::Relaxed);
@@ -4671,15 +4691,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                         ls.argend = state.argend;
                         ls.singles = state.singles;
                         ls.oopt = state.oopt;
-                        if let Some(wi) = wasopt_idx {
-                            let mut p = d.opts.as_deref_mut();
-                            while let Some(op) = p {
-                                if op.num as usize == wi {
-                                    op.active = 1;
-                                    break;
-                                }
-                                p = op.next.as_deref_mut();
-                            }
+                        if let Some(wo) = wasopt.as_ref() {
+                            wo.active.store(1, Ordering::Relaxed); // c:2415
                         }
                     }
                 }
@@ -4710,7 +4723,8 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
     let mut actopts = 0i32;
     let mut p = d.opts.as_deref();
     while let Some(o) = p {
-        if o.active != 0 {
+        if o.active.load(Ordering::Relaxed) != 0 {
+            // c:2423
             actopts += 1;
         }
         p = o.next.as_deref();
@@ -5383,7 +5397,7 @@ pub fn bin_comparguments(
                     if let Some(d) = s.d.as_ref() {
                         let mut p = d.opts.as_deref();
                         while let Some(opt) = p {
-                            if opt.active != 0 && opt.not == 0 {
+                            if opt.active.load(Ordering::Relaxed) != 0 && opt.not == 0 {
                                 let bucket: &mut Vec<String> = match opt.r#type {
                                     t if t == CAO_NEXT => &mut next_l,
                                     t if t == CAO_DIRECT => &mut direct_l,
@@ -9334,18 +9348,15 @@ mod tests {
         // c:996-1010 — freecaargs walks `next` chain freeing each
         // entry. After call, the chain owner observes no remaining
         // refs (Drop handles deallocation).
-        let mut head = caarg {
-            descr: Some("a".into()),
-            ..Default::default()
-        };
-        let mid = caarg {
-            descr: Some("b".into()),
-            ..Default::default()
-        };
-        let tail = caarg {
-            descr: Some("c".into()),
-            ..Default::default()
-        };
+        // `caarg` owns its `next` chain and tears it down iteratively,
+        // so it implements `Drop` and cannot be built with functional
+        // update syntax.
+        let mut head = caarg::default();
+        head.descr = Some("a".into());
+        let mut mid = caarg::default();
+        mid.descr = Some("b".into());
+        let mut tail = caarg::default();
+        tail.descr = Some("c".into());
         let mut mid_box = Box::new(mid);
         mid_box.next = Some(Box::new(tail));
         head.next = Some(mid_box);
@@ -9737,10 +9748,10 @@ mod tests {
         let args = vec![String::from(""), String::from("-foo[d]")];
         let mut def = *parse_cadef("_arguments", &args).expect("cadef built");
         // Mark the only opt active so ca_get_opt accepts it.
-        let mut cur = def.opts.as_deref_mut();
+        let mut cur = def.opts.as_deref();
         while let Some(o) = cur {
-            o.active = 1;
-            cur = o.next.as_deref_mut();
+            o.active.store(1, Ordering::Relaxed);
+            cur = o.next.as_deref();
         }
         let mut end: usize = 0;
         let hit = ca_get_opt(&def, "-foo", 1, &mut end).expect("hit");
@@ -9816,23 +9827,18 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         inittyptab();
-        let other = cadef {
-            opts: Some(Box::new(caopt {
-                name: Some("-bar".into()),
-                active: 1,
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-        let all = cadef {
-            opts: Some(Box::new(caopt {
-                name: Some("-foo".into()),
-                active: 1,
-                ..Default::default()
-            })),
-            snext: Some(Box::new(other)),
-            ..Default::default()
-        };
+        let mut bar = caopt::default();
+        bar.name = Some("-bar".into());
+        bar.active.store(1, Ordering::Relaxed);
+        let mut other = cadef::default();
+        other.opts = Some(Arc::new(bar));
+
+        let mut foo = caopt::default();
+        foo.name = Some("-foo".into());
+        foo.active.store(1, Ordering::Relaxed);
+        let mut all = cadef::default();
+        all.opts = Some(Arc::new(foo));
+        all.snext = Some(Box::new(other));
         // curset = &all (head). `-bar` lives in snext set — found.
         assert_eq!(ca_foreign_opt(&all, &all, "-bar"), 1);
         // `-foo` lives ONLY in the head (which gets skipped) — not found.
@@ -9848,17 +9854,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         inittyptab();
-        let mut d = cadef {
-            opts: Some(Box::new(caopt {
-                name: Some("-foo".into()),
-                active: 1,
-                ..Default::default()
-            })),
-            argsactive: 1,
-            ..Default::default()
-        };
+        let mut foo = caopt::default();
+        foo.name = Some("-foo".into());
+        foo.active.store(1, Ordering::Relaxed);
+        let mut d = cadef::default();
+        d.opts = Some(Arc::new(foo));
+        d.argsactive = 1;
         ca_inactive(&mut d, &[], 0, 0);
-        assert_eq!(d.opts.as_deref().unwrap().active, 1);
+        assert_eq!(
+            d.opts.as_deref().unwrap().active.load(Ordering::Relaxed),
+            1
+        );
         assert_eq!(d.argsactive, 1);
     }
 
@@ -9869,22 +9875,18 @@ mod tests {
         let _g = zle_test_setup();
         inittyptab();
         let saved_compcur = COMPCURRENT.load(Ordering::Relaxed);
-        let mut d = cadef {
-            opts: Some(Box::new(caopt {
-                name: Some("-foo".into()),
-                active: 1,
-                num: 0,
-                next: Some(Box::new(caopt {
-                    name: Some("-bar".into()),
-                    active: 1,
-                    num: 1,
-                    ..Default::default()
-                })),
-                ..Default::default()
-            })),
-            argsactive: 1,
-            ..Default::default()
-        };
+        let mut bar = caopt::default();
+        bar.name = Some("-bar".into());
+        bar.active.store(1, Ordering::Relaxed);
+        bar.num = 1;
+        let mut foo = caopt::default();
+        foo.name = Some("-foo".into());
+        foo.active.store(1, Ordering::Relaxed);
+        foo.num = 0;
+        foo.next = Some(Arc::new(bar));
+        let mut d = cadef::default();
+        d.opts = Some(Arc::new(foo));
+        d.argsactive = 1;
         // Force COMPCURRENT >= cur so the guard at c:1834 is satisfied.
         COMPCURRENT.store(2, Ordering::Relaxed);
         ca_inactive(&mut d, &[], 1, 1);
@@ -9893,7 +9895,12 @@ mod tests {
         COMPCURRENT.store(saved_compcur, Ordering::Relaxed);
         let mut p = d.opts.as_deref();
         while let Some(o) = p {
-            assert_eq!(o.active, 0, "{:?} should be deactivated", o.name);
+            assert_eq!(
+                o.active.load(Ordering::Relaxed),
+                0,
+                "{:?} should be deactivated",
+                o.name
+            );
             p = o.next.as_deref();
         }
     }
@@ -11407,4 +11414,178 @@ mod tests {
             elapsed
         );
     }
+
+    /// c:1019-1042 (`freecadef`) walks the `snext` chain with `while (d)`
+    /// and c:1026-1034 walks `opts` with `for (p = d->opts; p; p = n)`, so
+    /// in C a chain of any length is torn down in constant stack. The port
+    /// modelled `caopt.next` as an owning pointer with derived drop glue,
+    /// which recurses once per node — and a `cadef` is dropped implicitly
+    /// all over the place (cache eviction at c:1687, `ca_laststate.d`
+    /// being replaced), not only through `freecadef`.
+    ///
+    /// Measured on the old shape, debug build, on a libtest thread's
+    /// 2 MiB stack: 16000 options tore down fine, 17000 aborted the
+    /// process with `has overflowed its stack`. This builds 200000 — an
+    /// order of magnitude past the observed cliff — so the test either
+    /// passes or takes the whole run down with it, which is the only
+    /// honest way to pin a stack overflow. Parse plus teardown of 200000
+    /// measures 0.13 s, so the 5 s bound is about the harness, not the
+    /// work.
+    #[test]
+    fn caopt_chain_teardown_is_iterative_not_recursive() {
+        let _g = crate::test_util::global_state_lock();
+
+        let n = 200_000usize;
+        let mut args: Vec<String> = Vec::with_capacity(n + 1);
+        args.push(String::new());
+        for i in 0..n {
+            args.push(format!("--opt{}[d{}]", i, i));
+        }
+
+        let t0 = std::time::Instant::now();
+        let d = parse_cadef("_arguments", &args).expect("cadef built");
+        assert_eq!(d.nopts, n as i32);
+        drop(d); // recursion here aborts the process, it does not fail
+        let elapsed = t0.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "parse + teardown of a {}-option chain took {:?}",
+            n,
+            elapsed
+        );
+    }
+
+    /// c:1596 — `ret->single[sidx] = opt` stores the SAME `Caopt` the
+    /// `d->opts` chain holds, which is why c:1780 can read `p->active`
+    /// (live, rewritten by `ca_inactive` at c:1888/c:1912) and `p->args`
+    /// (the option's real argument spec) straight out of the slot.
+    ///
+    /// The port stored an independent copy with a hardcoded `active: 1`,
+    /// so the slot could not observe an exclusion and had to be
+    /// re-resolved through `d.opts` by `num` on every lookup. Pointer
+    /// identity is the whole property: assert it directly, and assert
+    /// that a write through the chain is visible through the slot.
+    #[test]
+    fn cadef_single_slots_alias_the_opts_chain_they_do_not_snapshot_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        inittyptab();
+
+        let args: Vec<String> = ["", "-s", "-a[alpha]", "-b[beta]:arg:_files", "--long[l]"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let d = parse_cadef("_arguments", &args).expect("cadef built");
+        let single = d.single.as_ref().expect("-s allocates the 188-slot table");
+
+        for name in ["-a", "-b"] {
+            let nb = name.as_bytes();
+            let sidx = single_index(nb[0], nb[1]);
+            assert!(sidx >= 0, "{} has no single-letter slot", name);
+            let slot = single[sidx as usize]
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} claimed no slot", name));
+
+            // The node the `opts` chain owns, by name.
+            let mut chain = d.opts.as_ref();
+            let node = loop {
+                let p = chain.expect("name not in the opts chain");
+                if p.name.as_deref() == Some(name) {
+                    break p;
+                }
+                chain = p.next.as_ref();
+            };
+
+            assert!(
+                Arc::ptr_eq(slot, node),
+                "single[{}] is a copy of {}, not the node itself",
+                sidx,
+                name
+            );
+            // c:1780 reads `p->args` out of the slot; `-b` takes one.
+            assert_eq!(slot.args.is_some(), name == "-b");
+
+            // c:1888 writes through the chain, c:1780 reads through the
+            // slot — one storage, as in C.
+            node.active.store(1, Ordering::Relaxed);
+            assert_eq!(slot.active.load(Ordering::Relaxed), 1);
+            node.active.store(0, Ordering::Relaxed);
+            assert_eq!(slot.active.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    /// c:1780 — `p = d->single[sidx]` is ONE array read per character of a
+    /// clumped word. Because the port's `single[]` held detached copies, it
+    /// could not trust the slot's `active`, and re-resolved each slot by
+    /// walking `d->opts` comparing `num` — an O(options) scan inside the
+    /// per-character loop, so a clump of C characters over an N-option
+    /// definition cost C*N where C costs C.
+    ///
+    /// The spec below is 100000 long options (pure chain padding, none of
+    /// them reachable through `single[]`) plus 62 single-letter CAO_NEXT
+    /// options, and the clumped word names all 62 — so every character
+    /// takes the c:1758 `CAO_NEXT` arm and the loop runs to the end. 1000
+    /// lookups is 62000 slot reads after, against 62000 * 100062 node
+    /// visits before. Measured by reinstating the re-resolve: 25.10 s,
+    /// against 0.0176 s for the array read. The 5 s bound is crossed 5x
+    /// over by the old shape and has ~285x of headroom over the new one,
+    /// so a loaded box cannot flip it.
+    #[test]
+    fn ca_get_sopt_indexes_the_single_table_it_does_not_rescan_the_opts_chain() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        inittyptab();
+
+        let letters: Vec<u8> = (b'a'..=b'z')
+            .chain(b'A'..=b'Z')
+            .chain(b'0'..=b'9')
+            .collect();
+        let mut args: Vec<String> = vec![String::new(), "-s".to_string()];
+        for i in 0..100_000 {
+            args.push(format!("--pad{}[p{}]", i, i));
+        }
+        for &c in &letters {
+            // `:arg:action` makes it CAO_NEXT, which c:1758 queues and
+            // keeps walking instead of terminating the clump.
+            args.push(format!("-{}[o]:arg:(x)", c as char));
+        }
+        let d = parse_cadef("_arguments", &args).expect("cadef built");
+
+        // c:2054 — `ca_parse_line` marks the chain active before any
+        // lookup; c:1780 refuses an inactive slot.
+        let mut p = d.opts.as_deref();
+        while let Some(o) = p {
+            o.active.store(1, Ordering::Relaxed);
+            p = o.next.as_deref();
+        }
+
+        let mut clump = String::from("-");
+        clump.push_str(&String::from_utf8(letters.clone()).unwrap());
+
+        const LOOKUPS: usize = 1_000;
+        let t0 = std::time::Instant::now();
+        for _ in 0..LOOKUPS {
+            let mut end = 0usize;
+            let mut lp: Option<Vec<Arc<caopt>>> = None;
+            let hit = ca_get_sopt(&d, &clump, &mut end, &mut lp);
+            // Every letter is CAO_NEXT, so the loop never terminates on a
+            // match: c:1801 returns `pp` and all 62 land in `lp`.
+            assert!(hit.is_some());
+            assert_eq!(lp.as_ref().map_or(0, Vec::len), letters.len());
+        }
+        let elapsed = t0.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "{} clumped lookups of {} letters over a {}-option chain took \
+             {:?}; each character is rescanning the chain instead of \
+             indexing d->single[] (c:1780)",
+            LOOKUPS,
+            letters.len(),
+            d.nopts,
+            elapsed
+        );
+    }
+
 }
