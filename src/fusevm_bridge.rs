@@ -14279,33 +14279,6 @@ fn subshell_restore_signal_dispositions(parent: &[i32], child: &[i32]) {
     }
 }
 
-/// Stack of the parent's `limits[]` and `current_limits[]` across
-/// in-process `( … )` bodies.
-///
-/// !!! WARNING: RUST-ONLY HELPER !!!
-/// C's `limits[]` / `current_limits[]` (`Src/exec.c:315`) are copied by
-/// the fork, and `zfork` applies the child's copy to the child process
-/// (`Src/exec.c:381-383` `setlimits(NULL)`), so `( ulimit -n 256 )`
-/// cannot be seen by the parent. zshrs shares the process, so the array
-/// and the real `setrlimit` state both have to be rolled back by hand.
-///
-/// BOTH arrays are needed, and they are not the same rollback. C keeps
-/// them apart on purpose: `limits[]` is what the shell WANTS,
-/// `current_limits[]` is what `setrlimit` has actually been given
-/// (`zsetlimit`, c:316-331, only calls `setrlimit` where the two
-/// disagree). `limit descriptors 256` without `-s` moves only the
-/// first. So the restore replays `setrlimit` for exactly the resources
-/// whose `current_limits[]` the BODY moved — never for a difference the
-/// parent was already carrying, which C would not have applied either.
-///
-/// Thread-local because subshell begin/end always pair on one thread,
-/// while a worker pool may have several in flight.
-#[cfg(unix)]
-thread_local! {
-    static SUBSH_SAVED_LIMITS: std::cell::RefCell<Vec<(Vec<libc::rlimit>, Vec<libc::rlimit>)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
 /// `waitpid(pid, &status, 0)` that retries on `EINTR`.
 ///
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -16399,13 +16372,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 .iter()
                 .filter_map(|n| crate::ported::params::getsparam(n).map(|v| ((*n).to_string(), v)))
                 .collect();
-            // libc::umask returns the previous mask AND sets the new
-            // one; call with current value to read without changing.
-            let cur_umask = unsafe {
-                let m = libc::umask(0o022);
-                libc::umask(m);
-                m as u32
-            };
             // Snapshot paramtab + hashed-storage too (step 1 of the
             // store unification mirrors writes there; restoring only
             // the HashMaps leaks subshell-scoped writes to the parent
@@ -16431,12 +16397,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 )
             };
             exec.subshell_snapshots.push(SubshellSnapshot {
-                // c:Src/Modules/zutil.c:106 `static HashTable zstyletab` —
-                // fork-copied for `(...)` in C. See SubshellSnapshot::zstyles.
-                zstyles: crate::ported::modules::zutil::zstyletab
-                    .lock()
-                    .map(|t| t.clone())
-                    .unwrap_or_default(),
                 // c:Src/utils.c:2111 `addlockfd` — the fds carrying
                 // `zsystem flock` locks. Recorded so subshell_end can close
                 // the ones the subshell itself opened (C's fork does it for
@@ -16447,19 +16407,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 special_globals: special_globals_snap,
                 positional_params: exec.pparams(),
-                // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
-                // symlink-resolved path. zsh's subshell isolation per
-                // Src/exec.c at the `entersubsh` path treats `pwd` (the
-                // shell-tracked logical PWD) as the carrier — see
-                // `Src/builtin.c:1239-1242` where cd writes the logical
-                // dest into `pwd`. Falling back to current_dir() only
-                // when PWD is unset matches `setupvals` at
-                // `Src/init.c:1100+`.
-                cwd: env::var("PWD")
-                    .ok()
-                    .map(PathBuf::from)
-                    .or_else(|| env::current_dir().ok()),
-                umask: cur_umask,
                 // Snapshot canonical `traps_table` — bin_trap writes
                 // there (`Src/builtin.c`).
                 traps: crate::ported::builtin::traps_table()
@@ -16472,7 +16419,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:2880 — fork() copies the alias tables to
                 // the subshell. `(alias x=y)` inside the subshell dies
                 // with the child; the parent doesn't see x. Bug #209.
-                tables: crate::ported::exec::SubshTables::save(),
+                tables: crate::ported::exec::SubshForkCopy::save(),
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. `(f() { ... })` defined
                 //   inside the subshell dies with the child; parent's
@@ -16485,26 +16432,6 @@ impl fusevm::ShellHost for ZshrsHost {
                     .unwrap_or_default(),
                 functions_compiled: exec.functions_compiled.clone(),
                 function_source: exec.function_source.clone(),
-                // c:Src/exec.c::entersubsh — subshell forks its own
-                // modulestab. A `(zmodload zsh/X)` inside the
-                // subshell flips MOD_INIT_B on the CHILD's
-                // modulestab; when the child exits the change
-                // dies with it. zshrs's in-process subshell would
-                // otherwise leak the load to the parent.
-                // Bug #210 in docs/BUGS.md. Snapshot just the
-                // (name → flags) pairs since the only mutating
-                // field is the flags bitmask (MOD_INIT_B for
-                // loaded, MOD_UNLOAD for unloaded).
-                modules: crate::ported::module::MODULESTAB
-                    .lock()
-                    .ok()
-                    .map(|t| {
-                        t.modules
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.node.flags))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
                 // c:Src/exec.c::entersubsh — fork-copy semantics for
                 // THINGYTAB (ZLE widget registry). A subshell `zle -N`
                 // / `zle -D` mutation dies with the child in C zsh;
@@ -16571,27 +16498,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:160 `int subsh;` — saved so End can put the
                 // parent's value back (subshells nest).
                 subsh: crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed),
-                // c:Src/builtin.c:541-547 — `enable`/`disable` flip the
-                // DISABLED bit on the `builtintab` node; c's fork for
-                // `( … )` gives the child a private copy of the table.
-                // See SubshellSnapshot::builtins_disabled.
-                builtins_disabled: crate::ported::builtin::BUILTINS_DISABLED
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default(),
-                // c:Src/builtin.c:541-547 — same for `disable -r` on the
-                // `reswdtab` node. See SubshellSnapshot::reswds_disabled.
-                reswds_disabled: crate::ported::hashtable::reswdtab_lock()
-                    .read()
-                    .map(|t| {
-                        t.iter()
-                            .filter(|(_, r)| {
-                                (r.node.flags & crate::ported::zsh_h::DISABLED as i32) != 0
-                            })
-                            .map(|(n, _)| n.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
             });
             // c:Src/exec.c:1192-1193 — `if (!(flags & ESUB_FAKE)) subsh = 1;`
             // A `( … )` is a real subshell, so the body runs with subsh set.
@@ -16641,28 +16547,11 @@ impl fusevm::ShellHost for ZshrsHost {
             // subshell_end, which is what makes clearing safe for zshrs's
             // in-process subshell.
             {
-                // Record the PARENT's `sigtrapped[]` and the parent's
-                // `limits[]` BEFORE the reset below wipes the first and
-                // before the body can call `ulimit` on the second. C
-                // gets both from the fork: the child mutates private
-                // copies (`Src/exec.c:315` for the limits, the
-                // `sigtrapped[]` of `Src/signals.c:39` for the traps)
-                // and the parent's stay put.
+                // Record the PARENT's `sigtrapped[]` BEFORE the reset below
+                // wipes it. C gets it from the fork: the child mutates a
+                // private copy (`Src/signals.c:39`) and the parent's stays
+                // put. (`limits[]` travels in SubshForkCopy.)
                 subshell_signal_enter();
-                #[cfg(unix)]
-                {
-                    crate::ported::builtins::rlimits::ensure_limits_initialized();
-                    let saved_limits = crate::ported::builtins::rlimits::LIMITS
-                        .get()
-                        .and_then(|l| l.lock().ok().map(|g| g.clone()))
-                        .unwrap_or_default();
-                    let saved_current = crate::ported::builtins::rlimits::CURRENT_LIMITS
-                        .get()
-                        .and_then(|l| l.lock().ok().map(|g| g.clone()))
-                        .unwrap_or_default();
-                    SUBSH_SAVED_LIMITS
-                        .with(|s| s.borrow_mut().push((saved_limits, saved_current)));
-                }
                 entersubsh_reset_traps();
             }
             // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
@@ -16764,11 +16653,6 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::builtin::BREAKS.store(breaks, SeqCst);
                     crate::ported::builtin::CONTFLAG.store(contflag, SeqCst);
                 }
-                // c:Src/Modules/zutil.c:106 — restore the fork-copied
-                // zstyle table. See SubshellSnapshot::zstyles.
-                if let Ok(mut t) = crate::ported::modules::zutil::zstyletab.lock() {
-                    *t = snap.zstyles;
-                }
                 // c:Src/utils.c:2155-2164 `zcloselockfd` — release the
                 // `zsystem flock` locks the subshell itself took. Under C
                 // the forked child's fds close on exit; here we close the
@@ -16782,23 +16666,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:160 / :1192-1193 — the child's `subsh = 1`
                 // dies with the fork in C; restore the parent's value here.
                 crate::ported::exec::subsh.store(snap.subsh, std::sync::atomic::Ordering::Relaxed);
-                // c:Src/builtin.c:541-547 — the child's `enable`/`disable`
-                // only touched its forked copy of `builtintab` /
-                // `reswdtab`. Put the parent's DISABLED sets back.
-                // See SubshellSnapshot::builtins_disabled.
-                if let Ok(mut s) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
-                    *s = snap.builtins_disabled;
-                }
-                if let Ok(mut t) = crate::ported::hashtable::reswdtab_lock().write() {
-                    let names: Vec<String> = t.iter().map(|(n, _)| n.clone()).collect();
-                    for n in names {
-                        if snap.reswds_disabled.contains(&n) {
-                            t.disable(&n);
-                        } else {
-                            t.enable(&n);
-                        }
-                    }
-                }
                 // c:Src/signals.c:39 — same fork-copy reasoning for the
                 // per-signal trap flags cleared at subshell entry.
                 //
@@ -16821,65 +16688,14 @@ impl fusevm::ShellHost for ZshrsHost {
                     Err(_) => Vec::new(),
                 };
                 subshell_restore_signal_dispositions(&snap.sigtrapped, &child_sigtrapped);
-                // c:Src/exec.c::entersubsh — restore parent's
-                // modulestab so a subshell `(zmodload zsh/X)` doesn't
-                // leak to the parent. Bug #210 in docs/BUGS.md.
-                // Restore via per-module flag write since the
-                // snapshot is `(name → flags)` only.
-                if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
-                    // A `zmodload zsh/X` for a module with no modulestab
-                    // node yet takes load_module's allocate-on-miss branch
-                    // (c:Src/module.c:2223-2251) and CREATES the node. In C
-                    // that node is allocated in the forked child and dies
-                    // with it; here it survives, and the flag-only restore
-                    // below never touched it because the parent's snapshot
-                    // has no entry for that name. So `(zmodload zsh/datetime)`
-                    // left the parent with a MOD_INIT_B node and
-                    // `zmodload -e zsh/datetime` answered 0 where zsh
-                    // answers 1 (V04features.ztst %prep loads the module in
-                    // exactly that shape). Drop nodes the parent didn't have
-                    // FIRST, then restore the flags of the ones it did.
-                    // Rolling the node out is not enough on its own: a
-                    // module's feature-enable state lives in ITS OWN
-                    // statics (C: the `bintab[]` BINF_ADDED bits and
-                    // `patab[]` `d->pm` slots the load flipped —
-                    // `setfeatureenables`, c:Src/module.c:3445), which the
-                    // fork made private to the child. Run the same rollback
-                    // C runs on a real unload — `cleanup_module` (c:1918) →
-                    // `finish_module` (c:1926) — so the parent's view of
-                    // those tables matches the "module was never loaded"
-                    // state it had before the subshell.
-                    let strays: Vec<String> = t
-                        .modules
-                        .keys()
-                        .filter(|n| !snap.modules.contains_key(*n))
-                        .cloned()
-                        .collect();
-                    for name in &strays {
-                        let loaded = t
-                            .modules
-                            .get(name)
-                            .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
-                            .unwrap_or(false);
-                        if loaded {
-                            let _ = crate::ported::module::cleanup_module(&mut t, name);
-                            let _ = crate::ported::module::finish_module(&mut t, name);
-                        }
-                    }
-                    t.modules.retain(|name, _| snap.modules.contains_key(name));
-                    for (name, saved_flags) in &snap.modules {
-                        if let Some(m) = t.modules.get_mut(name) {
-                            m.node.flags = *saved_flags;
-                        }
-                    }
-                }
-                // NOTE: this runs BEFORE the paramtab restore below.
-                // `cleanup_module` -> `setfeatureenables(m, f, NULL)`
-                // (c:Src/module.c:3445) -> `deleteparamdef` (c:1128) looks
-                // its parameter up in the LIVE paramtab, so rolling the
-                // module back after the parent's paramtab was reinstated
-                // found nothing and left the module's `patab[]` slots
-                // marked enabled forever.
+                // c:Src/exec.c:2880 — alias, hash-table, `environ`, cwd,
+                // umask, rlimit, zstyle, module, sched … writes in a
+                // subshell die with the forked child: the parent never sees
+                // `(alias x=y)` (Bug #209 in docs/BUGS.md), `(export y=sub)`
+                // or `(zmodload zsh/X)` (Bug #210). See SubshForkCopy.
+                // BEFORE the paramtab restore below: rolling a module back
+                // looks its parameters up in the LIVE paramtab.
+                snap.tables.restore();
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
@@ -16936,18 +16752,6 @@ impl fusevm::ShellHost for ZshrsHost {
                     *m = snap.paramtab_hashed_storage;
                 }
                 exec.set_pparams(snap.positional_params);
-                if let Some(cwd) = snap.cwd {
-                    let _ = env::set_current_dir(&cwd);
-                    // Resync $PWD env so a parent `pwd` doesn't read
-                    // the cwd the subshell `cd`'d into.
-                    env::set_var("PWD", &cwd);
-                }
-                // Restore umask. zsh's `(umask 077)` doesn't leak to
-                // parent because the subshell forks; we run in-process
-                // so we manually reset.
-                unsafe {
-                    libc::umask(snap.umask as libc::mode_t);
-                }
                 // Restore parent's traps (the subshell's own traps die
                 // with it). zsh: `(trap "X" USR1)` doesn't leak the
                 // USR1 trap out of the subshell. Write back to the
@@ -16960,11 +16764,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 // subshells so child option changes die with the
                 // child; we run in-process and must restore.
                 crate::ported::options::opt_state_restore(snap.opts);
-                // c:Src/exec.c:2880 — fork() means alias, hash-table and
-                // `environ` writes in a subshell die with the child: the
-                // parent never sees `(alias x=y)` (Bug #209 in docs/BUGS.md)
-                // or `(export y=sub)`. See SubshTables.
-                snap.tables.restore();
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. Restore parent's function
                 //   table from snapshot so `(f() { ... })` definitions
@@ -17030,46 +16829,6 @@ impl fusevm::ShellHost for ZshrsHost {
         // here against OUTER's trap, matching C zsh's
         // signal-delivery-to-parent semantics. Bug #450.
         crate::ported::signals_h::unqueue_signals();
-        // c:Src/exec.c:315 / :381-383 — `limits[]` is fork-copied and the
-        // child applies its copy with `setlimits(NULL)`, so `( ulimit -n
-        // 256 )` cannot be seen by the parent. Roll both arrays back and
-        // replay `setrlimit` for exactly the resources whose
-        // `current_limits[]` the BODY moved — the same test `zsetlimit`
-        // makes (c:319-320), applied to before/after rather than
-        // want/have, so a `limit` the PARENT set without `-s` is not
-        // suddenly installed here. A body that LOWERED a hard limit is
-        // the one case this cannot undo: the process cannot raise it
-        // again, and C only escapes that because the child dies with it.
-        #[cfg(unix)]
-        {
-            let saved = SUBSH_SAVED_LIMITS.with(|s| s.borrow_mut().pop());
-            if let Some((saved_limits, saved_current)) = saved {
-                if let Some(lock) = crate::ported::builtins::rlimits::CURRENT_LIMITS.get() {
-                    if let Ok(mut cur) = lock.lock() {
-                        for (i, want) in saved_current.iter().enumerate() {
-                            let have = match cur.get(i) {
-                                Some(h) => *h,
-                                None => continue,
-                            };
-                            // c:319-320 — `if (limits[n].rlim_max != …
-                            //   || limits[n].rlim_cur != …)`
-                            if have.rlim_max == want.rlim_max && have.rlim_cur == want.rlim_cur {
-                                continue;
-                            }
-                            // c:321 — `setrlimit(limnum, limits + limnum)`
-                            if unsafe { libc::setrlimit(i as _, want) } == 0 {
-                                cur[i] = *want; // c:329
-                            }
-                        }
-                    }
-                }
-                if let Some(lock) = crate::ported::builtins::rlimits::LIMITS.get() {
-                    if let Ok(mut g) = lock.lock() {
-                        *g = saved_limits;
-                    }
-                }
-            }
-        }
         // Replay the signals that arrived while the body ran and that
         // the PARENT traps, now that the parent's `sigtrapped[]` and
         // `traps_table` are back. See `subshell_defer_signal`.

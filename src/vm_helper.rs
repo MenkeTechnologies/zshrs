@@ -358,20 +358,9 @@ pub struct SubshellSnapshot {
     /// paramtab restore doesn't touch. C forks for `(...)`, so a child's writes
     /// to those globals die with it. zshrs runs subshells in-process, so
     /// `(IFS=,; :)` left the PARENT's IFS as `,` — and every later word-split
-    /// in the parent silently used it. Same fork-copy reasoning as `opts` /
-    /// `umask` / `aliases` above.
+    /// in the parent silently used it. Same fork-copy reasoning as `opts`
+    /// and `tables`.
     pub special_globals: Vec<(String, String)>,
-    /// Parent's `zstyletab` at subshell entry (Src/Modules/zutil.c:106
-    /// `static HashTable zstyletab`). C forks for `(...)`, so a
-    /// `zstyle` set inside the subshell dies with the child. zshrs runs
-    /// subshells in-process, so a subshell-scoped `zstyle` leaked into
-    /// the parent AND — because `setstypat` (c:388-396) inserts a
-    /// same-weight pattern AFTER the already-present ones — a second
-    /// subshell re-defining the same (context, style) pair only
-    /// REPLACED the leaked entry instead of establishing a fresh
-    /// definition order. Same fork-copy reasoning as `aliases` /
-    /// `shfuncs` / `modules`.
-    pub zstyles: crate::ported::modules::zutil::style_table,
     /// Flock fds (`Src/utils.c:2111` `addlockfd`) live at subshell
     /// entry. `zsystem flock FILE` keeps the fd open for the life of
     /// the shell; under C's forked `(...)` the child's fd — and hence
@@ -388,14 +377,6 @@ pub struct SubshellSnapshot {
     /// `after` twice. zshrs runs subshells in-process, so the three
     /// counters have to be restored by hand at the boundary.
     pub loop_flags: (i32, i32, i32),
-    /// Process working directory at subshell entry. `cd` inside the
-    /// subshell shouldn't leak to the parent; we restore on End.
-    pub cwd: Option<PathBuf>,
-    /// File-creation mask at subshell entry. zsh forks for `(...)` so
-    /// `umask` set inside dies with the child; we run subshells in
-    /// process so we must restore the mask on End. Otherwise
-    /// `umask 022; (umask 077); umask` shows 077 in the parent.
-    pub umask: u32,
     /// Parent's traps at subshell entry. zsh's `(trap "echo X" EXIT;
     /// true)` runs the trap when the subshell exits — BEFORE the parent
     /// continues. Without this snapshot, the trap inherited from parent
@@ -410,14 +391,14 @@ pub struct SubshellSnapshot {
     /// must restore the option store on subshell_end.
     pub opts: HashMap<String, bool>,
     /// The fork-copied hash tables — `aliastab`, `sufaliastab`, … — at
-    /// subshell entry (see `crate::ported::exec::SubshTables`). zsh forks
+    /// subshell entry (see `crate::ported::exec::SubshForkCopy`). zsh forks
     /// for `(...)` so `(alias x=y)` inside a subshell dies with the child
     /// and doesn't leak to the parent. Bug #209 in docs/BUGS.md. The
     /// tables are restored whole — node flags (ALIAS_GLOBAL / DISABLED)
     /// and bucket order included — which the `(name, text, flags)` list
     /// this replaced got only partly right, and it never covered
     /// `sufaliastab` at all: `(alias -s x=y)` leaked.
-    pub tables: crate::ported::exec::SubshTables,
+    pub tables: crate::ported::exec::SubshForkCopy,
     /// Parent's shell-function table at subshell entry. C zsh's
     /// `entersubsh` (`Src/exec.c`) forks before running the
     /// subshell body so `(f() { ... })` defining a function dies
@@ -450,19 +431,6 @@ pub struct SubshellSnapshot {
     ///
     /// Copy-on-write, for the same reason as `functions_compiled`.
     pub function_source: crate::cow_map::CowHashMap<String, String>,
-    /// Parent's modulestab `modules` map at subshell entry. zsh forks
-    /// for `(...)` so a `(zmodload zsh/X)` inside the subshell sets
-    /// MOD_INIT_B on the child's modulestab; when the child exits the
-    /// flag dies with it and the parent's modulestab is untouched.
-    /// zshrs runs subshells in-process, so a subshell `zmodload`
-    /// would otherwise flip the parent's `${modules[zsh/X]}` from
-    /// unset to "loaded". Snapshot here and restore on subshell_end.
-    /// Bug #210 in docs/BUGS.md. Stored as `(name → flags)`
-    /// since `module` struct doesn't derive Clone (LinkList/
-    /// Linkedmod) — and the only thing `zmodload` mutates that
-    /// affects introspection is the flags bitmask (MOD_INIT_B
-    /// for loaded, MOD_UNLOAD for unloaded).
-    pub modules: HashMap<String, i32>,
     /// Parent's THINGYTAB (ZLE widget registry) at subshell entry.
     /// zsh forks for `(...)` so `zle -N w f` / `zle -D w` inside the
     /// subshell flip widget bindings only in the child; when the
@@ -526,23 +494,6 @@ pub struct SubshellSnapshot {
     /// bare `false`. zshrs runs `( … )` in-process, so the flag has
     /// to be set on entry and restored by hand on End.
     pub subsh: i32,
-    /// Names of builtins carrying `DISABLED` in `builtintab` at
-    /// subshell entry (c:Src/builtin.c:541-547 `enable`/`disable`
-    /// flip `node.flags & DISABLED`; c:Src/hashtable.c:1097
-    /// `builtintab`). C forks for `(...)`, so a `(disable typeset)`
-    /// marks the flag only in the child's copy of `builtintab` and
-    /// the parent still sees the builtin. zshrs runs subshells
-    /// in-process against the process-global `BUILTINS_DISABLED`
-    /// set, so `( disable typeset ); typeset x=1` reported
-    /// `command not found: typeset` in the PARENT.
-    pub builtins_disabled: std::collections::HashSet<String>,
-    /// Names of reserved words carrying `DISABLED` in `reswdtab` at
-    /// subshell entry (c:Src/builtin.c:541-547 `disable -r`;
-    /// c:Src/hashtable.c:1124 `reswdtab = newhashtable(23,
-    /// "reswdtab", NULL)`). Same fork-copy reasoning as
-    /// `builtins_disabled` — `(disable -r typeset)` must not change
-    /// how the parent PARSES `typeset foo=`cmd``.
-    pub reswds_disabled: std::collections::HashSet<String>,
 }
 
 #[allow(unused_imports)]
@@ -6057,9 +6008,11 @@ impl ShellExecutor {
                     .unwrap_or_default();
                 let functions_compiled_snap = self.functions_compiled.clone();
                 let function_source_snap = self.function_source.clone();
-                // c:Src/exec.c:4816 — the fork-copied hash tables
-                // (aliases, …); see SubshTables.
-                let tables_snap = crate::ported::exec::SubshTables::save();
+                // c:Src/exec.c:4816 — what the forked child owns a copy of:
+                // hash tables, `environ`, cwd, umask, rlimits, …; see
+                // SubshForkCopy.
+                // A funsub/valsub runs in the current shell and keeps it all.
+                let tables_snap = (!shared_state).then(crate::ported::exec::SubshForkCopy::save);
                 // c:Src/exec.c:4782 — getoutput's child runs
                 // `entersubsh(ESUB_PGRP|ESUB_NOMONITOR)`, and c:1219
                 // `if (flags & ESUB_PGRP) clearjobtab(monitor)` hands
@@ -6258,6 +6211,11 @@ impl ShellExecutor {
                 // A funsub/valsub skips ALL of it: that is the entire
                 // difference between `${ list; }` and `$(list)`.
                 if !shared_state {
+                    // First: rolling a module back looks its parameters up
+                    // in the LIVE paramtab (see SubshForkCopy::restore).
+                    if let Some(snap) = tables_snap {
+                        snap.restore();
+                    }
                     if let Ok(mut t) = crate::ported::params::paramtab().write() {
                         *t = paramtab_snap;
                     }
@@ -6292,7 +6250,6 @@ impl ShellExecutor {
                     }
                     self.functions_compiled = functions_compiled_snap;
                     self.function_source = function_source_snap;
-                    tables_snap.restore();
                     // Discard anything the substitution added to the completion
                     // arena — the in-process stand-in for the forked child's
                     // address space going away (see comp_arena_save above).

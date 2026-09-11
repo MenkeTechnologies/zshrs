@@ -4989,24 +4989,28 @@ impl Drop for SubshStateGuard {
     }
 }
 
-/// The hash tables (and the environment) a forked subshell owns a private
-/// copy of, taken on entry to an in-process subshell and put back on exit.
+/// The state a forked subshell owns a private copy of — the shell's hash
+/// tables, its environment, its working directory and its process
+/// attributes — taken on entry to an in-process subshell and put back on
+/// exit.
 ///
 /// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
 /// `getoutput` (`Src/exec.c:4816`) and `( … )` (`c:2880`) run the body in
 /// a `zfork()` child. `entersubsh` (`c:1123-1261`) resets traps, job
-/// control, `subsh` and `zsh_subshell`, but it does not touch these
-/// tables at all: the child simply mutates its fork-copied tables, and
-/// they die at `_realexit()` (`c:4843`). The parent never sees
-///     x=$(alias a=b)
+/// control, `subsh` and `zsh_subshell`, but it does not touch any of the
+/// state below: the child simply writes its fork-copied tables, its own
+/// `environ`, its own cwd, umask and rlimits, and all of it dies at
+/// `_realexit()` (`c:4843`). The parent never sees
+///     x=$(alias a=b; export v=1; cd /tmp; umask 077)
 /// because nothing it owns was written. zshrs runs both forms IN
-/// PROCESS, so each table the body can write must be handed back here.
+/// PROCESS, so each piece the body can write must be handed back here.
 ///
-/// Every table is copy-on-write: `save` is a refcount bump per table,
-/// and only a body that actually writes a table pays for copying it.
-/// The environment is one byte copy (`environ_image`), sized by the
-/// environment rather than by any table.
-pub struct SubshTables {
+/// Cost of `save`, per substitution: every table is copy-on-write, so a
+/// refcount bump each, and only a body that writes a table pays for
+/// copying it; the environment is one byte copy (`environ_image`); the
+/// directory stack and the two rlimit arrays are short vectors; the cwd
+/// is one `stat` and the umask two `umask(2)` calls.
+pub struct SubshForkCopy {
     /// `aliastab` (`Src/hashtable.c:1177`) — `alias`, `unalias`,
     /// `disable -a`, `aliases[x]=…`.
     aliastab: crate::ported::hashtable::alias_table,
@@ -5029,13 +5033,57 @@ pub struct SubshTables {
     /// (`PWD`/`OLDPWD`) and `allexport` assignment writes it with
     /// `setenv`/`unsetenv` (`Src/params.c:5320`, `c:5537`).
     environ: crate::ported::params::environ_image,
+    /// The process working directory, as the device and inode of `.`.
+    /// `cd`, `pushd` and `popd` in the body move it for the whole
+    /// process; `restore` compares and moves back only if they did.
+    cwd: Option<(u64, u64)>,
+    /// `$PWD` on entry — where `restore` goes back to.
+    pwd: Option<String>,
+    /// `dirstack` (`Src/builtin.c:744`) — `pushd` / `popd`.
+    dirstack: Vec<String>,
+    /// The file-creation mask — `umask` (`Src/builtin.c:7483`).
+    umask: libc::mode_t,
+    /// `limits[]` and `current_limits[]` (`Src/exec.c:315`) — `ulimit`,
+    /// `limit`, `unlimit`. `zfork` applies the child's copy to the child
+    /// (`c:381-383` `setlimits(NULL)`), so the parent never sees it. Both
+    /// arrays are needed and are rolled back differently: `limits[]` is
+    /// what the shell WANTS, `current_limits[]` what `setrlimit` was
+    /// actually given (`zsetlimit`, `c:319-332`, only calls `setrlimit`
+    /// where they disagree), so `limit descriptors 256` without `-s`
+    /// moves only the first.
+    limits: Vec<libc::rlimit>,
+    current_limits: Vec<libc::rlimit>,
+    /// `zstyletab` (`Src/Modules/zutil.c:106`) — `zstyle`, `zstyle -d`.
+    zstyletab: crate::ported::modules::zutil::style_table,
+    /// `modulestab` (`Src/module.c:49`) as `(name → flags)`: `zmodload`
+    /// flips `MOD_INIT_B` / `MOD_UNLOAD`, and loading a module the table
+    /// has never seen adds a node (see `restore`).
+    modules: std::collections::HashMap<String, i32>,
+    /// Builtins carrying `DISABLED` in `builtintab` (`Src/builtin.c:146`)
+    /// — `disable`/`enable` (`c:535-546`).
+    builtins_disabled: std::collections::HashSet<String>,
+    /// Reserved words carrying `DISABLED` in `reswdtab`
+    /// (`Src/hashtable.c:1114`) — `disable -r`. Changes how the parent
+    /// PARSES, e.g. `repeat 2 print r` stops being a loop.
+    reswds_disabled: std::collections::HashSet<String>,
+    /// `schedcmds` (`Src/Builtins/sched.c:52`) — `sched`.
+    schedcmds: Option<Box<crate::ported::builtins::sched::schedcmd>>,
+    /// `shtimer` (`Src/params.c:147`) — assigning `SECONDS` moves it.
+    shtimer: std::time::Duration,
 }
 
-impl SubshTables {
-    /// Take the parent's tables. O(1) per table; see `environ_image` for
-    /// the environment.
+impl SubshForkCopy {
+    /// Take the parent's state. O(1) per table; see the type docs for
+    /// the rest.
     pub fn save() -> Self {
-        SubshTables {
+        use std::os::unix::fs::MetadataExt;
+        crate::ported::builtins::rlimits::ensure_limits_initialized();
+        let rlimits = |a: &std::sync::OnceLock<std::sync::Mutex<Vec<libc::rlimit>>>| {
+            a.get()
+                .and_then(|l| l.lock().ok().map(|g| g.clone()))
+                .unwrap_or_default()
+        };
+        SubshForkCopy {
             aliastab: crate::ported::hashtable::aliastab_lock()
                 .read()
                 .map(|t| t.snapshot())
@@ -5055,12 +5103,114 @@ impl SubshTables {
                 .unwrap_or_default(),
             pathchecked: pathchecked.load(Ordering::SeqCst),
             environ: crate::ported::params::environ_image::save(),
+            cwd: std::fs::metadata(".").ok().map(|m| (m.dev(), m.ino())),
+            pwd: getsparam("PWD"),
+            dirstack: crate::ported::modules::parameter::DIRSTACK
+                .lock()
+                .map(|d| d.clone())
+                .unwrap_or_default(),
+            // umask(2) can only be read by setting it; put it straight back.
+            umask: unsafe {
+                let m = libc::umask(0o022);
+                libc::umask(m);
+                m
+            },
+            limits: rlimits(&crate::ported::builtins::rlimits::LIMITS),
+            current_limits: rlimits(&crate::ported::builtins::rlimits::CURRENT_LIMITS),
+            zstyletab: crate::ported::modules::zutil::zstyletab
+                .lock()
+                .map(|t| t.clone())
+                .unwrap_or_default(),
+            modules: crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| t.modules.iter().map(|(k, v)| (k.clone(), v.node.flags)).collect())
+                .unwrap_or_default(),
+            builtins_disabled: crate::ported::builtin::BUILTINS_DISABLED
+                .lock()
+                .map(|s| s.clone())
+                .unwrap_or_default(),
+            reswds_disabled: crate::ported::hashtable::reswdtab_lock()
+                .read()
+                .map(|t| {
+                    t.iter()
+                        .filter(|(_, r)| (r.node.flags & crate::ported::zsh_h::DISABLED as i32) != 0)
+                        .map(|(n, _)| n.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            schedcmds: crate::ported::builtins::sched::schedcmd::subsh_save(),
+            shtimer: crate::ported::params::shtimer_lock()
+                .lock()
+                .map(|t| *t)
+                .unwrap_or_default(),
         }
     }
 
-    /// Put the parent's tables back, discarding whatever the subshell
-    /// body did to them — the in-process stand-in for the child exiting.
+    /// Put the parent's state back, discarding whatever the subshell
+    /// body did to it — the in-process stand-in for the child exiting.
     pub fn restore(self) {
+        use std::os::unix::fs::MetadataExt;
+        // modulestab first: rolling a module back runs `cleanup_module`
+        // → `setfeatureenables` (`Src/module.c:3354`) → `deleteparamdef`
+        // (c:1128), which looks its parameters up in the LIVE paramtab —
+        // so callers restore this struct before they put paramtab back.
+        //
+        // A `zmodload zsh/X` for a module with no node yet takes
+        // load_module's allocate-on-miss branch (c:2229-2237) and CREATES
+        // the node. In C that node is allocated in the forked child and
+        // dies with it; here it survives, and restoring flags alone would
+        // never touch it — `(zmodload zsh/datetime)` left the parent with a
+        // loaded node and `zmodload -e zsh/datetime` answering 0 where zsh
+        // answers 1. So nodes the parent did not have are rolled back the
+        // way a real unload does it — `cleanup_module` (c:1922) →
+        // `finish_module` (c:1930), undoing the feature enables the load
+        // made in the module's own statics — and dropped; then the flags
+        // of the parent's nodes are put back.
+        if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
+            let strays: Vec<String> = t
+                .modules
+                .keys()
+                .filter(|n| !self.modules.contains_key(*n))
+                .cloned()
+                .collect();
+            for name in &strays {
+                let loaded = t
+                    .modules
+                    .get(name)
+                    .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
+                    .unwrap_or(false);
+                if loaded {
+                    let _ = crate::ported::module::cleanup_module(&mut t, name);
+                    let _ = crate::ported::module::finish_module(&mut t, name);
+                }
+            }
+            t.modules.retain(|name, _| self.modules.contains_key(name));
+            for (name, saved_flags) in &self.modules {
+                if let Some(m) = t.modules.get_mut(name) {
+                    m.node.flags = *saved_flags;
+                }
+            }
+        }
+        if let Ok(mut t) = crate::ported::modules::zutil::zstyletab.lock() {
+            *t = self.zstyletab;
+        }
+        if let Ok(mut s) = crate::ported::builtin::BUILTINS_DISABLED.lock() {
+            *s = self.builtins_disabled;
+        }
+        if let Ok(mut t) = crate::ported::hashtable::reswdtab_lock().write() {
+            let names: Vec<String> = t.iter().map(|(n, _)| n.clone()).collect();
+            for n in names {
+                if self.reswds_disabled.contains(&n) {
+                    t.disable(&n);
+                } else {
+                    t.enable(&n);
+                }
+            }
+        }
+        crate::ported::builtins::sched::schedcmd::subsh_restore(self.schedcmds);
+        if let Ok(mut t) = crate::ported::params::shtimer_lock().lock() {
+            *t = self.shtimer;
+        }
         if let Ok(mut t) = crate::ported::hashtable::aliastab_lock().write() {
             t.restore(self.aliastab);
         }
@@ -5076,6 +5226,44 @@ impl SubshTables {
         }
         pathchecked.store(self.pathchecked, Ordering::SeqCst);
         self.environ.restore();
+        let here = std::fs::metadata(".").ok().map(|m| (m.dev(), m.ino()));
+        if here != self.cwd {
+            if let Some(pwd) = &self.pwd {
+                let _ = std::env::set_current_dir(pwd);
+            }
+        }
+        if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+            *d = self.dirstack;
+        }
+        unsafe {
+            libc::umask(self.umask);
+        }
+        // `zsetlimit` (c:319-332) applied to before/after: replay
+        // `setrlimit` only for the resources whose `current_limits[]` the
+        // BODY moved, so a `limit` the parent set without `-s` is not
+        // suddenly installed here. A body that LOWERED a hard limit is the
+        // one case this cannot undo — the process cannot raise it again;
+        // C escapes that only because the child dies with it.
+        if let Some(lock) = crate::ported::builtins::rlimits::CURRENT_LIMITS.get() {
+            if let Ok(mut cur) = lock.lock() {
+                for (i, want) in self.current_limits.iter().enumerate() {
+                    let Some(have) = cur.get(i).copied() else {
+                        continue;
+                    };
+                    if have.rlim_max == want.rlim_max && have.rlim_cur == want.rlim_cur {
+                        continue; // c:321-322
+                    }
+                    if unsafe { libc::setrlimit(i as _, want) } == 0 {
+                        cur[i] = *want; // c:329
+                    }
+                }
+            }
+        }
+        if let Some(lock) = crate::ported::builtins::rlimits::LIMITS.get() {
+            if let Ok(mut g) = lock.lock() {
+                *g = self.limits;
+            }
+        }
     }
 }
 

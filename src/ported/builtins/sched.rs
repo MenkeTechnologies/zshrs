@@ -69,12 +69,42 @@ pub type Schedcmd = Option<Box<schedcmd>>;
 ///     int flags;            /* flags as above */
 /// };
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct schedcmd {
     pub next: Option<Box<schedcmd>>, // c:44
     pub cmd: String,                 // c:45
     pub time: time_t,                // c:46
     pub flags: i32,                  // c:47
+}
+
+impl schedcmd {
+    /// The pending-events list as it stands, for an in-process subshell
+    /// to hand back at its end.
+    ///
+    /// !!! RUST-ONLY — C forks, and the child's `schedcmds` (c:52) dies
+    /// with it: `x=$(sched +100 true); sched` lists nothing in zsh !!!
+    pub fn subsh_save() -> Option<Box<schedcmd>> {
+        schedcmds_lock().lock().unwrap().clone()
+    }
+
+    /// Put back a list taken by `subsh_save`. When the body changed it,
+    /// the timed event is re-armed for the restored head the way every
+    /// other list edit does (`scheddeltimed` c:79 / `schedaddtimed` c:61).
+    ///
+    /// !!! RUST-ONLY — see `subsh_save` !!!
+    pub fn subsh_restore(saved: Option<Box<schedcmd>>) {
+        {
+            let mut head = schedcmds_lock().lock().unwrap();
+            if *head == saved {
+                return;
+            }
+            *head = saved;
+        }
+        scheddeltimed();
+        if schedcmds_lock().lock().unwrap().is_some() {
+            schedaddtimed();
+        }
+    }
 }
 
 // =====================================================================

@@ -3912,7 +3912,12 @@ pub struct MatchData {
 #[derive(Default, Clone)]
 pub struct style_table {
     /// `styles` field.
-    styles: HashMap<String, Vec<stypat>>,
+    ///
+    /// Copy-on-write (`crate::cow_map::CowHashMap`): `$( … )` and `( … )`
+    /// snapshot this table on entry (`crate::ported::exec::SubshForkCopy`),
+    /// so `clone()` must be a refcount bump. A compsys configuration runs
+    /// to hundreds of styles; only a body that runs `zstyle` pays for a copy.
+    styles: crate::cow_map::CowHashMap<String, Vec<stypat>>,
 }
 
 /// Namespace for the recursive zformat walker — distinct from

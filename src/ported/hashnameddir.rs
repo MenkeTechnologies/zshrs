@@ -204,7 +204,7 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {
 //   print -rl -- ${(k)nameddirs}   # zsh: aa dd bb cc ee
 //
 // Copy-on-write (`crate::cow_map::CowArc`): `$( … )` and `( … )` snapshot
-// this table on entry (see `crate::ported::exec::SubshTables`), so the
+// this table on entry (see `crate::ported::exec::SubshForkCopy`), so the
 // snapshot must be a refcount bump. A `hash -d`, a `~name` lookup that
 // adds a node (`adduserdir`, Src/utils.c:1184) or a `fillnameddirtable`
 // inside the body is what pays for the copy.
