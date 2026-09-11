@@ -21057,6 +21057,20 @@ pub fn paramsubst(
             let mut incmdpos_z: bool = true; // c:322-353
                                              // c:Src/hist.c:3391 — `int envarray = 0;` in bufferwords().
             let mut envarray: bool = false; // c:3391
+                                            // c:Src/lex.c:939-940 — two more gettokstr() locals: `bct`
+                                            // counts open `{` in the current word and `in_brace_param` is
+                                            // the depth of the `${` that is still open (0 = none). While a
+                                            // `${…}` is open NOTHING ends the word — not a blank (c:960),
+                                            // `;`/`&` (c:967), `|` (c:1001), `)` (c:991), `<` or `>`
+                                            // (c:1172, c:1209). Untracked, `${a:-x y}` split into two words.
+            let mut bct: i32 = 0; // c:939
+            let mut in_brace_param: i32 = 0; // c:940
+                                             // c:Src/lex.c:319 `static int oldpos` + the global `inredir`:
+                                             // ctxtlex() lexes the word after a redirection operator
+                                             // outside command position, then puts `incmdpos` back
+                                             // (c:361-367).
+            let mut inredir: bool = false; // c:362
+            let mut oldpos_z: bool = false; // c:319
                                             // !!! WARNING: RUST-ONLY HELPER !!!
                                             // C keeps `incmdpos` in a shell global that ctxtlex() (Src/lex.c:322)
                                             // rewrites after every token, and recognises reserved words inside
@@ -21203,20 +21217,124 @@ pub fn paramsubst(
             // Flushes the word C would have returned from gettokstr() and applies
             // the ctxtlex() bookkeeping (c:322-353) plus the fresh gettokstr()
             // locals (c:941 `pct = 0`).
+            #[allow(clippy::too_many_arguments)]
             fn push_word(
                 w: &mut String,
                 words: &mut Vec<String>,
                 pct: &mut i32,
+                bct: &mut i32,
+                in_brace_param: &mut i32,
                 incmdpos: &mut bool,
+                inredir: &mut bool,
+                oldpos: &mut bool,
             ) {
                 // c:2439
                 if !w.is_empty() {
                     // c:2439
                     *incmdpos = z_incmdpos_after_word(w, *incmdpos); // c:345-352
+                    if *inredir {
+                        // c:365-367 — `else if (inredir) { incmdpos = oldpos;
+                        // inredir = 0; }`: the redirection's target is done.
+                        *incmdpos = *oldpos; // c:366
+                        *inredir = false; // c:367
+                    }
                     words.push(std::mem::take(w)); // c:2439
                 } // c:2439
                 *pct = 0; // c:941 — pct is a gettokstr() local, fresh per word
+                *bct = 0; // c:939
+                *in_brace_param = 0; // c:940
             } // c:2439
+            // !!! WARNING: RUST-ONLY HELPER !!!
+            // c:Src/lex.c:581-610 `isnumglob()`, over the char array instead of
+            // hgetc()/hungetc(): `i` is the char after a `<`. Some(index of the
+            // closing `>`) when the text is `[0-9]*-[0-9]*>` — a `<N-M>` numeric
+            // glob, which is word text and not a redirection.
+            fn z_isnumglob(ch: &[char], mut i: usize) -> Option<usize> {
+                let mut ec = '-'; // c:583
+                while let Some(&c) = ch.get(i) {
+                    // c:588-603
+                    if !c.is_ascii_digit() {
+                        if c != ec {
+                            return None; // c:594-595
+                        }
+                        if ec == '>' {
+                            return Some(i); // c:596-598
+                        }
+                        ec = '>'; // c:599
+                    }
+                    i += 1;
+                }
+                None // c:589-591 — input ran out
+            }
+            // !!! WARNING: RUST-ONLY HELPER !!!
+            // c:Src/lex.c:826-913 — gettok()'s LX1_INANG / LX1_OUTANG arms, over
+            // the char array. `p` is the `<` or `>`. Returns the operator's
+            // `tokstrings[]` text (c:171-204; bufferwords prints that text, not
+            // the source, which is why `>!` comes back as `>|`) and how many
+            // chars it spans. None where C unpeeks and lexes a STRING instead:
+            // a `<(` / `>(` process substitution (c:828, c:868) or a `<N-M>`
+            // numeric glob (c:858-861).
+            fn z_redirop(ch: &[char], p: usize) -> Option<(&'static str, usize)> {
+                let at = |i: usize| ch.get(i).copied();
+                let bang = |c: Option<char>| matches!(c, Some('!') | Some('|'));
+                if ch[p] == '<' {
+                    return match at(p + 1) {
+                        Some('(') => None,           // c:828-836
+                        Some('>') => Some(("<>", 2)), // c:838-839 INOUTANG
+                        Some('<') => match at(p + 2) {
+                            Some('(') => Some(("<", 1)),   // c:843-846 INANG, `<(` follows
+                            Some('<') => Some(("<<<", 3)), // c:847-848 TRINANG
+                            Some('-') => Some(("<<-", 3)), // c:849-850 DINANGDASH
+                            _ => Some(("<<", 2)),          // c:851-855 DINANG
+                        },
+                        Some('&') => Some(("<&", 2)), // c:856-857 INANGAMP
+                        _ if z_isnumglob(ch, p + 1).is_some() => None, // c:860-861
+                        _ => Some(("<", 1)),          // c:862 INANG
+                    };
+                }
+                match at(p + 1) {
+                    Some('(') => None, // c:868-870
+                    Some('&') if bang(at(p + 2)) => Some(("&>|", 3)), // c:873-874 OUTANGAMPBANG
+                    Some('&') => Some((">&", 2)),                     // c:875-879 OUTANGAMP
+                    c if bang(c) => Some((">|", 2)),                  // c:880-881 OUTANGBANG
+                    Some('>') => match at(p + 2) {
+                        Some('&') if bang(at(p + 3)) => Some((">>&|", 4)), // c:885-887
+                        Some('&') => Some((">>&", 3)),                     // c:888-892
+                        c if bang(c) => Some((">>|", 3)),                  // c:893-894
+                        Some('(') => Some((">", 1)), // c:895-898 — OUTANG, `>(` follows
+                        _ => Some((">>", 2)),        // c:899-905 DOUTANG
+                    },
+                    _ => Some((">", 1)), // c:906-911 OUTANG
+                }
+            }
+            // !!! WARNING: RUST-ONLY HELPER !!!
+            // c:Src/lex.c:752-767 — gettok()'s LX1_AMPER arm once `&>` is seen.
+            // `p` is the `&`. Returns the `tokstrings[]` text and the span.
+            fn z_ampoutang(ch: &[char], p: usize) -> (&'static str, usize) {
+                let bang = |c: Option<&char>| matches!(c, Some('!') | Some('|'));
+                match ch.get(p + 2) {
+                    c if bang(c) => ("&>|", 3), // c:755-756 OUTANGAMPBANG
+                    Some('>') if bang(ch.get(p + 3)) => (">>&|", 4), // c:759-760 DOUTANGAMPBANG
+                    Some('>') => (">>&", 3), // c:763 DOUTANGAMP
+                    _ => ("&>", 2),          // c:767 AMPOUTANG
+                }
+            }
+            // Every word boundary goes through here, so the gettokstr() locals
+            // and the ctxtlex() redirection state are reset in one place.
+            macro_rules! z_push_word {
+                () => {
+                    push_word(
+                        &mut cur,
+                        &mut words,
+                        &mut pct,
+                        &mut bct,
+                        &mut in_brace_param,
+                        &mut incmdpos_z,
+                        &mut inredir,
+                        &mut oldpos_z,
+                    )
+                };
+            }
             let mut p = 0_usize; // c:2439
             while p < chars_v.len() {
                 // c:2439
@@ -21348,20 +21466,6 @@ pub fn paramsubst(
                     '"' => {
                         cur.push(ch);
                         in_dq = true;
-                                            // c:Src/lex.c:939-940 — two more gettokstr() locals: `bct`
-                                            // counts open `{` in the current word and `in_brace_param` is
-                                            // the depth of the `${` that is still open (0 = none). While a
-                                            // `${…}` is open NOTHING ends the word — not a blank (c:960),
-                                            // `;`/`&` (c:967), `|` (c:1001), `)` (c:991), `<` or `>`
-                                            // (c:1172, c:1209). Untracked, `${a:-x y}` split into two words.
-            let mut bct: i32 = 0; // c:939
-            let mut in_brace_param: i32 = 0; // c:940
-                                             // c:Src/lex.c:319 `static int oldpos` + the global `inredir`:
-                                             // ctxtlex() lexes the word after a redirection operator
-                                             // outside command position, then puts `incmdpos` back
-                                             // (c:361-367).
-            let mut inredir: bool = false; // c:362
-            let mut oldpos_z: bool = false; // c:319
                     } // c:2439
                     // c:Src/lex.c LEXFLAGS_COMMENTS_KEEP — `(Z+c+)`
                     // emits the entire `# comment` as ONE token.
@@ -21409,8 +21513,39 @@ pub fn paramsubst(
                     // mirrors what `bufferwords()` (Src/lex.c) does —
                     // it walks the lexer and yields each token as a
                     // separate node.
+                    // c:649-661 + c:752-767 — a lone digit that starts the
+                    // token, then `&>`, is the redirection's fd (`2&>x`).
+                    '&' if chars_v.get(p + 1) == Some(&'>')
+                        && cur.chars().count() == 1
+                        && cur.starts_with(|c: char| c.is_ascii_digit()) =>
+                    {
+                        // c:752-767 — AMPOUTANG and its `>>`/`!`/`|` forms.
+                        let (tok, n) = z_ampoutang(&chars_v, p); // c:752-767
+                        let fd = std::mem::take(&mut cur);
+                        words.push(format!("{fd}{tok}")); // c:Src/hist.c:3563-3566
+                        oldpos_z = incmdpos_z; // c:363
+                        incmdpos_z = false; // c:364
+                        inredir = true; // c:362
+                        pct = 0; // c:941 — fresh gettokstr() locals
+                        bct = 0; // c:939
+                        in_brace_param = 0; // c:940
+                        p += n;
+                        continue;
+                    }
                     ';' | '&' | '\n' => {
                         z_push_word!();
+                        // c:752-767 — `&>`: AMPOUTANG, a redirection, not AMPER.
+                        // bufferwords prints the `tokstrings[]` text, so `&>>`
+                        // comes back as `>>&` (c:192) and `&>!` as `&>|`.
+                        if ch == '&' && chars_v.get(p + 1) == Some(&'>') {
+                            let (tok, n) = z_ampoutang(&chars_v, p); // c:752-767
+                            words.push(String::from(tok));
+                            oldpos_z = incmdpos_z; // c:363
+                            incmdpos_z = false; // c:364
+                            inredir = true; // c:362
+                            p += n;
+                            continue;
+                        }
                         // Emit the separator as its own word.
                         // Coalesce `&&` / `||` / `;;` into one token.
                         // Normalize `\n` → `;` to match bufferwords()
@@ -21444,18 +21579,6 @@ pub fn paramsubst(
                     '|' if pct != 0 || in_brace_param != 0 => cur.push(ch), // c:1001-1008
                     '|' => {
                         z_push_word!();
-                        // c:752-767 — `&>`: AMPOUTANG, a redirection, not AMPER.
-                        // bufferwords prints the `tokstrings[]` text, so `&>>`
-                        // comes back as `>>&` (c:192) and `&>!` as `&>|`.
-                        if ch == '&' && chars_v.get(p + 1) == Some(&'>') {
-                            let (tok, n) = z_ampoutang(&chars_v, p); // c:752-767
-                            words.push(String::from(tok));
-                            oldpos_z = incmdpos_z; // c:363
-                            incmdpos_z = false; // c:364
-                            inredir = true; // c:362
-                            p += n;
-                            continue;
-                        }
                         let mut sep_str = String::from(ch);
                         // c:772-780 — DBAR `||`, BARAMP `|&`.
                         if matches!(chars_v.get(p + 1), Some('|') | Some('&')) {
@@ -21469,6 +21592,9 @@ pub fn paramsubst(
                     // c:824-825 — `case LX1_OUTPAR: return OUTPAR;` — but only
                     // once gettokstr() has released the word, which it does at
                     // c:991 when the current word has no unclosed `(`.
+                    // c:991 — `if (!in_brace_param && !pct--)`: inside an open
+                    // `${…}` a `)` is text and does not touch `pct`.
+                    ')' if in_brace_param != 0 => cur.push(ch), // c:998
                     ')' => {
                         if pct == 0 {
                             // c:991 — if (!in_brace_param && !pct--) … goto brk;
@@ -21487,6 +21613,9 @@ pub fn paramsubst(
                             cur.push(ch); // c:998 — c = Outpar;
                         }
                     }
+                    // c:1087 — `if (!in_brace_param) { … pct++ … }`: the LX2_INPAR
+                    // bookkeeping is skipped inside an open `${…}`.
+                    '(' if in_brace_param != 0 => cur.push(ch), // c:1135
                     '(' => {
                         // c:782 — `d = hgetc();` one-character lookahead.
                         let d = chars_v.get(p + 1).copied(); // c:782
@@ -21525,124 +21654,20 @@ pub fn paramsubst(
                             // LX2_OUTANG (c:1175) and LX2_EQUALS (c:1216).
                             let prev = cur.chars().next_back(); // c:1033/1175/1216
                             let proc_subst = match prev {
-            #[allow(clippy::too_many_arguments)]
                                 // c:1033 — LX2_STRING: `$(` is a command/math
                                 // substitution consumed by cmd_or_math_sub().
                                 Some('$') => true, // c:1033
                                 // c:826 / c:1175 — LX1_INANG / LX2_OUTANG: `<(`
-                bct: &mut i32,
-                in_brace_param: &mut i32,
                                 // and `>(` are process substitutions.
-                inredir: &mut bool,
-                oldpos: &mut bool,
                                 Some('<') | Some('>') => true, // c:828 / c:1175
                                 // c:1214 — `if (intpos)`: `=(` is only the
                                 // process substitution when the `=` STARTS the
                                 // word; otherwise c:1228 takes the ENVARRAY /
                                 // ENVSTRING branch instead.
-                    if *inredir {
-                        // c:365-367 — `else if (inredir) { incmdpos = oldpos;
-                        // inredir = 0; }`: the redirection's target is done.
-                        *incmdpos = *oldpos; // c:366
-                        *inredir = false; // c:367
-                    }
                                 Some('=') => cur.chars().count() == 1, // c:1214
                                 _ => false,
                             };
-                *bct = 0; // c:939
-                *in_brace_param = 0; // c:940
                             if d == Some(')') && !proc_subst {
-            // !!! WARNING: RUST-ONLY HELPER !!!
-            // c:Src/lex.c:581-610 `isnumglob()`, over the char array instead of
-            // hgetc()/hungetc(): `i` is the char after a `<`. Some(index of the
-            // closing `>`) when the text is `[0-9]*-[0-9]*>` — a `<N-M>` numeric
-            // glob, which is word text and not a redirection.
-            fn z_isnumglob(ch: &[char], mut i: usize) -> Option<usize> {
-                let mut ec = '-'; // c:583
-                while let Some(&c) = ch.get(i) {
-                    // c:588-603
-                    if !c.is_ascii_digit() {
-                        if c != ec {
-                            return None; // c:594-595
-                        }
-                        if ec == '>' {
-                            return Some(i); // c:596-598
-                        }
-                        ec = '>'; // c:599
-                    }
-                    i += 1;
-                }
-                None // c:589-591 — input ran out
-            }
-            // !!! WARNING: RUST-ONLY HELPER !!!
-            // c:Src/lex.c:826-913 — gettok()'s LX1_INANG / LX1_OUTANG arms, over
-            // the char array. `p` is the `<` or `>`. Returns the operator's
-            // `tokstrings[]` text (c:171-204; bufferwords prints that text, not
-            // the source, which is why `>!` comes back as `>|`) and how many
-            // chars it spans. None where C unpeeks and lexes a STRING instead:
-            // a `<(` / `>(` process substitution (c:828, c:868) or a `<N-M>`
-            // numeric glob (c:858-861).
-            fn z_redirop(ch: &[char], p: usize) -> Option<(&'static str, usize)> {
-                let at = |i: usize| ch.get(i).copied();
-                let bang = |c: Option<char>| matches!(c, Some('!') | Some('|'));
-                if ch[p] == '<' {
-                    return match at(p + 1) {
-                        Some('(') => None,           // c:828-836
-                        Some('>') => Some(("<>", 2)), // c:838-839 INOUTANG
-                        Some('<') => match at(p + 2) {
-                            Some('(') => Some(("<", 1)),   // c:843-846 INANG, `<(` follows
-                            Some('<') => Some(("<<<", 3)), // c:847-848 TRINANG
-                            Some('-') => Some(("<<-", 3)), // c:849-850 DINANGDASH
-                            _ => Some(("<<", 2)),          // c:851-855 DINANG
-                        },
-                        Some('&') => Some(("<&", 2)), // c:856-857 INANGAMP
-                        _ if z_isnumglob(ch, p + 1).is_some() => None, // c:860-861
-                        _ => Some(("<", 1)),          // c:862 INANG
-                    };
-                }
-                match at(p + 1) {
-                    Some('(') => None, // c:868-870
-                    Some('&') if bang(at(p + 2)) => Some(("&>|", 3)), // c:873-874 OUTANGAMPBANG
-                    Some('&') => Some((">&", 2)),                     // c:875-879 OUTANGAMP
-                    c if bang(c) => Some((">|", 2)),                  // c:880-881 OUTANGBANG
-                    Some('>') => match at(p + 2) {
-                        Some('&') if bang(at(p + 3)) => Some((">>&|", 4)), // c:885-887
-                        Some('&') => Some((">>&", 3)),                     // c:888-892
-                        c if bang(c) => Some((">>|", 3)),                  // c:893-894
-                        Some('(') => Some((">", 1)), // c:895-898 — OUTANG, `>(` follows
-                        _ => Some((">>", 2)),        // c:899-905 DOUTANG
-                    },
-                    _ => Some((">", 1)), // c:906-911 OUTANG
-                }
-            }
-            // !!! WARNING: RUST-ONLY HELPER !!!
-            // c:Src/lex.c:752-767 — gettok()'s LX1_AMPER arm once `&>` is seen.
-            // `p` is the `&`. Returns the `tokstrings[]` text and the span.
-            fn z_ampoutang(ch: &[char], p: usize) -> (&'static str, usize) {
-                let bang = |c: Option<&char>| matches!(c, Some('!') | Some('|'));
-                match ch.get(p + 2) {
-                    c if bang(c) => ("&>|", 3), // c:755-756 OUTANGAMPBANG
-                    Some('>') if bang(ch.get(p + 3)) => (">>&|", 4), // c:759-760 DOUTANGAMPBANG
-                    Some('>') => (">>&", 3), // c:763 DOUTANGAMP
-                    _ => ("&>", 2),          // c:767 AMPOUTANG
-                }
-            }
-            // Every word boundary goes through here, so the gettokstr() locals
-            // and the ctxtlex() redirection state are reset in one place.
-            macro_rules! z_push_word {
-                () => {
-                    push_word(
-                        &mut cur,
-                        &mut words,
-                        &mut pct,
-                        &mut bct,
-                        &mut in_brace_param,
-                        &mut incmdpos_z,
-                        &mut inredir,
-                        &mut oldpos_z,
-                    )
-                };
-            }
                                 // c:1121 — goto brk; (the `(` is NOT consumed)
                                 z_push_word!();
                                 continue;
@@ -21659,6 +21684,8 @@ pub fn paramsubst(
                                 w.push(ch); // c:3519 — dyncat(tokstr, "=(")
                                 words.push(w); // c:3559 — addlinknode(list, p);
                                 pct = 0; // c:941 — fresh gettokstr() locals
+                                bct = 0; // c:939
+                                in_brace_param = 0; // c:940
                                 envarray = true; // c:3520
                                 incmdpos_z = false; // c:348 — ENVARRAY: incmdpos = 0
                                 p += 1;
@@ -21675,6 +21702,95 @@ pub fn paramsubst(
                         z_push_word!();
                         // c:2439
                     } // c:2439
+                    // c:1049-1057 — LX2_STRING: `${` opens a brace parameter.
+                    // `++bct`, and the outermost one sets `in_brace_param`.
+                    '$' if chars_v.get(p + 1) == Some(&'{') => {
+                        cur.push(ch); // c:1050 — add(c)
+                        cur.push('{'); // c:1051 — c = Inbrace
+                        bct += 1; // c:1052
+                        if in_brace_param == 0 {
+                            in_brace_param = bct; // c:1054-1056
+                        }
+                        p += 1;
+                    }
+                    // c:1137-1150 — LX2_INBRACE. A `{` that starts a word in
+                    // command position is its own STRING (c:1141-1145) and is
+                    // left to the plain push below; anywhere else it counts.
+                    '{' if !isset(crate::ported::zsh_h::IGNOREBRACES)
+                        && !(cur.is_empty() && incmdpos_z) =>
+                    {
+                        bct += 1; // c:1149
+                        cur.push(ch);
+                    }
+                    // c:1152-1165 — LX2_OUTBRACE: closing the `{` that opened the
+                    // brace parameter ends it.
+                    '}' if bct != 0 => {
+                        if bct == in_brace_param {
+                            in_brace_param = 0; // c:1160-1163
+                        }
+                        bct -= 1; // c:1160
+                        cur.push(ch); // c:1165 — c = Outbrace
+                    }
+                    // Redirection operators. Gated on `pct == 0`: in this
+                    // tokenizer an open `(` is almost always the body of a
+                    // `$(`, `<(` or `>(`, which C consumes whole (skipcomm) so a
+                    // `>` inside it never reaches the arms below.
+                    '<' | '>' if pct == 0 => {
+                        let d = chars_v.get(p + 1).copied();
+                        // c:649-668 — a lone digit that starts the token is the
+                        // operator's fd (`2>x`, `2<&3`); c:831-835 `unpeekfd`
+                        // hands it back to the word when no operator follows.
+                        let fd_digit = cur.chars().count() == 1
+                            && cur.starts_with(|c: char| c.is_ascii_digit());
+                        if !cur.is_empty() && !fd_digit {
+                            // gettokstr() level — c:1171-1211, LX2_OUTANG /
+                            // LX2_INANG. `>(`/`<(` and a `<N-M>` numeric glob stay
+                            // in the word; anything else ends it.
+                            if in_brace_param != 0 || d == Some('(') {
+                                cur.push(ch); // c:1172 / c:1209 / c:1177 / c:1192
+                                p += 1;
+                                continue;
+                            }
+                            if ch == '<' {
+                                if let Some(end) = z_isnumglob(&chars_v, p + 1) {
+                                    cur.extend(&chars_v[p..=end]); // c:1201-1206
+                                    p = end + 1;
+                                    continue;
+                                }
+                            }
+                            z_push_word!(); // c:1180 / c:1211 — goto brk
+                        }
+                        match z_redirop(&chars_v, p) {
+                            Some((tok, n)) => {
+                                // c:Src/hist.c:3563-3566 — a redirection with an fd
+                                // is printed `"%d%s"`, fd then operator.
+                                let fd = std::mem::take(&mut cur);
+                                words.push(format!("{fd}{tok}"));
+                                pct = 0; // c:941 — fresh gettokstr() locals
+                                bct = 0; // c:939
+                                in_brace_param = 0; // c:940
+                                // c:361-364 — IS_REDIROP: `inredir = 1; oldpos =
+                                // incmdpos; incmdpos = 0;`.
+                                oldpos_z = incmdpos_z; // c:363
+                                incmdpos_z = false; // c:364
+                                inredir = true; // c:362
+                                p += n;
+                                continue;
+                            }
+                            None => {
+                                // c:828-836 / c:858-861 — process substitution or a
+                                // numeric glob: a STRING that begins here.
+                                cur.push(ch);
+                                if ch == '<' {
+                                    if let Some(end) = z_isnumglob(&chars_v, p + 1) {
+                                        cur.extend(&chars_v[p + 1..=end]); // c:1201-1206
+                                        p = end + 1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => cur.push(ch), // c:2439
                 } // c:2439
                 p += 1; // c:2439
