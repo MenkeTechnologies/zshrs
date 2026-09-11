@@ -121,6 +121,7 @@ not byte-identical evidence, so neither one exits 0 either).
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import difflib
 import fcntl
@@ -133,6 +134,7 @@ import random
 import re
 import select
 import shlex
+import shutil
 import signal
 import struct
 import sys
@@ -424,6 +426,54 @@ def user_fpath():
 # everything else: it cannot make one shell see something the other does not.
 INIT_EXTRA = ""
 
+# Every `build_init` makes a scratch dir that has to outlive the call -- both
+# shells source the init file out of it, and the utility-function sweep's
+# `dirhook` drops a probe report beside it that the run reads back. Nothing
+# needs it once the process is over, but nothing was removing it either, and
+# `build_init` is called from nine sites, several of them inside loops. They
+# accumulate across every run: the count in $TMPDIR when this was written was
+# 2378. That filled the disk mid-sweep, which then reads as the shell under
+# test failing rather than as the harness leaking.
+#
+# Deferred to `atexit` rather than removed eagerly so the in-run lifetime is
+# exactly what it always was -- this cannot change a verdict, only what is left
+# on disk afterwards. Set COMPTAB_KEEP_SCRATCH=1 to keep them for a post-mortem.
+_SCRATCH_DIRS = []
+_SCRATCH_OWNER = os.getpid()
+
+
+def _drop_scratch_dirs():
+    # `pty.fork()` children exec the shell immediately, so they never get here.
+    # Guard anyway: an exec that failed would otherwise delete the parent's
+    # scratch out from under a run that is still using it.
+    if os.getpid() != _SCRATCH_OWNER:
+        return
+    if os.environ.get("COMPTAB_KEEP_SCRATCH"):
+        return
+    for d in _SCRATCH_DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+atexit.register(_drop_scratch_dirs)
+
+
+def _scratch_signal_teardown(signum, frame):
+    # `atexit` does not run on SIGTERM, and a sweep is almost always launched
+    # under `timeout`, which sends exactly that -- so the long runs, the ones
+    # that make the most scratch dirs, were the ones that never cleaned any up.
+    # Clean up, then die the way we would have: restore the default and re-raise
+    # so the exit status stays 128+signum for whatever is watching.
+    _drop_scratch_dirs()
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+# SIGINT is deliberately not here: it raises KeyboardInterrupt, which unwinds
+# through `atexit` already. These two do not.
+for _sig in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_sig, _scratch_signal_teardown)
+del _sig
+
 
 def build_init(dump, fpath_dirs, zstyle_file, extra="", dirhook=None):
     """The init file BOTH shells source.
@@ -439,6 +489,7 @@ def build_init(dump, fpath_dirs, zstyle_file, extra="", dirhook=None):
     `extra` without a second mkdtemp.
     """
     d = tempfile.mkdtemp(prefix="comptab_parity_")
+    _SCRATCH_DIRS.append(d)
     if dirhook is not None:
         extra = dirhook(d)
     if INIT_EXTRA:
