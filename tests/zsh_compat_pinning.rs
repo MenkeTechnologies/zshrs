@@ -1516,3 +1516,46 @@ fn resize_during_a_widgets_foreground_wait_reaches_columns() {
          its own rolled-back copy"
     );
 }
+
+/// A resize delivered while a widget waits on a forked helper must REPAINT.
+///
+/// `adjustwinsize` ends with
+/// ```c
+/// if (zleactive && resetzle) {
+///     winchanged = resetneeded = 1;
+///     zleentry(ZLE_CMD_RESET_PROMPT);
+///     zleentry(ZLE_CMD_REFRESH);
+/// }
+/// ```
+/// (c:Src/utils.c:1954-1961) — the shell redraws the command line because
+/// the terminal has just reflowed it. The gate is `zleactive`, and the only
+/// thing that clears `zleactive` mid-command is `entersubsh`
+/// (c:Src/exec.c:1248), which C reaches in the FORKED CHILD. C's parent
+/// still reads 1 throughout a `$(...)`, so the repaint happens.
+///
+/// zshrs runs substitutions in-process, so that child-side write was visible
+/// to the parent's own SIGWINCH handler and the repaint was declined. Since
+/// a foreground wait is where the handler gets to run at all, the one resize
+/// that needed repainting was the one that never got it: on `git <TAB>`
+/// across a 24x80 -> 12x80 shrink, zsh repainted `WPROMPT% git` above the
+/// completion query and zshrs left row 0 blank where the terminal's reflow
+/// had scrolled it away.
+///
+/// Measured on the bytes, zsh emits `\r\r` + attribute reset + `ED` + the
+/// prompt right after the resize; zshrs emitted nothing at all.
+#[test]
+#[cfg(unix)]
+fn resize_during_a_widgets_foreground_wait_repaints_the_prompt() {
+    let (probe, after_resize) = winch_during_widget_foreground_wait(24, 80, 12, 80);
+    assert!(
+        probe.starts_with("PROBE a=80 "),
+        "the widget must have run, got {probe:?}"
+    );
+    let text = String::from_utf8_lossy(&after_resize);
+    assert!(
+        text.contains("WPROMPT"),
+        "the resize must redraw the command line while the widget still runs \
+         (c:Src/utils.c:1954-1960); nothing was written after it. Bytes: {:?}",
+        text
+    );
+}

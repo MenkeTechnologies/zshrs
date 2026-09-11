@@ -4917,6 +4917,31 @@ pub struct SubshStateGuard {
     saved_subsh: i32,
 }
 
+/// The `zleactive` the shell had before the innermost in-process subshell
+/// state was applied, or `-1` when no such state is in effect.
+///
+/// !!! WARNING: RUST-ONLY STATE !!! C has no counterpart and needs none.
+/// `Src/exec.c:1248`'s `zleactive = 0;` is inside `entersubsh`, and every
+/// caller reaches it in the FORKED CHILD — `getoutput`, the `$(...)` one,
+/// calls it at `Src/exec.c:4838` under the `/* pid == 0 */` label
+/// (c:4834), with the parent left at `waitforpid(pid, 0)` on c:4830.
+/// The parent's `zleactive` is never touched,
+/// so a signal handler that lands in the parent while a `$(...)` is running
+/// still sees ZLE as active — which is the whole reason `adjustwinsize`'s
+/// `if (zleactive && resetzle)` (`Src/utils.c:1954`) can repaint on a resize
+/// that arrives during a completion.
+///
+/// `SubshStateGuard` runs that child-side write IN THE PARENT because zshrs
+/// executes command substitutions in-process, so the parent's own handler
+/// read 0 and declined to repaint. This publishes what C's parent would have
+/// had, for the handler to consult. Only the outermost guard records, so a
+/// nested substitution cannot overwrite it with its own zero.
+pub static SUBSH_PARENT_ZLEACTIVE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(-1);
+
+/// Nesting depth of the in-process subshell state above.
+static SUBSH_STATE_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 impl SubshStateGuard {
     /// Apply the deltas listed above and capture the values to restore.
     pub fn enter() -> Self {
@@ -4938,6 +4963,12 @@ impl SubshStateGuard {
         dosetopt(MONITOR, 0, 1); // c:1097 / c:1207
         *shout.lock().unwrap() = 0; // c:1164
         dosetopt(USEZLE, 0, 1); // c:1208
+        // Publish the pre-substitution value BEFORE zeroing it, so a signal
+        // handler that lands in this process during the substitution can read
+        // the `zleactive` C's parent would still have. Outermost guard only.
+        if SUBSH_STATE_DEPTH.fetch_add(1, Ordering::SeqCst) == 0 {
+            SUBSH_PARENT_ZLEACTIVE.store(g.saved_zleactive, Ordering::SeqCst);
+        }
         zleactive.store(0, Ordering::Relaxed); // c:1209
         g
     }
@@ -4948,6 +4979,9 @@ impl Drop for SubshStateGuard {
         // Reverse order of `enter`; the C child never restores because it
         // `_realexit()`s, so this half has no C counterpart to cite.
         subsh.store(self.saved_subsh, Ordering::Relaxed);
+        if SUBSH_STATE_DEPTH.fetch_sub(1, Ordering::SeqCst) <= 1 {
+            SUBSH_PARENT_ZLEACTIVE.store(-1, Ordering::SeqCst);
+        }
         zleactive.store(self.saved_zleactive, Ordering::Relaxed);
         dosetopt(USEZLE, self.saved_usezle as i32, 1);
         *shout.lock().unwrap() = self.saved_shout;

@@ -19,6 +19,59 @@ CI green pending the underlying fix.
 
 ---
 
+## #1143 — a resize during a completion lost the prompt row instead of repainting it — fixed
+
+**Status:** `fixed` 2026-09-11.
+
+**Reproducer** (pty, `TERM` set; `TIOCSWINSZ` on the master 40ms after the
+TAB, while the completion is still running):
+
+```console
+# 24x80 -> 12x80 (ROWS only), screen after the query appears
+zsh     row 0: READY% git
+        row 1: zsh: do you wish to see all 152 possibilities (152 lines)?
+zshrs   row 0:
+        row 1: zsh: do you wish to see all 152 possibilities (152 lines)?
+```
+
+On the wire, zsh writes `\r\r` + attribute reset + `ED` + the prompt right
+after the resize; zshrs wrote nothing at all.
+
+**Root cause.** `adjustwinsize` ends with
+
+```c
+if (zleactive && resetzle) {
+    winchanged = resetneeded = 1;
+    zleentry(ZLE_CMD_RESET_PROMPT);
+    zleentry(ZLE_CMD_REFRESH);
+}
+```
+
+(c:Src/utils.c:1954-1961) — the command line is redrawn because the terminal
+has just reflowed it. The gate is `zleactive`, and the only thing that clears
+`zleactive` mid-command is `entersubsh` (c:Src/exec.c:1248). Every caller
+reaches that in the FORKED CHILD: `getoutput`, the `$(...)` one, calls it at
+c:4838 under the `/* pid == 0 */` label (c:4834) while the parent sits at
+`waitforpid(pid, 0)` on c:4830. C's parent therefore still reads 1 for the
+whole substitution, and a resize delivered during one repaints.
+
+zshrs runs substitutions in-process, so `SubshStateGuard` (exec.rs) applies
+that child-side write in the parent and the parent's own SIGWINCH handler read
+0. Since a foreground wait is where the handler gets to run at all — the
+standing `winch_block()` (c:Src/init.c:1458) is lifted only for the duration
+of `signal_suspend` (c:Src/signals.c:220) — the one resize that needed a
+repaint was the one that never got it. `_call_program` puts every completion
+in that state, so `git <TAB>` across a row shrink left row 0 wherever the
+terminal's reflow had scrolled it and printed the query over the top.
+
+**Fix.** `SubshStateGuard` publishes the pre-substitution `zleactive` (the
+outermost guard only, so a nested substitution cannot overwrite it with its
+own zero), and the SIGWINCH arm of `zhandler` hands `adjustwinsize` that value
+— what C's parent would have had — putting the in-process substitution's zero
+back immediately afterwards.
+
+---
+
 ## #1142 — a resize during a completion asked to see "152 possibilities (236 lines)" for 152 one-line matches — fixed
 
 **Status:** `fixed` 2026-09-11.

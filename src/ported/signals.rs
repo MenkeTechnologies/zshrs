@@ -522,7 +522,38 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
             // c:468
             // c:469 — `adjustwinsize(1)` (Src/utils.c) — re-reads
             // TIOCGWINSZ and updates LINES/COLUMNS params.
+            //
+            // `adjustwinsize`'s repaint is gated on `zleactive`
+            // (c:Src/utils.c:1954 `if (zleactive && resetzle)`), and the
+            // only place that clears `zleactive` mid-command is
+            // `entersubsh` (c:Src/exec.c:1248) — which C reaches in the
+            // FORKED CHILD. C's parent therefore still reads 1 while a
+            // `$(...)` runs, and a resize delivered during one repaints.
+            // zshrs runs substitutions in-process, so the child-side write
+            // is visible to the parent's own handler and the repaint was
+            // declined: a completer that forks a helper (`_call_program`,
+            // i.e. every `git <TAB>`) is exactly where a foreground wait
+            // opens the SIGWINCH window, so the resize that C repaints for
+            // was the one resize zshrs never repainted. The prompt row was
+            // left wherever the terminal's reflow had moved it, and the
+            // completion query printed over it.
+            //
+            // Hand `adjustwinsize` the value C's parent would have, and put
+            // the in-process substitution's zero back afterwards.
+            let parent_zleactive =
+                crate::ported::exec::SUBSH_PARENT_ZLEACTIVE.load(Ordering::SeqCst);
+            let masked = if parent_zleactive >= 0 {
+                Some(
+                    crate::ported::builtins::sched::zleactive
+                        .swap(parent_zleactive, Ordering::Relaxed),
+                )
+            } else {
+                None
+            };
             let _ = crate::ported::utils::adjustwinsize(1); // c:469
+            if let Some(inner) = masked {
+                crate::ported::builtins::sched::zleactive.store(inner, Ordering::Relaxed);
+            }
             let _ = handletrap(libc::SIGWINCH); // c:470
         }
         libc::SIGALRM => {
