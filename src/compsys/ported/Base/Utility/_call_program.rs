@@ -46,7 +46,6 @@
 //! `$( _call_program … )` its callers write, for Rust callers that cannot.
 
 use crate::compsys::ported::_comp_locale::_comp_locale;
-use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use std::env;
 use std::io::Read;
@@ -88,20 +87,92 @@ pub fn call_program_capture(args: &[String]) -> (String, i32) {
     }
 }
 
+/// sh:10 — `${${(@M)_comp_priv_prefix:#^*[^\\]=*}[1]}`, the word of the
+/// privilege prefix that names the COMMAND rather than an assignment.
+///
+/// `(@M) … :#pat` keeps the elements that MATCH `pat`, and `pat` is
+/// `^*[^\]=*` — an EXTENDED_GLOB negation of "anything, a byte that is not a
+/// backslash, `=`, anything". So an element is kept when it is NOT a
+/// `VAR=value` assignment, with `foo\=bar` deliberately surviving because the
+/// `=` there is escaped and the word is a command name. `_sudo` sh:66 builds
+/// exactly such a mixed list, e.g. `( sudo -n PATH=… )`.
+///
+/// EXTENDED_GLOB is in force: `compinit` lists it in `_comp_options`
+/// (`compinit` sh:141) and `_main_complete` applies that array with
+/// `setopt localoptions`, so the `^` really is a negation here and not a
+/// literal caret.
+///
+/// `[1]` on a list that kept nothing is the empty string in zsh, not an
+/// error, so this returns `""` rather than bailing.
+fn priv_prefix_command(prefix: &[String]) -> String {
+    prefix
+        .iter()
+        // `*[^\]=*` — an `=` that is preceded by at least one byte and that
+        // byte is not a backslash. `^…` keeps the complement.
+        .find(|w| !is_assignment_word(w))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Does the word match sh:10's inner pattern `*[^\]=*`?
+fn is_assignment_word(w: &str) -> bool {
+    let b = w.as_bytes();
+    // The `=` cannot be at index 0: `*[^\]` needs at least one byte before it.
+    b.iter()
+        .enumerate()
+        .skip(1)
+        .any(|(i, &c)| c == b'=' && b[i - 1] != b'\\')
+}
+
 /// sh:7-33 — flag parse plus the `command` style, yielding the word list the
 /// `eval` at sh:28 / sh:30 / sh:33 is handed, whether the `_comp_locale`
 /// reset applies (sh:4/sh:16), and WHICH of those three lines it is.
 fn command_line(args: &[String]) -> Option<(Vec<String>, bool, u64)> {
     let mut argv: Vec<String> = args.to_vec();
     let mut use_locale = true;
+    // sh:4 `local curcontext="${curcontext}"` — a COPY, because sh:10 rewrites
+    // it and that rewrite must not escape this function.
+    let mut curcontext = getsparam("curcontext").unwrap_or_default();
+    // sh:5 `local -a prefix`
+    let mut prefix: Vec<String> = Vec::new();
 
     // sh:7-17  flag parse
     if let Some(first) = argv.first() {
         if first == "-p" {
+            // sh:8  shift
             argv.remove(0);
-            // sh:9-13  privileged prefix — we don't model
-            //   _comp_priv_prefix processing fully; just drop the
-            //   flag and proceed with the rest.
+            // sh:9  if (( $#_comp_priv_prefix )); then
+            let priv_prefix =
+                crate::ported::params::getaparam("_comp_priv_prefix").unwrap_or_default();
+            if !priv_prefix.is_empty() {
+                // sh:10  curcontext="${curcontext%:*}/${…[1]}:"
+                //
+                // Note the TRAILING colon: sh:26 appends `:${1}` to this, so
+                // the privileged context carries an empty component and reads
+                // `:completion:<ctx-head>/sudo::<tag>`. Both the
+                // `gain-privileges` lookup below and the `command` lookup at
+                // sh:26 use it — the manual says so: "When looking up the
+                // gain-privileges and command styles, the command component
+                // of the zstyle context will end with a slash ("/") followed
+                // by the command that would be used to gain privileges."
+                let head = match curcontext.rfind(':') {
+                    Some(i) => &curcontext[..i], // `${curcontext%:*}`
+                    None => curcontext.as_str(),
+                };
+                curcontext = format!("{}/{}:", head, priv_prefix_command(&priv_prefix));
+                // sh:11-12  zstyle -t ":completion:${curcontext}:${1}" \
+                //             gain-privileges && prefix=( $_comp_priv_prefix )
+                //
+                // `zstyle -t` is true only at status 0; 1 (set but not true)
+                // and 2 (unset) both leave `prefix` empty, which is why this
+                // is `zstyle_t`, not `zstyle_T`.
+                if let Some(tag) = argv.first() {
+                    let gp_ctx = format!(":completion:{}:{}", curcontext, tag);
+                    if crate::compsys::ported::shared::zstyle_t(&gp_ctx, "gain-privileges") == 0 {
+                        prefix = priv_prefix;
+                    }
+                }
+            }
         } else if first == "-l" {
             argv.remove(0);
             use_locale = false;
@@ -112,17 +183,24 @@ fn command_line(args: &[String]) -> Option<(Vec<String>, bool, u64)> {
         return None;
     }
 
-    // sh:26  zstyle -s … command tmp — when set, replace argv[1..]
-    //   with the styled command line.
-    let curcontext = getsparam("curcontext").unwrap_or_default();
+    // sh:26  if zstyle -s ":completion:${curcontext}:${1}" command tmp; then
+    //
+    // The branch is on `zstyle -s`'s STATUS, not on whether `$tmp` came back
+    // non-empty: `zstyle … command ''` is a set style whose value is the
+    // empty string, and upstream then evals nothing at sh:30 instead of
+    // falling through to sh:33's default command. See [`zstyle_s`], which
+    // also performs c:649's join of the whole value array — a `command`
+    // style is routinely written as several words.
     let style_ctx = format!(":completion:{}:{}", curcontext, argv[0]);
-    let styled = lookupstyle(&style_ctx, "command")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if !styled.is_empty() {
+    if let Some(styled) = crate::compsys::ported::shared::zstyle_s(&style_ctx, "command") {
+        // sh:27  if [[ "$tmp" = -* ]]; then
         if let Some(rest) = styled.strip_prefix('-') {
             // sh:28  eval $clocale "$tmp[2,-1]" "$argv[2,-1]"
+            //
+            // No `$prefix` on this line, and that is the documented escape
+            // hatch: "To force the use of, e.g. sudo or to override any
+            // prefix that might be added due to gain-privileges, the command
+            // style can be used with a value that begins with a hyphen."
             let mut v: Vec<String> = vec![rest.to_string()];
             if argv.len() > 1 {
                 v.extend(argv[1..].iter().cloned());
@@ -130,11 +208,13 @@ fn command_line(args: &[String]) -> Option<(Vec<String>, bool, u64)> {
             return Some((v, use_locale, 28));
         }
         // sh:30  eval $clocale $prefix "$tmp"
-        return Some((vec![styled], use_locale, 30));
+        prefix.push(styled);
+        return Some((prefix, use_locale, 30));
     }
     // sh:33  eval $clocale $prefix "$argv[2,-1]"
     if argv.len() > 1 {
-        Some((argv[1..].to_vec(), use_locale, 33))
+        prefix.extend(argv[1..].iter().cloned());
+        Some((prefix, use_locale, 33))
     } else {
         None
     }

@@ -283,6 +283,50 @@ pub fn zstyle_t(ctx: &str, style: &str) -> i32 {
     )
 }
 
+/// `zstyle -s <ctx> <style> <name>` — the SCALAR style lookup, as the value
+/// it assigns plus the truth of its return status.
+///
+/// Port of `bin_zstyle`'s `case 's'` (`Src/Modules/zutil.c:643-658`):
+///
+/// ```text
+/// c:648      if ((vals = lookupstyle(args[1], args[2])) && vals[0]) {
+/// c:649          ret = sepjoin(vals, (args[4] ? args[4] : " "), 0);
+/// c:650          val = 0;
+/// c:651      } else {
+/// c:652          ret = ztrdup("");
+/// c:653          val = 1;
+/// c:654      }
+/// ```
+///
+/// Two things every `.first()` spelling of this gets wrong, and both are
+/// load-bearing for the `command` style (`_call_program` sh:26):
+///
+///   * c:649 joins the WHOLE value array with the separator (`" "` unless a
+///     fourth argument overrides it). `zstyle :ctx command ps -e` is a
+///     two-element style whose scalar value is `ps -e`; reading element 1
+///     alone silently drops `-e`. The manual states the contract in as many
+///     words — "The _string_s ... are concatenated with spaces between them
+///     and the resulting string is evaluated."
+///
+///   * c:648 branches on whether the style HAS a first element, not on
+///     whether that element is non-empty. `zstyle :ctx command ''` is SET,
+///     c:650 returns true, and the caller runs the empty command rather than
+///     falling through to its default. Treating `""` as unset inverts that.
+///
+/// `None` is c:651-653 (`val = 1`, the style does not apply here); `Some` is
+/// c:648-650 and carries the joined value, which may legitimately be `""`.
+pub fn zstyle_s(ctx: &str, style: &str) -> Option<String> {
+    // c:648 `lookupstyle(args[1], args[2]) && vals[0]` — an empty Vec is both
+    // C's NULL return (c:447) and its zero-element array; C answers `val = 1`
+    // for either, so one test covers both.
+    let vals = crate::ported::modules::zutil::lookupstyle(ctx, style);
+    if vals.is_empty() {
+        return None; // c:652-653
+    }
+    // c:649 `sepjoin(vals, " ", 0)`
+    Some(crate::ported::utils::zjoin(&vals, ' '))
+}
+
 /// `zstyle -T <ctx> <style>` — as [`zstyle_t`], except that an UNSET
 /// style is true (0) rather than 2 (c:724). This is the "default yes"
 /// spelling upstream uses for styles like `add-space` and `verbose`.
