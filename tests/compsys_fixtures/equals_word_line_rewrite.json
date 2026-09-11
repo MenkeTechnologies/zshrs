@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/1",
  "id": "equals_word_line_rewrite",
- "title": "`=ls<TAB>`: zsh keeps the word and lists commands, zshrs rewrites the line to the resolved path",
+ "title": "GUARD (fixed in 2b99dd54a4) — was: `=ls<TAB>`: zsh keeps the word and lists commands, zshrs rewrites the line to the resolved path",
  "harness": "comptab_parity",
  "run": {
   "buffer": "=ls",
@@ -11,10 +11,43 @@
   "flags": [],
   "zstyle": []
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-09-10",
+  "previous_expect": "diverges",
+  "fix_commit": "2b99dd54a4",
+  "fix_commit_subject": "fix(zle): =word under expand-or-complete expanded even when the command prefix was ambiguous",
+  "why": "`docomplete` (Src/Zle/zle_tricky.c:704-732) expands a `=word` under `expand-or-complete` only when the command prefix is UNAMBIGUOUS: c:712 `if (!hascompmod || isset(RECEXACT))` expands outright, otherwise the c:718-726 loop counts commands carrying the prefix, stops at two, and expands only on n == 1. zshrs had the count loop but never raised `hascompmod`, so every shell took the module-less arm. 2b99dd54a4 ports the three missing links: `zle -C`'s `require_module(\"zsh/complete\")` (zle_thingy.c:605), a `zsh/complete` row in module.rs's `setup_module`, and `hascompmod = 1` / `= 0` in the module's `setup_` / `finish_` (complete.c:1736 / c:1821).",
+  "evidence": "scripts/compsys_regressions.py, with `expect` still `diverges`, scored this cell NOW-PASSES -> NOW-PASSES -> NOW-PASSES against a pinned, re-codesigned copy of target/debug/zshrs at 2b99dd54a4, passed with --zshrs (zshrs 0.12.60, 112190272 bytes, sha256 36910cbf12b0502d) (`--confirm-moved 2`). The runner reported the binary MOVED since the stamp (6420c23cecc13c35 -> 36910cbf12b0502d), which is the 'somebody fixed the bug' branch of the two the README names, not the 'the fixture was wrong' one.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file: the cell stays in the evidence base and the gate now FAILS if the divergence comes back. It is also half of a PAIR — equals_word_unique_prefix_expands holds the other half. Either one alone can be satisfied by the wrong rule (always-complete passes this cell and breaks that one; always-expand does the reverse), so they only pin c:712 together."
+ },
+ "guard_verified": {
+  "date": "2026-09-10",
+  "against": "a pinned, re-codesigned build of the same tree with the complete.c:1736 store alone reverted (zshrs 0.12.60, 112190272 bytes, sha256 f590559eb4bb1032) — one line apart from the fixed binary, so the guard is answering about THIS bug and not about eleven days of unrelated drift",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "5 row(s) differ",
+  "controls_on_the_old_binary": "none",
+  "note": "the flip is only worth something if the gate would CATCH the bug coming back, so it was pointed at a build that still has it: `compsys_regressions.py --zshrs <pre-fix pin> --only equals_word_line_rewrite --confirm-moved 1`. It reported CONTROL-MOVED -> CONTROL-MOVED, 5 row(s) differ, and exited 1 — the same five rows `observed_when_diverging` records, so the guard fails on THIS bug and not merely on some difference. In the same run equals_word_unique_prefix_expands scored CONTROL-HOLDS on that old binary, which is what makes the pair a rule and not a preference."
+ },
  "group": "line-token-rewrite",
- "fingerprint": "f55ac1e11f",
+ "fingerprint": null,
+ "fingerprint_when_diverging": "f55ac1e11f",
  "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ from step #None (None)",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-09-10, commit 2b99dd54a4, a pinned, re-codesigned copy of target/debug/zshrs at 2b99dd54a4, passed with --zshrs (zshrs 0.12.60, 112190272 bytes, sha256 36910cbf12b0502d) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "the rendered grids agree: both shells leave `=ls` in the buffer and paint the same ls* listing under it. The word is no longer rewritten to a path, because the c:718-726 count sees more than one command carrying the `ls` prefix and `lst` stays COMP_EXPAND_COMPLETE."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "detail": "5 row(s) differ",
   "fingerprint_label": "cell/row0/col0 | ref/$ =ls | test/$ <path>",
@@ -35,25 +68,28 @@
     "zshrs": "<absent>"
    }
   ],
-  "notes": "zsh completes the command NAME after `=` and lists every command beginning with ls; zshrs performs the `=` expansion and replaces the word with /bin/ls, offering no list at all."
+  "notes": "zsh completes the command NAME after `=` and lists every command beginning with ls; zshrs performs the `=` expansion and replaces the word with /bin/ls, offering no list at all.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47), zsh 5.9.2 (aarch64-apple-darwin25.4.0) — this is the divergence AS MEASURED BEFORE 2b99dd54a4. It is history, not current behaviour; the fixture now asserts the two shells AGREE."
  },
  "variants": [],
  "origin": [
   "derived in this session from the round-2 note '=ls line rewrite'"
  ],
  "confirmed": {
-  "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "date": "2026-09-10",
+  "commit": "2b99dd54a4",
   "harness_sha256_16": {
-   "scripts/comptab_parity.py": "517045bc5c73ceee"
+   "scripts/comptab_parity.py": "a23aa0f696fdf2ab",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
-   "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "size": 112190272,
+   "mtime": "2026-09-10 18:04:59",
+   "version": "zshrs 0.12.60",
+   "sha256_16": "36910cbf12b0502d",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical, re-codesigned copy of this file, passed with --zshrs; ~16 peer instances rebuild target/debug/zshrs continuously, so only a pinned copy names one binary for a multi-minute sweep"
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -61,10 +97,33 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '5 row(s) differ'; failure fingerprint f55ac1e11f, unchanged"
+  "zshrs": "a pinned, re-codesigned copy of target/debug/zshrs at 2b99dd54a4, passed with --zshrs (zshrs 0.12.60, 112190272 bytes, sha256 36910cbf12b0502d)",
+  "note": "RETIRED AS A GUARD. `expect` flipped diverges -> agrees on this run; see `retired` and `guard_verified`. The whole-corpus sweep either side of 2b99dd54a4 moved exactly these two cells and nothing else: 16 failing / 4 fingerprints -> 14 failing / 2, with the residual e8e0447836 x5 and b29792c9a7 x9 unchanged in count and in membership."
  },
  "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/comptab_parity.py": "517045bc5c73ceee"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '5 row(s) differ'; failure fingerprint f55ac1e11f, unchanged"
+  },
   {
    "date": "2026-08-30",
    "commit": "132228963a",

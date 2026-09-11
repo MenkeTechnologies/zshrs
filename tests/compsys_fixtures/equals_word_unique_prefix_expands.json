@@ -1,0 +1,62 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "equals_word_unique_prefix_expands",
+ "title": "`=lsvfs<TAB>`: a `=word` whose command prefix is UNAMBIGUOUS still expands to the resolved path",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "=lsvfs",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "agrees",
+ "group": "line-token-rewrite",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@CT@ /usr/bin/lsvfs",
+    "zshrs": "@CT@ /usr/bin/lsvfs"
+   }
+  ],
+  "measured": "2026-09-10, commit 2b99dd54a4, a pinned, re-codesigned copy of target/debug/zshrs (zshrs 0.12.60, 112190272 bytes, sha256 36910cbf12b0502d) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "`lsvfs` is the only command on this host carrying the prefix `lsvfs`, so `docomplete`'s count (Src/Zle/zle_tricky.c:718-726) stops at n == 1 and c:728-729 sets lst = COMP_EXPAND. Both shells therefore REWRITE the word to /usr/bin/lsvfs and offer no list. `=lsappinfo` behaves identically and was measured alongside it; only one is pinned, because the two exercise the same n == 1 arm."
+ },
+ "why_this_fixture_exists": "It is the other half of the pair whose first half is equals_word_line_rewrite / equals_word_arg_position. c:712's rule has two outcomes and a fixture for only one of them can be satisfied by the WRONG rule: a shell that always expands passes this cell and fails those two (that was the bug 2b99dd54a4 fixed), and a shell that never expands passes those two and fails this one. Only together do they pin `expand iff the prefix is unambiguous`. That second failure mode is the live risk now, because the fix works by making the count branch reachable at all — a later change that makes hascompmod true too early, or that mis-ports the c:724-725 `if (n == 2) break`, breaks THIS cell and neither of the others.",
+ "controls": [],
+ "variants": [],
+ "origin": [
+  "written alongside 2b99dd54a4 as the unique-prefix half of the =word pair; the ambiguous half had been pinned since 2026-08-30 and passed the whole time the bug was live, which is exactly why one fixture was not enough"
+ ],
+ "confirmed": {
+  "date": "2026-09-10",
+  "commit": "2b99dd54a4",
+  "harness_sha256_16": {
+   "scripts/comptab_parity.py": "a23aa0f696fdf2ab",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 112190272,
+   "mtime": "2026-09-10 18:04:59",
+   "version": "zshrs 0.12.60",
+   "sha256_16": "36910cbf12b0502d",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical, re-codesigned copy of this file, passed with --zshrs"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "a pinned, re-codesigned copy of target/debug/zshrs at 2b99dd54a4 (sha256 36910cbf12b0502d)",
+  "note": "CONTROL-HOLDS on the fixed binary AND on a pinned pre-fix build one line apart from it (sha256 f590559eb4bb1032) — this cell agreed on both, which is the point: it is not evidence that the bug was fixed, it is the assertion that the fix did not over-correct into never expanding."
+ },
+ "history": []
+}
