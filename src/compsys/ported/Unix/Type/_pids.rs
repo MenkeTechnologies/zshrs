@@ -347,12 +347,17 @@ pub fn _pids(args: &[String]) -> i32 {
     if !all.is_empty() {
         // sh:49  zstyle -s … insert-ids out || out=menu
         let curcontext = getsparam("curcontext").unwrap_or_default();
-        let insert_ids = lookupstyle(
+        // sh:49  zstyle -s ":completion:${curcontext}:processes" insert-ids out
+        //         || out=menu
+        //
+        // The `||` default applies on `zstyle -s`'s STATUS (`zutil.c:648`), and
+        // the value handed to sh:51's `case` is `zutil.c:649`'s join of the
+        // whole array — so `insert-ids ''` reaches the `*)` arm rather than
+        // being read as unset and becoming `menu`.
+        let insert_ids = crate::compsys::ported::shared::zstyle_s(
             &format!(":completion:{}:processes", curcontext),
             "insert-ids",
         )
-        .first()
-        .cloned()
         .unwrap_or_else(|| "menu".to_string());
         match insert_ids.as_str() {
             // sh:52  menu) compstate[insert]=menu

@@ -200,17 +200,20 @@ fn set_unique_global(name: &str, val: Vec<String>) {
 fn mailbox_cache() {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
-    let maildirectory = lookupstyle(&ctx, "mail-directory")
-        .into_iter()
-        .next()
+    // sh:70-72  zstyle -s … mail-directory maildirectory || maildirectory="~/Mail"
+    //            zstyle -s … pine-directory pinedirectory
+    //            zstyle -s … muttrc muttrc || muttrc="~/.muttrc"
+    //
+    // Each `||` runs on `zstyle -s`'s STATUS (`zutil.c:648`), and the value is
+    // `zutil.c:649`'s join of the whole array. These three hold DIRECTORY and
+    // FILE paths, so the join is what a mail directory with a space in its
+    // name depends on — reading element 1 pointed the scan at a path that does
+    // not exist and the mailbox list came back empty.
+    let maildirectory = crate::compsys::ported::shared::zstyle_s(&ctx, "mail-directory")
         .unwrap_or_else(|| "~/Mail".to_string());
-    let pinedirectory = lookupstyle(&ctx, "pine-directory")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
-    let muttrc = lookupstyle(&ctx, "muttrc")
-        .into_iter()
-        .next()
+    let pinedirectory =
+        crate::compsys::ported::shared::zstyle_s(&ctx, "pine-directory").unwrap_or_default();
+    let muttrc = crate::compsys::ported::shared::zstyle_s(&ctx, "muttrc")
         .unwrap_or_else(|| "~/.muttrc".to_string());
     let maildir = tilde(&maildirectory);
 
@@ -334,9 +337,8 @@ pub fn _mua_mailboxes(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:", curcontext);
     let maildirectory = tilde(
-        &lookupstyle(&ctx, "mail-directory")
-            .into_iter()
-            .next()
+        // sh:113  zstyle -s … mail-directory maildirectory || maildirectory="~/Mail"
+        &crate::compsys::ported::shared::zstyle_s(&ctx, "mail-directory")
             .unwrap_or_else(|| "~/Mail".to_string()),
     );
 
@@ -433,10 +435,9 @@ pub fn _mua_mailboxes(args: &[String]) -> i32 {
         mbox_names.extend(mbox.clone());
         mbox_names.extend(mailbox.clone());
         mbox_names.extend(mh.clone());
-        let pinedirectory = lookupstyle(&ctx, "pine-directory")
-            .into_iter()
-            .next()
-            .unwrap_or_default();
+        // sh:114  zstyle -s … pine-directory pinedirectory
+        let pinedirectory =
+            crate::compsys::ported::shared::zstyle_s(&ctx, "pine-directory").unwrap_or_default();
         if !pinedirectory.is_empty() {
             mbox_names.extend(strip_dir_prefix(&pine, &tilde(&pinedirectory)));
         }

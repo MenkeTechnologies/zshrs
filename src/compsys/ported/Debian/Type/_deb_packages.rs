@@ -354,10 +354,11 @@ pub fn _deb_packages(args: &[String]) -> i32 {
     // sh:101  zstyle -s ":completion:*:*:$service:*" cache-policy update_policy
     let service = getsparam("service").unwrap_or_default();
     let policy_ctx = format!(":completion:*:*:{}:*", service);
-    let update_policy = lookupstyle(&policy_ctx, "cache-policy")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    // sh:101  zstyle -s ":completion:*:*:$service:*" cache-policy update_policy
+    //
+    // sh:102's `[[ -z … ]]` is a VALUE test and stays; the value is now
+    // `zutil.c:649`'s join of the whole array rather than element 1.
+    let update_policy = crate::compsys::ported::shared::zstyle_s(&policy_ctx, "cache-policy").unwrap_or_default();
     // sh:102-104  register the default cache-policy hook if unset.
     if update_policy.is_empty() {
         let _ = bin_zstyle(
@@ -382,10 +383,11 @@ pub fn _deb_packages(args: &[String]) -> i32 {
     // sh:111  zstyle -s ":completion:${curcontext}:" packageset pkgset
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let pkgset_ctx = format!(":completion:{}:", curcontext);
-    let mut pkgset = lookupstyle(&pkgset_ctx, "packageset")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    // sh:111  zstyle -s ":completion:${curcontext}:" packageset pkgset
+    //
+    // sh:113's membership test runs against `zutil.c:649`'s join of the whole
+    // value array.
+    let mut pkgset = crate::compsys::ported::shared::zstyle_s(&pkgset_ctx, "packageset").unwrap_or_default();
 
     // sh:113-115
     if !VALID_COMMANDS.contains(&pkgset.as_str()) {

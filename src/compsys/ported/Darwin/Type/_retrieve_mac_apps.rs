@@ -538,10 +538,11 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
 
     // sh:64  zstyle -s ":completion:*:*:$service:*" cache-policy cache_policy
     let cache_policy_ctx = format!(":completion:*:*:{}:*", service);
-    let cache_policy = lookupstyle(&cache_policy_ctx, "cache-policy")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    // sh:64  zstyle -s ":completion:*:*:$service:*" cache-policy cache_policy
+    //
+    // sh:65's `[[ -z $cache_policy ]]` is a VALUE test, so it stays; what
+    // changes is that the value is `zutil.c:649`'s join of the whole array.
+    let cache_policy = crate::compsys::ported::shared::zstyle_s(&cache_policy_ctx, "cache-policy").unwrap_or_default();
 
     // sh:65-67
     if cache_policy.is_empty() {
@@ -569,7 +570,11 @@ pub fn _retrieve_mac_apps(_args: &[String]) -> i32 {
 
     // sh:74-84  choose retrieve method (cached in the search-method style).
     let search_ctx = format!(":completion:*:*:{}:commands", service);
-    let mut retrieve = lookupstyle(&search_ctx, "search-method").into_iter().next();
+    // sh:74  if ! zstyle -s ":completion:*:*:${service}:commands" search-method retrieve
+    //
+    // The probe below runs on `zstyle -s`'s STATUS (`zutil.c:648` tests
+    // `vals[0]`, a pointer) and the value is `zutil.c:649`'s join.
+    let mut retrieve = crate::compsys::ported::shared::zstyle_s(&search_ctx, "search-method");
     if retrieve.is_none() {
         // sh:76-82
         retrieve = Some(if mdutil_root_indexed() {

@@ -120,10 +120,14 @@ fn populate_cache_if_unset() {
 
     // sh:19  zstyle -s ":completion:${curcontext}:colors" path file
     let style_ctx = format!(":completion:{}:colors", curcontext);
-    let file = crate::ported::modules::zutil::lookupstyle(&style_ctx, "path")
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    // sh:19-20  zstyle -s ":completion:${curcontext}:colors" path file
+    //            if [[ -n "$file" ]]; then
+    //
+    // sh:20 tests the VALUE, so the emptiness test below stays; what changes
+    // is that the value is `zutil.c:649`'s join of the whole array rather than
+    // element 1 — an rgb.txt path containing a space was truncated at the
+    // first word and the file silently failed to open.
+    let file = crate::compsys::ported::shared::zstyle_s(&style_ctx, "path").unwrap_or_default();
 
     let mut cache: Vec<String> = if !file.is_empty() {
         // sh:20-21 — no `:#* *` whitespace filter on this source.

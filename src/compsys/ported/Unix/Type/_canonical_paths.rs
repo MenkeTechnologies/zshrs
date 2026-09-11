@@ -378,13 +378,23 @@ pub fn _canonical_paths(args: &[String]) -> i32 {
     } else if is_dotdot_path(&base) {
         // sh:103-104  zstyle -s … canonical-paths-back-limit blimit || blimit=8
         let curcontext = getsparam("curcontext").unwrap_or_default();
-        let mut blimit: i64 = lookupstyle(
+        // sh:104-105  zstyle -s ":completion:${curcontext}:$tag" \
+        //                canonical-paths-back-limit blimit || blimit=8
+        //
+        // `blimit` is `typeset -i` (sh:90), so the `||` default applies only
+        // when `zstyle -s` reports UNSET (`zutil.c:648`); a style set to the
+        // empty string assigns 0 to the integer and the sh:111 loop never
+        // runs. `zutil.c:649` also joins the whole value array before that
+        // assignment.
+        let mut blimit: i64 = match crate::compsys::ported::shared::zstyle_s(
             &format!(":completion:{}:{}", curcontext, tag),
             "canonical-paths-back-limit",
-        )
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8);
+        ) {
+            // `typeset -i x=<text>` evaluates the text as arithmetic; an empty
+            // or unparseable value lands on 0, not on the sh:105 default.
+            Some(v) => v.trim().parse().unwrap_or(0),
+            None => 8,
+        };
 
         // sh:106-109
         if !base.ends_with('/') {

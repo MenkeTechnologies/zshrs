@@ -186,9 +186,21 @@ pub fn _dates(args: &[String]) -> i32 {
     // sh:23-24
     let (fmt_opt, future_flag, rest) = zparse_dates(args);
     let future: i64 = if future_flag { 1 } else { -1 };
-    // sh:25-26 — format resolution.
-    let userformat = lookupstyle(&dctx, "date-format").into_iter().next();
-    let format = userformat.or(fmt_opt).unwrap_or_else(|| "%F".to_string());
+    // sh:25-26  zstyle -s ":completion:${curcontext}:dates" date-format userformat
+    //            format=${userformat:-${format[2]:-%F}}
+    //
+    // Two corrections. `zutil.c:649` joins the WHOLE value array, so a
+    // `date-format` written unquoted — `zstyle ':completion:*:dates'
+    // date-format %Y-%m-%d %H:%M` — keeps both words instead of collapsing to
+    // the first. And sh:26's `:-` is an EMPTINESS test on the resulting
+    // scalar, not a set/unset test: `date-format ''` is a hit for `zstyle -s`
+    // but still falls through to `$format[2]` / `%F`, which an `Option` that
+    // carries `Some("")` forward does not.
+    let userformat =
+        crate::compsys::ported::shared::zstyle_s(&dctx, "date-format").filter(|f| !f.is_empty());
+    let format = userformat
+        .or_else(|| fmt_opt.filter(|f| !f.is_empty()))
+        .unwrap_or_else(|| "%F".to_string());
 
     // sh:28-33 — row budget from max-matches-length.
     let limits = lookupstyle(&dctx, "max-matches-length");

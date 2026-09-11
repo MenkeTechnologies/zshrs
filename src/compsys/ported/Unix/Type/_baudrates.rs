@@ -113,14 +113,21 @@ pub fn _baudrates(args: &[String]) -> i32 {
         styled
     };
 
-    // sh:51-53 — style overrides for max/min/filter.
-    if let Some(v) = lookupstyle(&bctx, "max-value").into_iter().next() {
+    // sh:56-58 — style overrides for max/min/filter, each
+    //   `zstyle -s ":completion:${curcontext}:baud-rates" <style> tmp &&
+    //    opts[-X]=$tmp`.
+    //
+    // The `&&` is `zstyle -s`'s STATUS (`zutil.c:648`) and `$tmp` is
+    // `zutil.c:649`'s join of the whole value array. `filter` names a shell
+    // function that sh:59 calls, and is the one of the three a user is likely
+    // to write with arguments; reading element 1 dropped them.
+    if let Some(v) = crate::compsys::ported::shared::zstyle_s(&bctx, "max-value") {
         opt_u = Some(v);
     }
-    if let Some(v) = lookupstyle(&bctx, "min-value").into_iter().next() {
+    if let Some(v) = crate::compsys::ported::shared::zstyle_s(&bctx, "min-value") {
         opt_l = Some(v);
     }
-    let opt_f = opt_f_arg.or_else(|| lookupstyle(&bctx, "filter").into_iter().next());
+    let opt_f = opt_f_arg.or_else(|| crate::compsys::ported::shared::zstyle_s(&bctx, "filter"));
 
     // sh:55-61 — numeric range keep `<min-max>`.
     if opt_u.is_some() || opt_l.is_some() {
