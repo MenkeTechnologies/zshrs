@@ -2587,13 +2587,14 @@ pub fn adjustwinsize(from: i32) {
     // This used to return `(usize, usize)`, and it built that pair by calling
     // `adjustcolumns()` / `adjustlines()` again on the way out — a Rust-only
     // return value that no caller ever read (every call site is `let _ =`).
-    // Those trailing re-entries DEADLOCKED the shell: `assignnparam` holds the
-    // paramtab write guard across the c:2874 gsu setfn dispatch
-    // (params.rs:9944 → params.rs:9998), and the setfn for `$LINES` is
-    // `zlevarsetfn`, which calls back in here with from=2 (c:4232). Exiting
-    // through `adjustcolumns()` then reached `getsparam("COLUMNS")`
-    // (utils.rs:2538), which wants a READ lock on the very table the caller
-    // still holds for writing. std's `RwLock` is not reentrant, so the shell
+    // Those trailing re-entries DEADLOCKED the shell: `assignnparam` takes the
+    // paramtab WRITE guard and still holds it when it dispatches the c:2874
+    // gsu setfn (`intsetfn` on its PM_INTEGER arm), and the setfn behind
+    // `$LINES` is `zlevarsetfn`, which calls back in here with from=2
+    // (c:4232). Exiting through `adjustcolumns()` then reached
+    // `getsparam("COLUMNS")` — its last-resort fallback, below — which wants a
+    // READ lock on the very table the caller still holds for writing. std's
+    // `RwLock` is not reentrant, so the shell
     // parked in `lock_contended` forever. C cannot hit this: `adjustcolumns`
     // (c:1856-1878) reads `shttyinfo.winsize` and `tccolumns` and never once
     // touches the parameter table.
@@ -2642,8 +2643,8 @@ pub fn adjustwinsize(from: i32) {
             // `shttyinfo.winsize`, so `zterm_lines`/`zterm_columns` are
             // positive no matter which way the probe went. zshrs has no cached
             // `winsize` struct, so without these two calls a shell with no tty
-            // leaves both globals at 0 and `zlevargetfn` (params.rs:10947,
-            // c:362-363) answers `$LINES`/`$COLUMNS` with 0. Seed, then return
+            // leaves both globals at 0 and `zlevargetfn` (c:Src/params.c:362-363,
+            // IPDEF5) answers `$LINES`/`$COLUMNS` with 0. Seed, then return
             // as C does — the results are deliberately discarded.
             let _ = adjustcolumns();
             let _ = adjustlines();
