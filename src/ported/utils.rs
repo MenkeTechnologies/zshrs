@@ -2598,11 +2598,18 @@ pub fn adjustwinsize(from: i32) {
     // (c:1856-1878) reads `shttyinfo.winsize` and `tccolumns` and never once
     // touches the parameter table.
     //
-    // The window it needed was a terminal reporting 0x0, because only then
-    // does `adjustcolumns` fall past its ioctl to the parameter fallback. A
-    // pty allocated without an explicit `TIOCSWINSZ` is exactly that, which is
-    // why it took out every `zsh/zpty`-spawned shell and left them producing
-    // no prompt and no output at all.
+    // The window it needed was a terminal reporting 0 columns, because only
+    // then does `adjustcolumns` fall past its ioctl to the parameter fallback.
+    // A `zsh/zpty` slave is exactly that whenever the shell that spawned it is
+    // NOT interactive: the stamp that would give the slave a real geometry,
+    // `Src/Modules/zpty.c:374-377`, sits inside an `if (interact)` at
+    // zpty.c:371, so a pty opened from a script keeps the 0x0 the kernel gave
+    // it. Measured: both shells report 24x80 (their fallbacks, not a real
+    // window) inside a zpty spawned from `zsh -f <script>`, and giving the
+    // OUTER shell a 40x100 terminal changes nothing, because it is still not
+    // interactive. That is every pty the test harness opens, which is why this
+    // took out the zpty parity suite wholesale while leaving hand-run
+    // interactive shells alone.
 
     // c:1891 — `static int getwinsz = 1;`
     let getwinsz = ADJUSTWINSIZE_GETWINSZ.load(Ordering::SeqCst);
