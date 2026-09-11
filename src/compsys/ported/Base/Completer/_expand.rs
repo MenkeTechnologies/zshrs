@@ -187,7 +187,16 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // sh:14  the array-valued half of the `local` line. These names are
     // handed to `compadd -a` / `compadd -d` by NAME below, so they must be
     // real parameters — and must not survive the call.
-    let _scope = LocalScope::declare(&["exp", "dir", "space", "normal", "dstr"], PM_ARRAY);
+    //
+    // `expl` is on the same sh:14 line and belongs here for the opposite
+    // reason: this port never writes it, `_description` does (sh:186/188,
+    // sh:199/201, sh:226/228 all pass the NAME), and `_description` ends in
+    // `set -A "$name" …` (`_description` sh:100/102). Without the shadow that
+    // array is created at the caller's level and outlives the completion:
+    // measured with `completer _expand _complete` and `(( <TAB>`,
+    // /opt/homebrew/bin/zsh 5.9.2 leaves `expl` unset where zshrs left
+    // `expl=(-J -default-)`.
+    let _scope = LocalScope::declare(&["exp", "dir", "space", "normal", "dstr", "expl"], PM_ARRAY);
 
     // sh:15  local continue=0 — also the exit status at sh:245.
     let mut continue_: i32 = 0;
