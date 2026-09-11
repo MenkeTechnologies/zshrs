@@ -8795,9 +8795,41 @@ pub fn execute_script(src: &str) -> Result<i32, String> {
 /// above: `execstring` (c:1228).
 /// Run a script source string through the live executor's zsh pipeline.
 /// `Ok(0)` when no executor is in scope.
+///
+/// Executor ladder, identical to [`execute_script`] above and to
+/// `fusevm_bridge::source_file_per_command`: the innermost ACTIVE executor
+/// when one is in scope, the installed session executor otherwise, `Ok(0)`
+/// with neither.
+///
+/// The session-executor rung is what makes `execstring` (c:1228) behave like
+/// C, where the interpreter is plain process globals and the string ALWAYS
+/// runs. Every caller that fires between commands rather than inside one
+/// reaches this with `CURRENT_EXECUTOR` unset — `checksched`'s
+/// `execstring(sch->cmd, 0, 0, "sched")` (c:Src/Builtins/sched.c:122), fired
+/// from the pre-prompt hook or from the `addtimedfn` deadline in ZLE's read
+/// loop, and `dotrap`'s re-parse of a non-function trap action
+/// (signals.rs). Without it, `try_with_executor` returned `None`, the
+/// `.unwrap_or(Ok(0))` reported success, and the command was dropped on the
+/// floor: `sched +1 'print hi'` listed the entry, dequeued it on time, and
+/// printed nothing.
 pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
-    crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script_zsh_pipeline(src))
-        .unwrap_or(Ok(0))
+    if let Some(r) =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script_zsh_pipeline(src))
+    {
+        return r;
+    }
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        // SAFETY: set by install_session_executor to an executor that lives
+        // for the whole single-threaded interactive session. Reached only
+        // when `CURRENT_EXECUTOR` is unset, i.e. no chunk is running on this
+        // thread (`run_chunk` holds an `ExecutorContext` for the whole of
+        // `vm.run()`), so this cannot alias a live `&mut ShellExecutor`.
+        Some(ptr) => {
+            let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).execute_script_zsh_pipeline(src) }
+        }
+        None => Ok(0),
+    })
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!

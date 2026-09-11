@@ -4355,6 +4355,18 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/pcre" => crate::ported::modules::pcre::boot_(std::ptr::null()),
         "zsh/random" => crate::ported::modules::random::boot_(std::ptr::null()),
         "zsh/regex" => crate::ported::modules::regex::boot_(std::ptr::null()),
+        // c:Src/Builtins/sched.c:421 boot_ — `addprepromptfn(&checksched)`.
+        // That single line is the ONLY thing that arms the schedule at
+        // prompt time; `sched.mdd` is `load=yes` with `autofeatures="b:sched
+        // p:zsh_scheduled_events"`, so C boots the module the first time
+        // `sched` is run (`$modules[zsh/sched]` goes `autoloaded` ->
+        // `loaded`). With no arm here `sched::boot_` had zero callers, so a
+        // due entry was never checked between commands — only the
+        // `addtimedfn` deadline inside ZLE's read loop ever reached
+        // `checksched`, and a shell that was NOT idle in the editor (ZLE
+        // off, or busy running a command when the deadline passed) never
+        // ran the command at all.
+        "zsh/sched" => crate::ported::builtins::sched::boot_(std::ptr::null()),
         "zsh/net/socket" => crate::ported::modules::socket::boot_(std::ptr::null()),
         "zsh/stat" => crate::ported::modules::stat::boot_(std::ptr::null()),
         "zsh/system" => crate::ported::modules::system::boot_(std::ptr::null()),
@@ -4425,6 +4437,11 @@ pub fn cleanup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/pcre" => crate::ported::modules::pcre::cleanup_(std::ptr::null()),
         "zsh/random" => crate::ported::modules::random::cleanup_(std::ptr::null()),
         "zsh/regex" => crate::ported::modules::regex::cleanup_(std::ptr::null()),
+        // c:Src/Builtins/sched.c:438 cleanup_ — `delprepromptfn(&checksched)`
+        // plus the free of every pending entry. Symmetric with the boot_ arm
+        // above: without it a `zmodload -u zsh/sched` would leave the
+        // preprompt hook installed and re-loading would push a second copy.
+        "zsh/sched" => crate::ported::builtins::sched::cleanup_(std::ptr::null()),
         "zsh/net/socket" => crate::ported::modules::socket::cleanup_(std::ptr::null()),
         "zsh/stat" => crate::ported::modules::stat::cleanup_(std::ptr::null()),
         "zsh/system" => crate::ported::modules::system::cleanup_(std::ptr::null()),
