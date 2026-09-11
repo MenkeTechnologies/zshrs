@@ -34,6 +34,7 @@ mod bash_shopt_parity;
 mod binary_parity;
 mod bindkey_parity;
 mod brace_parity;
+mod bracketed_paste_parity;
 mod builtin_c_parity;
 mod builtin_misc_parity;
 mod builtin_print_parity;

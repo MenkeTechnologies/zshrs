@@ -28,7 +28,6 @@ use crate::ported::zle::zle_main::{
     MULT, NEG_ARG, PREFIXFLAG, REGION_ACTIVE, YANKB, YANKE, ZLECS, ZLELINE, ZLELL,
     ZLE_RESET_NEEDED, ZMOD,
 };
-use std::io::Read;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -1146,81 +1145,55 @@ pub fn yankpop() -> i32 {
 /// Port of `mod_export char *bracketedstring(void)` from
 /// Src/Zle/zle_misc.c:784.
 ///
-/// Reads bytes from the terminal until the end-paste sequence
-/// `\e[201~` is seen, demetafying high-bit bytes and translating
-/// `\r` → `\n` along the way.
+/// Reads bytes through the ZLE input pump until the end-paste sequence
+/// `\e[201~` is seen, translating `\r` → `\n` along the way. Returns
+/// the accumulated payload without the sentinel.
 ///
-/// Blocked on: `getbyte()` from zle_main.c — the keyboard input
-/// pump that respects the ZLE timeout/select(2) machinery. Until
-/// the input pump lands, returns the empty string so callers see a
-/// no-op paste rather than a panic.
-/// Port of `bracketedstring()` from `Src/Zle/zle_misc.c:784`.
-/// C decl: `bracketedstring(void)`
-/// Reads bytes from the controlling tty
-/// looking for the bracketed-paste end sentinel `\033[201~`,
-/// translating CR → LF and meta-encoding high-bit bytes along the
-/// way. Returns the accumulated payload (without the sentinel).
-///
-/// C uses `getbyte(1L, &timeout, 1)` which goes through the full
-/// ZLE input pump (sets `timeout=1`, blocks ≤1 sec). The Rust port
-/// uses a direct `read()` on SHTTY with a 1-second poll budget per
-/// byte — enough for paste activity but not enough to wedge an
-/// idle session.
+/// The bytes come from `getbyte` (c:810), NOT from a direct read of the
+/// terminal. That is load-bearing twice over:
+///   * `getbyte` drains `kungetbuf` first (c:Src/Zle/zle_main.c:541), so
+///     text queued by `zle -U` is part of the paste. `bracketed-paste-magic`
+///     depends on it — it ends with `zle -U - $PASTED$'\e[201~'` followed by
+///     `zle .bracketed-paste`, expecting this function to read the queued
+///     text back.
+///   * the paste body has usually already been pulled off the terminal by
+///     the time the widget runs: the terminal delivers `\e[200~`, the body
+///     and `\e[201~` in one burst. A read that bypasses the pump finds the
+///     terminal empty, and the body is then executed as keystrokes.
 pub fn bracketedstring() -> String {
-    // c:784
-
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    if fd < 0 {
-        return String::new();
-    }
-
-    const ENDESC: &[u8] = b"\x1b[201~"; // c:786
-    let mut pbuf: Vec<u8> = Vec::with_capacity(64); // c:789
-    let mut endpos: usize = 0; // c:787
-
-    // Read one byte at a time with a 1-second deadline per `getbyte`-
-    // equivalent call. Use stdin fd 0 if SHTTY is the controlling tty;
-    // otherwise read directly from SHTTY.
-    let mut stdin = std::io::stdin();
-    let deadline_per_byte = std::time::Duration::from_secs(1);
+    // c:798
+    const ENDESC: &[u8] = b"\x1b[201~"; // c:800
+    let mut endpos: usize = 0; // c:801
+    let mut pbuf: Vec<u8> = Vec::with_capacity(64); // c:802-803
 
     while endpos < ENDESC.len() {
-        // c:793
-        let mut buf = [0u8; 1];
-        let start = std::time::Instant::now();
-        let next: u8 = loop {
-            match stdin.read(&mut buf) {
-                Ok(1) => break buf[0],                                       // c:796
-                Ok(_) => return String::from_utf8_lossy(&pbuf).into_owned(), // EOF
-                Err(_) if start.elapsed() < deadline_per_byte => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                    continue;
-                }
-                Err(_) => return String::from_utf8_lossy(&pbuf).into_owned(),
-            }
+        // c:807 — while (endesc[endpos])
+        // c:809-810 — `if ((next = getbyte(1L, &timeout, 1)) == EOF) break;`
+        let next = match crate::ported::zle::zle_main::getbyte(true) {
+            Some(b) => b,
+            None => break,
         };
-
-        // c:798-799 — sliding match against ENDESC.
+        // c:812-813 — `if (!endpos || next != endesc[endpos++])
+        //                  endpos = (next == *endesc);`
         if endpos == 0 || next != ENDESC[endpos] {
             endpos = if next == ENDESC[0] { 1 } else { 0 };
         } else {
             endpos += 1;
         }
-
-        // c:800-806 — meta-encode high-bit bytes, CR→LF, else copy.
-        if (next & 0x80) != 0 && next != 0xff {
-            // c:800 imeta()
-            pbuf.push(0x83); // c:801 Meta
-            pbuf.push(next ^ 32); // c:802
-        } else if next == b'\r' {
-            // c:803
-            pbuf.push(b'\n'); // c:804
+        // c:814-820 — `if (imeta(next)) { Meta; next ^ 32 } else if (next ==
+        // '\r') '\n' else next`. The imeta arm has nothing to do here: zshrs
+        // keeps shell strings as UNMETAFIED UTF-8 (see `utils::metafy`'s note —
+        // a metafied byte string is not valid UTF-8), so the raw byte is kept
+        // and the whole buffer is decoded once below. Escaping it here would turn
+        // every pasted non-ASCII character into U+FFFD.
+        if next == b'\r' {
+            pbuf.push(b'\n'); // c:818
         } else {
-            pbuf.push(next); // c:806
+            pbuf.push(next); // c:820
         }
     }
-    // c:808 — `pbuf[current-endpos] = '\0';` — trim the sentinel we
-    //          appended byte-by-byte off the tail.
+    // c:822 — `pbuf[current-endpos] = '\0';` — drop the sentinel bytes that
+    // were copied in while it was being matched.
     let strip = endpos.min(pbuf.len());
     pbuf.truncate(pbuf.len() - strip);
     String::from_utf8_lossy(&pbuf).into_owned()
@@ -1236,12 +1209,14 @@ pub fn bracketedstring() -> String {
 /// prevents the user from accidentally pasting shell metacharacters.
 pub fn bracketedpaste(args: &[String]) -> i32 {
     // c:814
-    let pbuf = bracketedstring(); // c:816
+    let pbuf = bracketedstring(); // c:830
     if let Some(name) = args.first() {
-        // c:818
-        // c:819 — `setsparam(*args, pbuf)`. Param-table not yet a
-        // singleton; fall back to env-var (matches other ports).
-        std::env::set_var(name, &pbuf);
+        // c:832-833 — `if (*args) setsparam(*args, pbuf);`. This used to be
+        // `std::env::set_var` under a comment claiming the parameter table
+        // was not reachable; the process environment is not the shell's
+        // parameter table, so `zle .bracketed-paste PASTED` left `$PASTED`
+        // empty and `bracketed-paste-magic` replayed nothing.
+        crate::ported::params::setsparam(name, &pbuf);
         return 0;
     }
     // c:822-825 — quote when zmult != 1 then convert to ZLE_CHAR_T,
