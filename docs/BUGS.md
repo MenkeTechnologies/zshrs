@@ -43140,6 +43140,32 @@ out:a 1
 
 Three-level nesting verified. Test baseline 1024/28 (was 1023/29 — `test_local_assoc_array_shadows_outer` flipped).
 
+**Follow-up 2026-09-11 — the gate was half the shape.** Both sides above tested
+the OUTER param's type, which has no C counterpart: C's unwind
+(`unsetparam_pm` c:Src/params.c:3800 → `stdunsetfn`'s `case PM_HASHED`
+c:3922-3925 → `hashsetfn` c:4045) dispatches on the type of the LOCAL being
+destroyed, because the fresh local's own `u.hash` is the only place its pairs
+ever lived (c:1157 `zshcalloc`). So a hashed local under a NON-hashed outer
+local pushed no frame and nothing ever removed its row:
+
+```sh
+$ /opt/homebrew/bin/zsh -f -c 'outer(){ local H; inner; print "in: ${(t)H} ${#H}" }; inner(){ typeset -A H; H[x]=1 }; outer; print "after: ${(t)H} ${#H}"'
+in: scalar-local 0
+after:  0
+$ ./target/debug/zshrs --zsh -f -c '…same…'   # before
+in: scalar-local 1
+after: association 1
+```
+
+The association was readable through the outer function's scalar local while
+`inner` ran, and outlived `outer` as a global. Same with an outer `local -a H`
+(there `${#H}` counted the array while `${(k)H}` listed the inner's keys). The
+push now fires when EITHER side is PM_HASHED, and each frame records the
+`locallevel` of the local that pushed it so `endparamscope` pops a frame only
+for the scope that made one — the pop no longer re-derives the push condition
+from the flags, which is how the two spellings drifted apart in the first
+place. Pinned by `tests/parity/assoc_local_shadow_scope_parity.rs`.
+
 ---
 
 ## #416 — `unset PATH` ignored — command lookup still resolves binaries
@@ -57501,7 +57527,7 @@ no longer reports the internal trap-machinery scalar.
 | 412 | `$PROMPT3` default empty — `select` prompt missing (zsh: `\\033[1;34m-->>>> \\033[0m`) | **fixed** 2026-06-02 | seed `PS3` in zshrc |
 | 413 | `do` standalone-keyword silently accepted as no-op (zsh: parse error near `do`) — reserved-word strict check missing | **fixed** 2026-06-02 | `zsh -n script.zsh` pre-check |
 | 414 | `print -P "%Z..."` keeps unknown prompt escape literal (zsh: drops the escape) — opposite of #398 printf direction | **fixed** 2026-06-04 | n/a |
-| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-05 | createparam saves displaced paramtab_hashed_storage[name] onto shadow stack for PM_LOCAL|PM_HASHED; endparamscope pops on outer-pm restoration (mirrors C copyparam via parallel storage) |
+| 415 | **CRITICAL** function-local `typeset -A h=()` clobbers global `h` instead of shadowing (regular `local`/`-a` shadow correctly) | **fixed** 2026-06-05, widened 2026-09-11 | createparam saves displaced paramtab_hashed_storage[name] onto a level-tagged shadow stack whenever a PM_LOCAL shadow installs and either side is PM_HASHED; endparamscope pops the frame whose level matches the local it unwinds (mirrors C copyparam + stdunsetfn's PM_HASHED arm via parallel storage) |
 | 416 | `unset PATH` ignored — command lookup still resolves (security bypass for sandboxing patterns) | **fixed** 2026-06-04 | try `PATH=` empty assignment (needs verify) |
 | 417 | `unset RANDOM` ignored — special-param regenerator stays active (zsh: returns empty after unset) | **fixed** 2026-06-04 | n/a |
 | 418 | `unset SECONDS` / `unset EPOCHSECONDS` ignored — extends #417 to time-tracking specials | **fixed** 2026-06-05 | unsetparam retains PM_SPECIAL pms in paramtab with PM_UNSET (mirror C `Src/params.c:3911-3913`); getsparam honors PM_UNSET as empty; re-assignment reuses pm via createparam oldpm so intsetfn name-dispatch fires through intsecondssetfn |

@@ -2608,7 +2608,28 @@ pub fn createparam(
                 && crate::ported::modules::parameter::PARTAB
                     .iter()
                     .any(|e| e.name == name);
-            if (op.node.flags as u32 & PM_HASHED) != 0
+            // c:Src/params.c:3800 + c:3908-3925 — the unwind of a plain local
+            // is `unsetparam_pm` → `pm->gsu.s->unsetfn(pm, exp)` → stdunsetfn's
+            // `case PM_HASHED: pm->gsu.h->setfn(pm, NULL)` (hashsetfn, c:4045,
+            // `deleteparamtable(pm->u.hash)`). That switch dispatches on the
+            // type of the LOCAL being destroyed and never looks at `pm->old`,
+            // because in C the pairs hang off the local's own `u.hash`
+            // (c:1157 `zshcalloc` leaves the fresh local's slot NULL, so the
+            // outer's table is still hanging off the `pm->old` struct,
+            // untouched). RUST-ONLY HAZARD: zshrs keeps the pairs in the
+            // name-keyed `paramtab_hashed_storage` with no scope dimension, so
+            // the save/clear here is what stands in for both halves — and
+            // gating it on the OUTER being PM_HASHED had no C counterpart. A
+            // `typeset -A H` under an outer `local H` (or `local -a H`)
+            // therefore pushed no frame, so nothing ever removed the row:
+            //   outer(){ local H; inner; print ${(t)H} ${#H} }
+            //   inner(){ typeset -A H; H[x]=1 }
+            //   outer; print ${(t)H}
+            // read `scalar-local 1` inside and left `association` behind in
+            // GLOBAL scope after `outer` returned. Fire whenever EITHER side is
+            // hashed: outer-hashed needs the outer's bag preserved, and
+            // local-hashed needs the local's bag torn down.
+            if ((op.node.flags as u32 & PM_HASHED) != 0 || (flags as u32 & PM_HASHED) != 0)
                 && (flags as u32 & PM_LOCAL) != 0
                 && !keeps_special_hash
             {
@@ -2631,7 +2652,17 @@ pub fn createparam(
                 let stk_mtx =
                     PARAMTAB_HASHED_SHADOW_STACK.get_or_init(|| Mutex::new(HashMap::new()));
                 if let Ok(mut stk) = stk_mtx.lock() {
-                    stk.entry(name.to_string()).or_default().push(saved);
+                    // The frame carries the level of the local it belongs to
+                    // (the same `cur_locallevel` stamped into `pm.level` below,
+                    // c:Src/builtin.c:2576 `pm->level = locallevel`), so
+                    // endparamscope pops a frame only for the scope that
+                    // actually pushed one. Without that tag the pop side had to
+                    // re-derive the push condition from the param flags, and
+                    // the two spellings drifted apart — which is how the leak
+                    // above survived.
+                    stk.entry(name.to_string())
+                        .or_default()
+                        .push((cur_locallevel, saved));
                 }
                 if let Ok(mut m) = paramtab_hashed_storage().lock() {
                     // c:Src/params.c:2270 — `if (PM_TYPE(pm->node.flags) &
@@ -13430,11 +13461,10 @@ pub fn endparamscope() {
             };
             if let Some(pm) = popped {
                 let had_outer = pm.old.is_some();
-                let outer_is_assoc = pm
-                    .old
-                    .as_ref()
-                    .map(|p| (p.node.flags as u32 & PM_HASHED) != 0)
-                    .unwrap_or(false);
+                // The level this local was stamped with at createparam time
+                // (c:Src/builtin.c:2576 `pm->level = locallevel`); the assoc
+                // shadow frame pushed for it carries the same number.
+                let popped_level = pm.level;
                 // c:Src/params.c:3862 — scanendscope's non-special arm calls
                 // `unsetparam_pm(pm, 0, 0)`, whose `if (pm->env) delenv(pm)`
                 // strips the popped local's ENVIRON entry. This pop path
@@ -13530,42 +13560,83 @@ pub fn endparamscope() {
                         .as_deref_mut()
                         .map(|m| m.remove(&n));
                 }
-                // RUST-ONLY: PM_HASHED outer-pm restoration — pop the
-                // saved paramtab_hashed_storage[name] from the shadow
-                // stack and re-install it so the outer scope's assoc
-                // data is visible again. Mirrors the C copyparam +
-                // pm.old chain via parallel storage. Bug #415. Symmetric
-                // with the createparam push-side.
+                // RUST-ONLY: assoc-storage shadow restoration — pop the
+                // frame createparam pushed for THIS local and put the name's
+                // `paramtab_hashed_storage` row back the way it was before the
+                // shadow installed. In C there is nothing to do here: the
+                // outer's pairs never moved (they hang off the `pm->old`
+                // struct's own `u.hash`, c:Src/params.c:1157-1158) and the
+                // local's pairs die with the local in `stdunsetfn`'s PM_HASHED
+                // arm (c:3922-3925 → hashsetfn c:4045). zshrs's one row per
+                // NAME has to be unwound by hand, and this is the only place
+                // that does it. Bug #415.
                 //
-                // The condition must mirror the PUSH exactly: createparam
-                // (params.rs:2260) pushes whenever the OUTER pm is
-                // PM_HASHED and the new one is PM_LOCAL — the new pm's own
-                // type is irrelevant. Gating the pop on `was_assoc` (the
-                // LOCAL being hashed) stranded every save made by a
-                // NON-hashed local, leaving the cleared/empty bag in place
-                // for the rest of the process:
+                // The frame is matched by the level createparam recorded, not
+                // by re-deriving the push condition from the flags: the two
+                // spellings had drifted into "outer is PM_HASHED" on both
+                // sides, so a hashed local under a NON-hashed outer pushed
+                // nothing and popped nothing, and its row outlived every
+                // enclosing scope (see the createparam comment). A level match
+                // also means a frame is never stolen from an enclosing scope
+                // when this scope pushed none — which is what kept
                 //   typeset -A h=(a 1); f(){ local h; }; f; echo ${h[a]}
-                // printed nothing instead of `1`, and `local options` /
-                // `local functions` (git-completion.bash's
-                // `__git_resolve_builtins`) permanently blanked the
-                // zsh/parameter magic assoc for the whole session.
-                // `pm.level > ll` already restricts this loop to locals,
-                // so `outer_is_assoc` alone is the mirror image.
-                let _ = was_assoc;
-                if outer_is_assoc {
+                // working (a non-hashed local over a hashed outer still pushes,
+                // so it still restores `a 1`).
+                {
                     let stk_mtx =
                         PARAMTAB_HASHED_SHADOW_STACK.get_or_init(|| Mutex::new(HashMap::new()));
-                    let saved = if let Ok(mut stk) = stk_mtx.lock() {
-                        stk.get_mut(&n).and_then(|v| v.pop()).flatten()
-                    } else {
-                        None
-                    };
-                    if let Ok(mut m) = paramtab_hashed_storage().lock() {
-                        match saved {
-                            Some(map) => {
-                                m.insert(n.clone(), map);
+                    // Outer Option: whether a frame belonging to this scope was
+                    // popped at all. Inner: whether the name had a row before.
+                    let saved: Option<Option<IndexMap<String, String>>> =
+                        if let Ok(mut stk) = stk_mtx.lock() {
+                            match stk.get_mut(&n) {
+                                Some(frames)
+                                    if frames
+                                        .last()
+                                        .is_some_and(|(lvl, _)| *lvl == popped_level) =>
+                                {
+                                    frames.pop().map(|(_, row)| row)
+                                }
+                                _ => None,
                             }
-                            None => {
+                        } else {
+                            None
+                        };
+                    let frame_popped = saved.is_some();
+                    if let Some(saved) = saved {
+                        if let Ok(mut m) = paramtab_hashed_storage().lock() {
+                            match saved {
+                                Some(map) => {
+                                    m.insert(n.clone(), map);
+                                }
+                                None => {
+                                    m.remove(&n);
+                                }
+                            }
+                        }
+                    }
+                    // RUST-ONLY: the same unwind for a local that became hashed
+                    // AFTER it was declared, where createparam saw no hash on
+                    // either side and pushed no frame:
+                    //   d0() { local -a H; d1 }
+                    //   d1() { local H=s; typeset -A H; H[x]=1 }
+                    // The second declaration takes createparam's REUSE arm
+                    // (c:Src/params.c:1154-1155 `pm = oldpm`, reached because
+                    // `oldpm->level == locallevel`), which installs no shadow at
+                    // all — in C there is still nothing to unwind, since the
+                    // pairs went into the one Param that the scope pop frees.
+                    // Here they went into the name-keyed row, which nothing
+                    // owned. So enforce the invariant the push side states: a
+                    // binding that is not PM_HASHED owns no row. `tab` already
+                    // holds whatever this pop revealed, so the test reads the
+                    // binding that is about to become visible.
+                    if !frame_popped && had_outer {
+                        let visible_hashed = tab
+                            .get(&n)
+                            .map(|p| (p.node.flags as u32 & PM_HASHED) != 0)
+                            .unwrap_or(false);
+                        if !visible_hashed {
+                            if let Ok(mut m) = paramtab_hashed_storage().lock() {
                                 m.remove(&n);
                             }
                         }
@@ -15123,13 +15194,21 @@ pub(crate) fn paramtab_hashed_storage(
 /// canonical assoc data lives in `paramtab_hashed_storage` (a flat
 /// HashMap keyed by name with NO scope dimension — Rust-only parallel
 /// store; the C side keeps assoc data in pm.u_hash so it rides the
-/// pm.old chain automatically). createparam pushes the displaced
-/// value when a PM_LOCAL|PM_HASHED shadow installs; endparamscope
-/// pops on PM_HASHED restoration so the outer scope's bag comes
-/// back. Mirrors C's `copyparam` (Src/builtin.c:2382-2424) via
-/// parallel storage. Bug #415.
+/// pm.old chain automatically, and the local's own bag is freed with
+/// the local by `stdunsetfn`'s PM_HASHED arm, Src/params.c:3922-3925).
+/// createparam pushes the displaced value whenever a PM_LOCAL shadow
+/// installs and either side is PM_HASHED; endparamscope pops the frame
+/// whose recorded level matches the local it is unwinding, so the outer
+/// scope's bag comes back and the local's bag goes away. Mirrors C's
+/// `copyparam` (Src/builtin.c:2382-2424) via parallel storage. Bug #415.
+///
+/// Each frame is `(level, row)`: `level` is the `locallevel` of the local
+/// that displaced the row, `row` is `Some(map)` when the name had a row
+/// before the shadow and `None` when it had none. The level tag is what
+/// keeps push and pop matched — the pop side used to re-derive the push
+/// condition from the param flags and the two spellings drifted.
 pub(crate) static PARAMTAB_HASHED_SHADOW_STACK: OnceLock<
-    Mutex<HashMap<String, Vec<Option<IndexMap<String, String>>>>>,
+    Mutex<HashMap<String, Vec<(i32, Option<IndexMap<String, String>>)>>>,
 > = OnceLock::new();
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -20484,7 +20563,9 @@ fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
             if let Some(stk) = crate::ported::params::PARAMTAB_HASHED_SHADOW_STACK.get() {
                 if let Ok(stk) = stk.lock() {
                     if let Some(frames) = stk.get(target) {
-                        if let Some(Some(saved)) = frames.last() {
+                        // Frames are `(level, row)`; the hidden outer's bag is
+                        // the row saved by the innermost shadow.
+                        if let Some((_, Some(saved))) = frames.last() {
                             return saved.get(key).cloned();
                         }
                     }

@@ -24,6 +24,7 @@ mod advanced_parity;
 mod alias_parity;
 mod always_block_parity;
 mod assoc_array_deep_parity;
+mod assoc_local_shadow_scope_parity;
 mod autoload_parity;
 mod bare_name_subscript_default_parity;
 mod bash_param_compat_parity;
