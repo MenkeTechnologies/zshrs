@@ -5796,6 +5796,21 @@ pub fn getiparam(s: &str) -> i64 {
     if s == "HISTCMD" {
         return crate::ported::hist::curhist.load(Ordering::SeqCst); // c:348 + c:4202
     }
+    // c:362-363 + c:4202 — `$COLUMNS`/`$LINES` are the other valptr-bound
+    // specials, and for the same reason they have to be resolved through
+    // `intvargetfn` before the `u_val` fast path below. `unset COLUMNS`
+    // leaves the node in the table flagged PM_UNSET (c:3877, PM_SPECIAL
+    // without PM_REMOVABLE), and an unset parameter reads empty rather than
+    // as the global, so the flag is consulted first.
+    if s == "COLUMNS" || s == "LINES" {
+        if let Ok(tab) = paramtab().read() {
+            if let Some(pm) = tab.get(s) {
+                if (pm.node.flags as u32 & PM_UNSET) == 0 && !is_unset_special(s) {
+                    return intvargetfn(pm); // c:4202
+                }
+            }
+        }
+    }
     // C also honours PM_INTEGER's `pm->u.val` payload directly when
     // the param is typed numeric; check paramtab first for that case.
     if let Ok(tab) = paramtab().read() {
@@ -5824,6 +5839,18 @@ pub fn getnparam(s: &str) -> (i64, f64, bool) {
     if s == "HISTCMD" {
         let v = crate::ported::hist::curhist.load(Ordering::SeqCst); // c:348 + c:4202
         return (v, v as f64, false);
+    }
+    // c:362-363 + c:4202 — the same valptr-bound pair, resolved through
+    // `intvargetfn`; see `getiparam` for the PM_UNSET gate.
+    if s == "COLUMNS" || s == "LINES" {
+        if let Ok(tab) = paramtab().read() {
+            if let Some(pm) = tab.get(s) {
+                if (pm.node.flags as u32 & PM_UNSET) == 0 && !is_unset_special(s) {
+                    let v = intvargetfn(pm); // c:4202
+                    return (v, v as f64, false);
+                }
+            }
+        }
     }
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(s) {
@@ -9950,14 +9977,39 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 pm.node.flags |= PM_DONTIMPORT as i32;
             }
             let t = PM_TYPE(pm.node.flags as u32);
+            // c:2874's setfn for `$COLUMNS`/`$LINES` is `zlevarsetfn`
+            // (c:362-363 `IPDEF5(..., zlevar_gsu)`), and its two lines cannot
+            // both run here: c:4230 `*p = x` is a plain write, but c:4232
+            // `adjustwinsize(...)` READS parameters, and this arm still holds
+            // the paramtab write guard, which is not reentrant. That is the
+            // same hazard the `drop(tab)` before `zerr` above exists for, and
+            // it froze `(( COLUMNS = 0 ))` outright. Do the write here, the
+            // adjustwinsize once the guard is gone.
+            // Name-based, not PM_SPECIAL-based, for the reason `intsetfn`
+            // already documents: some assignment paths build a fresh param
+            // shell and lose the flag.
+            let zlevar = t == PM_INTEGER && matches!(pm.node.nam.as_str(), "COLUMNS" | "LINES");
             if t == PM_INTEGER {
                 // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. MN_FLOAT
                 // input truncates to integer.
-                pm.u_val = if val.type_ == MN_FLOAT {
+                let iv = if val.type_ == MN_FLOAT {
                     val.d as i64
                 } else {
                     val.l
                 };
+                if zlevar {
+                    // c:4230 — `*p = x`, where `p` is `&zterm_columns` /
+                    // `&zterm_lines`. One write in C; two here, because the
+                    // port's parameter carries its own copy.
+                    pm.u_val = iv;
+                    if pm.node.nam == "COLUMNS" {
+                        crate::ported::utils::ZTERM_COLUMNS.store(iv as i32, Ordering::SeqCst);
+                    } else {
+                        crate::ported::utils::ZTERM_LINES.store(iv as i32, Ordering::SeqCst);
+                    }
+                } else {
+                    intsetfn(pm, iv); // c:2874
+                }
                 // c:Src/params.c:2801 — `if (!v->pm->base && lastbase
                 // != -1) v->pm->base = lastbase;`. After setfn the C
                 // path falls through `setstrvalue(v, NULL)` which
@@ -9994,6 +10046,12 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 pm.u_str = Some(s_rendered);
             }
             let cloned = pm.clone();
+            // c:4232 — `adjustwinsize(2 + (p == &zterm_columns));`, the half
+            // of `zlevarsetfn` that could not run under the guard.
+            drop(tab);
+            if zlevar {
+                let _ = adjustwinsize(if cloned.node.nam == "COLUMNS" { 3 } else { 2 }); // c:4232
+            }
             return Some(cloned);
         }
     }
@@ -10528,6 +10586,20 @@ pub fn intsetfn(pm: &mut param, x: i64) {
             intvarsetfn(pm, x); // c:4213
             return;
         }
+        // c:Src/params.c:362-363 —
+        //   IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu),
+        //   IPDEF5("LINES", &zterm_lines, zlevar_gsu),
+        // whose setfn is `zlevarsetfn` (c:4176): `*p = x` writes the
+        // `zterm_columns` / `zterm_lines` GLOBAL through the same pointer the
+        // getter reads, then `adjustwinsize(2 + (p == &zterm_columns))`
+        // re-derives the terminal state. Exactly the TRY_BLOCK_* shape above:
+        // the port cannot carry `u.valptr`, so the bound global is reached by
+        // name. `zlevarsetfn` existed with no caller, so `COLUMNS=40` moved
+        // only `pm.u_val` while every geometry reader kept the old width.
+        "COLUMNS" | "LINES" => {
+            zlevarsetfn(pm, x); // c:4176
+            return;
+        }
         // c:Src/params.c:4552 randomsetfn — `RANDOM=N` calls
         // srand(N). Without this dispatch, $RANDOM writes only u.val
         // and the next read returns rand()'s next value from the
@@ -10865,7 +10937,37 @@ pub fn nullsethashfn(pm: &mut param, x: HashTable) {
 /// Port of `intvargetfn()` from `Src/params.c:4202`. C body:
 /// `return *pm->u.valptr;`
 pub fn intvargetfn(pm: &param) -> i64 {
-    pm.u_val
+    // c:4156 — `return *pm->u.valptr;`. For most IPDEF4/IPDEF5 specials the
+    // pointer aims at a global that zshrs models as an atomic rather than as
+    // storage on the node, so the read has to name that global. `$COLUMNS`
+    // and `$LINES` are `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)` /
+    // `IPDEF5("LINES", &zterm_lines, zlevar_gsu)` (c:362-363).
+    //
+    // The alias runs both ways in C and nothing synchronises the halves:
+    // `zlevarsetfn` (c:4176 `*p = x`) writes the global through the same
+    // pointer, and `adjustwinsize`'s `setiparam("COLUMNS", zterm_columns)`
+    // (c:1934) exists only to re-export an environment COLUMNS — it is
+    // guarded by `zgetenv("COLUMNS")` precisely because the parameter itself
+    // needs no update.
+    //
+    // zshrs ported only the SET half (`zlevarsetfn` mirrors into
+    // `ZTERM_COLUMNS`), so a read answered from the node's `u_val` — a
+    // snapshot, and a snapshot can be rolled back. `adjustwinsize` runs from
+    // the SIGWINCH handler, which zshrs can enter while the shell is inside a
+    // command substitution's saved state, so the handler's `setiparam` write
+    // was discarded when that state was restored while the `ZTERM_*` globals
+    // kept the new size. A completer that forked a helper across a resize
+    // then read `$COLUMNS` as the OLD width while its matches were counted
+    // against the NEW one: `_git_commands` pads every display string to
+    // `${(r.COLUMNS-4.)…}` (Functions/Completion/Unix/_git:6890), so
+    // `git <TAB>` across a 24x80 -> 24x60 resize asked to see "all 152
+    // possibilities (236 lines)" for 152 one-line matches. The same gap made
+    // `local COLUMNS` read 0 where zsh reads the live width.
+    match pm.node.nam.as_str() {
+        "COLUMNS" => crate::ported::utils::ZTERM_COLUMNS.load(Ordering::SeqCst) as i64, // c:362
+        "LINES" => crate::ported::utils::ZTERM_LINES.load(Ordering::SeqCst) as i64, // c:363
+        _ => pm.u_val,
+    }
 }
 
 /// Port of `intvarsetfn()` from `Src/params.c:4213`. C body:
@@ -15603,6 +15705,23 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
                 .load(Ordering::SeqCst)
                 .to_string(),
         ), // c:348 + c:4202
+        // c:Src/params.c:362-363 — `IPDEF5("COLUMNS", &zterm_columns,
+        // zlevar_gsu)` / `IPDEF5("LINES", &zterm_lines, zlevar_gsu)`, whose
+        // getfn is `intvargetfn` (c:4156 `return *pm->u.valptr;`). See
+        // `intvargetfn` for why the node's own `u_val` is not the answer.
+        // `unset COLUMNS` keeps the node (c:3877) and reads empty, so the
+        // PM_UNSET flag decides whether the global is the answer at all.
+        "COLUMNS" | "LINES" => {
+            if is_unset_special(name) {
+                return None; // c:3877
+            }
+            let tab = paramtab().read().ok()?;
+            let pm = tab.get(name)?;
+            if (pm.node.flags as u32 & PM_UNSET) != 0 {
+                return None; // c:3877
+            }
+            Some(intvargetfn(pm).to_string()) // c:362-363 + c:4202
+        }
         // libc syscall callbacks.
         "RANDOM" => Some(randomgetfn().to_string()),
         "TTYIDLE" => Some(ttyidlegetfn().to_string()),
@@ -19011,6 +19130,64 @@ mod tests {
             setiparam("zshrs_rt_i2", -12345);
             assert_eq!(getiparam("zshrs_rt_i2"), -12345);
             unsetparam("zshrs_rt_i2");
+        });
+    }
+
+    /// `$COLUMNS` and `$LINES` read the live `zterm_*` global, both ways.
+    ///
+    /// c:Src/params.c:362-363 registers them as
+    /// `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)` /
+    /// `IPDEF5("LINES", &zterm_lines, zlevar_gsu)`, so the getter
+    /// (`intvargetfn`, c:4156 `return *pm->u.valptr;`) and the setter
+    /// (`zlevarsetfn`, c:4176 `*p = x`) are two views of ONE cell. zshrs had
+    /// only the setter half wired, and even that had no caller, so the two
+    /// drifted: `adjustwinsize` published the new width to `ZTERM_COLUMNS`
+    /// and to the parameter separately, and anything that rolled the
+    /// parameter table back — an in-process `$(...)`'s saved state, a
+    /// function scope — took the parameter back to the old width while the
+    /// global kept the new one.
+    ///
+    /// What that cost: a completer forks a helper (`_call_program`), the
+    /// foreground wait is where SIGWINCH is delivered, and `_git_commands`
+    /// then pads every display string to `${(r.COLUMNS-4.)…}`. Strings built
+    /// against the OLD width, counted against the NEW one, and `git <TAB>`
+    /// across a 24x80 -> 24x60 resize asked to see "all 152 possibilities
+    /// (236 lines)" for 152 one-line matches.
+    #[test]
+    fn columns_and_lines_are_two_views_of_the_zterm_globals() {
+        with_exec(|| {
+            let saved_cols = crate::ported::utils::ZTERM_COLUMNS.load(Ordering::SeqCst);
+            let saved_lines = crate::ported::utils::ZTERM_LINES.load(Ordering::SeqCst);
+            // `createparamtable` does not run under the unit harness, so make
+            // the two nodes exist the way a real shell's startup does. The
+            // read path deliberately requires a node: `unset COLUMNS` keeps
+            // a PM_UNSET node (c:3877) and must read EMPTY, not the global.
+            setiparam("COLUMNS", 80);
+            setiparam("LINES", 24);
+
+            // READ half — c:4156. A resize publishes to the global; the
+            // parameter must report it without anyone re-assigning it.
+            crate::ported::utils::ZTERM_COLUMNS.store(60, Ordering::SeqCst);
+            crate::ported::utils::ZTERM_LINES.store(12, Ordering::SeqCst);
+            assert_eq!(getiparam("COLUMNS"), 60, "$COLUMNS must read zterm_columns");
+            assert_eq!(getiparam("LINES"), 12, "$LINES must read zterm_lines");
+            assert_eq!(getsparam("COLUMNS").as_deref(), Some("60"));
+            assert_eq!(getsparam("LINES").as_deref(), Some("12"));
+
+            // WRITE half — c:4176. An assignment must move the global the
+            // rest of the shell measures against, not just the node.
+            setiparam("COLUMNS", 100);
+            assert_eq!(
+                crate::ported::utils::ZTERM_COLUMNS.load(Ordering::SeqCst),
+                100,
+                "COLUMNS=100 must write zterm_columns"
+            );
+            assert_eq!(getiparam("COLUMNS"), 100);
+
+            crate::ported::utils::ZTERM_COLUMNS.store(saved_cols, Ordering::SeqCst);
+            crate::ported::utils::ZTERM_LINES.store(saved_lines, Ordering::SeqCst);
+            setiparam("COLUMNS", saved_cols as i64);
+            setiparam("LINES", saved_lines as i64);
         });
     }
 

@@ -19,6 +19,77 @@ CI green pending the underlying fix.
 
 ---
 
+## #1142 — a resize during a completion asked to see "152 possibilities (236 lines)" for 152 one-line matches — fixed
+
+**Status:** `fixed` 2026-09-11.
+
+**Reproducer** (pty, `TERM` set; resize the master with `TIOCSWINSZ` 40ms
+after the TAB, while the completion is still running):
+
+```console
+# 24x80 -> 24x60, mid-completion
+zsh   -f -i   git <TAB>   zsh: do you wish to see all 152 possibilities (152 lines)?
+zshrs -f -i   git <TAB>   zsh: do you wish to see all 152 possibilities (236 lines)?
+```
+
+Static geometry agrees at 24x80, 24x60, 12x80 and 40x110 (152/152 on both),
+and a resize delivered BEFORE the TAB agrees too. Only a resize that lands
+mid-completion diverges, and it does so for every delay from 0 to 300ms —
+the whole time the completion is running — so it is not a race.
+
+**Root cause.** `Src/params.c:362-363` binds the parameter to the global:
+
+```c
+IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu),
+IPDEF5("LINES", &zterm_lines, zlevar_gsu),
+```
+
+`zlevar_gsu`'s getfn is `intvargetfn` (c:4156 `return *pm->u.valptr;`) and its
+setfn is `zlevarsetfn` (c:4176 `*p = x`). One cell, two views: when the
+SIGWINCH handler's `adjustwinsize` writes `zterm_columns`, `$COLUMNS` has
+already changed, and there is no second write to lose. (c:1934's
+`setiparam("COLUMNS", zterm_columns)` is guarded by `zgetenv("COLUMNS")`
+precisely because it only re-exports to the environment.)
+
+zshrs parameters carry their own `u_val`, and only the SET half of that alias
+was ported — `zlevarsetfn` mirrored into `ZTERM_COLUMNS`, and it had no
+caller. So a read answered from the node, a snapshot that can be rolled back.
+A foreground wait is where the shell's standing `winch_block()`
+(c:Src/init.c:1458) is lifted — `waitforpid` blocks in
+`signal_suspend(SIGCHLD, wait_cmd)` (c:Src/jobs.c:1658) whose sigsuspend mask
+is empty (c:Src/signals.c:220) — and in zshrs that wait happens inside the
+in-process `$(...)` saved state, so the handler's parameter write was
+discarded when that state was restored while the `ZTERM_*` globals kept the
+new size.
+
+`_call_program` is exactly that shape, and `_git_commands` pads every display
+string to `${(r.COLUMNS-4.)…}` (`Functions/Completion/Unix/_git:6890`). Built
+against the stale 80, counted by `calclist` against the live 60: 84 of 152
+strings measured as wrapping, hence 236.
+
+Measured directly, with a widget that reads `$COLUMNS`, waits on a forked
+helper and reads it again across a 24x80 -> 12x60 resize:
+
+```console
+zsh    PROBE a=80 b=60
+zshrs  PROBE a=80 b=80      # before
+zshrs  PROBE a=80 b=60      # after
+```
+
+The same gap made `local COLUMNS` read 0 where zsh reads the live width.
+
+**Fix.** `intvargetfn` resolves `COLUMNS`/`LINES` to the `ZTERM_*` globals,
+the way C's `*pm->u.valptr` does, and `getiparam` / `getnparam` /
+`lookup_special_var` route those two names through it ahead of the `u_val`
+fast path — with the PM_UNSET node check C gets for free, since `unset
+COLUMNS` keeps the node (c:3877) and must read empty. The write half is
+completed to match: `intsetfn` dispatches them to `zlevarsetfn`, and
+`assignnparam` runs c:4230's value write under the paramtab guard and
+c:4232's `adjustwinsize` after releasing it, because that call reads
+parameters and the guard is not reentrant.
+
+---
+
 ## #1125 — `${~var}` in a PATTERN operand globbed the ENCLOSING expansion — fixed
 
 **Status:** `fixed` 2026-08-30.

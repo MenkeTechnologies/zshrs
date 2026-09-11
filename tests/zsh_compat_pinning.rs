@@ -1294,3 +1294,225 @@ fn completer_chain_survives_command_not_found_but_not_zerr() {
          print DONE",
     );
 }
+
+/// Drive `zshrs -f -i` in a pty, run a ZLE widget that waits on a forked
+/// helper, resize the terminal while that wait is in flight, and report both
+/// what the widget saw and every byte the shell wrote.
+///
+/// A pty is required twice over: ZLE does not engage without one, and a
+/// resize IS a `TIOCSWINSZ` on the master — that ioctl is what raises
+/// SIGWINCH on the child's foreground process group. Nothing about this
+/// window is reachable from `-c`.
+///
+/// The widget's shape is the one that matters: `$(...)` puts the shell in a
+/// foreground wait, and a foreground wait is C's one reliable mid-command
+/// SIGWINCH delivery point — `waitforpid` blocks in
+/// `signal_suspend(SIGCHLD, wait_cmd)` (c:Src/jobs.c:1658) whose sigsuspend
+/// mask is empty (c:Src/signals.c:220), so the standing `winch_block()`
+/// (c:Src/init.c:1458) is lifted for exactly as long as the shell waits.
+/// Every completion that calls `_call_program` is this shape.
+///
+/// Returns `(probe_line, raw_output)`. `probe_line` is what the widget
+/// appended to its probe file: `PROBE a=<before> b=<after>`.
+#[cfg(unix)]
+fn winch_during_widget_foreground_wait(
+    rows: u16,
+    cols: u16,
+    new_rows: u16,
+    new_cols: u16,
+) -> (String, Vec<u8>) {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    let probe = std::env::temp_dir().join(format!(
+        "zshrs-winch-probe-{}-{}",
+        std::process::id(),
+        new_cols
+    ));
+    let _ = std::fs::remove_file(&probe);
+    // `/bin/sleep` holds the foreground wait open long enough for the resize
+    // to land inside it on any machine: 1s against a 300ms delay.
+    let init = probe.with_extension("zsh");
+    std::fs::write(
+        &init,
+        "_p(){\n  PROBE_A=$COLUMNS\n  local x=$(/bin/sleep 1; /bin/echo hi)\n\
+           print -r -- \"PROBE a=$PROBE_A b=$COLUMNS\" >> $PROBE_OUT\n}\n\
+         zle -N _p\nbindkey '^T' _p\nprint SETUP_OK\n",
+    )
+    .expect("write widget fixture");
+
+    let mut master: libc::c_int = 0;
+    let termp = std::ptr::null_mut::<libc::termios>();
+    let mut win = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pid = unsafe { libc::forkpty(&mut master, std::ptr::null_mut(), termp, &mut win) };
+    assert!(pid >= 0, "forkpty failed");
+    if pid == 0 {
+        unsafe {
+            // TERM must be set or ZLE never engages and the keystrokes echo
+            // literally. PS1 is a fixed marker so the repaint is greppable.
+            libc::setenv(c"TERM".as_ptr(), c"xterm-256color".as_ptr(), 1);
+            libc::setenv(c"PS1".as_ptr(), c"WPROMPT%# ".as_ptr(), 1);
+            // Same two knobs `scripts/comptab_parity.py` pins: the native
+            // ZLE effects paint autosuggest ghost text and syntax colour
+            // over everything this test reads, and the extension builtins
+            // have no zsh counterpart. Neither touches the resize path.
+            libc::setenv(c"ZSHRS_NATIVE_ZLE_FX".as_ptr(), c"0".as_ptr(), 1);
+            libc::setenv(c"ZSHRS_HIDE_EXT_BUILTINS".as_ptr(), c"1".as_ptr(), 1);
+            libc::setenv(c"LANG".as_ptr(), c"C".as_ptr(), 1);
+            libc::setenv(c"LC_ALL".as_ptr(), c"C".as_ptr(), 1);
+            // No rc files, and no history to recall into the buffer.
+            libc::setenv(c"ZDOTDIR".as_ptr(), c"/nonexistent-zdotdir".as_ptr(), 1);
+            libc::unsetenv(c"HISTFILE".as_ptr());
+            let p = std::ffi::CString::new(probe.to_string_lossy().as_ref()).unwrap();
+            libc::setenv(c"PROBE_OUT".as_ptr(), p.as_ptr(), 1);
+        }
+        let bin = std::ffi::CString::new(zshrs_bin().to_string_lossy().as_ref()).unwrap();
+        let f = std::ffi::CString::new("-f").unwrap();
+        let i = std::ffi::CString::new("-i").unwrap();
+        unsafe {
+            libc::execl(
+                bin.as_ptr(),
+                bin.as_ptr(),
+                f.as_ptr(),
+                i.as_ptr(),
+                std::ptr::null::<libc::c_char>(),
+            );
+            libc::_exit(127);
+        }
+    }
+
+    // Read on a thread from the first byte, so the driver can WAIT FOR THE
+    // PROMPT instead of sleeping a fixed interval. A debug zshrs can be an
+    // order of magnitude slower to reach its first prompt than a release one,
+    // and keys typed before ZLE is listening land in the tty buffer in
+    // canonical mode — the run then measures nothing and looks like a
+    // divergence.
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let sink = std::sync::Arc::clone(&seen);
+    let mut term = unsafe { std::fs::File::from_raw_fd(master) };
+    let mut writer = term.try_clone().expect("dup pty master");
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match term.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => sink.lock().unwrap().extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+        }
+    });
+    let count = |needle: &str| -> usize {
+        String::from_utf8_lossy(&seen.lock().unwrap()).matches(needle).count()
+    };
+    let wait_for = |needle: &str, n: usize, secs: u64| -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < deadline {
+            if count(needle) >= n {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    };
+    assert!(
+        wait_for("WPROMPT", 1, 40),
+        "shell never reached a prompt; saw {:?}",
+        String::from_utf8_lossy(&seen.lock().unwrap()).into_owned()
+    );
+
+    // Source the widget rather than typing it: three lines typed into a live
+    // ZLE arrive as one burst and the shell may treat them as pasted text.
+    // `SETUP_OK` is the handshake — a prompt count is not one, because a
+    // redraw reprints the prompt and inflates it.
+    let _ = writer.write_all(format!("source {}\n", init.display()).as_bytes());
+    let _ = writer.flush();
+    assert!(
+        wait_for("SETUP_OK", 1, 40),
+        "the widget fixture never sourced; saw {:?}",
+        String::from_utf8_lossy(&seen.lock().unwrap()).into_owned()
+    );
+    let before_resize = seen.lock().unwrap().len();
+
+    let _ = writer.write_all(b"\x14"); // ^T — run the widget
+    let _ = writer.flush();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut newwin = libc::winsize {
+        ws_row: new_rows,
+        ws_col: new_cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    unsafe {
+        // THE resize. Raises SIGWINCH on the shell's process group.
+        libc::ioctl(master, libc::TIOCSWINSZ, &mut newwin);
+    }
+    // The widget still has ~700ms of `sleep` to serve, then writes its probe.
+    let probe_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < probe_deadline {
+        if std::fs::read_to_string(&probe).map(|c| c.contains("PROBE ")).unwrap_or(false) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Two statements, not one expression: `seen.lock()` twice in the same
+    // expression self-deadlocks on a non-reentrant Mutex.
+    let tail = {
+        let all = seen.lock().unwrap();
+        all[before_resize.min(all.len())..].to_vec()
+    };
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        let mut st = 0;
+        libc::waitpid(pid, &mut st, 0);
+    }
+    // Deliberately NOT joined: the thread sits in a blocking read on the pty
+    // master, and whether that read returns after the child dies is not
+    // something to make the test depend on. The bytes are already captured.
+    drop(reader);
+    let line = std::fs::read_to_string(&probe).unwrap_or_default();
+    let _ = std::fs::remove_file(&probe);
+    let _ = std::fs::remove_file(&init);
+    (line.trim().to_string(), tail)
+}
+
+/// A resize delivered while a widget waits on a forked helper must reach
+/// `$COLUMNS`.
+///
+/// `Src/params.c:362-363` binds the parameter to the global:
+/// `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)`, getfn `intvargetfn`
+/// (c:4156 `return *pm->u.valptr;`). So when the SIGWINCH handler's
+/// `adjustwinsize` writes `zterm_columns`, `$COLUMNS` has already changed —
+/// there is no second write to lose.
+///
+/// zshrs kept the parameter's own copy, so the handler had to publish twice,
+/// and the parameter half was inside state that an in-process `$(...)` puts
+/// back when it finishes. Measured across a 24x80 -> 12x60 resize: zsh
+/// reported `a=80 b=60`, zshrs `a=80 b=80`.
+///
+/// What that cost in the completion system: `_call_program` is this exact
+/// shape, and `_git_commands` pads every display string to
+/// `${(r.COLUMNS-4.)…}`. Strings built against the stale 80 and counted
+/// against the live 60 turned `git <TAB>` into "do you wish to see all 152
+/// possibilities (236 lines)?" for 152 one-line matches — 152/152 in zsh.
+#[test]
+#[cfg(unix)]
+fn resize_during_a_widgets_foreground_wait_reaches_columns() {
+    let (probe, _raw) = winch_during_widget_foreground_wait(24, 80, 12, 60);
+    assert!(
+        probe.starts_with("PROBE a=80 "),
+        "the widget must start at the pty's original width, got {probe:?} \
+         (an empty probe means the widget never ran)"
+    );
+    assert_eq!(
+        probe, "PROBE a=80 b=60",
+        "$COLUMNS must report the width the resize published to zterm_columns \
+         (c:Src/params.c:362 + c:4156); `b=80` is the parameter answering from \
+         its own rolled-back copy"
+    );
+}
