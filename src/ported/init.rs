@@ -2430,6 +2430,16 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             continue; // c:174
         }
         let prog_inner = prog.take().unwrap();
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // The accepted line is about to run at top level, where commands
+        // stamp `locallevel` without opening a scope (a bare `typeset X=1`
+        // takes the current level). An `async_precmd` batch fired by the
+        // preprompt() above may still be running hook functions on a worker,
+        // with that counter raised by its own scope — the typeset would then
+        // belong to the worker's scope and vanish when the hook returned.
+        // C runs precmd hooks synchronously (c:140 preprompt), so nothing
+        // else can hold a scope here; wait for the batch, or withdraw it.
+        crate::async_precmd::quiesce();
         // c:176 — `if (hend(prog))`: passing the program in commits the
         // history line. zshrs's `hend` takes Option<&[u8]>; sentinel
         // non-empty slice signals "program present" to the commit path.

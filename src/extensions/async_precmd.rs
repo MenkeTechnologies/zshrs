@@ -15,9 +15,46 @@
 //! Built on the Phase-1 [`crate::vm_helper::ShellExecutor::new_worker`]
 //! lightweight worker executor. No isolation is needed here: `async_precmd`
 //! WANTS its `typeset -g` writes to land in the shared table.
+//!
+//! ## The batch never overlaps shell code on the shell thread
+//!
+//! A hook is a shell FUNCTION, and running one moves state C keeps for a
+//! single thread of execution: `locallevel` (`Src/params.c:5837`
+//! `locallevel++` in `startparamscope`, `:5856` `locallevel--` in
+//! `endparamscope`) and the level-stamped entries of the one `paramtab`,
+//! which `scanendscope` (`Src/params.c:5904-5907`, `if (pm->level >
+//! locallevel)`) restores or deletes on every scope exit. The worker's
+//! pushes and pops land on the same counter and the same table as the
+//! shell thread's.
+//!
+//! The batch is fired from `preprompt()`, and the first thing the shell
+//! thread does after the prompt paints is usually run a widget: a
+//! shell-function widget brackets its body with `startparamscope();
+//! makezleparams(0); … endparamscope();` (`Src/Zle/zle_main.c:1533-1540`),
+//! and `makezleparams` stamps `$BUFFER` and its family with the scope level
+//! (`Src/Zle/zle_params.c:206`). A worker scope exit that lands inside that
+//! window deletes the widget's `$BUFFER`, and the write-back in
+//! `zle_param_sync::sync_from_paramtab` then copies the now-empty value
+//! into the editor: every character typed so far on the line disappears.
+//! Measured with a self-insert wrapper (`zle -N self-insert f; f() { zle
+//! .self-insert }`, the shape zpwr's `zpwrSelfInsert` has) and a hook that
+//! runs for half a second: most typed lines lost a prefix, and a trace
+//! showed the worker's `endparamscope` removing `BUFFER` at the widget's
+//! level immediately before the editor was overwritten with "".
+//! A top-level `typeset X=1` typed during the batch was stamped with the
+//! worker's level and vanished when the hook returned.
+//!
+//! So shell code on the shell thread waits for a batch that is already
+//! running ([`quiesce`]), and withdraws one the pool has not started yet.
+//! Plain typing is not held up: builtin widgets never open a scope. The
+//! first scope usually opens after the prompt is on screen; a
+//! `zle-line-init` widget is the exception, because this port's `zleread`
+//! runs it before its first `zrefresh` (C paints first, c:1353, then calls
+//! the hook, c:1357), so a running batch delays that paint by the hook's
+//! runtime.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 /// The session's shared worker pool, published by `ShellExecutor::new()` at
 /// startup. `preprompt()` runs BETWEEN commands where the thread_local
@@ -30,10 +67,67 @@ pub fn set_session_pool(pool: Arc<crate::worker::WorkerPool>) {
     let _ = SESSION_POOL.set(pool);
 }
 
-/// True while an async_precmd batch is in flight. Debounce: if the previous
-/// batch hasn't finished by the next prompt, skip this round rather than pile
-/// up overlapping runs of the same hooks.
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Where the current batch is. Debounce: while it is not [`IDLE`], the next
+/// prompt skips its round rather than pile up overlapping runs of the same
+/// hooks.
+static BATCH: AtomicU8 = AtomicU8::new(IDLE);
+/// No batch in flight.
+const IDLE: u8 = 0;
+/// Submitted to the pool, not started. [`quiesce`] may withdraw it.
+const QUEUED: u8 = 1;
+/// A worker is running the hooks. [`quiesce`] waits for it.
+const RUNNING: u8 = 2;
+
+/// Paired with [`BATCH_DONE`]: the worker flips `BATCH` back to [`IDLE`]
+/// while holding it, so a waiter that checked `BATCH` under the same lock
+/// cannot miss the wake-up.
+static BATCH_LOCK: Mutex<()> = Mutex::new(());
+static BATCH_DONE: Condvar = Condvar::new();
+
+/// Returns the batch to [`IDLE`] and wakes [`quiesce`] however the worker
+/// leaves the hooks — including by unwinding out of a panicking one, which
+/// would otherwise leave the shell thread waiting forever.
+struct BatchFinished;
+
+impl Drop for BatchFinished {
+    fn drop(&mut self) {
+        let _guard = BATCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        BATCH.store(IDLE, Ordering::Release);
+        BATCH_DONE.notify_all();
+    }
+}
+
+/// Make the shell thread safe to run shell code: wait for a batch a worker
+/// is running, or withdraw one that is only queued (its hooks run on the
+/// next prompt instead). Returns at once when no batch is in flight, and on
+/// any thread but the shell's — a worker must never wait on its own batch.
+///
+/// Called where the shell thread opens a parameter scope
+/// (`utils::inc_locallevel`, every function, widget, hook and trap call)
+/// and before it executes an accepted line at top level (`init::loop_`).
+/// After it returns no batch can start until the next `preprompt()`, since
+/// that is the only place one is fired.
+pub fn quiesce() {
+    if BATCH.load(Ordering::Acquire) == IDLE {
+        return;
+    }
+    // Same shell-thread test as `errflag_cell`: the shell runs on "main",
+    // pool workers are named "zshrs-worker-N".
+    if std::thread::current().name() != Some("main") {
+        return;
+    }
+    if BATCH
+        .compare_exchange(QUEUED, IDLE, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        tracing::debug!("async_precmd: batch withdrawn before it started");
+        return;
+    }
+    let mut guard = BATCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    while BATCH.load(Ordering::Acquire) == RUNNING {
+        guard = BATCH_DONE.wait(guard).unwrap_or_else(|e| e.into_inner());
+    }
+}
 
 /// Collect the registered `async_precmd` hook function names: the function
 /// literally named `async_precmd` (if defined) followed by every member of the
@@ -67,14 +161,17 @@ fn collect_hook_functions() -> Vec<String> {
 /// Fire the `async_precmd` hooks on a worker thread. Called from `preprompt()`
 /// AFTER precmd + prompt render, so the prompt is already on screen. Returns
 /// immediately (non-blocking): it submits ONE closure to the shared worker pool
-/// and lets it run in the background. Debounced via [`RUNNING`].
+/// and lets it run in the background. Debounced via [`BATCH`].
 pub fn fire_async_precmd() {
     let names = collect_hook_functions();
     if names.is_empty() {
         return;
     }
     // Debounce: only one batch in flight at a time.
-    if RUNNING.swap(true, Ordering::AcqRel) {
+    if BATCH
+        .compare_exchange(IDLE, QUEUED, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
         return;
     }
     tracing::debug!(?names, "async_precmd: dispatching hooks to worker pool");
@@ -82,11 +179,20 @@ pub fn fire_async_precmd() {
     // executor context is not entered during preprompt.
     let Some(pool) = SESSION_POOL.get().map(Arc::clone) else {
         tracing::warn!("async_precmd: session pool not published yet — skipping");
-        RUNNING.store(false, Ordering::Release);
+        BATCH.store(IDLE, Ordering::Release);
         return;
     };
     let pool_for_worker = std::sync::Arc::clone(&pool);
     pool.submit(move || {
+        // The shell thread withdrew the batch (see `quiesce`) before a
+        // worker got to it: it is already running shell code.
+        if BATCH
+            .compare_exchange(QUEUED, RUNNING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let _finished = BatchFinished;
         // Lightweight worker executor — shares the global param/function tables.
         let mut wex = crate::vm_helper::ShellExecutor::new_worker(pool_for_worker);
         for name in &names {
@@ -117,6 +223,5 @@ pub fn fire_async_precmd() {
             // `typeset -g` lands in the shared global param table.
             let _ = wex.execute_script_zsh_pipeline(name);
         }
-        RUNNING.store(false, Ordering::Release);
     });
 }

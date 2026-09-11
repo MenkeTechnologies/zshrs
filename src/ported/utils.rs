@@ -11099,6 +11099,13 @@ pub fn locallevel() -> i32 {
 /// the global is declared at `Src/params.c:54`.
 /// Bump `locallevel` (called by `startparamscope`).
 pub fn inc_locallevel() {
+    // c:Src/params.c:5837 `locallevel++` assumes one thread of shell
+    // execution. An `async_precmd` batch runs hook functions on a pool worker
+    // against this same counter and the same paramtab, so a scope opened here
+    // while it runs gets its level-stamped params deleted by the worker's
+    // `endparamscope` (c:5904-5907) — a widget's `$BUFFER` among them. Let the
+    // batch finish (or withdraw it) before the shell thread opens a scope.
+    crate::async_precmd::quiesce();
     LOCALLEVEL.fetch_add(1, Ordering::Relaxed);
 }
 
