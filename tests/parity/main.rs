@@ -148,6 +148,7 @@ mod unset_deep_parity;
 mod whence_parity;
 mod wordcode_parity;
 mod xtrace_corpus_parity;
+mod z_flag_lexing_parity;
 mod zdharma_corpus_parity;
 mod zinit_p10k_parity;
 mod zinit_plugin_corpus_parity;
