@@ -156,6 +156,103 @@ if [[ $all == *'print fxa1'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Mid-word TAB — where the cursor is when completion starts
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A session whose only completion for `print` is a fixed two-word list,
+/// so the candidate set cannot drift with the filesystem the way the
+/// `fx*` fixture files can. `setup` runs last, which is where a case
+/// turns `COMPLETE_IN_WORD` on.
+///
+/// The keys are: type `print fxalp`, `^B` back over the `p`, TAB, Return.
+/// `bindkey -e` is explicit because `$EDITOR` reaching the inner shell
+/// would otherwise put it in vi mode and `^B` would page instead of
+/// stepping back one character.
+///
+/// The setup ends by printing `MARKZZ`, and the verdict throws away
+/// everything up to the LAST one. The inner shell echoes back every
+/// setup line it is handed, so the `compctl` line puts `fxalpha_zzz` in
+/// the transcript before the completion ever runs — a verdict looking at
+/// the whole transcript sees the candidate whether or not TAB inserted
+/// it, which is exactly how the suffix case below first passed on a
+/// shell that had not completed anything.
+fn midword_driver(setup: &str, verdict: &str) -> String {
+    let setup_q = sq(setup);
+    format!(
+        "{OPEN}
+zpty -w w 'unsetopt beep'
+zpty -w w 'bindkey -e'
+zpty -w w 'compctl -k \"(fxalpha_zzz fxbravo_zzz)\" print'
+zpty -w w {setup_q}
+zpty -w w 'print MARKZZ'
+sleep 2
+zpty -w -n w 'print fxalp'
+sleep 2
+zpty -w -n w $'\\C-b'
+sleep 1
+zpty -w -n w $'\\t'
+sleep 3
+zpty -w -n w $'\\r'
+sleep 3
+{DRAIN}
+all=\"${{all##*MARKZZ}}\"
+{verdict}
+"
+    )
+}
+
+/// With `COMPLETE_IN_WORD` unset — the default — a TAB struck with the
+/// cursor inside a word completes the WHOLE word: the shell first moves
+/// the cursor to the end of it. So `print fxal|p` completes against
+/// `fxalp`, matches `fxalpha_zzz` uniquely, and inserts it.
+///
+/// Judged on the OUTPUT, not on the line: ZLE redraws an insertion as a
+/// backspace plus the tail it appends, so the transcript carries
+/// `print fxalp\x08ha_zzz` and never the whole candidate. `fxalpha_zzz`
+/// can therefore only appear because `print` ran with the completed
+/// word. `fxbravo_zzz` must NOT appear — that would mean the shell
+/// listed both candidates instead of inserting the unique one.
+///
+/// zshrs scored zero here. `makecomplistflags` had been ported from
+/// `Src/Zle/compctl.c:3070` onward and the cursor-to-end-of-word step
+/// three lines above it (c:3066-3068) was missing, so `offs` still
+/// pointed at the cursor, the word was split there, and every candidate
+/// had to end in `p` to match. Nothing did, and the line was left alone.
+#[test]
+fn a_midword_tab_completes_the_whole_word_by_default() {
+    let verdict = "if [[ $all == *fxalpha_zzz* && $all != *fxbravo_zzz* ]]; then
+  print \"K=yes\"
+else
+  print \"K=no\"
+fi";
+    assert_same_verdict(
+        &midword_driver("true", verdict),
+        "K",
+        "a mid-word TAB completed the whole word with COMPLETE_IN_WORD unset",
+    );
+}
+
+/// The other half of the same switch, and the guard that keeps the case
+/// above from being "passed" by moving the cursor unconditionally. With
+/// `COMPLETE_IN_WORD` SET the cursor stays put, so the word is split
+/// into the prefix `fxal` and the suffix `p` and a candidate has to
+/// match both ends. Neither `fxalpha_zzz` nor `fxbravo_zzz` ends in `p`,
+/// so there is nothing to insert and the line is still `print fxalp`.
+#[test]
+fn a_midword_tab_respects_a_suffix_under_complete_in_word() {
+    let verdict = "if [[ $all == *'print fxalp'* && $all != *fxalpha_zzz* ]]; then
+  print \"K=yes\"
+else
+  print \"K=no\"
+fi";
+    assert_same_verdict(
+        &midword_driver("setopt completeinword", verdict),
+        "K",
+        "a mid-word TAB kept the suffix under COMPLETE_IN_WORD",
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // compsys — the same case after `compinit`
 // ═══════════════════════════════════════════════════════════════════════
 

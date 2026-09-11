@@ -3533,6 +3533,35 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     };
     use std::sync::atomic::Ordering;
 
+    // c:3066-3068 — "Go to the end of the word if complete_in_word is not
+    // set."
+    //
+    //     if (unset(COMPLETEINWORD) && zlemetacs != we)
+    //         zlemetacs = we, offs = strlen(s);
+    //
+    // This ran BEFORE the c:3070 `s = dupstring(s)` the preamble below
+    // starts at, and the port began one statement late, so it was missing
+    // outright. With the option off — the default — a mid-word TAB left
+    // `offs` pointing at the cursor, `rpre`/`rsuf` split the word there, and
+    // every candidate had to match the text to the RIGHT of the cursor as a
+    // suffix. `compctl -k '(alpha beta gamma)' foo` with the line `foo al|p`
+    // therefore produced no matches at all and the line was left untouched,
+    // where zsh moves the cursor to the end of `alp` and inserts `alpha`.
+    //
+    // `offs` is a CHARACTER index everywhere in this port (`zle_tricky.rs`
+    // stores `zlemetacs - wb`, both character counts), so C's byte-wise
+    // `strlen(s)` becomes `s.chars().count()`.
+    {
+        use crate::ported::zle::compcore::{OFFS, WE, ZLEMETACS};
+        let we = WE.load(Ordering::Relaxed);
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::COMPLETEINWORD)
+            && ZLEMETACS.load(Ordering::Relaxed) != we
+        {
+            ZLEMETACS.store(we, Ordering::Relaxed);
+            OFFS.store(s.chars().count() as i32, Ordering::Relaxed);
+        }
+    }
+
     // =================================================================
     // makecomplistflags preamble — Src/Zle/compctl.c:3070-3403.
     // Computes the prefix/suffix file-statics that `addmatch` reads back
