@@ -162,9 +162,12 @@ pub fn _logical_volumes(args: &[String]) -> i32 {
     let mut disp: Vec<String> = Vec::new();
     if zstyle_t_default_true(&bctx, "verbose") {
         // sh:8
-        let sep = lookupstyle(&bctx, "list-separator")
-            .into_iter()
-            .next()
+        // sh:8  zstyle -s ":completion:${curcontext}:" list-separator sep || sep=--
+        //
+        // `zstyle -s` joins the whole value array (`zutil.c:649`) and reports
+        // "set" from a POINTER test (`zutil.c:648`), so a multi-word separator
+        // survives and `list-separator ''` suppresses the `--` default.
+        let sep = crate::compsys::ported::shared::zstyle_s(&bctx, "list-separator")
             .unwrap_or_else(|| "--".to_string());
         // sh:9
         setaparam("list", zformat_align(&format!(" {} ", sep), &list));

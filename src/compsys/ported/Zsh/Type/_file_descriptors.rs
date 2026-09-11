@@ -114,12 +114,16 @@ pub fn _file_descriptors_impl(args: &[String]) -> i32 {
 
     let mut disp: Vec<String> = Vec::new();
     if verbose {
-        let sep = lookupstyle(
+        // sh:10  zstyle -s ":completion:${curcontext}:file-descriptors" \
+        //          list-separator sep || sep=--
+        //
+        // `zutil.c:649` joins the whole value array and `zutil.c:648` reports
+        // "set" from a pointer test, so a multi-word separator survives and
+        // `list-separator ''` suppresses the `--` default.
+        let sep = crate::compsys::ported::shared::zstyle_s(
             &format!(":completion:{}:file-descriptors", curcontext),
             "list-separator",
         )
-        .first()
-        .cloned()
         .unwrap_or_else(|| "--".to_string());
 
         let pid = std::process::id();

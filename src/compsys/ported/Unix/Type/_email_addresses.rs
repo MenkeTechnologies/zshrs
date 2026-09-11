@@ -558,14 +558,21 @@ pub fn _email_addresses(args: &[String]) -> i32 {
     // sh:133-135  muttrc location
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let muttrc = {
-        let styled = lookupstyle(
-            &format!(":completion:{}:email-addresses", curcontext),
-            "muttrc",
-        )
-        .first()
-        .cloned();
+        // sh:133  if ! zstyle -s ":completion:${curcontext}:email-addresses" \
+        //            muttrc muttrc; then
+        //
+        // The fallback runs on `zstyle -s`'s STATUS (`zutil.c:648` tests
+        // `vals[0]`, a pointer), so `muttrc ''` is SET and upstream keeps the
+        // empty value instead of probing `~/mutt/muttrc`. `zutil.c:649` also
+        // joins the whole value array, so a muttrc path containing a space is
+        // no longer cut at the first word.
+        let styled =
+            crate::compsys::ported::shared::zstyle_s(
+                &format!(":completion:{}:email-addresses", curcontext),
+                "muttrc",
+            );
         match styled {
-            Some(m) if !m.is_empty() => m,
+            Some(m) => m,
             _ => {
                 if Path::new(&expand_word("~/mutt/muttrc")).exists() {
                     "~/mutt/muttrc".to_string()
@@ -724,12 +731,17 @@ pub fn _email_addresses(args: &[String]) -> i32 {
                             && assoc_get("opts", "-n").as_deref() == Some(plugin.as_str())
                         {
                             // sh:164  list-separator
-                            let sep = lookupstyle(
+                            // sh:164  zstyle -s ":completion:${curcontext}:$curtag" \
+                            //            list-separator sep || sep=--
+                            //
+                            // `zutil.c:649` joins the whole value array and
+                            // `zutil.c:648` reports "set" from a pointer test, so a
+                            // multi-word separator survives and `list-separator ''`
+                            // suppresses the `--` default.
+                            let sep = crate::compsys::ported::shared::zstyle_s(
                                 &format!(":completion:{}:{}", curcontext, curtag),
                                 "list-separator",
                             )
-                            .first()
-                            .cloned()
                             .unwrap_or_else(|| "--".to_string());
                             // sh:165  zformat -a list " $sep " "${reply[@]}"
                             let mut zf =

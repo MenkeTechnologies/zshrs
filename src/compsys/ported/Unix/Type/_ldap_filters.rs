@@ -302,9 +302,13 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
 
 fn lookup_sep(curcontext: &str) -> String {
     let ctx = format!(":completion:{}:operators", curcontext);
-    crate::ported::modules::zutil::lookupstyle(&ctx, "list-separator")
-        .into_iter()
-        .next()
+    // sh:48  zstyle -s ":completion:${curcontext}:operators" list-separator sep
+    //         || sep=--
+    //
+    // `zutil.c:649` joins the whole value array and `zutil.c:648` reports
+    // "set" from a pointer test, so a multi-word separator survives and
+    // `list-separator ''` suppresses the `--` default.
+    crate::compsys::ported::shared::zstyle_s(&ctx, "list-separator")
         .unwrap_or_else(|| "--".to_string())
 }
 

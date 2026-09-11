@@ -232,9 +232,13 @@ pub fn _printers(args: &[String]) -> i32 {
     }
 
     // sh:12 — list-separator style (default `--`).
-    let sep = lookupstyle(&pctx, "list-separator")
-        .into_iter()
-        .next()
+    // sh:12  zstyle -s ":completion:${curcontext}:printers" list-separator sep
+    //         || sep=--
+    //
+    // `zutil.c:649` joins the whole value array and `zutil.c:648` reports
+    // "set" from a pointer test, so a multi-word separator survives and
+    // `list-separator ''` suppresses the `--` default.
+    let sep = crate::compsys::ported::shared::zstyle_s(&pctx, "list-separator")
         .unwrap_or_else(|| "--".to_string());
 
     // sh:20-24 — the command's server option (lpr uses -H, others -h).

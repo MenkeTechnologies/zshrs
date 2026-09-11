@@ -64,9 +64,13 @@ pub fn _directory_stack(args: &[String]) -> i32 {
     // sh:16
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let ctx = format!(":completion:{}:directory-stack", curcontext);
-    let sep = lookupstyle(&ctx, "list-separator")
-        .first()
-        .cloned()
+    // sh:17  zstyle -s ":completion:${curcontext}:directory-stack" \
+    //           list-separator sep || sep=--
+    //
+    // `zutil.c:649` joins the whole value array and `zutil.c:648` reports
+    // "set" from a pointer test, so a multi-word separator survives and
+    // `list-separator ''` suppresses the `--` default.
+    let sep = crate::compsys::ported::shared::zstyle_s(&ctx, "list-separator")
         .unwrap_or_else(|| "--".to_string());
 
     // sh:19 — verbose default-on (`-T` returns true when unset OR true)
