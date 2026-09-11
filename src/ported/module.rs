@@ -4169,7 +4169,39 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
             }
             0
         }
-        _ => 0,
+        // c:Src/Zle/complist.c:3518-3524 — complist's `module_features` is
+        // `{ NULL, 0, NULL, 0, NULL, 0, NULL, 0, 0 }`: four empty descriptor
+        // lists and no abstract features. Its `features_` (c:3535-3538) still
+        // returns 0, so `featuresarray` hands back an EMPTY (but present)
+        // array and `zmodload -lF zsh/complist` prints nothing with rc 0.
+        // complist's user surface is widgets + `$ZLS_COLORS`, neither of which
+        // travels through the feature interface.
+        //
+        // This arm has to be explicit so the `_ =>` default below can carry
+        // C's real "no features_ entry point" answer. Without it complist
+        // would inherit that 1 and start claiming "does not support features".
+        "zsh/complist" => 0, // c:Zle/complist.c:3537
+        // c:305-320 — zsh/main is the `link=static` pseudo-module holding the
+        // shell core, and its `features_` is one of the two in the tree that
+        // returns 1 outright: "There are lots and lots of features, but
+        // they're not handled here." (c:315-319). The other is
+        // `Src/Modules/newuser.c:44-47`, whose arm dispatches to
+        // `newuser::features_` above and gets the same 1 from there.
+        //
+        // zshrs answered 0-with-an-empty-vec, so `zmodload -lF zsh/main`
+        // printed nothing and exited 0 where zsh prints
+        // `module `zsh/main' does not support features` and exits 1
+        // (the c:3118-3123 arm of `bin_zmodload_features`).
+        "zsh/main" => 1, // c:319
+        // c:1816-1825 `dyn_features_module` — a module with no `features_`
+        // entry point yields 1, "not a user-visible error if no features
+        // function" (c:1823). Every module zshrs links in that C gives a
+        // `features_` to has an explicit arm above, so reaching here means
+        // the name has no feature interface at all and 1 is the faithful
+        // answer. Returning 0 instead left the caller with an EMPTY feature
+        // array that reads as "supports features, has none" — a different
+        // statement, and the one that silenced the zsh/main diagnostic.
+        _ => 1, // c:1824
     }
 }
 

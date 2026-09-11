@@ -279,3 +279,98 @@ fn capital_l_form_lists_only_enabled_features() {
     assert_feature_parity("zmodload -F zsh/zutil b:zstyle b:zformat; zmodload -LF zsh/zutil");
     assert_feature_parity(": ${commands+x}; zmodload -LF zsh/parameter");
 }
+
+// ---------------------------------------------------------------------------
+// "Supports features and has none" is NOT "does not support features".
+// ---------------------------------------------------------------------------
+
+/// `features_module` (c:1896) hands back whatever the module's `features_`
+/// returned, and a NON-ZERO return is the "no feature interface" answer:
+/// `dyn_features_module` (c:1816-1825) produces it for a module with no
+/// `features_` entry point, and two in-tree modules return it outright —
+/// `zsh/main` (c:313-320, "There are lots and lots of features, but they're
+/// not handled here") and `Src/Modules/newuser.c:44-47`.
+///
+/// Every `-F` reader keys off that: `bin_zmodload_features` (c:3118-3123)
+/// warns `does not support features` and exits 1, `do_module_features`
+/// (c:2121-2124) warns the same when an `enablesarr` was supplied, and
+/// `printmodules` (c:232-235) drops the module from `-LF` entirely.
+///
+/// zshrs's dispatch had no `zsh/main` arm and fell to a default that returned
+/// 0 with an EMPTY array — "supports features, has none" — so every one of
+/// those readers took the wrong branch and `zmodload -lF zsh/main` printed
+/// nothing with rc 0.
+///
+/// stderr is folded into stdout here because the diagnostic IS the result.
+#[test]
+fn main_module_reports_no_feature_interface() {
+    assert_feature_parity("zmodload -lF zsh/main 2>&1; print -r -- \"rc=$?\"");
+    assert_feature_parity("zmodload -lFP a zsh/main 2>&1; print -r -- \"rc=$? n=${#a}\"");
+    assert_feature_parity("zmodload -LF zsh/main 2>&1; print -r -- \"rc=$?\"");
+    // c:2121-2124 — the `enablesarr` arm of `do_module_features`, reached by
+    // naming a feature rather than listing.
+    assert_feature_parity("zmodload -F zsh/main b:x 2>&1; print -r -- \"rc=$?\"");
+    // c:3145-3147 — `-e` asks the question silently; only the status differs.
+    assert_feature_parity("zmodload -eF zsh/main b:x 2>&1; print -r -- \"rc=$?\"");
+    // c:232-235 — a module with no feature interface is skipped by the
+    // whole-table `-LF` listing, so zsh/main must not appear in it.
+    assert_feature_parity("zmodload zsh/zutil; zmodload -LF 2>&1 | sort");
+}
+
+/// The counterweight, and the reason the default above cannot simply be
+/// flipped for everyone: `zsh/complist`'s `module_features`
+/// (c:Src/Zle/complist.c:3518-3524) is four empty descriptor lists with zero
+/// abstract features, yet its `features_` (c:3535-3538) returns 0. That is the
+/// genuine "supports features, has none" case — `-lF` prints nothing with
+/// rc 0, `-LF` still emits a bare `zmodload -F zsh/complist` line, and naming
+/// a feature gets `has no such feature`, not `does not support features`.
+///
+/// complist and zsh/main are the only two linked modules that reach the
+/// `features_module` default, so this pair covers both sides of it.
+#[test]
+fn complist_supports_features_and_has_none() {
+    assert_feature_parity("zmodload zsh/complist; zmodload -lF zsh/complist; print -r -- \"rc=$?\"");
+    assert_feature_parity(
+        "zmodload zsh/complist; zmodload -lFP a zsh/complist; print -r -- \"rc=$? n=${#a}\"",
+    );
+    assert_feature_parity("zmodload zsh/complist; zmodload -LF zsh/complist; print -r -- \"rc=$?\"");
+    assert_feature_parity(
+        "zmodload zsh/complist; zmodload -F zsh/complist b:x 2>&1; print -r -- \"rc=$?\"",
+    );
+}
+
+/// An unresolvable `-F` feature name is a WARNING, not an error: both raise
+/// sites use the non-errflag reporters — `do_module_features` calls `zwarn`
+/// (c:2101-2104) on the load path and `bin_zmodload_features` calls
+/// `zwarnnam` (c:3155-3158) once the module is already up. Neither
+/// `zwarn` nor `zwarnnam` touches `errflag` (c:Src/utils.c:214-246); only
+/// `zerr`/`zerrnam` do (c:181/c:203). So the builtin returns 1 and the script
+/// runs on, and nothing downstream may raise the flag on zshrs's side either.
+///
+/// Measured on modules that survive the demand-load-then-fail path. A handful
+/// of this zsh build's modules (`zsh/complist`, `zsh/rlimits`, `zsh/curses`,
+/// `zsh/net/tcp`, `zsh/zftp`, `zsh/param/private`) die with SIGSEGV there —
+/// `zmodload -F zsh/complist b:bogus` exits 139 — which is a fault in the
+/// reference, not a contract to copy, and cannot be used as a fixture.
+#[test]
+fn invalid_feature_name_warns_without_aborting() {
+    for m in ["zsh/zutil", "zsh/files", "zsh/parameter", "zsh/stat"] {
+        // Demand-load path: the module is not yet up, so `require_module`
+        // loads it and `do_module_features` (c:2099-2105) rejects the name.
+        assert_feature_parity(&format!(
+            "zmodload -F {m} b:definitely_not_a_feature 2>&1; \
+             print -r -- \"rc=$?\"; print -r -- AFTER"
+        ));
+        // Already-loaded path: `bin_zmodload_features` (c:3153-3159).
+        assert_feature_parity(&format!(
+            "zmodload {m}; zmodload -F {m} b:definitely_not_a_feature 2>&1; \
+             print -r -- \"rc=$?\"; print -r -- AFTER"
+        ));
+        // c:3155-3157 — the `-m` form takes the "no feature matching" text
+        // and the same non-aborting status.
+        assert_feature_parity(&format!(
+            "zmodload {m}; zmodload -mF {m} 'b:definitely_not*' 2>&1; \
+             print -r -- \"rc=$?\"; print -r -- AFTER"
+        ));
+    }
+}
