@@ -4,7 +4,7 @@
 //!
 //! The history lines are kept in a hash, and also doubly-linked in a ring.   // c:98
 
-use crate::ported::glob::remnulargs;
+use crate::ported::glob::{getmatch, remnulargs};
 use crate::ported::hashtable::addhistnode;
 use crate::ported::input::{ingetc, inputsetline, inungetc};
 use crate::ported::lex::{
@@ -13,7 +13,7 @@ use crate::ported::lex::{
 use crate::ported::options::dosetopt;
 use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
-use crate::ported::subst::equalsubstr;
+use crate::ported::subst::{equalsubstr, singsub};
 use crate::ported::utils::{errflag, zerr, zmonotime, zsleep_random, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
@@ -21,9 +21,10 @@ use crate::ported::zsh_h::{
     CASMOD_UPPER, CSHJUNKIEHISTORY, ERRFLAG_INT, HFILE_FAST, HFILE_USE_OPTIONS,
     HISTEXPIREDUPSFIRST, HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY,
     HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE,
-    HISTREDUCEBLANKS, HISTVERIFY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE,
-    INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY,
-    SHINSTDIN,
+    HISTREDUCEBLANKS, HISTSUBSTPATTERN, HISTVERIFY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD,
+    HIST_TMPSTORE, INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE,
+    SHAREHISTORY, SHINSTDIN, SUB_END, SUB_GLOBAL, SUB_LONG, SUB_REST, SUB_RETFAIL, SUB_START,
+    SUB_SUBSTR,
 };
 use crate::ported::zsh_system_h::IS_DIRSEP;
 use crate::ported::ztype_h::itok;
@@ -585,12 +586,14 @@ pub fn histsubchar(c_in: i32) -> i32 {
         }
         let in_pat = hsubl.lock().unwrap().clone().unwrap_or_default();
         let out_pat = hsubr.lock().unwrap().clone().unwrap_or_default();
-        let new = subst(&sline, &in_pat, &out_pat, gbal != 0); // c:632
-        if new == sline {
-            // c:632 subst returned 0 (no match)
+        // c:632 — `if (subst(&sline, hsubl, hsubr, gbal, 0))`.  The
+        // verdict is subst's STATUS, not whether `sline` changed:
+        // `^old^old` substitutes successfully and leaves the line
+        // looking exactly as it did.  `forcepat` is 0 here — the
+        // `^a^b` form has no `:S` spelling.
+        if subst(&mut sline, &in_pat, &out_pat, gbal, 0) != 0 {
             return substfailed(); // c:633
         }
-        sline = new;
     } else {
         // c:636 — !c shortcut: first-column flag clears unless c==' '.
         if c != b' ' as i32 {
@@ -1059,12 +1062,12 @@ pub fn histsubchar(c_in: i32) -> i32 {
                         (hsubl.lock().unwrap().clone(), hsubr.lock().unwrap().clone());
                     if let (Some(ip), Some(op)) = (in_pat, out_pat) {
                         // c:904
-                        let new = subst(&sline, &ip, &op, gbal != 0); // c:905
-                        if new == sline {
-                            // c:905 no match
+                        // c:905 — branch on subst's STATUS. `hsubpatopt`
+                        // is the `forcepat` argument: `:S` forces the
+                        // pattern path even without HIST_SUBST_PATTERN.
+                        if subst(&mut sline, &ip, &op, gbal, hsubpatopt.load(SeqCst)) != 0 {
                             return substfailed(); // c:906
                         }
-                        sline = new;
                     } else {
                         // c:907
                         herrflush(); // c:908
@@ -1077,11 +1080,11 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     let (in_pat, out_pat) =
                         (hsubl.lock().unwrap().clone(), hsubr.lock().unwrap().clone());
                     if let (Some(ip), Some(op)) = (in_pat, out_pat) {
-                        let new = subst(&sline, &ip, &op, gbal != 0);
-                        if new == sline {
-                            return substfailed();
+                        // c:905 — the `:&` arm C falls into from `:s`,
+                        // so it repeats the same status branch.
+                        if subst(&mut sline, &ip, &op, gbal, hsubpatopt.load(SeqCst)) != 0 {
+                            return substfailed(); // c:906
                         }
-                        sline = new;
                     } else {
                         herrflush();
                         zerr("no previous substitution");
@@ -3369,73 +3372,147 @@ pub fn casemodify(s: &str, how: i32) -> String {
     result
 }
 
-/// Port of `subst()` from `Src/hist.c:2336`. — C decl `subst(char **strptr, char *in, char *out, int gbal, int forcepat)`.
+/*
+ * Substitute "in" for "out" in "*strptr" and update "*strptr".
+ * If "gbal", do global substitution.
+ *
+ * This returns a result from the heap.  There seems to have
+ * been some confusion on this point.
+ */
+/// Port of `subst()` from `Src/hist.c:2336`. — C decl
+/// `int subst(char **strptr, char *in, char *out, int gbal, int forcepat)`.
 ///
-/// C body excerpt (c:2349-2358):
-/// ```c
-/// if (*in == '#' || *in == Pound) {       // c:2349 — anchor-head
-///     fl |= SUB_START;
-///     in++;
-/// }
-/// if (*in == '%') {                       // c:2354 — anchor-tail
-///     in++;
-///     fl |= SUB_END;
-/// }
-/// ```
+/// !!! WARNING: RUST-ONLY ADAPTATION OF THE SIGNATURE !!!
 ///
-/// Previous Rust port checked only ASCII `'#'`. The C check covers
-/// BOTH the literal `'#'` byte AND the tokenized form `Pound`
-/// (0x84 / `\u{84}`) emitted by the lexer when `#` appears inside
-/// a parsed substitution body. A history-substitution like
-/// `:s/#foo/bar/` where the lexer has tokenized the `#` would
-/// silently miss the anchor-start in the Rust port — falling
-/// through to substring-match semantics.
-pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
-    // c:2336
-    if in_pattern.is_empty() {
-        return s.to_string();
-    }
-    let mut anchor_start = false;
-    let mut anchor_end = false;
-    let mut pat = in_pattern;
-    // c:2349 — `if (*in == '#' || *in == Pound)` — anchor-head matcher
-    // covers BOTH the literal char and the tokenized Pound byte.
-    if let Some(rest) = pat.strip_prefix('#').or_else(|| pat.strip_prefix(Pound)) {
-        anchor_start = true; // c:2351 SUB_START
-        pat = rest; // c:2352 in++
-    }
-    if let Some(rest) = pat.strip_prefix('%') {
-        anchor_end = true;
-        pat = rest;
-    }
-    if pat.is_empty() {
-        return s.to_string();
-    }
-    let out_expanded = convamps(out_pattern, pat);
-    if anchor_start && anchor_end {
-        if s == pat {
-            return out_expanded;
-        }
-        return s.to_string();
-    }
-    if anchor_start {
-        if let Some(rest) = s.strip_prefix(pat) {
-            return format!("{}{}", out_expanded, rest);
-        }
-        return s.to_string();
-    }
-    if anchor_end {
-        if s.ends_with(pat) {
-            let prefix_len = s.len() - pat.len();
-            return format!("{}{}", &s[..prefix_len], out_expanded);
-        }
-        return s.to_string();
-    }
-    if global {
-        s.replace(pat, &out_expanded)
+/// C carries the result out through `char **strptr` and RETURNS A
+/// STATUS: 0 when the substitution was performed, 1 when it was not.
+/// The previous Rust port returned the resulting `String` and no
+/// status, so all three callers had to guess at the status by asking
+/// whether the string had CHANGED — which is a different question. A
+/// substitution whose replacement equals what it replaced (`^old^old`,
+/// `!!:s/x/x/`) succeeds in C and reports `substitution failed` under
+/// that guess. `strptr` is therefore `&mut String` here (C's out-
+/// pointer) and the return value is C's own 0/1 status.
+///
+/// Two behaviours the previous port did not have:
+///
+///   * `#` / `%` are anchors ONLY on the pattern path — i.e. only when
+///     `HIST_SUBST_PATTERN` is set or `forcepat` is on (`:S`). Under
+///     plain `:s` they are ordinary characters, and C never looks at
+///     them (c:2344 gates the whole block). The old port applied them
+///     unconditionally, so `!!:s/#print/echo/` substituted where zsh
+///     reports `substitution failed`.
+///   * the pattern path itself did not exist: the match was always
+///     `strstr`, so a glob in the pattern never matched, and `&` in
+///     the replacement was expanded by `convamps` even on the pattern
+///     path, where C leaves it literal.
+pub fn subst(strptr: &mut String, in_: &str, out: &str, gbal: i32, forcepat: i32) -> i32 {
+    // c:2338 char *str = *strptr, *substcut, *sptr;
+    let str_ = strptr.clone();
+    let mut gbal = gbal; // c:2336
+    let substcut: Option<usize>; // c:2338
+    let mut off: usize; // c:2339 int off, inlen, outlen
+    let inlen: usize;
+    let outlen: usize;
+
+    // c:2341 — `if (!*in) in = str, gbal = 0;`  An empty pattern means
+    // the whole line is the pattern, and a whole-line match cannot
+    // repeat, so global is turned off with it.
+    let in_owned: String = if in_.is_empty() {
+        gbal = 0; // c:2342
+        str_.clone() // c:2342
     } else {
-        s.replacen(pat, &out_expanded, 1)
+        in_.to_string()
+    };
+    let mut in_: &str = &in_owned;
+
+    if isset(HISTSUBSTPATTERN) || forcepat != 0 {
+        // c:2344
+        let mut fl = SUB_LONG | SUB_REST | SUB_RETFAIL; // c:2345
+        let oldin = in_; // c:2346
+        if gbal != 0 {
+            // c:2347
+            fl |= SUB_GLOBAL; // c:2348
+        }
+        // c:2349 — `if (*in == '#' || *in == Pound)`.  The check covers
+        // BOTH the literal `#` and the tokenized `Pound` (0x84) the
+        // lexer emits for a `#` inside a parsed substitution body.
+        if let Some(rest) = in_.strip_prefix('#').or_else(|| in_.strip_prefix(Pound)) {
+            // c:2350 — anchor at head, flag needed if SUB_END is also set
+            fl |= SUB_START; // c:2351
+            in_ = rest; // c:2352 in++
+        }
+        if let Some(rest) = in_.strip_prefix('%') {
+            // c:2354
+            // c:2355 — anchor at tail
+            in_ = rest; // c:2356 in++
+            fl |= SUB_END; // c:2357
+        }
+        if in_ == oldin {
+            // c:2359
+            // c:2360 — no anchor, substring match
+            fl |= SUB_SUBSTR; // c:2361
+        }
+        // c:2363-2364 — `if (in == str) in = dupstring(in);`  C has to
+        // copy because `in` may alias the buffer `getmatch` is about to
+        // rewrite through `strptr`; `in_owned` is already a separate
+        // Rust String, so the aliasing cannot happen.
+        let in_parsed = match parse_subst_string(in_) {
+            // c:2365
+            Ok(s) => s,
+            Err(_) => return 1, // c:2366
+        };
+        if errflag.load(SeqCst) != 0 {
+            // c:2365
+            return 1; // c:2366
+        }
+        let out_parsed = match parse_subst_string(out) {
+            // c:2367
+            Ok(s) => s,
+            Err(_) => return 1, // c:2368
+        };
+        if errflag.load(SeqCst) != 0 {
+            // c:2367
+            return 1; // c:2368
+        }
+        let in_subbed = singsub(&in_parsed); // c:2369
+        if getmatch(strptr, &in_subbed, fl, 1, Some(&out_parsed)) != 0 {
+            // c:2370
+            return 0; // c:2371
+        }
+    } else {
+        substcut = str_.find(in_); // c:2373
+        if let Some(pos) = substcut {
+            inlen = in_.len(); // c:2374
+            let sptr = convamps(out, in_); // c:2375
+            outlen = sptr.len(); // c:2376
+
+            // c:2378-2384 — replace, then (when global) keep looking
+            // from just past the text that was written in, so the
+            // replacement is never re-scanned.
+            let mut cur = str_; // c:2382 *strptr
+            let mut substcut = pos; // c:2379
+            loop {
+                off = substcut + outlen; // c:2380
+                cur = format!("{}{}{}", &cur[..substcut], sptr, &cur[substcut + inlen..]); // c:2382
+                                                                                          // c:2383 str = *strptr + off
+                if gbal == 0 {
+                    // c:2384
+                    break;
+                }
+                match cur[off..].find(in_) {
+                    // c:2384
+                    Some(p) => substcut = off + p,
+                    None => break,
+                }
+            }
+            *strptr = cur;
+
+            return 0; // c:2386
+        }
     }
+
+    1 // c:2390
 }
 
 /// Port of `convamps()` from `Src/hist.c:2395`. — C decl `convamps(char *out, char *in, int inlen)`.
@@ -7647,49 +7724,128 @@ mod subst_modifier_tests {
     }
 
     /// `Src/hist.c:2349` — anchor-head matcher checks BOTH ASCII `#`
-    /// AND the tokenized `Pound` byte (0x84). Previous Rust port
-    /// matched only `'#'`. Pin the Pound-token recognition.
+    /// AND the tokenized `Pound` byte (0x84), and c:2344 gates the
+    /// whole block behind `HIST_SUBST_PATTERN || forcepat`. These run
+    /// with `forcepat = 1`, which is what `:S` passes.
     #[test]
     fn subst_anchor_head_recognises_pound_token() {
         let _g = crate::test_util::global_state_lock();
         // c:2349 — ASCII '#' anchor at head: matches only prefix.
-        assert_eq!(
-            subst("foobar", "#foo", "baz", false),
-            "bazbar",
-            "c:2349 ASCII '#' anchor — match at head"
-        );
+        let mut s = String::from("foobar");
+        assert_eq!(subst(&mut s, "#foo", "baz", 0, 1), 0);
+        assert_eq!(s, "bazbar", "c:2349 ASCII '#' anchor — match at head");
         // c:2349 — Pound token (0x84) anchor at head: same effect.
         let pat = format!("{}foo", Pound);
+        let mut s = String::from("foobar");
+        assert_eq!(subst(&mut s, &pat, "baz", 0, 1), 0);
         assert_eq!(
-            subst("foobar", &pat, "baz", false),
-            "bazbar",
+            s, "bazbar",
             "c:2349 Pound token (0x84) anchor — match at head"
         );
-        // Negative: anchored at head MUST NOT match mid-string.
+        // Negative: anchored at head MUST NOT match mid-string, and
+        // c:2390 reports that as status 1 rather than a quiet no-op.
         let pat = format!("{}foo", Pound);
+        let mut s = String::from("xfoo");
         assert_eq!(
-            subst("xfoo", &pat, "baz", false),
-            "xfoo",
-            "c:2349 anchor-head rejects non-prefix"
+            subst(&mut s, &pat, "baz", 0, 1),
+            1,
+            "c:2390 anchor-head rejects non-prefix"
         );
+        assert_eq!(s, "xfoo");
     }
 
     /// `Src/hist.c:2354` — anchor-tail matcher checks `%` only
-    /// (no tokenized counterpart in C). Pin the basic semantics.
+    /// (no tokenized counterpart in C).
     #[test]
     fn subst_anchor_tail_matches_only_suffix() {
         let _g = crate::test_util::global_state_lock();
         // c:2354 — `%foo` anchored at tail.
+        let mut s = String::from("xxfoo");
+        assert_eq!(subst(&mut s, "%foo", "bar", 0, 1), 0);
+        assert_eq!(s, "xxbar", "c:2354 — '%' anchors at end of string");
+        // Non-suffix → no match, status 1.
+        let mut s = String::from("foox");
         assert_eq!(
-            subst("xxfoo", "%foo", "bar", false),
-            "xxbar",
-            "c:2354 — '%' anchors at end of string"
-        );
-        // Non-suffix → no change.
-        assert_eq!(
-            subst("foox", "%foo", "bar", false),
-            "foox",
+            subst(&mut s, "%foo", "bar", 0, 1),
+            1,
             "c:2354 — '%foo' must not match unless `foo` is at end"
+        );
+        assert_eq!(s, "foox");
+    }
+
+    /// c:2344 — with neither `HIST_SUBST_PATTERN` nor `forcepat`, C
+    /// never reads `#` or `%` as anchors: the `strstr` arm at c:2373
+    /// takes the pattern literally. The previous port stripped them
+    /// unconditionally, so `!!:s/#print/echo/` substituted where zsh
+    /// reports `substitution failed`.
+    #[test]
+    fn subst_anchors_are_literal_without_pattern_mode() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::from("foobar");
+        assert_eq!(
+            subst(&mut s, "#foo", "baz", 0, 0),
+            1,
+            "c:2373 — `#foo` is the literal four characters under plain :s"
+        );
+        assert_eq!(s, "foobar");
+
+        let mut s = String::from("a#foob");
+        assert_eq!(subst(&mut s, "#foo", "X", 0, 0), 0);
+        assert_eq!(s, "aXb", "c:2373 — and it matches where it literally is");
+    }
+
+    /// c:2386 vs c:2390 — the status says whether a substitution
+    /// HAPPENED, which is not the same question as whether the text
+    /// changed. `^old^old` replaces `old` with `old`: C returns 0 and
+    /// the line runs. Deciding by comparing the strings turns that
+    /// into `substitution failed`.
+    #[test]
+    fn subst_reports_success_when_the_replacement_equals_the_pattern() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::from("print old xx");
+        assert_eq!(
+            subst(&mut s, "old", "old", 0, 0),
+            0,
+            "c:2386 — a match is a success even with an identical replacement"
+        );
+        assert_eq!(s, "print old xx");
+
+        // The genuine no-match still fails.
+        let mut s = String::from("print old xx");
+        assert_eq!(
+            subst(&mut s, "zzz", "q", 0, 0),
+            1,
+            "c:2390 — no match is the only failure"
+        );
+        assert_eq!(s, "print old xx");
+    }
+
+    /// c:2378-2384 — `gbal` keeps scanning from just past the text it
+    /// wrote in, so a replacement containing the pattern is not
+    /// re-scanned and cannot loop.
+    #[test]
+    fn subst_global_does_not_rescan_its_own_replacement() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::from("aXbXc");
+        assert_eq!(subst(&mut s, "X", "XX", 1, 0), 0);
+        assert_eq!(s, "aXXbXXc", "c:2383 — resume after the replacement");
+    }
+
+    /// c:2375 — `&` in the replacement stands for the pattern, but
+    /// only on the `strstr` arm. c:2367 passes `out` straight through
+    /// on the pattern arm, where `&` is an ordinary character.
+    #[test]
+    fn subst_ampersand_is_literal_in_pattern_mode() {
+        let _g = crate::test_util::global_state_lock();
+        let mut s = String::from("print old xx");
+        assert_eq!(subst(&mut s, "old", "&X", 0, 0), 0);
+        assert_eq!(s, "print oldX xx", "c:2375 — convamps expands `&`");
+
+        let mut s = String::from("print old xx");
+        assert_eq!(subst(&mut s, "old", "&X", 0, 1), 0);
+        assert_eq!(
+            s, "print &X xx",
+            "c:2367 — no convamps on the pattern arm, `&` stays literal"
         );
     }
 

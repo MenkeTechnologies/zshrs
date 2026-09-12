@@ -205,3 +205,243 @@ fn hist_verify_leaves_open_s_modifier_in_the_buffer() {
         "HIST_VERIFY left the unclosed :s substitution in the buffer",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// `subst()` — what the substitution DID, and what it reports
+// ═══════════════════════════════════════════════════════════════════════
+//
+// These do not need a pty. History expansion runs for any interactive
+// shell, so piping a script into `-fis` exercises it, and the shell
+// ECHOES the line it expanded — which is the whole verdict, together
+// with the exit status and the error text when it refuses.
+//
+// The distinction under test is that C's `subst()` (c:Src/hist.c:2336)
+// returns a STATUS, 0 for "a substitution was made" and 1 for "the
+// pattern did not match" (c:2386 vs c:2390), and that status is
+// independent of whether the line CHANGED. `^old^old` replaces `old`
+// with `old`: zsh runs the line, a shell that decides by comparing the
+// before and after text says `substitution failed`.
+//
+// The same block also gates `#` and `%` as anchors and the glob
+// matcher behind `HIST_SUBST_PATTERN` (c:2344), so every case that can
+// tell the two matchers apart is pinned with the option both ways.
+
+/// Feed a script to an interactive `$UNDER_TEST` and keep the lines
+/// that carry the verdict: the marker (so the echoed expansion and its
+/// output both show), the status, and the two refusals `subst` can
+/// produce. Everything else is prompt noise, which differs between the
+/// shells for reasons that have nothing to do with substitution.
+fn subst_driver(setup: &str, recall: &str) -> String {
+    format!(
+        r#"
+local out
+out=$({{ print -rl -- \
+  'unsetopt promptcr promptsp' 'HISTFILE=/dev/null' 'HISTSIZE=200' 'SAVEHIST=0' \
+  {} \
+  'print SETUPDONE' \
+  'print HSMARK old xx' \
+  {} \
+  'print "HSRC=$?"' ; }} | PS1= RPS1= PROMPT= $UNDER_TEST -f -i -s 2>&1)
+print -rl -- ${{(M)${{(f)out}}:#*(HSMARK|HSRC=|substitution failed|no previous substitution)*}} >! $OUTFILE
+"#,
+        sq(setup),
+        sq(recall)
+    )
+}
+
+/// `^old^old` — the replacement equals what it replaced. zsh
+/// substitutes and runs the line; the text is unchanged, which is not
+/// the same thing as the substitution failing. This is the case the
+/// "did the string change?" test gets wrong, and it reaches `subst`
+/// through `histsubchar` (c:632) rather than through `modify`.
+#[test]
+fn quick_substitution_with_an_identical_replacement_succeeds() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "^old^old"),
+        "^old^old substituted and ran",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "^old^old"),
+        "^old^old substituted and ran under HIST_SUBST_PATTERN",
+    );
+}
+
+/// The control: a pattern that genuinely is not there must still fail,
+/// with zsh's own message and status. Without this the case above
+/// could be satisfied by never failing at all.
+#[test]
+fn quick_substitution_with_no_match_still_fails() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "^zzz^q"),
+        "^zzz^q reported substitution failed",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "^zzz^q"),
+        "^zzz^q reported substitution failed under HIST_SUBST_PATTERN",
+    );
+}
+
+/// The `:s` spelling of the same thing, which reaches `subst` from the
+/// modifier loop (c:905) instead. Both call sites had to branch on the
+/// status, so both are pinned.
+#[test]
+fn s_modifier_with_an_identical_replacement_succeeds() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/old/old/"),
+        ":s with an identical replacement substituted and ran",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/old/old/"),
+        ":s with an identical replacement under HIST_SUBST_PATTERN",
+    );
+}
+
+/// `&` in the replacement stands for the pattern — but only on the
+/// literal arm (c:2375 `convamps`). On the pattern arm C hands `out`
+/// to `getmatch` untouched (c:2367), so `&` is an ordinary character
+/// there and the expanded line differs between the two option states.
+#[test]
+fn ampersand_in_the_replacement_stands_for_the_pattern() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/old/&X/"),
+        "`&` expanded to the pattern",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/old/&X/"),
+        "`&` stayed literal under HIST_SUBST_PATTERN",
+    );
+}
+
+/// `\&` and `\/` — the backslash is eaten by the reader (c:2597-2598
+/// in `hdynread2`), so `\/` is how a `/` gets past the delimiter and
+/// `\&` does NOT protect the `&` from `convamps` on the literal arm.
+#[test]
+fn escaped_ampersand_and_slash_reach_the_replacement() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", r"!!:s/old/A\&B/"),
+        r"`\&` in the replacement",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", r"!!:s/old/A\&B/"),
+        r"`\&` in the replacement under HIST_SUBST_PATTERN",
+    );
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", r"!!:s/old/A\/B/"),
+        r"`\/` in the replacement",
+    );
+}
+
+/// A blank in the replacement. The replacement is read to the
+/// delimiter, so `A B` is two words of one replacement — and on the
+/// pattern arm it goes through `parse_subst_string`, whose lexer must
+/// NOT treat the blank as the end of a word (c:Src/lex.c:968, the
+/// `!sub` term).
+#[test]
+fn a_blank_in_the_replacement_survives() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/old/A B/"),
+        "a blank in the replacement",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/old/A B/"),
+        "a blank in the replacement under HIST_SUBST_PATTERN",
+    );
+}
+
+/// `#` and `%` anchor the pattern ONLY on the pattern arm (c:2349,
+/// c:2354 — both inside the `isset(HISTSUBSTPATTERN) || forcepat`
+/// block at c:2344). Under plain `:s` they are ordinary characters, so
+/// `#print` is four characters that are not in the line and zsh
+/// refuses; with the option it anchors and succeeds. The pair is what
+/// makes the gate visible: a shell that always anchors passes the
+/// second and fails the first.
+#[test]
+fn the_head_anchor_only_applies_under_hist_subst_pattern() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/#print/echo/"),
+        "`#print` is literal without HIST_SUBST_PATTERN",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/#print/echo/"),
+        "`#print` anchors at the head under HIST_SUBST_PATTERN",
+    );
+}
+
+/// The tail anchor, same gate.
+#[test]
+fn the_tail_anchor_only_applies_under_hist_subst_pattern() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/%xx/yy/"),
+        "`%xx` is literal without HIST_SUBST_PATTERN",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/%xx/yy/"),
+        "`%xx` anchors at the tail under HIST_SUBST_PATTERN",
+    );
+}
+
+/// A glob metacharacter in the pattern: `strstr` on the literal arm
+/// (so `o*d` is not in the line and the substitution is refused),
+/// `getmatch` on the pattern arm (so it matches `old`).
+#[test]
+fn a_glob_in_the_pattern_matches_only_under_hist_subst_pattern() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s/o*d/G/"),
+        "`o*d` is literal without HIST_SUBST_PATTERN",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:s/o*d/G/"),
+        "`o*d` matched as a pattern under HIST_SUBST_PATTERN",
+    );
+}
+
+/// `:gs` replaces every match, on both arms — c:2384 loops the
+/// `strstr` arm, and c:2347-2348 passes `SUB_GLOBAL` into `getmatch`
+/// on the pattern arm. `[x]` is a glob, so the two arms disagree about
+/// whether there is anything to replace at all.
+#[test]
+fn global_substitution_replaces_every_match() {
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:gs/x/y/"),
+        ":gs replaced both x's",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:gs/[x]/y/"),
+        ":gs with a glob replaced both x's",
+    );
+    assert_same_dump(
+        &subst_driver("setopt hist_subst_pattern", "!!:gs/x*/Q/"),
+        ":gs with a greedy glob",
+    );
+}
+
+/// An empty pattern reuses the last one: `getsubsargs` leaves `hsubl`
+/// alone when the pattern it read is empty (c:531-535), so `!!:s//Q/`
+/// after `!!:s/old/new/` substitutes `old` again.
+#[test]
+fn an_empty_pattern_reuses_the_previous_one() {
+    assert_same_dump(
+        &subst_driver(
+            "unsetopt hist_subst_pattern",
+            "!!:s/old/new/ ; print HSMARK old yy ; !!:s//Q/",
+        ),
+        "an empty pattern reused the previous one",
+    );
+    assert_same_dump(
+        &subst_driver("unsetopt hist_subst_pattern", "!!:s//Q/"),
+        "an empty pattern with nothing to reuse",
+    );
+}
+
+/// `:&` repeats the last substitution, and falls into the same arm as
+/// `:s` (c:903), so it inherits the same status branch.
+#[test]
+fn the_repeat_modifier_reuses_the_last_substitution() {
+    assert_same_dump(
+        &subst_driver(
+            "unsetopt hist_subst_pattern",
+            "!!:s/old/new/ ; print HSMARK old yy ; !!:&",
+        ),
+        ":& repeated the last substitution",
+    );
+}

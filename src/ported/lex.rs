@@ -1909,8 +1909,16 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // (`print -r -- 三` printed nothing). Only ASCII can be blank.
         let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
-        if inbl && in_brace_param == 0 && pct == 0 {
-            // Whitespace outside brace param ends token
+        if inbl && in_brace_param == 0 && pct == 0 && !sub {
+            // Whitespace outside brace param ends token.
+            //
+            // c:958-959 — C does not break here: it sets `act =
+            // LX2_BREAK` and lets the c:968 arm decide, and that arm's
+            // test is `if (!in_brace_param && !sub)`. So under `sub`
+            // (i.e. from `parse_subst_string`, c:1811) a blank is
+            // added like any other character instead of ending the
+            // word — `!!:s/old/A B/` under HIST_SUBST_PATTERN kept
+            // only `A` without the `!sub` term here.
             break;
         }
 
@@ -2886,7 +2894,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // Bug #604. `pct == 0` is also dropped — `(...)` grouping
             // is handled by the outer parser's command structure, not
             // by `;` being mid-token here.
-            LX2_BREAK if in_brace_param == 0 => {
+            // c:968 — the `!sub` term above is not decoration: with
+            // `sub` set (the one caller is `parse_subst_string`,
+            // c:1811 `gettokstr(c, 1)`) a break character is NOT a word
+            // boundary, it falls out of the switch to the shared
+            // `add(c)` at c:1421 like any other character. Dropping the
+            // term truncated the string at the first blank, `;` or `&`:
+            // `!!:s/old/A B/` under HIST_SUBST_PATTERN substituted `A`
+            // and the shell re-read the rest of the line.
+            LX2_BREAK if in_brace_param == 0 && !sub => {
                 break;
             }
             LX2_BREAK => {
