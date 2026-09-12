@@ -135,6 +135,7 @@ mod shift_positional_parity;
 mod locale_parity;
 mod special_params_parity;
 mod special_runtime_params_parity;
+mod spliced_backslash_pattern_parity;
 mod style_scalar_parity;
 mod subscript_chain_and_ssub_parity;
 mod subshell_parity;

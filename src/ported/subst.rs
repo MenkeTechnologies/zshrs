@@ -3728,11 +3728,52 @@ pub fn paramsubst(
             Bang, Bar, Bnull, Bnullkeep, Dash, Hat, Inang, Inbrace, Inbrack, Inpar, Outang,
             Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde,
         };
-        // A character the user quoted or escaped must stay literal. The
-        // output below spells that `\X` — patcompile's own literal form
-        // after the downstream `tokenize` — for the backslash, the pattern
-        // metacharacters this pass and `literalize_spliced_metas` act on,
-        // and the quote characters this pass reads as quoting.
+        // c:Src/subst.c:3387 + c:169 — how C spells "this character is
+        // literal" in the pattern operand, and why that spelling must not
+        // be a backslash when GLOBSUBST is off.
+        //
+        // `parse_subst_string(s)` re-lexes the operand, so a source `\X` /
+        // `'X'` / `"X"` becomes the pair `Bnull X` (c:Src/lex.c:1268
+        // `add(Bnull)`). `singsub` then splices parameter values in RAW
+        // (c:3412, and c:814-835 `strcatsub` only ever shtokenizes the
+        // value), and prefork's `remnulargs(getdata(node))` (c:169,
+        // c:Src/glob.c:3673-3681) STRIPS that Bnull. The operand that
+        // reaches `patcompile` therefore carries the escaped character as
+        // a BARE character — which is literal anyway, because
+        // `zpc_chars` dispatches on TOKEN bytes only
+        // (c:Src/pattern.c:248). Source escape and spliced character end
+        // up spelled the same way, and both mean "literal"; a raw `\` in
+        // that string is never an escape, only a backslash of somebody's
+        // value.
+        //
+        // zshrs used to keep the source escape as a raw `\X` pair instead,
+        // which made it byte-identical to a backslash the `singsub`
+        // SPLICED in, so `literalize_spliced_metas` honoured the spliced
+        // one as an escape:
+        //     x="a(b"; y="("; print ${x//${(b)y}/Q}   zsh: a(b  was: aQb
+        // Decaying the escape to the bare character the way C does removes
+        // the collision at the source. `literalize_spliced_metas` re-adds
+        // the `\` the downstream tokenize needs, uniformly, for both.
+        //
+        // The decay is skipped under GLOBSUBST, where C's shtokenize of
+        // the spliced value (c:4419-4420 / c:829-830) reads a spliced `\X`
+        // as a quoted literal X too (c:Src/glob.c:3597-3605
+        // `s[-1] = Bnullkeep`) — the two spellings MEAN the same thing
+        // there, so the `\X` pair is kept and both are honoured, which is
+        // what the GLOBSUBST rows of the operand already pin.
+        let glob_subst_now = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        // `$` / `` ` `` / `'` / `"` must survive `singsub` unread: a bare
+        // one would open a substitution or a quoted span in stringsubst.
+        // They take the lexer's Bnull pair (c:Src/lex.c:1268), whose
+        // marker stringsubst drops while skipping the payload (subst.rs
+        // Bnull arm) — leaving exactly the bare literal character C's
+        // remnulargs leaves.
+        let needs_subst_shield = |c: char| matches!(c, '$' | '`' | '\'' | '"');
+        // A character the user quoted or escaped must stay literal. Under
+        // GLOBSUBST the output spells that `\X` — patcompile's own literal
+        // form after the downstream `tokenize` — for the backslash, the
+        // pattern metacharacters this pass and `literalize_spliced_metas`
+        // act on, and the quote characters this pass reads as quoting.
         let needs_backslash = |c: char| {
             matches!(
                 c,
@@ -3743,11 +3784,14 @@ pub fn paramsubst(
         // `$` and `` ` `` take the lexer's Bnull pair instead (c:Src/lex.c:1268
         // `add(Bnull)`): the singsub that follows skips a Bnull-marked
         // character, but still opens a substitution after a plain `\`.
+        // With GLOBSUBST off the same shield covers the quote characters,
+        // and every other literal decays to its bare self (see the
+        // `glob_subst_now` header).
         let push_literal = |out: &mut String, c: char| {
-            if c == '$' || c == '`' {
+            if needs_subst_shield(c) && (!glob_subst_now || c == '$' || c == '`') {
                 out.push(Bnull);
                 out.push(c);
-            } else if needs_backslash(c) {
+            } else if glob_subst_now && needs_backslash(c) {
                 out.push('\\');
                 out.push(c);
             } else {
@@ -3844,47 +3888,40 @@ pub fn paramsubst(
         let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
-            // Source `\X` escape — both chars verbatim, except an escaped
-            // `$` / `` ` ``: C's lexer makes `\$` the pair Bnull `$`
-            // (c:Src/lex.c:1268 `add(Bnull)`), and stringsubst opens a
-            // substitution only on the String/Qstring token, so the `$`
-            // is never an opener. The raw `\$` that `${x//\$v/…}`'s
-            // separator scan hands us was expanded by the singsub below
-            // (`x='a$vb' v=b; print ${x//\$v/Q}` gave `a$vQ`, zsh `aQb`);
-            // re-mark it so singsub skips it.
+            // Source `\X` escape — routed through `push_literal`, which
+            // decays it to the bare `X` C's remnulargs leaves behind (or
+            // keeps the `\X` pair under GLOBSUBST), and shields an escaped
+            // `$` / `` ` `` / quote with the lexer's Bnull pair: C's lexer
+            // makes `\$` the pair Bnull `$` (c:Src/lex.c:1268
+            // `add(Bnull)`), and stringsubst opens a substitution only on
+            // the String/Qstring token, so the `$` is never an opener. The
+            // raw `\$` that `${x//\$v/…}`'s separator scan hands us was
+            // expanded by the singsub below (`x='a$vb' v=b;
+            // print ${x//\$v/Q}` gave `a$vQ`, zsh `aQb`); re-mark it so
+            // singsub skips it.
             if c == '\\' && i + 1 < chars.len() {
-                let x = chars[i + 1];
-                if x == '$' || x == '`' {
-                    out.push(Bnull);
-                } else {
-                    out.push(c);
-                }
-                out.push(x);
+                push_literal(&mut out, chars[i + 1]);
                 i += 2;
                 continue;
             }
             // Lexer quote markers Bnull/Bnullkeep — payload is
-            // user-literal.
+            // user-literal, so it takes the same `push_literal` route as a
+            // source `\X`.
             //
             // Bnull + `\` (source `\\` — a QUOTED literal backslash) and
-            // Bnull + a pattern metacharacter are rewritten to the
-            // parser's raw-ASCII literal form `\X` HERE, before singsub:
-            // stringsubst's Bnull arm (subst.rs:696) DROPS the marker and
-            // keeps the payload raw, which turned the quoted backslash
-            // into an ACTIVE escape prefix for patcompile (`${s/\\./X}`
-            // matched a plain dot instead of backslash+dot, bug #296), and
-            // left a quoted metacharacter for literalize_spliced_metas to
-            // re-activate under GLOBSUBST as if it had been spliced
-            // (`setopt globsubst; x='a(b'; print ${x#a\(}` → "bad
-            // pattern"; zsh `b`). C never loses the marker (Bnull
-            // survives the whole subst walk; remnulargs strips it only at
-            // the value boundary, and patcompile reads Bnull-marked chars
-            // as literal — c:Src/lex.c:1268 add(Bnull) + Src/pattern.c
-            // Bnull contract). Other payloads KEEP the marker pair: a raw
-            // `$` / `` ` `` would re-substitute inside stringsubst.
+            // Bnull + a pattern metacharacter have to be re-spelled HERE,
+            // before singsub: stringsubst's Bnull arm (subst.rs:782) DROPS
+            // the marker and keeps the payload raw, which turned the quoted
+            // backslash into an ACTIVE escape prefix for patcompile
+            // (`${s/\\./X}` matched a plain dot instead of backslash+dot,
+            // bug #296), and left a quoted metacharacter for
+            // literalize_spliced_metas to re-activate under GLOBSUBST as if
+            // it had been spliced (`setopt globsubst; x='a(b';
+            // print ${x#a\(}` → "bad pattern"; zsh `b`). Other payloads
+            // KEEP the marker pair: a raw `$` / `` ` `` would
+            // re-substitute inside stringsubst.
             if c == Bnull && i + 1 < chars.len() && needs_backslash(chars[i + 1]) {
-                out.push('\\');
-                out.push(chars[i + 1]);
+                push_literal(&mut out, chars[i + 1]);
                 i += 2;
                 continue;
             }
@@ -4033,8 +4070,7 @@ pub fn paramsubst(
                         out.push(Bar);
                     } else {
                         // Literal per Src/pattern.c:248 — see header.
-                        out.push('\\');
-                        out.push('|');
+                        push_literal(&mut out, '|');
                     }
                 }
                 // c:Src/lex.c:1401-1409 LX2_BANG —
@@ -4092,6 +4128,9 @@ pub fn paramsubst(
     //   raw ASCII glob meta (splice)           -> `\`-escaped
     //       (downstream tokenize folds `\X` to Bnull+X = literal),
     //       or left raw under GLOBSUBST (re-activated downstream),
+    //   raw `\` (splice)                       -> `\\`, a literal
+    //       backslash, or paired with the next character under
+    //       GLOBSUBST (where shtokenize gives `\X` that meaning),
     //   `\X` / Bnull/Bnullkeep pairs           -> verbatim.
     let literalize_spliced_metas = |s: &str| -> String {
         use crate::ported::zsh_h::{
@@ -4112,24 +4151,36 @@ pub fn paramsubst(
         let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
-            // A raw `\` immediately before a TOKEN char (or at end of
-            // string) cannot be a source `\X` escape — pretokenize
-            // copies source escape pairs verbatim BEFORE converting
-            // metas to tokens, so an escape payload is never a token.
-            // It is a SPLICED literal backslash (a param value ending
-            // in `\`, e.g. hsmw's `[$specch]` where specch ends in
-            // `\\`): escape it and leave the following token char for
-            // the transpose arms below — otherwise the class-close
-            // Outbrack is swallowed as escape payload, the char class
-            // never closes, and patcompile rejects the whole pattern
-            // ("bad pattern: [ab\", _hsmw_main:45). Under GLOBSUBST a
-            // spliced backslash stays active, matching C's shtokenize
-            // of spliced values (Src/subst.c:1669).
-            if c == '\\'
-                && !glob_subst
-                && (i + 1 >= chars.len()
-                    || ((chars[i + 1] as u32) < 256 && crate::ztype_h::itok(chars[i + 1] as u8)))
-            {
+            // With GLOBSUBST off, EVERY raw `\` left here came from a
+            // SPLICE: pretokenize decayed each source escape to its bare
+            // character (c:Src/subst.c:169 `remnulargs` — see that pass's
+            // `glob_subst_now` header), so it emits no backslash of its
+            // own. C treats a spliced backslash as an ordinary character
+            // of the value — `strcatsub` (c:Src/subst.c:814-835) copies
+            // the value in verbatim and patcompile dispatches on TOKEN
+            // bytes only (c:Src/pattern.c:248 `zpc_chars`), so a raw `\`
+            // is never an escape there:
+            //     x="a(b";  y="("; print ${x//${(b)y}/Q}   zsh: a(b
+            //     x="a\(b"; y="("; print ${x//${(b)y}/Q}   zsh: aQb
+            // The `(b)` / `(q)` flags exist to make a value safe as a
+            // literal, and reading their backslash as an escape silently
+            // matched the metacharacter they were quoting.
+            //
+            // Escape it so the downstream `tokenize` folds `\\` to
+            // Bnull + `\` = a literal backslash — including a value
+            // ending in `\` (hsmw's `[$specch]`), where leaving it raw
+            // let the class-close Outbrack be swallowed as escape payload
+            // and patcompile rejected the pattern ("bad pattern: [ab\",
+            // _hsmw_main:45).
+            //
+            // Under GLOBSUBST the value is shtokenized instead
+            // (c:Src/subst.c:4419-4420 / c:829-830), and shtokenize reads
+            // `\X` as a quoted literal X (c:Src/glob.c:3597-3605,
+            // `s[-1] = Bnullkeep`) — the SAME meaning the source escape
+            // has, so pretokenize keeps its `\X` pairs there and both
+            // spellings fall through to the pair arm below, which hands
+            // the downstream tokenize the fold it already does.
+            if c == '\\' && !glob_subst {
                 out.push('\\');
                 out.push('\\');
                 i += 1;
