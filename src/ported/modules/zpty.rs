@@ -564,6 +564,42 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
     let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
     if r <= 0 {
         // c:537
+        //
+        // !!! NO C COUNTERPART — REAP BEFORE THE LIVENESS TEST !!!
+        //
+        // The `kill(cmd->pid, 0)` below is an accurate liveness test in
+        // C only because something else has already reaped this child: an
+        // exited-but-unreaped process is a zombie, and kill(2) on a
+        // zombie still SUCCEEDS. In zsh that reaper is the process-wide
+        // SIGCHLD handler — `wait_for_processes` (c:Src/signals.c:285)
+        // loops on `waitpid(-1, &status, WAITFLAGS)`, so it collects
+        // EVERY child. A zpty child is deliberately outside the job
+        // table (c:348 `clearjobtab(0)` in the forked child, and the
+        // parent never `addproc`s it), so `findproc` misses it and the
+        // reaper simply discards the status — but the zombie is gone,
+        // and the next `kill(pid, 0)` fails with ESRCH.
+        //
+        // zshrs never reaps this pid: no job entry owns it, and a
+        // script/`-c` run does not reach the `install_handler(SIGCHLD)`
+        // in `init.rs` at all, so the zombie survives for the life of
+        // the shell and `kill(pid, 0)` keeps returning 0. `fin` was
+        // then never set, and the one caller that retries — the
+        // `written < 0` arm of `ptywritestr` (c:730-735), which sets
+        // `written = 0` and goes round again whenever the command is
+        // still believed alive — spun forever: `zpty -w` to a child
+        // that had already exited burned 100% of a core and never
+        // returned, where zsh returns 2 immediately.
+        //
+        // Reap here, at the one place that asks whether the child is
+        // alive, so the kill below answers the question it is written
+        // to ask.
+        // Plain WNOHANG (not the reaper's WUNTRACED|WCONTINUED) keeps
+        // this to "collect it if it has exited": a merely stopped child
+        // is not reaped and `kill(pid, 0)` still reports it alive.
+        // ECHILD (someone else got there first) is equally fine — the
+        // kill below then fails and the command is marked finished.
+        let mut wstatus: libc::c_int = 0;
+        unsafe { libc::waitpid(cmd.pid, &mut wstatus, libc::WNOHANG) };
         // c:538 — `if (kill(cmd->pid, 0) < 0)` — process gone.
         if unsafe { libc::kill(cmd.pid, 0) } < 0 {
             cmd.finished = true; // c:539 cmd->fin = 1

@@ -163,6 +163,7 @@ mod z_flag_lexing_parity;
 mod zdharma_corpus_parity;
 mod zinit_p10k_parity;
 mod zinit_plugin_corpus_parity;
+mod zpty_dead_child_parity;
 mod zpwr_corpus_parity;
 mod always_break_parity;
 mod terminfo_parity;
