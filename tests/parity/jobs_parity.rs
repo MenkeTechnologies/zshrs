@@ -375,3 +375,234 @@ fn wait_two_pids_each_status_retained() {
         r#"(exit 1) & p=$!; (exit 2) & q=$!; wait $q; echo "q=$?"; wait $p; echo "p=$?""#,
     );
 }
+
+// ── #1150: compound-command job text (getjobtext → gettext2) ────────
+//
+// C never stores a job's source text; `getjobtext()` (Src/text.c:315)
+// DEPARSES the stored `Eprog` through `gettext2()` (Src/text.c:415),
+// which has a rendering arm per node type. zshrs's fusevm compiler used
+// to substitute the placeholders `"for ..."`, `"while ..."`, `"if ..."`,
+// `"case ..."`, `"repeat ..."` and `"until ..."`, so every compound
+// background job listed as an indistinguishable stub.
+//
+// Every expectation below is whatever `/opt/homebrew/bin/zsh` itself
+// prints, including the spacing that looks wrong but is not: `do;` after
+// the loop opener, `then;` after the condition, `{;` opening an `always`
+// block, and the space before `;;` in a `case` arm.
+
+#[test]
+fn jobtext_for_loop() {
+    // c:Src/text.c:635-663 WC_FOR — `for X in W; do; BODY; done`.
+    assert_parity(r#"for jt_x in 1 2; do sleep 5; done & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_for_positional() {
+    // c:647-651 — WC_FOR_PPARAM has no ` in ` clause.
+    assert_parity(
+        r#"set -- 1 2; for jt_x; do sleep 5; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_for_arithmetic() {
+    // c:638-645 — WC_FOR_COND renders `for ((i; c; s)) do`, with no `;`
+    // between `))` and `do` unlike every other loop opener.
+    assert_parity(
+        r#"for ((jt_i=0; jt_i<2; jt_i++)) do sleep 5; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_for_nested() {
+    assert_parity(
+        r#"for jt_x in 1; do for jt_y in 2; do sleep 5; done; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_select_with_list() {
+    // c:665-683 WC_SELECT. Redirected so the numbered menu the forked
+    // job prints cannot interleave with the parent's own output.
+    assert_parity(
+        r#"select jt_s in a b; do sleep 5; done >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]""#,
+    );
+}
+
+#[test]
+fn jobtext_select_without_list() {
+    // c:669-672 — no WC_SELECT_LIST, so no ` in ` clause.
+    assert_parity(
+        r#"set -- a b; select jt_s; do sleep 5; done >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]""#,
+    );
+}
+
+#[test]
+fn jobtext_while_loop() {
+    // c:685-704 WC_WHILE.
+    assert_parity(
+        r#"jt_q=1; while [[ -n $jt_q ]]; do sleep 5; jt_q=; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_until_loop() {
+    // c:687-688 — WC_WHILE_UNTIL prints `until `.
+    assert_parity(
+        r#"jt_q=1; until [[ -z $jt_q ]]; do sleep 5; jt_q=; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_repeat_loop() {
+    // c:705-720 WC_REPEAT.
+    assert_parity(r#"repeat 2; do sleep 5; done & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_if_elif_else() {
+    // c:820-859 WC_IF — every branch keyword is preceded by `; `.
+    assert_parity(
+        r#"if true; then sleep 5; elif false; then echo a; else echo b; fi & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_case_all_three_terminators() {
+    // c:721-818 WC_CASE — ` ;;`, ` ;&` and ` ;|` each keep their leading
+    // space, and the arms are separated by a bare `' '` (c:779-780),
+    // never by `"; "`.
+    assert_parity(
+        r#"jt_v=a; case $jt_v in (a) sleep 5 ;& (b|c) echo x ;| (*) echo y;; esac & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_case_no_arms() {
+    // c:730-736 — an empty `case` closes with `' '` + `esac`.
+    assert_parity(r#"jt_v=x; case $jt_v in esac & print -r -- "[$jobtexts[1]]""#);
+}
+
+#[test]
+fn jobtext_subshell() {
+    // c:525-542 WC_SUBSH — `(` SP body `; )`.
+    assert_parity(r#"( sleep 5; echo hi ) & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_current_shell_group() {
+    // c:543-559 WC_CURSH.
+    assert_parity(r#"{ sleep 5; echo hi } & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_always_block() {
+    // c:982-1004 WC_TRY — opens with `taddnl(0)`, not WC_CURSH's
+    // `taddnl(1)`, so both braces are followed by a semicolon.
+    assert_parity(r#"{ sleep 5 } always { echo x } & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_funcdef_body_elided() {
+    // c:586-590 — with `tjob` set the body collapses to `{ ... }`.
+    assert_parity(r#"jt_fn () { sleep 5 } & print -r -- "[$jobtexts[1]]""#);
+}
+
+#[test]
+fn jobtext_funcdef_multiple_names() {
+    assert_parity(r#"function jt_a jt_b { sleep 5 } & print -r -- "[$jobtexts[1]]""#);
+}
+
+#[test]
+fn jobtext_funcdef_anonymous() {
+    // c:584 — `if (nargs) taddstr(" ")`; an unnamed function emits
+    // neither a name nor the space, so the text starts at `()`.
+    assert_parity(r#"() { sleep 5 } & print -r -- "[$jobtexts[1]]""#);
+}
+
+#[test]
+fn jobtext_cond_parenthesises_opposite_operator() {
+    // c:905-923 — an `&&` operand under `||` is wrapped in `( … )`,
+    // so `[[ -n x && ! -z y || a = b ]]` comes back parenthesised.
+    assert_parity(
+        r#"while [[ -n x && ! -z y || a = b ]]; do sleep 5; break; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_cond_keeps_explicit_grouping() {
+    assert_parity(
+        r#"while [[ ( a = a || c = d ) && -n e ]]; do sleep 5; break; done & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_arithmetic_command() {
+    // c:972-976 WC_ARITH — the stored expression keeps its inner
+    // spacing, so `(( 1 + 2 ))` round-trips byte for byte.
+    assert_parity(r#"if (( 1 + 2 )); then sleep 5; fi & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_simple_command_redirections() {
+    // c:503-511 WC_REDIR → getredirs (c:1019). Redirections were
+    // dropped entirely, so this listed as a bare `sleep 5`.
+    assert_parity(
+        r#"sleep 5 >>/dev/null 2>&1 <<<"str" 3</dev/null & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_compound_redirections() {
+    assert_parity(r#"{ sleep 5 } >/dev/null & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_heredoc_becomes_herestring() {
+    // c:1056-1096 — a here-document is rewritten to a here-STRING for
+    // display, so the job line carries the body, not the delimiter. An
+    // unquoted body is tokenized, so `has_token` picks the double-quoted
+    // form and the `$` survives unescaped.
+    assert_parity(
+        "sleep 5 <<EOT >/dev/null & print -r -- \"[$jobtexts[1]]\"; kill %1\nline $jt_v here\nEOT\n",
+    );
+}
+
+#[test]
+fn jobtext_quoted_heredoc_becomes_single_quoted_herestring() {
+    // c:1085-1088 — a `<<'EOT'` body has no tokens, so it takes the
+    // single-quoted branch and `$jt_v` stays literal.
+    assert_parity(
+        "sleep 5 <<'EOT' >/dev/null & print -r -- \"[$jobtexts[1]]\"; kill %1\nraw $jt_v body\nEOT\n",
+    );
+}
+
+#[test]
+fn jobtext_preserves_quoting_and_expansions() {
+    // c:304/:342 — `untokenize()` over the finished buffer maps `Qstring`
+    // back to `$`. Skipping it dropped the `$` of an expansion inside
+    // double quotes: `"a $jt_v b"` listed as `"a jt_v b"`.
+    assert_parity(
+        r#"sleep 5 "a $jt_v b" 'c$d' \$e & print -r -- "[$jobtexts[1]]"; kill %1"#,
+    );
+}
+
+#[test]
+fn jobtext_assignment_prefixes() {
+    // c:183-207 taddassign — every assignment is followed by a space,
+    // and an array value is `name=(v1 v2)`.
+    assert_parity(r#"jt_p=1 jt_q=(a b) sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobtext_time_keyword() {
+    // c:561-573 WC_TIMED.
+    assert_parity(r#"time sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn jobs_listing_shows_compound_text() {
+    // The `jobs` listing is the user-visible consumer: c:Src/jobs.c:1295
+    // prints `[1]  + running    ` followed by the deparsed text.
+    assert_parity(r#"for jt_x in 1 2; do sleep 5; done & jobs; kill %1"#);
+}

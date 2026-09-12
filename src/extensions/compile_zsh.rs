@@ -863,7 +863,15 @@ impl ZshCompiler {
         // equivalent via `dupstring(text)`). The trap body reads
         // the parameter and the runtime unsets it on return. Bug
         // #263 in docs/BUGS.md.
-        let cmd_text = render_list_for_debug(list);
+        // `job = false` — c:Src/exec.c:1484-1485 sets `$ZSH_DEBUG_CMD` from
+        // `getpermtext(state->prog, pc2, 0)`, which runs with `tjob` clear.
+        // c:Src/text.c:304 — `untokenize(tbuf)` runs ONCE over the finished
+        // buffer, so every piece the arms emitted is covered, not just the
+        // ones that go through `tstr` individually. Skipping it here left a
+        // `[[ -n x && a = b ]]` condition as `[[ n x && a  b ]]`, because
+        // `Dash` and `Equals` are tokens inside `[[ ]]` and printed as the
+        // invisible C1 bytes 0x9c / 0x83.
+        let cmd_text = tstr(&render_list_for_debug(list, false));
         let txt_const = self.builder.add_constant(Value::str(&cmd_text));
         self.builder.emit(Op::LoadConst(txt_const), 0);
         // mode 0 = c:1476's pre-sublist DEBUG_BEFORE_CMD arm.
@@ -927,7 +935,8 @@ impl ZshCompiler {
             // and lands in the proc entry via addproc. Reconstruct the
             // sublist text at compile time and pass it alongside the
             // sub-chunk index so BUILTIN_RUN_BG can addproc with it.
-            let job_text = render_sublist_for_debug(&list.sublist);
+            // c:Src/text.c:342 — `untokenize(jbuf)` over the finished buffer.
+            let job_text = tstr(&render_sublist_for_debug(&list.sublist, true));
             let text_const = self.builder.add_constant(Value::str(&job_text));
             self.builder.emit(Op::LoadConst(text_const), 0);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
@@ -1205,7 +1214,7 @@ impl ZshCompiler {
         // at c:1758), so its proc entry carries getjobtext display text
         // (Src/text.c:235) exactly like a background job. Reconstruct
         // the pipe text at compile time, mirroring the RUN_BG site.
-        let job_text = render_pipe_for_debug(pipe);
+        let job_text = tstr(&render_pipe_for_debug(pipe, true)); // c:342
         let text_const = self.builder.add_constant(Value::str(&job_text));
         self.builder.emit(Op::LoadConst(text_const), 0);
         self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
@@ -1757,7 +1766,7 @@ impl ZshCompiler {
                     // source text here and push it as the desc operand
                     // for the handler to forward to printtime as job_name.
                     // Bug #66 in docs/BUGS.md.
-                    let desc = render_sublist_for_debug(sublist);
+                    let desc = tstr(&render_sublist_for_debug(sublist, true)); // c:342
                     // c:Src/exec.c:3690 — `is_cursh = (is_builtin ||
                     // is_shfunc || nullexec || type >= WC_CURSH);`. When the
                     // timed body runs in the CURRENT shell, execcmd_exec's
@@ -12525,8 +12534,40 @@ fn value_has_procsubst(value: &str) -> bool {
     false
 }
 
-fn render_list_for_debug(list: &crate::parse::ZshList) -> String {
-    render_sublist_for_debug(&list.sublist)
+/// The print-side mapping `getpermtext()` and `getjobtext()` apply to the
+/// finished buffer — `untokenize(tbuf)` at `c:Src/text.c:304` and `c:342`.
+///
+/// `Src/utils.c:4204-4208`'s untokenize maps every ITOK char back through
+/// `ztokens`, prints `Qstring` as `$` and DROPS `Nularg`. zshrs's
+/// `lex::untokenize_preserve_quotes` is the quote-preserving half; the two
+/// print-side mappings it defers have to be applied here, exactly as
+/// `ported::text::getpermtext` does (`src/ported/text.rs:229-233`).
+///
+/// Without the `Qstring` half, an expansion inside double quotes lost its
+/// `$`: `sleep 1 "a $v b"` was rendered `sleep 1 "a v b"` in the job text.
+fn tstr(s: &str) -> String {
+    crate::lex::untokenize_preserve_quotes(s)
+        .chars()
+        .filter(|&c| c != crate::ported::zsh_h::Nularg)
+        .map(|c| {
+            if c == crate::ported::zsh_h::Qstring {
+                '$'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// `taddnl(0)` under `tnewlins == 0` — `c:Src/text.c:246-247`
+/// (`taddstr("; ")`).
+const TNL: &str = "; ";
+/// `taddnl(1)` under `tnewlins == 0` — `c:Src/text.c:244-245`
+/// (`taddstr(" ")`).
+const TNL_NOSEMI: &str = " ";
+
+fn render_list_for_debug(list: &crate::parse::ZshList, job: bool) -> String {
+    render_sublist_for_debug(&list.sublist, job)
 }
 
 /// Classify a `time`-d sublist as "runs in the current shell" (C's
@@ -12574,22 +12615,26 @@ fn time_cursh_hint(sublist: &crate::parse::ZshSublist) -> (i64, String) {
     }
 }
 
-fn render_sublist_for_debug(sublist: &crate::parse::ZshSublist) -> String {
-    let head = render_pipe_for_debug(&sublist.pipe);
-    let mut out = if sublist.flags.not {
-        format!("! {}", head)
-    } else {
-        head
-    };
+fn render_sublist_for_debug(sublist: &crate::parse::ZshSublist, job: bool) -> String {
+    let mut out = String::new();
+    // c:Src/text.c:464-467 — `if (WC_SUBLIST_FLAGS(code) & WC_SUBLIST_NOT)
+    // taddstr("! "); if (… & WC_SUBLIST_COPROC) taddstr("coproc ");` — the
+    // negation is emitted before the coproc keyword, so `! coproc cmd`.
+    if sublist.flags.not {
+        out.push_str("! "); // c:465
+    }
+    if sublist.flags.coproc {
+        out.push_str("coproc "); // c:467
+    }
+    out.push_str(&render_pipe_for_debug(&sublist.pipe, job));
     if let Some((op, next)) = &sublist.next {
-        let op_str = match op {
-            crate::parse::SublistOp::And => "&&",
-            crate::parse::SublistOp::Or => "||",
-        };
-        out.push(' ');
-        out.push_str(op_str);
-        out.push(' ');
-        out.push_str(&render_sublist_for_debug(next));
+        // c:471-472 — `taddstr((WC_SUBLIST_TYPE(code) == WC_SUBLIST_OR) ?
+        // " || " : " && ");`
+        out.push_str(match op {
+            crate::parse::SublistOp::And => " && ",
+            crate::parse::SublistOp::Or => " || ",
+        });
+        out.push_str(&render_sublist_for_debug(next, job));
     }
     out
 }
@@ -12629,30 +12674,193 @@ fn getredirs(redirs: &[crate::parse::ZshRedir]) -> String {
             // c:834-835 — a non-default fd is written as one digit
             out.push_str(&f.fd.to_string());
         }
+        // c:1056-1096 — `if (f->type == REDIR_HERESTR && (f->flags &
+        // REDIRF_FROM_HEREDOC))`. C rewrites a here-DOCUMENT into a here-
+        // STRING before it ever reaches the text buffer, so the job line for
+        // `cmd <<EOT` shows the BODY, not the delimiter: zsh 5.9.2 lists
+        // `sleep 1 <<EOT` + `line $v here` as `sleep 1 <<<"line $v here"`.
+        // zshrs keeps the here-document shape in the AST, so the rewrite
+        // happens here. Note there is NO space after `<<<` on this path —
+        // c:1069's `taddstr(fstr[REDIR_HERESTR])` is followed straight by the
+        // quoting, unlike the c:1098-1101 arm.
+        if let Some(h) = &f.heredoc {
+            out.push_str(FSTR[REDIR_HERESTR as usize]); // c:1069
+            // c:1074-1078 — `/* Remove a terminating newline, if any. */`
+            let mut body = h.content.clone();
+            if body.ends_with('\n') {
+                body.pop();
+            }
+            // c:Src/lex.c `gethere()` — an UNQUOTED here-document body is
+            // tokenized as the lexer reads it: `$` becomes `Qstring`, a
+            // backquote becomes `Qtick`, and a backslash that quotes one of
+            // `$`, a backquote or another backslash becomes `Bnull` followed
+            // by that character verbatim. A `<<'EOT'` body is stored raw.
+            // zshrs keeps the raw body plus the `quoted` flag, so the
+            // tokenization that C's `has_token` / `quotestring` pair sees has
+            // to be rebuilt before either is asked anything — the whole point
+            // of the token chars is that they are invisible to `quotestring`
+            // and are turned back into their literals by the final
+            // untokenize, which is why zsh prints `$v` unescaped but `\$v`
+            // as `\\$v`.
+            let prepared: String = if h.quoted {
+                body
+            } else {
+                let src: Vec<char> = body.chars().collect();
+                let mut acc = String::with_capacity(src.len());
+                let mut i = 0;
+                while i < src.len() {
+                    if src[i] == '\\' && matches!(src.get(i + 1), Some('$' | '`' | '\\')) {
+                        acc.push(Bnull);
+                        acc.push(src[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    acc.push(match src[i] {
+                        '$' => Qstring,
+                        '`' => Qtick,
+                        c => c,
+                    });
+                    i += 1;
+                }
+                acc
+            };
+            // c:1085 — `if (!has_token(f->name))`.
+            //
+            // RESIDUAL: a backslash that quotes a `$` still comes out one
+            // backslash short of zsh — a body of `\$esc` renders `\$esc`
+            // where zsh 5.9.2 renders `\\$esc`. C gets the second backslash
+            // because `quotestring(QT_DOUBLE)` escapes the literal `$` that
+            // `Bnull` is quoting (c:6311-6312); zshrs's `quotestring` leaves
+            // that `$` bare in this position. `\\` and a bare `$` both match.
+            let tokenised = crate::ported::utils::has_token(&prepared);
+            let quoted = if tokenised {
+                // c:1090-1092 — `taddchr('"'); quotestring(…, QT_DOUBLE);`
+                format!(
+                    "\"{}\"",
+                    crate::ported::utils::quotestring(&prepared, QT_DOUBLE)
+                )
+            } else {
+                // c:1086-1088 — `taddchr('\''); quotestring(…, QT_SINGLE);`
+                format!(
+                    "'{}'",
+                    crate::ported::utils::quotestring(&prepared, QT_SINGLE)
+                )
+            };
+            out.push_str(&tstr(&quoted));
+            out.push(' '); // c:1103
+            continue;
+        }
         // c:872-876 — `taddstr(fstr[f->type]); if (f->type != REDIR_MERGEIN
         // && f->type != REDIR_MERGEOUT) taddchr(' '); taddstr(f->name);`
         out.push_str(FSTR[f.rtype as usize]); // c:873
         if f.rtype != REDIR_MERGEIN && f.rtype != REDIR_MERGEOUT {
             out.push(' '); // c:875
         }
-        out.push_str(&crate::lex::untokenize_preserve_quotes(&f.name)); // c:876
+        out.push_str(&tstr(&f.name)); // c:876
         out.push(' '); // c:878
     }
     out.pop(); // c:898 `tptr--` drops the trailing separator
     out
 }
 
-fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe) -> String {
-    let mut out = render_cmd_for_debug(&pipe.cmd);
+fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe, job: bool) -> String {
+    let mut out = render_cmd_for_debug(&pipe.cmd, job);
     if let Some(next) = &pipe.next {
+        // c:Src/text.c:496 — `taddstr(" | ");`
         out.push_str(if pipe.merge_stderr { " |& " } else { " | " });
-        out.push_str(&render_pipe_for_debug(next));
+        out.push_str(&render_pipe_for_debug(next, job));
     }
     out
 }
 
-fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
+/// Port of the `WC_COND` arm of `gettext2()` (`c:Src/text.c:861-971`).
+///
+/// C walks a prefix-coded condition with its own `tstack`; the AST here is
+/// already a tree, so the recursion carries the one thing C's stack is
+/// tracking: whether the CHILD about to be rendered is the opposite boolean
+/// operator and therefore has to be wrapped in `( … )`.
+///
+/// c:905-923 — under `COND_AND` (and under `COND_OR`) C reads each operand
+/// and emits `"( "` + a `par = 1` frame — which closes with `" )"` at
+/// c:873-876 — only when that operand is the OTHER operator. Both the left
+/// and the right operand are tested, which is why zsh prints
+/// `[[ -n x && ! -z y || a = b ]]` back as
+/// `[[ ( -n x && ! -z y ) || a = b ]]`.
+///
+/// c:896-903 — `COND_NOT` wraps its operand whenever
+/// `WC_COND_TYPE(code) <= COND_OR`, i.e. for `COND_NOT` (0), `COND_AND` (1)
+/// and `COND_OR` (2) (`Src/zsh.h:660-662`) — a unary or binary test is never
+/// wrapped, so `! -z y` stays bare.
+fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
+    use crate::parse::ZshCond;
+    /// c:881/889/900/910/920 `taddstr("( ")` … c:874 `taddstr(" )")`.
+    fn wrap(child: &ZshCond, parenthesise: bool) -> String {
+        let s = render_cond_for_debug(child);
+        if parenthesise {
+            format!("( {} )", s)
+        } else {
+            s
+        }
+    }
+    match cond {
+        // c:896-903
+        ZshCond::Not(inner) => format!(
+            "! {}",
+            wrap(
+                inner,
+                matches!(**inner, ZshCond::Not(_) | ZshCond::And(..) | ZshCond::Or(..)),
+            )
+        ),
+        // c:905-914 — only a `COND_OR` operand is parenthesised under an AND.
+        ZshCond::And(l, r) => format!(
+            "{} && {}",
+            wrap(l, matches!(**l, ZshCond::Or(..))),
+            wrap(r, matches!(**r, ZshCond::Or(..)))
+        ),
+        // c:915-924 — only a `COND_AND` operand is parenthesised under an OR.
+        ZshCond::Or(l, r) => format!(
+            "{} || {}",
+            wrap(l, matches!(**l, ZshCond::And(..))),
+            wrap(r, matches!(**r, ZshCond::And(..)))
+        ),
+        // c:955-965 — `/* Unary test: `-f foo' etc. */` builds `"-X "` then
+        // the operand. zshrs already stores the operator with its dash.
+        ZshCond::Unary(op, arg) => format!("{} {}", op, tstr(arg)),
+        // c:944-954 — `/* Binary test: `a = b' etc. */` is
+        // `lhs SP op SP rhs`, with the operator spelled by
+        // `cond_binary_ops[ctype - COND_STREQ]`; zshrs stores the spelling.
+        ZshCond::Binary(l, op, r) => format!("{} {} {}", tstr(l), op, tstr(r)),
+        // `=~` is `COND_REGEX`, one more entry in `cond_binary_ops`.
+        ZshCond::Regex(l, r) => format!("{} =~ {}", tstr(l), tstr(r)),
+        // c:925-930 — `COND_MOD`: `taddstr(name); taddchr(' ');
+        // taddlist(state, WC_COND_SKIP(code));`. `taddlist` of an empty list
+        // emits nothing, so a no-operand module condition keeps the space.
+        ZshCond::ModCond(name, args) => format!(
+            "{} {}",
+            name,
+            args.iter().map(|a| tstr(a)).collect::<Vec<_>>().join(" ")
+        ),
+    }
+}
+
+/// Port of the per-command arms of `gettext2()` (`c:Src/text.c:415-1015`),
+/// restricted to the `tnewlins == 0` configuration.
+///
+/// `job` is C's `tjob` (`c:Src/text.c:332` sets it for `getjobtext()`,
+/// c:298 clears it for `getpermtext()`). It changes exactly one arm:
+/// `WC_FUNCDEF` collapses the body to `{ ... }` for job text (c:586-600).
+///
+/// `tnewlins` is 0 in BOTH modes here, which is `getjobtext()`'s setting
+/// (c:332) and not `getpermtext()`'s (c:296): every consumer of this
+/// renderer wants one line. `taddnl(0)` therefore always means `"; "` and
+/// `taddnl(1)` always means `" "` — see `TNL` / `TNL_NOSEMI`.
+fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand, job: bool) -> String {
     use crate::parse::ZshCommand;
+    // c:Src/text.c:170-179 `taddlist` — every word is followed by a space
+    // and the trailing one is then dropped (`tptr--`), i.e. a plain join.
+    let taddlist = |words: &[String]| -> String {
+        words.iter().map(|w| tstr(w)).collect::<Vec<_>>().join(" ")
+    };
     match cmd {
         // c:Src/text.c::gettext2 WC_ASSIGN — each assignment is emitted
         // `name=value` (or `name=(v1 v2)` for an array) followed by a
@@ -12671,28 +12879,24 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
                 out.push('=');
                 match &a.value {
                     crate::parse::ZshAssignValue::Scalar(v) => {
-                        out.push_str(&crate::lex::untokenize_preserve_quotes(v));
+                        out.push_str(&tstr(v));
                     }
                     crate::parse::ZshAssignValue::Array(items) => {
                         out.push('(');
-                        for (i, it) in items.iter().enumerate() {
-                            if i > 0 {
-                                out.push(' ');
-                            }
-                            out.push_str(&crate::lex::untokenize_preserve_quotes(it));
-                        }
+                        out.push_str(&taddlist(items));
                         out.push(')');
                     }
                 }
                 out.push(' ');
             }
-            out.push_str(
-                &s.words
-                    .iter()
-                    .map(|w| crate::lex::untokenize_preserve_quotes(w))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            );
+            out.push_str(&taddlist(&s.words));
+            // c:503-511 — a command carrying redirections is wrapped in a
+            // `WC_REDIR` frame whose second visit calls `getredirs()`, so the
+            // redirection list is rendered AFTER the words. Dropping it made
+            // `sleep 1 > /dev/null 2>&1 < /dev/null` list as bare `sleep 1`.
+            if !s.redirs.is_empty() {
+                out.push_str(&getredirs(&s.redirs)); // c:509
+            }
             out
         }
         // c:Src/text.c::gettext2 SUBSH/CURSH branches — `time (cmd)`
@@ -12703,44 +12907,265 @@ fn render_cmd_for_debug(cmd: &crate::parse::ZshCommand) -> String {
         // the body; mirror the C textual round-trip so `time (sleep
         // 0.1; echo done)` prints `( sleep 0.1; echo done; )`.
         // Bug #432.
-        ZshCommand::Subsh(prog) => format!("( {} )", render_program_for_debug(prog)),
-        ZshCommand::Cursh(prog) => format!("{{ {} }}", render_program_for_debug(prog)),
-        ZshCommand::For(_) => "for ...".to_string(),
-        ZshCommand::Case(_) => "case ...".to_string(),
-        ZshCommand::If(_) => "if ...".to_string(),
-        ZshCommand::While(_) => "while ...".to_string(),
-        ZshCommand::Until(_) => "until ...".to_string(),
-        ZshCommand::Repeat(_) => "repeat ...".to_string(),
-        // c:Src/text.c::gettext2 WC_FUNCDEF — `name () {` then one
-        // TAB-indented line per body list, then `}`. This is the same shape
-        // `functions name` prints, and it is what `$ZSH_DEBUG_CMD` carries
-        // for a function definition (C05debug:7). The old `"funcdef ..."`
-        // placeholder lost the whole definition.
-        ZshCommand::FuncDef(fd) => {
-            let mut out = format!("{} () {{\n", fd.names.join(" "));
-            for list in &fd.body.lists {
-                out.push('\t');
-                out.push_str(&render_sublist_for_debug(&list.sublist));
-                out.push('\n');
+        // c:525-542 WC_SUBSH — `taddstr("("); tindent++; taddnl(1);` … then
+        // `taddnl(0); taddstr(")");`, i.e. `(` SP body `; )`.
+        ZshCommand::Subsh(prog) => format!(
+            "({}{}{})",
+            TNL_NOSEMI,
+            render_program_for_debug(prog, job),
+            TNL
+        ),
+        // c:543-560 WC_CURSH — identical to WC_SUBSH with braces.
+        ZshCommand::Cursh(prog) => format!(
+            "{{{}{}{}}}",
+            TNL_NOSEMI,
+            render_program_for_debug(prog, job),
+            TNL
+        ),
+        // c:982-1005 WC_TRY — `taddstr("{"); tindent++; taddnl(0);` … then
+        // `taddnl(0); taddstr("} always {"); tindent++; taddnl(0);` … then
+        // `taddnl(0); taddstr("}")`. Note this arm opens with `taddnl(0)`,
+        // NOT the `taddnl(1)` WC_CURSH uses, so the rendering really is
+        // `{; body; } always {; body; }` — zsh 5.9.2 prints it that way.
+        ZshCommand::Try(t) => format!(
+            "{{{}{}{}}} always {{{}{}{}}}",
+            TNL,
+            render_program_for_debug(&t.try_block, job),
+            TNL,
+            TNL,
+            render_program_for_debug(&t.always, job),
+            TNL
+        ),
+        // c:635-684 WC_FOR / WC_SELECT. Both end with
+        // `taddnl(0); taddstr("done")`, and both open the body with
+        // `taddstr("do"); taddnl(0)` — which is where zsh's otherwise
+        // surprising `do;` comes from.
+        ZshCommand::For(f) => {
+            let body = render_program_for_debug(&f.body, job);
+            if f.is_select {
+                // c:665-683 — `taddstr("select "); taddstr(var);` then the
+                // optional ` in LIST`, `taddnl(0)`, `"do"`, `taddnl(0)`.
+                let head = match &f.list {
+                    crate::parse::ForList::Words(words) => {
+                        format!("select {} in {}", f.var, taddlist(words)) // c:667-672
+                    }
+                    // WC_SELECT has no `((…))` form; a select without a word
+                    // list reads `$@`, which C renders with no `in` clause.
+                    _ => format!("select {}", f.var), // c:667-668
+                };
+                format!("{}{}do{}{}{}done", head, TNL, TNL, body, TNL)
+            } else {
+                match &f.list {
+                    // c:638-645 — `for ((init; cond; step)) do`. The `do`
+                    // is appended WITHOUT a preceding `taddnl`, unlike the
+                    // word-list form, so there is no `;` before it.
+                    crate::parse::ForList::CStyle { init, cond, step } => format!(
+                        "for (({}; {}; {})) do{}{}{}done",
+                        tstr(init),
+                        tstr(cond),
+                        tstr(step),
+                        TNL,
+                        body,
+                        TNL
+                    ),
+                    // c:647-653 — `taddlist(vars)`, then for WC_FOR_LIST
+                    // `" in "` + the word list, then `taddnl(0); taddstr("do")`.
+                    crate::parse::ForList::Words(words) => format!(
+                        "for {} in {}{}do{}{}{}done",
+                        f.var,
+                        taddlist(words),
+                        TNL,
+                        TNL,
+                        body,
+                        TNL
+                    ),
+                    // WC_FOR_PPARAM — no `in` clause.
+                    crate::parse::ForList::Positional => {
+                        format!("for {}{}do{}{}{}done", f.var, TNL, TNL, body, TNL)
+                    }
+                }
             }
-            out.push('}');
+        }
+        // c:685-704 WC_WHILE — `taddstr(… "until " : "while ")`, the
+        // condition, then `taddnl(0); taddstr("do"); taddnl(0)`, the body,
+        // and `taddnl(0); taddstr("done")`.
+        ZshCommand::While(w) | ZshCommand::Until(w) => format!(
+            "{} {}{}do{}{}{}done",
+            if w.until { "until" } else { "while" }, // c:687-688
+            render_program_for_debug(&w.cond, job),
+            TNL,
+            TNL,
+            render_program_for_debug(&w.body, job),
+            TNL
+        ),
+        // c:705-720 WC_REPEAT — `taddstr("repeat "); taddstr(count);
+        // taddnl(0); taddstr("do"); taddnl(0);` … `taddnl(0); "done"`.
+        ZshCommand::Repeat(r) => format!(
+            "repeat {}{}do{}{}{}done",
+            tstr(&r.count),
+            TNL,
+            TNL,
+            render_program_for_debug(&r.body, job),
+            TNL
+        ),
+        // c:820-860 WC_IF — `"if "` cond, `taddnl(0) "then" taddnl(0)` body,
+        // then per continuation `taddnl(0)` + (`"elif "` cond, or `"else"`
+        // + `taddnl(0)`), and finally `taddnl(0) "fi"`.
+        ZshCommand::If(i) => {
+            let mut out = format!(
+                "if {}{}then{}{}",
+                render_program_for_debug(&i.cond, job),
+                TNL, // c:835
+                TNL, // c:838
+                render_program_for_debug(&i.then, job)
+            );
+            for (cond, body) in &i.elif {
+                // c:844-847
+                out.push_str(TNL); // c:842
+                out.push_str("elif ");
+                out.push_str(&render_program_for_debug(cond, job));
+                out.push_str(TNL); // c:835 on the next visit
+                out.push_str("then");
+                out.push_str(TNL); // c:838
+                out.push_str(&render_program_for_debug(body, job));
+            }
+            if let Some(e) = &i.else_ {
+                // c:848-852
+                out.push_str(TNL); // c:842
+                out.push_str("else");
+                out.push_str(TNL); // c:851
+                out.push_str(&render_program_for_debug(e, job));
+            }
+            out.push_str(TNL); // c:856
+            out.push_str("fi"); // c:857
             out
         }
-        _ => String::new(),
+        // c:721-819 WC_CASE. Under `tnewlins == 0` every `taddnl(0)` in this
+        // arm is replaced by a bare `taddchr(' ')` (c:733-734, :779-780,
+        // :814-815), which is why the arms are separated by a single space
+        // rather than `"; "`.
+        ZshCommand::Case(c) => {
+            let mut out = format!("case {} in", tstr(&c.word)); // c:726-728
+            if c.arms.is_empty() {
+                out.push(' '); // c:734
+                out.push_str("esac"); // c:735
+                return out;
+            }
+            for (i, arm) in c.arms.iter().enumerate() {
+                if i > 0 {
+                    // c:764-776 — the terminator belongs to the arm that
+                    // just ended.
+                    out.push_str(case_term_for_debug(c.arms[i - 1].terminator));
+                }
+                out.push(' '); // c:734 / c:780 — `taddchr(' ')`
+                out.push('('); // c:744 / c:781
+                // c:748-753 — alternatives are joined with `" | "`.
+                out.push_str(
+                    &arm.patterns
+                        .iter()
+                        .map(|p| tstr(p))
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
+                out.push_str(") "); // c:754
+                out.push_str(&render_program_for_debug(&arm.body, job));
+            }
+            // c:798-816 — the last arm's terminator, then `" esac"`.
+            out.push_str(case_term_for_debug(
+                c.arms[c.arms.len() - 1].terminator,
+            ));
+            out.push(' '); // c:815
+            out.push_str("esac"); // c:816
+            out
+        }
+        // c:972-977 WC_ARITH — `taddstr("(("); taddstr(expr); taddstr("))")`.
+        // The stored expression keeps the source's inner spacing, so
+        // `(( 1 + 2 ))` round-trips unchanged.
+        ZshCommand::Arith(expr) => format!("(({}))", tstr(expr)),
+        // c:861-971 WC_COND — `taddstr("[[ ")` … `taddstr(" ]]")`.
+        ZshCommand::Cond(cond) => format!("[[ {} ]]", render_cond_for_debug(cond)),
+        // c:561-573 WC_TIMED — `taddstr("time")`, plus `' '` and the timed
+        // pipeline for `WC_TIMED_PIPE`; a bare `time` keeps just the word.
+        ZshCommand::Time(Some(sub)) => format!("time {}", render_sublist_for_debug(sub, job)),
+        ZshCommand::Time(None) => "time".to_string(),
+        // c:503-511 WC_REDIR — the redirection list is rendered after the
+        // command it wraps.
+        ZshCommand::Redirected(inner, redirs) => {
+            format!("{}{}", render_cmd_for_debug(inner, job), getredirs(redirs))
+        }
+        // c:575-633 WC_FUNCDEF.
+        ZshCommand::FuncDef(fd) => {
+            // An anonymous function has no name in C (`nargs == 0`), so
+            // nothing is emitted before `() { … }`. zshrs's parser gives it
+            // a synthetic `_zshrs_anon_N` / `_zshrs_anon_kw_N` name
+            // (src/ported/parse.rs:2701-2714) which must not reach the text.
+            let anon = fd.names.len() == 1 && fd.names[0].starts_with("_zshrs_anon_");
+            let names = if anon { String::new() } else { fd.names.join(" ") };
+            if job {
+                // c:586-590 — `if (tjob) { … taddstr("() { ... }"); }`.
+                //
+                // NOTE the dev tree (5.9.999.3-test) also emits a leading
+                // `"function "` and a bare `"{ ... }"` when `nargs > 1`
+                // (c:581-588, upstream b26b6b3fe0 "Tweaks to MULTI_FUNC_DEF",
+                // post-5.9). The 5.9.2 oracle this port is measured against
+                // predates that and prints `jt_a jt_b () { ... }`, so the
+                // release spelling is what is emitted here.
+                let mut out = names;
+                if !out.is_empty() {
+                    out.push(' '); // c:584-585
+                }
+                out.push_str("() { ... }"); // c:590
+                out
+            } else {
+                // c:601-620 — the permanent-text spelling: `name () {` then
+                // one indented line per body statement, then `}`. This is
+                // what `$ZSH_DEBUG_CMD` carries for a function definition
+                // (C05debug:7).
+                let mut out = format!("{} () {{\n", names);
+                for list in &fd.body.lists {
+                    out.push('\t');
+                    out.push_str(&render_sublist_for_debug(&list.sublist, job));
+                    out.push('\n');
+                }
+                out.push('}');
+                out
+            }
+        }
     }
 }
 
-fn render_program_for_debug(prog: &crate::parse::ZshProgram) -> String {
-    // c:Src/text.c::gettext2 LIST_PIPE — each list emits its sublist
-    // text + `;` separator. The outer subshell/cursh wrapper supplies
-    // the parens/braces; here we just join the contained statements.
+/// c:Src/text.c:764-776 / :798-810 — the spelling of a `case` arm's
+/// terminator, emitted with a leading space by `taddstr(" ;;")` and friends.
+fn case_term_for_debug(term: crate::parse::CaseTerm) -> &'static str {
+    match term {
+        crate::parse::CaseTerm::Break => " ;;",      // c:765-767
+        crate::parse::CaseTerm::Continue => " ;&",   // c:769-771
+        crate::parse::CaseTerm::TestNext => " ;|",   // c:773-775
+    }
+}
+
+/// Port of the `WC_LIST` arm of `gettext2()` (`c:Src/text.c:437-458`) under
+/// `tnewlins == 0`.
+///
+/// Each list's text is followed by `" &"` (plus `"|"` for `&|`) when the
+/// list is asynchronous (c:442-446), and every list but the LAST is followed
+/// by a separator — `" "` after an async list, `"; "` otherwise (c:451).
+/// The final list gets no separator; the enclosing construct supplies its
+/// own `taddnl(0)`, which is where `( a; b; )`'s trailing `;` comes from.
+fn render_program_for_debug(prog: &crate::parse::ZshProgram, job: bool) -> String {
     let mut out = String::new();
-    for list in &prog.lists {
-        if !out.is_empty() {
-            out.push(' ');
+    let last = prog.lists.len().saturating_sub(1);
+    for (i, list) in prog.lists.iter().enumerate() {
+        out.push_str(&render_sublist_for_debug(&list.sublist, job));
+        if list.flags.async_ {
+            out.push_str(" &"); // c:443
+            if list.flags.disown {
+                out.push('|'); // c:445
+            }
         }
-        out.push_str(&render_sublist_for_debug(&list.sublist));
-        out.push(';');
+        if i != last {
+            out.push_str(if list.flags.async_ { " " } else { TNL }); // c:451
+        }
     }
     out
 }

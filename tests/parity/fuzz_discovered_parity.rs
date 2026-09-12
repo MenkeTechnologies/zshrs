@@ -4248,9 +4248,10 @@ mod at_flag_bridge_textual_scan {
 // through `gettext2` with `tnewlins = 0` (c:Src/text.c:332), producing one
 // line. zshrs builds the text at COMPILE time from the extensions AST in
 // `render_cmd_for_debug` (src/extensions/compile_zsh.rs), whose `For` /
-// `Case` / `If` / `While` / `Until` / `Repeat` arms are hardcoded
-// `"for ..."` … placeholders; only `Subsh` / `Cursh` recurse into a real
-// render, which is why the block forms already agree.
+// `Case` / `If` / `While` / `Until` / `Repeat` arms USED to be hardcoded
+// `"for ..."` … placeholders; only `Subsh` / `Cursh` recursed into a real
+// render, which is why the block forms already agreed. FIXED — those arms
+// now port the matching `gettext2` case.
 //
 // c:Src/text.c:586's `if (tjob)` `{ ... }` abbreviation is reached ONLY
 // from the `WC_FUNCDEF` arm at c:575 — it is not licence to abbreviate a
@@ -4267,45 +4268,39 @@ mod job_text_compound_placeholder {
         assert_parity("( sleep 3 ) &\njobs\nwait");
     }
 
-    /// zshrs gap: `for ...` vs zsh's `for i in 1 2; do; sleep 3; done`.
+    /// FIXED (was `for ...`); zsh renders `for i in 1 2; do; sleep 3; done`.
     #[test]
-    #[ignore]
     fn for_loop_job_text() {
         assert_parity("for i in 1 2; do\nsleep 3\ndone &\njobs\nwait");
     }
 
-    /// zshrs gap: `if ...` vs zsh's `if true; then; sleep 3; fi`.
+    /// FIXED (was `if ...`); zsh renders `if true; then; sleep 3; fi`.
     #[test]
-    #[ignore]
     fn if_job_text() {
         assert_parity("if true; then\nsleep 3\nfi &\njobs\nwait");
     }
 
-    /// zshrs gap: `while ...` vs zsh's `while false; do; sleep 3; done`.
+    /// FIXED (was `while ...`); zsh renders `while false; do; sleep 3; done`.
     #[test]
-    #[ignore]
     fn while_job_text() {
         assert_parity("while false; do\nsleep 3\ndone &\njobs\nwait");
     }
 
-    /// zshrs gap: `until ...` vs zsh's `until true; do; sleep 3; done`.
+    /// FIXED (was `until ...`); zsh renders `until true; do; sleep 3; done`.
     #[test]
-    #[ignore]
     fn until_job_text() {
         assert_parity("until true; do\nsleep 3\ndone &\njobs\nwait");
     }
 
-    /// zshrs gap: `repeat ...` vs zsh's `repeat 2; do; sleep 3; done`.
+    /// FIXED (was `repeat ...`); zsh renders `repeat 2; do; sleep 3; done`.
     #[test]
-    #[ignore]
     fn repeat_job_text() {
         assert_parity("repeat 2 do\nsleep 3\ndone &\njobs\nwait");
     }
 
-    /// zshrs gap: `case ...` vs zsh's `case x in (x) sleep 3 ;; esac` —
+    /// FIXED (was `case ...`); zsh renders `case x in (x) sleep 3 ;; esac` —
     /// note C re-emits the pattern with a LEADING paren.
     #[test]
-    #[ignore]
     fn case_job_text() {
         assert_parity("case x in x) sleep 3;; esac &\njobs\nwait");
     }
