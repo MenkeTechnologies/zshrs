@@ -11035,7 +11035,41 @@ pub fn stdunsetfn(pm: &mut param, exp: i32) {
             }
         }
         PM_HASHED => {
+            // c:3922-3925 — `pm->gsu.h->setfn(pm, NULL)`, which for the
+            // standard hash gsu (c:194 `{ hashgetfn, hashsetfn, stdunsetfn }`)
+            // is `hashsetfn` (c:4045-4050): `if (pm->u.hash && pm->u.hash != x)
+            // deleteparamtable(pm->u.hash); pm->u.hash = x;` — with `x` NULL,
+            // the association's pairs are DESTROYED and the slot cleared.
+            //
+            // !!! WARNING: RUST-ONLY HAZARD (the structures do NOT match) !!!
+            // In C the pairs hang off the Param itself, so clearing `u.hash`
+            // IS the teardown. zshrs keeps them in `paramtab_hashed_storage`,
+            // a side map keyed by NAME, and `arrhashsetfn` — the only writer
+            // of whole associations (c:4065, reached from `sethparam` →
+            // `setarrvalue` c:2908) — never populates `pm.u_hash` at all. So
+            // clearing `u_hash` here freed a slot nothing reads, and this arm
+            // was inert: the pairs outlived the unset and every subscripted
+            // read still found them.
+            //
+            // Callers papered over that one at a time. `bin_typeset`'s `+a`/
+            // `+A` arm said so outright — "unsetparam alone can leave the
+            // paramtab_hashed_storage entry, so a later scalar deref still saw
+            // the joined values" — and `bin_unset`'s ordinary `unset NAME` arm
+            // carried its own copy. Doing it here instead is what C does, and
+            // it puts the teardown on the same node the rest of this function
+            // is tearing down.
+            //
+            // Keyed by name, because that is how the store is keyed; this is
+            // the same dimension mismatch recorded on the store's own
+            // declaration. It is safe against the one place where name is not
+            // enough — a `local -A` shadow — because that path does not come
+            // through here at all: `endparamscope` unlinks the popped node
+            // directly and restores the outer scope's row from
+            // `PARAMTAB_HASHED_SHADOW_STACK`, never calling any unsetfn.
             pm.u_hash = None;
+            if let Ok(mut m) = paramtab_hashed_storage().lock() {
+                m.remove(pm.node.nam.as_str()); // c:4047 deleteparamtable
+            }
         }
         _ => {
             if (pm.node.flags as u32 & PM_SPECIAL) == 0 {

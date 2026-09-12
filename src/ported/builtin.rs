@@ -7511,13 +7511,15 @@ pub fn bin_typeset(
                     })
                 }) == Some(true);
                 if is_arraylike {
-                    // Drop the assoc backing map too — unsetparam alone can
-                    // leave the paramtab_hashed_storage entry, so a later
-                    // scalar deref still saw the joined values (`+A` on
-                    // `h=(k v)` read back `v` instead of "").
-                    if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                        m.remove(arg);
-                    }
+                    // The assoc backing row goes with it. This used to be
+                    // open-coded here ("unsetparam alone can leave the
+                    // paramtab_hashed_storage entry, so a later scalar deref
+                    // still saw the joined values") because `stdunsetfn`'s
+                    // PM_HASHED arm only cleared `pm.u_hash`, which nothing
+                    // populates. That arm now does what C's does — c:3922-3925
+                    // → `hashsetfn` c:4047 `deleteparamtable(pm->u.hash)` — so
+                    // `unsetparam` drops the row on the way through, the same
+                    // way C's does, and the hand-rolled copy is gone.
                     crate::ported::params::unsetparam(arg);
                     crate::ported::params::assignsparam(arg, "", 0); // empty scalar
                 }
@@ -9732,26 +9734,24 @@ pub fn bin_unset(
                 // would erase the OUTER binding too (the local pm's
                 // pm.old chain dropped on the floor).
                 //
-                // Clear the parallel shadow storage that lives in
-                // ShellExecutor (paramtab_hashed_storage for assoc,
-                // and the per-executor arrays/assocs maps). These
-                // are NOT touched by params.rs::unsetparam so we
-                // wipe them directly here; using crate::ported::exec::unset_*
-                // would loop back into unsetparam.
                 // c:Src/builtin.c:3952-3953 — `if (unsetparam_pm(pm,
                 // 0, 1)) returnval = 1;` (readonly rejection). On
-                // rejection the param is untouched, so the shadow-
-                // storage wipe and env delenv (which unsetparam_pm
-                // only runs on its success path, c:Src/params.c:3872)
-                // must not fire either.
+                // rejection the param is untouched, so the env delenv
+                // (which unsetparam_pm only runs on its success path,
+                // c:Src/params.c:3872) must not fire either.
+                //
+                // The assoc backing row used to be wiped here too, with the
+                // note "NOT touched by params.rs::unsetparam so we wipe them
+                // directly here". It is now, because `stdunsetfn`'s PM_HASHED
+                // arm does what C's does (c:3922-3925 → `hashsetfn` c:4047
+                // `deleteparamtable(pm->u.hash)`) instead of clearing a
+                // `u_hash` slot nothing populates. The readonly gate is
+                // preserved for free: `unsetparam_pm` takes its rejection at
+                // c:3852 BEFORE it reaches the unsetfn, so a rejected unset
+                // still drops no row.
                 if unsetparam(nm) != 0 {
                     returnval = 1; // c:3953
                 } else {
-                    let _ = crate::ported::params::paramtab_hashed_storage()
-                        .lock()
-                        .ok()
-                        .as_deref_mut()
-                        .map(|m| m.remove(nm));
                     env::remove_var(nm); // c:3905 delenv
                 }
             }
