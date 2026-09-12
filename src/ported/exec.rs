@@ -8938,14 +8938,69 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
         // c:4481-4520 — PM_SPECIAL: route through gsu setfn.
         // c:4521-4523 — non-special: re-install via paramtab.
         if (pm.node.flags & PM_SPECIAL as i32) != 0 {
-            // PM_SPECIAL restore: full path requires PM_TYPE dispatch
-            // on gsu_s/i/f/a/h setfn. Each setfn fires the param's
-            // canonical write hook. Pragmatic port: overwrite in
-            // paramtab; daily-driver path rarely saves specials (those
-            // are reserved-name vars like PATH/FPATH/etc. which can't
-            // appear as `VAR=val cmd` prefix anyway).
-            let mut tab = paramtab().write().unwrap();
-            tab.insert(pm.node.nam.clone(), Box::new(pm));
+            // c:4537 — `tpm = paramtab->getnode(paramtab, pm->node.nam);`
+            // c:4542-4543 — `if (!pm->env && tpm->env) delenv(tpm);`
+            if pm.env.is_none() {
+                let live_env = {
+                    let tab = paramtab().read().unwrap();
+                    tab.get(&pm.node.nam).and_then(|p| p.env.clone())
+                };
+                if live_env.is_some() {
+                    crate::ported::params::delenv(&pm.node.nam);
+                }
+            }
+            // c:4544 — `tpm->node.flags = pm->node.flags;`
+            {
+                let mut tab = paramtab().write().unwrap();
+                if let Some(slot) = tab.get_mut(&pm.node.nam) {
+                    slot.node.flags = pm.node.flags;
+                }
+            }
+            // c:4545-4563 — the value goes back through the LIVE node's own
+            // setfn, so the special's write hook fires: `PATH=/tmp cmd` has
+            // to leave `pathsetfn` re-deriving `$path` and the command hash
+            // from the restored string. The previous spelling overwrote the
+            // paramtab entry instead, which restored `$PATH` but left every
+            // global the setfn derives sitting at the prefix assignment's
+            // value.
+            match crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) {
+                crate::ported::zsh_h::PM_INTEGER => {
+                    // c:4551 — `tpm->gsu.i->setfn(tpm, pm->u.val);`
+                    crate::ported::params::setiparam(&pm.node.nam, pm.u_val);
+                }
+                crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT => {
+                    // c:4555 — `tpm->gsu.f->setfn(tpm, pm->u.dval);`
+                    crate::ported::params::setnparam(
+                        &pm.node.nam,
+                        crate::ported::zsh_h::mnumber {
+                            l: 0,
+                            d: pm.u_dval,
+                            type_: crate::ported::zsh_h::MN_FLOAT,
+                        },
+                    );
+                }
+                crate::ported::zsh_h::PM_ARRAY => {
+                    // c:4558 — `tpm->gsu.a->setfn(tpm, pm->u.arr);`
+                    crate::ported::params::setaparam(
+                        &pm.node.nam,
+                        pm.u_arr.clone().unwrap_or_default(),
+                    );
+                }
+                crate::ported::zsh_h::PM_HASHED => {
+                    // c:4561 — `tpm->gsu.h->setfn(tpm, pm->u.hash);`. zshrs
+                    // keeps an association's pairs OUTSIDE the Param, in
+                    // `paramtab_hashed_storage` (see `stdunsetfn`'s note at
+                    // params.rs:11044), so they are not in `pm` to hand over
+                    // here; the caller that saved them restores them.
+                }
+                _ => {
+                    // c:4548 — `tpm->gsu.s->setfn(tpm, pm->u.str);`
+                    crate::ported::params::setsparam(
+                        &pm.node.nam,
+                        pm.u_str.as_deref().unwrap_or(""),
+                    );
+                }
+            }
         } else {
             // c:4521 — `paramtab->addnode(paramtab, ztrdup(pm->node.nam), pm);`
             let mut tab = paramtab().write().unwrap();

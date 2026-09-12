@@ -115,6 +115,7 @@ mod parity_harness;
 mod parity_survey_fc;
 mod pipeline_parity;
 mod precmd_keyword_parity;
+mod prefix_assign_restore_parity;
 mod print_flag_interaction_parity;
 mod printf_format_parity;
 mod printf_percent_q_parity;

@@ -7438,13 +7438,110 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .last()
                 .is_some_and(|frame| frame.recording)
             {
-                let prev_var = crate::ported::params::getsparam(&name);
                 let prev_env = env::var(&name).ok();
-                exec.inline_env_stack.last_mut().unwrap().saved.push((
-                    name.clone(),
-                    prev_var,
-                    prev_env,
-                ));
+                // c:Src/exec.c:4476 — `pm = paramtab->getnode(paramtab, s)`.
+                // c:4491-4493 — an existing name is SNAPSHOTTED, not removed:
+                // `tpm = zshcalloc(...); tpm->node.nam = ztrdup(pm->node.nam);
+                //  copyparam(tpm, pm, 0);` — the WHOLE Param, type flags and
+                // value union together. Saving only `getsparam(name)` (a
+                // scalar string) is what destroyed every non-scalar: an array
+                // came back as the IFS-joined string retyped to PM_SCALAR, and
+                // an association came back as None — the scalar getter has
+                // nothing to read for a PM_HASHED param — so the restore took
+                // the "did not exist" arm and unset it outright.
+                let pm_snapshot: Option<crate::ported::zsh_h::param> = {
+                    let live = crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(&name).map(|p| (**p).clone()));
+                    // c:4480 / c:4494 — three arms, and the third saves
+                    // nothing: a PM_SPECIAL that is also PM_READONLY leaves
+                    // `tpm` NULL and only joins the remove list (c:4504).
+                    let fakecopy = live.as_ref().map(|p| {
+                        (p.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0
+                    });
+                    let live = match (live, fakecopy) {
+                        (Some(p), Some(true))
+                            if (p.node.flags & crate::ported::zsh_h::PM_READONLY as i32) != 0 =>
+                        {
+                            None
+                        }
+                        (other, _) => other,
+                    };
+                    live.map(|mut tpm| {
+                        // c:Src/params.c:1273-1291 — copyparam reads the value
+                        // back through the type's GSU getfn rather than trusting
+                        // the union slot it already holds, because a special's or
+                        // a tied scalar's value does not live there.
+                        match crate::ported::zsh_h::PM_TYPE(tpm.node.flags as u32) {
+                            crate::ported::zsh_h::PM_INTEGER => {
+                                // c:1279 — `tpm->u.val = pm->gsu.i->getfn(pm);`
+                                tpm.u_val = crate::ported::params::getiparam(&name);
+                            }
+                            crate::ported::zsh_h::PM_EFLOAT
+                            | crate::ported::zsh_h::PM_FFLOAT => {
+                                // c:1283 — `tpm->u.dval = pm->gsu.f->getfn(pm);`
+                                tpm.u_dval = crate::ported::params::getnparam(&name).1;
+                            }
+                            crate::ported::zsh_h::PM_ARRAY => {
+                                // c:1286 — `tpm->u.arr = zarrdup(pm->gsu.a->getfn(pm));`
+                                tpm.u_arr = crate::ported::params::getaparam(&name);
+                            }
+                            crate::ported::zsh_h::PM_HASHED => {
+                                // c:1289 — `tpm->u.hash = copyparamtable(...)`.
+                                // See `hashed_snapshot` below for where the pairs go.
+                            }
+                            _ => {
+                                // c:1276 — `tpm->u.str = ztrdup(pm->gsu.s->getfn(pm));`
+                                tpm.u_str = crate::ported::params::getsparam(&name);
+                            }
+                        }
+                        // c:1269-1272 / c:1301-1302 — the `!fakecopy` postlude:
+                        // the copy is going back into the parameter table as a
+                        // REAL parameter, so it stops being special and gets the
+                        // standard get/set vtable for its type. That is what
+                        // makes a user's `typeset -T PAIR pair` scalar come back
+                        // as a plain scalar holding the joined string instead of
+                        // re-reading the partner array the prefix assignment
+                        // just overwrote.
+                        if fakecopy == Some(false) {
+                            tpm.node.flags &= !(crate::ported::zsh_h::PM_SPECIAL as i32); // c:1271
+                            crate::ported::params::assigngetset(&mut tpm); // c:1302
+                        }
+                        tpm
+                    })
+                };
+                // !!! RUST-ONLY FIELD — THE SECOND HALF OF c:1289 !!!
+                // C keeps an association's pairs in `pm->u.hash`, so
+                // `copyparam`'s `copyparamtable` copy travels inside the Param
+                // above and `restore_params`' `tpm->gsu.h->setfn(tpm, pm->u.hash)`
+                // (c:4561) puts them back. zshrs keeps them in the name-keyed
+                // `paramtab_hashed_storage` instead, OUTSIDE the Param —
+                // `arrhashsetfn`, the only writer of whole associations, never
+                // populates `u_hash` at all (the same structural mismatch
+                // `stdunsetfn` documents at params.rs:11044). So the pairs have
+                // to be carried alongside the node and put back alongside it.
+                let hashed_snapshot = if pm_snapshot.as_ref().is_some_and(|p| {
+                    crate::ported::zsh_h::PM_TYPE(p.node.flags as u32)
+                        == crate::ported::zsh_h::PM_HASHED
+                }) {
+                    crate::ported::params::paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .and_then(|m| m.get(&name).cloned())
+                } else {
+                    None
+                };
+                exec.inline_env_stack
+                    .last_mut()
+                    .unwrap()
+                    .saved
+                    .push(crate::vm_helper::SavedInlineParam {
+                        name: name.clone(),
+                        pm: pm_snapshot,
+                        hashed: hashed_snapshot,
+                        prev_env,
+                    });
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
             }
@@ -8327,20 +8424,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
         with_executor(|exec| {
             if let Some(frame) = exec.inline_env_stack.pop() {
-                for (name, prev_var, prev_env) in frame.saved.into_iter().rev() {
-                    match prev_var {
-                        Some(v) => {
-                            exec.set_scalar(name.clone(), v);
-                        }
-                        None => {
-                            exec.unset_scalar(&name);
-                        }
-                    }
-                    match prev_env {
-                        Some(v) => env::set_var(&name, &v),
-                        None => env::remove_var(&name),
-                    }
-                }
+                frame.restore(); // c:Src/exec.c:4519 restore_params
             }
         });
         Value::Status(0)
@@ -8356,20 +8440,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if persist {
                     return; // c:3971 — no save/restore under POSIX_BUILTINS
                 }
-                for (name, prev_var, prev_env) in frame.saved.into_iter().rev() {
-                    match prev_var {
-                        Some(v) => {
-                            exec.set_scalar(name.clone(), v);
-                        }
-                        None => {
-                            exec.unset_scalar(&name);
-                        }
-                    }
-                    match prev_env {
-                        Some(v) => env::set_var(&name, &v),
-                        None => env::remove_var(&name),
-                    }
-                }
+                frame.restore(); // c:Src/exec.c:4519 restore_params
             }
         });
         Value::Status(0)

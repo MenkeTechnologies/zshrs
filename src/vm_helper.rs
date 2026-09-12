@@ -297,10 +297,34 @@ pub use crate::ported::modules::zutil::zstyle_entry;
 /// SEAL clears this flag, so `X=y . file` no longer records (and
 /// then reverts) every global the sourced file assigns.
 pub struct InlineEnvFrame {
-    /// Per-name pre-assignment state: `(name, prev_var, prev_env)`.
-    pub saved: Vec<(String, Option<String>, Option<String>)>,
+    /// Per-name pre-assignment state, one entry per prefix assignment.
+    pub saved: Vec<SavedInlineParam>,
     /// True only while the prefix assignments are being executed.
     pub recording: bool,
+}
+
+/// One parameter a prefix assignment displaced — the Rust twin of the
+/// `tpm` that C's `save_params` builds with
+/// `copyparam(tpm, pm, 0)` (c:Src/exec.c:4491-4493).
+pub struct SavedInlineParam {
+    /// The assigned name (C's `s`, c:Src/exec.c:4475).
+    pub name: String,
+    /// The WHOLE pre-assignment `Param` — type flags, base, width, level
+    /// and the value union, with the value read back through the type's
+    /// GSU getfn exactly as `copyparam` does (c:Src/params.c:1273-1291).
+    /// `None` when the name did not exist, which is C's remove-only arm
+    /// at c:Src/exec.c:4507-4508.
+    pub pm: Option<crate::ported::zsh_h::param>,
+    /// !!! RUST-ONLY FIELD — THE SECOND HALF OF c:Src/params.c:1289 !!!
+    /// C's `copyparam` copies an association's pairs into `tpm->u.hash`,
+    /// so they travel inside the `Param` above. zshrs keeps them in the
+    /// name-keyed `paramtab_hashed_storage` instead, OUTSIDE the `Param`
+    /// (the structural mismatch `stdunsetfn` documents at
+    /// params.rs:11044), so the pairs must be carried — and restored —
+    /// alongside the node rather than within it.
+    pub hashed: Option<IndexMap<String, String>>,
+    /// Pre-assignment `environ` entry for the name.
+    pub prev_env: Option<String>,
 }
 
 impl InlineEnvFrame {
@@ -309,6 +333,51 @@ impl InlineEnvFrame {
         Self {
             saved: Vec::new(),
             recording: true,
+        }
+    }
+
+    /// Put every displaced parameter back — the frame's half of
+    /// `restore_params` (c:Src/exec.c:4519), run when the prefixed
+    /// command returns.
+    ///
+    /// Saves are pushed as the prefix assignments execute, so a name
+    /// assigned twice (`X=1 X=2 cmd`) has its ORIGINAL in the first
+    /// entry; walking in reverse makes that the last write, which is
+    /// what C's single pre-`addvars` snapshot achieves.
+    pub fn restore(self) {
+        for saved in self.saved.into_iter().rev() {
+            // c:4525-4531 (remove the temporary parameter) followed by
+            // c:4533-4570 (put the saved one back). C's `remove_p` carries
+            // the name in BOTH arms of `save_params` (c:4504 runs whether or
+            // not a `tpm` was made), so the name is always in the remove
+            // list and the restore list holds the snapshot only if there was
+            // one.
+            crate::ported::exec::restore_params(
+                saved.pm.into_iter().collect(),
+                vec![saved.name.clone()],
+            );
+            // !!! RUST-ONLY — see `SavedInlineParam::hashed` !!!
+            // c:4561's `tpm->gsu.h->setfn(tpm, pm->u.hash)` in zshrs terms.
+            // Unconditional: when nothing was saved the row must be gone, or
+            // the pairs the command itself wrote would outlive the frame.
+            if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+                match saved.hashed {
+                    Some(pairs) => {
+                        store.insert(saved.name.clone(), pairs);
+                    }
+                    None => {
+                        store.remove(saved.name.as_str());
+                    }
+                }
+            }
+            // c:4568-4569 — `if ((pm->node.flags & PM_EXPORTED) && ...)
+            // addenv(pm, s);`. zshrs's prefix-assignment path publishes the
+            // value with `zputenv` on the way in, so the way out is the
+            // matching restore of the pre-assignment `environ` entry.
+            match saved.prev_env {
+                Some(v) => std::env::set_var(&saved.name, &v),
+                None => std::env::remove_var(&saved.name),
+            }
         }
     }
 }
