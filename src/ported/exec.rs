@@ -2781,7 +2781,36 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     if default_path != 0 {
         return search_defpath(arg0, libc::PATH_MAX as usize);
     }
-    // c:912-913 — strlen(arg0) > PATH_MAX → NULL.
+    // c:936-938 — the table comes FIRST, and a miss populates it:
+    //     cn = (Cmdnam) cmdnamtab->getnode(cmdnamtab, arg0);
+    //     if (!cn && isset(HASHCMDS))
+    //         cn = hashcmd(arg0, path);
+    // This port went straight to the `$PATH` walk below, so `whence -p foo`
+    // after `hash foo=/usr/bin/awk` reported nothing (a HASHED entry names a
+    // path that no `$PATH` directory contains), and no lookup through
+    // `findcmd` — `whence`, `type`, `command -v`, compctl — ever hashed
+    // anything, where C hashes on every one of them.
+    let cn: Option<cmdnam> = {
+        // c:936
+        let hit = cmdnamtab_lock()
+            .read()
+            .ok()
+            .and_then(|t| t.get_including_disabled(arg0).cloned());
+        match hit {
+            Some(c) => Some(c),
+            // c:937-938
+            None if isset(crate::ported::zsh_h::HASHCMDS) => {
+                let dirs: Vec<String> = getsparam("PATH")
+                    .unwrap_or_default()
+                    .split(':')
+                    .map(String::from)
+                    .collect();
+                hashcmd(arg0, &dirs)
+            }
+            None => None,
+        }
+    };
+    // c:939-940 — `if ((int) ztrlen(arg0) >= PATH_MAX) return NULL;`.
     if arg0.len() > libc::PATH_MAX as usize {
         return None;
     }
@@ -2813,11 +2842,60 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
         }
         // else fall through to PATH walk.
     }
-    // c:943-951 — walk `path[]` (the shell `$path` array). Read $PATH
+    // c:948-977 — resolve through the node the table gave us.
+    //     if (cn) {
+    //         if (cn->node.flags & HASHED) nn = cn->u.cmd;
+    //         else {
+    //             for (pp = path; pp < cn->u.name; pp++)
+    //                 if (**pp != '/') { buf = "<*pp>/<arg0>"; RET_IF_COM(buf); }
+    //             nn = "<*cn->u.name>/<arg0>";
+    //         }
+    //         RET_IF_COM(nn);
+    //     }
+    let path = getsparam("PATH").unwrap_or_default();
+    let dirs: Vec<&str> = path.split(':').collect();
+    if let Some(cn) = cn.as_ref() {
+        // c:948
+        let nn = if (cn.node.flags & (crate::ported::zsh_h::HASHED as i32)) != 0 {
+            // c:951-954
+            cn.cmd.clone()
+        } else {
+            // c:956-968 — the `$path` entries BEFORE the matched one still
+            // get a look-in, because `hashcmd` only ever matches an ABSOLUTE
+            // entry (c:1058 `if (**pp == '/')`) and a relative one earlier in
+            // `$path` takes precedence. `cn.name` is C's `cn->u.name` tail
+            // slice, so its length recovers the index C compares against.
+            let matched_at = dirs.len().saturating_sub(cn.name.as_ref().map_or(0, |v| v.len()));
+            for d in dirs.iter().take(matched_at) {
+                // c:956
+                if !d.starts_with('/') {
+                    // c:957
+                    let buf = if d.is_empty() {
+                        arg0.to_string() // c:959 — an empty entry means `.`
+                    } else {
+                        format!("{}/{}", d, arg0) // c:960-965
+                    };
+                    if iscom(&buf) {
+                        return Some(buf); // c:966 RET_IF_COM
+                    }
+                }
+            }
+            // c:969-974 — `"%s/%s", *(cn->u.name), cn->node.nam`.
+            cn.name
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|d| format!("{}/{}", d, arg0))
+        };
+        if let Some(nn) = nn {
+            if iscom(&nn) {
+                return Some(nn); // c:976 RET_IF_COM
+            }
+        }
+    }
+    // c:978-988 — walk `path[]` (the shell `$path` array). Read $PATH
     // from paramtab so shell-private edits via `path=(...)` take
     // effect (not OS env only).
-    let path = getsparam("PATH")?;
-    for dir in path.split(':') {
+    for dir in dirs {
         if dir.is_empty() {
             continue;
         }
@@ -2826,7 +2904,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
             return Some(candidate);
         }
     }
-    None // c:952
+    None // c:989
 }
 
 /// Port of `addfd()` from `Src/exec.c:2397` — C decl `addfd(int forked, int *save, struct multio **mfds, int fd1, int fd2, int rflag, char *varid)`.
@@ -3458,9 +3536,13 @@ pub fn closem(how: i32, all: i32) {
 /// `None` if `arg0` is absolute or no PATH entry contains it.
 pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<cmdnam> {
     // c:1010
-    // c:1016 — `if (*arg0 == '/') return NULL;`
-    if arg0.starts_with('/') {
-        return None; // c:1017
+    // c:1055 — `if ((*arg0 == '/') || !strncmp(arg0, "./", 2) ||
+    //            !strncmp(arg0, "../", 3)) return NULL;`
+    // The doc-comment above quotes an older zsh where only the leading `/`
+    // was rejected; current C rejects the two explicitly-relative spellings
+    // too, and this port had kept the old single test.
+    if arg0.starts_with('/') || arg0.starts_with("./") || arg0.starts_with("../") {
+        return None; // c:1056
     }
     // c:1018-1028 — walk pp[] for first matching absolute entry.
     let mut found_idx: Option<usize> = None;

@@ -5284,6 +5284,69 @@ impl ShellExecutor {
                 ));
             }
         }
+        // c:Src/exec.c:3655-3675 — execcmd_exec's external-command
+        // resolution, the step that populates `cmdnamtab`:
+        //
+        //     hn = cmdnamtab->getnode(cmdnamtab, cmdarg);           c:3661
+        //     if (!hn && dohashcmd && strcmp(cmdarg, "..")) {       c:3671
+        //         for (s = cmdarg; *s && *s != '/'; s++);           c:3672
+        //         if (!*s) hn = (HashNode) hashcmd(cmdarg, ...);    c:3674
+        //     }
+        //
+        // and c:831-869 in `execute()`, which turns the resulting node into
+        // the pathname it hands `zexecve`: a HASHED entry execs `cn->u.cmd`
+        // verbatim, an unhashed one execs `"<*cn->u.name>/<arg0>"`.
+        //
+        // Neither step ran here. This is the funnel every statically-spelled
+        // external command reaches (`awk …` compiles to a fusevm exec op →
+        // host_exec_external → here), and it handed the bare word straight to
+        // `Command::new`, i.e. to libc `execvp`, which does its own PATH walk
+        // and knows nothing about the shell's table. Two consequences:
+        // `cmdnamtab` stayed empty for the whole life of the shell, so `hash`
+        // listed nothing after running a command and everything reading the
+        // table (`hash`, `unhash`, `whence`, `$commands`, completion) saw an
+        // empty one; and an explicit `hash awk=/bin/echo` was ignored at exec
+        // time because libc re-derived the path from `$PATH`. Only the
+        // run-time-resolved head (`c=awk; $c …`) went through execcmd_exec
+        // and hashed correctly, which is why the gap was invisible from the
+        // ported side.
+        //
+        // `hashed_prog` also records that the pathname came from the table,
+        // so the ENOENT arms below can fall back to the bare name the way
+        // c:877 `execute_skip_exec:` falls through to a full `$path` walk
+        // when the cmdnamtab candidate fails to exec.
+        let mut hashed_prog: Option<String> = None;
+        // c:3672-3673 — bare names only; a `/` in the word means the user
+        // named a file and C never consults the table for it. c:3671 —
+        // `..` is excluded by name.
+        if !cmd.contains('/') && cmd != ".." {
+            // c:3661 — `cmdnamtab->getnode(cmdnamtab, cmdarg)`.
+            let mut have = crate::ported::hashtable::cmdnamtab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(cmd).cloned());
+            // c:3659 + c:3671 — `dohashcmd = isset(HASHCMDS)`.
+            if have.is_none() && crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHCMDS) {
+                // c:3674 — `hashcmd(cmdarg, checkpath)`. Passing the whole
+                // `$path` matches the sibling call in execcmd_exec
+                // (exec.rs:11106) and hashcmd's own indexing of `pathchecked`.
+                let dirs: Vec<String> = crate::ported::params::getsparam("PATH")
+                    .unwrap_or_default()
+                    .split(':')
+                    .map(String::from)
+                    .collect();
+                have = crate::ported::exec::hashcmd(cmd, &dirs);
+            }
+            if have.is_some() {
+                // c:834 / c:861 — `cn->u.cmd` for a HASHED node, else
+                // `"<*cn->u.name>/<arg0>"`. `get_full_path` is that arm.
+                hashed_prog = crate::ported::hashtable::cmdnamtab_lock()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get_full_path(cmd))
+                    .map(|p| p.display().to_string());
+            }
+        }
         // c:Src/exec.c:531-534 — `execve(pth, argv, newenvp); if ((eno =
         // errno) == ENOEXEC || eno == ENOENT) { … }`. The kernel is the only
         // thing that understands `#!`, and when it REFUSES the file — ENOEXEC
@@ -5298,7 +5361,11 @@ impl ShellExecutor {
         // explicit `arg0`. `cmd`/`args` stay untouched: every diagnostic and
         // hook below reports the command the user actually typed, exactly as
         // C reports `arg0` (c:797/811).
-        let mut spawn_prog: String = cmd.to_string();
+        //
+        // c:870 `ee = zexecve(nn, argv, newenvp)` — when the table answered,
+        // `nn` (not the bare word) is what C execs.
+        let mut retried_bare = false;
+        let mut spawn_prog: String = hashed_prog.clone().unwrap_or_else(|| cmd.to_string());
         let mut spawn_arg0: String = cmd.to_string();
         let mut spawn_args: Vec<String> = args.to_vec();
         // C recurses through zexecve for each rewrite; the loop is that
@@ -5379,6 +5446,20 @@ impl ShellExecutor {
                                 spawn_args =
                                     newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
                                 spawn_prog = prog;
+                                continue;
+                            }
+                            // c:Src/exec.c:877-895 `execute_skip_exec:` — a
+                            // cmdnamtab candidate that will not exec is not
+                            // the end of the search: C falls through to a
+                            // full `$path` walk, so a stale
+                            // `hash foo=/gone/foo` still runs the real `foo`.
+                            // Re-drive the spawn with the bare word and let
+                            // the PATH search happen.
+                            if !retried_bare && hashed_prog.is_some() && spawn_prog != cmd {
+                                retried_bare = true;
+                                spawn_prog = cmd.to_string();
+                                spawn_arg0 = cmd.to_string();
+                                spawn_args = args.to_vec();
                                 continue;
                             }
                         }
@@ -5465,6 +5546,17 @@ impl ShellExecutor {
                                 spawn_args =
                                     newargv.get(1..).map(|v| v.to_vec()).unwrap_or_default();
                                 spawn_prog = prog;
+                                continue;
+                            }
+                            // c:Src/exec.c:877-895 `execute_skip_exec:` — see
+                            // the identical fall-through in the background
+                            // arm above. The cmdnamtab candidate failing to
+                            // exec sends C back to a full `$path` walk.
+                            if !retried_bare && hashed_prog.is_some() && spawn_prog != cmd {
+                                retried_bare = true;
+                                spawn_prog = cmd.to_string();
+                                spawn_arg0 = cmd.to_string();
+                                spawn_args = args.to_vec();
                                 continue;
                             }
                         }

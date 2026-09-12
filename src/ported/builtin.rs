@@ -10367,28 +10367,30 @@ pub fn bin_whence(
             // directly. Was a fake env-var bridge under invented
             // `__zshrs_hash_NAME` keys; cmdnamtab is bucket-2-
             // consolidated now.
-            let hashed_path: Option<String> = {
+            // c:4115 — `if ((hn = cmdnamtab->getnode(cmdnamtab, *argv)) &&
+            //             (hn->flags & HASHED))`.
+            let hashed_node: Option<cmdnam> = {
                 match cmdnamtab_lock().read() {
-                    Ok(tab) => tab.get(arg).and_then(|cn| {
-                        if (cn.node.flags & HASHED as i32) != 0 {
-                            cn.cmd.clone() // c:4168 cn->u.cmd
-                        } else {
-                            None
-                        }
-                    }),
+                    Ok(tab) => tab
+                        .get(arg)
+                        .filter(|cn| (cn.node.flags & HASHED as i32) != 0)
+                        .cloned(),
                     Err(_) => None,
                 }
             };
-            if let Some(p) = hashed_path {
-                if (printflags & PRINT_LIST) != 0 {
-                    println!("hash {}={}", arg, p);
-                } else {
-                    println!("{}", p);
-                }
-                informed = 1; // c:4170
+            if let Some(cn) = hashed_node {
+                // c:4116 — `cmdnamtab->printnode(hn, printflags)`, i.e.
+                // `printcmdnamnode`, which dispatches on the PRINT_WHENCE_*
+                // bits. This site open-coded `println!("{}", p)` plus a
+                // PRINT_LIST special case, so every other form was wrong:
+                // `type foo` (PRINT_WHENCE_VERBOSE) printed the bare path
+                // instead of `foo is hashed to /usr/bin/awk`, and
+                // `whence -w foo` (PRINT_WHENCE_WORD) lost `foo: hashed`.
+                printcmdnamnode(&cn, printflags);
+                informed = 1; // c:4117
                 if !all {
                     continue;
-                } // c:4171
+                } // c:4118-4119
             }
         }
         // c:4141-4172 — `-a` all-paths search. C iterates the
@@ -10661,10 +10663,29 @@ pub fn bin_hash(
             if let Some(prog) = pprog {
                 if dir_mode {
                     if let Ok(t) = nameddirtab().lock() {
-                        for (n, nd) in t.iter() {
+                        let mut entries: Vec<_> = t.iter().collect();
+                        entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:4286 sorted=1
+                        for (n, nd) in entries {
                             if pattry(&prog, n) {
                                 // c:4286
                                 printnameddirnode(nd, printflags);
+                            }
+                        }
+                    }
+                } else {
+                    // c:4286 — `scanmatchtable(ht, pprog, 1, 0, 0, ht->printnode,
+                    // printflags)`. `ht` is cmdnamtab unless `-d` selected
+                    // nameddirtab, and this arm was missing entirely: `hash -m
+                    // 'aw*'` matched nothing and exited 0, whatever the command
+                    // table held. It went unnoticed while the table was always
+                    // empty.
+                    if let Ok(t) = cmdnamtab_lock().read() {
+                        let mut entries: Vec<_> = t.iter().collect();
+                        entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:4286 sorted=1
+                        for (n, cn) in entries {
+                            if pattry(&prog, n) {
+                                // c:4286
+                                printcmdnamnode(cn, printflags);
                             }
                         }
                     }
