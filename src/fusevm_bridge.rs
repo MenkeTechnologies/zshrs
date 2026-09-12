@@ -7545,6 +7545,52 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
             }
+            // c:Src/exec.c:2641 —
+            //     if ((addflags & ADDVAR_EXPORT) && !strchr(name, '[')) {
+            //         ...
+            //         allexp = opts[ALLEXPORT];
+            //         opts[ALLEXPORT] = 1;
+            //         if (isset(KSHARRAYS))
+            //             unsetparam(name);
+            //         pm = assignsparam(name, val, myflags);
+            //         opts[ALLEXPORT] = allexp;
+            //     } else
+            //         pm = assignsparam(name, val, myflags);
+            // The assignment itself is what has to run under ALLEXPORT —
+            // `createparam` ORs in PM_EXPORTED for a name that did not
+            // exist (c:Src/params.c:1170-1171) and `assignstrvalue`'s tail
+            // calls `export_param` for one that did (c:2836-2841) — so the
+            // flip wraps the setsparam/setiparam/setnparam dispatch and the
+            // env mirror below, and nothing else. Doing it any other way
+            // would be special-casing the `${(t)}` readout instead of
+            // marking the parameter.
+            //
+            // !!! NOT PORTED — the STTY leg (c:2642-2645 `STTYval =
+            // ztrdup(val)`). `execute` consumes STTYval on the next
+            // external command (exec.rs:4081) and C drops it again at
+            // c:4310 / c:4400-4401 when the prefixed command finishes;
+            // the bridge has no counterpart for those clears, so capturing
+            // it here would apply `STTY=… cmd`'s settings to whatever
+            // command ran next instead.
+            let addvar_export = exec
+                .inline_env_stack
+                .last()
+                .is_some_and(|frame| frame.recording && frame.export)
+                && !name.contains('['); // c:2641
+            let saved_allexport = if addvar_export {
+                let allexp = isset(crate::ported::zsh_h::ALLEXPORT); // c:2646
+                crate::ported::options::opt_state_set("allexport", true); // c:2647
+                if isset(crate::ported::zsh_h::KSHARRAYS) {
+                    // c:2648 — force the name to be recreated by the scalar
+                    // assignment rather than written into the array that is
+                    // already there: `setopt ksharrays; A=(1 2); A=x f`
+                    // reports `scalar-export` inside the call in zsh.
+                    crate::ported::params::unsetparam(&name); // c:2649
+                }
+                Some(allexp)
+            } else {
+                None
+            };
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
             // through setiparam so the param is PM_INTEGER + inherits
@@ -7667,6 +7713,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.param_flags(&name), // c:5463 pm->flags
                 );
                 let _ = crate::ported::params::zputenv(&envstr); // c:Src/params.c:5354
+            }
+            // c:2651 — `opts[ALLEXPORT] = allexp;`
+            if let Some(allexp) = saved_allexport {
+                crate::ported::options::opt_state_set("allexport", allexp);
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -8407,6 +8457,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 frame.recording = false; // c:4122-4123 do_save = 0
             }
         }
+        // c:4137-4147 — the OTHER decision the command word drives, and the
+        // one that has nothing to do with POSIX_BUILTINS:
+        //     /* Export this if the command is a shell function,
+        //      * but not if it's a builtin.
+        //      */
+        //     int flags = 0;
+        //     if (is_shfunc)
+        //         flags |= ADDVAR_EXPORT;
+        //     ...
+        //     addvars(state, varspc, flags);
+        // `addvars` turns that bit into `opts[ALLEXPORT] = 1` around the
+        // assignment (c:2641-2651), so `X=y shellfn` leaves `X` EXPORTED —
+        // `${(t)X}` reads `scalar-export` inside the call and `export -p`
+        // lists it — while `X=y eval …` leaves a plain `scalar`. Verified
+        // against /opt/homebrew/bin/zsh: `f(){ print ${(t)Q} }; Q=y f` →
+        // `scalar-export`, `Q=y eval 'print ${(t)Q}'` → `scalar`.
+        //
+        // The external-command leg (c:4343-4348 sets ADDVAR_EXPORT
+        // unconditionally) runs in the FORKED child, after which nothing
+        // reads the child's parameter table; the value reaches the child's
+        // environment through the `zputenv` the set-var builtin already
+        // does either way, so only the shell-function leg is observable and
+        // only it is mirrored here.
+        //
+        // !!! KNOWN GAP — an EXPANDED command word (`c=f; X=y $c`) has no
+        // compile-time literal, so `name` is the unexpanded text and the
+        // lookup misses: the prefix assignment stays unexported where zsh
+        // exports it. Same limitation, same cause as the POSIX_BUILTINS
+        // `do_save` decision above (compile_zsh.rs:2133-2137) — C resolves
+        // `hn` at runtime from the expanded word and the bridge is handed a
+        // constant.
+        frame.export = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|t| t.get(&name).is_some())
+            .unwrap_or(false); // c:4142-4143
         with_executor(|exec| {
             exec.inline_env_stack.push(frame);
         });

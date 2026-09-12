@@ -301,6 +301,15 @@ pub struct InlineEnvFrame {
     pub saved: Vec<SavedInlineParam>,
     /// True only while the prefix assignments are being executed.
     pub recording: bool,
+    /// C's `ADDVAR_EXPORT` bit for this command (c:Src/exec.c:37), decided
+    /// where C decides it: `if (is_shfunc) flags |= ADDVAR_EXPORT`
+    /// (c:Src/exec.c:4142-4143), under the comment "Export this if the
+    /// command is a shell function, but not if it's a builtin"
+    /// (c:4138-4140). `addvars` reads it to run the prefix assignment with
+    /// `opts[ALLEXPORT]` forced on (c:2646-2651), which is what makes
+    /// `X=y shellfn` leave `X` marked exported for the duration of the
+    /// call while `X=y builtin` does not.
+    pub export: bool,
 }
 
 /// One parameter a prefix assignment displaced — the Rust twin of the
@@ -333,6 +342,9 @@ impl InlineEnvFrame {
         Self {
             saved: Vec::new(),
             recording: true,
+            // c:4141 `int flags = 0;` — BEGIN_INLINE_ENV sets the
+            // ADDVAR_EXPORT bit once it has resolved the command word.
+            export: false,
         }
     }
 

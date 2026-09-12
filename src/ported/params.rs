@@ -5209,6 +5209,19 @@ pub fn export_param(pm: &mut param) {
         strgetfn(pm) // c:2670
     };
     addenv(&pm.node.nam, &val);
+    // c:2672 `addenv(pm, val)` → c:5477-5478 —
+    //     pm->env = newenv;
+    //     pm->node.flags |= PM_EXPORTED;
+    // C's `addenv` takes the Param and marks it; this port's `addenv`
+    // takes `(name, value)` and cannot, so the two lines it owes live at
+    // its Param-holding caller. Without the flag the only caller that
+    // reaches here with an UNexported param — `assignstrvalue`'s
+    // `isset(ALLEXPORT)` tail at c:2836-2841 — put the value in the
+    // environment and left the parameter reading `scalar`, so
+    // `setopt allexport; typeset v=1; v=2; print ${(t)v}` answered
+    // `scalar` where zsh answers `scalar-export`, and `export -p` did not
+    // list it.
+    pm.node.flags |= PM_EXPORTED as i32; // c:5478
     pm.env = Some(val);
 }
 
