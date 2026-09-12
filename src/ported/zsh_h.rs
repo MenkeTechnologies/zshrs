@@ -1385,10 +1385,17 @@ pub struct heap {
 #[allow(non_camel_case_types)]
 pub struct sortelt {
     // c:3013
-    pub orig: String, // c:3015
-    pub cmp: String,  // c:3017
-    pub origlen: i32, // c:3022
-    pub len: i32,     // c:3027
+    pub orig: String, // c:3013 `char *orig` — "The original string", still metafied.
+    // c:3015 `const char *cmp` — "The string used for comparison".
+    // BYTES, not a `String`: `strmetasort` (c:293-315) fills this by
+    // UNMETAFYING the original, and an unmetafied byte string is not
+    // valid UTF-8 in general — `$'a\xe9'` unmetafies to the two bytes
+    // `61 e9`, which no `String` can hold. Holding the metafied
+    // spelling instead handed `strcoll` `a\u{83}\u{c9}` and collated
+    // the Meta payload as the accented letter it happens to spell.
+    pub cmp: Vec<u8>,
+    pub origlen: i32, // c:3020
+    pub len: i32,     // c:3025
 }
 /// `SortElt` type alias.
 pub type SortElt = Box<sortelt>; // c:3030

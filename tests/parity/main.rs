@@ -100,6 +100,7 @@ mod magic_equal_subst_parity;
 mod magic_hash_parity;
 mod man_zshall_corpus_parity;
 mod math_parity;
+mod metasort_unmetafy_parity;
 mod module_feature_enables_parity;
 mod modules_parity;
 mod noclobber_parity;

@@ -29,7 +29,12 @@
 //!   `O(N log N × M)` extra work.
 //! - Multibyte case-folding uses Rust's native Unicode-aware
 //!   `to_lowercase` (which subsumes C's `mbrtowc` + `towlower` +
-//!   `wcrtomb` dance at sort.c:341-368).
+//!   `wcrtomb` dance at sort.c:341-368), applied to the UNMETAFIED
+//!   bytes as C does, with a byte-wise `tulower` fallback for the
+//!   invalid-multibyte and `unsetopt multibyte` arms.
+//! - `sortelt.cmp` is `Vec<u8>`, matching C's `const char *`: the
+//!   prep loop fills it by unmetafying (sort.c:293-315) and an
+//!   unmetafied byte string need not be valid UTF-8.
 
 use crate::ported::zsh_h::sortelt;
 use crate::zsh_h::{
@@ -59,7 +64,11 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
     let a_has_len = a.len >= 0;
     let b_has_len = b.len >= 0;
     let result = if !a_has_len && !b_has_len {
-        zstrcmp(&a.cmp, &b.cmp, sort_flags & !(SORTIT_BACKWARDS as u32))
+        zstrcmp(
+            a.cmp.as_slice(),
+            b.cmp.as_slice(),
+            sort_flags & !(SORTIT_BACKWARDS as u32),
+        )
     } else {
         // c:52-118 — the recorded-length branch. NOTE what C does here:
         // it is NOT a replacement comparison. It is a PREFIX SKIP that
@@ -81,8 +90,8 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
         // collation for every length-carrying caller: `print -o foo Bar
         // BAZ` collated as ASCII (`BAZ Bar foo`) instead of zsh's `Bar BAZ
         // foo`.
-        let ab = a.cmp.as_bytes();
-        let bb = b.cmp.as_bytes();
+        let ab = a.cmp.as_slice();
+        let bb = b.cmp.as_slice();
         // c:68-72 — `len` is the SHORTER recorded length, or the only one.
         let mut len: i64 = if a_has_len {
             if b_has_len {
@@ -136,8 +145,8 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
         } else {
             // c:112-113 — `bs += (laststarta - as); as += (laststarta - as);`
             // then fall through to the shared collation path (c:120-134).
-            let at = a.cmp.get(laststarta..).unwrap_or("");
-            let bt = b.cmp.get(laststarta..).unwrap_or("");
+            let at = ab.get(laststarta..).unwrap_or(&[][..]);
+            let bt = bb.get(laststarta..).unwrap_or(&[][..]);
             zstrcmp(at, bt, sort_flags & !(SORTIT_BACKWARDS as u32)) // c:134
         }
     };
@@ -514,65 +523,218 @@ pub fn strmetasort(
         return;
     }
 
-    // Build sortelts up front, applying transforms once (C does the
-    // same at sort.c:289-385 inside the prep loop).
-    let apply_transforms = |s: &str| -> String {
-        let mut t = s.to_string();
+    // c:255-395 — the prep loop. Each element's `cmp` key is built ONCE
+    // here; the qsort comparator never re-derives it.
+    //
+    // c:284-294 — C's `cmp` is the UNMETAFIED byte string. It takes the
+    // copy-and-transform arm when a transform flag is set OR the element
+    // holds a `Meta` byte (c:289-290), and the plain arm (c:392
+    // `sortarrptr->cmp = *arrptr;`) only when neither applies — and in
+    // that case the element provably carries no Meta, so `*arrptr` and
+    // its unmetafied form are the same bytes. So `cmp` is unmetafied
+    // unconditionally, and this port builds it that way without
+    // replicating the branch, which only exists in C to dodge a
+    // `zhalloc`.
+    //
+    // Skipping the unmetafy is the bug this replaces: `${(o)}` over
+    // `$'a\xe9' $'a\xe8'` handed `strcoll` the Meta ENCODING's spelling,
+    // `a\u{83}\u{c9}` vs `a\u{83}\u{c8}`, and a UTF-8 locale collated
+    // those payload bytes as É and È — accented letters whose relative
+    // order is the REVERSE of the raw bytes 0xe9/0xe8 they stand for.
+    // Under `LC_ALL=C` the same input came out right, which is the tell
+    // that the operands were being read as text.
+    let unmeta_bytes = |s: &str| -> Vec<u8> {
+        // c:305-315 — `while ((*t = *metaptr++)) { if (*t++ == Meta)
+        // t[-1] = *metaptr++ ^ 32; }`, transposed onto zshrs's char-level
+        // Meta encoding (`compile_zsh.rs::meta_encode_byte`).
+        crate::ported::utils::unmetafy_str(s)
+    };
+
+    // Port of `tulower(int c)` (`Src/utils.c:2302`):
+    // `c &= 0xff; return (isupper(c) ? tolower(c) : c);`
+    // `utils::tulower` is the `char` form and lowercases by Unicode
+    // rules; c:351/371 call this on a single BYTE of possibly-invalid
+    // multibyte data, where the answer comes from the locale's
+    // single-byte tables and must stay one byte wide.
+    let tulower_byte = |c: u8| -> u8 {
+        #[cfg(unix)]
+        unsafe {
+            // c:utils.c:2304-2305
+            if libc::isupper(c as libc::c_int) != 0 {
+                libc::tolower(c as libc::c_int) as u8
+            } else {
+                c
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            c.to_ascii_lowercase()
+        }
+    };
+
+    // !!! RUST-ONLY ADAPTER — NO C COUNTERPART !!!
+    // Stands in for c:347 `clen = mbrtowc(&wc, s, send-s, &mbsin)`.
+    // Yields the leading scalar and its byte length, or `None` for C's
+    // `clen < 0` ("invalid or unfinished"). A scalar is at most 4 bytes,
+    // so the shortest valid prefix is the answer.
+    let mbrtowc_one = |s: &[u8]| -> Option<(char, usize)> {
+        for n in 1..=s.len().min(4) {
+            if let Ok(st) = std::str::from_utf8(&s[..n]) {
+                if let Some(c) = st.chars().next() {
+                    return Some((c, n));
+                }
+            }
+        }
+        None
+    };
+
+    // c:328-373 — `if (sortwhat & SORTIT_IGNORING_CASE)`. C lowercases the
+    // UNMETAFIED bytes, which is why this has to run after the unmetafy
+    // and on bytes rather than on a `String`.
+    let lower_bytes = |src: &[u8]| -> Vec<u8> {
+        let mut dst: Vec<u8> = Vec::with_capacity(src.len());
+        // c:331 — `if (isset(MULTIBYTE))`.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::MULTIBYTE) {
+            // c:346-365 — decode a wide char, `towlower` it, re-encode.
+            let mut s = 0usize;
+            while s < src.len() {
+                // c:354-358 — `clen == 0` is an embedded null: emit it and
+                // step one byte. (Rust's decoder reports U+0000 as a
+                // one-byte scalar rather than a zero-length one, so the
+                // case is spelled out before the decode instead of after.)
+                if src[s] == 0 {
+                    dst.push(0);
+                    s += 1;
+                    continue;
+                }
+                match mbrtowc_one(&src[s..]) {
+                    Some((wc, clen)) => {
+                        s += clen; // c:360
+                        // c:361-363 — `wc = towlower(wc); wcrtomb(t, wc)`.
+                        let mut buf = [0u8; 4];
+                        for lc in wc.to_lowercase() {
+                            dst.extend_from_slice(lc.encode_utf8(&mut buf).as_bytes());
+                        }
+                    }
+                    None => {
+                        // c:348-352 — "invalid or unfinished: treat as
+                        // single bytes" for the whole remainder, then stop.
+                        while s < src.len() {
+                            dst.push(tulower_byte(src[s]));
+                            s += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+        } else {
+            // c:370-371 — `for (s = src, t = dst; s < send; ) *t++ = tulower(*s++);`
+            for &b in src {
+                dst.push(tulower_byte(b));
+            }
+        }
+        dst
+    };
+
+    // c:374-384 — `if (sortwhat & SORTIT_IGNORING_BACKSLASHES)`. C drops
+    // ONE backslash ahead of each character, it does not strip them all:
+    // `\\` (a filename holding a literal backslash) loses the first and
+    // KEEPS the second, so a 0x5c stays in the compare key and collates
+    // between `Z` and `d`. The previous `filter(|c| c != '\\')` deleted
+    // both.
+    let strip_backslashes = |src: &[u8]| -> Vec<u8> {
+        let mut dst: Vec<u8> = Vec::with_capacity(src.len());
+        let mut s = 0usize;
+        while s < src.len() {
+            if src[s] == b'\\' {
+                s += 1; // c:378-380 — `s++; len--;`
+                if s >= src.len() {
+                    // c:375 — C's `end` is `src + len + 1`, so a TRAILING
+                    // backslash copies the NUL terminator and stops. Rust
+                    // keeps no terminator, so there is nothing to copy.
+                    break;
+                }
+            }
+            dst.push(src[s]); // c:382 — `*t++ = *s++;`
+            s += 1;
+        }
+        dst
+    };
+
+    let apply_transforms = |mut cmp: Vec<u8>| -> Vec<u8> {
         if sort_flags & (SORTIT_IGNORING_CASE as u32) != 0 {
-            t = t.to_lowercase(); // c:329-374
+            cmp = lower_bytes(&cmp); // c:328-373
         }
         if sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32) != 0 {
-            t = t.chars().filter(|&c| c != '\\').collect(); // c:375-385
+            cmp = strip_backslashes(&cmp); // c:374-384
         }
-        t
+        cmp
     };
+
     let elts: Vec<sortelt> = match unmetalenp.as_deref() {
+        // c:262-273 — "Already unmetafied.  We just need to check for
+        // embedded nulls." The only thing this arm adds over the other
+        // is c:269 `sortarrptr->origlen = count;`, the per-element length
+        // the caller reads back after the sort.
+        //
+        // !!! RUST-ONLY DIVERGENCE !!! The premise of C's arm does not
+        // hold for zshrs's one caller. C's `bin_print` unmetafies every
+        // argument at c:builtin.c:4736 (or takes `getkeystring`'s
+        // unmetafied result at c:4745) BEFORE the c:4792
+        // `strmetasort(args, flags, len)`; zshrs's `bin_print` defers
+        // that decode until AFTER the sort, so the elements arriving
+        // here are still metafied — and `&mut [String]` could not carry
+        // raw bytes even if it wanted to. Unmetafying here is what makes
+        // the two agree: without it `print -o $'a\xe9' $'a\xe8'` had the
+        // same reversed order `${(o)}` did.
         Some(lens) => arr
             .iter()
             .zip(lens.iter())
-            .map(|(s, &l)| sortelt {
-                orig: s.clone(),
-                cmp: apply_transforms(s),
-                origlen: l as i32,
-                len: l as i32,
+            .map(|(s, &l)| {
+                let cmp = apply_transforms(unmeta_bytes(s));
+                // c:270-273 — walk `count` bytes; `needlen = (count != 0)`
+                // is true exactly when a NUL was hit before the count ran
+                // out, i.e. when the element has an embedded NUL.
+                let needlen = cmp.contains(&0u8);
+                sortelt {
+                    orig: s.clone(),
+                    // c:269 — "Remember this length for sorted array".
+                    origlen: l as i32,
+                    // c:386/393 — `len = needlen ? len : -1`.
+                    len: if needlen { cmp.len() as i32 } else { -1 },
+                    cmp,
+                }
             })
             .collect(),
         None => arr
             .iter()
             .map(|s| {
-                // c:275-283 — the `unmetalenp == NULL` arm. C's rule there is
-                //   "Not yet unmetafied.  See if it needs unmetafying.
-                //    If it doesn't, there can't be any embedded nulls,
-                //    since these are metafied."
-                // followed by the unmetafy loop at c:305-315 which sets
-                // `needlen = 1` when a `Meta`-escaped byte decodes to `'\0'`,
-                // and finally c:384 `sortarrptr->len = needlen ? len : -1;`.
+                let cmp = apply_transforms(unmeta_bytes(s));
+                // c:310-311 — `if ((t[-1] = *metaptr++ ^ 32) == '\0')
+                // needlen = 1;`. C can only reach a NUL through the Meta
+                // escape because a metafied string never holds a bare one
+                // (c:277-279).
                 //
-                // !!! RUST-ONLY DIVERGENCE !!! zshrs stores an embedded NUL as
-                // a RAW 0x00 byte inside the `String` (a Rust `String` holds
-                // one fine), not as C's two-byte `Meta`+`\0^32` pair, so there
-                // is nothing to unmetafy — but `needlen` must still be
-                // computed, and the length it needs is simply the byte length.
-                // Without it every element carried `len == -1`, eltpcmp took
-                // its no-length arm, and `strcoll` truncated each operand at
-                // the first NUL — so `${(o)}` over `$'a\0c' $'a\0b' $'a'`
-                // called all three equal and the stable sort left the array in
-                // INPUT order (D04parameter.ztst "Sorting arrays with embedded
+                // !!! RUST-ONLY DIVERGENCE !!! zshrs's char-level Meta
+                // encoding escapes bytes >= 0x80 only
+                // (`compile_zsh.rs::meta_encode_byte`), so a NUL rides
+                // through metafied text as a RAW 0x00 and there is no
+                // escape for the c:310 test to catch. Asking the decoded
+                // bytes directly covers both spellings. Without it every
+                // element carried `len == -1`, eltpcmp took its no-length
+                // arm, and `strcoll` truncated each operand at the first
+                // NUL — so `${(o)}` over `$'a\0c' $'a\0b' $'a'` called all
+                // three equal and the stable sort left the array in INPUT
+                // order (D04parameter.ztst "Sorting arrays with embedded
                 // nulls").
-                let cmp = apply_transforms(s);
-                // c:312 needlen, measured on the same buffer c:316 `len` is
-                // measured on (the transformed copy) — the case/backslash
-                // transforms neither create nor destroy NUL bytes, so the two
-                // agree with C's split reading.
-                let needlen = cmp.as_bytes().contains(&0u8); // c:283/312
-                let len = if needlen { cmp.len() as i32 } else { -1 }; // c:384
+                let needlen = cmp.contains(&0u8);
                 sortelt {
                     orig: s.clone(),
-                    cmp,
-                    // c:270 — C assigns `origlen` only on the `unmetalenp`
+                    // c:269 — C assigns `origlen` only on the `unmetalenp`
                     // arm; nothing reads it here.
                     origlen: -1,
-                    len,
+                    len: if needlen { cmp.len() as i32 } else { -1 }, // c:386
+                    cmp,
                 }
             })
             .collect(),
@@ -756,13 +918,13 @@ mod tests {
         // below prefix "abc" + 0 + "d" (the longer continuation).
         let a = sortelt {
             orig: "abc".to_string(),
-            cmp: "abc".to_string(),
+            cmp: "abc".as_bytes().to_vec(),
             origlen: 3,
             len: 3,
         };
         let b = sortelt {
             orig: "abc".to_string(),
-            cmp: "abc".to_string(),
+            cmp: "abc".as_bytes().to_vec(),
             origlen: 5,
             len: 5,
         };
@@ -1039,13 +1201,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = sortelt {
             orig: "a".to_string(),
-            cmp: "a".to_string(),
+            cmp: "a".as_bytes().to_vec(),
             origlen: 1,
             len: -1,
         };
         let b = sortelt {
             orig: "b".to_string(),
-            cmp: "b".to_string(),
+            cmp: "b".as_bytes().to_vec(),
             origlen: 1,
             len: -1,
         };
@@ -1062,13 +1224,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let a = sortelt {
             orig: "x".to_string(),
-            cmp: "x".to_string(),
+            cmp: "x".as_bytes().to_vec(),
             origlen: 1,
             len: -1,
         };
         let b = sortelt {
             orig: "x".to_string(),
-            cmp: "x".to_string(),
+            cmp: "x".as_bytes().to_vec(),
             origlen: 1,
             len: -1,
         };
@@ -1228,13 +1390,13 @@ mod tests {
     fn eltpcmp_is_deterministic() {
         let a = sortelt {
             orig: "a".to_string(),
-            cmp: "a".to_string(),
+            cmp: "a".as_bytes().to_vec(),
             origlen: 1,
             len: 1,
         };
         let b = sortelt {
             orig: "b".to_string(),
-            cmp: "b".to_string(),
+            cmp: "b".as_bytes().to_vec(),
             origlen: 1,
             len: 1,
         };
