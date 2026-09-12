@@ -8470,6 +8470,54 @@ pub fn paramsubst(
         // The `other_name` fetches (`${a:|b}`, `${a:*b}`, `${a:^b}`) call the
         // module path directly: those are C's SEPARATE fetchvalue on the RHS
         // name, whose subscript state is its own, not `subscript`'s.
+        // c:Src/subst.c:2764 — `if (!subexp || aspar) { … fetchvalue(…) … }`.
+        // The clamp above lives INSIDE fetchvalue, and c:2801 is the only call
+        // to it in paramsubst, guarded by that `!subexp` test. A NESTED
+        // substitution — `${${(z)v}}`, `${#${(s: :)v}}`, `${(j:-:)${(f)v}}` —
+        // sets `subexp = 1` at c:2650 and receives its value through
+        // `multsub(&val, PREFORK_SUBEXP, &aval, &isarr, …)` at c:2683. No
+        // parameter is fetched for the OUTER expansion, so no clamp can reach
+        // the array that comes up: `setopt ksharrays; v="a b c"` leaves
+        // `${#${(z)v}}` at 3, not 1, even though a bare `${a}` on a real array
+        // is element 0.
+        //
+        // zshrs materializes that inner array into a synthetic `__subexp_arr_N`
+        // parameter and repoints `var_name` at it (see the
+        // `subexp_array_temp` rebind above) so the existing splat/subscript/
+        // filter arms can read it by name. The temp name is a plain identifier
+        // with no subscript, which is exactly the clamp's predicate, so the
+        // whole nested result was being truncated to its first element — the
+        // bug was in the CARRIER, not in any one flag, which is why `(z)`,
+        // `(s::)`, `(f)` and `(0)` all lost their elements together.
+        //
+        // `(P)` is the exception, twice over. An inner `${(P)n}` never yields a
+        // value: c:2757 sets `*ret_flags |= MULTSUB_PARAM_NAME` and the OUTER
+        // instance splices the dereferenced name back into the expression and
+        // turns the subexp off again (c:2707-2709 `s = dyncat(val, s);
+        // subexp = 0;`), so the outer really does call fetchvalue on a real
+        // parameter and really does clamp — `setopt ksharrays; a=(a b c); n=a;
+        // ${#${(P)n}}` is 1, not 3. `subexp_aspar_name` is this port's record of
+        // that splice. And c:2764's own `|| aspar` covers the un-nested
+        // `${(P)n}`, where the fetch happens in this instance.
+        let subexp_not_fetched_c2764 = subexp_array_temp.is_some() // c:2650 subexp = 1
+            && subexp_aspar_name.is_none() // c:2707-2709 — the splice sets subexp = 0
+            && !aspar; // c:2764 `|| aspar`
+
+        // c:Src/params.c:2286-2288, minus the per-NAME half of the predicate.
+        // Ten operator arms below already hold the array in hand and open-coded
+        // this same three-term test, which is how the `subexp` exception above
+        // could be added in one place and still miss `${(j:-:)${(z)v}}`,
+        // `${(o)${(s: :)v}}`, `${(U)${(f)v}}` and the rest. A macro, not a bool:
+        // it expands at each site so the read of `subscript` happens there, and
+        // it does not hold a borrow across the arms the way a closure would.
+        macro_rules! ksh_bare_ref_shape_c2286 {
+            () => {
+                crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) // c:2287
+                    && subscript.is_none() // c:2280 — no getindex ran
+                    && !was_at_star_splat
+                    && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
+            };
+        }
         let ksh_bare_ref_c2286 = |name: &str| -> bool {
             let is_ident = name
                 .as_bytes()
@@ -8480,6 +8528,7 @@ pub fn paramsubst(
                 && is_ident
                 && subscript.is_none() // c:2280 — no getindex ran
                 && !was_at_star_splat
+                && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
         };
         let arrays_get = |name: &str| -> Option<Vec<String>> {
             let clamp = ksh_bare_ref_c2286(name);
@@ -13437,9 +13486,7 @@ pub fn paramsubst(
             // element as a SCALAR, applied BEFORE any flag/modifier. So
             // `${(o)a}` `${(u)a}` `${(U)a}` `${a:u}` `${(j:-:)a}` all fold just
             // element 0. `${(o)a[@]}` keeps the whole array (was_at_star_splat).
-            if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                && subscript.is_none()
-                && !was_at_star_splat
+            if ksh_bare_ref_shape_c2286!()
                 && arrays_contains(&var_name)
             {
                 let first = arrays_get(&var_name)
@@ -13663,9 +13710,7 @@ pub fn paramsubst(
                 } else if let Some(arr) = arrays_get(&var_name) {
                     // KSHARRAYS bare array → join sees only element 0.
                     let arr: Vec<String> =
-                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                            && subscript.is_none()
-                            && !was_at_star_splat
+                        if ksh_bare_ref_shape_c2286!()
                         {
                             arr.into_iter().take(1).collect()
                         } else {
@@ -14836,9 +14881,7 @@ pub fn paramsubst(
                         // element 0 (params.c fetchvalue scalarizes a bare
                         // ref). `${a[@]:#pat}` keeps the full array
                         // (was_at_star_splat). See [[ksh-arrays-bare-flag-gap]].
-                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                            && subscript.is_none()
-                            && !was_at_star_splat
+                        if ksh_bare_ref_shape_c2286!()
                         {
                             arr.into_iter().take(1).collect()
                         } else {
@@ -18743,9 +18786,7 @@ pub fn paramsubst(
                 // KSHARRAYS bare array → set-op LHS is element 0 only
                 // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
                 let arr: Vec<String> =
-                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                        && subscript.is_none()
-                        && !was_at_star_splat
+                    if ksh_bare_ref_shape_c2286!()
                         && arrays_contains(&var_name)
                     {
                         arr.into_iter().take(1).collect()
@@ -18830,9 +18871,7 @@ pub fn paramsubst(
                 // KSHARRAYS bare array → set-op LHS is element 0 only
                 // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
                 let arr: Vec<String> =
-                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                        && subscript.is_none()
-                        && !was_at_star_splat
+                    if ksh_bare_ref_shape_c2286!()
                         && arrays_contains(&var_name)
                     {
                         arr.into_iter().take(1).collect()
@@ -18996,9 +19035,7 @@ pub fn paramsubst(
                     // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps
                     // all. Same clamp the `:|` / `:*` arms apply.
                     let cur_arr: Vec<String> =
-                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                            && subscript.is_none()
-                            && !was_at_star_splat
+                        if ksh_bare_ref_shape_c2286!()
                             && arrays_contains(&var_name)
                         {
                             cur_arr.into_iter().take(1).collect()
@@ -19337,9 +19374,7 @@ pub fn paramsubst(
                     } else if let Some(arr) = arrays_get(&var_name).filter(|_| !wantt_typed) { // c:2859
                         // KSHARRAYS bare array → modifier folds only element 0.
                         let arr: Vec<String> =
-                            if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                                && subscript.is_none()
-                                && !was_at_star_splat
+                            if ksh_bare_ref_shape_c2286!()
                             {
                                 arr.into_iter().take(1).collect()
                             } else {
@@ -20444,9 +20479,7 @@ pub fn paramsubst(
             }) {
                 // KSHARRAYS bare array → case modifier folds only element 0.
                 let arr: Vec<String> =
-                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                        && subscript.is_none()
-                        && !was_at_star_splat
+                    if ksh_bare_ref_shape_c2286!()
                     {
                         arr.into_iter().take(1).collect()
                     } else {
@@ -20813,9 +20846,7 @@ pub fn paramsubst(
                     });
                 if let Some(slice) = slice_arr {
                     value = slice.join(sp); // c:3906 over aval (slice)
-                } else if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                    && subscript.is_none()
-                    && !was_at_star_splat
+                } else if ksh_bare_ref_shape_c2286!()
                 {
                     // KSHARRAYS bare array → join sees only element 0.
                     value = arr.into_iter().next().unwrap_or_default();
@@ -20962,9 +20993,7 @@ pub fn paramsubst(
             }; // c:4290
                // KSHARRAYS bare array → sort/unique fold only element 0.
             let parts: Vec<String> = if split_parts.is_none()
-                && !was_at_star_splat
-                && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-                && subscript.is_none()
+                && ksh_bare_ref_shape_c2286!()
                 && arrays_contains(&var_name)
             {
                 parts.into_iter().take(1).collect()
