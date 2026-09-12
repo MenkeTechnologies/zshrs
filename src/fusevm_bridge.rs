@@ -2164,11 +2164,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let dispatch =
             crate::ported::exec::execcmd_compile_head(&full, crate::ported::zsh_h::WC_SIMPLE);
         let post = &full[dispatch.precmd_skip..];
-        // c:Src/builtin.c:4500 — `command -p` resets PATH for the
-        // exec to the POSIX-defined default (`getconf PATH`), so
-        // standard utilities resolve even when the caller has
-        // emptied $PATH. zsh restores the original PATH after the
-        // command returns. Mirror via a scoped env::set_var.
+        // c:Src/exec.c:3212-3214 — `} else if (has_p) { /* Use default path */
+        // use_defpath = 1; … }`. `-p` is a flag carried down to the exec
+        // (c:4369 `execute(args, cflags, use_defpath)`) and to whence
+        // (c:Src/builtin.c:4165-4167 `findcmd(*argv, 1, func == BIN_COMMAND &&
+        // OPT_ISSET(ops,'p'))`), where the compiled-in DEFAULT_PATH
+        // (configure.ac:1954, `getconf _CS_PATH` at build time) is searched
+        // directly. C never assigns to `$path` for this.
         //
         // command's OWN options end at the first non-flag arg —
         // everything after the command name belongs to IT. The
@@ -2223,47 +2225,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let post = post.as_slice();
-        let _path_guard = if dash_p {
-            let saved = env::var("PATH").ok();
-            let default_path = std::process::Command::new("getconf")
-                .arg("PATH")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
-            env::set_var("PATH", &default_path);
-            crate::ported::params::setsparam("PATH", &default_path);
-            Some(saved)
-        } else {
-            None
-        };
-        struct PathGuard {
-            saved: Option<String>,
-            active: bool,
-        }
-        impl Drop for PathGuard {
-            fn drop(&mut self) {
-                if !self.active {
-                    return;
-                }
-                match self.saved.take() {
-                    Some(p) => {
-                        env::set_var("PATH", &p);
-                        crate::ported::params::setsparam("PATH", &p);
-                    }
-                    None => {
-                        env::remove_var("PATH");
-                        crate::ported::params::setsparam("PATH", "");
-                    }
-                }
-            }
-        }
-        let _restore = PathGuard {
-            saved: _path_guard.unwrap_or(None),
-            active: dash_p,
-        };
+        // The previous implementation spelled `-p` as a temporary `$PATH`
+        // reassignment around the call, seeded by forking `getconf PATH`.
+        // Three things were wrong with that and all three are gone now:
+        // every `$PATH` write empties `cmdnamtab` (c:Src/params.c pathsetfn),
+        // so the entry `execcmd_exec` had just made for the command was wiped
+        // on restore and `hash` came back empty where the oracle lists the
+        // command; the child process inherited the DEFAULT_PATH in its
+        // environment instead of the caller's `$PATH`; and a shell whose point
+        // is not forking paid a fork per `command -p` for a value the C build
+        // bakes in at configure time.
         if dispatch.has_command_vv {
             // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
             let mut ops = options {
@@ -2287,6 +2258,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             ops.ind[flag_byte as usize] = 1;
+            // c:Src/builtin.c:4157 + c:4165-4167 — bin_whence reads `-p` off
+            // `ops` twice: to prefer a builtin over an external for
+            // `command -p[vV]`, and as `findcmd`'s `default_path` argument.
+            // `p` was consumed above (it never reaches `post`), so re-raise it
+            // here; without it `command -pv` reported the `$PATH` hit instead
+            // of the DEFAULT_PATH one.
+            if dash_p {
+                ops.ind[b'p' as usize] = 1;
+            }
             let whence_args: Vec<String> = post[name_pos..].to_vec();
             return Value::Status(crate::ported::builtin::bin_whence(
                 "command",
@@ -2323,7 +2303,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // past for its duration — matching what `command cat` already does to
         // the coreutils shadow.
         let _forced = crate::native_cmds::force_external();
-        Value::Status(with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127))
+        // c:Src/exec.c:4369 — `execute(args, cflags, use_defpath)`. The `-p`
+        // flag is the third argument, not a mutation of the environment.
+        Value::Status(
+            with_executor(|exec| {
+                if dash_p {
+                    exec.execute_external_defpath(&n, &r, &[])
+                } else {
+                    exec.execute_external(&n, &r, &[])
+                }
+            })
+            .unwrap_or(127),
+        )
     });
 
     // `exec cmd args…` — BINF_EXEC prefix (Src/builtin.c:45). Zsh

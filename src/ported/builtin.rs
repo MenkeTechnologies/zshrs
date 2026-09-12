@@ -10464,8 +10464,25 @@ pub fn bin_whence(
         //     informed = 1;
         if func == BIN_COMMAND && OPT_ISSET(ops, b'p') {
             // c:4157
-            if let Some(b) = BUILTINS.iter().find(|b| b.node.nam == *arg) {
-                // c:4158
+            // c:4158 is `builtintab->getnode(builtintab, *argv)`, the SAME
+            // lookup as c:4123 above — so it answers NULL for exactly the
+            // same two reasons, and this arm has to respect both. A raw
+            // `BUILTINS.iter().find()` here reported `chown`, `mkdir`, `rm`
+            // and every other `zsh/files` name as a builtin under
+            // `command -pv` while `whence -w` on the same name correctly
+            // said `none`, because the module-bound gate and the `disable`
+            // set were only applied at c:4123. The divergence was hidden as
+            // long as `-p` never reached `ops` at all.
+            let gated = !crate::extensions::ext_builtins::module_builtin_available(arg)
+                || BUILTINS_DISABLED
+                    .lock()
+                    .map(|s| s.contains(arg.as_str()))
+                    .unwrap_or(false);
+            if let Some(b) = BUILTINS
+                .iter()
+                .find(|b| b.node.nam == *arg)
+                .filter(|_| !gated)
+            {
                 // c:4163 — `builtintab->printnode(hn, printflags)`, NOT a
                 // hardcoded `NAME: builtin` line: `printflags` here is
                 // PRINT_WHENCE_SIMPLE for `-pv` (prints just `echo`) and

@@ -5243,15 +5243,36 @@ impl ShellExecutor {
         // callers of that spawn (the common static-head command path
         // calls execute_external_bg directly), so counting here would
         // miss `time sleep 0` while double-counting this path.
-        self.execute_external_bg(cmd, args, redirects, false)
+        self.execute_external_bg(cmd, args, redirects, false, 0)
     }
 
+    /// `command -p cmd …` — `execute(args, cflags, defpath=1)`.
+    ///
+    /// c:Src/exec.c:3212-3214 — the `command` precommand modifier's `-p`
+    /// sets `use_defpath = 1`, and c:4369 `execute(args, cflags,
+    /// use_defpath)` carries it into the exec. C never touches `$path` for
+    /// this: the default-path search happens inside `execute()` alone
+    /// (c:810-828), so `$PATH`, the child's environment and `cmdnamtab` all
+    /// stay exactly as they were.
+    pub(crate) fn execute_external_defpath(
+        &mut self,
+        cmd: &str,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<i32, String> {
+        self.execute_external_bg(cmd, args, redirects, false, 1)
+    }
+
+    /// Port of `execute()` from `Src/exec.c:729` — C decl
+    /// `execute(LinkList args, int flags, int defpath)`. `defpath` is the
+    /// third C parameter and is non-zero only for `command -p`.
     fn execute_external_bg(
         &mut self,
         cmd: &str,
         args: &[String],
         _redirects: &[Redirect],
         background: bool,
+        defpath: i32, // c:729
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
         // c:Src/exec.c:3545-3547 — `setunderscore((args && nonempty(args)) ?
@@ -5330,7 +5351,11 @@ impl ShellExecutor {
         // param is unset OR empty, emit the canonical
         // "command not found" diagnostic and return 127 BEFORE
         // touching libc.
-        if !cmd.contains('/') {
+        //
+        // c:810-815 — `if (defpath) { … search_defpath(arg0, …) … }` runs
+        // INSTEAD OF the `$path` walk, so `command -p` must not be judged by
+        // `$PATH` at all: the oracle runs `PATH=; command -p awk …` fine.
+        if !cmd.contains('/') && defpath == 0 {
             let path_set_and_nonempty = crate::ported::params::getsparam("PATH")
                 .map(|p| !p.is_empty())
                 .unwrap_or(false);
@@ -5437,6 +5462,62 @@ impl ShellExecutor {
                     .map(|p| p.display().to_string());
             }
         }
+        // c:Src/exec.c:810-828 — `/* for command -p, search the default path */
+        //     if (defpath) {
+        //         char pbuf[MAXCMDLEN];
+        //         if (!search_defpath(arg0, pbuf, MAXCMDLEN)) {
+        //             if (commandnotfound(arg0, args) == 0) _realexit();
+        //             zerr("command not found: %s", arg0);
+        //             _exit(127);
+        //         }
+        //         ee = zexecve(pbuf, argv, newenvp);
+        //     } else { … cmdnamtab / $path walk … }`
+        //
+        // The two arms are mutually exclusive in C, so under `-p` the exec'd
+        // pathname is the DEFAULT_PATH hit and nothing else — no `$path` walk,
+        // no bare-name retry, and a miss is final even when the name sits on
+        // `$PATH`. The `cmdnamtab` population above still runs because it is
+        // NOT part of `execute()`: it belongs to `execcmd_exec` in the parent
+        // (c:3671-3674), which hashes `cmdarg` against `$path` regardless of
+        // `use_defpath`. That asymmetry is visible in the oracle — after
+        // `PATH=<dir-with-a-fake-awk>:…; command -p awk`, the REAL
+        // `/usr/bin/awk` runs while the table records the fake one.
+        //
+        // c:798-808 runs before this and execs a `/`-bearing arg0 directly, so
+        // `defpath` never applies to a name the user spelled as a path.
+        let mut defpath_prog: Option<String> = None;
+        if defpath != 0 && !cmd.contains('/') {
+            // c:815 — `if (!search_defpath(arg0, pbuf, MAXCMDLEN))`
+            match crate::ported::exec::search_defpath(cmd, libc::PATH_MAX as usize) {
+                // c:822 — `ee = zexecve(pbuf, argv, newenvp)`
+                Some(pbuf) => defpath_prog = Some(pbuf),
+                None => {
+                    // c:816-817 — `if (commandnotfound(arg0, args) == 0)
+                    // _realexit();`. The `command_not_found_handler` hook
+                    // runs for a default-path miss exactly as it does for a
+                    // `$path` miss, and its status is the command's status.
+                    // The `$path` miss reaches the same hook from the ENOENT
+                    // arm further down, after the spawn has failed; there is
+                    // no spawn to fail here, so the call is explicit.
+                    let mut hook_args = Vec::with_capacity(args.len() + 1);
+                    hook_args.push(cmd.to_string());
+                    hook_args.extend_from_slice(args);
+                    if let Some(rc) =
+                        self.dispatch_function_call("command_not_found_handler", &hook_args)
+                    {
+                        return Ok(rc);
+                    }
+                    let sn = crate::ported::utils::scriptname_get()
+                        .unwrap_or_else(|| "zshrs".to_string());
+                    // c:818 — `zerr("command not found: %s", arg0)`. Emitted
+                    // directly rather than through `zerr` for the same reason
+                    // as the PATH-unset arm above: command-not-found is
+                    // non-fatal and must not raise errflag.
+                    eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                    return Ok(127); // c:819 `_exit(127)`
+                }
+            }
+        }
         // c:Src/exec.c:531-534 — `execve(pth, argv, newenvp); if ((eno =
         // errno) == ENOEXEC || eno == ENOENT) { … }`. The kernel is the only
         // thing that understands `#!`, and when it REFUSES the file — ENOEXEC
@@ -5455,7 +5536,16 @@ impl ShellExecutor {
         // c:870 `ee = zexecve(nn, argv, newenvp)` — when the table answered,
         // `nn` (not the bare word) is what C execs.
         let mut retried_bare = false;
-        let mut spawn_prog: String = hashed_prog.clone().unwrap_or_else(|| cmd.to_string());
+        // c:822 vs c:870 — the defpath hit wins outright; `hashed_prog` (and
+        // with it the ENOENT bare-name retry at c:877) belongs to the `else`
+        // arm alone.
+        let mut spawn_prog: String = defpath_prog
+            .clone()
+            .or_else(|| hashed_prog.clone())
+            .unwrap_or_else(|| cmd.to_string());
+        if defpath_prog.is_some() {
+            hashed_prog = None;
+        }
         let mut spawn_arg0: String = cmd.to_string();
         let mut spawn_args: Vec<String> = args.to_vec();
         // C recurses through zexecve for each rewrite; the loop is that
