@@ -8533,6 +8533,16 @@ pub fn paramsubst(
         let arrays_get = |name: &str| -> Option<Vec<String>> {
             let clamp = ksh_bare_ref_c2286(name);
             match crate::ported::subst::arrays_get(name) {
+                // c:Src/subst.c:2945-2954 — the clamp lands in the scalar arm,
+                // and for a ZERO-element array that arm sets `vunset = 1` and
+                // assigns NEITHER `val` nor `aval`. There is no array left for
+                // an operator to read, which is not the same thing as an array
+                // of no elements: an empty `aval` would make `${(q)a}` emit
+                // zero words, where zsh emits the one word `''` it gives for
+                // any unset scalar, and would make `${a:^b}` zip against an
+                // empty LHS instead of skipping. Answer None so every arm takes
+                // its scalar fallback, the way C's NULL `aval` makes it.
+                Some(arr) if clamp && arr.is_empty() => None, // c:2954 vunset
                 Some(arr) if clamp => Some(arr.into_iter().take(1).collect()), // c:2288 v->end = 1
                 Some(arr) => Some(arr),
                 // c:2288's other half, `v->scanflags = 0`, drops the HASH shape
@@ -8548,6 +8558,41 @@ pub fn paramsubst(
                 None => None,
             }
         };
+
+        // c:Src/subst.c:2930-2954 — the SCALAR arm of the fetch, which is where
+        // the KSHARRAYS clamp lands a bare array reference. Once
+        // c:Src/params.c:2288 has cleared `v->scanflags`, c:2916 answers
+        // `isarr = 0` and C arrives here still holding a PM_ARRAY:
+        //
+        //     if (v->pm->node.flags & PM_ARRAY) {
+        //         ...
+        //         if (!(v->valflags & VALFLAG_INV))
+        //             if (v->start < 0 ||
+        //                 (tmplen != -1 ? v->start >= tmplen
+        //                  : arrlen_le(v->pm->gsu.a->getfn(v->pm), v->start)))
+        //             vunset = 1;
+        //
+        // The clamp writes only `v->end`, so `v->start` is still 0 and
+        // `arrlen_le(arr, 0)` is true exactly when the array is EMPTY. A clamped
+        // reference to an empty array is therefore UNSET, not empty-but-set:
+        // `setopt ksharrays; a=()` gives `${a-D}` = `D`, `${+a}` = 0, `${(q)a}` =
+        // `''` and `${a:^b}` = nothing, where the same array without the option
+        // is set and answers empty, 1, nothing and nothing. Without the option
+        // the clamp never fires and this is always false.
+        //
+        // A macro rather than a `let`, for the same reason
+        // `ksh_bare_ref_shape_c2286` is one: it reads `subscript`, which later
+        // arms clear, so the test has to happen where it is asked. The emptiness
+        // half reads the RAW stored vector, because the clamping `arrays_get`
+        // above already answers None for this shape (it models C's unassigned
+        // `aval`) and asking it would make the test vacuous.
+        macro_rules! ksh_clamped_past_end_c2954 {
+            () => {
+                ksh_bare_ref_c2286(&var_name)
+                    && crate::ported::subst::arrays_get(&var_name)
+                        .is_some_and(|a| a.is_empty()) // c:2953 arrlen_le(arr, 0)
+            };
+        }
 
         // Look up var (with subscript if present). Port of
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
@@ -8705,6 +8750,41 @@ pub fn paramsubst(
                     // (p_flag_indirects megamonster test).
                     let arr_shape: Option<Vec<String>> =
                         subexp_arr_parts.as_ref().cloned().filter(|a| a.len() > 1);
+                    // c:Src/params.c:1617-1620 — EVERY subscript in C is read by
+                    // `getarg`, and that is the one place KSH_ARRAYS 0-bases it:
+                    //
+                    //     } else {
+                    //         r = mathevalarg(s, &s);
+                    //         if (isset(KSHARRAYS) && r >= 0)
+                    //             r++;
+                    //     }
+                    //
+                    // so the 1-based machinery downstream is fed `r + 1` and a
+                    // written `[0]` selects the first element. A subexp result is
+                    // not exempt: c:Src/subst.c:2890 wraps the nested value in a
+                    // throwaway `createparam(nulstring, isarr ? PM_ARRAY :
+                    // PM_SCALAR)` and c:2900 calls `getindex` on that, which calls
+                    // the same `getarg`.
+                    //
+                    // This port hand-rolls the subscript for the subexp carrier
+                    // rather than routing it through `getindex`, and the
+                    // adjustment was missing, so a nested reference stayed 1-based
+                    // under the option: `setopt ksharrays; s=hello` left
+                    // `${${s}[0]}` empty where zsh gives `h`, and `${${s}[1]}`
+                    // gave `h` where zsh gives `e`. It is also what a clamped
+                    // ARRAY reference now needs — once c:2288 has made it a
+                    // scalar, `${${a}[0]}` is a character index into element 0.
+                    //
+                    // A NEGATIVE subscript is left alone, exactly as c:1619's
+                    // `r >= 0` leaves it: `${${s}[-1]}` is the last character
+                    // under either option state.
+                    let ksh_sub_c1619 = |r: i64| -> i64 {
+                        if r >= 0 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+                            r + 1 // c:1620
+                        } else {
+                            r // c:1618
+                        }
+                    };
                     if let Some(an) = subexp_passoc_name.as_deref() {
                         // `${${(P)n}[key]}` — the inner `(P)n` references
                         // assoc `an`; the outer subscript is an assoc KEY
@@ -8724,15 +8804,25 @@ pub fn paramsubst(
                             None => sv,
                         }
                     } else if let Some((lo_s, hi_s)) = sub.split_once(',') {
-                        let lo: i64 = lo_s.trim().parse().unwrap_or(1);
+                        // c:Src/params.c:1533-1536 — a `[lo,hi]` range calls
+                        // `getarg` once per BOUND, so each one takes c:1619's
+                        // adjustment on its own.
+                        let lo: i64 = lo_s.trim().parse().map(ksh_sub_c1619).unwrap_or(1);
                         match arr_shape {
                             Some(arr) => {
-                                let hi: i64 = hi_s.trim().parse().unwrap_or(arr.len() as i64);
+                                let hi: i64 = hi_s
+                                    .trim()
+                                    .parse()
+                                    .map(ksh_sub_c1619)
+                                    .unwrap_or(arr.len() as i64);
                                 getarrvalue(&arr, lo, hi).join(" ")
                             }
                             None => {
-                                let hi: i64 =
-                                    hi_s.trim().parse().unwrap_or(sv.chars().count() as i64);
+                                let hi: i64 = hi_s
+                                    .trim()
+                                    .parse()
+                                    .map(ksh_sub_c1619)
+                                    .unwrap_or(sv.chars().count() as i64);
                                 let n = sv.chars().count() as i64;
                                 let resolve = |k: i64| -> usize {
                                     let k = if k < 0 { n + k + 1 } else { k };
@@ -8764,7 +8854,7 @@ pub fn paramsubst(
                                 }
                             }
                         }
-                    } else if let Ok(n) = sub.trim().parse::<i64>() {
+                    } else if let Ok(n) = sub.trim().parse::<i64>().map(ksh_sub_c1619) {
                         match arr_shape {
                             Some(arr) => {
                                 let nl = arr.len() as i64;
@@ -12525,11 +12615,15 @@ pub fn paramsubst(
                         arrays_get("@").map_or(false, |a| n <= a.len())
                     }
                 });
-            used_subexp
-                || vars_contains(&var_name)
-                || arrays_contains(&var_name)
-                || assoc_contains(&var_name)
-                || positional_set
+            // c:Src/subst.c:2954 — the KSHARRAYS clamp on an EMPTY array lands
+            // past the end of the vector, so C answers `vunset = 1` and the
+            // reference is unset rather than set-and-empty.
+            !ksh_clamped_past_end_c2954!()
+                && (used_subexp
+                    || vars_contains(&var_name)
+                    || arrays_contains(&var_name)
+                    || assoc_contains(&var_name)
+                    || positional_set)
         };
 
         // c:Src/params.c:2175-2179 — `if (v->scanflags && !com && …)
@@ -12838,11 +12932,20 @@ pub fn paramsubst(
             // bare-array→element-1 scalarization (params.c:1616) applies
             // only to a real bare array PARAM reference — NOT to a nested
             // split-derived result like `${#${(z)v}}`, whose inner `(z)`
-            // sets isarr from a split. That inner result is materialized
-            // into a synthetic `__subexp_arr_N` temp; excluding it keeps
-            // `setopt ksharrays; v="a b c"; print ${#${(z)v}}` at 3 (the
-            // element count) instead of collapsing to element-0's char
-            // length (1). subexp_array_temp is Some only on that path.
+            // sets isarr from a split. C's reason is c:Src/subst.c:2764:
+            // fetchvalue, where the clamp lives, is not called at all when
+            // `subexp` is set, so `setopt ksharrays; v="a b c"; print
+            // ${#${(z)v}}` stays 3 (the element count) instead of collapsing
+            // to element-0's char length (1).
+            //
+            // The test is `subexp_not_fetched_c2764`, not "is there a temp
+            // carrier": c:2764's guard is `if (!subexp || aspar)`, and the
+            // `(P)` splice at c:2707-2709 (`s = dyncat(val, s); subexp = 0;`)
+            // hands the outer expansion a REAL parameter name to fetch, so
+            // that shape clamps like any other bare reference. Keying off the
+            // carrier alone made `${#${(P)n}}` answer 1 (the one element of
+            // the temp) where zsh answers 2 (the characters of element 0),
+            // because both shapes materialize a `__subexp_arr_N`.
             let ksh_scalar_array = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
                 // c:2859 — the `(t)` arm already cleared `isarr`, so the
                 // KSHARRAYS bare-array scalarization has nothing to clamp;
@@ -12851,7 +12954,7 @@ pub fn paramsubst(
                 && subscript.is_none()
                 && !flagged_array_subscript
                 && magic_keys.is_none()
-                && subexp_array_temp.is_none()
+                && !subexp_not_fetched_c2764 // c:2764 — fetchvalue never ran
                 // c:Src/params.c:2270-2276 sets `v->scanflags` for PM_HASHED as
                 // well as PM_ARRAY, so c:2288's clamp scalarizes a bare hash
                 // too: `setopt ksharrays; typeset -A h=(k1 /a/v1.txt k2
@@ -13596,6 +13699,70 @@ pub fn paramsubst(
                 // because a subscripted `${*[2,4]}` already had its
                 // shape decided by the slice dispatch above.
                 isarr = 1;
+            }
+        }
+        // c:Src/params.c:2288's SECOND half — `v->end = 1, v->scanflags = 0;`.
+        // The `arrays_get` closure above carries the `v->end = 1` half (the
+        // operand narrows to element 0). `v->scanflags = 0` is the other half
+        // and it drops the array SHAPE, which c:Src/subst.c:2916 reads back:
+        //
+        //     if ((isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1
+        //                : v->scanflags ? 1 : 0))
+        //         … aval = getarrvalue(v);
+        //     else
+        //         … val = getstrvalue(v);
+        //
+        // With scanflags cleared that test answers 0, C takes the SCALAR arm at
+        // c:2928-2966, and `aval` is never filled. So a clamped bare reference
+        // is a scalar in zsh — not a one-element array — and every outer
+        // consumer sees a string: `setopt ksharrays; a=(aa bb cc)` makes
+        // `${#${a}}` the two CHARACTERS of `aa` and `${${a}[0]}` the character
+        // `a`, where a one-element array would answer 1 and `aa`.
+        //
+        // The if/else chain that just closed is this port's c:2916 — every arm
+        // of it derives `isarr` from what the fetch found — so the shape half
+        // belongs right here, at the same point C reads scanflags. The bare-HASH
+        // case already had it (`ksh_bare_assoc` clears `isarr` at its own arm
+        // above, because c:2270-2276 stamps scanflags for PM_HASHED too); arrays
+        // had no equivalent, which is the whole of the divergence.
+        if ksh_bare_ref_c2286(&var_name) && arrays_contains(&var_name) {
+            isarr = 0; // c:2288 `v->scanflags = 0` → c:2916
+            // c:2956-2966 — with `isarr` clear C takes the scalar arm and reads
+            // `val = getstrvalue(v)` off the narrowed Value, so `val` becomes
+            // that ONE element and `aval` is never assigned. Both halves have to
+            // be written here. `value` is NOT already the element: it was seeded
+            // from `raw_value`, which for a bare array name is the whole
+            // space-joined vector, and the clamped text used to be produced
+            // further down inside the c:3029 `if (isarr)` block — which this
+            // very assignment now switches off. Leaving it out made `${a:-D}`
+            // and `"${${a}}"` answer `aa bb cc`. The fetch below is the
+            // clamping `arrays_get`, so element 0 is what it hands back.
+            //
+            // !!! RUST-ONLY: `split_parts` carries the element too !!!
+            // C's `aval` really is left NULL here, and nothing reads it again.
+            // This port instead re-derives the value list from the paramtab at
+            // the final splat (c:3960), so a scalar that only lives in `value`
+            // is silently replaced there by the parameter's ORIGINAL elements —
+            // the same trap the `(D)` scalar arm documents, and it cost the
+            // padding flags their result (`setopt ksharrays;
+            // a=(/x/one.txt /y/two.txt); set -- ${(l:12:)a}` came back
+            // unpadded). Publishing the one element as the value list is what
+            // makes the splat see it.
+            //
+            // c:2956 `if (!vunset) { … val = getstrvalue(v); }` — when the
+            // clamp landed PAST THE END (an empty array, c:2945-2954) nothing
+            // is assigned at all, and `arrays_get` answers None for exactly
+            // that shape, so neither half is written and the reference stays
+            // the unset empty.
+            match arrays_get(&var_name).and_then(|a| a.into_iter().next()) {
+                Some(first) => {
+                    value = first.clone(); // c:2966 getstrvalue
+                    split_parts = Some(vec![first]);
+                }
+                None => {
+                    value = String::new(); // c:3615 — vunset reads back empty
+                    split_parts = None; // c:2928 — the scalar arm assigns no `aval`
+                }
             }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
@@ -18972,6 +19139,16 @@ pub fn paramsubst(
                     // it away. c:3480 only asks whether the LHS names a set
                     // parameter; it never looks at the elements.
                     || assoc_contains(&var_name);
+                // c:Src/subst.c:2954 — c:3480's `vunset` is the SAME `vunset`
+                // the fetch computed, so a bare array reference the KSHARRAYS
+                // clamp landed past the end of is unset HERE too, whatever the
+                // membership tests above say about the name. `vars_get` answers
+                // `Some("")` for an empty array (the scalar slot), so without
+                // this the zip took the set branch, c:3498's
+                // `aval = hmkarray(val); isarr = 1;` promoted the empty scalar
+                // to a one-element array, and `setopt ksharrays; a=();
+                // b=(bb dd); ${a:^b}` produced `bb` where zsh produces nothing.
+                let lhs_param_set = lhs_param_set && !ksh_clamped_past_end_c2954!();
                 let vunset = !lhs_param_set && split_parts.is_none() && isarr == 0;
                 if vunset {
                     // c:3481-3485 — `if (vunset > 0 && unset(UNSET))` errors
