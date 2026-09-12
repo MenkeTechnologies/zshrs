@@ -3275,11 +3275,22 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         // is P_ANY at offset `atom`; rewrite or pad as needed.
         let mut buf = patout.lock().unwrap();
         if op == P_TWOHASH {
-            // c:1712-1713 — `?##` → `?*`: leave the P_ANY in place,
-            // then emit P_STAR right after.
+            // c:1717-1719 — `/* ?## becomes ?* */`; the C keeps the atom
+            // as P_ANY (`uptr->l = (uptr->l & ~0xff) | P_ANY;` is a no-op
+            // on an already-P_ANY node) and then runs
+            // `pattail(starter, patnode(P_STAR));`. The `pattail` is the
+            // load-bearing half: it writes the new P_STAR into the P_ANY's
+            // next slot, so the two nodes form the `?*` chain. Emitting the
+            // P_STAR without chaining it leaves it unreachable and makes
+            // `?##` match exactly one character.
             drop(buf);
-            let _star = patnode(P_STAR);
-            *tail_out = atom as usize;
+            let star = patnode(P_STAR);
+            pattail(atom as usize, star); // c:1719
+            // The piece's chain-tail is now the P_STAR, not the P_ANY:
+            // whatever patcompbranch splices in next belongs after the
+            // star (C reaches the same node because `pattail` walks the
+            // chain from the returned `starter`).
+            *tail_out = star;
         } else {
             // c:1715-1716 — `?#` → `*`: just rewrite atom's opcode.
             buf[atom as usize + I_OP] = P_STAR;

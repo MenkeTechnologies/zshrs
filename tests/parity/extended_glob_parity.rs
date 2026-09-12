@@ -372,3 +372,144 @@ mod number_qualifier_quantifier {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "" == a# ]]; echo $?"#);
     }
 }
+
+mod quest_two_hash_closure {
+    //! `?##` (one-or-more of any character). c:Src/pattern.c:1710-1722 —
+    //! patcomppiece special-cases a `#`/`##` closure over a P_ANY atom:
+    //! `?#` collapses to a single P_STAR, and `?##` becomes the two-node
+    //! chain `?*` via `pattail(starter, patnode(P_STAR))`. The port emitted
+    //! the P_STAR but never ran the `pattail`, so the star was unreachable
+    //! and `?##` matched EXACTLY ONE character instead of one-or-more.
+    //!
+    //! Every case here asserts zsh's own answer. Pre-fix, 38 of the 49
+    //! cases in the bisect matrix diverged; the ones below are the
+    //! representative shapes.
+    use super::*;
+
+    /// The single smallest divergence: `[[ abc == ?## ]]` was false.
+    #[test]
+    fn quest_two_hash_matches_more_than_one_char() {
+        assert_parity(r#"setopt extendedglob; v="abc"; [[ $v == ?## ]] && print yes || print no"#);
+    }
+
+    /// One-or-more, not zero-or-more: the empty string must NOT match.
+    #[test]
+    fn quest_two_hash_rejects_empty_but_quest_hash_accepts() {
+        assert_parity(r#"setopt extendedglob; v=""; [[ $v == ?## ]] && print yes || print no"#);
+        assert_parity(r#"setopt extendedglob; v=""; [[ $v == ?# ]] && print yes || print no"#);
+    }
+
+    /// The closure has to stay greedy when a literal tail follows it.
+    #[test]
+    fn quest_two_hash_greedy_with_literal_tail() {
+        assert_parity(
+            r#"setopt extendedglob; v="abbbc"; [[ $v == a?##c ]] && print yes || print no"#,
+        );
+        assert_parity(r#"setopt extendedglob; v="abc"; [[ $v == ?##c ]] && print yes || print no"#);
+    }
+
+    /// A `(#b)` group wrapping the closure captures the WHOLE run, and
+    /// $mbegin/$mend must agree — not just the replacement text.
+    #[test]
+    fn backref_group_captures_whole_run_with_mbegin_mend() {
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == (#b)(?##) ]] && print -r -- "$match[1]|$mbegin|$mend" || print no"#,
+        );
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == (#b)(?##)(?) ]] && print -r -- "$match[1]/$match[2]|$mbegin|$mend" || print no"#,
+        );
+    }
+
+    /// The originally-reported shape: an escaped literal bracket around
+    /// the closure, inside a `(#b)` group, driving `${x//…}`.
+    #[test]
+    fn escaped_brackets_around_closure_in_backref_group() {
+        assert_parity(
+            r#"setopt extendedglob; v="[baz]"; print -r -- ${v//(#b)(\[?##\])/<$match[1]>}"#,
+        );
+        assert_parity(
+            r#"setopt extendedglob; v="x[baz]y"; print -r -- ${v//(#b)(\[?##\])/<$match[1]>[$mbegin,$mend]}"#,
+        );
+    }
+
+    /// `(#B)` (match, do not capture) over the same pattern.
+    #[test]
+    fn no_capture_backref_group_over_closure() {
+        assert_parity(r#"setopt extendedglob; v="[baz]"; print -r -- ${v//(#B)(\[?##\])/Y}"#);
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == (#B)(?##) ]] && print -r -- "cap=${match:-none}" || print no"#,
+        );
+    }
+
+    /// Every substitution form that drives the same compiled pattern:
+    /// `//`, `/`, and the four strip operators.
+    #[test]
+    fn closure_across_substitution_forms() {
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v//?##/X}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v/?##/X}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v#?##}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v##?##}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v%?##}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; print -r -- ${v%%?##}"#);
+    }
+
+    /// `case` dispatches through the same compiler.
+    #[test]
+    fn closure_in_case_pattern() {
+        assert_parity(
+            r#"setopt extendedglob; v="[baz]"; case $v in ((#b)(\[?##\])) print -r -- "c:$match[1]";; (*) print c-no;; esac"#,
+        );
+    }
+
+    /// Two closures in one pattern, and a repeated-group replacement —
+    /// pre-fix these split the subject into single characters.
+    #[test]
+    fn two_closures_and_repeated_replacement() {
+        assert_parity(
+            r#"setopt extendedglob; v="foo.bar.baz"; print -r -- ${v//(#b)(?##).(?##)/<$match[1]|$match[2]>}"#,
+        );
+        assert_parity(r#"setopt extendedglob; v="aXbXc"; print -r -- ${v//(#b)(?##)X/[$match[1]]}"#);
+        assert_parity(r#"setopt extendedglob; v="abcd"; [[ $v == ?##?## ]] && print yes || print no"#);
+    }
+
+    /// Anchors and exclusion still bind to the whole `?*` chain, not to
+    /// the leading P_ANY alone.
+    #[test]
+    fn closure_with_anchors_and_exclusion() {
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == (?##)(#e) ]] && print yes || print no"#,
+        );
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == (#s)?## ]] && print yes || print no"#,
+        );
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == ?##~abcd ]] && print yes || print no"#,
+        );
+        assert_parity(
+            r#"setopt extendedglob; v="abcd"; [[ $v == ?##~abc ]] && print yes || print no"#,
+        );
+    }
+
+    /// `(#m)` MATCH and the `(M)` flag read the same run.
+    #[test]
+    fn closure_under_match_flags() {
+        assert_parity(r#"setopt extendedglob; v="abc"; print -r -- ${(M)v##?##}"#);
+        assert_parity(r#"setopt extendedglob; v="abc"; print -r -- ${v//(#m)?##/[$MATCH]}"#);
+    }
+
+    /// Was misfiled as
+    /// `subst_flags_more_parity::spliced_backslash_in_replace_pattern::hsmw_specch_class_escapes_metas`.
+    /// No parameter splice is involved in its failure: the `\[?##\]`
+    /// alternative never matched because of the `?##` compilation bug
+    /// above. Moved here verbatim, assertion unchanged.
+    #[test]
+    fn hsmw_specch_class_escapes_metas() {
+        assert_parity(
+            r#"setopt extendedglob
+specch="][*?|#~^()><\\"
+b="foo bar[baz]*"
+b="${b//(#b)((\[?##\])|([$specch]))/${${match[2]:+$match[2]}:-\\${match[3]}}}"
+print -r -- "$b""#,
+        );
+    }
+}

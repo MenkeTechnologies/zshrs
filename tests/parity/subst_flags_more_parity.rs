@@ -521,17 +521,11 @@ mod spliced_backslash_in_replace_pattern {
         assert_parity(r#"c="ab\\"; s="x\\y"; print -r -- "${s//[$c]/_}""#);
     }
 
-    /// The exact hsmw specch shape (all glob metas + trailing `\`).
-    #[test]
-    fn hsmw_specch_class_escapes_metas() {
-        assert_parity(
-            r#"setopt extendedglob
-specch="][*?|#~^()><\\"
-b="foo bar[baz]*"
-b="${b//(#b)((\[?##\])|([$specch]))/${${match[2]:+$match[2]}:-\\${match[3]}}}"
-print -r -- "$b""#,
-        );
-    }
+    // The hsmw specch case that used to live here was misfiled: its
+    // failure had no splice in it at all (proved byte-identical across
+    // 617c533b57). It is now
+    // `extended_glob_parity::quest_two_hash_closure::hsmw_specch_class_escapes_metas`,
+    // next to the `?##` closure bug that actually broke it.
 
     /// Spliced backslash as the entire pattern value.
     #[test]
