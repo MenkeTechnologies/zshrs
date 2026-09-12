@@ -22155,6 +22155,22 @@ pub fn paramsubst(
                         i += 2;
                         continue;
                     }
+                    // c:Src/lex.c:1261-1270 `case LX2_BKSLASH:` — the lexer
+                    // reads the char AFTER the backslash first
+                    // (`c = hgetc();`), then `add(Bnull);`, then
+                    // `if (lexstop) goto brk;`. When the backslash is the LAST
+                    // character the `hgetc()` hit end-of-input, so the Bnull is
+                    // the only thing appended and the loop breaks without ever
+                    // adding a quoted character. c:Src/subst.c:4141-4152's
+                    // `remnulargs(val); untokenize(val);` then deletes the
+                    // Bnull (c:Src/glob.c:3673 `inull(c)` covers
+                    // Snull/Dnull/Bnull), so a trailing lone backslash leaves
+                    // NOTHING behind: `v="\\"; ${(Q)v}` is the empty string,
+                    // and `${(Q)}` of `a\` is `a`. The port used to fall
+                    // through to the literal push below and keep the
+                    // backslash. Consume it and emit nothing.
+                    i += 1; // c:Src/lex.c:1268 add(Bnull) with no partner char
+                    continue;
                 }
                 if c == '\'' || c == '"' {
                     // Probe for a closing partner. Inside `'…'`, no
