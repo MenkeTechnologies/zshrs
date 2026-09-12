@@ -59683,6 +59683,12 @@ Deliberately NOT changed, because C does not metafy on those paths either:
 `${(o)}` / `${(O)}` / `print -o` (`strmetasort`) and glob expansion order
 (`gmatchcmp` on `uname`).
 
+**Correction (#1145).** The table row above reads `strmetasort`'s operand as
+already unmetafied in zshrs. It was not: the port never wrote C's `c:299-315`
+unmetafy loop, so `${(o)}` was collating the metafied SPELLING and a UTF-8
+locale reversed two high bytes. Leaving `zstrcmp` alone was still right —
+#1145 fixes it in the prep loop, where C does.
+
 **Correction (#1140).** This entry also claimed `compdescribe`
 (`Src/Zle/computil.c:235`) passes a metafied `sortstr` and so shares the defect
 class. It does not: `sortstr` is declared `/* unmetafied string used to sort
@@ -60132,3 +60138,63 @@ Pinned by `a_child_of_the_parent_still_sees_term_after_a_subshell` in
 `tests/parity/cmdsubst_isolation_parity.rs`, which drives an interactive
 shell through `zsh/zpty` and asks a child what it sees. A `-c` probe
 passes vacuously, so the pin has to go through a pty.
+
+## #1145 — `${(o)}` collated the Meta encoding's SPELLING, so a UTF-8 locale reversed two high bytes — fixed
+
+**Status:** `fixed` 2026-09-12.
+
+```console
+$ LC_ALL=en_US.UTF-8 zsh   -f -c 'a=($'\''a\xe9'\'' $'\''a\xe8'\''); print -r -- ${(o)a}' | xxd
+00000000: 61e8 2061 e90a                           a. a..
+$ LC_ALL=en_US.UTF-8 zshrs -f -c 'a=($'\''a\xe9'\'' $'\''a\xe8'\''); print -r -- ${(o)a}' | xxd
+00000000: 61e9 2061 e80a                           a. a..        ✗
+```
+
+Under `LC_ALL=C` the two agreed. That locale flip is the whole diagnosis:
+`strcoll` degenerates to a byte compare there, so it only mattered what the
+operands SPELL when the locale was one that reads them as text.
+
+**C reference.** `strmetasort` builds each element's compare key by
+unmetafying the original — `Src/sort.c:305-315`,
+`while ((*t = *metaptr++)) { if (*t++ == Meta) t[-1] = *metaptr++ ^ 32; }` —
+so the `strcoll(as, bs)` at `Src/sort.c:134` sees the raw bytes. C takes the
+plain arm at `c:392` (`sortarrptr->cmp = *arrptr;`) only when the element
+provably holds no `Meta` byte, in which case the original and its unmetafied
+form are the same bytes. `cmp` is therefore unmetafied unconditionally.
+
+The port never wrote that loop. `sortelt.cmp` held the METAFIED text, where
+zshrs spells the byte `0xe9` as `\u{83}\u{c9}` (`meta_encode_byte`,
+`src/extensions/compile_zsh.rs`). `en_US.UTF-8` then collated the payloads
+`\u{c9}` and `\u{c8}` as É and È — accented Latin letters whose relative
+order is the REVERSE of the bytes 0xe9/0xe8 they encode.
+
+**Fix.** `sortelt.cmp` becomes `Vec<u8>`, matching C's `const char *`: an
+unmetafied byte string is not valid UTF-8 in general and no `String` can hold
+one. `strmetasort`'s prep loop fills it through `utils::unmetafy_str`, and the
+two pre-passes move onto those bytes where C runs them — both now ported as C
+writes them rather than as Rust idioms:
+
+* case-fold (`c:328-373`) decodes a scalar, lowers it, re-encodes, and falls
+  back to a byte-wise `tulower` for undecodable input (`c:348-352`) and under
+  `unsetopt multibyte` (`c:370-371`). The old `String::to_lowercase` had
+  neither fallback.
+* backslash-strip (`c:374-384`) drops ONE backslash ahead of each character,
+  not all of them, so a name holding a literal `\\` keeps a `0x5c` in its
+  compare key. The old `filter(|c| c != '\\')` deleted both.
+
+`print -o` needed the decode too. C unmetafies its arguments at
+`Src/builtin.c:4736` (or takes `getkeystring`'s unmetafied result at `:4745`)
+BEFORE the `strmetasort(args, flags, len)` at `:4792`, which is why that call
+site passes lengths and takes the "already unmetafied" arm at `c:262-273`.
+zshrs' `bin_print` defers the decode until AFTER the sort, so the premise does
+not hold for its one caller and the prep loop decodes there as well.
+
+Not touched: `zstrcmp` itself, and the completion-match sort that reaches it
+through `matchcmp` (`Src/Zle/compcore.c:3194`). That caller compares METAFIED
+strings in C too, and #1138 made the port match it deliberately; unmetafying
+inside `zstrcmp` would have broken completion order to fix parameter order.
+
+Regression tests: `tests/parity/metasort_unmetafy_parity.rs`, twelve probes
+pinned to the oracle's own stdout BYTES (hex, because the expectations are not
+valid UTF-8) under both `LC_ALL=C` and `LC_ALL=en_US.UTF-8` — the two locales
+legitimately disagree for some inputs and both answers are zsh's.
