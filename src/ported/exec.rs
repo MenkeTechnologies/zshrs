@@ -8718,7 +8718,13 @@ pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::e
 /// Stack of `"context"` labels used by `eval`-style nested execution:
 /// `bin_dot`, `bin_eval`, `execode`, autoloads. Each `execode(prog,
 /// ..., "context")` pushes its label and pops on return.
-pub static zsh_eval_context: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+///
+/// Storage is [`crate::thread_shell_state::ThreadMutex`], not a plain
+/// `Mutex`: like `funcstack`, the stack describes where the ONE thread of
+/// execution is, so a hook function running on a pool worker must not push
+/// `"shfunc"` onto the shell thread's `$ZSH_EVAL_CONTEXT`.
+pub static zsh_eval_context: crate::thread_shell_state::ThreadMutex<Vec<String>> =
+    crate::thread_shell_state::ThreadMutex::new(Vec::new(), Vec::new);
 
 /// RAII form of C's `execode` context push/pop (`Src/exec.c:1265-1266`
 /// and the matching `zsh_eval_context[alen] = NULL` at c:1281).
@@ -8753,6 +8759,18 @@ impl EvalContextFrame {
     /// `u_arr`/`u_str` fields directly because both names are
     /// `PM_READONLY_SPECIAL`.
     fn sync(stack: &[String]) {
+        // !!! WARNING: RUST-ONLY GUARD — NO C COUNTERPART !!!
+        // C has one `char **zsh_eval_context` and one thread, so the
+        // publish below cannot be reached from anywhere but the frame that
+        // pushed. zshrs's param table is ONE shared table that
+        // `async_precmd` hooks deliberately write into, so a worker's push
+        // would overwrite the shell thread's `$ZSH_EVAL_CONTEXT` with the
+        // hook's context. The worker still tracks its own stack (the
+        // `ThreadMutex` above); only the shell-visible parameters stay the
+        // shell thread's.
+        if !crate::thread_shell_state::is_shell_thread() {
+            return;
+        }
         let joined = stack.join(":");
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             if let Some(pm) = tab.get_mut("zsh_eval_context") {

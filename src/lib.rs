@@ -155,6 +155,11 @@ pub mod errflag_cell;
 /// `fast_hash` submodule — dependency-free FxHash for internal name tables.
 #[path = "extensions/fast_hash.rs"]
 pub mod fast_hash;
+/// `thread_shell_state` submodule — per-thread storage for the state C
+/// keeps per thread of execution (`scriptname`, `funcstack`,
+/// `zsh_eval_context`, the diagnostic half of `locallevel`).
+#[path = "extensions/thread_shell_state.rs"]
+pub mod thread_shell_state;
 /// `opts_cache` submodule — fast-path `isset()` option-state cache.
 #[path = "extensions/opts_cache.rs"]
 pub mod opts_cache;

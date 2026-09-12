@@ -166,7 +166,16 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     }
     let scriptname = scriptname_lock().lock().unwrap().clone();
     let argzero = argzero_lock().lock().unwrap().clone();
-    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+    // c:150 reads the `locallevel` global. `here()` rather than `load()`:
+    // C's counter belongs to its single thread of execution, so it can only
+    // ever describe the frame that raised THIS diagnostic. zshrs runs
+    // `async_precmd` hook functions on a pool worker against the shared
+    // counter, and a hook's scope made a top-level error print with a
+    // function-name prefix and a line number zsh does not print —
+    //     spin_hook:4: parse error near `done'   vs   zsh: parse error near `done'
+    // for a line typed while the hook ran. See
+    // `crate::thread_shell_state::LocalLevelCell`.
+    let locallevel = LOCALLEVEL.here();
     let prefix: String = scriptname.or(argzero).unwrap_or_default();
     let stderr_handle = io::stderr();
     let mut stderr_lock = stderr_handle.lock();
@@ -334,7 +343,9 @@ pub fn dputs(msg: &str) {
     // zerrmsg at c:296-308. Built once, written to file or stderr.
     let lineno = lineno() as i32;
     let shinstdin = isset(SHINSTDIN);
-    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+    // `here()` not `load()` — the depth of the thread raising this message;
+    // see the matching note in `zwarning`.
+    let locallevel = LOCALLEVEL.here();
     let prefix = if (!shinstdin || locallevel != 0) && lineno != 0 {
         format!("{}: ", lineno)
     } else {
@@ -394,7 +405,9 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     // Route through lex::lineno() so the parser-advanced counter
     // drives the error prefix.
     let lineno = lineno() as i32;
-    let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+    // `here()` not `load()` — the depth of the thread raising this message;
+    // see the matching note in `zwarning`.
+    let locallevel = LOCALLEVEL.here();
     // c:301-308 — `if ((unset(SHINSTDIN) || locallevel) && lineno)
     //                 fprintf(file, "%d: ", lineno); else fputc(' ', file);`
     if (unset(SHINSTDIN) || locallevel != 0) && lineno != 0 {
@@ -10863,7 +10876,17 @@ pub static mut SCRIPT_FILENAME: Option<String> = None;
 /// Port of `char *scriptname` from `Src/init.c`. Set when `source`
 /// is reading a script; cleared on return. Used by `zwarning()`
 /// (utils.c:147) as the diagnostic prefix.
-static SCRIPTNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
+///
+/// Storage is [`crate::thread_shell_state::ThreadMutex`], not a plain
+/// `Mutex`: C's `scriptname` says where the ONE thread of execution is,
+/// and `doshfunc` overwrites it with the callee's name on every function
+/// entry (c:Src/exec.c:5903). An `async_precmd` hook running on a pool
+/// worker therefore stamped its own name over the shell thread's, and a
+/// diagnostic the user caused at the prompt came out prefixed with the
+/// hook's name. Per-thread is C's model — background work there is a
+/// forked child with its own copy.
+static SCRIPTNAME: crate::thread_shell_state::ThreadMutex<Option<String>> =
+    crate::thread_shell_state::ThreadMutex::new(None, || None);
 
 /// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
 /// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
@@ -10881,7 +10904,12 @@ static ARGZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock
 /// = "zsh"`), init.c:1367 (`source` enters the named file),
 /// init.c:1558+1592+1667 (save/install/restore around `.` /
 /// `source` bin_dot dispatch).
-static SCRIPTFILENAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
+///
+/// Per-thread for the same reason as [`SCRIPTNAME`]: a hook function that
+/// `source`s a file on a worker would otherwise move the file PS4's `%x`
+/// and the `funcstack` frames name on the shell thread.
+static SCRIPTFILENAME: crate::thread_shell_state::ThreadMutex<Option<String>> =
+    crate::thread_shell_state::ThreadMutex::new(None, || None);
 
 /// Port of `char *posixzero` from `Src/params.c:76`. The original
 /// argv[0] preserved unchanged by later mutations. Used by
@@ -12364,8 +12392,8 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 /// standalone function.
 /// `OnceLock` get-or-init accessor for the storage behind C's
 /// `char *scriptname` global (`Src/utils.c:36`). C dereferences the global.
-fn scriptname_lock() -> &'static Mutex<Option<String>> {
-    SCRIPTNAME.get_or_init(|| Mutex::new(None))
+fn scriptname_lock() -> &'static crate::thread_shell_state::ThreadMutex<Option<String>> {
+    &SCRIPTNAME
 }
 
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
@@ -12382,8 +12410,8 @@ fn argzero_lock() -> &'static Mutex<Option<String>> {
 /// standalone function.
 /// `OnceLock` get-or-init accessor for the storage behind C's
 /// `char *scriptfilename` global (`Src/utils.c:41`).
-fn scriptfilename_lock() -> &'static Mutex<Option<String>> {
-    SCRIPTFILENAME.get_or_init(|| Mutex::new(None))
+fn scriptfilename_lock() -> &'static crate::thread_shell_state::ThreadMutex<Option<String>> {
+    &SCRIPTFILENAME
 }
 
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock accessor for `posixzero`.

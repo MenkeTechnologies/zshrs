@@ -28,6 +28,7 @@ mod assoc_array_deep_parity;
 mod assoc_local_shadow_scope_parity;
 mod assoc_type_change_discard_parity;
 mod assoc_unset_hashed_row_parity;
+mod async_precmd_attribution_parity;
 mod async_precmd_typeahead_parity;
 mod autoload_parity;
 mod bare_name_subscript_default_parity;

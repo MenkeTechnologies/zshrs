@@ -5538,7 +5538,19 @@ pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
 // function call stack. Rust port mirrors the chain as Vec snapshot
 // (the C source walks `funcstack->prev` to produce array params).
 /// `FUNCSTACK` static.
-pub static FUNCSTACK: Mutex<Vec<crate::ported::zsh_h::funcstack>> = Mutex::new(Vec::new());
+///
+/// Storage is [`crate::thread_shell_state::ThreadMutex`], not a plain
+/// `Mutex`. C's `funcstack` (Src/exec.c:340) is the call chain of the ONE
+/// thread of execution, and it is what `$funcstack`, `$functrace`,
+/// `$funcfiletrace` and `$funcsourcetrace` report (c:Src/Modules/
+/// parameter.c:650/681). zshrs runs `async_precmd` hook functions on a
+/// pool worker and the completer tree on `compsys::in_editor`'s own
+/// thread, each of which pushes a `doshfunc` frame (exec.rs, c:6210) — so
+/// with one shared Vec the shell thread's `$funcstack` grew frames for
+/// functions it never called. `ThreadMutex` keeps the `lock()` API, so
+/// every reader below is unchanged.
+pub static FUNCSTACK: crate::thread_shell_state::ThreadMutex<Vec<crate::ported::zsh_h::funcstack>> =
+    crate::thread_shell_state::ThreadMutex::new(Vec::new(), Vec::new);
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!

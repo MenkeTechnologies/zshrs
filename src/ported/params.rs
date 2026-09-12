@@ -153,9 +153,18 @@ pub fn IPDEF2(A: &str, B: usize, C: i32) -> paramdef {
 /// Tracks function-local-scope nesting depth. Bumped by
 /// `startparamscope()` (params.c:5879) on every function call,
 /// decremented by `endparamscope()` (params.c:5950) on return.
+///
+/// Storage is [`crate::thread_shell_state::LocalLevelCell`], not a bare
+/// `AtomicI32`: the counter does two jobs that C can merge because it has
+/// one thread. `load()` is the SHARED stamp the one param table's entries
+/// are compared against and is unchanged; `here()` is the calling thread's
+/// own depth, which is what the error formatters must read so an
+/// `async_precmd` hook running on a worker cannot make a top-level error
+/// print as if it had happened inside that hook. See that module for the
+/// misattribution this prevents.
 #[allow(non_upper_case_globals)]
-pub static locallevel: std::sync::atomic::AtomicI32 = // c:54
-    std::sync::atomic::AtomicI32::new(0);
+pub static locallevel: crate::thread_shell_state::LocalLevelCell = // c:54
+    crate::thread_shell_state::LocalLevelCell::new();
 
 // ---------------------------------------------------------------------------
 // Real `param` struct lives in Src/zsh.h:1829 (port at zsh_h.rs:750).
