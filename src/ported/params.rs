@@ -9797,22 +9797,34 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     // PM_HASHED param (setarrvalue c:2919-2920) collapses to
     // `arrhashsetfn(v->pm, val, 0)`, which owns the odd-count gate
     // (c:4128-4131, zerr + ERRFLAG_ERROR) and the pair walk.
-    let mut tab = paramtab().write().unwrap();
-    let pm = tab.get_mut(name)?;
-    if pm.node.flags & PM_SPECIAL as i32 == 0 {
-        let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
-        pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_HASHED as i32;
-    }
-    pm.u_arr = None;
-    pm.u_str = None;
-    arrhashsetfn(pm, val, 0); // c:3651 via setarrvalue c:2920
-    let cloned = pm.clone();
-    drop(tab);
+    // !!! LOCK DISCIPLINE — NO GSU CALLBACK MAY RUN UNDER THE GUARD !!!
+    // Same rule, and the same reasoning, as the long note in `assignnparam`:
+    // C holds no lock, so `arrhashsetfn` (c:4113) is free to reach anything,
+    // and it does — its odd-pair rejection at c:4129-4131 calls `zerr`, which
+    // is not a leaf (zwarning → zleentry(ZLE_CMD_TRASH) → the ZLE repaint,
+    // which reads parameters and takes this very RwLock). `typeset -A h; h=(a
+    // b c)` in an interactive shell was therefore one `zerr` away from parking
+    // the shell on itself. Commit the flags under the guard, detach, release,
+    // then dispatch — the hash contents go to `paramtab_hashed_storage`, a
+    // separate map, so there is nothing to publish back.
+    let mut staged = {
+        let mut tab = paramtab().write().unwrap();
+        let pm = tab.get_mut(name)?;
+        if pm.node.flags & PM_SPECIAL as i32 == 0 {
+            let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
+            pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_HASHED as i32;
+        }
+        pm.u_arr = None;
+        pm.u_str = None;
+        (**pm).clone()
+    };
+    // ---- guard released ----
+    arrhashsetfn(&mut staged, val, 0); // c:3651 via setarrvalue c:2920
 
     // c:3652-3653 — `unqueue_signals(); return v->pm;` — C returns
     // the param even when arrhashsetfn errored; the failure travels
     // via errflag (callers like the SET_ARRAY bridge check it).
-    Some(cloned)
+    Some(Box::new(staged))
 }
 
 // -----------------------------------------------------------
@@ -9985,7 +9997,55 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
     // reassignments stick — same shape as `assignsparam`'s c:3343
     // `assignstrvalue(v, val, flags)` path which mutates paramtab in
     // place.
-    if let Ok(mut tab) = paramtab().write() {
+    //
+    // !!! LOCK DISCIPLINE — NO GSU CALLBACK MAY RUN UNDER THE GUARD !!!
+    //
+    // C holds no lock here at all, so `Src/params.c` gives no hint that the
+    // dispatch is dangerous. `setnumvalue` (c:2846) hands the setfn a pointer
+    // to the LIVE node — `v->pm->gsu.i->setfn(v->pm, ...)` (c:2870) — and the
+    // setfn is free to read or write any OTHER parameter while it runs.
+    // Several do: `zlevarsetfn` (c:4226) re-enters `adjustwinsize`,
+    // `histsizesetfn` (c:4974) resizes the history, and every arm that can
+    // fail reaches `zerr`, which is not a leaf either (zwarning →
+    // zleentry(ZLE_CMD_TRASH) → the ZLE repaint, which reads parameters).
+    // `paramtab()` is a `std::sync::RwLock` and is NOT reentrant, so any of
+    // those under the write guard parks the shell on itself — blocked in
+    // `semaphore_wait_trap`, not spinning. That shipped twice already: once as
+    // the `$LINES` startup hang that silenced every `zsh/zpty`-spawned shell
+    // (fixed in 5929e82b81 by removing a Rust-only return value from
+    // `adjustwinsize` — the callee, not the pattern), and once as the
+    // `read-only variable` report below.
+    //
+    // So the guard is released BEFORE the dispatch, and the order C commits in
+    // is preserved exactly:
+    //
+    //   1. under the guard, commit everything C has already written to the
+    //      node by the time `setnumvalue` is entered — the `~PM_DEFAULTED`
+    //      clear (c:3671) and the `pm->base` inheritance (c:2801) — and take
+    //      the readonly rejection (c:2852), which C also takes before any
+    //      dispatch;
+    //   2. release the guard;
+    //   3. run the setfn (c:2870 / c:2876) against a detached node, which is
+    //      what C's pointer-to-the-live-node amounts to once no lock stands in
+    //      the way. The setfn may now take the paramtab lock itself, in either
+    //      mode, as deeply as it likes;
+    //   4. re-take the guard only to publish the union slot the setfn wrote.
+    //
+    // Step 4 is the one place this port can still differ from C: a setfn that
+    // reassigned ITS OWN parameter through the table would have that write
+    // overwritten by the publish. No setfn reachable from here does (every arm
+    // of `intsetfn` either writes `pm` directly or writes a global), and a
+    // future one must not. There is deliberately no lock-ordering rule to
+    // violate instead — after step 2 no paramtab guard is held at all, so a
+    // setfn cannot deadlock against this caller no matter what it touches.
+    //
+    // `staged` carries the node between the three phases.
+    let mut staged: param;
+    let t: u32;
+    {
+        let Ok(mut tab) = paramtab().write() else {
+            return None;
+        };
         if let Some(pm) = tab.get_mut(s) {
             // c:Src/params.c — setnumvalue (the C function this
             // reassign-path mirrors) eventually calls setfn which
@@ -10027,40 +10087,8 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
             if keep_dontimport {
                 pm.node.flags |= PM_DONTIMPORT as i32;
             }
-            let t = PM_TYPE(pm.node.flags as u32);
-            // c:2874's setfn for `$COLUMNS`/`$LINES` is `zlevarsetfn`
-            // (c:362-363 `IPDEF5(..., zlevar_gsu)`), and its two lines cannot
-            // both run here: c:4230 `*p = x` is a plain write, but c:4232
-            // `adjustwinsize(...)` READS parameters, and this arm still holds
-            // the paramtab write guard, which is not reentrant. That is the
-            // same hazard the `drop(tab)` before `zerr` above exists for, and
-            // it froze `(( COLUMNS = 0 ))` outright. Do the write here, the
-            // adjustwinsize once the guard is gone.
-            // Name-based, not PM_SPECIAL-based, for the reason `intsetfn`
-            // already documents: some assignment paths build a fresh param
-            // shell and lose the flag.
-            let zlevar = t == PM_INTEGER && matches!(pm.node.nam.as_str(), "COLUMNS" | "LINES");
+            t = PM_TYPE(pm.node.flags as u32);
             if t == PM_INTEGER {
-                // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. MN_FLOAT
-                // input truncates to integer.
-                let iv = if val.type_ == MN_FLOAT {
-                    val.d as i64
-                } else {
-                    val.l
-                };
-                if zlevar {
-                    // c:4230 — `*p = x`, where `p` is `&zterm_columns` /
-                    // `&zterm_lines`. One write in C; two here, because the
-                    // port's parameter carries its own copy.
-                    pm.u_val = iv;
-                    if pm.node.nam == "COLUMNS" {
-                        crate::ported::utils::ZTERM_COLUMNS.store(iv as i32, Ordering::SeqCst);
-                    } else {
-                        crate::ported::utils::ZTERM_LINES.store(iv as i32, Ordering::SeqCst);
-                    }
-                } else {
-                    intsetfn(pm, iv); // c:2874
-                }
                 // c:Src/params.c:2801 — `if (!v->pm->base && lastbase
                 // != -1) v->pm->base = lastbase;`. After setfn the C
                 // path falls through `setstrvalue(v, NULL)` which
@@ -10074,39 +10102,102 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 // equivalent.
                 // Posix-faithful: no per-var output base (see the create-path
                 // gate above) — bash/ksh/POSIX integers print decimal.
+                //
+                // This stays INSIDE the guard because C has already applied it
+                // to the live node by the time the setfn runs, and a setfn is
+                // entitled to read `pm->base`.
                 if pm.base == 0 && !crate::dash_mode::posix_faithful() {
                     let lb = crate::ported::math::lastbase();
                     if lb > 0 {
                         pm.base = lb;
                     }
                 }
-            } else if t == PM_EFLOAT || t == PM_FFLOAT {
-                // c:2878 — MN_INTEGER input promotes to f64.
-                pm.u_dval = if val.type_ == MN_FLOAT {
-                    val.d
-                } else {
-                    val.l as f64
-                };
-            } else if t == PM_SCALAR || t == PM_NAMEREF || t == PM_ARRAY {
-                // c:2862-2871 — convbase/convfloat → u_str.
-                let s_rendered = if val.type_ == MN_FLOAT {
-                    convfloat_underscore(val.d, pm.width)
-                } else {
-                    convbase_underscore(val.l, if pm.base > 0 { pm.base } else { 10 }, pm.width)
-                };
-                pm.u_str = Some(s_rendered);
             }
-            let cloned = pm.clone();
-            // c:4232 — `adjustwinsize(2 + (p == &zterm_columns));`, the half
-            // of `zlevarsetfn` that could not run under the guard.
-            drop(tab);
-            if zlevar {
-                let _ = adjustwinsize(if cloned.node.nam == "COLUMNS" { 3 } else { 2 }); // c:4232
+            // c:2856-2880 — `setnumvalue`'s type switch. The STORAGE half of
+            // each arm lands here, under the guard, because that is where C
+            // lands it: C's setfn writes through the live node pointer, so the
+            // value is visible to everything that runs afterwards without any
+            // handoff. Doing it here also means the common case needs no second
+            // guard at all — see the publish below.
+            match t {
+                // c:2870-2871 — `(val.type & MN_INTEGER) ? val.u.l : (zlong) val.u.d`.
+                // This is `intsetfn`'s own body (c:4007 `pm->u.val = x`) for
+                // every name it does not special-case; the queued dispatch
+                // below adds the side effects only the special names have.
+                PM_INTEGER => {
+                    pm.u_val = if val.type_ == MN_FLOAT {
+                        val.d as i64
+                    } else {
+                        val.l
+                    }
+                }
+                // c:2876-2877 — MN_INTEGER input promotes to f64.
+                PM_EFLOAT | PM_FFLOAT => {
+                    pm.u_dval = if val.type_ == MN_FLOAT {
+                        val.d
+                    } else {
+                        val.l as f64
+                    }
+                }
+                // c:2860-2867 — convbase/convfloat → `setstrvalue(v, ztrdup(p))`.
+                PM_SCALAR | PM_NAMEREF | PM_ARRAY => {
+                    pm.u_str = Some(if val.type_ == MN_FLOAT {
+                        convfloat_underscore(val.d, pm.width)
+                    } else {
+                        convbase_underscore(val.l, if pm.base > 0 { pm.base } else { 10 }, pm.width)
+                    })
+                }
+                _ => {}
             }
-            return Some(cloned);
+            // Phase 1 ends: everything C had written to the node before
+            // entering `setnumvalue` (c:2846) is committed. Detach and release.
+            staged = (**pm).clone();
+        } else {
+            return None;
         }
     }
-    None
+    // ---- guard released; no paramtab lock is held from here on ----
+    //
+    // Phase 2 — the setfn dispatch this whole restructure exists for. Only the
+    // integer arm has one: c:2870 `v->pm->gsu.i->setfn(v->pm, ...)`. It is now
+    // free to take the paramtab lock in either mode, as deeply as it likes.
+    //
+    // For `$COLUMNS` / `$LINES` it lands in `zlevarsetfn` (c:362-363
+    // `IPDEF5(..., zlevar_gsu)`), whose c:4230 `*p = x` and c:4232
+    // `adjustwinsize(2 + (p == &zterm_columns))` now BOTH run, in C's order,
+    // from C's one call site. `assignnparam` used to open-code the `*p = x`
+    // half by name and call `adjustwinsize` itself after `drop(tab)` — a
+    // name-keyed special case covering only the two names somebody had already
+    // been bitten by, which left every other parameter-reading setfn
+    // (`intsecondssetfn`'s `zwarn`, the `uidsetfn` / `euidsetfn` / `gidsetfn` /
+    // `egidsetfn` failure reports) still dispatching under the guard.
+    let committed = staged.u_val;
+    if t == PM_INTEGER {
+        intsetfn(&mut staged, committed); // c:2870
+    }
+    // Phase 3 — publish, IF the setfn wrote a value phase 1 had not already
+    // committed. C needs no equivalent at all: its setfn wrote through the live
+    // node pointer. No setfn reachable from here produces a different value —
+    // each either stores exactly what it was handed or leaves `pm` alone and
+    // writes a global — so this costs no second guard on any path the shell
+    // takes today, which is what keeps a `(( i++ ))` loop at the acquisition
+    // count it had before. The comparison, not a name list, is what decides:
+    // a future setfn that DOES compute a value is published correctly without
+    // anyone having to remember to add it here.
+    //
+    // Only the value slot moves, never the flags — the setfn may have unset or
+    // retyped the node through the table (`unsetparam`, `assignsparam`), and
+    // stamping a stale flag word back over that would undo it. A node the setfn
+    // removed outright is left removed; the detached copy goes back to the
+    // caller, which is the pointer C would still be holding.
+    if t == PM_INTEGER && staged.u_val != committed {
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(pm) = tab.get_mut(s) {
+                pm.u_val = staged.u_val;
+            }
+        }
+    }
+    Some(Box::new(staged)) // c:3674 `return v->pm;`
 }
 
 /// Port of `setnparam()` from `Src/params.c:3744`.

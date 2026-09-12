@@ -2507,6 +2507,38 @@ impl ShellExecutor {
         // write-lock below: `addenv` takes that same lock itself, so the call
         // cannot be made while the guard is alive.
         let mut shlvl_env: Option<String> = None;
+        // !!! LOCK DISCIPLINE — NO GSU CALLBACK MAY RUN UNDER THE PARAMTAB GUARD !!!
+        //
+        // C's import loop calls `assignsparam(..., ASSPM_ENV_IMPORT)` (c:907-908)
+        // and holds no lock at all, so a setfn reached from there is free to read
+        // any parameter — and several do. `intsetfn` name-dispatches `$COLUMNS` /
+        // `$LINES` to `zlevarsetfn` (c:4226), which re-enters `adjustwinsize`,
+        // which falls back to `getsparam("COLUMNS")` when its ioctl comes back
+        // empty. `paramtab()` is a non-reentrant `std::sync::RwLock`, so running
+        // that under the write guard below parked the shell on itself:
+        //
+        //     COLUMNS=200 zshrs -f -c 'print $COLUMNS'
+        //
+        // never printed anything and never exited, with `sample` showing
+        // 2665/2665 samples in `semaphore_wait_trap` down
+        // `ShellExecutor::new → intsetfn → zlevarsetfn → adjustwinsize →
+        // adjustlines → getsparam → RwLock::lock_contended`. That is the same
+        // chain 5929e82b81 diagnosed on the startup path; that fix removed a
+        // Rust-only return value from `adjustwinsize` so the ONE caller it knew
+        // about stopped re-entering, and left the pattern in place for this one.
+        //
+        // So the dispatches are queued here and replayed after the guard is
+        // released, the way `shlvl_env` and `tied_env_arrays` already are. One
+        // queue, not one per signature, because C's order is per-variable and
+        // must survive: `termsetfn` populates the termcap geometry that a later
+        // `$LINES` import reads back through `adjustwinsize`.
+        enum DeferredEnvSetfn {
+            /// c:2774 — `v->pm->gsu.i->setfn(v->pm, ival)`.
+            Int(String, i64),
+            /// c:907-908 — the cached-storage scalar specials' setfn.
+            Scalar(String, String),
+        }
+        let mut deferred_env_setfns: Vec<DeferredEnvSetfn> = Vec::new();
         {
             use crate::ported::params::paramtab;
             if let Ok(mut tab) = paramtab().write() {
@@ -2602,8 +2634,23 @@ impl ShellExecutor {
                             // intsetfn is this port's stand-in for the gsu_i
                             // vtable: it name-dispatches the specials whose
                             // setter has side effects (SECONDS, RANDOM,
-                            // HISTSIZE, …) and writes u.val otherwise.
-                            crate::ported::params::intsetfn(pm.as_mut(), ival);
+                            // HISTSIZE, …) and writes u.val otherwise. Queued,
+                            // not called: see the lock-discipline note above.
+                            //
+                            // The plain storage half of the setfn still lands
+                            // HERE, synchronously, because C's write is
+                            // synchronous and code further down this same guard
+                            // reads it back: the c:948-951 SHLVL block computes
+                            // `++shlvl` from the value this loop just imported,
+                            // and the C comment on it ("the increment must
+                            // observe the imported value") is load-bearing.
+                            // Deferring the storage too made `SHLVL=5 zshrs -f
+                            // -c 'print $SHLVL'` answer 1 instead of 6. The
+                            // queued dispatch then re-applies it along with the
+                            // side effects only it can produce.
+                            pm.u_val = ival; // c:2774 (the `pm->u.val = x` half)
+                            deferred_env_setfns
+                                .push(DeferredEnvSetfn::Int(env_name.clone(), ival)); // c:2774
                             pm.env = Some(format!("{env_name}={env_value}"));
                             continue;
                         }
@@ -2650,34 +2697,24 @@ impl ShellExecutor {
                             // Cached-state specials: route through
                             // the matching setfn so the global cache
                             // (home_lock / wordchars_lock / etc.)
-                            // reflects the env value. Each setfn
-                            // ignores its `pm` arg (matches C's
-                            // UNUSED(Param pm)), so passing the
-                            // borrowed paramtab entry is safe.
-                            match env_name.as_str() {
-                                "HOME" => {
-                                    crate::ported::params::homesetfn(pm.as_mut(), env_value.clone())
-                                }
-                                "USERNAME" => crate::ported::params::usernamesetfn(
-                                    pm.as_mut(),
+                            // reflects the env value. Queued, not
+                            // called: see the lock-discipline note
+                            // above. `termsetfn` in particular reaches
+                            // the terminal setup, which is exactly the
+                            // kind of callee that reads parameters.
+                            if matches!(
+                                env_name.as_str(),
+                                "HOME"
+                                    | "USERNAME"
+                                    | "TERM"
+                                    | "WORDCHARS"
+                                    | "TERMINFO"
+                                    | "TERMINFO_DIRS"
+                            ) {
+                                deferred_env_setfns.push(DeferredEnvSetfn::Scalar(
+                                    env_name.clone(),
                                     env_value.clone(),
-                                ),
-                                "TERM" => {
-                                    crate::ported::params::termsetfn(pm.as_mut(), env_value.clone())
-                                }
-                                "WORDCHARS" => crate::ported::params::wordcharssetfn(
-                                    pm.as_mut(),
-                                    env_value.clone(),
-                                ),
-                                "TERMINFO" => crate::ported::params::terminfosetfn(
-                                    pm.as_mut(),
-                                    env_value.clone(),
-                                ),
-                                "TERMINFO_DIRS" => crate::ported::params::terminfodirssetfn(
-                                    pm.as_mut(),
-                                    env_value.clone(),
-                                ),
-                                _ => {}
+                                )); // c:907-908
                             }
                         }
                         // c:Src/params.c:907-908 — env import always
@@ -2764,12 +2801,65 @@ impl ShellExecutor {
                 // fusevm_bridge.rs's BUILTIN_EXEC.)
                 if let Some(pm) = tab.get_mut("SHLVL") {
                     let next = pm.u_val + 1; // c:949 `++shlvl`
-                    crate::ported::params::intsetfn(pm.as_mut(), next); // c:949
+                    // Queued like the import loop's dispatches above — SHLVL's
+                    // setfn is a leaf today, but the rule is the pattern, not
+                    // the current callee list. Storage half applied here for
+                    // the same reason it is up there: c:951's `addenv` and
+                    // everything after this guard must see the incremented
+                    // value.
+                    pm.u_val = next; // c:949 (the `*pm->u.valptr = x` half)
+                    deferred_env_setfns.push(DeferredEnvSetfn::Int("SHLVL".to_string(), next)); // c:949
                     pm.node.flags &= !(PM_UNSET as i32);
                     // c:951 — the argument of the unconditional `addenv`.
                     // C renders it with `sprintf(buf, "%d", (int)shlvl)`
                     // AFTER the increment, so it is the incremented value.
                     shlvl_env = Some(next.to_string()); // c:950
+                }
+            }
+        }
+        // ---- paramtab guard released; replay the queued dispatches ----
+        //
+        // This is the c:907-908 / c:2774 / c:949 setfn call, moved to where no
+        // lock is held, in the order C makes it. Each one runs against a
+        // detached node — which is what C's pointer-to-the-live-node amounts to
+        // once the lock is out of the way — and the integer arm publishes the
+        // union slot the setfn wrote back onto the table afterwards. The scalar
+        // specials need no publish: their setfns write a cached global
+        // (`home_lock`, `wordchars_lock`, …) and ignore `pm`, matching C's
+        // `UNUSED(Param pm)`. A node the setfn removed outright is simply
+        // skipped.
+        for deferred in deferred_env_setfns {
+            match deferred {
+                DeferredEnvSetfn::Int(name, ival) => {
+                    let staged = crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|tab| tab.get(name.as_str()).map(|pm| (**pm).clone()));
+                    let Some(mut staged) = staged else { continue };
+                    crate::ported::params::intsetfn(&mut staged, ival); // c:2774
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                        if let Some(pm) = tab.get_mut(name.as_str()) {
+                            pm.u_val = staged.u_val;
+                        }
+                    }
+                }
+                DeferredEnvSetfn::Scalar(name, value) => {
+                    let staged = crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|tab| tab.get(name.as_str()).map(|pm| (**pm).clone()));
+                    let Some(mut staged) = staged else { continue };
+                    match name.as_str() {
+                        "HOME" => crate::ported::params::homesetfn(&mut staged, value),
+                        "USERNAME" => crate::ported::params::usernamesetfn(&mut staged, value),
+                        "TERM" => crate::ported::params::termsetfn(&mut staged, value),
+                        "WORDCHARS" => crate::ported::params::wordcharssetfn(&mut staged, value),
+                        "TERMINFO" => crate::ported::params::terminfosetfn(&mut staged, value),
+                        "TERMINFO_DIRS" => {
+                            crate::ported::params::terminfodirssetfn(&mut staged, value)
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
