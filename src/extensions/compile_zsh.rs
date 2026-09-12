@@ -919,7 +919,36 @@ impl ZshCompiler {
         self.builder.patch_jump(prologue_fast, prologue_fast_at);
 
         // ZshList = sublist + flags (async / disown).
-        if list.flags.async_ {
+        if list.flags.async_ && list.sublist.next.is_none() && list.sublist.pipe.next.is_some() {
+            // `pipeline &` — a MULTI-STAGE pipeline in the background.
+            //
+            // c:Src/exec.c:1795 — the Z_ASYNC arm of execpline calls
+            // `execpline2()` in the CURRENT shell; it does not wrap the
+            // pipeline in one extra process. execpline2 then recurses once per
+            // stage (c:2092) and each stage's execcmd forks and calls
+            // `addproc(pid, text, …)` (c:2907), so the job ends up holding one
+            // proc PER STAGE, each with its own pid and its own text. That is
+            // what makes `jobs` print `sleep 5 |` and `cat` as two lines and
+            // `jobs -l` show a different pid on each.
+            //
+            // Emit the per-stage sub-chunks and texts; BUILTIN_RUN_BG forks one
+            // child per stage in this shell and addprocs each one.
+            let stages = self.compile_pipe_stages(&list.sublist.pipe);
+            let n = stages.len();
+            for (idx, text) in &stages {
+                let c = self.builder.add_constant(Value::str(text));
+                self.builder.emit(Op::LoadConst(c), 0);
+                self.builder.emit(Op::LoadInt(*idx as i64), 0);
+            }
+            self.builder.emit(Op::LoadInt(n as i64), 0);
+            self.builder
+                .emit(Op::LoadInt(i64::from(list.flags.disown)), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, (2 * n + 2) as u8),
+                0,
+            );
+            self.builder.emit(Op::SetStatus, 0);
+        } else if list.flags.async_ {
             // Background: compile the sublist into a sub-chunk + emit
             // BUILTIN_RUN_BG.
             let mut sub = ZshCompiler::new();
@@ -940,6 +969,7 @@ impl ZshCompiler {
             let text_const = self.builder.add_constant(Value::str(&job_text));
             self.builder.emit(Op::LoadConst(text_const), 0);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
+            self.builder.emit(Op::LoadInt(1), 0); // one proc for the whole sublist
             // `&|` / `&!` (disown): pass the flag so BUILTIN_RUN_BG deletes the
             // job (C exec.c:1752-1758) instead of announcing it via spawnjob.
             // Without this, `cmd &|` inside a function/`zle -F` handler leaked a
@@ -948,7 +978,7 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::LoadInt(i64::from(list.flags.disown)), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 3), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 4), 0);
             self.builder.emit(Op::SetStatus, 0);
         } else {
             self.compile_sublist(&list.sublist);
@@ -1419,6 +1449,39 @@ impl ZshCompiler {
             self.compile_command(&pipe.cmd);
             return;
         }
+        let stages = self.compile_pipe_stages(pipe);
+        let n = stages.len();
+        for (idx, _text) in &stages {
+            self.builder.emit(Op::LoadInt(*idx as i64), 0);
+        }
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_PIPELINE, n as u8), 0);
+        self.builder.emit(Op::SetStatus, 0);
+        // c:Src/exec.c::execpline — after a pipeline finishes, C's
+        // post-command path checks errflag via zexit_or_continue()
+        // which sees the pipeline's last-stage non-zero status under
+        // `setopt errexit`. zshrs's compile_pipe path emitted
+        // SetStatus but never called emit_errexit_check, so
+        // `setopt errexit; true | false; echo never` ran "never"
+        // instead of aborting. Bug #286 in docs/BUGS.md. Mirror the
+        // existing simple-command and try-block emit_errexit_check
+        // pattern (lines 423 and 705).
+        self.emit_errexit_check();
+    }
+
+    /// Compile every stage of a multi-stage pipeline into its own sub-chunk.
+    ///
+    /// Returns one `(sub_chunk_index, job_text)` pair per stage, in pipeline
+    /// order. Both pipeline drivers consume this: `BUILTIN_RUN_PIPELINE` for a
+    /// foreground pipeline (which needs only the indices) and `BUILTIN_RUN_BG`
+    /// for `pipeline &` (which additionally hangs each stage's text off its own
+    /// proc entry, the way C's `execpline2` recursion reaches `addproc` once per
+    /// stage — c:Src/exec.c:2092 / c:2907).
+    ///
+    /// The per-stage text is the same deparse C would produce for that ONE
+    /// command, because in C each proc's text is `getjobtext()` over the single
+    /// command's wordcode, never over the whole pipeline.
+    fn compile_pipe_stages(&mut self, pipe: &ZshPipe) -> Vec<(u16, String)> {
         // cmdstack: direct port of Src/exec.c:1991-2039 execpline2.
         // C structure (recursive):
         //   if WC_PIPE_END:
@@ -1449,6 +1512,7 @@ impl ZshCompiler {
                 None => break,
             }
         }
+        let mut built: Vec<(u16, String)> = Vec::with_capacity(stages.len());
         for (i, (stage_cmd, merge)) in stages.iter().enumerate() {
             // c:Src/exec.c:3720-3724 — where the stage's pipe fds land
             // on 0/1. For a SIMPLE command the addfd pair runs after
@@ -1525,23 +1589,18 @@ impl ZshCompiler {
                 break sub.builder.build();
             };
             let idx = self.builder.add_sub_chunk(chunk);
-            self.builder.emit(Op::LoadInt(idx as i64), 0);
+            // c:Src/parse.c:919-928 — `a |& b` is not its own operator in the
+            // stored program: the parser splices a `REDIR_MERGEOUT 2>&1` node
+            // onto the END of the FIRST command's redirection list. The
+            // deparser therefore never renders `|&`, and this stage's job
+            // text carries the `2>&1` the parser gave it.
+            let mut text = tstr(&render_cmd_for_debug(stage_cmd, true));
+            if *merge {
+                text.push_str(" 2>&1");
+            }
+            built.push((idx as u16, text));
         }
-        self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_PIPELINE, stages.len() as u8),
-            0,
-        );
-        self.builder.emit(Op::SetStatus, 0);
-        // c:Src/exec.c::execpline — after a pipeline finishes, C's
-        // post-command path checks errflag via zexit_or_continue()
-        // which sees the pipeline's last-stage non-zero status under
-        // `setopt errexit`. zshrs's compile_pipe path emitted
-        // SetStatus but never called emit_errexit_check, so
-        // `setopt errexit; true | false; echo never` ran "never"
-        // instead of aborting. Bug #286 in docs/BUGS.md. Mirror the
-        // existing simple-command and try-block emit_errexit_check
-        // pattern (lines 423 and 705).
-        self.emit_errexit_check();
+        built
     }
 
     fn compile_command(&mut self, cmd: &ZshCommand) {
@@ -12766,8 +12825,16 @@ fn getredirs(redirs: &[crate::parse::ZshRedir]) -> String {
 fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe, job: bool) -> String {
     let mut out = render_cmd_for_debug(&pipe.cmd, job);
     if let Some(next) = &pipe.next {
+        // c:Src/parse.c:919-928 — `|&` is desugared at PARSE time: the
+        // `REDIR_MERGEOUT 2>&1` node is appended to this command's redirection
+        // list and the node stored for the pipe itself is a plain `WC_PIPE_MID`.
+        // gettext2 has no `|&` arm at all (no such string exists in
+        // Src/text.c), so zsh deparses `a |& b` back as `a 2>&1 | b`.
+        if pipe.merge_stderr {
+            out.push_str(" 2>&1");
+        }
         // c:Src/text.c:496 — `taddstr(" | ");`
-        out.push_str(if pipe.merge_stderr { " |& " } else { " | " });
+        out.push_str(" | ");
         out.push_str(&render_pipe_for_debug(next, job));
     }
     out

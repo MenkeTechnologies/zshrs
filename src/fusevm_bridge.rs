@@ -3537,13 +3537,193 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `&|` / `&!` set disown → the job is dropped from the table (no
         // `[N] pid` announcement, no `[N] done`), matching C exec.c:1752-1758.
         let disown = vm.pop().to_int() != 0;
-        let sub_idx = vm.pop().to_int() as usize;
-        let job_text = vm.pop().to_str();
-        let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
+        // Stage count. 1 for anything but a multi-stage pipeline; the compiler
+        // pushes one (text, sub_chunk_index) pair per stage ahead of it.
+        let nstages = vm.pop().to_int().max(1) as usize;
+        let mut stages: Vec<(usize, String)> = Vec::with_capacity(nstages);
+        for _ in 0..nstages {
+            let idx = vm.pop().to_int() as usize;
+            let text = vm.pop().to_str();
+            stages.push((idx, text));
+        }
+        stages.reverse(); // popped last-stage-first
+        let chunks: Vec<fusevm::Chunk> = match stages
+            .iter()
+            .map(|(i, _)| vm.chunk.sub_chunks.get(*i).cloned())
+            .collect::<Option<Vec<_>>>()
+        {
             Some(c) => c,
             None => return Value::Status(1),
         };
 
+        if nstages > 1 {
+            // c:Src/exec.c:1795 — the Z_ASYNC arm runs execpline2 in THIS
+            // shell, so every stage is forked here and becomes its own proc
+            // entry on the one job. Build the N-1 pipes, fork N children, and
+            // addproc each; nothing in the parent waits.
+            let mut pipes: Vec<(i32, i32)> = Vec::with_capacity(nstages - 1);
+            for _ in 0..nstages - 1 {
+                let mut fds = [0i32; 2];
+                if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+                    for (r, w) in &pipes {
+                        unsafe {
+                            libc::close(*r);
+                            libc::close(*w);
+                        }
+                    }
+                    return Value::Status(1);
+                }
+                pipes.push((fds[0], fds[1]));
+            }
+            // c:Src/exec.c:2916 — every async stage enters the subshell with
+            // ESUB_PGRP, so they all land in ONE new process group led by the
+            // first stage (c:Src/jobs.c:1582-1583 sets jn->gleader to the first
+            // proc's pid). Keeping them together is what makes `kill %1` reach
+            // the whole pipeline. Both parent and child set the pgid so neither
+            // side can lose the race.
+            let mut gleader: libc::pid_t = 0;
+            let mut procs: Vec<(libc::pid_t, String)> = Vec::with_capacity(nstages);
+            for (i, chunk) in chunks.iter().enumerate() {
+                match unsafe { libc::fork() } {
+                    -1 => {
+                        for (pid, _) in &procs {
+                            unsafe { libc::kill(*pid, libc::SIGTERM) };
+                        }
+                        for (r, w) in &pipes {
+                            unsafe {
+                                libc::close(*r);
+                                libc::close(*w);
+                            }
+                        }
+                        return Value::Status(1);
+                    }
+                    0 => {
+                        unsafe { libc::setpgid(0, gleader) };
+                        // Mirrors the RUN_PIPELINE stage child: default SIGPIPE
+                        // so a broken pipe kills the stage quietly, and drop the
+                        // parent's EXIT trap (c:Src/exec.c:2917-2918).
+                        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+                        if let Ok(mut tt) = crate::ported::builtin::traps_table().lock() {
+                            tt.remove("EXIT");
+                        }
+                        if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+                            if let Some(slot) =
+                                st.get_mut(crate::ported::signals_h::SIGEXIT as usize)
+                            {
+                                *slot = 0;
+                            }
+                        }
+                        // c:Src/exec.c:2862 → 1219 — entersubsh clears the job
+                        // table and marks the process a subshell.
+                        with_executor(|exec| {
+                            let monitor =
+                                crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
+                            crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
+                        });
+                        crate::ported::exec::subsh.store(1, std::sync::atomic::Ordering::Relaxed);
+                        *crate::ported::jobs::THISJOB
+                            .get_or_init(|| std::sync::Mutex::new(-1))
+                            .lock()
+                            .unwrap() = -1;
+                        let in_fd = if i > 0 { pipes[i - 1].0 } else { -1 };
+                        // Unlike a foreground pipeline (whose last stage runs
+                        // inline in the shell), an async pipeline forks its last
+                        // stage too, so that stage simply has no pipe on stdout.
+                        let out_fd = if i + 1 < nstages { pipes[i].1 } else { -1 };
+                        for (r, w) in &pipes {
+                            unsafe {
+                                if *r != in_fd && *r != out_fd {
+                                    libc::close(*r);
+                                }
+                                if *w != in_fd && *w != out_fd {
+                                    libc::close(*w);
+                                }
+                            }
+                        }
+                        stage_fds_park(in_fd, out_fd);
+                        crate::fusevm_disasm::maybe_print_stdout(
+                            &format!("background_job:stage:{i}"),
+                            chunk,
+                        );
+                        let mut stage_vm = fusevm::VM::new(chunk.clone());
+                        register_builtins(&mut stage_vm);
+                        let _ = stage_vm.run();
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(stage_vm.last_status);
+                    }
+                    pid => {
+                        if gleader == 0 {
+                            gleader = pid;
+                        }
+                        unsafe { libc::setpgid(pid, gleader) };
+                        procs.push((pid, stages[i].1.clone()));
+                    }
+                }
+            }
+            for (r, w) in &pipes {
+                unsafe {
+                    libc::close(*r);
+                    libc::close(*w);
+                }
+            }
+            // c:Src/exec.c:2891-2892 — `if (how & Z_ASYNC) lastpid = pid;` runs
+            // for EVERY stage as it is forked, so `$!` ends up holding the LAST
+            // stage's pid even though the job's group leader is the first.
+            if let Some((last, _)) = procs.last() {
+                crate::ported::modules::clone::lastpid
+                    .store(*last, std::sync::atomic::Ordering::Relaxed);
+            }
+            {
+                use crate::ported::jobs;
+                use std::sync::Mutex;
+                let table = jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+                let idx = {
+                    let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                    let idx = jobs::initjob(&mut tab); // c:exec.c:1756
+                    for (pid, text) in &procs {
+                        // c:exec.c:2907 — one addproc per forked stage.
+                        jobs::addproc(
+                            &mut tab[idx],
+                            *pid,
+                            text,
+                            false,
+                            Some(std::time::Instant::now()),
+                            -1,
+                            -1,
+                        );
+                    }
+                    tab[idx].stat |= crate::ported::zsh_h::STAT_NOSTTY; // c:exec.c:1803
+                    idx
+                };
+                jobs::clearoldjobtab(); // c:exec.c:1798
+                if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
+                    *tj = idx as i32;
+                }
+                if disown {
+                    // c:exec.c:1808-1811
+                    {
+                        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                        jobs::pipecleanfilelist(&mut tab[idx], false);
+                        jobs::deletejob(&mut tab[idx], true);
+                    }
+                    if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
+                        *tj = -1;
+                    }
+                } else {
+                    jobs::spawnjob(); // c:exec.c:1814
+                }
+            }
+            with_executor(|exec| {
+                for (pid, text) in &procs {
+                    exec.jobs.add_pid_job(*pid, text.clone(), JobState::Running);
+                }
+            });
+            return Value::Status(0);
+        }
+
+        let chunk = chunks.into_iter().next().unwrap();
+        let job_text = stages.into_iter().next().unwrap().1;
         match unsafe { libc::fork() } {
             -1 => Value::Status(1),
             0 => {

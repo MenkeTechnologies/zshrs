@@ -1351,36 +1351,81 @@ pub fn printjob(
         };
         format!("{}{}{}", head_prefix, status_str, job.text)
     } else {
-        // c:1255-1327 — group consecutive procs with the same status
-        // onto one line (text joined with " | "); `jobs -l` / `jobs -p`
-        // (lng & 3) put each proc on its own line.
+        // c:1264-1336 — group consecutive procs with the same status onto
+        // one line; `jobs -l` / `jobs -p` (lng & 3) put each proc on its
+        // own line.
+        //
+        // c:1151 — `lineleng = zterm_columns`. The grouping loop only keeps
+        // adding procs to a line while they still FIT in the terminal
+        // width, so the same job lists on one line in an 80-column terminal
+        // and one line per process when the width is unknown (a pipe, where
+        // zterm_columns is 0 and the very first fit test already fails).
+        let lineleng = crate::ported::utils::ZTERM_COLUMNS.load(std::sync::atomic::Ordering::SeqCst);
         let mut lines: Vec<String> = Vec::new();
         let mut i = 0usize;
         let mut fline = true;
         let mut lng = lng;
+        // c:1151 — `skip = 0`, widened once by the `lng & 2` arm below and
+        // then used to indent every CONTINUATION line under the gleader pid.
+        let mut skip = 0usize;
         while i < job.procs.len() {
             let pn = &job.procs[i];
-            // c:1257-1267 — group extent.
+            // c:1265 — `len2 = (thisfmt ? 5 : 10) + len;` — the width the
+            // header already costs. C never adds the FIRST text on a line to
+            // it, so the leading proc of every line is always admitted.
+            let mut len2 = 10 + len;
+            // c:1266-1276 — group extent.
             let mut group_end = i + 1;
             if (lng & 3) == 0 {
-                while group_end < job.procs.len() && job.procs[group_end].status == pn.status {
+                while group_end < job.procs.len() {
+                    let qn = &job.procs[group_end];
+                    if qn.status != pn.status {
+                        break; // c:1270-1271
+                    }
+                    // c:1272-1274 — the trailing `" | "` a non-final proc
+                    // still has to print counts toward the fit.
+                    let tail = if group_end + 1 < job.procs.len() { 3 } else { 0 };
+                    if qn.text.len() + len2 + tail > lineleng as usize {
+                        break;
+                    }
+                    len2 += qn.text.len() + 2; // c:1275
                     group_end += 1;
                 }
             }
             let mut line = String::new();
             line.push_str(if fline { &head_prefix } else { cont_prefix });
             if (lng & 1) != 0 {
-                line.push_str(&format!("{} ", pn.pid)); // c:1281 "%ld "
+                line.push_str(&format!("{} ", pn.pid)); // c:1290 "%ld "
             } else if (lng & 2) != 0 {
-                line.push_str(&format!("{} ", job.gleader)); // c:1283-1285
-                lng &= !3; // c:1290
+                // c:1291-1299 — `jobs -p` prints the job's group leader ONCE,
+                // then clears the flag and remembers how wide that pid was so
+                // the following lines indent past it.
+                let x = job.gleader;
+                line.push_str(&format!("{} ", x));
+                let mut d = x;
+                loop {
+                    skip += 1; // c:1295-1297
+                    d /= 10;
+                    if d == 0 {
+                        break;
+                    }
+                }
+                skip += 1; // c:1298 — the space after the pid
+                lng &= !3; // c:1299
+            } else {
+                line.push_str(&" ".repeat(skip)); // c:1301 `"%*s", skip, ""`
             }
             line.push_str(&fmt_proc_status(pn.status));
-            let texts: Vec<&str> = job.procs[i..group_end]
-                .iter()
-                .map(|p| p.text.as_str())
-                .collect();
-            line.push_str(&texts.join(" | ")); // c:1318-1325
+            // c:1326-1333 — each proc on the line prints its own text, and
+            // every proc that is not the LAST OF THE JOB is followed by
+            // `" | "`. The group's final proc therefore keeps a dangling
+            // `" | "` when more of the pipeline follows on the next line.
+            for (k, p) in job.procs[i..group_end].iter().enumerate() {
+                line.push_str(&p.text);
+                if i + k + 1 < job.procs.len() {
+                    line.push_str(" | "); // c:1331-1332
+                }
+            }
             lines.push(line);
             fline = false;
             i = group_end;

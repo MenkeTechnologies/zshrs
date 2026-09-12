@@ -80,29 +80,79 @@ struct R {
     exit: i32,
 }
 
-fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path())
-        .args(["-fc", s])
-        .output()
-        .expect("zsh");
+/// Every script here backgrounds a `sleep` and is expected to finish in
+/// well under a second. Run it under a hard deadline so a job that never
+/// gets reaped fails the test instead of wedging the suite.
+const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn run_deadlined(mut cmd: Command, who: &str) -> R {
+    use std::io::Read;
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("spawn {who}: {e}"));
+    let mut out = child.stdout.take().expect("stdout");
+    let mut err = child.stderr.take().expect("stderr");
+    // Drain on threads: the probes print little, but a child blocked on a
+    // full pipe would otherwise outlive the deadline for the wrong reason.
+    let ot = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out.read_to_end(&mut b);
+        b
+    });
+    let et = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err.read_to_end(&mut b);
+        b
+    });
+    let deadline = std::time::Instant::now() + PROBE_DEADLINE;
+    let status = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(st) => break st,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("{who} exceeded the {PROBE_DEADLINE:?} probe deadline");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    };
+    let ob = ot.join().unwrap_or_default();
+    let eb = et.join().unwrap_or_default();
     R {
-        stdout: normalize_pids(&String::from_utf8_lossy(&o.stdout)),
-        stderr: normalize_pids(&String::from_utf8_lossy(&o.stderr)),
-        exit: o.status.code().unwrap_or(-1),
+        stdout: normalize_pids(&String::from_utf8_lossy(&ob)),
+        stderr: normalize_pids(&String::from_utf8_lossy(&eb)),
+        exit: status.code().unwrap_or(-1),
     }
 }
 
+fn run_zsh(s: &str) -> R {
+    let mut c = Command::new(zsh_path());
+    c.args(["-fc", s]);
+    run_deadlined(c, "zsh")
+}
+
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-f", "-c", s])
+    let mut c = Command::new(zshrs_bin());
+    c.args(["--zsh", "-f", "-c", s]).env_remove("ZSHRS_CACHE");
+    run_deadlined(c, "zshrs")
+}
+
+fn run_zsh_cols(cols: u32, s: &str) -> R {
+    let mut c = Command::new(zsh_path());
+    c.args(["-fc", s]).env("COLUMNS", cols.to_string());
+    run_deadlined(c, "zsh")
+}
+
+fn run_zshrs_cols(cols: u32, s: &str) -> R {
+    let mut c = Command::new(zshrs_bin());
+    c.args(["--zsh", "-f", "-c", s])
         .env_remove("ZSHRS_CACHE")
-        .output()
-        .expect("zshrs");
-    R {
-        stdout: normalize_pids(&String::from_utf8_lossy(&o.stdout)),
-        stderr: normalize_pids(&String::from_utf8_lossy(&o.stderr)),
-        exit: o.status.code().unwrap_or(-1),
-    }
+        .env("COLUMNS", cols.to_string());
+    run_deadlined(c, "zshrs")
 }
 
 /// Byte-parity on pid-normalized stdout + stderr + exit code.
@@ -127,6 +177,32 @@ fn assert_parity(s: &str) {
         "exit mismatch for {:?} (zsh {} vs zshrs {})",
         s, z.exit, r.exit
     );
+}
+
+/// Same byte-parity check, with the terminal width PINNED on both shells.
+///
+/// `printjob` breaks a job's process list across lines using
+/// `lineleng = zterm_columns` (c:Src/jobs.c:1151), and a non-interactive zsh
+/// adopts `$COLUMNS` from the environment (c:Src/init.c:1294-1301), so pinning
+/// it is what makes the wrap point a property of the script rather than of
+/// whatever terminal the suite happens to run under.
+fn assert_parity_cols(cols: u32, s: &str) {
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh_cols(cols, s);
+    let r = run_zshrs_cols(cols, s);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout mismatch at COLUMNS={} for {:?}\n zsh:   {:?}\n zshrs: {:?}",
+        cols, s, z.stdout, r.stdout
+    );
+    assert_eq!(
+        z.stderr, r.stderr,
+        "stderr mismatch at COLUMNS={} for {:?}\n zsh:   {:?}\n zshrs: {:?}",
+        cols, s, z.stderr, r.stderr
+    );
+    assert_eq!(z.exit, r.exit, "exit mismatch at COLUMNS={} for {:?}", cols, s);
 }
 
 // ── #79: job table populated by `cmd &` ────────────────────────────
@@ -605,4 +681,174 @@ fn jobs_listing_shows_compound_text() {
     // The `jobs` listing is the user-visible consumer: c:Src/jobs.c:1295
     // prints `[1]  + running    ` followed by the deparsed text.
     assert_parity(r#"for jt_x in 1 2; do sleep 5; done & jobs; kill %1"#);
+}
+
+// ── multi-stage pipeline job shape (execpline2 → one addproc per stage) ──
+//
+// c:Src/exec.c:1795 — the Z_ASYNC arm of `execpline()` runs `execpline2()` in
+// the CURRENT shell rather than wrapping the pipeline in one extra process.
+// execpline2 recurses once per stage (c:2092) and every stage's `execcmd`
+// forks and calls `addproc(pid, text, …)` (c:2907), so a backgrounded
+// pipeline holds one proc PER STAGE — each with its own pid and its own
+// deparsed text.
+//
+// zshrs used to fork a single wrapper child for the whole pipeline and
+// register ONE proc carrying the whole pipeline's text, so `jobs` printed one
+// line where zsh prints one per process, `jobs -l` showed a single pid for a
+// multi-process job, and `$jobtexts` was built from one string instead of
+// joined per-process texts.
+//
+// `printjob` (c:Src/jobs.c:1264-1336) then decides the line breaks: it packs
+// consecutive same-status procs onto a line while they fit in
+// `lineleng = zterm_columns` (c:1151), and `jobs -l` / `jobs -p` (`lng & 3`,
+// c:1266-1267) force one proc per line regardless. Every proc that is not the
+// last of the JOB prints a trailing `" | "` (c:1331-1332), which is why a
+// wrapped pipeline leaves the separator dangling at end of line.
+
+/// Two-stage pipeline, width too narrow to pack: one line per process, and
+/// the first line keeps the dangling `" | "` separator (c:1331-1332).
+#[test]
+fn bg_pipeline_two_stages_one_line_each() {
+    assert_parity_cols(20, "sleep 5 | cat & jobs; kill %1");
+}
+
+/// Three stages: the middle process also ends its line with `" | "` because a
+/// further process follows it in the job; only the last one does not.
+#[test]
+fn bg_pipeline_three_stages_one_line_each() {
+    assert_parity_cols(20, "sleep 5 | cat | cat & jobs; kill %1");
+}
+
+/// The same job at a width that fits packs back onto ONE line — the grouping
+/// loop at c:1266-1276 is a width test, not an unconditional split. Guards the
+/// fix against over-splitting.
+#[test]
+fn bg_pipeline_packs_onto_one_line_when_it_fits() {
+    assert_parity_cols(80, "sleep 5 | cat | cat & jobs; kill %1");
+}
+
+/// c:1265 + c:1272-1274 — the fit test is
+/// `strlen(qn->text) + len2 + (qn->next ? 3 : 0) > lineleng`, with `len2`
+/// seeded at `10 + len` (19 here) and the FIRST text on a line never charged
+/// to it. For `sleep 5 | cat` that puts the break at exactly 21/22 columns.
+/// Pinning both sides catches an accumulator that is off by even one column.
+#[test]
+fn bg_pipeline_break_point_just_too_narrow() {
+    assert_parity_cols(21, "sleep 5 | cat & jobs; kill %1");
+}
+
+#[test]
+fn bg_pipeline_break_point_just_wide_enough() {
+    assert_parity_cols(22, "sleep 5 | cat & jobs; kill %1");
+}
+
+/// Three stages exercise the `+ 3` term: at 24 columns only the FIRST process
+/// fits alone, at 25 the first two pack together and the last wraps, and at 27
+/// all three share a line. The middle row is the one that fails if the
+/// dangling-separator charge is dropped.
+#[test]
+fn bg_pipeline_three_stage_break_first_alone() {
+    assert_parity_cols(24, "sleep 5 | cat | cat & jobs; kill %1");
+}
+
+#[test]
+fn bg_pipeline_three_stage_break_after_second() {
+    assert_parity_cols(25, "sleep 5 | cat | cat & jobs; kill %1");
+}
+
+#[test]
+fn bg_pipeline_three_stage_all_on_one_line() {
+    assert_parity_cols(27, "sleep 5 | cat | cat & jobs; kill %1");
+}
+
+/// c:1266-1267 — `jobs -l` sets `lng & 1`, which both forces one process per
+/// line and prints each process's OWN pid. A single-proc job table cannot
+/// produce a distinct pid per line.
+#[test]
+fn bg_pipeline_jobs_l_pid_per_process() {
+    assert_parity_cols(80, "sleep 5 | cat & jobs -l; kill %1");
+}
+
+#[test]
+fn bg_pipeline_jobs_l_three_stages() {
+    assert_parity_cols(80, "sleep 5 | cat | cat & jobs -l; kill %1");
+}
+
+/// c:1291-1301 — `jobs -p` prints the job's group LEADER once, then clears the
+/// flag and indents every following line by the width of that pid plus one
+/// (the `skip` counter). The continuation lines are blank where the pid was.
+#[test]
+fn bg_pipeline_jobs_p_indents_continuation_lines() {
+    assert_parity_cols(80, "sleep 5 | cat & jobs -p; kill %1");
+}
+
+/// `jobs -r` (running only) still walks the same proc list.
+#[test]
+fn bg_pipeline_jobs_r_lists_each_process() {
+    assert_parity_cols(20, "sleep 5 | cat & jobs -r; kill %1");
+}
+
+/// c:Src/parse.c:919-928 — `|&` is desugared by the PARSER: a
+/// `REDIR_MERGEOUT 2>&1` node is appended to the first command's redirection
+/// list, so the deparser renders `a 2>&1 | b` and the first process's job text
+/// carries the redirect. Src/text.c has no `|&` arm at all.
+#[test]
+fn bg_pipeline_errpipe_text_is_desugared_redirect() {
+    assert_parity_cols(20, "sleep 5 |& cat & jobs; kill %1");
+}
+
+#[test]
+fn bg_pipeline_errpipe_jobtexts_is_desugared_redirect() {
+    assert_parity_cols(80, r#"sleep 5 |& cat & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+/// c:Src/Modules/parameter.c:1257-1273 — `$jobtexts` is built by walking the
+/// job's procs and joining their texts with `" | "`, so it is downstream of
+/// the same per-process registration.
+#[test]
+fn bg_pipeline_jobtexts_joins_process_texts() {
+    assert_parity_cols(80, r#"sleep 5 | cat & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+/// Compound stages keep their own deparsed text per process rather than one
+/// merged string — `{ … }` on one line, the `while` loop on the next.
+#[test]
+fn bg_pipeline_compound_stages_keep_own_text() {
+    assert_parity_cols(
+        20,
+        "{ sleep 5 } | while read jt_x; do :; done & jobs; kill %1",
+    );
+}
+
+/// c:Src/jobs.c:2063 getjob — `%?string` searches the job's text for a
+/// substring. It has to match against a stage that is not the first, which
+/// only works if that stage's text is actually registered.
+#[test]
+fn bg_pipeline_job_match_by_later_stage() {
+    assert_parity_cols(20, "sleep 5 | cat & jobs %?cat; kill %1");
+}
+
+#[test]
+fn bg_pipeline_job_match_by_first_stage() {
+    assert_parity_cols(20, "sleep 5 | cat & jobs %?sleep; kill %1");
+}
+
+/// Two backgrounded pipelines: the `+` / `-` markers still track curjob and
+/// prevjob while each job now spans several lines.
+#[test]
+fn bg_pipeline_two_jobs_markers_with_multiline_jobs() {
+    assert_parity_cols(20, "sleep 5 | cat & sleep 5 | cat & jobs; kill %1 %2");
+}
+
+/// `( … )` is ONE fork in both shells, so a pipeline inside a subshell stays a
+/// single process — the fix must not split it.
+#[test]
+fn bg_subshell_wrapping_a_pipeline_is_one_process() {
+    assert_parity_cols(20, "( sleep 5 | cat ) & jobs; kill %1");
+}
+
+/// A single-command background job is unchanged by the per-stage path.
+#[test]
+fn bg_single_command_still_one_process() {
+    assert_parity_cols(20, "sleep 5 & jobs -l; kill %1");
 }
