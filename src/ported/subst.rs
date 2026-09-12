@@ -4736,12 +4736,18 @@ pub fn paramsubst(
         // range bounds, which go through getarg, but not on a standalone
         // `${a[(i)pat]}`, which does not. Folding the two inline copies back
         // onto getarg is the real repair; docs/BUGS.md #1044.
-        let ksh_search_index = |one_based: i64| -> String {
+        //
+        // It answers an i64 rather than the printed string because the chained
+        // inverse subscript needs the shifted NUMBER: c:2112 runs inside
+        // getindex, so it lands before c:Src/subst.c:2945-2948 folds a negative
+        // index against the temp array's length, and a decremented-then-folded
+        // index is not the same as a folded-then-decremented one.
+        let ksh_search_index = |one_based: i64| -> i64 {
             // c:2091
             if one_based > 0 && isset(crate::ported::zsh_h::KSHARRAYS) {
-                (one_based - 1).to_string()
+                one_based - 1
             } else {
-                one_based.to_string()
+                one_based
             }
         };
         // c:1691 — `int vunset = 0;` — value-was-unset flag.
@@ -9911,7 +9917,7 @@ pub fn paramsubst(
                         }
                     }
                     match found_idx {
-                        Some(idx) if return_index => ksh_search_index(idx as i64 + 1),
+                        Some(idx) if return_index => ksh_search_index(idx as i64 + 1).to_string(),
                         Some(idx) => arr[idx].clone(),
                         // c:1744/1748 — a begin index that stays negative after
                         // `beg += len` means "no scan, answer 0", even forward,
@@ -9920,7 +9926,7 @@ pub fn paramsubst(
                         None if return_index && !down => {
                             // c:2945 — (i) no-match: one-past-end
                             // so `$arr[$arr[(i)pat]]` yields empty.
-                            ksh_search_index(arr.len() as i64 + 1)
+                            ksh_search_index(arr.len() as i64 + 1).to_string()
                         }
                         None if return_index && down => {
                             // c:2945 — (I) no-match: 0 (before first).
@@ -11226,7 +11232,7 @@ pub fn paramsubst(
                             }
                         }
                         match (found, return_index) {
-                            (Some(s), true) => ksh_search_index(s as i64 + 1),
+                            (Some(s), true) => ksh_search_index(s as i64 + 1).to_string(),
                             (Some(s), false) => {
                                 // c:Src/params.c:1798-1980 — scalar (r)/(R)
                                 // returns the CHAR at the match position,
@@ -11249,7 +11255,7 @@ pub fn paramsubst(
                                 } else if n == 0 {
                                     "0".to_string()
                                 } else if flags.contains('i') {
-                                    ksh_search_index(n as i64 + 1)
+                                    ksh_search_index(n as i64 + 1).to_string()
                                 } else {
                                     "0".to_string()
                                 }
@@ -12115,12 +12121,41 @@ pub fn paramsubst(
             // first subscript (`${a[N][M]}`) walks into the element's chars
             // (handled below). Equivalent to `${${a[lo,hi]}[M]}`.
             // c:Src/params.c:1533-1536 — a RANGE is decided on the unexpanded text.
+            // c:Src/params.c:1618-1620 — EVERY subscript in C is read by
+            // `getarg`, and that is the one place KSH_ARRAYS 0-bases it:
+            //
+            //     } else {
+            //         r = mathevalarg(s, &s);
+            //         if (isset(KSHARRAYS) && r >= 0)
+            //             r++;
+            //     }
+            //
+            // so the 1-based machinery downstream is always fed `r + 1` and a
+            // written `[0]` selects the first element/character. A CHAINED
+            // subscript is not exempt: c:Src/subst.c:2890-2900 wraps the value
+            // the first subscript produced in a throwaway
+            // `createparam(nulstring, isarr ? PM_ARRAY : PM_SCALAR)` and calls
+            // `getindex` on it, which calls this same `getarg`. The first
+            // subscript of the chain is re-read here too (`bound_idx` below),
+            // so it needs the adjustment for the same reason.
+            //
+            // The adjustment rides the PARSED value only. `dflt` is this
+            // port's stand-in for a bound C never read through `getarg` at
+            // all — the text did not parse as arithmetic — so it is already
+            // the effective 1-based bound and must not be shifted again.
+            // A negative index is left alone, as c:1619's `r >= 0` leaves it.
             let parse_idx = |t: &str, dflt: i64| -> i64 {
-                t.trim()
-                    .parse()
+                match t
+                    .trim()
+                    .parse::<i64>()
                     .ok()
                     .or_else(|| crate::ported::math::mathevali(t.trim()).ok())
-                    .unwrap_or(dflt)
+                {
+                    // c:1619-1620 `if (isset(KSHARRAYS) && r >= 0) r++;`
+                    Some(r) if r >= 0 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) => r + 1,
+                    Some(r) => r,
+                    None => dflt,
+                }
             };
             let first_slice = subscript.as_deref().filter(|s| {
                 crate::subscript_escape::subscript_range_bounds(s, &subscript_split).is_some()
@@ -12255,7 +12290,17 @@ pub fn paramsubst(
                             // VALFLAG_INV, and c:Src/params.c:2336-2339
                             // getstrvalue prints it: `${A[(i)pat][(r)x]}` is the
                             // index, not the element.
-                            Some(start_c2058.to_string())
+                            //
+                            // c:Src/params.c:2112-2113 `if (start > 0 &&
+                            // (isset(KSHARRAYS) || (v->pm->node.flags &
+                            // PM_HASHED))) start--;` — the position handed back
+                            // is 1-based, and under KSHARRAYS the caller reads
+                            // it as an index into a 0-based array, so it comes
+                            // down by one. The `> 0` guard preserves the `(I)`
+                            // no-match answer of 0. `ksh_search_index` is the
+                            // single port of that line; the standalone
+                            // `${a[(i)pat]}` sites already share it.
+                            Some(ksh_search_index(start_c2058 as i64).to_string())
                         } else {
                             // c:Src/params.c:2144-2145 `start -= startprevlen`
                             // (1 by default, c:1404-1405) then c:2540 getarrvalue
@@ -12330,6 +12375,15 @@ pub fn paramsubst(
                         // (`v->start += tmplen + 1` under VALFLAG_INV), then
                         // c:Src/params.c:2336-2339 prints it: on a 3-match scan
                         // `${A[(I)*][-1]}` is `3` and `${A[(I)*][-9]}` is `-5`.
+                        //
+                        // c:Src/params.c:2112-2113 runs FIRST, inside getindex,
+                        // and only on a positive index — so under KSHARRAYS the
+                        // `r++` c:1619 just applied comes straight back off and
+                        // a written index is echoed unchanged:
+                        // `${A[(i)k1][2]}` is `2` either way. The fold at
+                        // c:Src/subst.c:2945 happens afterwards, which is why
+                        // the shift has to be taken before it and not after.
+                        let k = ksh_search_index(k); // c:2112
                         let k = if k < 0 { k + nl + 1 } else { k };
                         let res = k.to_string();
                         split_parts = Some(vec![res.clone()]);
@@ -12372,22 +12426,25 @@ pub fn paramsubst(
                     }
                 };
                 if let Some((lo, hi)) = s2.split_once(',') {
-                    let lo: i64 = lo
-                        .trim()
-                        .parse()
-                        .ok()
-                        .or_else(|| crate::ported::math::mathevali(lo.trim()).ok())
-                        .unwrap_or(1);
-                    let hi: i64 = hi
-                        .trim()
-                        .parse()
-                        .ok()
-                        .or_else(|| crate::ported::math::mathevali(hi.trim()).ok())
-                        .unwrap_or(0);
+                    // c:Src/params.c:1618-1620 — a CHARACTER subscript is read
+                    // by the same `getarg` as an element subscript, so it is
+                    // 0-based under KSHARRAYS too. These three parses were
+                    // open-coded copies of `parse_idx` that predated it and so
+                    // never inherited the option; they now route through the one
+                    // reader, which is where c:1619 lives.
+                    //
+                    // The `hi` default moves from 0 to `n` as part of that. It
+                    // was a sentinel meaning "to the end" for text that did not
+                    // parse, but it also swallowed a WRITTEN `0`, which C reads
+                    // as the bound 0 and answers empty for: `s=hello` gives
+                    // `${s[1,0]}` = `` in zsh, not `hello`. Spelling the
+                    // fallback as the length keeps the unparsed case and lets a
+                    // written 0 mean 0 — and under KSHARRAYS c:1619 turns that
+                    // written 0 into 1 before it ever gets here.
+                    let lo: i64 = parse_idx(lo, 1);
+                    let hi: i64 = parse_idx(hi, n);
                     let l = resolve(lo);
-                    let h = if hi == 0 {
-                        n as usize
-                    } else {
+                    let h = {
                         let k = if hi < 0 { n + hi + 1 } else { hi };
                         if k < 1 {
                             0
@@ -12403,12 +12460,9 @@ pub fn paramsubst(
                         dv.chars().skip(l).take(h - l).collect()
                     }
                 } else {
-                    let k: i64 = s2
-                        .trim()
-                        .parse()
-                        .ok()
-                        .or_else(|| crate::ported::math::mathevali(s2.trim()).ok())
-                        .unwrap_or(1);
+                    // c:Src/params.c:1618-1620, via the one reader — see the
+                    // range arm above.
+                    let k: i64 = parse_idx(s2, 1);
                     let i = resolve(k);
                     dv.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()
                 }

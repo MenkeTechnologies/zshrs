@@ -92,6 +92,7 @@ mod ifs_parity;
 mod jobs_parity;
 mod kill_signal_parity;
 mod ksharrays_bare_ref_parity;
+mod ksharrays_chained_subscript_parity;
 mod ksharrays_clamped_ref_is_scalar_parity;
 mod ksharrays_nested_subst_parity;
 mod let_arith_command_parity;
