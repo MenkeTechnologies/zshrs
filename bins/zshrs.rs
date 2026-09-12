@@ -2658,16 +2658,13 @@ pub fn zshrs_main() {
             &option_actions,
             deferred_zsh_style_emu,
         );
-        // c:Src/init.c:1444-1445 — C reaches this through `init_signals`
-        // on EVERY invocation; this dispatch path never calls that
-        // function (see extensions/startup_signals.rs for why calling all
-        // of `init_signals` here is not safe). Without it, a shell started
-        // with SIGQUIT already ignored — nohup, a supervisor, or `cargo
-        // test`'s own spawn — listed no `trap -- '' QUIT` where zsh does.
-        zsh::startup_signals::record_inherited_sigquit_ignore();
-        // c:Src/init.c:1451-1452 — an INHERITED SIG_IGN on SIGHUP clears the
-        // HUP option, so `set -o` reports `nohup` under nohup/supervisors.
-        zsh::startup_signals::record_inherited_sighup_ignore();
+        // c:Src/init.c:1427-1470 (`init_signals`) — C reaches it through
+        // `zsh_main` on EVERY invocation; this dispatch path never calls
+        // that function, so run the same sequence here (all of it bar
+        // `install_handler(SIGCHLD)` — see extensions/startup_signals.rs).
+        // It must come AFTER `apply_cli_flags`, which is what settles
+        // INTERACTIVE and MONITOR, because C's gates read them.
+        zsh::startup_signals::init_dispatch_signals();
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
         //                                 ztrdup_metafy(cmd));`
@@ -2950,16 +2947,11 @@ pub fn zshrs_main() {
             &option_actions,
             deferred_zsh_style_emu,
         );
-        // c:Src/init.c:1444-1445 — C reaches this through `init_signals`
-        // on EVERY invocation; this dispatch path never calls that
-        // function (see extensions/startup_signals.rs for why calling all
-        // of `init_signals` here is not safe). Without it, a shell started
-        // with SIGQUIT already ignored — nohup, a supervisor, or `cargo
-        // test`'s own spawn — listed no `trap -- '' QUIT` where zsh does.
-        zsh::startup_signals::record_inherited_sigquit_ignore();
-        // c:Src/init.c:1451-1452 — an INHERITED SIG_IGN on SIGHUP clears the
-        // HUP option, so `set -o` reports `nohup` under nohup/supervisors.
-        zsh::startup_signals::record_inherited_sighup_ignore();
+        // c:Src/init.c:1427-1470 (`init_signals`) — same bypass as the
+        // `-c` dispatch above: run the whole sequence here (bar
+        // `install_handler(SIGCHLD)`), after `apply_cli_flags` has
+        // settled the INTERACTIVE and MONITOR gates C's branches read.
+        zsh::startup_signals::init_dispatch_signals();
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
         //   argv[0] = shell binary       (from init.c:271)

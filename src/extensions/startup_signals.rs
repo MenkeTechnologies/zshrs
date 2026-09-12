@@ -18,9 +18,10 @@
 //! substitute: it also installs C's SIGCHLD handler, whose reaper then
 //! races the pipeline's own `waitpid` and destroys `$pipestatus`
 //! (measured with that call wired in: `parity-fuzz --mode pipeline` went
-//! from 0 to 139 divergences, `jobs` 0 -> 16, `errexit` 0 -> 13). Only the
-//! inherited-SIGQUIT half is shared here until those dispatch paths are
-//! converged onto `zsh_main`.
+//! from 0 to 139 divergences, `jobs` 0 -> 16, `errexit` 0 -> 13). So
+//! `init_dispatch_signals` below replays `init_signals` line by line with
+//! that ONE line left out, until those dispatch paths are converged onto
+//! `zsh_main`.
 
 /// Whether the inherited-signal bookkeeping below applies at all.
 ///
@@ -84,43 +85,137 @@ pub fn record_inherited_sigquit_ignore() {
 #[cfg(not(unix))]
 pub fn record_inherited_sigquit_ignore() {}
 
-/// Clear the `HUP` option when SIGHUP is INHERITED as `SIG_IGN`.
+/// Run `init_signals` (`Src/init.c:1427-1470`) on a dispatch path that
+/// does not reach `ported::init::zsh_main`.
 ///
-/// Port of `Src/init.c:1451-1452`:
-/// ```c
-/// if (signal_ignore(SIGHUP) == SIG_IGN)
-///     opts[HUP] = 0;
-/// else
-///     install_handler(SIGHUP);
-/// ```
+/// Every line of C's `init_signals` is replayed here in C's order bar
+/// two, each with a measurement at its site below: `intr()` (`c:1442`)
+/// and `install_handler(SIGCHLD)` (`c:1455`). The `sigtrapped`/`siglists`
+/// allocations (`c:1431-1432`) and the `sigchld_mask` cache (`c:1440`)
+/// have no zshrs counterpart, same as in the ported `init_signals`
+/// itself.
 ///
-/// Same bypass as `record_inherited_sigquit_ignore`: `-c` and script-file
-/// dispatch never reach `init_signals`, so a shell started under `nohup`
-/// (or `cargo test`) reported `set +o nohup` where zsh reports
-/// `set -o nohup`.
+/// Without this, `zsh -f -i -c 'kill -ALRM $$'` printed `zsh:1: timeout`
+/// and exited 14 while zshrs died from the raw signal with 142: SIGALRM,
+/// SIGPIPE and the SIGTERM/SIGQUIT ignores were only ever armed for a
+/// shell that read its input from stdin. SIGHUP was unarmed on BOTH the
+/// interactive and non-interactive `-c` path (129 vs zsh's 1).
 ///
-/// Only the SIG_IGN LEG is ported here. C's else-branch installs a SIGHUP
-/// handler, which is deliberately not done on these paths — see the module
-/// docs on why installing C's handlers here breaks pipeline reaping. This
-/// reads the disposition with `sigaction` rather than C's `signal_ignore`
-/// so it does not also SET the signal to ignored; for the inherited case
-/// the signal is already ignored, so the observable result is the same.
+/// The ORDER matters beyond tidiness: C records an inherited `SIG_IGN` on
+/// SIGQUIT (`c:1444-1445`) only AFTER the interactive branch has reset
+/// every disposition to default (`c:1437-1438`), so an interactive shell
+/// never records it. Doing the record first — which is what the two
+/// dispatch sites used to do — made `nohup zshrs -fic trap` print
+/// `trap -- '' QUIT` where zsh prints nothing.
 #[cfg(unix)]
-pub fn record_inherited_sighup_ignore() {
+pub fn init_dispatch_signals() {
+    use crate::ported::signals::install_handler;
+    use crate::ported::signals_h::{signal_default, signal_ignore, winch_block, SIGCOUNT};
+    use crate::ported::zsh_h::{interact, jobbing};
+
+    // Same gate as `record_inherited_sigquit_ignore`: this is ZSH's
+    // startup signal policy, and the drop-in modes have their own.
+    // Measured under `-i -c 'kill -<sig> $$; echo survived'`:
+    //   TERM  bash survives, zsh survives      — agree
+    //   QUIT  bash survives, zsh survives      — agree
+    //   ALRM  bash dies (142), zsh prints "timeout" and exits 14
+    //   HUP   bash dies (129), zsh exits 1
+    // so arming zsh's SIGALRM/SIGHUP handlers in `--bash` would break the
+    // two rows that used to agree. A drop-in mode that wants its own
+    // arming needs its own port of it, not a share of this one.
     if !zsh_mode_only() {
         return;
     }
-    let is_ignored = unsafe {
-        let mut act: libc::sigaction = std::mem::zeroed();
-        libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut act) == 0
-            && act.sa_sigaction == libc::SIG_IGN
-    };
-    if is_ignored {
-        // c:1452 — `opts[HUP] = 0;`
-        crate::ported::options::dosetopt(crate::ported::zsh_h::HUP, 0, 0);
+
+    // c:1434-1439 — `if (interact) { signal_setmask(signal_mask(0));
+    // for (i=0; i<NSIG; ++i) signal_default(i); }`.
+    if interact() {
+        let empty = crate::ported::signals::signal_mask(0);
+        let _ = crate::ported::signals::signal_setmask(&empty);
+        // c:1437-1438 — `SIGCOUNT` is the port of NSIG-1; skip 0, whose
+        // `signal_default(0)` is implementation-defined.
+        for i in 1..=SIGCOUNT {
+            let _ = signal_default(i);
+        }
+    }
+
+    // c:1440 — `sigchld_mask = signal_mask(SIGCHLD);` not modeled.
+
+    // !!! DELIBERATE OMISSION — NO C COUNTERPART FOR THE ABSENCE !!!
+    // c:1442 — `intr();`, i.e. `if (interact) install_handler(SIGINT);`.
+    //
+    // C's handler does not terminate the shell on an untrapped SIGINT: it
+    // sets `errflag |= ERRFLAG_INT` and `lastval = 128 + SIGINT`
+    // (c:Src/signals.c:457/463), and the ABORT comes from execlist's list
+    // gate `while (… && !errflag)` (c:Src/exec.c:1443) ending the list.
+    // zshrs emits no such per-statement gate for a top-level `-c` chunk —
+    // `BUILTIN_NOEXEC_CHECK` is not reached there at all (measured by
+    // instrumenting the builtin: `kill -INT $$; print survived` never
+    // calls it) — so with the handler installed the interrupt is recorded
+    // and then ignored:
+    //   zsh    -f -i -c 'kill -INT $$; print survived'  -> exit 130, silent
+    //   zshrs, handler installed                        -> prints survived, exit 0
+    //   zshrs, no handler (default disposition)         -> exit 130, silent
+    // and the same three ways round for an external interrupt into
+    // `-f -i -c 'while true; do sleep 0.05; done; print AFTERLOOP'`,
+    // where the loop gate DOES read the whole errflag word
+    // (fusevm_bridge BUILTIN_LOOP_ERRFLAG_BREAK) so the installed handler
+    // breaks the loop and then runs `AFTERLOOP` that zsh never reaches.
+    // Leaving SIGINT at its default disposition reproduces C's observable
+    // — status and output — on every case measured, so install it only
+    // once the top-level list gate exists. Note `bin_trap` installs the
+    // handler itself when a real INT trap is set, so trapped interrupts
+    // are unaffected by this.
+
+    // c:1444-1445 — inherited SIG_IGN on SIGQUIT becomes ZSIG_IGNORED.
+    record_inherited_sigquit_ignore();
+
+    // c:1447-1449 — `#ifndef QDEBUG signal_ignore(SIGQUIT); #endif`
+    signal_ignore(libc::SIGQUIT);
+
+    // c:1451-1454 — an inherited SIG_IGN on SIGHUP clears the HUP option
+    // (so `set -o` reports `nohup` under nohup/supervisors); otherwise
+    // the handler takes over, which is what turns an untrapped HUP into
+    // zsh's exit 1 instead of the raw 129.
+    if signal_ignore(libc::SIGHUP) == libc::SIG_IGN {
+        crate::ported::options::dosetopt(crate::ported::zsh_h::HUP, 0, 0); // c:1452
+    } else {
+        install_handler(libc::SIGHUP); // c:1454
+    }
+
+    // !!! DELIBERATE OMISSION — NO C COUNTERPART FOR THE ABSENCE !!!
+    // c:1455 — `install_handler(SIGCHLD);`. zshrs's pipelines reap their
+    // own children with `waitpid`; C's SIGCHLD reaper races them and
+    // destroys `$pipestatus`. Module docs carry the measurement.
+
+    // c:1456-1459 — `#ifdef SIGWINCH install_handler(SIGWINCH);
+    // winch_block(); #endif`. The standing block is the delivery policy:
+    // a resize stays PENDING until an explicit unblock window, and the
+    // fork-child unblocks before `execve` (c:Src/exec.c:533, ported at
+    // ported/exec.rs:4305) so the new program starts with it deliverable.
+    #[cfg(not(target_os = "haiku"))]
+    {
+        install_handler(libc::SIGWINCH); // c:1457
+        winch_block(); // c:1458
+    }
+
+    // c:1460-1464 — interactive-only: SIGPIPE and SIGALRM get handlers
+    // (SIGALRM is how `$TMOUT` logs out with "timeout"), SIGTERM is
+    // ignored outright so an interactive shell survives it.
+    if interact() {
+        install_handler(libc::SIGPIPE); // c:1461
+        install_handler(libc::SIGALRM); // c:1462
+        signal_ignore(libc::SIGTERM); // c:1463
+    }
+
+    // c:1465-1469 — job-control signals are ignored in the shell itself.
+    if jobbing() {
+        signal_ignore(libc::SIGTTOU); // c:1466
+        signal_ignore(libc::SIGTSTP); // c:1467
+        signal_ignore(libc::SIGTTIN); // c:1468
     }
 }
 
-/// Non-unix stub: there is no SIGHUP to inherit.
+/// Non-unix stub: none of these signals exist.
 #[cfg(not(unix))]
-pub fn record_inherited_sighup_ignore() {}
+pub fn init_dispatch_signals() {}
