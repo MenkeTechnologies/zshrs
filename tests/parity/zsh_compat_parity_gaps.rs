@@ -294,8 +294,24 @@ mod typeset_and_dump {
         // CoreFoundation via a dependency and CF's dyld initializer
         // (which runs before main, unbeatable in-process) rewrites
         // that one variable in the live environment; zsh has no CF
-        // initializer in its path. Everything else is compared raw.
-        export_minus_p_full_dump => (r#"export -p"#, r#"export -p | grep -v __CF_USER_TEXT_ENCODING"#);
+        // initializer in its path.
+        //
+        // Secret-shaped names are excluded too, and that exclusion is a
+        // DISCLOSURE fix rather than a parity one. This case dumps the
+        // developer's whole environment, and on a failure the assertion
+        // prints both dumps verbatim into the test log. The environment it
+        // ran in held four live credentials -- COMMAND_LINE_GITHUB_API_TOKEN,
+        // GITHUB_TOKEN, HOMEBREW_GITHUB_API_TOKEN, CLAUDE_CODE_MESSAGING_TOKEN
+        // -- so every run of this test while it was red wrote real GitHub
+        // PATs in cleartext to wherever the output went.
+        //
+        // The filter runs INSIDE the script, so both shells are filtered by
+        // the same pipeline and the comparison stays symmetric -- exactly how
+        // __CF_USER_TEXT_ENCODING is already handled. It removes whole lines
+        // from both sides, so it cannot hide a one-sided divergence; it can
+        // only stop comparing those names at all, which is the intended
+        // trade. Everything else is still compared raw.
+        export_minus_p_full_dump => (r#"export -p"#, r#"export -p | grep -vE '__CF_USER_TEXT_ENCODING|TOKEN|SECRET|PASSWORD|PASSWD|_KEY|APIKEY|CREDENTIAL'"#);
     }
 }
 
