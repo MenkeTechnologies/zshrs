@@ -133,15 +133,66 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // tie with the same exit code C uses.
     {
         let mut existing_unset_failed = false;
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut(pmname) {
+        // !!! LOCK DISCIPLINE — NO GSU CALLBACK MAY RUN UNDER THE GUARD !!!
+        // Same rule, and the same reasoning, as the long note in
+        // `assignnparam` (params.rs): C holds no lock at all — c:157 hands
+        // `unsetparam_pm` a pointer to the LIVE node — so the callee is free
+        // to reach anything, and `unsetparam_pm` does: its `if (pm->env)
+        // delenv(pm)` arm (c:Src/params.c:3872) lands in a `delenv` that
+        // re-takes `paramtab().write()`, and its read-only rejection
+        // (c:Src/params.c:3852) calls `zerr`, which is not a leaf either
+        // (zwarning → zleentry(ZLE_CMD_TRASH) → zrefresh →
+        // getaparam("zle_highlight") → this same lock).
+        //
+        // `paramtab()` is a `std::sync::RwLock` and is NOT reentrant, so
+        // holding the write guard across that call parked the shell on
+        // itself. Unlike the other two sites this restructure covers, it was
+        // not merely latent — it hung outright for any parameter imported
+        // from the environment, which is where `pm.env` gets set
+        // (params.rs, the c:907-914 import loop):
+        //
+        //     MYIMPORTED=hello zshrs -f -c 'zmodload zsh/db/gdbm
+        //                                   ztie -d db/gdbm -f r.gdbm MYIMPORTED'
+        //
+        // never returned, with 2660 of 2660 `sample` frames in
+        // `semaphore_wait_trap` under
+        // `bin_ztie → unsetparam_pm → delenv → RwLock::write → lock_contended`.
+        //
+        // So the guard is released before the dispatch, in C's order: detach
+        // the node under the guard, release, run `unsetparam_pm` against the
+        // detached node (which is what C's pointer-to-the-live-node amounts
+        // to once no lock stands in the way), then publish the node it
+        // mutated. `unsetparam_pm` mutates ONLY the node it is handed — it
+        // never unlinks it (its own comment records that the c:3853-3935
+        // removenode postlude is unported) — so republishing that node is the
+        // whole of the write-back, and `delenv`'s own `pm.env = None` write
+        // to the live table is idempotent with the copy's.
+        let staged = {
+            let tab = match crate::ported::params::paramtab().read() {
+                Ok(t) => t,
+                Err(_) => return 1,
+            };
+            match tab.get(pmname) {
                 // c:143 — `!(tied_param->node.flags & PM_UNSET)`
-                if (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0 {
-                    // c:157 — `if (unsetparam_pm(tied_param, 0, 1)) return 1;`
-                    let r = crate::ported::params::unsetparam_pm(pm, 0, 1);
-                    if r != 0 {
-                        existing_unset_failed = true;
-                    }
+                Some(pm) if (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0 => {
+                    Some((**pm).clone())
+                }
+                _ => None,
+            }
+        };
+        // ---- guard released; no paramtab lock is held across the dispatch ----
+        if let Some(mut pm) = staged {
+            // c:157 — `if (unsetparam_pm(tied_param, 0, 1)) return 1;`
+            let r = crate::ported::params::unsetparam_pm(&mut pm, 0, 1);
+            if r != 0 {
+                existing_unset_failed = true;
+            } else if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                // Publish what the dispatch wrote through C's live pointer.
+                // Only if the node is still there: `unsetparam_pm` may have
+                // reached code that removed it, and re-adding it would
+                // resurrect a parameter C had just dropped.
+                if let Some(slot) = tab.get_mut(pmname) {
+                    **slot = pm;
                 }
             }
         }

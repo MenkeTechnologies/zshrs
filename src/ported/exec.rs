@@ -8879,16 +8879,56 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
         };
         if let Some(f) = flags {
             if (f & PM_SPECIAL as i32) == 0 {
-                // c:4473 — `pm->node.flags &= ~PM_READONLY;`
-                let mut tab = paramtab().write().unwrap();
-                if let Some(pm_mut) = tab.get_mut(s) {
-                    pm_mut.node.flags &= !(PM_READONLY as i32);
-                }
-                // Drop write guard before calling unsetparam_pm.
-                drop(tab);
-                let mut tab = paramtab().write().unwrap();
-                if let Some(pm_mut) = tab.get_mut(s) {
-                    let _ = crate::ported::params::unsetparam_pm(pm_mut, 0, 0); // c:4474
+                // !!! LOCK DISCIPLINE — NO GSU CALLBACK MAY RUN UNDER THE GUARD !!!
+                // Same rule, and the same reasoning, as the long note in
+                // `assignnparam` (params.rs). C holds no lock at all: c:4474
+                // hands `unsetparam_pm` a pointer to the live node, so the
+                // callee may reach anything, and this one does — its
+                // `if (pm->env) delenv(pm)` arm (c:Src/params.c:3872) lands in
+                // a `delenv` that re-takes `paramtab().write()`, and its
+                // read-only rejection (c:Src/params.c:3852) calls `zerr`,
+                // which is not a leaf either (zwarning →
+                // zleentry(ZLE_CMD_TRASH) → zrefresh →
+                // getaparam("zle_highlight") → this same lock). `paramtab()`
+                // is a `std::sync::RwLock` and is NOT reentrant.
+                //
+                // Neither arm can fire from HERE today, and neither is
+                // disarmed by the callee being a leaf — both are disarmed by
+                // this caller's preconditions, one line apart:
+                //   * the `zerr` arm, by c:4473 clearing PM_READONLY
+                //     immediately below;
+                //   * the `delenv` arm, by `save_params` having already run
+                //     `if (pm->env) delenv(pm)` (c:4423-4424) over this very
+                //     name on the way in, which left `pm.env` None.
+                // That is a guarantee held by a different function, for its
+                // own reasons. `bin_ztie` had the identical shape with no such
+                // guarantee and hung outright. The previous spelling here even
+                // said `// Drop write guard before calling unsetparam_pm.` and
+                // then re-acquired the guard on the next line, so the dispatch
+                // ran under it anyway.
+                //
+                // Detach under the guard, release, dispatch, publish — C's
+                // order. `unsetparam_pm` mutates only the node it is handed
+                // and never unlinks it (its own comment records that the
+                // c:3853-3935 removenode postlude is unported), so
+                // republishing that node is the whole of the write-back.
+                let staged = {
+                    // c:4473 — `pm->node.flags &= ~PM_READONLY;`
+                    let mut tab = paramtab().write().unwrap();
+                    tab.get_mut(s).map(|pm_mut| {
+                        pm_mut.node.flags &= !(PM_READONLY as i32);
+                        (**pm_mut).clone()
+                    })
+                };
+                // ---- guard released; none is held across the dispatch ----
+                if let Some(mut pm) = staged {
+                    let _ = crate::ported::params::unsetparam_pm(&mut pm, 0, 0); // c:4474
+                    let mut tab = paramtab().write().unwrap();
+                    // Only if the node is still there — re-adding one the
+                    // dispatch removed would resurrect a parameter C dropped.
+                    if let Some(slot) = tab.get_mut(s) {
+                        **slot = pm;
+                    }
                 }
             }
         }

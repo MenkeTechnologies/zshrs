@@ -236,3 +236,142 @@ fn the_cached_storage_scalar_specials_survive_the_deferral() {
     assert_import_completes("TERM", "xterm");
     assert_import_completes("TERMINFO_DIRS", "/x");
 }
+
+// ---------------------------------------------------------------------------
+// The three dispatch sites 267ec6ea73 left open.
+//
+// That commit fixed the sites that could hang and deliberately left three that
+// reached only a leaf callee. Two of the three turned out not to: the callee
+// they reach, `unsetparam_pm`, calls `delenv` on an exported parameter
+// (`Src/params.c:3872`), and this port's `delenv` re-takes `paramtab().write()`.
+// One of those two — `bin_ztie` — had no caller-side precondition standing in
+// the way and hung outright.
+// ---------------------------------------------------------------------------
+
+/// Run `script` under zshrs with no extra environment, under the same deadline.
+fn run_zshrs(script: &str) -> Result<String, Duration> {
+    run_zshrs_with_env("ZSHRS_LOCKREST_PROBE", "1", script)
+}
+
+/// `bin_ztie` unset any existing parameter before taking over its name
+/// (`Src/Modules/db_gdbm.c:157` `if (unsetparam_pm(tied_param, 0, 1)) return 1;`)
+/// while holding the paramtab write guard. For a parameter imported from the
+/// environment — which is where `pm.env` gets set, `Src/params.c:907-914` —
+/// `unsetparam_pm` took its `if (pm->env) delenv(pm)` arm (c:3872), and
+/// `delenv` re-took the same non-reentrant write lock.
+///
+/// `sample` on the hung process, 2660 of 2660 in `semaphore_wait_trap`:
+///
+/// ```text
+/// bin_ztie -> unsetparam_pm -> delenv -> RwLock::write -> lock_contended
+/// ```
+///
+/// The tie itself is expected to FAIL here (this build reports "GDBM support
+/// not compiled in"), and that is fine: the unset at c:157 runs first, which is
+/// the part that hung. What is pinned is that the shell answers at all.
+///
+/// No oracle comparison: `/opt/homebrew/bin/zsh` is built without
+/// `zsh/db/gdbm`, so there is nothing to compare against.
+#[test]
+fn ztie_over_an_imported_parameter_completes() {
+    let script = "zmodload zsh/db/gdbm 2>/dev/null || { print -r -- NOMODULE; return }\n\
+                  ztie -d db/gdbm -f ${TMPDIR:-/tmp}/zshrs_lockrest_$$.gdbm MYIMPORTED 2>/dev/null\n\
+                  print -r -- REACHED";
+    let got = match run_zshrs_with_env("MYIMPORTED", "hello", script) {
+        Ok(out) => out,
+        Err(elapsed) => panic!(
+            "DEADLOCK: `MYIMPORTED=hello zshrs -f -c '<ztie>'` never finished ({elapsed:?}).\n\
+             bin_ztie dispatched unsetparam_pm while holding the paramtab write guard; the \
+             parameter came from the environment, so unsetparam_pm took its delenv arm \
+             (Src/params.c:3872) and delenv re-took the same non-reentrant lock.\n\
+             Diagnose with `sample <pid>`: every sample will be in semaphore_wait_trap under \
+             bin_ztie -> unsetparam_pm -> delenv -> RwLock::write."
+        ),
+    };
+    assert!(
+        got.contains("REACHED") || got.contains("NOMODULE"),
+        "expected the shell to get past the ztie, got {got:?}"
+    );
+}
+
+/// `setopt sunkeyboardhack` is `Src/options.c:874-877`, whose whole body is
+/// `keyboardhackchar = (value ? '`' : '\0');` — a plain assignment to a global,
+/// with no paramtab lookup and no gsu dispatch in it at all. This port used to
+/// look `KEYBOARD_HACK` up and call `keyboardhacksetfn` under the write guard.
+/// It could not hang as written, only because neither of that setfn's `zwarn`
+/// arms (c:5041, c:5045) is reachable from a one-byte ASCII literal — and
+/// `zwarn` is not a leaf: zwarning -> zleentry(ZLE_CMD_TRASH) -> zrefresh ->
+/// `getaparam("zle_highlight")` -> the same lock.
+///
+/// The values are the oracle's own answers.
+#[test]
+fn sunkeyboardhack_sets_the_hack_character() {
+    if !zsh_available() {
+        eprintln!("skip: zsh not found");
+        return;
+    }
+    for script in [
+        "setopt sunkeyboardhack; printf '[%s]' \"$KEYBOARD_HACK\"",
+        "unsetopt sunkeyboardhack; printf '[%s]' \"$KEYBOARD_HACK\"",
+        "setopt sunkeyboardhack; unsetopt sunkeyboardhack; printf '[%s]' \"$KEYBOARD_HACK\"",
+        // A user-set value is overwritten by the option, per c:876's
+        // unconditional assignment.
+        "KEYBOARD_HACK=';'; setopt sunkeyboardhack; printf '[%s]' \"$KEYBOARD_HACK\"",
+        // The option's own state must still be recorded (c:878 `new_opts[optno]
+        // = value`), which is downstream of the arm this change rewrote.
+        "setopt sunkeyboardhack; [[ -o sunkeyboardhack ]] && print -n on",
+    ] {
+        let got = match run_zshrs(script) {
+            Ok(out) => out,
+            Err(elapsed) => panic!(
+                "DEADLOCK: `zshrs -f -c {script:?}` never finished ({elapsed:?}). \
+                 setopt's SUNKEYBOARDHACK arm dispatched a gsu setfn under the paramtab \
+                 write guard and the setfn reached back into the table."
+            ),
+        };
+        let want = zsh_with_env("ZSHRS_LOCKREST_PROBE", "1", script);
+        assert_eq!(got, want, "`{script}`:\n  zsh   {want:?}\n  zshrs {got:?}");
+    }
+}
+
+/// `restore_params` (`Src/exec.c:4464`) unsets every name a `VAR=val cmd`
+/// prefix touched, via `unsetparam_pm(pm, 0, 0)` at c:4474 — which this port
+/// also ran under the write guard, behind a `drop(tab)` that the very next line
+/// undid. Both of `unsetparam_pm`'s non-leaf arms happen to be disarmed from
+/// here, and neither by the callee: the `zerr` arm by c:4473 clearing
+/// PM_READONLY, the `delenv` arm by `save_params` having already run
+/// `if (pm->env) delenv(pm)` over the same name on the way in (c:4423-4424).
+///
+/// So this pins the behaviour rather than a hang: the prefix value must be
+/// visible to the command and the previous binding must come back after it,
+/// with the oracle's answers.
+#[test]
+fn a_prefix_assignment_restores_the_previous_binding() {
+    if !zsh_available() {
+        eprintln!("skip: zsh not found");
+        return;
+    }
+    for script in [
+        // Name did not exist: restore_params must remove it (c:4470-4476).
+        "f(){ print -n \"in=$V|\"; }; V=2 f; print -n \"out=${V-gone}\"",
+        // Name existed and was exported: the saved copy comes back (c:4478).
+        "export V=1; f(){ print -n \"in=$V|\"; }; V=2 f; print -n \"out=$V\"",
+        // allexport makes the prefix-created parameter itself exported, which
+        // is the state that decides whether unsetparam_pm reaches delenv.
+        "setopt allexport; f(){ print -n \"in=$W|\"; }; W=2 f; print -n \"out=${W-gone}\"",
+        // A builtin rather than a shell function — the other caller of the
+        // same save/restore pair.
+        "V=2 typeset -p V; print -n \"out=${V-gone}\"",
+    ] {
+        let got = match run_zshrs(script) {
+            Ok(out) => out,
+            Err(elapsed) => panic!(
+                "DEADLOCK: `zshrs -f -c {script:?}` never finished ({elapsed:?}). \
+                 restore_params dispatched unsetparam_pm under the paramtab write guard \
+                 and it reached delenv, which re-takes the same lock."
+            ),
+        };
+        let want = zsh_with_env("ZSHRS_LOCKREST_PROBE", "1", script);
+        assert_eq!(got, want, "`{script}`:\n  zsh   {want:?}\n  zshrs {got:?}");
+    }
+}

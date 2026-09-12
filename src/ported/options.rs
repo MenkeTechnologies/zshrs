@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use crate::ported::init::SHTTY;
 use crate::ported::jobs::{acquire_pgrp, ORIGPGRP};
-use crate::ported::params::{keyboardhacksetfn, paramtab};
+use crate::ported::params::keyboardhack_lock;
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
@@ -982,27 +982,46 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
             }
         }
     }
-    // c:871-874 — SUNKEYBOARDHACK backward-compat: setopt
+    // c:874-877 — SUNKEYBOARDHACK backward-compat: setopt
     // sunkeyboardhack sets keyboardhackchar to '`'; unsetopt to '\0'.
     // Also no `!force` guard in C.
     {
         if idx == SUNKEYBOARDHACK {
-            // c:871
-            // c:873 — `keyboardhackchar = (value ? '`' : '\0');`. C
-            // dispatches through `pm->gsu.s->setfn(pm, val)`; mirror
-            // by looking up KEYBOARD_HACK in paramtab and threading
-            // the pm through (the setfn body ignores pm anyway,
-            // matching UNUSED(Param pm) in C).
-            let new_val = if value != 0 {
-                "`".to_string()
-            } else {
-                String::new()
-            };
-            if let Ok(mut tab) = paramtab().write() {
-                if let Some(pm) = tab.get_mut("KEYBOARD_HACK") {
-                    keyboardhacksetfn(pm, new_val);
-                }
-            }
+            // c:874
+            // c:876 — `keyboardhackchar = (value ? '`' : '\0');`.
+            //
+            // That is the WHOLE C arm: a plain assignment to the global,
+            // with no paramtab lookup and no gsu dispatch anywhere in it.
+            // This port used to claim the opposite — "C dispatches through
+            // `pm->gsu.s->setfn(pm, val)`; mirror by looking up
+            // KEYBOARD_HACK in paramtab and threading the pm through" — and
+            // then did exactly that, calling `keyboardhacksetfn` while
+            // holding the paramtab WRITE guard. Neither half was C: the
+            // dispatch does not exist at c:876, and running one under the
+            // guard is the hazard the long note in `assignnparam`
+            // (params.rs, "NO GSU CALLBACK MAY RUN UNDER THE GUARD") exists
+            // to forbid, because `paramtab()` is a `std::sync::RwLock` and
+            // is not reentrant while C holds no lock at all.
+            //
+            // It could not hang as written, but only by accident of the two
+            // arguments this call site passes: `keyboardhacksetfn`'s own
+            // failure arms (c:5041 "Only one KEYBOARD_HACK character", c:5045
+            // "can only contain ASCII characters") both reach `zwarn`, and
+            // `zwarn` is not a leaf — zwarning → zleentry(ZLE_CMD_TRASH) →
+            // trashzle → zrefresh → `getaparam("zle_highlight")` → the very
+            // same lock. A one-byte ASCII literal and the empty string miss
+            // both arms, so the reachable path stayed a leaf; any future
+            // caller handing this setfn a different string would park the
+            // shell on itself.
+            //
+            // Writing the global directly is both the fix and the faithful
+            // port: no guard, no callback, and unlike the lookup form it is
+            // unconditional the way c:876 is, instead of silently doing
+            // nothing when KEYBOARD_HACK happens not to be in the table.
+            // `$KEYBOARD_HACK` still reports it, because `keyboardhackgetfn`
+            // (c:5019) reads this same global.
+            *keyboardhack_lock().lock().expect("keyboardhack poisoned") =
+                if value != 0 { b'`' } else { 0 }; // c:876
         }
     }
     // c:744 — write the canonical opt_name(idx) slot so the

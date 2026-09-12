@@ -15580,7 +15580,13 @@ fn histchars_lock() -> &'static Mutex<[u8; 3]> {
 /// !!! WARNING: RUST-ONLY HELPER !!!
 /// No C counterpart: `OnceLock` accessor for the C global
 /// `unsigned char keyboardhackchar = '\0';` (`Src/params.c:135`).
-fn keyboardhack_lock() -> &'static Mutex<u8> {
+///
+/// `pub(crate)` because C's global is file-scope-external and
+/// `Src/options.c:876` assigns it directly (`keyboardhackchar = (value ?
+/// '`' : '\0')`). That call site used to reach the byte by dispatching
+/// `keyboardhacksetfn` under the paramtab write guard, which is neither
+/// what C does nor safe to do; it now writes the global, like C.
+pub(crate) fn keyboardhack_lock() -> &'static Mutex<u8> {
     static KEYBOARDHACK_VAR: OnceLock<Mutex<u8>> = OnceLock::new();
     KEYBOARDHACK_VAR.get_or_init(|| Mutex::new(0))
 }
