@@ -4724,6 +4724,8 @@ impl ShellExecutor {
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // c:Src/exec.c:772-776 — a function runs unchanged under `-`.
+        crate::fusevm_bridge::take_exec_dash();
         // Held for the WHOLE call, not just the load: an autoloaded function is
         // registered TWICE — once when its file's text defines it, and again
         // (unchanged) when its chunk is compiled at call time — and the second
@@ -5811,6 +5813,11 @@ impl ShellExecutor {
             hashed_prog = None;
         }
         let mut spawn_arg0: String = cmd.to_string();
+        // c:Src/exec.c:772-776 — "if the pre-command `-' was given, we add
+        // `-' to the front of argv[0] for this command."
+        if crate::fusevm_bridge::take_exec_dash() {
+            spawn_arg0 = format!("-{}", cmd); // c:775-776
+        }
         let mut spawn_args: Vec<String> = args.to_vec();
         // C recurses through zexecve for each rewrite; the loop is that
         // recursion, re-driving the spawn with the rewritten argv.

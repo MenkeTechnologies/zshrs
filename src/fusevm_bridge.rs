@@ -523,6 +523,14 @@ thread_local! {
     /// VM ops, and errflag alone cannot tell this skip from an error raised
     /// by the command words, which C handles at c:3760 instead.
     static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// c:Src/exec.c:772-776 — the `-` precommand (BINF_DASH) for the next
+    /// command. Set by BUILTIN_EXEC_DASH; an external spawn consumes it and
+    /// prefixes argv[0] with `-`, any other command clears it.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C accumulates BINF_DASH into
+    /// `cflags` in the same function that calls `execute()`; here the
+    /// compile-time fact crosses from the marker op to the spawn.
+    static EXEC_DASH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Counts sublists (bumped by BUILTIN_STMT_PROLOGUE_FAST). Together with
     /// REDIR_SCOPE_OPENED it tells a builtin whether the redirect scope on
     /// top of the stack belongs to its own command.
@@ -1229,7 +1237,14 @@ fn module_gated_files_builtin(name: &str) -> bool {
     )
 }
 
+/// Consume the `-` precommand carrier (see BUILTIN_EXEC_DASH).
+pub(crate) fn take_exec_dash() -> bool {
+    EXEC_DASH.with(|c| c.replace(false))
+}
+
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    // c:Src/exec.c:772-776 — BINF_DASH only changes an external's argv[0].
+    take_exec_dash();
     // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close any
     // `>(cmd)` write ends owned by this command once it finishes
     // (drops on every return path below).
@@ -3211,6 +3226,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See BUILTIN_TYPESET_RESWD.
     vm.register_builtin(BUILTIN_TYPESET_RESWD, |_vm, _argc| {
         TYPESET_RESWD_DISPATCH.with(|c| c.set(true));
+        Value::Int(0)
+    });
+    // See BUILTIN_EXEC_DASH.
+    vm.register_builtin(BUILTIN_EXEC_DASH, |_vm, _argc| {
+        EXEC_DASH.with(|c| c.set(true));
         Value::Int(0)
     });
     vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_END, |_vm, _argc| {
@@ -16088,6 +16108,12 @@ pub const BUILTIN_TYPESET_POSTASSIGNS_END: u16 = 685;
 /// `disable typeset` does not stop the reserved-word form. No args; sets the
 /// carrier dispatch_builtin consumes before its disabled-builtin test.
 pub const BUILTIN_TYPESET_RESWD: u16 = 686;
+/// Emitted right before the dispatch of a command that carried the `-`
+/// precommand modifier (c:Src/builtin.c:42 `BIN_PREFIX("-", BINF_DASH)`,
+/// accumulated into `cflags` at c:Src/exec.c:3246). No args; sets the
+/// EXEC_DASH carrier. c:Src/exec.c:772-776 — an external command then gets
+/// argv[0] `-name`; a function or builtin runs unchanged.
+pub const BUILTIN_EXEC_DASH: u16 = 687;
 
 /// EXTEND step of typeset paren-init packing. Pops `argc` values:
 /// [base, e1, …, eN] — base is either the opener (`name=(` /
@@ -19380,6 +19406,9 @@ impl ShellExecutor {
     /// the tree-walker's `execute_external` rather than a plain
     /// `Command::new` shortcut. Returns the exit status.
     pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
+        // c:Src/exec.c:772-776 — BINF_DASH reaches `execute()` only; every
+        // other route below runs the command without it.
+        let exec_dash = EXEC_DASH.with(|c| c.replace(false));
         // Native p10k API: the `p10k(){ zshrs-p10k-api "$@" }` stub's
         // body lands here (the name is neither function nor builtin).
         // Route into the engine instead of a PATH miss.
@@ -19605,6 +19634,7 @@ impl ShellExecutor {
             }
         }
 
+        EXEC_DASH.with(|c| c.set(exec_dash));
         self.execute_external(cmd, &rest_vec, &[]).unwrap_or(127)
     }
 }
