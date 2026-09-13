@@ -383,3 +383,18 @@ mod local_shadow {
         assert_parity("alias zz=yy; f(){ local -a aliases=(c d) }; f; print -r -- ${(kv)aliases[zz]}");
     }
 }
+
+/// c:Src/Modules/parameter.c:220-233 — `$commands[name]` fills the command table
+/// only under HASH_LIST_ALL; otherwise it searches $path with `findcmd`, so
+/// a command removed after `rehash` is gone at once under no_hash_list_all.
+/// The port always read the (stale) table.
+mod commands_lookup_without_hash_list_all {
+    use super::*;
+
+    #[test]
+    fn lookup_follows_path_when_the_table_is_not_filled() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; for 1 in hash_cmds no_hash_cmds; do ( setopt no_hash_list_all $1; : > ls; chmod +x ls; rm=$commands[rm]; path=( $PWD ); rehash; a=$commands[ls]; $rm ls; b=$commands[ls]; [[ $a == $b ]]; print -r - $? ${a:t}:${b:t} ); done; cd /; command rm -rf $d"#,
+        );
+    }
+}

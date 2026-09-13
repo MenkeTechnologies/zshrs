@@ -687,6 +687,42 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
             crate::ported::hashtable::fillcmdnamtable(&path_arr); // c:220
         }
     }
+    // c:224-232 — `else { char *found = findcmd((char*)name, 1, 0); if (found)
+    // { cmd = hcalloc(...); cmd->u.cmd = found; cmd->node.flags = HASHED; } }`.
+    // Without HASH_LIST_ALL the table is not filled; the lookup searches
+    // $path directly ("this will return the path even if hashcmds is
+    // disabled"). The port had no such branch, so `$commands[ls]` read
+    // whatever stale entry the table held (or nothing).
+    if !entry_exists && !crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+        if let Some(found) = crate::ported::exec::findcmd(name, 1, 0) {
+            // c:227
+            return Some(Box::new(param {
+                node: hashnode {
+                    next: None,
+                    nam: name.to_string(),   // c:236
+                    flags: PM_SCALAR as i32, // c:237
+                },
+                u_data: 0,
+                u_tied: None,
+                u_arr: None,
+                u_str: Some(found), // c:241 `pm->u.str = cmd->u.cmd`
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
+            }));
+        }
+    }
     let g = cmdnamtab_lock().read().ok()?;
     let entry = g.get(name); // c:218/221 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {
