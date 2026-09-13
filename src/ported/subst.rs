@@ -25864,18 +25864,26 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     chars.next(); // c:4531
                 } // c:4531
                 Some(&'W') => {
-                    // c:4531
+                    // c:4699-4710
                     any_flag_consumed = true;
-                    chars.next(); // c:4531
-                                  // Parse separator
-                    if chars.peek() == Some(&':') {
-                        // c:4531
-                        chars.next(); // c:4531
-                        let collected: String =             // c:4531
-                            chars.by_ref().take_while(|&c| c != ':').collect(); // c:4531
-                        sep = Some(collected); // c:4531
-                    } // c:4531
-                } // c:4531
+                    wall = true; // c:4700 `wall = 1;` — `W` is word-wise like `w`
+                    chars.next(); // c:4701 `(*ptr)++`
+                    // c:4702-4708 — the separator is a get_strarg argument:
+                    //     ptr1 = get_strarg(ptr2 = *ptr, &charlen);
+                    //     sep = dupstring(ptr2 + charlen);  (up to ptr1)
+                    //     *ptr = ptr1 + charlen;
+                    // so ANY delimiter character opens it, with `(`/`[`/`{`/`<`
+                    // closed by their partners (c:1366-1391). Accepting only `:`
+                    // made `${W:W_B_l}` fail "unrecognized modifier `_'".
+                    let rest: String = chars.clone().collect();
+                    if let Some((_del, content, after)) = get_strarg(&rest) {
+                        let consumed = rest.chars().count() - after.chars().count();
+                        for _ in 0..consumed {
+                            chars.next();
+                        }
+                        sep = Some(content); // c:4705
+                    }
+                } // c:4710
                 // c:Src/subst.c modify() — `f` flag = repeat the
                 // following `:s`/`:&` until no more changes. `F N` =
                 // bounded-iteration variant. Both are zsh-specific
@@ -26649,7 +26657,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     }
                 }
                 if bad {
-                    zerr(&format!("unrecognized modifier `{}'", modifier));
+                    // c:4720-4722 `default: *ptr = lptr; return;` — the caller
+                    // reports `s[1]`, the first char after the `:` (c:3788).
+                    zerr(&format!("unrecognized modifier `{}'", first_after_colon.unwrap_or(modifier)));
                     errflag_set_error();
                     return String::new();
                 }
@@ -26658,7 +26668,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 match dispatch(&result) {
                     Some(m) => result = m,
                     None => {
-                        zerr(&format!("unrecognized modifier `{}'", modifier));
+                        // c:4720-4722 + c:3788 — see the word-wise arm above.
+                        zerr(&format!("unrecognized modifier `{}'", first_after_colon.unwrap_or(modifier)));
                         errflag_set_error();
                         return String::new();
                     }

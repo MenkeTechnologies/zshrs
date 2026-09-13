@@ -1135,3 +1135,34 @@ mod eval_flag_failed_relex_is_null {
         assert_parity(r#"a='$('; v=${(e)a}; b=ok; print -r -- "[$v] [${b}] m${b}n""#);
     }
 }
+
+/// The `:W<delim>sep<delim>` modifier flag (c:Src/subst.c:4699-4710): the
+/// separator is a get_strarg argument, so any delimiter opens it, and `W` is
+/// word-wise like `w` (`wall = 1`), applying the modifier to each piece
+/// between separators. An unusable spelling reports the char after the `:`
+/// (c:4720-4722 → c:3788).
+mod modifier_capital_w_separator {
+    use super::*;
+
+    #[test]
+    fn any_delimiter_opens_the_separator() {
+        assert_parity(r#"W=FOOBAR; echo ${W:W_B_l}"#);
+        assert_parity(r#"x=FOOBAR; echo ${x:W(B)l}"#);
+        assert_parity(r#"x=a-b; echo ${x:W<->u}"#);
+        assert_parity(r#"x=FOO:BAR; echo ${x:W.:.l}"#);
+    }
+
+    #[test]
+    fn modifier_applies_per_separated_word() {
+        assert_parity(r#"x=A.BxC.D; echo ${x:W(x)r} ${x:W(x)e}"#);
+        assert_parity(r#"x=foobar; echo ${x:W(b)u}"#);
+        assert_parity(r#"x=aa; echo ${x:W:a:u}"#);
+        assert_parity(r#"x="p q"; echo ${x:W:q:u}"#);
+    }
+
+    #[test]
+    fn unusable_spelling_names_the_w() {
+        assert_parity(r#"x=a.b.c; echo ${x:W.\..u}; echo rc=$?"#);
+        assert_parity(r#"x=a_b; echo ${x:W_}; echo rc=$?"#);
+    }
+}
