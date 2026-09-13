@@ -477,6 +477,19 @@ mod argv_prefork_before_glob {
         run("print nomatch_zz* =nosuchcmd_zz");
     }
 
+    /// c:Src/subst.c:165-191 — filesub (`=cmd`, `~user`) is prefork's second
+    /// pass, after stringsubst has run over every word, so a later
+    /// substitution runs before an earlier `=cmd` fails.
+    #[test]
+    fn equals_and_tilde_expand_after_every_substitution() {
+        run("print =nosuchcmd_zz $(print ran >&2)");
+        run("print ~nosuchuser_zz `print ran >&2`");
+        run("f() { print x =nosuchcmd_zz $(print ran >&2); }; f");
+        run("setopt nonomatch; print =nosuchcmd_zz $(print ran >&2)");
+        run("print =ls $(print ran >&2) a{1,2} | cat");
+        run("setopt noglob; print =ls ~/zz_no* a*");
+    }
+
     #[test]
     fn orders_that_already_agreed() {
         run("print == [[");

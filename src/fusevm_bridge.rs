@@ -1283,19 +1283,21 @@ fn glob_word_noting_errflag(raw: Value, skip_glob: bool) -> Value {
 /// untokenized, so the token test picks the same words out again; noglob was
 /// already applied there. The glob call and the empty-result shapes are the
 /// ones mode 0 uses.
-fn glob_tokenized_word(raw: Value) -> Value {
+fn glob_tokenized_word(raw: Value, noglob: bool) -> Value {
     use std::sync::atomic::Ordering;
     let words: Vec<String> = match &raw {
         Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
         other => vec![other.to_str()],
     };
-    if !words.iter().any(|w| crate::ported::pattern::haswilds(w)) {
-        return raw;
-    }
     let mut parts: Vec<String> = Vec::with_capacity(words.len());
     for w in words {
-        if !crate::ported::pattern::haswilds(&w) {
-            parts.push(w);
+        // c:Src/glob.c:1872 — NO_GLOB leaves the word literal; a word that came
+        // back tokenized only for its deferred filesub reaches here too.
+        if noglob || !crate::ported::pattern::haswilds(&w) {
+            // c:Src/glob.c:1232 — zglob untokenizes a word it does not glob; a
+            // deferred `=cmd` / `~user` that filesub left alone (NOMATCH off)
+            // still carries its token.
+            parts.push(crate::ported::lex::untokenize(&w).to_string());
             continue;
         }
         let ef = || crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR;
@@ -1310,6 +1312,24 @@ fn glob_tokenized_word(raw: Value) -> Value {
         Value::str(parts.into_iter().next().unwrap_or_default())
     } else {
         Value::array(parts.into_iter().map(Value::str).collect())
+    }
+}
+
+/// Run the filesub BUILTIN_EXPAND_TEXT mode 10 deferred on one word's
+/// elements (c:Src/subst.c:178-182, `flags` 0 for a command argument).
+fn filesub_deferred_word(raw: Value) -> Value {
+    let expand = |s: String| -> String {
+        if s.starts_with(crate::ported::zsh_h::Tilde) || s.starts_with(crate::ported::zsh_h::Equals) {
+            crate::ported::subst::filesub(&s, 0)
+        } else {
+            s
+        }
+    };
+    match raw {
+        Value::Array(items) => {
+            Value::array(items.iter().map(|v| Value::str(expand(v.to_str()))).collect())
+        }
+        other => Value::str(expand(other.to_str())),
     }
 }
 
@@ -3396,16 +3416,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         words.reverse();
         let noglob =
             opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
+        let errflag_set = || {
+            (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR)
+                != 0
+        };
+        // c:Src/subst.c:165-191 — prefork's second pass: filesub on each word
+        // in order, returning at the first error, before globlist ever runs.
+        // Only EXPAND_TEXT mode-10 words deferred theirs (see that arm).
+        for (i, word) in words.iter_mut().enumerate() {
+            if errflag_set() {
+                break; // c:187-190
+            }
+            if i < 64 && text_mask & (1u64 << i) != 0 {
+                *word = filesub_deferred_word(std::mem::replace(word, Value::Int(0)));
+            }
+        }
         let mut out: Vec<Value> = Vec::with_capacity(n);
         for (i, word) in words.into_iter().enumerate() {
-            let stopped = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
-                & crate::ported::zsh_h::ERRFLAG_ERROR)
-                != 0; // c:494 `!errflag`
+            let stopped = errflag_set(); // c:494 `!errflag`
             let bit = if i < 64 { 1u64 << i } else { 0 };
             if stopped || (mask | text_mask) & bit == 0 {
                 out.push(word);
             } else if text_mask & bit != 0 {
-                out.push(glob_tokenized_word(word)); // c:495 zglob
+                out.push(glob_tokenized_word(word, noglob)); // c:495 zglob
             } else {
                 out.push(glob_word_noting_errflag(word, noglob)); // c:495 zglob
             }
@@ -13306,8 +13340,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // (stringsubst reads it immediately after each paramsubst
                 // call, subst.rs:1094).
                 crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
+                // Mode 10 (a deferred command argument): c:Src/subst.c:165-191
+                // runs filesub in prefork's second pass, after stringsubst has
+                // run over EVERY word, so `print =nosuchcmd $(cmd)` runs `cmd`
+                // before `=nosuchcmd` fails. This handler expands one word, so
+                // the word's filesub is left to BUILTIN_GLOBLIST's all-words
+                // pass (the word comes back with its Equals/Tilde token).
+                let saved_skip_filesub = crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
+                if mode == 10 {
+                    crate::ported::subst::SKIP_FILESUB.with(|c| c.set(true));
+                }
                 let (_first, nodes, _ms_ws, _ret) =
                     crate::ported::subst::multsub(&prepped, pf_flags);
+                crate::ported::subst::SKIP_FILESUB.with(|c| c.set(saved_skip_filesub));
                 // c:Src/subst.c:326-327 → prefork c:142-147 — an `(e)` NULL ended
                 // prefork: the word is the text before the `$` (c:1878), and the
                 // brace / filesub / remnulargs passes after the substitution loop
@@ -13481,10 +13526,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             .chars()
                             .skip(1)
                             .any(|c| c == crate::ported::zsh_h::Equals);
-                        if is_glob_pre && mode == 10 {
-                            // Mode 10: the command's BUILTIN_GLOBLIST globs this
-                            // word after every argument has been expanded
-                            // (c:Src/exec.c:3357-3359 then c:3755-3757).
+                        // c:Src/subst.c:180 `filesub(&cptr, flags & …)` acts on a
+                        // leading Tilde / Equals token; mode 10 deferred it above.
+                        let filesub_deferred = mode == 10
+                            && (s_tok.starts_with(crate::ported::zsh_h::Tilde)
+                                || s_tok.starts_with(crate::ported::zsh_h::Equals));
+                        if (is_glob_pre || filesub_deferred) && mode == 10 {
+                            // Mode 10: the command's BUILTIN_GLOBLIST runs this
+                            // word's filesub and glob after every argument has
+                            // been expanded (c:Src/subst.c:165-191, then
+                            // c:Src/exec.c:3755-3757).
                             vec![s_tok]
                         } else if is_glob_pre {
                             // c:Src/exec.c:3755-3762 — an error raised here is a
