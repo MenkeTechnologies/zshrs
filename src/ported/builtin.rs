@@ -4682,11 +4682,18 @@ pub fn bin_typeset(
                 let rest = &a[eq_idx + 2..];
                 let inner = rest.trim_end_matches(')');
                 let parts: Vec<String> = if inner.contains('\u{1f}') {
-                    inner
-                        .split('\u{1f}')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect()
+                    // Only the boundary empties from the `=(` / `)` argv
+                    // fragments are dropped: a `[k]=` triad's empty VALUE
+                    // (c:Src/subst.c:77) is an element and must keep its
+                    // slot, as in the generic array-init path below.
+                    let mut v: Vec<String> = inner.split('\u{1f}').map(String::from).collect();
+                    if v.first().is_some_and(|s| s.is_empty()) {
+                        v.remove(0);
+                    }
+                    if v.last().is_some_and(|s| s.is_empty()) {
+                        v.pop();
+                    }
+                    v
                 } else {
                     // Fallback: whitespace split for synthetic args
                     // that didn't pass through the REJOIN_SEP emitter.
@@ -4900,7 +4907,15 @@ pub fn bin_typeset(
             if let Some(sval) = sval_opt.as_deref() {
                 crate::ported::params::assignsparam(sname, sval, 0);
             } else if let Some(arr) = aval_opt {
-                crate::ported::params::assignaparam(aname, arr, 0);
+                // c:3019-3020 — `int flags = (asg->flags & ASG_KEY_VALUE) ?
+                // ASSPM_KEY_VALUE : 0;`. The compiler marks the `[k]=v` form
+                // with a Marker element (c:Src/subst.c:72).
+                let flags = if arr.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
+                    crate::ported::zsh_h::ASSPM_KEY_VALUE
+                } else {
+                    0
+                };
+                crate::ported::params::assignaparam(aname, arr, flags);
             }
             unqueue_signals();
             return 0;
@@ -5097,11 +5112,16 @@ pub fn bin_typeset(
             tab.insert(aname.to_string(), Box::new(apm));
             tab.insert(sname.to_string(), Box::new(spm));
         }
-        // c:3018-3025 — store the initial value now that both halves exist.
-        // flags 0: the `[k]=v` (ASG_KEY_VALUE) form is not tracked on this
-        // path, the same as the already-tied arm above.
+        // c:3018-3025 — store the initial value now that both halves exist,
+        // with c:3019's ASSPM_KEY_VALUE when the array value carries a
+        // `[k]=v` Marker triad (c:Src/subst.c:72).
         if assign_initial {
-            let _ = crate::ported::params::assignaparam(aname, init_arr, 0); // c:3020
+            let flags = if init_arr.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
+                crate::ported::zsh_h::ASSPM_KEY_VALUE
+            } else {
+                0
+            };
+            let _ = crate::ported::params::assignaparam(aname, init_arr, flags); // c:3020
         }
         unqueue_signals();
         return 0;
@@ -6715,7 +6735,30 @@ pub fn bin_typeset(
                         typ == PM_ARRAY || typ == PM_HASHED
                     })
                 }) == Some(true);
-                if is_hashed {
+                if is_hashed && elems.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
+                    // c:Src/params.c:3485-3502 — once the compiler marked a
+                    // `[key]=value` element (c:Src/subst.c:49-79), EVERY element
+                    // must be a Marker / key / value triad.
+                    if elems.len() % 3 != 0
+                        || elems
+                            .chunks(3)
+                            .any(|t| !t[0].starts_with(crate::ported::zsh_h::Marker))
+                    {
+                        zerr("bad [key]=value syntax for associative array"); // c:3499
+                    } else {
+                        // c:Src/params.c:4094-4117 arrhashsetfn — a `Marker +` triad
+                        // appends onto the key's current value.
+                        let mut map: IndexMap<String, String> = IndexMap::new();
+                        for t in elems.chunks(3) {
+                            if t[0].ends_with('+') {
+                                map.entry(t[1].clone()).or_default().push_str(&t[2]);
+                            } else {
+                                map.insert(t[1].clone(), t[2].clone());
+                            }
+                        }
+                        crate::ported::exec::set_assoc(n, map);
+                    }
+                } else if is_hashed {
                     // c:2960-2975 — `setdataparam(..., PM_HASHED, …)`.
                     // Two assoc-init shapes accepted by zsh:
                     //  1. flat alternating k/v: `m=(k1 v1 k2 v2)`
@@ -6830,6 +6873,16 @@ pub fn bin_typeset(
                             crate::bash_arrays::note_unset(n, i);
                         }
                     }
+                } else if elems.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
+                    // c:3019-3020 — the compiler emitted `[k]=v` elements as
+                    // Marker triads (c:Src/subst.c:49-79), so the value goes to
+                    // assignaparam with ASSPM_KEY_VALUE, which places each one
+                    // by index (c:Src/params.c:3436-3541).
+                    let _ = crate::ported::params::assignaparam(
+                        n,
+                        elems.clone(),
+                        crate::ported::zsh_h::ASSPM_KEY_VALUE,
+                    );
                 } else {
                     // c:2980-2995 — plain array.
                     crate::ported::exec::set_array(n, elems.clone());

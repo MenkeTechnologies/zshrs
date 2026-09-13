@@ -1130,3 +1130,38 @@ mod tied_initial_value_through_assignment {
         assert_parity(r#"typeset -T P=a:b:a p; print $P ${#p}; typeset -T -U Q="" q; print "[$Q]" ${#q}"#);
     }
 }
+
+/// c:Src/subst.c:49-79 keyvalpairelement + c:Src/builtin.c:3019-3020 — a
+/// typeset array value's unquoted `[key]=value` elements become Marker
+/// triads handed to assignaparam with ASSPM_KEY_VALUE, which places each one
+/// by index (c:Src/params.c:3436-3541). zshrs stored the `[k]=v` text, and
+/// globbed `[2]=$x` ("no matches found").
+mod typeset_key_value_array_value {
+    use super::*;
+
+    #[test]
+    fn local_array_placed_by_index() {
+        assert_parity(r#"local -a a=([1]=a [3]=c); print ${#a}; typeset -p a"#);
+        assert_parity(r#"f() { local -a a=([1]=a [3]=c); print ${#a} "$a[3]"; }; f"#);
+        assert_parity(r#"typeset -a a=([1]=a b [4]=d); print -r -- "$a" ${#a}"#);
+        assert_parity(r#"typeset -a a=([1]= [2]=b); typeset -p a"#);
+    }
+
+    #[test]
+    fn tied_array_placed_by_index() {
+        assert_parity(r#"typeset -T -U P p=([1]=a [2]=b [3]=a); print $P"#);
+        assert_parity(r#"x=q; typeset -T P p=([2]=$x); print $P"#);
+        assert_parity(r#"typeset -T P p; typeset -T P p=([2]=y [1]=x); print $P"#);
+    }
+
+    /// A quoted element stays literal and assoc `[k]=v` still works
+    /// (controls); assoc `[k]+=v` appends (c:Src/params.c:4096, zshrs printed
+    /// nothing) and a quoted empty tie element keeps its slot.
+    #[test]
+    fn quoted_and_assoc_forms_unchanged() {
+        assert_parity(r#"typeset -T P p=("[1]=a" b); print $P"#);
+        assert_parity(r#"typeset -A m=([k]=v [j]=w); typeset -p m"#);
+        assert_parity(r#"typeset -A m=([k]=v [k]+=x); print $m[k]"#);
+        assert_parity(r#"typeset -T P p=(a "" b); print -r -- "$P" ${#p}"#);
+    }
+}

@@ -1015,6 +1015,39 @@ impl ZshCompiler {
         self.compile_sublist_impl(sublist, None);
     }
 
+    /// c:Src/subst.c:49-79 keyvalpairelement, invoked from prefork's
+    /// PREFORK_ASSIGN walk (c:111-117). An unquoted `[key]=value` /
+    /// `[key]+=value` array element becomes THREE values: Marker (or
+    /// Marker `+`), key, value — each substituted once with singsub
+    /// (c:65, c:75: no glob, no word split, no brace expansion). The triad
+    /// reaches assignaparam's ASSPM_KEY_VALUE arm. Returns false, emitting
+    /// nothing, for a plain element; the split runs on the raw token form,
+    /// so a quoted `"[k]=v"` stays a plain element (c:54 tests the Inbrack
+    /// TOKEN).
+    fn emit_kv_pair_element(&mut self, elem: &str) -> bool {
+        let Some((key_raw, val_raw, is_append)) = split_kv_element(elem) else {
+            return false;
+        };
+        // c:Src/subst.c:59-60 marker / marker_plus.
+        let marker = if is_append {
+            format!("{}+", crate::ported::zsh_h::Marker)
+        } else {
+            crate::ported::zsh_h::Marker.to_string()
+        };
+        let mc = self.builder.add_constant(Value::str(marker.as_str()));
+        self.builder.emit(Op::LoadConst(mc), 0);
+        for part in [&key_raw, &val_raw] {
+            // dq_context_depth > 0 routes every emit site to the no-glob /
+            // no-split variants (EXPAND_TEXT mode 1, GLOB_EXPAND gated).
+            self.assign_context_depth += 1;
+            self.dq_context_depth += 1;
+            self.compile_word_str(part);
+            self.dq_context_depth -= 1;
+            self.assign_context_depth -= 1;
+        }
+        true
+    }
+
     /// `async_tail` is `Some(disown)` when the enclosing list ended in `&`
     /// (`false`) or `&!` / `&|` (`true`): C's `ltype` carries Z_ASYNC and
     /// execlist passes it to the final pipeline only (c:Src/exec.c:1545),
@@ -3150,35 +3183,53 @@ impl ZshCompiler {
                     // p10k's __p9k_colors has 408 elements; a single
                     // call wrapped argc mod 256 and spilled the stack
                     // into the arg list.
-                    for chunk in elems.chunks(200) {
-                        for e in chunk {
-                            // c:Src/subst.c:111 keyvalpairelement —
-                            // PREFORK_ASSIGN context. Bump
-                            // assign_context_depth so compile_word_str's
-                            // looks_like_kv_pair gate suppresses globbing
-                            // for `[key]=value` assoc-init elements
-                            // (`typeset -gA m=([alpha]=1)` — the `[alpha]`
-                            // is a key, NOT a glob char-class). Without
-                            // it the `[` triggered NOMATCH.
+                    let mut pending = 0usize;
+                    for e in &elems {
+                        // c:Src/builtin.c:3019 + c:Src/subst.c:49-79 — a
+                        // typeset array value takes the same PREFORK_ASSIGN
+                        // walk as a plain assignment, so `[key]=value`
+                        // becomes a Marker triad that bin_typeset hands to
+                        // assignaparam with ASSPM_KEY_VALUE.
+                        if self.emit_kv_pair_element(e) {
+                            pending += 3;
+                        } else {
+                            // PREFORK_ASSIGN context: assign_context_depth
+                            // keeps compile_word_str's looks_like_kv_pair
+                            // gate from globbing a quoted-away `[…]`.
                             self.assign_context_depth += 1;
                             self.compile_word_str(e);
                             self.assign_context_depth -= 1;
-                            // Array-literal elements field-split
-                            // unquoted expansion results — same emit
-                            // as compile_assign's array branch:
-                            // `typeset b=( $(print q w) e )` → 3
-                            // elements in zsh.
+                            // Array-literal elements field-split unquoted
+                            // expansion results — same emit as
+                            // compile_assign's array branch:
+                            // `typeset b=( $(print q w) e )` → 3 elements.
                             if needs_word_split(e) {
                                 self.builder.emit(
                                     Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0),
                                     0,
                                 );
                             }
+                            pending += 1;
                         }
+                        // CallBuiltin argc is u8 — PACK in batches of at
+                        // most ~200 stack values. p10k's __p9k_colors has
+                        // 408 elements; one call wrapped argc mod 256.
+                        if pending >= 198 {
+                            self.builder.emit(
+                                Op::CallBuiltin(
+                                    crate::vm_helper::BUILTIN_TYPESET_PAREN_PACK,
+                                    (pending + 1) as u8,
+                                ),
+                                0,
+                            );
+                            pending = 0;
+                        }
+                    }
+                    if pending > 0 {
                         self.builder.emit(
                             Op::CallBuiltin(
                                 crate::vm_helper::BUILTIN_TYPESET_PAREN_PACK,
-                                (chunk.len() + 1) as u8,
+                                (pending + 1) as u8,
                             ),
                             0,
                         );
@@ -4898,29 +4949,7 @@ impl ZshCompiler {
                         // distinguishes quoted (`"[k]=v"` — plain element,
                         // c:54 start[0]==Inbrack is the TOKEN form only)
                         // from unquoted.
-                        if let Some((key_raw, val_raw, is_append)) = split_kv_element(elem) {
-                            // c:Src/subst.c:59-60 marker / marker_plus.
-                            let marker = if is_append {
-                                format!("{}+", crate::ported::zsh_h::Marker)
-                            } else {
-                                crate::ported::zsh_h::Marker.to_string()
-                            };
-                            let mc = self.builder.add_constant(Value::str(marker.as_str()));
-                            self.builder.emit(Op::LoadConst(mc), 0);
-                            for part in [&key_raw, &val_raw] {
-                                // c:Src/subst.c:65/75 `singsub(&dat)` —
-                                // PREFORK_SINGLE semantics: parameter /
-                                // command substitution runs, but no glob,
-                                // no IFS split, no brace expansion.
-                                // dq_context_depth>0 routes every emit
-                                // site to the no-glob / no-split variants
-                                // (EXPAND_TEXT mode 1, GLOB_EXPAND gated).
-                                self.assign_context_depth += 1;
-                                self.dq_context_depth += 1;
-                                self.compile_word_str(part);
-                                self.dq_context_depth -= 1;
-                                self.assign_context_depth -= 1;
-                            }
+                        if self.emit_kv_pair_element(elem) {
                             stack_values += 3;
                             continue;
                         }
