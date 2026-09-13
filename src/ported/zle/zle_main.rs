@@ -1343,6 +1343,12 @@ pub fn zleread(
     flags: i32,
     context: i32,
 ) -> io::Result<String> {
+    // c:1220 — `int tmout = getiparam("TMOUT");`. Read once on entry; the
+    // alarm it arms is set further down (c:1323-1324), and a TMOUT the
+    // user changes while this line is being edited takes effect on the
+    // next line or at the next SIGALRM re-arm (handletrap, c:1002-1003),
+    // exactly as in C.
+    let tmout = crate::ported::params::getiparam("TMOUT") as i32; // c:1220
     // Stash the unexpanded templates so reexpandprompt() can re-run
     // expansion later. C zsh saves these in the global raw_lp/raw_rp
     // slots — the Rust port keeps the same shape as file-scope
@@ -1350,12 +1356,6 @@ pub fn zleread(
     *RAW_LP.lock().unwrap() = lprompt.to_string();
     *RAW_RP.lock().unwrap() = rprompt.to_string();
     // c:1250 — `keytimeout = (time_t)getiparam("KEYTIMEOUT");`. The
-    // c:1220 — `int tmout = getiparam("TMOUT");`. Read once on entry; the
-    // alarm it arms is set further down (c:1323-1324), and a TMOUT the
-    // user changes while this line is being edited takes effect on the
-    // next line or at the next SIGALRM re-arm (handletrap, c:1002-1003),
-    // exactly as in C.
-    let tmout = crate::ported::params::getiparam("TMOUT") as i32; // c:1220
     // ZLE-side global is refreshed from the parameter once per edit
     // session, so a `KEYTIMEOUT=1` in .zshrc (or a mid-session change)
     // takes effect on the NEXT line, not retroactively. Without this
@@ -1576,17 +1576,6 @@ pub fn zleread(
     // Set up terminal
     zsetterm()?;
 
-    // c:1337-1338 — `zleactive = 1; resetneeded = 1;`. zleactive marks ZLE
-    // as running so widgets/trashzle/signal handlers act on the live line;
-    // it was previously never set in the live path (only in tests), which
-    // silently disabled trashzle's `zleactive && !trashedzle` gate — so a
-    // completion list never parked the cursor below the command line.
-    // resetneeded arms the first frame to home the video cursor and draw the
-    // whole prompt+line from column 0 (a fresh line — the previous command's
-    // accept emitted a trailing CRLF; the incremental refresh otherwise
-    // carries VCS/VLN across frames within a single line edit).
-    //
-    // MUST precede the `zle-line-init` hook below (C: c:1337 `zleactive = 1`,
     // c:1323-1324 — `if (tmout) alarm(tmout);`. This is the ONLY place
     // `$TMOUT` starts the clock: SIGALRM then reaches zhandler
     // (Src/signals.c:474-491), which runs TRAPALRM via handletrap — whose
@@ -1603,6 +1592,17 @@ pub fn zleread(
         }
     }
 
+    // c:1337-1338 — `zleactive = 1; resetneeded = 1;`. zleactive marks ZLE
+    // as running so widgets/trashzle/signal handlers act on the live line;
+    // it was previously never set in the live path (only in tests), which
+    // silently disabled trashzle's `zleactive && !trashedzle` gate — so a
+    // completion list never parked the cursor below the command line.
+    // resetneeded arms the first frame to home the video cursor and draw the
+    // whole prompt+line from column 0 (a fresh line — the previous command's
+    // accept emitted a trailing CRLF; the incremental refresh otherwise
+    // carries VCS/VLN across frames within a single line edit).
+    //
+    // MUST precede the `zle-line-init` hook below (C: c:1337 `zleactive = 1`,
     // then c:1356 `zlecallhook(init, NULL)`). Calling the hook first left
     // `zle_usable()` (zle_thingy.c:634) false for the whole widget, so any
     // wrapper that re-dispatches with `zle .widget` — every
@@ -1725,6 +1725,12 @@ pub fn zleread(
     // ZLE is no longer editing; clear zleactive so a later trashzle (e.g.
     // from output/precmd) doesn't try to redraw an inactive line.
     zleactive.store(0, SeqCst);
+    // c:1384 — `alarm(0);`. The TMOUT clock only runs while the editor
+    // waits for input; cancel it before the accepted line executes, so a
+    // command that runs longer than TMOUT is never interrupted by it.
+    unsafe {
+        libc::alarm(0); // c:1384
+    }
     // c:1386 — `freeundo();` — the change list belongs to this line only.
     crate::ported::zle::zle_utils::freeundo(); // c:1386
 
@@ -1738,12 +1744,6 @@ pub fn zleread(
     // EOF (^D on an empty line), an error, or a pending `exit` yield NULL
     // so the caller (inputline) sees end-of-input; otherwise the accepted
     // line gets a trailing newline appended — matching shingetline, which
-    // c:1384 — `alarm(0);`. The TMOUT clock only runs while the editor
-    // waits for input; cancel it before the accepted line executes, so a
-    // command that runs longer than TMOUT is never interrupted by it.
-    unsafe {
-        libc::alarm(0); // c:1384
-    }
     // returns "…\n" — so a bare Enter is an empty COMMAND ("\n"), not EOF.
     // The Rust entry returns the empty string for the NULL case; inputline
     // treats an empty (no-newline) result as EOF, a "\n" result as an
