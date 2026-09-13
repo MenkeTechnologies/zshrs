@@ -6803,11 +6803,28 @@ pub fn paramsubst(
                 // c:2681 `multsub(&val, PREFORK_SUBEXP, …)` — skipped only for
                 // the `(P)`-name-splice shape above, where C runs no inner
                 // expansion either (c:2717) and every field below is replaced.
+                // c:Src/subst.c:1671 — `globsubst` is local to each paramsubst,
+                // so an inner `${~…}` only shtokenizes its own result. When the
+                // outer spec then runs a pattern operator (`#` `%` `/` `//`
+                // `:#`), getmatch rebuilds the value without those tokens and
+                // nothing is left to glob: `${${~:-*}//x/y}` is a literal `*`.
+                // The port carries `~` on the global option, so undo the inner
+                // flip for that case only; subscripts, case modifiers and plain
+                // pass-through keep the inner's globbing.
+                let outer_pattern_op = match body_chars.get(p).copied() {
+                    Some(c) if c == '#' || c == Pound || c == '%' || c == '/' => true,
+                    Some(':') => matches!(body_chars.get(p + 1).copied(), Some(c) if c == '#' || c == Pound),
+                    _ => false,
+                };
+                let __inner_gs = outer_pattern_op.then(|| gs_save());
                 let (joined, arr_parts, isarr, _) = if aspar_arr.is_some() {
                     (String::new(), Vec::new(), false, 0)
                 } else {
                     multsub(&inner, PREFORK_SUBEXP)
                 };
+                if let Some(saved) = __inner_gs {
+                    gs_restore(saved);
+                }
                 if scalar_ctx {
                     SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() - 1));
                 }

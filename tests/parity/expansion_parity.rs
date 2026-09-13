@@ -223,6 +223,15 @@ mod alternate_word_split_flags {
         assert_parity(r#"setopt shwordsplit; str=s; print -rl -- ${str+"one two" "3 2 1" foo "$str"}"#);
         assert_parity(r#"setopt shwordsplit; v="1 2"; x=1; print -rl -- ${y:-"p q" r} ${y:-$v} ${y:-"$v"} ${x+a b} "${x+c d}""#);
     }
+
+    /// c:Src/subst.c:1671 — globsubst is local to each paramsubst: an inner
+    /// `${~…}` only tokenizes its own result, and an outer pattern operator
+    /// rebuilds the value without those tokens. Other outer forms keep them.
+    #[test]
+    fn inner_tilde_does_not_glob_through_a_pattern_operator() {
+        assert_parity(r#"cd "$(mktemp -d)" && touch boringfile && print -r -- ${${~:-*}//x/y} ${${~:-*}#x} ${${~:-*}%x} ${${~:-*}:#x}"#);
+        assert_parity(r#"cd "$(mktemp -d)" && touch boringfile && print -r -- ${${~:-*}} ${${~:-*}:u} ${(U)${~:-*}} ${${~:-*}[1]}"#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
