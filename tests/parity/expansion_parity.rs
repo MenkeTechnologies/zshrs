@@ -1136,6 +1136,42 @@ mod eval_flag_failed_relex_is_null {
     }
 }
 
+/// The compiler side of the `(e)` NULL (c:Src/subst.c:1878, 326-327, 142-147).
+/// Inside a word the value is the node text up to the `$`, earlier
+/// substitutions and the lexer's quote tokens included; and every LATER word
+/// of the command stays unexpanded, reaching only globlist.
+mod eval_flag_null_cuts_the_command_words {
+    use super::*;
+
+    #[test]
+    fn the_word_ends_at_the_dollar() {
+        assert_parity(r#"a='$('; print -r -- x${(e)a}z; echo rc=$?"#);
+        assert_parity(r#"a='$('; b=B; print -r -- $b${(e)a}z"#);
+        assert_parity(r#"a='$('; v=x${(e)a}z; print -r -- "[$v]""#);
+    }
+
+    #[test]
+    fn a_double_quoted_assignment_keeps_its_opening_quote() {
+        assert_parity(r#"a='$('; v="pre${(e)a}post"; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; v="${(e)a}"; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; b=B; v="$b${(e)a}z"; print -r -- "[$v]""#);
+    }
+
+    #[test]
+    fn later_words_stay_unexpanded() {
+        assert_parity(r#"a='$('; print -rl -- x ${(e)a} ${(e)a} y; echo rc=$?"#);
+        assert_parity(r#"a='$('; print -r -- x ${(e)a} "*" y; echo rc=$?"#);
+        assert_parity(r#"a='$('; print -r -- x${(e)a}z ${(e)a}; echo rc=$?"#);
+        assert_parity(r#"a='$('; print -r -- ${(e)a} $(print hi >&2) y; echo rc=$?"#);
+    }
+
+    #[test]
+    fn a_successful_eval_is_unaffected() {
+        assert_parity(r#"b=ok; print -r -- pre${(e)b}post "${(e)b}" x${(e)b}"#);
+        assert_parity(r#"c='$b'; b=B; v="p${(e)c}"; print -r -- $v"#);
+    }
+}
+
 /// The `:W<delim>sep<delim>` modifier flag (c:Src/subst.c:4699-4710): the
 /// separator is a get_strarg argument, so any delimiter opens it, and `W` is
 /// word-wise like `w` (`wall = 1`), applying the modifier to each piece

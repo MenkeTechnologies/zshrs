@@ -13123,7 +13123,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // ("${(s:|:)x}" on "|a|b|") leak U+00A1 into argv.
                 let result_value = if mode == 5 {
                     let out = crate::ported::subst::singsub(&prepped);
-                    Value::str(crate::ported::lex::untokenize(&out))
+                    if crate::ported::subst::PREFORK_STOPPED.with(|c| c.get()) {
+                        // Stopped by an `(e)` NULL: the node keeps its quote
+                        // tokens (no remnulargs), rendered by C's untokenize
+                        // (c:Src/exec.c:2134): `v="pre${(e)a}post"` → `"pre`.
+                        Value::str(crate::ported::lex::untokenize_ztokens(&out))
+                    } else {
+                        Value::str(crate::ported::lex::untokenize(&out))
+                    }
                 } else {
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
                     // c:Src/subst.c:655 — multsub returns Vec::new()
@@ -13303,7 +13310,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if crate::ported::subst::PREFORK_STOPPED.with(|c| c.replace(false)) {
                     PREFORK_CUT.with(|c| c.set(true));
                     let head = nodes.into_iter().next().unwrap_or_default();
-                    return Value::str(crate::ported::lex::untokenize(&head).to_string());
+                    // remnulargs (c:170) never ran either, so C's node still
+                    // holds its quote tokens and untokenize (c:Src/exec.c:2134)
+                    // renders them through ztokens. (multsub's own remnulargs
+                    // pass, which C's multsub c:625-657 does not have, strips
+                    // them before this point today: `print x"q"${(e)a}z` gives
+                    // `xq` where zsh gives `x"q"`.)
+                    return Value::str(crate::ported::lex::untokenize_ztokens(&head));
                 }
                 // Read immediately: brace expansion / filesub / glob below can
                 // re-enter paramsubst and overwrite the cell. `seg_is_array` is

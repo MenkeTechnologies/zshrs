@@ -3303,6 +3303,8 @@ impl ZshCompiler {
         let globlist_argv = !head_is_typeset_family && argv_words.len() <= 63;
         let mut globlist_mask: u64 = 0;
         let mut globlist_text_mask: u64 = 0;
+        // (jump op, word index, value mask, text mask) per prefork-cut check.
+        let mut cut_pads: Vec<(usize, usize, u64, u64)> = Vec::new();
         for (argv_index, word) in argv_words.iter().enumerate() {
             // c:Src/parse.c:1986-1989 / c:2008-2050 — from a typeset-family
             // command's first `NAME=…` argument on, every word is a postassign,
@@ -3532,6 +3534,19 @@ impl ZshCompiler {
                     0,
                 );
             }
+            // c:Src/subst.c:142-147 — when this word's paramsubst returned NULL
+            // (a failed `(e)` re-lex), prefork returns at once: every later word
+            // stays as the lexer left it and only globlist still runs over it
+            // (`x ${(e)a} ${(e)a} y` → `no matches found: ${(e)a}`). The pad
+            // taken on the cut pushes those words unexpanded.
+            if argv_index + 1 < argv_words.len() && expansion_may_null_prefork(word) {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_PREFORK_CUT_CHECK, 0),
+                    0,
+                );
+                let jump = self.builder.emit(Op::JumpIfTrue(0), 0);
+                cut_pads.push((jump, argv_index, globlist_mask, globlist_text_mask));
+            }
         }
 
         // c:Src/exec.c:3755-3757 `globlist(args, 0)` — filename generation
@@ -3549,6 +3564,49 @@ impl ZshCompiler {
                 0,
             );
             self.builder.emit(Op::Pop, 0);
+        }
+
+        // The prefork-cut pads (see the BUILTIN_PREFORK_CUT_CHECK emit above).
+        // Stack on entry: the values of words 0..=i. Each later word is pushed
+        // as the lexer left it; zglob untokenizes a word with no wildcards
+        // (c:Src/glob.c:1232) and globs one that has them, which the text mask
+        // hands to BUILTIN_GLOBLIST. All paths meet before the postassign close.
+        if !cut_pads.is_empty() {
+            let mut joins = vec![self.builder.emit(Op::Jump(0), 0)];
+            for (jump, cut_index, value_mask, text_mask) in cut_pads {
+                let pad = self.builder.current_pos();
+                self.builder.patch_jump(jump, pad);
+                let mut text_mask = text_mask;
+                for (k, later) in argv_words.iter().enumerate().skip(cut_index + 1) {
+                    let pushed = if globlist_argv && crate::ported::pattern::haswilds(later) {
+                        text_mask |= 1u64 << k;
+                        later.to_string()
+                    } else {
+                        // c:Src/exec.c:2134 untokenize: quote tokens render as
+                        // `"`/`'`/`\` (`x ${(e)a} "*" y` → `"*"`).
+                        crate::ported::lex::untokenize_ztokens(later)
+                    };
+                    let idx = self.builder.add_constant(Value::str(pushed.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                }
+                if value_mask | text_mask != 0 {
+                    self.builder.emit(Op::LoadInt(value_mask as i64), 0);
+                    self.builder.emit(Op::LoadInt(text_mask as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(
+                            crate::fusevm_bridge::BUILTIN_GLOBLIST,
+                            (argv_words.len() + 2) as u8,
+                        ),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
+                joins.push(self.builder.emit(Op::Jump(0), 0));
+            }
+            let join = self.builder.current_pos();
+            for j in joins {
+                self.builder.patch_jump(j, join);
+            }
         }
 
         // Every word from the first postassign on has been expanded: close
@@ -8947,7 +9005,23 @@ impl ZshCompiler {
             self.builder.emit(Op::Pop, 0); // discard the RESET status
         }
         if !has_bnull && !starts_with_tilde_and_has_var {
-            if let Some(segs) = split_word_segments(s) {
+            // c:Src/subst.c:1878 / c:326-327 / c:142-147 — a failed `(e)`
+            // re-lex returns NULL out of paramsubst after the word was cut at
+            // that `$`, so the word becomes its node text up to the cut: the
+            // literal parts WITH their quote tokens, plus what earlier
+            // substitutions already spliced in (`v="pre${(e)a}post"` → `"pre`,
+            // `b=B; print $b${(e)a}z` → `B`). Segment assembly untokenizes each
+            // literal on its own and cannot rebuild that text, so a word that
+            // combines an `(e)` expansion with anything else is expanded whole
+            // by BUILTIN_EXPAND_TEXT, whose multsub/singsub is the C prefork
+            // over the tokenized word and returns that node on a stop.
+            let segs_opt = split_word_segments(s).filter(|segs| {
+                !(segs.len() > 1
+                    && segs.iter().any(|seg| {
+                        matches!(seg, WordSegment::Expansion(e) if expansion_may_null_prefork(e))
+                    }))
+            });
+            if let Some(segs) = segs_opt {
                 // Pick concat operator based on segment shape:
                 // - Default splice (`${arr[@]}`, `$@`, `$*`): FIRST/LAST
                 //   sticking — emit BUILTIN_CONCAT_SPLICE.
@@ -14526,8 +14600,15 @@ impl ZshCompiler {
         //
         // c:Src/zsh.h token constants: Star = \u{87}, Quest = \u{97},
         // Inbrack = \u{91}, Inbrace = \u{8f}.
+        // A word that can stop prefork on an `(e)` NULL keeps its own tokens:
+        // the stopped value is the node text with its quote tokens rendered
+        // (c:Src/subst.c:1878, c:Src/exec.c:2134), and a synthetic Dnull would
+        // render as a `"` zsh never prints (`v=x${(e)a}z` → `x`). Mode 8 applies
+        // the same no-glob (c:Src/exec.c:2603-2613) and no-brace
+        // (c:Src/subst.c:170) rules the wrap stands in for.
         let needs_dq_wrap = !s.starts_with('\u{9e}')
             && !s.starts_with('\u{9d}')
+            && !expansion_may_null_prefork(s)
             && (s.contains('*') || s.contains('\u{87}')      // Star
                 || s.contains('?') || s.contains('\u{97}')   // Quest
                 || s.contains('[') || s.contains('\u{91}')   // Inbrack
@@ -14756,6 +14837,31 @@ fn braced_expansion_spans_word(untoked: &str) -> bool {
             }
         }
         k += 1;
+    }
+    false
+}
+
+/// Whether `s` holds a `${(…e…)…}` flag group, the only way paramsubst
+/// returns NULL and stops prefork (c:Src/subst.c:4346, 4394, 4413, 4433,
+/// 4472: the `(e)` re-lex fails). Flags are literal source text, so a
+/// textual scan finds every candidate; a false positive (`${(s:e:)x}`) only
+/// costs the cut check.
+fn expansion_may_null_prefork(s: &str) -> bool {
+    use crate::ported::zsh_h::{Inbrace, Inpar, Outpar};
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i + 1 < chars.len() {
+        if matches!(chars[i], '{' | Inbrace) && matches!(chars[i + 1], '(' | Inpar) {
+            let mut j = i + 2;
+            while j < chars.len() && !matches!(chars[j], ')' | Outpar) {
+                if chars[j] == 'e' {
+                    return true;
+                }
+                j += 1;
+            }
+            i = j;
+        }
+        i += 1;
     }
     false
 }
