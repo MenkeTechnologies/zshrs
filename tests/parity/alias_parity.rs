@@ -407,3 +407,24 @@ mod listing_matches_the_parse {
         assert_parity(&format!("{fp}; autoload +X g; functions g; g"));
     }
 }
+
+/// c:Src/lex.c:1964-1969 — exalias looks a punctuation token up by its
+/// `tokstrings[tok]` text, so a global alias named after any operator expands.
+/// zshrs only tried `;`, `&` and `|`, and `alias -g '&&=…'` never fired.
+mod global_alias_on_an_operator_token {
+    use super::*;
+
+    #[test]
+    fn a_global_alias_named_after_an_operator_expands() {
+        assert_parity(r#"alias -g '&&=; print yes; '; eval 'true && print no'"#);
+        assert_parity(r#"alias -g '||=; print or; '; eval 'false || print no'"#);
+        assert_parity(r#"alias -g '|&=; print pipe; '; eval 'print a |& cat'"#);
+    }
+
+    #[test]
+    fn a_regular_alias_or_no_alias_leaves_the_operator_alone() {
+        assert_parity(r#"alias '&&=print never'; eval 'true && print no'"#);
+        assert_parity(r#"alias ls=print; eval 'ls a && ls b'"#);
+        assert_parity("true && print plain; false || print plain2");
+    }
+}

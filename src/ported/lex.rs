@@ -4033,12 +4033,14 @@ pub fn exalias() -> bool {
         if tok() == NEWLIN {
             return false;
         }
-        // Use punctuation-token text; unknown tokens skip alias.
-        let text = match tok() {
-            SEMI => ";",
-            AMPER => "&",
-            BAR_TOK => "|",
-            _ => return false,
+        // c:1969 — `return checkalias();` with that `tokstrings[tok]` text,
+        // for EVERY punctuation token: a global alias named `&&`, `||`, `|&`
+        // or `(` expands exactly like one named `;`. Limiting the lookup to
+        // `;` / `&` / `|` left `alias -g '&&=; print yes; '` unexpanded. A
+        // token with no table entry has a NULL zshlextext, which checkalias
+        // rejects (c:1906-1907).
+        let Some(text) = tokstrings.get(tok() as usize).copied().flatten() else {
+            return false;
         };
         return checkalias(text);
     }
