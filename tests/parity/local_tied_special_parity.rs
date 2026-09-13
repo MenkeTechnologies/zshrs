@@ -353,3 +353,25 @@ mod retie_existing_pair {
     }
 }
 
+/// The scalar splits on its join character exactly as tiedarrsetfn builds
+/// `sepbuf` (c:Src/params.c:4320-4333): NUL is a real separator, and a meta
+/// byte is matched in its metafied form. B02typeset.ztst "Tied parameters
+/// and uniquified arrays with meta-character / NUL-character as separator".
+mod tied_separator_bytes {
+    use super::*;
+
+    #[test]
+    fn nul_separator_splits_and_prints_empty_join_char() {
+        assert_parity(
+            r#"typeset -T S=$'l\000o\000c\000a\000l' arr $'\000'; typeset -U S; print $arr; typeset -p S arr; [[ $S == $'l\000o\000c\000a' ]]; echo $?"#,
+        );
+    }
+
+    #[test]
+    fn meta_byte_separator_splits() {
+        assert_parity(
+            r#"setopt NO_multibyte; typeset -T SC=$'l\x83o\x83c\x83a\x83l' ar $'\x83'; print $#ar; typeset -U SC; print $#ar"#,
+        );
+    }
+}
+

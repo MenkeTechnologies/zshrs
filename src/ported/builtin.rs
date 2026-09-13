@@ -4742,27 +4742,30 @@ pub fn bin_typeset(
         // character used to join the elements of the array in the
         // scalar.
         let joinchar: i32 = if argv.len() == 3 {
-            let joinstr = argv[2].as_bytes(); // c:2880
-            if joinstr.is_empty() {
-                0 // c:2893-2894 `else if (!*joinstr) joinchar = 0;`
-            } else if joinstr[0] == 0x83 {
-                // c:2895-2896 `else if (*joinstr == Meta) joinchar = joinstr[1] ^ 32;`
-                (joinstr.get(1).copied().unwrap_or(0) ^ 32) as i32
-            } else {
-                joinstr[0] as i32 // c:2897-2898
+            // c:2884 `joinstr = nextasg->name;` — a metafied byte reaches
+            // zshrs as the CHAR Meta followed by the char of `byte ^ 32`, so
+            // the Meta test is on chars: the first UTF-8 byte of U+0083 is
+            // 0xc2, never 0x83, and the old byte test could not fire.
+            let joinstr = &argv[2];
+            let mut cs = joinstr.chars();
+            match (cs.next(), cs.next()) {
+                (None, _) => 0, // c:2889-2890 `else if (!*joinstr) joinchar = 0;`
+                (Some(m), Some(n)) if m as u32 == Meta as u32 => {
+                    ((n as u32) ^ 32) as i32 // c:2891-2892 `joinchar = joinstr[1] ^ 32;`
+                }
+                _ => joinstr.as_bytes()[0] as i32, // c:2893-2894 `joinchar = *joinstr;`
             }
         } else {
             ':' as i32 // c:2891-2892 `if (!joinstr) joinchar = ':';`
         };
-        // Split/join separators from joinchar. joinchar==0 measured on
-        // the 5.9.1 release binary: assignment keeps the whole string
-        // as one element (no split) and reads join with a NUL byte
-        // (`zjoin(arr, 0, 1)` writing the raw byte, c:Src/params.c:4352).
-        let split_one = joinchar == 0;
-        let joinsep: String = if joinchar == 0 {
-            "\0".to_string()
-        } else {
-            ((joinchar as u8) as char).to_string()
+        // c:Src/params.c:4320-4332 tiedarrsetfn — the separator is the join
+        // character, metafied when it is imeta; the same bytes join the array
+        // back in tiedarrgetfn (c:4303-4304 zjoin). NUL is imeta in C (`Meta
+        // ' '`), but zshrs keeps NUL unmetafied inside values, so it stays raw.
+        let joinsep: String = match joinchar as u8 {
+            0 => "\0".to_string(),
+            b if crate::ported::utils::imeta_byte(b) => [char::from(Meta), char::from(b ^ 32)].iter().collect(),
+            b => char::from(b).to_string(),
         };
 
         // c:Src/builtin.c:2940-2944 — when the scalar already exists
@@ -4979,11 +4982,7 @@ pub fn bin_typeset(
         let init_arr: Vec<String> = if let Some(arr) = aval_opt {
             arr
         } else if let Some(sval) = sval_opt.as_deref() {
-            if split_one {
-                vec![sval.to_string()]
-            } else {
-                crate::ported::utils::sepsplit(sval, Some(&joinsep), true)
-            }
+            crate::ported::utils::sepsplit(sval, Some(&joinsep), true)
         } else if let Some(old) = existing_scalar
             .as_deref()
             // Inheriting the existing scalar is for a tie declared at the
@@ -5002,8 +5001,6 @@ pub fn bin_typeset(
         {
             if old.is_empty() {
                 Vec::new()
-            } else if split_one {
-                vec![old.to_string()]
             } else {
                 crate::ported::utils::sepsplit(old, Some(&joinsep), true)
             }
@@ -5103,11 +5100,14 @@ pub fn bin_typeset(
             // c:4352 — `zjoin(*dptr->arrptr, (unsigned char)
             // dptr->joinchar, 1)`; joinchar lives on the tieddata
             // riding pm->u.data (Rust: typed u_tied view).
+            // c:Src/params.c:4303-4304 + c:4320-4332 — the join bytes are the
+            // metafied join character (raw NUL in zshrs, see bin_typeset above).
             let sep = match pm.u_tied.as_deref() {
-                // joinchar==0 joins with the raw NUL byte (zjoin with
-                // delim 0, c:Src/params.c:4352; measured on 5.9.1).
-                Some(td) if td.joinchar == 0 => "\0".to_string(),
-                Some(td) => ((td.joinchar as u8) as char).to_string(),
+                Some(td) => match td.joinchar as u8 {
+                    0 => "\0".to_string(),
+                    b if crate::ported::utils::imeta_byte(b) => [char::from(crate::ported::zsh_h::Meta), char::from(b ^ 32)].iter().collect(),
+                    b => char::from(b).to_string(),
+                },
                 None => ":".to_string(),
             };
             crate::ported::params::tiedarrgetfn(pm).join(&sep)

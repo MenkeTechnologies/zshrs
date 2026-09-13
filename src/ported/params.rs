@@ -11514,24 +11514,23 @@ pub fn tiedarrsetfn(pm: &mut param, x: Option<String>) {
     // joinchar==0 → empty sepbuf; no tieddata → `:` default (the
     // PM_SPECIAL colon-tied params, c:5314-5315).
     let sepbuf: String = match pm.u_tied.as_deref() {
-        Some(td) if td.joinchar == 0 => String::new(), // c:4376-4377
-        Some(td) => ((td.joinchar as u8) as char).to_string(), // c:4378-4379
-        None => ":".to_string(),                       // c:5314-5315
+        // c:4320-4332 — `if (imeta(dptr->joinchar)) { sepbuf[0] = Meta;
+        // sepbuf[1] = dptr->joinchar ^ 32; } else sepbuf[0] = dptr->joinchar;`
+        // !!! WARNING: RUST-ONLY ARM — zshrs keeps NUL unmetafied inside values,
+        // so a NUL join character is the raw `\0`, not C's `Meta ' '` pair.
+        Some(td) => match td.joinchar as u8 {
+            0 => "\0".to_string(),
+            b if crate::ported::utils::imeta_byte(b) => [char::from(Meta), char::from(b ^ 32)].iter().collect(),
+            b => char::from(b).to_string(), // c:4330
+        },
+        None => ":".to_string(),              // c:5314-5315
     };
     let arr_opt: Option<Vec<String>> = if let Some(s) = x {
         // c:4369
-        // c:4381 — `sepsplit(x, sepbuf, 0, 0)`.
-        // joinchar==0 (typeset -T s a ''): the zsh 5.9.1 release
-        // binary keeps the whole string as ONE element on assignment
-        // (measured: `typeset -T S s ""; S=abc; typeset -p s` →
-        // `s=( abc )`), diverging from a literal char-split reading
-        // of sepsplit("") in the C source; match the release binary
-        // (parity floor).
-        let split: Vec<String> = if sepbuf.is_empty() {
-            vec![s.clone()]
-        } else {
-            crate::ported::utils::sepsplit(&s, Some(&sepbuf), true)
-        };
+        // c:4333 — `*dptr->arrptr = sepsplit(x, sepbuf, 0, 0);`. sepbuf holds
+        // the join character itself, NUL included, so a NUL-tied scalar splits
+        // on NUL; a value with no NUL stays one element.
+        let split: Vec<String> = crate::ported::utils::sepsplit(&s, Some(&sepbuf), true);
         // c:4382-4383 — uniqarray if PM_UNIQUE.
         let split = if pm.node.flags & PM_UNIQUE as i32 != 0 {
             // c:4382
@@ -15197,7 +15196,10 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if let Some(jc) = joinchar {
             if jc != ':' as i32 {
                 // c:6313-6316 — one-char buf, space-separated, quoted.
-                print!(" {}", quotedzputs(&((jc as u8) as char).to_string()));
+                // `buf[0] = joinchar; buf[1] = '\0';` — a NUL join character
+                // is an EMPTY C string, so it prints as `''`.
+                let buf = if jc == 0 { String::new() } else { ((jc as u8) as char).to_string() };
+                print!(" {}", quotedzputs(&buf));
             }
         }
     }
