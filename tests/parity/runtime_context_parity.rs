@@ -369,3 +369,18 @@ only the raw-word provenance is missing. BUGS.md #1121."]
         assert_stderr_parity(r#"t=x; [[ $t f ]]"#);
     }
 }
+
+/// c:Src/glob.c:1936 — the code of an `(oe:…:)` / `(o+fn)` sort qualifier runs
+/// through `execode(prog, 1, 0, "globsort")`, so it sees `globsort` appended
+/// to $zsh_eval_context, as `(e:…:)` sees `globqual` (c:3930). The port ran
+/// the sort code with no context push.
+mod glob_sort_eval_context {
+    use super::*;
+
+    #[test]
+    fn sort_qualifier_code_runs_in_globsort_context() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; touch b a c; contextfn() { print -r - $zsh_eval_context }; : *(o+contextfn); : *(oe:'print -r - $zsh_eval_context':); print -r - $zsh_eval_context; rev() { REPLY=${REPLY/a/z} }; print *(o+rev); cd /; command rm -rf $d"#,
+        );
+    }
+}

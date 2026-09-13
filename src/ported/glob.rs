@@ -4395,7 +4395,12 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             let name = glob_emit_path(&m.path);
             for code in &sort_codes {
                 crate::ported::params::setsparam("REPLY", &name);
+                // c:1936 — `execode(prog, 1, 0, "globsort");`: the sort code
+                // runs with `globsort` appended to $zsh_eval_context, as the
+                // `(e…)` qualifier runs with `globqual` (c:3930).
+                let globsort_ctx = crate::ported::exec::EvalContextFrame::push("globsort");
                 let _ = crate::ported::exec::execute_script(code);
+                drop(globsort_ctx);
                 let key = crate::ported::params::getsparam("REPLY").unwrap_or_else(|| name.clone());
                 m.sort_strings.push(key);
             }
