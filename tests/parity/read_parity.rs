@@ -254,6 +254,21 @@ mod ifs_handling {
         assert_parity(r#"IFS=: read X Y Z <<< 'a:b:c'; echo "[$X][$Y][$Z]""#);
     }
 
+    /// A multibyte non-whitespace IFS character always ends the current
+    /// word, even an empty one: zread feeds mbrtowc one byte at a time and
+    /// the leading bytes are stored before the character decodes, so
+    /// c:Src/builtin.c:6815 `bptr != buf` holds. The same test at the start
+    /// of the last variable (c:7009 `bptr == buf`) fails, so that variable
+    /// keeps the separator.
+    #[test]
+    fn multibyte_separator_delimits_empty_fields() {
+        assert_parity(
+            r#"IFS=" 日"; read -rA a <<< " a 日 b"; print ${#a} "[${(j:][:)a}]"
+read -rA a <<< "a日日b 日 c"; print ${#a} "[${(j:][:)a}]"
+read -r x y <<< "a 日 b"; print -r -- "[$x][$y]""#,
+        );
+    }
+
     /// Empty IFS — no splitting, whole line goes to first var.
     #[test]
     fn ifs_empty_no_splitting() {

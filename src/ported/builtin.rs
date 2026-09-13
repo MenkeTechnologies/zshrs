@@ -15593,6 +15593,53 @@ pub fn bin_read(
         }
         end
     };
+    // c:Src/builtin.c:6772-6830 — read one word starting at byte `*cur`,
+    // updating C's `first` (a non-whitespace separator was seen, so empty
+    // fields count) and `gotnl` (the delimiter or EOF was reached). The
+    // returned word keeps its Bnull marks; callers unmark before assigning.
+    let read_word = |cur: &mut usize, first: &mut bool, gotnl: &mut bool| -> String {
+        let mut word = String::new();
+        loop {
+            if *cur >= buf.len() {
+                *gotnl = true; // c:6898 `if (wc == delim) gotnl = 1` / EOF
+                break;
+            }
+            let l = unit_len(&buf[*cur..]);
+            let unit = &buf[*cur..*cur + l];
+            *cur += l;
+            // c:6823-6826 — a backslash-escaped unit is stored literally and
+            // clears `first`; it is never a separator.
+            if unit.starts_with(rmark) {
+                word.push_str(unit);
+                if *cur < buf.len() {
+                    let nl = unit_len(&buf[*cur..]);
+                    word.push_str(&buf[*cur..*cur + nl]);
+                    *cur += nl;
+                }
+                *first = false;
+                continue;
+            }
+            let (sep, ws) = unit_sep(unit);
+            if sep {
+                // c:6815 `bptr != buf` — with MULTIBYTE set, zread hands
+                // mbrtowc one byte at a time and every leading byte of a
+                // multibyte character is stored before it decodes (c:6827),
+                // so a multibyte separator always ends the word, even an
+                // empty one; c:6887 `*laststart = '\0'` then drops those bytes.
+                // `IFS=" 日"; read -rA a <<< " a 日 b"` is (a "" b).
+                let bptr_ne_buf = !word.is_empty() || (read_multibyte && l > 1);
+                if bptr_ne_buf || (!ws && *first) {
+                    *first |= !ws; // c:6817
+                    break;
+                }
+                *first |= !ws; // c:6820
+                continue;
+            }
+            *first = false; // c:6826
+            word.push_str(unit);
+        }
+        word
+    };
 
     // Assign to scalar reply, multi-var split, or array.
     // c:6685-6735 — `read x y z` splits buf by IFS, fills the first
@@ -15610,83 +15657,18 @@ pub fn bin_read(
         // c:6863-6869 — the FIRST word's char loop skips leading
         // whitespace-IFS (bptr==buf && iwsep → continue), so leading
         // whitespace produces no empty element.
-        let trimmed = &buf[ws_prefix_len(&buf)..];
-        // NB: do NOT trim trailing whitespace-IFS. C reads word-by-word
-        // and, after the last real word terminates on a whitespace
-        // separator, attempts one more word: it consumes the remaining
-        // trailing whitespace and hits the delimiter with an empty buf
-        // and gotnl=1, so c:6929 `(*buf || first || gotnl)` adds a
-        // trailing empty element. `read -A arr <<< "a b "` → (a b "").
-        // c:Src/utils.c:3711 spacesplit — a whitespace-IFS char collapses a
-        // run, and whitespace ADJACENT to a non-whitespace IFS separator is
-        // absorbed into it (so `a : b` with IFS=" :" is ONE delimiter → 2
-        // fields), while consecutive non-whitespace separators each delimit
-        // (`a :: b` → 3, empty preserved). A non-whitespace separator also
-        // absorbs its own trailing whitespace.
+        // c:Src/builtin.c:6764 — `while (*args || (OPT_ISSET(ops,'A') && !gotnl))`:
+        // one word per pass until the delimiter (or EOF) sets gotnl.
         let mut parts: Vec<String> = Vec::new();
-        let mut field = String::new();
-        // (is separator, is whitespace separator, byte length) of the unit at `i`.
-        let peek = |i: usize| -> Option<(bool, bool, usize)> {
-            if i >= trimmed.len() {
-                return None;
+        let mut cur = 0usize;
+        let mut first = true; // c:6763
+        let mut gotnl = false;
+        while !gotnl {
+            let word = read_word(&mut cur, &mut first, &mut gotnl);
+            // c:6929 — `if (!OPT_ISSET(ops,'e') && (*buf || first || gotnl))`
+            if !word.is_empty() || first || gotnl {
+                parts.push(unmark(&word)); // c:6931 addlinknode
             }
-            let l = unit_len(&trimmed[i..]);
-            let (s, w) = unit_sep(&trimmed[i..i + l]);
-            Some((s, w, l))
-        };
-        let mut i = 0;
-        while let Some((sep, ws, l)) = peek(i) {
-            let unit = &trimmed[i..i + l];
-            i += l;
-            // A Bnull-marked unit is a backslash-escaped literal — never a
-            // separator. Consume the mark and push the following unit raw.
-            if unit.starts_with(rmark) {
-                if let Some((_, _, nl)) = peek(i) {
-                    field.push_str(&trimmed[i..i + nl]);
-                    i += nl;
-                }
-                continue;
-            }
-            if sep {
-                parts.push(std::mem::take(&mut field));
-                if ws {
-                    // Coalesce the whitespace-IFS run.
-                    while let Some((_, true, nl)) = peek(i) {
-                        i += nl;
-                    }
-                    // If that run is followed by a non-whitespace separator,
-                    // it belongs to the SAME delimiter — consume it and its
-                    // trailing whitespace so no empty field appears.
-                    if let Some((true, false, nl)) = peek(i) {
-                        i += nl;
-                        while let Some((_, true, nl)) = peek(i) {
-                            i += nl;
-                        }
-                    }
-                } else {
-                    // Non-whitespace separator: absorb its trailing whitespace.
-                    while let Some((_, true, nl)) = peek(i) {
-                        i += nl;
-                    }
-                }
-            } else {
-                field.push_str(unit);
-            }
-        }
-        if !field.is_empty() || !parts.is_empty() {
-            parts.push(field);
-        }
-        // c:Src/builtin.c:6929 — `if (*buf || first || gotnl)`. With
-        // `gotnl=1` set on EOF (c:6898/6914) and `first=1` initial
-        // value (c:6771), C's `read -A` adds the empty buf as one
-        // element even when no bytes were ever read. The resulting
-        // linked list at c:6949 then yields a 1-element array
-        // containing "". Without this branch, immediate EOF produced
-        // a 0-element array — diverging from zsh's "consumed one
-        // (empty) field" semantics that downstream `${#arr}` checks
-        // rely on to distinguish "empty line" from "no input".
-        if parts.is_empty() {
-            parts.push(String::new());
         }
         // c:Src/builtin.c:6910-6961 — `-A` with `-e`/`-E`. The word is
         // echoed (one per line) when `-e` (main per-word loop, c:6910)
@@ -15734,71 +15716,57 @@ pub fn bin_read(
                 setsparam(var, &val); // c:7106
             }
         };
-        let mut remaining = buf[ws_prefix_len(&buf)..].to_string();
-        // Byte offset of the next UNMARKED IFS separator unit (a Bnull-marked
-        // unit is a backslash-escaped literal and never delimits).
-        let next_sep = |s: &str| -> Option<usize> {
-            let mut m = false;
-            let mut bi = 0;
-            while bi < s.len() {
-                let l = unit_len(&s[bi..]);
-                let unit = &s[bi..bi + l];
-                if m {
-                    m = false;
-                } else if unit.starts_with(rmark) {
-                    m = true;
-                } else if unit_sep(unit).0 {
-                    return Some(bi);
-                }
-                bi += l;
-            }
-            None
-        };
-        for (i, var) in vars.iter().enumerate() {
-            if i + 1 == vars.len() {
-                // Last var: store the remainder, trim trailing IFS.
-                let final_val = remaining[..ws_suffix_start(&remaining)].to_string();
-                emit(var, &final_val);
-            } else {
-                // Find next IFS char.
-                match next_sep(&remaining) {
-                    Some(idx) => {
-                        let field = remaining[..idx].to_string();
-                        // c:Src/utils.c:3711 spacesplit — skip the whole
-                        // delimiter. The separator unit plus the IFS-whitespace
-                        // ABSORBED around it form one delimiter: a whitespace
-                        // separator coalesces its run AND a following non-ws
-                        // separator (with that one's trailing whitespace); a
-                        // non-ws separator absorbs its own trailing whitespace.
-                        // So `x : y : z` (IFS=" :") reads as x, y, z — not
-                        // x, "", "y : z".
-                        let sep_len = unit_len(&remaining[idx..]);
-                        let sep_is_ws = unit_sep(&remaining[idx..idx + sep_len]).1;
-                        let after = &remaining[idx + sep_len..];
-                        let rest: &str = if sep_is_ws {
-                            let r = &after[ws_prefix_len(after)..];
-                            let nl = unit_len(r);
-                            match unit_sep(&r[..nl]) {
-                                (true, false) => {
-                                    let r2 = &r[nl..];
-                                    &r2[ws_prefix_len(r2)..]
-                                }
-                                _ => r,
-                            }
-                        } else {
-                            &after[ws_prefix_len(after)..]
-                        };
-                        emit(var, &field);
-                        remaining = rest.to_string();
-                    }
-                    None => {
-                        // No more IFS: this var gets remaining, others empty.
-                        emit(var, &remaining);
-                        remaining.clear();
-                    }
-                }
+        let mut cur = 0usize;
+        let mut first = true; // c:6763
+        let mut gotnl = false;
+        let (last, leading) = vars.split_last().expect("vars holds reply");
+        // c:6764 — every variable but the last takes one word.
+        for var in leading {
+            let word = read_word(&mut cur, &mut first, &mut gotnl);
+            // c:6929 — `(*buf || first || gotnl)`; otherwise the word is
+            // dropped and the variable left untouched.
+            if !word.is_empty() || first || gotnl {
+                emit(var, &word);
+            } else if opt_echo {
+                println!("{}", unmark(&word)); // c:6926 echo precedes the test
             }
         }
+        // c:6993-7060 — any remaining part of the line goes into the last
+        // parameter. Only a separator met while nothing is stored yet
+        // (`bptr == buf`, c:7009) is skipped: whitespace always, one
+        // non-whitespace separator when the word loop did not end on one.
+        let mut rest = String::new();
+        if !gotnl {
+            while cur < buf.len() {
+                let l = unit_len(&buf[cur..]);
+                let unit = &buf[cur..cur + l];
+                cur += l;
+                if unit.starts_with(rmark) {
+                    rest.push_str(unit);
+                    if cur < buf.len() {
+                        let nl = unit_len(&buf[cur..]);
+                        rest.push_str(&buf[cur..cur + nl]);
+                        cur += nl;
+                    }
+                    continue;
+                }
+                // c:7009 — a multibyte character's leading bytes are already
+                // stored by the time it decodes, so `bptr == buf` is false.
+                let bptr_is_buf = rest.is_empty() && !(read_multibyte && l > 1);
+                let (sep, ws) = unit_sep(unit);
+                if bptr_is_buf && sep {
+                    if ws {
+                        continue; // c:7011
+                    } else if !first {
+                        first = true; // c:7013
+                        continue;
+                    }
+                }
+                rest.push_str(unit);
+            }
+        }
+        // c:7078-7091 — strip trailing IFS whitespace.
+        emit(last, &rest[..ws_suffix_start(&rest)]);
     } else {
         // c:Src/builtin.c:6843 — `read VAR` single-var path strips
         // leading/trailing IFS-whitespace exactly like the multi-var
