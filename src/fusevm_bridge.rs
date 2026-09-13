@@ -502,6 +502,15 @@ thread_local! {
     /// suppress compile-time globbing), so quoting can no longer be recovered
     /// from the value bytes — this flag carries the compile-time decision.
     static SET_VAR_GLOB_ELIGIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// c:Src/exec.c:3088-3096 — the next builtin dispatch comes from a
+    /// WC_TYPESET command, which looks the builtin up with `getnode2`
+    /// (DISABLED ignored). Set by BUILTIN_TYPESET_RESWD, consumed by
+    /// dispatch_builtin.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C knows `type == WC_TYPESET` in the
+    /// same function that looks the builtin up; here the compile-time fact has
+    /// to cross from the marker op to the dispatch op.
+    static TYPESET_RESWD_DISPATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// c:Src/exec.c:4147-4154 — `addvars(state, varspc, flags); if (errflag)
     /// { …; lastval = 1; fixfds(save); goto done; }`: an expansion error in
     /// the prefix assignments of `X=… cmd` skips `cmd`. Set by
@@ -1363,10 +1372,15 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // set (man zshbuiltins: `builtin name` runs the builtin
     // regardless of disable state). Place the check here so the
     // bypass path stays clean.
-    let disabled = crate::ported::builtin::BUILTINS_DISABLED
-        .lock()
-        .map(|s| s.contains(name))
-        .unwrap_or(false);
+    // c:Src/exec.c:3088-3096 — a WC_TYPESET command finds the builtin with
+    // `getnode2`, which ignores DISABLED: `disable typeset` leaves the
+    // reserved-word form running the builtin.
+    let typeset_reswd = TYPESET_RESWD_DISPATCH.with(|c| c.replace(false));
+    let disabled = !typeset_reswd
+        && crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .map(|s| s.contains(name))
+            .unwrap_or(false);
     if disabled {
         let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
@@ -3143,6 +3157,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_BEGIN, |_vm, _argc| {
         let word_failed = with_executor(|exec| exec.current_command_glob_failed.replace(false));
         TYPESET_WORD_GLOB_FAILED.with(|c| c.set(word_failed));
+        Value::Int(0)
+    });
+    // See BUILTIN_TYPESET_RESWD.
+    vm.register_builtin(BUILTIN_TYPESET_RESWD, |_vm, _argc| {
+        TYPESET_RESWD_DISPATCH.with(|c| c.set(true));
         Value::Int(0)
     });
     vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_END, |_vm, _argc| {
@@ -15998,6 +16017,15 @@ pub const BUILTIN_TYPESET_POSTASSIGNS_BEGIN: u16 = 684;
 /// per-command cell (so argument collection does not store status 1) and
 /// puts back the command-word NOMATCH BEGIN set aside.
 pub const BUILTIN_TYPESET_POSTASSIGNS_END: u16 = 685;
+/// Emitted right before the dispatch of a command whose command word was the
+/// enabled, unquoted TYPESET reserved word (C's WC_TYPESET, c:Src/parse.c:1931-1932).
+/// c:Src/exec.c:3088-3096 — `if (type == WC_TYPESET && (hn =
+/// builtintab->getnode2(builtintab, cmdarg)))`: "If reserved word for typeset
+/// command found (and so enabled), use regardless of whether builtin is
+/// enabled as we share the implementation." `getnode2` ignores DISABLED, so
+/// `disable typeset` does not stop the reserved-word form. No args; sets the
+/// carrier dispatch_builtin consumes before its disabled-builtin test.
+pub const BUILTIN_TYPESET_RESWD: u16 = 686;
 
 /// EXTEND step of typeset paren-init packing. Pops `argc` values:
 /// [base, e1, …, eN] — base is either the opener (`name=(` /
