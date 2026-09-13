@@ -1157,6 +1157,16 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"a='$('; b=B; v="$b${(e)a}z"; print -r -- "[$v]""#);
     }
 
+    /// multsub adds no remnulargs of its own (c:Src/subst.c:625-657), so the
+    /// quote tokens before the cut survive into the word.
+    #[test]
+    fn quote_tokens_before_the_cut_survive() {
+        assert_parity(r#"a='$('; print -r -- x"q"${(e)a}z"#);
+        assert_parity(r#"a='$('; v="p"q${(e)a}z; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; typeset v="p${(e)a}q"; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; print -r -- x\ y${(e)a}z"#);
+    }
+
     #[test]
     fn later_words_stay_unexpanded() {
         assert_parity(r#"a='$('; print -rl -- x ${(e)a} ${(e)a} y; echo rc=$?"#);

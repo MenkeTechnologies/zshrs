@@ -780,21 +780,13 @@ fn stringsubst(
           // Drop the marker, keep the next char verbatim, and skip past
           // it without further processing this iteration.
         if c == '\u{9f}' && pos + 1 < chars.len() {
-            // c:237
-            let prefix: String = chars[..pos].iter().collect(); // c:237
-            let kept = chars[pos + 1]; // c:237
-            let suffix: String = if pos + 2 < chars.len() {
-                // c:237
-                chars[pos + 2..].iter().collect() // c:237
-            } else {
-                // c:237
-                String::new() // c:237
-            }; // c:237
-            str3 = format!("{}{}{}", prefix, kept, suffix); // c:237
-            chars = str3.chars().collect(); // c:237
-            pos += 1; // c:237
-            list.setdata(node_idx, str3.clone()); // c:237
-            continue; // c:237
+            // c:282-331 — C's stringsubst has no Bnull arm: the marker and the
+            // char it escapes are passed over, and prefork's remnulargs (c:170)
+            // strips the marker later. Deleting it here lost it when an `(e)`
+            // NULL stops prefork before c:170: `a='$('; print -r -- x\ y${(e)a}z`
+            // is `x\ y` in zsh.
+            pos += 2;
+            continue;
         } // c:237
           // c:Src/subst.c:237 — literal `'…'` single-quote SPAN
           // handling in stringsubst. C's stringsubst dispatches on
@@ -1853,7 +1845,13 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
 
     // C: `prefork(&foo, pf_flags, ms_flags);`
     let mut ret_flags = 0i32; // c:625
+    PREFORK_STOPPED.with(|c| c.set(false));
     prefork(&mut list, pf_flags, &mut ret_flags); // c:625
+    // c:327 → prefork c:145-146 — an `(e)` NULL returned from prefork with the
+    // word cut at the `$` and remnulargs (c:170) never run, so the quote
+    // markers before the cut stay: `a='$('; print -r -- x"q"${(e)a}z` is
+    // `x"q"`. C's multsub (c:625-657) adds no remnulargs of its own.
+    let prefork_stopped = PREFORK_STOPPED.with(|c| c.get());
 
     // C lines 626-630: errflag bail.
     if errflag_set() {
@@ -1874,7 +1872,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
                         //   returned false because the leftover `\u{a1}` had StringLen=1.
     let strip_nul = |s: String| -> String {
         let mut s = s;
-        crate::ported::glob::remnulargs(&mut s);
+        if !prefork_stopped {
+            crate::ported::glob::remnulargs(&mut s);
+        }
         s
     };
     if l > 1 || (list.flags & LF_ARRAY != 0) {
