@@ -1165,3 +1165,22 @@ mod typeset_key_value_array_value {
         assert_parity(r#"typeset -T P p=(a "" b); print -r -- "$P" ${#p}"#);
     }
 }
+
+/// c:Src/params.c:3495-3500 — a mixed `[k]=v` / plain assoc value makes
+/// assignaparam `zerr` and return NULL, so typeset_single returns NULL
+/// (c:Src/builtin.c:2326-2329) and bin_typeset's status is 1 (c:3153-3156).
+/// The error aborts the script, so the shell exits 1. zshrs printed the
+/// message but exited 0. arrhashsetfn's odd-count error (c:Src/params.c:4083)
+/// returns nothing and keeps status 0 in both shells.
+mod assoc_bad_key_value_status {
+    use super::*;
+
+    #[test]
+    fn mixed_key_value_assoc_fails_the_typeset() {
+        assert_parity(r#"typeset -A m=([k]=v j); print rc=$?"#);
+        assert_parity(r#"f(){ local -A m=([k]=v j); print in rc=$? }; f; print out rc=$?"#);
+        assert_parity(r#"typeset -A m; m=([k]=v j); print rc=$?"#);
+        // Control: odd flat pair list keeps status 0.
+        assert_parity(r#"typeset -A m=(k); print rc=$?"#);
+    }
+}

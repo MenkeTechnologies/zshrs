@@ -6745,6 +6745,10 @@ pub fn bin_typeset(
                             .any(|t| !t[0].starts_with(crate::ported::zsh_h::Marker))
                     {
                         zerr("bad [key]=value syntax for associative array"); // c:3499
+                        // c:Src/params.c:3500 `return NULL` -> typeset_single c:2326-2329 returns
+                        // NULL -> bin_typeset c:3153-3156 `returnval = 1`; no attribute stamps.
+                        returnval = 1;
+                        continue;
                     } else {
                         // c:Src/params.c:4094-4117 arrhashsetfn — a `Marker +` triad
                         // appends onto the key's current value.
@@ -6809,6 +6813,10 @@ pub fn bin_typeset(
                     let any_bracket = elems.iter().any(|e| e.starts_with('[') && e.contains("]=")); // c:3495
                     if any_bracket && !bracket_shape {
                         zerr("bad [key]=value syntax for associative array"); // c:3499
+                        // c:Src/params.c:3500 `return NULL` -> typeset_single c:2326-2329 returns
+                        // NULL -> bin_typeset c:3153-3156 `returnval = 1`; no attribute stamps.
+                        returnval = 1;
+                        continue;
                                                                               // c:3500 `return NULL;` — the parameter is NOT set.
                     } else if odd_pairs {
                         // c:4083 — `zerr(...)`; zshrs's zerr raises ERRFLAG_ERROR
