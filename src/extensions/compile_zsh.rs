@@ -14810,27 +14810,75 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
 /// Anchored on `:` followed by a known modifier letter (or `g` then
 /// `s`) so `$a:$b` stays two expansions. Bugs #579/#580/#581.
 fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
+    // c:Src/subst.c:4554-4564 — `while (**ptr == ':')`, then the flag loop
+    // `for (; !c && **ptr;)`: the flags `g`, `w`, `W<delim>sep<delim>`, `f`
+    // and `F<delim>n<delim>` (c:4690-4719) come before the modifier letter,
+    // in any number and order. Any other character ends the modifier with
+    // `*ptr = lptr` (c:4720-4722), leaving the colon as literal text.
+    //
+    // c:Src/subst.c:1348 `get_strarg` — the argument of `W`/`F` runs from the
+    // delimiter after the flag to its match: `(`→`)`, `[`→`]`, `{`→`}`,
+    // `<`→`>`, the tokenized forms of those four pair the same way, and any
+    // other character closes itself. Returns the index of the closing
+    // delimiter, or `chars.len()` when there is none.
+    fn get_strarg_end(chars: &[char], open: usize) -> usize {
+        use crate::ported::zsh_h::{Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace, Outbrack, Outpar};
+        let close = match chars[open] {
+            '(' => ')',
+            '[' => ']',
+            '{' => '}',
+            '<' => '>',
+            c if c == Inpar => Outpar,
+            c if c == Inang => Outang,
+            c if c == Inbrace => Outbrace,
+            c if c == Inbrack => Outbrack,
+            c => c,
+        };
+        (open + 1..chars.len())
+            .find(|&k| chars[k] == close)
+            .unwrap_or(chars.len())
+    }
     while *j + 1 < chars.len() && chars[*j] == ':' {
         let mut probe = *j + 1;
-        // Optional prefixes to `:s` — `g` (global, apply everywhere) and `f`
-        // (repeat until the substitution stops changing the string). C accepts
-        // them before the `s` (Src/hist.c — the `g`/`f`/count flags on the
-        // substitute modifier). The unbraced scanner handled `g` but not `f`,
-        // so `$f:fs/a//` fell through as literal text while `${f:fs/a//}` and
-        // `$f:gs/a//` both worked.
-        let mut saw_prefix = false;
-        while probe < chars.len() && (chars[probe] == 'g' || chars[probe] == 'f') {
-            saw_prefix = true;
-            probe += 1;
+        // c:4690-4719 — the prefix flags.
+        let mut flags_ok = true;
+        while probe < chars.len() {
+            match chars[probe] {
+                'g' | 'w' | 'f' => probe += 1, // c:4690-4698, c:4712-4715
+                'W' => {
+                    // c:4699-4710 — `ptr1 = get_strarg(…); *ptr = ptr1 + charlen;`
+                    probe += 1;
+                    if probe >= chars.len() {
+                        break;
+                    }
+                    let end = get_strarg_end(chars, probe);
+                    probe = (end + 1).min(chars.len());
+                }
+                'F' => {
+                    // c:4716-4719 → c:1428 get_intarg: with no closing
+                    // delimiter (c:1436-1437) the pointer stays ON the opening
+                    // delimiter, which the next pass rejects.
+                    probe += 1;
+                    if probe >= chars.len() {
+                        break;
+                    }
+                    let end = get_strarg_end(chars, probe);
+                    if end < chars.len() {
+                        probe = end + 1;
+                    } else {
+                        flags_ok = false;
+                        break;
+                    }
+                }
+                _ => break,
+            }
         }
-        if probe >= chars.len() {
+        if !flags_ok || probe >= chars.len() {
+            // c:4725-4728 — the string ended before a modifier letter.
             break;
         }
         let after = chars[probe];
-        if saw_prefix || after == 's' {
-            if after != 's' {
-                break;
-            }
+        if after == 's' {
             // Position now: at `s`.
             probe += 1;
             if probe >= chars.len() {

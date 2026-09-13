@@ -1166,3 +1166,32 @@ mod modifier_capital_w_separator {
         assert_parity(r#"x=a_b; echo ${x:W_}; echo rc=$?"#);
     }
 }
+
+/// c:Src/subst.c:4554-4728 modify — the flags `g`, `w`, `W<delim>sep<delim>`,
+/// `f` and `F<delim>n<delim>` precede the modifier letter in the UNBRACED
+/// form too (c:3770-3796 calls modify with inbrace = 0); anything else resets
+/// to the colon and stays literal. Pins both the runtime scanner and the
+/// compiler's word-segment walker (`p$x:wu` is a concatenated word).
+mod unbraced_modifier_prefix_flags {
+    use super::*;
+
+    #[test]
+    fn flags_before_the_modifier_letter() {
+        assert_parity(r#"wu="aa bb cc"; echo $wu:wu"#);
+        assert_parity(r#"x=aBc; echo $x:W_B_u; x="a b"; echo $x:W:x:u; x=aXb; echo $x:W{X}u"#);
+        assert_parity(r#"x=a.b.c; echo $x:F:1+1:r $x:F(2)r"#);
+        assert_parity(r#"x=aa; echo $x:gu $x:fu $x:wgu "$x:wu" $x:F:2:s/a/b/"#);
+        assert_parity(r#"x=aXa; echo $x:W:X:s/a/b/; a=(x.c y.c); echo $a:wr"#);
+    }
+
+    #[test]
+    fn inside_a_concatenated_word() {
+        assert_parity(r#"x=aa; echo p$x:wu q$x:W:a:u r${x}s$x:gu"#);
+    }
+
+    #[test]
+    fn a_flag_without_a_modifier_stays_literal() {
+        assert_parity(r#"x=aa; echo $x:w:u $x:F:2 $x:f:t $x:S/a/b/"#);
+        assert_parity(r#"x=/a/b.c; echo $x:h2 $x:e $x:gs/a/z/ $x:fs/a//"#);
+    }
+}
