@@ -103,6 +103,12 @@ use crate::ported::ztype_h::{
 /// Port of `set_widearray()` from `Src/utils.c:69`.
 ///
 /// `set_widearray` — see implementation.
+/// `static struct widechar_array ifs_wide;` (c:Src/utils.c:64) — `$IFS` as
+/// wide characters, rebuilt by `inittyptab` under MULTIBYTE (c:4207-4213).
+/// `wcsitype(c, ISEP)` matches a non-ASCII character against it (c:4367);
+/// ASCII characters use the typtab ISEP bit.
+pub static IFS_WIDE: std::sync::RwLock<Vec<char>> = std::sync::RwLock::new(Vec::new());
+
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
     let mut bytes = mb_array.as_bytes().to_vec();
     unmetafy(&mut bytes);
@@ -5541,8 +5547,23 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     };
     // itype_end(s, ISEP, 1) — `once` advances past exactly ONE ISEP char
     // if present, else leaves the index unchanged (c:4462 `if (once) break`).
+    // c:4412-4455 itype_end / c:3813-3814 findsep under MULTIBYTE —
+    // `MB_METACHARLENCONV` + `WC_ZISTYPE(c, ISEP)`: a valid non-ASCII
+    // character is ISEP when it is in `ifs_wide`. zshrs's Meta pair (an
+    // invalid byte) stays on the byte path below, where it cannot match.
+    let multibyte = isset(crate::ported::zsh_h::MULTIBYTE);
+    let wide_sep_at = |i: usize| -> Option<usize> {
+        if !multibyte || bytes[i] < 0xc0 || (bytes[i] == 0xc2 && bytes.get(i + 1) == Some(&Meta)) {
+            return None;
+        }
+        let c = s[i..].chars().next()?;
+        Some(if wcsitype(c, ISEP as u32) { c.len_utf8() } else { 0 })
+    };
     let isep_one = |i: usize| -> usize {
         if i < bytes.len() {
+            if let Some(l) = wide_sep_at(i) {
+                return i + l;
+            }
             let (c, l) = char_at(i);
             if zistype(c, ISEP as u32) {
                 return i + l;
@@ -5553,6 +5574,13 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     // findsep(&s, NULL, 0) — advance to the next ISEP char. c:3784
     let findsep_at = |mut i: usize| -> usize {
         while i < bytes.len() {
+            if let Some(l) = wide_sep_at(i) {
+                if l > 0 {
+                    break;
+                }
+                i += s[i..].chars().next().map_or(1, |c| c.len_utf8());
+                continue;
+            }
             let (c, l) = char_at(i);
             if zistype(c, ISEP as u32) {
                 break;
@@ -6436,6 +6464,12 @@ pub fn inittyptab() {
         } else {
             src
         };
+        // c:4207/4212 — `set_widearray(ifs, &ifs_wide)`.
+        if multibyte {
+            if let Ok(mut w) = IFS_WIDE.write() {
+                *w = set_widearray(&src);
+            }
+        }
         let bytes = src.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
@@ -6692,13 +6726,8 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
     }
     if cls == ISEP {
         // c:4366
-        // c:4367 — same canonical-global pattern for IFS.
-        let ifs = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
-            .unwrap_or_default();
-        return ifs.chars().any(|x| x == c);
+        // c:4367 — `return !!wmemchr(ifs_wide.chars, c, ifs_wide.len);`
+        return IFS_WIDE.read().map(|w| w.contains(&c)).unwrap_or(false);
     }
     let _ = IALNUM;
     c.is_alphanumeric() // c:4370

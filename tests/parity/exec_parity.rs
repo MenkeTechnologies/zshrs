@@ -643,3 +643,24 @@ mod e_flag_null_keeps_empty_word {
         assert_parity(r#"a='$('; print -rl -- x ${(e)a} y; v=${(e)a}; print "[$v]"; arr=(one ${(e)a} two); print $#arr"#);
     }
 }
+
+/// c:Src/utils.c:4207 `set_widearray(ifs, &ifs_wide)` and c:4367
+/// `wcsitype(c, ISEP)` — under MULTIBYTE a non-ASCII IFS character is
+/// matched as a wide character (itype_end c:4412-4455, findsep c:3813), so
+/// `IFS=é` splits; with MULTIBYTE unset the IFS bytes are matched one by one.
+mod wide_character_ifs {
+    use super::*;
+
+    #[test]
+    fn multibyte_ifs_character_splits() {
+        assert_parity(r#"IFS=é; s=aébéc; print -rl -- ${=s}"#);
+        assert_parity(r#"IFS=é:; s=aé:bééc; print -rl -- ${=s}; IFS="é "; s=" aé b "; print -rl -- ${=s}"#);
+        assert_parity(r#"IFS=€; s=a€b; print -rl -- ${=s}; IFS=:; s="aé:bé"; print -rl -- ${=s}"#);
+    }
+
+    #[test]
+    fn without_multibyte_bytes_still_split() {
+        assert_parity(r#"unsetopt multibyte; IFS=é; s=aébéc; print -rl -- ${=s}"#);
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; s=$'a\xe9b'; print -rl -- ${=s}"#);
+    }
+}
