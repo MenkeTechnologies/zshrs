@@ -412,3 +412,25 @@ mod reserved_word_right_after_esac {
         assert_parity("case a in a) print x;; esac; print after");
     }
 }
+
+/// c:Src/exec.c:5389 execfuncdef + c:Src/text.c WC_CASE — `functions` deparses
+/// the wordcode parsed at definition time. Under a sticky `emulate sh -c`
+/// (SH_GLOB) `( one | two )` holds separate alternatives, printed with " | ".
+/// zshrs re-lexed the stored body under the live native options and printed
+/// `(one|two)`.
+mod case_alternatives_deparse_under_sticky_emulation {
+    use super::*;
+
+    #[test]
+    fn functions_prints_the_emulation_parse() {
+        assert_parity("emulate sh -c 'fn() { case $1 in ( one | two ) print x;; esac }'; functions fn");
+        assert_parity("emulate sh -c 'fn() { case $1 in ( one | two | three ) print M $1 ;; ( fo* | fi* ) print P $1 ;; esac }'; print -r -- $functions[fn]; fn two; fn fish");
+        assert_parity("emulate sh -c 'fn() { case $1 in ( one | two ) print x;; esac }'; functions fn >/dev/null; setopt | grep -c shglob");
+    }
+
+    #[test]
+    fn native_functions_are_unchanged() {
+        assert_parity("fn() { case $1 in ( one | two ) print x;; esac }; functions fn");
+        assert_parity("fn() { case $1 in (one|two) print x;; esac }; functions fn");
+    }
+}

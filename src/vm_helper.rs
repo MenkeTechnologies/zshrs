@@ -7876,6 +7876,52 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
     // loaded under `autoload -U` (PM_UNALIASED, c:Src/exec.c:5746) or rendered
     // from a `.zwc`. Any other body keeps the live alias table.
     let noaliases = crate::ported::lex::noaliases();
+    // c:Src/exec.c:5389 execfuncdef — C deparses the wordcode parsed when the
+    // function was DEFINED, and a definition inside `emulate sh -c` is parsed
+    // under that emulation (stamped as `shf->sticky`, c:5527-5532). Re-lex
+    // under the same emulation (installemulation + its on/off options, as
+    // doshfunc applies it at c:5977-6010), so an sh-mode `( one | two )` case
+    // pattern keeps its separate alternatives and prints `(one | two)`. Only a
+    // function carrying a sticky emulation is touched: `eval` / `-z` / `+X`
+    // bodies keep the live state.
+    let sticky_restore = crate::ported::utils::getshfunc(name)
+        .and_then(|f| f.sticky.clone())
+        .filter(|s| crate::ported::exec::sticky_emulation_differs(Some(s)) != 0)
+        .map(|s| {
+            use std::sync::atomic::Ordering;
+            let size = crate::ported::zsh_h::OPT_SIZE as usize;
+            let saved: Vec<bool> = (0..size)
+                .map(|optno| {
+                    optno > 0
+                        && crate::ported::options::opt_state_get(crate::ported::zsh_h::opt_name(optno as i32))
+                            .unwrap_or(false)
+                })
+                .collect();
+            let saved_emu = (
+                crate::ported::options::emulation.load(Ordering::Relaxed),
+                crate::ported::options::EMULATION.load(Ordering::Relaxed),
+                crate::ported::options::FULLY_EMULATING.load(Ordering::Relaxed),
+            );
+            let mut new_opts = [-1i8; crate::ported::zsh_h::OPT_SIZE as usize];
+            crate::ported::options::installemulation(s.emulation, &mut new_opts); // c:5993
+            for (optno, &v) in new_opts.iter().enumerate().skip(1) {
+                if v >= 0 {
+                    crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), v == 1);
+                }
+            }
+            for on in &s.on_opts {
+                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*on as i32), true); // c:5995-6001
+            }
+            for off in &s.off_opts {
+                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*off as i32), false); // c:6002-6008
+            }
+            let emu_base = s.emulation & !crate::ported::zsh_h::EMULATE_FULLY;
+            crate::ported::options::emulation.store(emu_base, Ordering::Relaxed);
+            crate::ported::options::EMULATION.store(emu_base, Ordering::Relaxed);
+            crate::ported::options::FULLY_EMULATING
+                .store((s.emulation & crate::ported::zsh_h::EMULATE_FULLY) != 0, Ordering::Relaxed);
+            (saved, saved_emu.0, saved_emu.1, saved_emu.2)
+        });
     let captured = FUNCDEF_ALIAS_RESOLVED
         .lock()
         .as_ref()
@@ -7902,11 +7948,13 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
             FuncdefLexPin {
                 restore: Some(live),
                 noaliases,
+                sticky_restore,
             }
         }
         _ => FuncdefLexPin {
             restore: None,
             noaliases,
+            sticky_restore,
         },
     }
 }
@@ -7918,6 +7966,9 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
 pub(crate) struct FuncdefLexPin {
     restore: Option<bool>,
     noaliases: bool,
+    /// Options and emulation in force before a sticky emulation was applied
+    /// for the re-lex; put back on drop.
+    sticky_restore: Option<(Vec<bool>, i32, i32, bool)>,
 }
 
 impl Drop for FuncdefLexPin {
@@ -7926,6 +7977,15 @@ impl Drop for FuncdefLexPin {
             crate::ported::options::opt_state_set("rcquotes", live);
         }
         crate::ported::lex::set_noaliases(self.noaliases);
+        if let Some((opts, emu, emu_cell, fully)) = self.sticky_restore.take() {
+            use std::sync::atomic::Ordering;
+            for (optno, on) in opts.into_iter().enumerate().skip(1) {
+                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), on);
+            }
+            crate::ported::options::emulation.store(emu, Ordering::Relaxed);
+            crate::ported::options::EMULATION.store(emu_cell, Ordering::Relaxed);
+            crate::ported::options::FULLY_EMULATING.store(fully, Ordering::Relaxed);
+        }
     }
 }
 
