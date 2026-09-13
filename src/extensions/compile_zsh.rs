@@ -6762,7 +6762,14 @@ impl ZshCompiler {
         // `get_var_impl` positional arm tests only `"@"`/`"*"` — the name
         // missed, the ordinary parameter lookup found nothing, and the
         // expansion came back EMPTY.
-        let bare_target = if !has_bnull {
+        // A word with quote markers that is not one double-quoted span
+        // (`""$@""`, `''$@`) is declined: untokenize erased its quotes, so the
+        // match would read it as a bare `$@`. c:Src/subst.c:36 — the quoted
+        // empty literal keeps its Dnull/Snull and anchors the edge node, which
+        // the segment path honours (WORD_DROP_KEEPS_FIRST / _LAST).
+        let quoted_affix_word =
+            (s.contains('\u{9d}') || s.contains('\u{9e}')) && !word_is_single_dq_span(s);
+        let bare_target = if !has_bnull && !quoted_affix_word {
             if untoked == "$@" || untoked == "$*" {
                 Some(&untoked[1..])
             } else if untoked == "${@}" || untoked == "${*}" {

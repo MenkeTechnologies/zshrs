@@ -707,6 +707,13 @@ mod quoted_empty_literal_anchors_edge_field {
         assert_parity(r#"setopt shwordsplit; s=" a"; print -rl -- """${s}" ""${s} """${s}""x"; s="a "; print -rl -- "${s}""""#);
         assert_parity(r#"s=" a"; print -rl -- """${=s}" x"${s}" "${s}"; a=(x "" y); print -rl -- ""${a}"" | wc -l"#);
     }
+
+    /// The positional splat beside a quoted empty literal.
+    #[test]
+    fn positional_splat_beside_quoted_literal() {
+        assert_parity(r#"set -- "" x ""; print -rl -- ""$@"" ''$@'' ""$*"" ""${@}"" ""$argv"" | wc -l"#);
+        assert_parity(r#"set -- "" x; print -rl -- ""$@; set -- x ""; print -rl -- $@""; set -- "" x ""; print -rl -- "$@" | wc -l"#);
+    }
 }
 
 /// c:Src/subst.c:4366-4437 then c:183-186 — an array splice's empty edge
