@@ -16026,7 +16026,26 @@ pub fn paramsubst(
                 if is_set && !colon_null {
                     // c:3300-3313 — the alternate word also goes through
                     // multsub: `${str+${(z)v}}` / `${str+$arr}` yield arrays.
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    // c:Src/subst.c:3195-3203 — `case '+'` sets `vunset = 1` and
+                    // falls through into `case '-'`, so the alternate word gets
+                    // the same split flags (c:3215-3226) and the same
+                    // `spbreak = 0` afterwards (c:3230): `${=1+"$@"}` keeps
+                    // "$@"'s elements and nothing re-splits them.
+                    let spbreak = force_split
+                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                            && pf_flags & PREFORK_SINGLE == 0
+                            && !qt); // c:1707 / c:2567
+                    let split_flags = if spbreak {
+                        let mut f = PREFORK_SHWORDSPLIT; // c:3216
+                        if !aspar {
+                            f |= PREFORK_SPLIT; // c:3218
+                        }
+                        f
+                    } else {
+                        PREFORK_NOSHWORDSPLIT // c:3226
+                    };
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
+                    force_split = false; // c:3230
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -16080,7 +16099,26 @@ pub fn paramsubst(
                 // c:3296
                 if is_set {
                     // c:3300-3313 — multsub, not singsub (see `:+` above).
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    // c:Src/subst.c:3195-3203 — `case '+'` sets `vunset = 1` and
+                    // falls through into `case '-'`, so the alternate word gets
+                    // the same split flags (c:3215-3226) and the same
+                    // `spbreak = 0` afterwards (c:3230): `${=1+"$@"}` keeps
+                    // "$@"'s elements and nothing re-splits them.
+                    let spbreak = force_split
+                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                            && pf_flags & PREFORK_SINGLE == 0
+                            && !qt); // c:1707 / c:2567
+                    let split_flags = if spbreak {
+                        let mut f = PREFORK_SHWORDSPLIT; // c:3216
+                        if !aspar {
+                            f |= PREFORK_SPLIT; // c:3218
+                        }
+                        f
+                    } else {
+                        PREFORK_NOSHWORDSPLIT // c:3226
+                    };
+                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
+                    force_split = false; // c:3230
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);

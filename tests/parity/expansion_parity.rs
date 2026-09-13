@@ -195,6 +195,19 @@ mod defaults {
     }
 }
 
+/// c:Src/subst.c:3195-3203 — `case '+'` falls through into `case '-'`, so the
+/// alternate word is split like the default word (c:3215-3226) and
+/// `spbreak = 0` (c:3230) keeps the value from being split again.
+mod alternate_word_split_flags {
+    use super::*;
+
+    #[test]
+    fn forced_split_keeps_quoted_array_elements() {
+        assert_parity(r#"set Make "a b" c; print -rl -- ${=1+"$@"} ${=1:+"$@"}"#);
+        assert_parity(r#"x=1; print -rl -- ${=x+a b} ${=x:+c d} ${x+e f}"#);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Length / substring
 // ═══════════════════════════════════════════════════════════════════════════
