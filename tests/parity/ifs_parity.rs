@@ -598,3 +598,24 @@ mod nested_substitution_in_quoted_at_flag {
         assert_parity(r#"setopt shwordsplit; s=" foo bar "; print -rl -- ${(@)${:-x${s}y}}"#);
     }
 }
+
+/// c:Src/subst.c:4237-4245 — a split default / alternate word that begins or
+/// ends with IFS whitespace splits the surrounding text off at that edge
+/// (multsub's MULTSUB_WS_AT_START / _AT_END).
+mod default_word_whitespace_edges {
+    use super::*;
+
+    #[test]
+    fn affixes_become_their_own_words() {
+        assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; t x${:- foo bar }y x${:- foo bar } ${:- foo bar }y"#);
+        assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; t x${:- foo }y x${:- foo}y x${:-foo }y x${:-   }y"#);
+        assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; x=1; t x${x:+ foo bar }y x${u- foo bar }y x${:- foo "bar" }y"#);
+        assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; t x${:- foo bar }y\z; a=(x${:- foo bar }y); t $a"#);
+    }
+
+    #[test]
+    fn unsplit_contexts_are_unchanged() {
+        assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; t ${:- foo bar } "x${:- foo bar }y"; v=${:- foo bar }; t "[$v]""#);
+        assert_parity(r#"t() { print -r $#: "$@" }; t x${:- foo bar }y"#);
+    }
+}

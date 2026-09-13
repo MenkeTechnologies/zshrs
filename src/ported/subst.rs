@@ -15721,13 +15721,34 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
                             isarr = 1; // c:3227 multsub writes &isarr
+                        }
+                    }
+                    // c:Src/subst.c:4237-4245 — a split default word that began or ended
+                    // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
+                    // c:596) gets a node boundary there: the text before the `$` becomes a
+                    // word of its own and so does the text after the `}` (`t x${:- foo bar }y`
+                    // is `x` `foo` `bar` `y`). An empty edge node carries that boundary:
+                    // glued to the word's prefix/suffix it becomes that text, and with nothing
+                    // attached c:184-187 deletes it like any other empty node (or the compiled
+                    // caller's end-of-word drop does).
+                    if ms_ws & (MULTSUB_WS_AT_START | MULTSUB_WS_AT_END) != 0 {
+                        let mut edged = split_parts.take().unwrap_or_else(|| vec![value.clone()]);
+                        if ms_ws & MULTSUB_WS_AT_START != 0 {
+                            edged.insert(0, String::new()); // c:4237-4240
+                        }
+                        if ms_ws & MULTSUB_WS_AT_END != 0 {
+                            edged.push(String::new()); // c:4242-4245
+                        }
+                        split_parts = Some(edged);
+                        if isarr == 0 {
+                            isarr = 1;
                         }
                     }
                     // c:Src/subst.c → globlist — the default word is
@@ -15831,13 +15852,34 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
                             isarr = 1; // c:3227 multsub writes &isarr
+                        }
+                    }
+                    // c:Src/subst.c:4237-4245 — a split default word that began or ended
+                    // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
+                    // c:596) gets a node boundary there: the text before the `$` becomes a
+                    // word of its own and so does the text after the `}` (`t x${:- foo bar }y`
+                    // is `x` `foo` `bar` `y`). An empty edge node carries that boundary:
+                    // glued to the word's prefix/suffix it becomes that text, and with nothing
+                    // attached c:184-187 deletes it like any other empty node (or the compiled
+                    // caller's end-of-word drop does).
+                    if ms_ws & (MULTSUB_WS_AT_START | MULTSUB_WS_AT_END) != 0 {
+                        let mut edged = split_parts.take().unwrap_or_else(|| vec![value.clone()]);
+                        if ms_ws & MULTSUB_WS_AT_START != 0 {
+                            edged.insert(0, String::new()); // c:4237-4240
+                        }
+                        if ms_ws & MULTSUB_WS_AT_END != 0 {
+                            edged.push(String::new()); // c:4242-4245
+                        }
+                        split_parts = Some(edged);
+                        if isarr == 0 {
+                            isarr = 1;
                         }
                     }
                     if !qt {
@@ -16166,7 +16208,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(alt, split_flags);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
@@ -16175,6 +16217,27 @@ pub fn paramsubst(
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
                             isarr = 1; // c:3313 multsub writes &isarr
+                        }
+                    }
+                    // c:Src/subst.c:4237-4245 — a split default word that began or ended
+                    // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
+                    // c:596) gets a node boundary there: the text before the `$` becomes a
+                    // word of its own and so does the text after the `}` (`t x${:- foo bar }y`
+                    // is `x` `foo` `bar` `y`). An empty edge node carries that boundary:
+                    // glued to the word's prefix/suffix it becomes that text, and with nothing
+                    // attached c:184-187 deletes it like any other empty node (or the compiled
+                    // caller's end-of-word drop does).
+                    if ms_ws & (MULTSUB_WS_AT_START | MULTSUB_WS_AT_END) != 0 {
+                        let mut edged = split_parts.take().unwrap_or_else(|| vec![value.clone()]);
+                        if ms_ws & MULTSUB_WS_AT_START != 0 {
+                            edged.insert(0, String::new()); // c:4237-4240
+                        }
+                        if ms_ws & MULTSUB_WS_AT_END != 0 {
+                            edged.push(String::new()); // c:4242-4245
+                        }
+                        split_parts = Some(edged);
+                        if isarr == 0 {
+                            isarr = 1;
                         }
                     }
                     if !qt {
@@ -16241,7 +16304,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(alt, split_flags);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
@@ -16250,6 +16313,27 @@ pub fn paramsubst(
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
                             isarr = 1; // c:3313 multsub writes &isarr
+                        }
+                    }
+                    // c:Src/subst.c:4237-4245 — a split default word that began or ended
+                    // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
+                    // c:596) gets a node boundary there: the text before the `$` becomes a
+                    // word of its own and so does the text after the `}` (`t x${:- foo bar }y`
+                    // is `x` `foo` `bar` `y`). An empty edge node carries that boundary:
+                    // glued to the word's prefix/suffix it becomes that text, and with nothing
+                    // attached c:184-187 deletes it like any other empty node (or the compiled
+                    // caller's end-of-word drop does).
+                    if ms_ws & (MULTSUB_WS_AT_START | MULTSUB_WS_AT_END) != 0 {
+                        let mut edged = split_parts.take().unwrap_or_else(|| vec![value.clone()]);
+                        if ms_ws & MULTSUB_WS_AT_START != 0 {
+                            edged.insert(0, String::new()); // c:4237-4240
+                        }
+                        if ms_ws & MULTSUB_WS_AT_END != 0 {
+                            edged.push(String::new()); // c:4242-4245
+                        }
+                        split_parts = Some(edged);
+                        if isarr == 0 {
+                            isarr = 1;
                         }
                     }
                     if !qt {
