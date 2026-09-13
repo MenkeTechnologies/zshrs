@@ -6882,6 +6882,21 @@ pub fn paramsubst(
                     _ => false,
                 };
                 let __inner_gs = outer_pattern_op.then(|| gs_save());
+                // !!! RUST-ONLY CARRIERS (see their declarations) !!! — the same
+                // c:1671 locality covers the default-word glob request. A `*`
+                // in the inner's DEFAULT word (`${${:-*}//x/y}`) is a glob token
+                // of the INNER result only; getmatch rebuilds the outer value
+                // without it. The inner arm still raised DEFAULT_WORD_GLOB_PENDING,
+                // and the enclosing word's BUILTIN_DEFAULT_WORD_GLOB then globbed
+                // the outer result: `print x${${:-*}//x/y}` failed "no matches
+                // found: x*" where zsh prints `x*`.
+                let __inner_dwg = outer_pattern_op.then(|| {
+                    (
+                        DEFAULT_WORD_GLOB_PENDING.with(|c| c.get()),
+                        DEFAULT_WORD_GLOB_BARS.with(|b| b.borrow().clone()),
+                        DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.get()),
+                    )
+                });
                 let (joined, arr_parts, isarr, _) = if aspar_arr.is_some() {
                     (String::new(), Vec::new(), false, 0)
                 } else {
@@ -6889,6 +6904,11 @@ pub fn paramsubst(
                 };
                 if let Some(saved) = __inner_gs {
                     gs_restore(saved);
+                }
+                if let Some((pending, bars, off)) = __inner_dwg {
+                    DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(pending));
+                    DEFAULT_WORD_GLOB_BARS.with(|b| *b.borrow_mut() = bars);
+                    DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.set(off));
                 }
                 if scalar_ctx {
                     SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() - 1));

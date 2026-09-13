@@ -339,3 +339,23 @@ mod globsubst_off_after_a_default_word {
     }
 }
 
+/// c:Src/subst.c:1671 — the default word of an INNER spec (`${${:-*}…}`) is a
+/// glob request for the inner result only; an outer pattern operator rebuilds
+/// the value through getmatch, so the enclosing word does not glob it.
+mod inner_default_word_glob_stays_inside_an_outer_pattern_op {
+    use super::assert_parity;
+
+    const DIR: &str = "cd \"$(mktemp -d)\" && touch boringfile && ";
+
+    #[test]
+    fn outer_replace_and_strip_results_stay_literal() {
+        assert_parity(&format!("{DIR}print -r -- x${{${{:-*}}//x/y}} x${{${{:-bor*}}#y}} ${{${{:-bor*}}//x/y}}x"));
+        assert_parity(&format!("{DIR}print -r -- x${{${{~:-*}}//x/y}} ${{${{~:-*}}//x/y}}x \"x${{${{~:-*}}//x/y}}\""));
+    }
+
+    #[test]
+    fn pass_through_and_case_modifier_still_glob() {
+        assert_parity(&format!("{DIR}print -r -- ${{${{:-bor*}}}}x"));
+        assert_parity(&format!("{DIR}print -r -- ${{${{~:-bor*}}:u}} ${{${{~:-*}}}}"));
+    }
+}
