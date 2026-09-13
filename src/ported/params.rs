@@ -15079,7 +15079,10 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         // the ARRAY peer's contents (so the output is re-parseable
         // and doesn't collapse `(a b c)` vs `('a b c')` to the same
         // colon-string). Bug #410.
-        if (f & PM_TIED) != 0 {
+        // c:6204/c:6257 — the tied peer is printed only inside the
+        // `if (printflags & (PRINT_TYPE|PRINT_TYPESET))` attribute block, so
+        // the POSIX `readonly -p` / `export -p` forms never show it.
+        if (f & PM_TIED) != 0 && (printflags & (PRINT_TYPE | PRINT_TYPESET)) != 0 {
             if let Some(ename) = hn.ename.clone() {
                 // c:Src/params.c:6275 `paramtab->getnode(paramtab,
                 // p->ename)`. The bin_typeset caller pre-clones the

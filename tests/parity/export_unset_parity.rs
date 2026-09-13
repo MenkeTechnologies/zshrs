@@ -297,4 +297,10 @@ mod posix_builtins_readonly {
         assert_parity("setopt posixbuiltins; export eu; print ${+eu}; export -p | grep -x 'export eu'");
     }
 
+    /// The POSIX `readonly -p` form prints no tied peer (c:Src/params.c:6204,
+    /// c:6257 — the peer is printed only for PRINT_TYPE / PRINT_TYPESET).
+    #[test]
+    fn posix_readonly_listing_omits_tied_peer() {
+        assert_parity("function { emulate -L sh; MANPATH=/bin; export MANPATH; readonly MANPATH; readonly -p; }");
+    }
 }
