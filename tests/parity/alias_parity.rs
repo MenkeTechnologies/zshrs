@@ -357,3 +357,32 @@ mod quoting_suppresses_expansion {
         );
     }
 }
+
+/// c:Src/hashtable.c:954 — `functions` renders the body's wordcode, which
+/// holds exactly the aliases its PARSE expanded. zshrs re-lexes the stored
+/// source to print it, and that re-lex expanded aliases the parse never saw:
+/// a `-c` string is parsed whole before `alias` runs (c:Src/init.c:1568
+/// execstring), and `autoload -U` parses with `noaliases`
+/// (c:Src/exec.c:5746). Both listed `print aliased x` where zsh lists `ll x`.
+mod listing_matches_the_parse {
+    use super::*;
+
+    #[test]
+    fn alias_defined_after_the_parse_does_not_expand() {
+        assert_parity("alias ll='print aliased'\nf(){ ll x }\nfunctions f; f");
+        assert_parity("f(){ ll x }\nalias ll='print aliased'\nfunctions f; which f");
+        // Control: an alias live at parse time is part of the body.
+        assert_parity("alias ll='print aliased'\neval 'f(){ ll x }'\nfunctions f; f");
+    }
+
+    #[test]
+    fn autoload_u_body_lists_unexpanded() {
+        let d = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(d.path().join("g"), "ll y\n").expect("write g");
+        let fp = format!("fpath=({} $fpath); alias ll='print aliased'", d.path().display());
+        assert_parity(&format!("{fp}; autoload -Uz g; g; functions g"));
+        assert_parity(&format!("{fp}; autoload +X -U g; functions g"));
+        // Control: without -U the load expands the alias.
+        assert_parity(&format!("{fp}; autoload +X g; functions g; g"));
+    }
+}

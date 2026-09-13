@@ -2599,6 +2599,7 @@ fn par_funcdef() -> Option<ZshCommand> {
     // rendering. pos() AFTER a zshlex is already past the next token (one-token
     // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
     let mut body_mark = crate::funcdef_capture::body_mark_begin();
+    let alias_snap = crate::ported::lex::LEX_ALIAS_PUSHES.get();
     if saw_paren {
         zshlex();
     }
@@ -2698,6 +2699,9 @@ fn par_funcdef() -> Option<ZshCommand> {
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
+        // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+        // vm_helper::funcdef_note_alias_expansion.
+        crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
         zshlex();
 
         // Anonymous form `function () { body } a b c` (with `()`) or
@@ -2760,6 +2764,9 @@ fn par_funcdef() -> Option<ZshCommand> {
                         .to_string()
                 })
                 .filter(|s| !s.is_empty());
+            // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+            // vm_helper::funcdef_note_alias_expansion.
+            crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
             let list = ZshList {
                 sublist: ZshSublist {
                     pipe: ZshPipe {
@@ -9139,6 +9146,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                         // `echo a; echo b` for `f() { echo a;
                         // echo b }`.
                         let body_mark = crate::funcdef_capture::body_mark_begin();
+                        let alias_snap = crate::ported::lex::LEX_ALIAS_PUSHES.get();
                         zshlex();
                         // c:Src/parse.c — synth funcdef body terminates
                         // at OUTBRACE_TOK. Explicit end-token avoids
@@ -9165,6 +9173,9 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                                 t.to_string()
                             })
                             .filter(|s| !s.is_empty());
+                        // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+                        // vm_helper::funcdef_note_alias_expansion.
+                        crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
                         if tok() == OUTBRACE_TOK {
                             zshlex();
                         }
@@ -9945,6 +9956,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // body_start must be recorded BEFORE each advance. Mirrors the braced
     // path's body_start-before-zshlex capture (parse.rs:2484).
     let mut body_mark = crate::funcdef_capture::body_mark_begin();
+    let alias_snap = crate::ported::lex::LEX_ALIAS_PUSHES.get();
     zshlex(); // skip ()
     while tok() == SEPER || tok() == NEWLIN {
         crate::funcdef_capture::body_mark_restart(&mut body_mark);
@@ -9979,6 +9991,9 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
                     .to_string()
             })
             .filter(|s| !s.is_empty());
+        // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+        // vm_helper::funcdef_note_alias_expansion.
+        crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
         let list = ZshList {
             sublist: ZshSublist {
                 pipe: ZshPipe {
@@ -10171,6 +10186,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
     // pos() AFTER a zshlex is already past the next token (one-token
     // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
     let mut body_mark = crate::funcdef_capture::body_mark_begin();
+    let alias_snap = crate::ported::lex::LEX_ALIAS_PUSHES.get();
     // Skip ()
     if tok() == INOUTPAR {
         zshlex();
@@ -10231,6 +10247,9 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
+        // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+        // vm_helper::funcdef_note_alias_expansion.
+        crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
         zshlex();
         Some(ZshCommand::FuncDef(ZshFuncDef {
             names,
@@ -10262,6 +10281,9 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                             .to_string()
                     })
                     .filter(|s| !s.is_empty());
+                // c:Src/parse.c par_funcdef bakes alias expansion into the wordcode; see
+                // vm_helper::funcdef_note_alias_expansion.
+                crate::vm_helper::funcdef_note_alias_expansion(body_source.as_deref(), alias_snap);
                 let list = ZshList {
                     sublist: ZshSublist {
                         pipe: ZshPipe {

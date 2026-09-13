@@ -7752,6 +7752,37 @@ pub(crate) fn funcdef_note_rcquotes(name: &str, body: &str, rcquotes: bool) {
         );
 }
 
+/// !!! WARNING: RUST-ONLY HELPER STATE — NO C COUNTERPART !!!
+///
+/// Digests of function bodies whose PARSE expanded at least one alias.
+///
+/// C's par_funcdef compiles the body to wordcode after alias expansion, so
+/// `functions` (getpermtext, c:Src/hashtable.c:954) shows exactly what the
+/// parse saw: `alias ll=…` defined after `f(){ ll x }` was parsed — the whole
+/// `-c` string is parsed before it runs (c:Src/init.c:1568 execstring) — or a
+/// body loaded under `autoload -U` (c:Src/exec.c:5746 `noaliases`) still lists
+/// `ll x`. zshrs keeps the raw source and re-lexes it to print, so the parser
+/// records, per body digest, whether its parse expanded an alias; a body
+/// recorded as unexpanded is re-lexed with aliases off. Keyed by digest like
+/// [`FUNCDEF_LEX_RCQUOTES`], so a body re-parsed under a different alias state
+/// simply updates its entry.
+static FUNCDEF_ALIAS_EXPANDED: Mutex<Option<HashMap<[u8; 32], bool>>> = Mutex::new(None);
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Called by the parser right after it captures a function body:
+/// `alias_snap` is `lex::LEX_ALIAS_PUSHES` sampled when the body capture
+/// opened. See [`FUNCDEF_ALIAS_EXPANDED`].
+pub(crate) fn funcdef_note_alias_expansion(body: Option<&str>, alias_snap: u64) {
+    let Some(body) = body else { return };
+    let expanded = crate::ported::lex::LEX_ALIAS_PUSHES.get() != alias_snap;
+    let digest = crate::autoload_cache::source_digest(body);
+    FUNCDEF_ALIAS_EXPANDED
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(digest, expanded);
+}
+
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
 ///
 /// Pin RCQUOTES to the value `name`'s body was defined under, for the
@@ -7770,6 +7801,30 @@ pub(crate) fn funcdef_note_rcquotes(name: &str, body: &str, rcquotes: bool) {
 /// thread that lexes concurrently; the window is one synchronous deparse,
 /// as it is for [`ZwcRelexGuard`].
 pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
+    // c:Src/hashtable.c:954 renders the STORED wordcode, where every alias the
+    // body's parse expanded is already baked in and nothing else can expand.
+    // The re-lex runs with `noaliases` (c:Src/lex.c:135) when the body is
+    // known to carry no expansion: the parser recorded that no alias fired
+    // inside it (FUNCDEF_ALIAS_EXPANDED), or — for an autoload body not yet
+    // parsed, as after `autoload +X` — the function was loaded under
+    // `autoload -U` (PM_UNALIASED, c:Src/exec.c:5746) or from a `.zwc` whose
+    // text is already resolved. Any other body keeps the live alias table.
+    let noaliases = crate::ported::lex::noaliases();
+    let parsed_expanded = FUNCDEF_ALIAS_EXPANDED
+        .lock()
+        .as_ref()
+        .and_then(|map| map.get(&crate::autoload_cache::source_digest(body)).copied());
+    let deparse_noaliases = match parsed_expanded {
+        Some(expanded) => !expanded,
+        None => {
+            crate::ported::utils::getshfunc(name).is_some_and(|f| {
+                (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0
+            }) || autoload_body_from_wordcode(name, body)
+        }
+    };
+    if deparse_noaliases {
+        crate::ported::lex::set_noaliases(true); // c:Src/lex.c:1909
+    }
     let want = {
         let slot = FUNCDEF_LEX_RCQUOTES.lock();
         slot.as_ref()
@@ -7781,9 +7836,15 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
     match want {
         Some(w) if w != live => {
             crate::ported::options::opt_state_set("rcquotes", w);
-            FuncdefLexPin { restore: Some(live) }
+            FuncdefLexPin {
+                restore: Some(live),
+                noaliases,
+            }
         }
-        _ => FuncdefLexPin { restore: None },
+        _ => FuncdefLexPin {
+            restore: None,
+            noaliases,
+        },
     }
 }
 
@@ -7793,6 +7854,7 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
 /// changed, so the common path costs one hash lookup and no option write.
 pub(crate) struct FuncdefLexPin {
     restore: Option<bool>,
+    noaliases: bool,
 }
 
 impl Drop for FuncdefLexPin {
@@ -7800,6 +7862,7 @@ impl Drop for FuncdefLexPin {
         if let Some(live) = self.restore {
             crate::ported::options::opt_state_set("rcquotes", live);
         }
+        crate::ported::lex::set_noaliases(self.noaliases);
     }
 }
 
