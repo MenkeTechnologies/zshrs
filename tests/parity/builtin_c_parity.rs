@@ -299,6 +299,15 @@ mod print_builtin {
         assert_parity("print -s hello; echo $?");
     }
 
+    /// `fc -l` to stdout renders the entry through `nicezputs`
+    /// (c:Src/builtin.c:1850-1852), so an embedded newline lists as the two
+    /// characters `\n`. zshrs wrote the raw newline, splitting one event
+    /// across two lines.
+    #[test]
+    fn fc_list_escapes_embedded_newline() {
+        assert_parity(r#"print -s $'a\nb'; print -f '%s\n' -s foo; fc -ln -2"#);
+    }
+
     /// `echo` with default settings adds newline.
     #[test]
     fn echo_basic() {

@@ -3465,8 +3465,22 @@ pub fn fclist(
             }
         }
 
-        // c:1875 — write the line.
-        let _ = writeln!(out, "{}", text);
+        // c:Src/builtin.c:1850-1858 — output the command:
+        //     if (f == stdout) { nicezputs(s, f); putc('\n', f); }
+        //     else { unmetafy(s, &len); fwrite(s, 1, len, f); putc('\n', f); }
+        // A listing renders control bytes visibly (an embedded newline from
+        // `print -s $'a\nb'` lists as `a\nb`); the temp file handed to the
+        // editor gets the raw bytes so the edited command round-trips.
+        // !!! WARNING: Rust cannot compare a `&mut dyn Write` against stdout,
+        // so the `f == stdout` test is read from `is_command`. The two are
+        // equivalent at every C call site: c:1611 passes (stdout, …, 0) and
+        // c:1643 passes (the temp file, …, 1).
+        if is_command == 0 {
+            crate::ported::utils::nicezputs(&text, out); // c:1851
+            let _ = out.write_all(b"\n"); // c:1852
+        } else {
+            let _ = writeln!(out, "{}", text); // c:1856-1857
+        }
 
         if ev == last {
             break;
