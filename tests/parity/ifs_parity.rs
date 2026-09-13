@@ -183,6 +183,14 @@ mod for_loop_iteration {
     fn for_in_literal_list_three_iters() {
         assert_parity(r#"n=0; for x in a b c; do n=$((n+1)); done; echo $n"#);
     }
+
+    /// A bare `$@` / `$*` word list gets the word's own c:184-187 removal
+    /// once; the `nulstring` fields of a SH_WORD_SPLIT re-split survive it.
+    #[test]
+    fn for_in_positional_splat_keeps_nulstring_fields() {
+        assert_parity(r#"setopt shwordsplit; IFS=:; set -- a::b "" :c:; for i in $@; do print "<$i>"; done; for i in $* z; do print "<$i>"; done"#);
+        assert_parity(r#"set -- a "" b; for i in $@ $*; do print "<$i>"; done; setopt shwordsplit; set -- "" x ""; for i in $@; do print "<$i>"; done"#);
+    }
 }
 
 mod cmdsubst_split {

@@ -10372,23 +10372,13 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
             }
-            // c:Src/subst.c — unquoted `$@` / `$*` drop empty
-            // elements (POSIX-like word splitting via the multsub
-            // PREFORK_SPLIT path). zsh's specific quirk: it does NOT
-            // IFS-split each element on internal spaces (so
-            // `set -- "hello world"; for x in $@` keeps "hello world"
-            // as one). Just filter empties — don't word-split.
-            // Bug #166 in docs/BUGS.md.
-            let untoked_w = crate::lex::untokenize(word);
-            let is_unquoted_at_or_star = !word.contains('\u{9e}')
-                && !word.contains('\u{9d}')
-                && (untoked_w == "$@" || untoked_w == "$*");
-            if is_unquoted_at_or_star {
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 0),
-                    0,
-                );
-            }
+            // c:Src/subst.c:184-187 — the empty-word removal of an unquoted
+            // `$@` / `$*` (Bug #166) is emitted by compile_word_str's
+            // whole-word positional arm, which also strips the c:36
+            // `nulstring` markers of a SH_WORD_SPLIT re-split. A second
+            // removal here deleted those now-empty fields:
+            // `setopt shwordsplit; IFS=:; set -- a::b "" :c:; for i in $@`
+            // is seven iterations in zsh.
             // c:Src/options.c GLOB_SUBST. When the word contains
             // unquoted parameter / command substitution AND the
             // option is set at runtime, the substituted chars
