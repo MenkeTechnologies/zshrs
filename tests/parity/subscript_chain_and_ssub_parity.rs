@@ -553,3 +553,17 @@ mod unbalanced_paren_subscript {
         assert_parity(r#"arr=(x y z); print ${arr[(r)y]} ${arr[$((1+1))]} ${arr[(i)z]}"#);
     }
 }
+
+/// c:Src/params.c:2029-2045 checks bracket balance on the RAW subscript
+/// text only; an expansion that produces `1)` reaches getarg's mathevalarg
+/// (c:1618) and fails there as a math error.
+mod expanded_paren_subscript_is_a_math_error {
+    use super::*;
+
+    #[test]
+    fn expanded_unbalanced_paren_reports_the_math_error() {
+        assert_parity(r#"{ arr=(x y); k="1)"; print ${arr[$k]}; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ arr=(x y); k="(1"; print "${arr[$k]}"; print rc=$? } 2>&1"#);
+    }
+}
+

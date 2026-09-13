@@ -7447,7 +7447,15 @@ impl ZshCompiler {
         // already rejects `$`-containing keys so qt has no observable
         // effect for the resolved literal.
         let untoked_preserve = crate::lex::untokenize_preserve_quotes(s);
-        if let Some((base, key)) = braced_subscript_ref(&untoked_preserve) {
+        // c:Src/params.c:2029-2045 — the literal key must pass getindex's
+        // `parse_subscript` bracket/paren check, which reports `invalid
+        // subscript`. The fast path hands the key to BUILTIN_ARRAY_INDEX as
+        // already-expanded text that skips that check, so a key that fails
+        // it (`${arr[)]}`) takes the full paramsubst path instead.
+        let static_subscript = braced_subscript_ref(&untoked_preserve).filter(|(_, key)| {
+            crate::ported::lex::parse_subscript(&format!("{}]", key), ']').is_some()
+        });
+        if let Some((base, key)) = static_subscript {
             let key = subscript_literal_key(key);
             let name_const = self.builder.add_constant(Value::str(base));
             let key_const = self.builder.add_constant(Value::str(key.as_ref()));

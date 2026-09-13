@@ -3482,6 +3482,15 @@ thread_local! {
     /// words/statements.
     pub static DEFAULT_WORD_GLOB_PENDING: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// Set by the bridge's `array_index_lookup` for the ONE paramsubst it
+    /// runs on `${name[<already-expanded key>]}`. C checks bracket balance
+    /// on the RAW subscript text (c:Src/params.c:2029-2045) and never sees the
+    /// expansion there; the rebuilt body carries the expansion, so the raw
+    /// check must not run on it (`k="1)"; ${arr[$k]}` is a math error in C,
+    /// not "invalid subscript"). Taken (read + cleared) at the first check.
+    pub static SUBSCRIPT_PREEXPANDED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 /// Record the user's GLOB_SUBST value before the `${~}` carrier flip
@@ -7378,7 +7387,9 @@ pub fn paramsubst(
                 // The bracket scan above only balances `[`/`]`, so without
                 // this the text reached the math evaluator ("operand
                 // expected at `)'").
-                if closed_literal.is_some()
+                let preexpanded = SUBSCRIPT_PREEXPANDED.with(|c| c.replace(false));
+                if !preexpanded
+                    && closed_literal.is_some()
                     && crate::ported::lex::parse_subscript(&format!("{}]", raw_sub), ']').is_none()
                 {
                     zerr("invalid subscript"); // c:2042

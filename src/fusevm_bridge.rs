@@ -13541,19 +13541,26 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
         }
     }
     let body = format!("${{{}[{}]}}", name, expanded_subscript_text(idx));
+    // The key here is already expanded; C validated only the raw text
+    // (c:Src/params.c:2029-2045). See subst::SUBSCRIPT_PREEXPANDED.
+    crate::ported::subst::SUBSCRIPT_PREEXPANDED.with(|c| c.set(true));
     // c:Src/subst.c:4226 — `if (isarr && ssub) { val = sepjoin(aval, NULL, 1);
     // isarr = 0; }`. `PREFORK_SINGLE` is the whole of `ssub` (c:1761), and the
     // ported `paramsubst` already carries that gate (`ssub_c4226` /
     // `ssub_join_c3903` in `src/ported/subst.rs`); this fast path just had no
     // way to say it.
-    paramsubst_to_value_pf(
+    let v = paramsubst_to_value_pf(
         &body,
         if ssub {
             crate::ported::zsh_h::PREFORK_SINGLE
         } else {
             0
         },
-    )
+    );
+    // A body that never reached the subscript check must not leave the
+    // carrier armed for the next, unrelated subscript.
+    crate::ported::subst::SUBSCRIPT_PREEXPANDED.with(|c| c.set(false));
+    v
 }
 
 /// Exact-key read against an assoc-like target WITHOUT the textual
