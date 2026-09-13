@@ -434,3 +434,16 @@ mod input_multio_on_a_non_zero_fd {
         );
     }
 }
+
+/// c:Src/exec.c:3489-3499 — under the `builtin` precommand modifier the name is
+/// looked up with `builtintab->getnode`, which skips DISABLED entries, so a
+/// disabled builtin is "no such builtin" with status 1.
+mod builtin_prefix_on_a_disabled_builtin {
+    use super::*;
+
+    #[test]
+    fn reports_no_such_builtin() {
+        assert_parity(r#"disable typeset; { builtin typeset x=1; } 2>&1; print rc=$? $+x"#);
+        assert_parity(r#"disable echo; { builtin echo hi; } 2>&1; print rc=$?"#);
+    }
+}

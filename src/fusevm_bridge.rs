@@ -2322,7 +2322,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // silently. Probe the table here so the diagnostic fires
         // before dispatch.
         let tab = crate::ported::builtin::createbuiltintable();
-        if !tab.contains_key(name.as_str()) {
+        // c:Src/exec.c:3489-3499 — `builtintab->getnode` skips DISABLED
+        // entries, so `disable typeset; builtin typeset x=1` is "no such
+        // builtin: typeset" with status 1, like a name that was never a builtin.
+        let disabled = crate::ported::builtin::BUILTINS_DISABLED
+            .lock()
+            .map(|s| s.contains(name.as_str()))
+            .unwrap_or(false);
+        if !tab.contains_key(name.as_str()) || disabled {
             // zshrs-original opcode builtins (async, doctor, peach, …) aren't
             // in builtintab; `builtin NAME` must still reach them.
             if let Some(status) = try_run_registered_builtin(name, rest) {
