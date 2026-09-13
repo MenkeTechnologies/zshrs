@@ -6825,11 +6825,12 @@ pub fn doshfunc(
         crate::ported::options::FULLY_EMULATING.store(emu_fully, Ordering::Relaxed);
         funcsave_restore_sticky = 1; // c:5992
                                      // c:5993 — `installemulation(emulation, opts);`
-        let mut new_opts: std::collections::HashMap<String, bool> =
-            std::collections::HashMap::new();
+        let mut new_opts = [-1i8; crate::ported::zsh_h::OPT_SIZE as usize];
         crate::ported::options::installemulation(emu, &mut new_opts); // c:5993
-        for (k, v) in &new_opts {
-            opt_state_set(k, *v);
+        for (optno, &v) in new_opts.iter().enumerate().skip(1) {
+            if v >= 0 {
+                opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), v == 1);
+            }
         }
         {
             let guard = sticky.lock().unwrap_or_else(|e| e.into_inner());

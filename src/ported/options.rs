@@ -195,10 +195,12 @@ pub fn createoptiontable() {
 /// Per-option callback invoked by `scanhashtable(optiontab, ...,
 /// setemulate, ...)` to populate the `new_opts[]` table with each
 /// option's default-for-target-emulation state.
-pub fn setemulate(name: &str, fully: i32) {
-    // c:507
-    let flags = optns_flags(name); // c:507
-                                   // c:515-517 — emulation-relevant filter.
+pub fn setemulate(optno: i32, fully: i32) {
+    // c:507 — `Optname on = (Optname) hn;` The node carries its option
+    // number; the port is handed the number and reads the node's flags from
+    // OPTNS_FLAGS_BY_NO, the `optns[].node.flags` column (c:77-280).
+    let flags = OPTNS_FLAGS_BY_NO[optno as usize];
+    // c:515-517 — emulation-relevant filter.
     let is_alias = (flags & OPT_ALIAS) != 0;
     let is_special = (flags & OPT_SPECIAL) != 0;
     let is_emulate = (flags & OPT_EMULATE) != 0;
@@ -210,10 +212,11 @@ pub fn setemulate(name: &str, fully: i32) {
         return;
     }
     // c:518 — `setemulate_opts[on->optno] = defset(on, setemulate_emulation);`
+    // with c:73 `defset(X, my_emulation) (!!((X)->node.flags & my_emulation))`.
     let target = SETEMULATE_EMULATION.load(std::sync::atomic::Ordering::Relaxed);
-    let on_by_default = defset(name, target);
+    let on_by_default = (flags & (target as u16)) != 0;
     if let Ok(mut tab) = setemulate_opts_lock().lock() {
-        tab.insert(name.to_string(), on_by_default);
+        tab[optno as usize] = on_by_default as i8;
     }
 }
 
@@ -229,34 +232,30 @@ pub fn setemulate(name: &str, fully: i32) {
 /// emulation state by walking `optiontab` via the `setemulate`
 /// per-option callback. Does NOT mutate the live `opts[]` — that
 /// happens in the caller (`emulate()` and `bin_emulate -L`).
-pub fn installemulation(
-    new_emulation: i32,
-    new_opts: &mut std::collections::HashMap<String, bool>,
-) {
+pub fn installemulation(new_emulation: i32, new_opts: &mut [i8; OPT_SIZE as usize]) {
     // c:523
     // c:525 — `setemulate_emulation = new_emulation;`
     SETEMULATE_EMULATION.store(new_emulation, std::sync::atomic::Ordering::Relaxed); // c:525
-                                                                                     // c:526 — `setemulate_opts = new_opts;`. We can't alias the
-                                                                                     // caller's HashMap directly, so the per-option callback writes
-                                                                                     // into our module-static and we splice it back into `new_opts`.
+    // c:526 — `setemulate_opts = new_opts;`. The static cannot alias the
+    // caller's array, so setemulate writes the static and it is copied to
+    // `new_opts` below. -1 marks an option setemulate left alone.
     if let Ok(mut tab) = setemulate_opts_lock().lock() {
-        tab.clear();
+        tab.fill(-1);
     }
-    // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully).
+    // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully): one pass
+    // over the option table, by option number.
     let fully = if (new_emulation & EMULATE_FULLY) != 0 {
         1
     } else {
         0
     }; // c:528
-    for name in ZSH_OPTIONS_SET.iter() {
-        setemulate(name, fully); // c:527
-    }
-    // Splice setemulate_opts → new_opts so the C semantic of
-    // "new_opts is now populated" holds for the caller.
-    if let Ok(tab) = setemulate_opts_lock().lock() {
-        for (k, v) in tab.iter() {
-            new_opts.insert(k.clone(), *v);
+    for optno in 1..OPT_SIZE {
+        if !crate::ported::zsh_h::opt_name(optno).is_empty() {
+            setemulate(optno, fully); // c:527
         }
+    }
+    if let Ok(tab) = setemulate_opts_lock().lock() {
+        *new_opts = *tab;
     }
 }
 
@@ -322,12 +321,13 @@ pub fn emulate(mode: &str, fully: bool) {
     if fully {
         emu |= EMULATE_FULLY; // c:551
     }
-    let mut new_opts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut new_opts = [-1i8; OPT_SIZE as usize];
     installemulation(emu, &mut new_opts); // c:552
-    for (k, v) in &new_opts {
-        if (optns_flags(k) & OPT_SPECIAL) == 0 {
+    for optno in 1..OPT_SIZE {
+        let v = new_opts[optno as usize];
+        if v >= 0 && (OPTNS_FLAGS_BY_NO[optno as usize] & OPT_SPECIAL) == 0 {
             // exec.c:5933-5938
-            opt_state_set(k, *v);
+            opt_state_set(crate::ported::zsh_h::opt_name(optno), v == 1);
         }
     }
     if new_emu == EMULATE_ZSH {
@@ -340,13 +340,24 @@ pub fn emulate(mode: &str, fully: bool) {
         // off. Without this filter the blanket defset walk clobbered them
         // back on, which every `emulate -L zsh` in a p10k/zpwr function
         // silently did — flipping rcs/hashdirs mid-config.
-        for name in ZSH_OPTIONS_SET.iter() {
-            let flags = optns_flags(name);
+        // By option number, as installemulation walks. The OPT_ALIAS rows
+        // (`braceexpand`, `dotglob`, …) have no number of their own and were
+        // part of this walk's name set, so they are visited by name after.
+        let reset = |name: &'static str, flags: u16| {
             let is_emulate = (flags & OPT_EMULATE) != 0;
             let is_special = (flags & OPT_SPECIAL) != 0;
             if is_emulate || (fully && !is_special) {
-                opt_state_set(name, defset(name, EMULATE_ZSH));
+                opt_state_set(name, (flags & (EMULATE_ZSH as u16)) != 0); // c:73 defset
             }
+        };
+        for optno in 1..OPT_SIZE {
+            let name = crate::ported::zsh_h::opt_name(optno);
+            if !name.is_empty() {
+                reset(name, OPTNS_FLAGS_BY_NO[optno as usize]);
+            }
+        }
+        for name in ZSH_OPTION_ALIASES.iter() {
+            reset(name, optns_flags(name));
         }
     }
 }
@@ -1685,13 +1696,26 @@ static SETEMULATE_EMULATION: AtomicI32 = // c:496
     AtomicI32::new(0);
 
 /// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
-/// The precomputed `new_opts[]` array `setemulate` writes into. C
-/// stores it as a flat `char[]` indexed by `optno`; the Rust port
-/// keeps it as a HashMap<String, bool> since the runtime is FNV-
-/// hashed instead of densely indexed.
-static SETEMULATE_OPTS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, bool>>,
-> = std::sync::OnceLock::new(); // c:501
+/// The precomputed `new_opts[]` array `setemulate` writes into, a flat
+/// array indexed by `optno` as in C; -1 marks an option the walk did not
+/// select.
+static SETEMULATE_OPTS: std::sync::Mutex<[i8; OPT_SIZE as usize]> =
+    std::sync::Mutex::new([-1; OPT_SIZE as usize]); // c:501
+
+/// `optns[optno].node.flags` (Src/options.c:77-280), indexed by option
+/// number and built once from the name-keyed `optns_flags` match. The
+/// emulation walks read flags by number, as C does through the node,
+/// instead of string-matching every option name on every `emulate`.
+static OPTNS_FLAGS_BY_NO: LazyLock<[u16; OPT_SIZE as usize]> = LazyLock::new(|| {
+    let mut table = [0u16; OPT_SIZE as usize];
+    for optno in 1..OPT_SIZE {
+        let name = crate::ported::zsh_h::opt_name(optno);
+        if !name.is_empty() {
+            table[optno as usize] = optns_flags(name);
+        }
+    }
+    table
+});
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
@@ -2170,8 +2194,8 @@ pub(crate) fn default_on_options() -> HashSet<&'static str> {
     set
 }
 
-fn setemulate_opts_lock() -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>> {
-    SETEMULATE_OPTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+fn setemulate_opts_lock() -> &'static std::sync::Mutex<[i8; OPT_SIZE as usize]> {
+    &SETEMULATE_OPTS
 }
 
 /// Reverse lookup to map a canonical option name back to its
