@@ -609,3 +609,31 @@ mod chained_subscript_after_scan {
         assert_parity(&format!(r#"{a}print -r -- "${{a[1]}}" "${{a[-1]}}" "${{a[2,4]}}""#));
     }
 }
+
+/// `typeset NAME=(…)` with no type flag on an existing assoc keeps it an
+/// assoc and assigns key/value pairs (c:Src/builtin.c:2091-2093 skips the
+/// PM_ARRAY promotion for a reused array/hash; B02typeset.ztst "typeset
+/// preserves existing variable types"). The port promoted to array.
+mod typeset_reassign_keeps_type {
+    use super::*;
+
+    #[test]
+    fn global_assoc_stays_assoc() {
+        assert_parity("typeset -A h=(a 1); typeset h=(b 2 c 3); typeset -p h");
+    }
+
+    #[test]
+    fn same_level_local_assoc_stays_assoc() {
+        assert_parity("f() { local -A l=(a 1); local l=(d 4); typeset -p l }; f");
+    }
+
+    #[test]
+    fn existing_array_stays_array() {
+        assert_parity("typeset -a a=(x y); typeset a=(p q r); typeset -p a");
+    }
+
+    #[test]
+    fn new_local_level_shadows_with_array() {
+        assert_parity("typeset -A g=(a 1); f() { local g=(m n); typeset -p g }; f; typeset -p g");
+    }
+}

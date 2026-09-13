@@ -6475,9 +6475,32 @@ pub fn bin_typeset(
             // it the c:2342 inconsistency check below errors on every
             // bare array assign.
             let mut on = on;
+            // c:Src/builtin.c:2091-2093 — the promotion is skipped when the
+            // parameter is being reused and is ALREADY an array or hash:
+            //     if (ASG_ARRAYP(asg) && PM_TYPE(on) == PM_SCALAR &&
+            //         !(usepm && (PM_TYPE(pm->node.flags) & (PM_ARRAY|PM_HASHED))))
+            //         on |= PM_ARRAY;
+            // The reuse arm then hands the list to assignaparam (c:2324-2329),
+            // which keeps a hashed pm hashed (c:Src/params.c:3341 resets only
+            // non-array types), so `typeset -A h=(a 1); typeset h=(b 2)` is
+            // still an assoc. usepm is cleared first for a new local level
+            // (c:2078-2086). The inline paths below key on `on`'s type, so
+            // the reused pm's type stands in for the untouched PM_SCALAR.
+            let reused_type = paramtab().read().ok().and_then(|t| {
+                t.get(arg_name).and_then(|pm| {
+                    let f = pm.node.flags as u32;
+                    let same_scope = (on as u32 & PM_LOCAL) == 0
+                        || pm.level == locallevel_param.load(Relaxed) as i32;
+                    let typ = crate::ported::zsh_h::PM_TYPE(f);
+                    ((f & PM_UNSET) == 0 && same_scope && (typ == PM_ARRAY || typ == PM_HASHED))
+                        .then_some(typ)
+                })
+            });
             if is_paren_init && crate::ported::zsh_h::PM_TYPE(on) == PM_SCALAR {
-                on |= PM_ARRAY;
+                on |= reused_type.unwrap_or(PM_ARRAY);
             }
+            let is_hashed = (on & PM_HASHED) != 0;
+            let is_array = (on & PM_ARRAY) != 0;
             // c:Src/builtin.c:2342-2347 — `inconsistent type for
             // assignment`: when the user types an array RHS
             // (`x=(...)`) but the resolved type flags don't include
