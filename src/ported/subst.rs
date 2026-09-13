@@ -25011,7 +25011,12 @@ pub fn paramsubst(
             // The lexer tokenizes these inside double-quotes / param
             // expansion contexts, so `$#?` arrives here with `next`
             // being Quest (\u{97}) not ASCII '?'.
-            let next_starts_name = next.is_ascii_alphabetic()
+            // c:Src/subst.c:2571-2572 — `(c == '#' || c == Pound) &&
+            // (inbrace || !isset(POSIXIDENTIFIERS)) && …`. This arm is the
+            // unbraced form, so under POSIX_IDENTIFIERS (set by `emulate sh`)
+            // `$#-1` is the positional count followed by a literal `-1`.
+            let next_starts_name = !isset(crate::ported::zsh_h::POSIXIDENTIFIERS)
+                && (next.is_ascii_alphabetic()
                 || next == '_'
                 || matches!(next, '@' | '*' | '?' | '!' | '-' | '0' | '$')
                 || next == Quest
@@ -25019,7 +25024,7 @@ pub fn paramsubst(
                 || next == Dash
                 || next == Star
                 || next == Stringg
-                || next == Pound;
+                || next == Pound);
             if next_starts_name {
                 let name_start = pos + 1;
                 let mut name_end = name_start + 1;

@@ -277,6 +277,10 @@ mod special_parameters {
         manpath_glob_flag_t => (r#"${(t)manpath}"#, r#"print ${(t)manpath}"#);
         term_glob_flag_t => (r#"${(t)TERM}"#, r#"print ${(t)TERM}"#);
         prompt2_parameter_metadata_line => (r#"PROMPT2 (t)+"#, r#"print -r "t=${(t)PROMPT2} plus=$+PROMPT2""#);
+        // c:Src/subst.c:2571-2572 — unbraced `$#` is the length operator only
+        // under `(inbrace || !isset(POSIXIDENTIFIERS))`; `emulate sh` sets the
+        // option, so `$#-1` is the count followed by a literal `-1`.
+        count_then_dash_under_posix_identifiers => (r#"$#-1 sh"#, r#"emulate sh -c 'f() { echo $#-1; }'; f; set -- a b; setopt posixidentifiers; echo $#-1"#);
     }
 }
 
