@@ -485,5 +485,8 @@ mod argv_prefork_before_glob {
         run("print [ =nosuchcmd_zz");
         run("print =ls a*");
         run("setopt nonomatch; print [[ ==");
+        // c:Src/exec.c:3523-3524: a prefork error keeps a non-zero lastval,
+        // and the deferred glob of `x(a)` never runs.
+        run("(exit 5); print x(a) =nosuchcmd_zz");
     }
 }
