@@ -1542,6 +1542,11 @@ pub fn zshrs_main() {
     // script-file slot and died with `can't open input file: sh`
     // (B07emulate.ztst:17).
     if let Some(emu_idx) = args.iter().position(|a| a == "--emulate") {
+        // c:Src/init.c:282 `argzero = *argv++` runs before parseargs, while
+        // `lineno` is still 0: zwarning's prefix is argv[0] and zerrmsg
+        // prints no line number (`zsh: --emulate: argument required`).
+        zsh::ported::utils::set_argzero(Some(args[0].clone()));
+        zsh::ported::lex::set_lineno(0);
         if args.get(emu_idx + 1).is_none() {
             zsh::ported::utils::zerr("--emulate: argument required"); // c:464
             std::process::exit(1); // c:465
@@ -1577,8 +1582,18 @@ pub fn zshrs_main() {
     } else {
         None
     };
-    let explicit_mode: Option<ShellMode> = if zsh_style_emu.is_some() {
-        // zsh-STYLE: zsh parser/semantics; the option deltas apply via emu_name.
+    // c:Src/init.c:461-474 — `--emulate MODE` is zsh's own option: the shell
+    // stays zsh and runs `emulate(*argv, 1, &emulation, opts)`, a FULL
+    // emulation installed before any later option word is read (so `-f`
+    // after `--emulate sh` is read with kshletters).
+    let cli_emulate: Option<&str> = args
+        .iter()
+        .position(|a| a == "--emulate")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str());
+    let explicit_mode: Option<ShellMode> = if zsh_style_emu.is_some() || cli_emulate.is_some() {
+        // zsh-STYLE and `--emulate`: zsh parser/semantics; the option deltas
+        // apply via emu_name.
         Some(ShellMode::Zsh)
     } else if args.iter().any(|a| a == "--dash" || a == "--ash") {
         // ash and dash are the same Almquist strict-POSIX shell family.
@@ -1601,16 +1616,6 @@ pub fn zshrs_main() {
         Some(ShellMode::Zsh)
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
         Some(ShellMode::Zsh)
-    } else if let Some(emu_idx) = args.iter().position(|a| a == "--emulate") {
-        // `--emulate MODE` — consume the next arg as the mode name.
-        match args.get(emu_idx + 1).map(|s| s.as_str()) {
-            Some("ksh" | "mksh" | "pdksh") => Some(ShellMode::Ksh),
-            Some("dash" | "ash") => Some(ShellMode::Dash),
-            Some("sh" | "posix") => Some(ShellMode::Posix),
-            Some("bash") => Some(ShellMode::Bash),
-            Some("csh" | "zsh") => Some(ShellMode::Zsh),
-            _ => None,
-        }
     } else {
         None
     };
@@ -1645,6 +1650,8 @@ pub fn zshrs_main() {
         // zsh-STYLE (`--X --zsh`): SHELL_MODE is Zsh, but the sub-mode's option
         // deltas still layer on — this is what `emulate X` inside a real zsh does.
         sub
+    } else if let Some(mode) = cli_emulate {
+        mode
     } else {
         match shell_mode() {
             ShellMode::Ksh => "ksh",

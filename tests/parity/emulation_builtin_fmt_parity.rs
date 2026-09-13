@@ -450,3 +450,40 @@ fn bash_compound_function_body_layout_is_a_known_gap() {
     let g = run(zbin.to_str().unwrap(), &["--bash", "-f", "-c"], script);
     assert_eq!(r.stdout, g.stdout);
 }
+
+// ===========================================================================
+// --emulate MODE
+// ===========================================================================
+
+/// c:Src/init.c:461-474 — `zsh --emulate MODE` stays zsh and installs a full
+/// `emulate(MODE, 1, …)` before the remaining option words are read. The
+/// zsh-compat option must not select the drop-in sh/ksh personality: its
+/// `readonly -p` listed the zsh specials and its error prefix read `zshrs`.
+/// The early `--emulate` errors are reported with argv[0] as the prefix and
+/// no line number (`argzero` is set at c:282, before parseargs).
+#[test]
+fn emulate_option_is_zsh_running_emulate() {
+    let Some(zshbin) = zsh() else {
+        panic!("zsh is not installed — the reference cannot run");
+    };
+    let zbin = zshrs_bin();
+    let z = zbin.to_str().expect("zshrs path is UTF-8");
+    let both = |pre: &[&str], script: Option<&str>| {
+        let go = |bin: &str| {
+            let mut c = Command::new(bin);
+            c.args(pre).env_remove("ZSHRS_CACHE").env_remove("ENV");
+            if let Some(s) = script {
+                c.arg(s);
+            }
+            let o = c.output().unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
+            let err = String::from_utf8_lossy(&o.stderr).replace(bin, "ZSH");
+            (String::from_utf8_lossy(&o.stdout).into_owned(), err, o.status.code())
+        };
+        assert_eq!(go(&zshbin), go(z), "args {pre:?} script {script:?}");
+    };
+    both(&["--emulate", "sh", "-c"], Some("readonly x=1; readonly -p"));
+    both(&["--emulate", "sh", "-f", "-c"], Some("setopt; nosuchcmd_zz"));
+    both(&["--emulate", "ksh", "-f", "-c"], Some("emulate; setopt | wc -l"));
+    both(&["-f", "--emulate", "sh"], None);
+    both(&["--emulate"], None);
+}
