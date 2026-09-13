@@ -1630,48 +1630,131 @@ pub fn hbegin(dohist: i32) {
 
 /// Port of `histreduceblanks()` from `Src/hist.c:1199`. — C decl `histreduceblanks(void)`.
 ///
-/// **Signature divergence from C**: C operates on global `chline`
-/// + `chwords` state and returns void. Rust port takes a `&str`
-/// input and returns the collapsed result — the in-tree caller
-/// (hist.rs:1388) threads text through this Rust shape. A future
-/// refactor that wires the global-state path would deprecate this
-/// signature.
+/// Operates on the global `chline` / `chwords` / `chwordpos` exactly as C
+/// does: each recorded word is moved left to close the gap before it,
+/// carrying the ONE separator byte that followed it, so quoted text inside a
+/// word (`"a  b"`) is never touched and a tab separator stays a tab. Leading
+/// spaces survive only under HIST_IGNORE_SPACE (c:1204-1205), which is what
+/// keeps an ignore-space line recognisable as one.
 ///
-/// **Whitespace class fix**: C uses `inblank(*ptr)` at c:1240 — the
-/// NARROW typtab class (space + tab only per Src/ztype.h:50). The
-/// previous Rust port used `c.is_whitespace()` (broad Unicode)
-/// which also catches CR/FF/VT/NBSP — silently collapsing those
-/// chars that C would preserve. Now matches C's narrow inblank.
-pub fn histreduceblanks(text: &str) -> String {
-    // c:50 — `inblank` is space/tab only.
-    #[inline]
-    fn is_inblank_narrow(c: char) -> bool {
-        c == ' ' || c == '\t'
-    }
+/// The previous port collapsed every blank run in the raw string and trimmed
+/// both ends, so ` print   "a  b"` was stored — and handed to preexec as
+/// `$1` — as `print "a b"`.
+pub fn histreduceblanks() {
+    // c:1199
+    let mut line = chline.lock().unwrap();
+    let mut words = chwords.lock().unwrap();
+    let wpos = (chwordpos.load(SeqCst).max(0) as usize).min(words.len());
+    let mut buf: Vec<u8> = std::mem::take(&mut *line).into_bytes();
+    // C reads a NUL-terminated buffer; the Rust String ends at its length.
+    let at = |b: &[u8], i: usize| b.get(i).copied().unwrap_or(0);
 
-    let mut result = String::with_capacity(text.len());
-    let mut prev_space = false;
-    for c in text.chars() {
-        if is_inblank_narrow(c) {
-            if !prev_space {
-                result.push(' ');
-                prev_space = true;
-            }
-        } else {
-            result.push(c);
-            prev_space = false;
+    let mut spacecount = 0usize; // c:1201
+    if isset(HISTIGNORESPACE) {
+        // c:1204
+        while at(&buf, spacecount) == b' ' {
+            spacecount += 1; // c:1205
         }
     }
-    // c:1240 — trim trailing inblank only; preserve embedded non-
-    // inblank chars (newline, CR, etc).
-    let mut s = result;
-    while s.ends_with(' ') {
-        s.pop();
+
+    let mut len = spacecount; // c:1207
+    let mut i = 0usize;
+    while i + 1 < wpos {
+        len += (words[i + 1] - words[i]).max(0) as usize // c:1208
+            + (i > 0 && words[i] > words[i - 1]) as usize; // c:1209
+        i += 2;
     }
-    while s.starts_with(' ') {
-        s.remove(0);
+    if at(&buf, len) == 0 {
+        // c:1211
+        *line = String::from_utf8(buf).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        return; // c:1212
     }
-    s
+
+    /* Remember where the delimited words end */
+    let lastptr = if wpos != 0 {
+        // c:1215
+        words[wpos - 1].max(0) as usize // c:1216
+    } else {
+        0 // c:1218
+    };
+
+    let mut pos = spacecount; // c:1220
+    i = 0;
+    while i + 1 < wpos {
+        let len = (words[i + 1] - words[i]).max(0) as usize; // c:1221
+        let needblank = (i + 2 < wpos && words[i + 2] > words[i + 1]) as usize; // c:1222
+        let from = words[i].max(0) as usize;
+        if pos != from {
+            // c:1223
+            let end = (from + len + needblank).min(buf.len());
+            if from < end {
+                buf.copy_within(from..end, pos); // c:1224 memmove
+            }
+            words[i] = pos as i16; // c:1225
+            words[i + 1] = (pos + len) as i16; // c:1226
+        }
+        pos += len + needblank; // c:1228
+        i += 2;
+    }
+
+    /*
+     * A terminating comment isn't recorded as a word.
+     * Only truncate the line if just whitespace remains.
+     */
+    let tail = buf.get(lastptr..).unwrap_or(&[]);
+    let trunc_ok = tail
+        .iter()
+        .take_while(|&&b| b != 0)
+        .all(|&b| b == b' ' || b == b'\t'); // c:1235-1241 inblank
+    if trunc_ok {
+        buf.truncate(pos); // c:1243 chline[pos] = '\0'
+    } else if pos < lastptr {
+        // c:1245-1248 — copy the tail from lastptr down to pos.
+        buf.drain(pos..lastptr.min(buf.len()));
+    }
+    *line = String::from_utf8(buf).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+}
+
+#[cfg(test)]
+use reduce_blanks_test_util::{reduce_blanks, reduce_line};
+
+/// Test-only drivers for `histreduceblanks`, shared by the test modules below.
+#[cfg(test)]
+mod reduce_blanks_test_util {
+    use super::*;
+
+    /// Run `histreduceblanks` over `line` whose recorded words are the
+    /// `[start, end)` byte pairs in `words`, restoring the history globals.
+    /// The caller must hold `test_util::global_state_lock`.
+    pub(crate) fn reduce_blanks(line: &str, words: &[i16], ignorespace: bool) -> String {
+        let saved = (
+            chline.lock().unwrap().clone(),
+            chwords.lock().unwrap().clone(),
+            chwordpos.load(SeqCst),
+            isset(HISTIGNORESPACE),
+        );
+        *chline.lock().unwrap() = line.to_string();
+        *chwords.lock().unwrap() = words.to_vec();
+        chwordpos.store(words.len() as i32, SeqCst);
+        dosetopt(HISTIGNORESPACE, ignorespace as i32, 0);
+        histreduceblanks();
+        let out = chline.lock().unwrap().clone();
+        *chline.lock().unwrap() = saved.0;
+        *chwords.lock().unwrap() = saved.1;
+        chwordpos.store(saved.2, SeqCst);
+        dosetopt(HISTIGNORESPACE, saved.3 as i32, 0);
+        out
+    }
+
+    /// [`reduce_blanks`] with the words `histsplitwords` finds in `line`
+    /// (blank-separated spans), HIST_IGNORE_SPACE off.
+    pub(crate) fn reduce_line(line: &str) -> String {
+        let words: Vec<i16> = histsplitwords(line, false)
+            .iter()
+            .flat_map(|&(s, e)| [s as i16, e as i16])
+            .collect();
+        reduce_blanks(line, &words, false)
+    }
 }
 
 /// Port of `histremovedups()` from `Src/hist.c:1254`. — C decl `histremovedups(void)`.
@@ -2224,7 +2307,13 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             }
             if isset(HISTREDUCEBLANKS) {
                 // c:1593
-                text = histreduceblanks(&text); // c:1594
+                // C edits `chline` in place; `text` is this port's copy of
+                // it (with the trailing newline already dropped, c:1540),
+                // so hand it to the buffer histreduceblanks works on and
+                // take the result back.
+                *chline.lock().unwrap() = text.clone();
+                histreduceblanks(); // c:1594
+                text = chline.lock().unwrap().clone();
             }
         }
         let newflags: u32 = if save == -1 {
@@ -6360,58 +6449,64 @@ mod subst_modifier_tests {
         assert_eq!(cflag, 0, "no cflag set");
     }
 
-    /// `histreduceblanks` collapses runs of spaces+tabs to single
-    /// spaces. Used by HIST_REDUCE_BLANKS option. A regression that
-    /// fails to collapse would bloat the history file with redundant
-    /// whitespace.
+    /// `Src/hist.c:1199` — words move left carrying the ONE byte that
+    /// followed them, so the gaps between words shrink but nothing inside a
+    /// word changes. zsh stores `print  "a  b"   c` as `print "a  b" c` and
+    /// `a<TAB><TAB>b   c` as `a<TAB>b c` (measured with `fc -ln -1`).
     #[test]
-    fn histreduceblanks_collapses_internal_runs() {
+    fn histreduceblanks_closes_gaps_between_recorded_words_only() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("a    b"), "a b");
-        assert_eq!(histreduceblanks("foo\t\tbar"), "foo bar");
-        // Leading/trailing whitespace is left intact per the C body.
-        assert_eq!(histreduceblanks("a b"), "a b");
+        assert_eq!(
+            reduce_blanks("print  \"a  b\"   c", &[0, 5, 7, 13, 16, 17], false),
+            "print \"a  b\" c",
+            "c:1224 — a quoted word keeps its inner blanks"
+        );
+        assert_eq!(
+            reduce_blanks("a\t\tb   c", &[0, 1, 3, 4, 7, 8], false),
+            "a\tb c",
+            "c:1224 — the separator byte that follows a word is carried, tab included"
+        );
+        assert_eq!(
+            reduce_blanks("a b", &[0, 1, 2, 3], false),
+            "a b",
+            "c:1211 — an already-reduced line returns untouched"
+        );
+        assert_eq!(
+            reduce_blanks("é  x", &[0, 2, 4, 5], false),
+            "é x",
+            "offsets are bytes; a multibyte word survives the move"
+        );
     }
 
-    /// `Src/hist.c:1240` — `histreduceblanks` uses `inblank(*ptr)`
-    /// which is space+tab ONLY per `Src/ztype.h:50`. The previous
-    /// Rust port used `c.is_whitespace()` (broad Unicode) which
-    /// also matched CR/FF/VT/NBSP — silently mangling history lines
-    /// that legitimately contain those chars.
+    /// `Src/hist.c:1204-1205` / `:1235-1248` — the ends of the line.
     #[test]
-    fn histreduceblanks_uses_narrow_inblank_only() {
+    fn histreduceblanks_line_ends_follow_ignorespace_and_tail() {
         let _g = crate::test_util::global_state_lock();
-        // Space and tab — collapsed.
-        assert_eq!(histreduceblanks("a  b"), "a b");
-        assert_eq!(histreduceblanks("a\t\tb"), "a b");
         assert_eq!(
-            histreduceblanks("a \tb"),
-            "a b",
-            "c:1240 — mixed space/tab run collapses to single space"
+            reduce_blanks(" print  lead", &[1, 6, 8, 12], false),
+            "print lead",
+            "c:1204 — without HIST_IGNORE_SPACE the leading space goes"
         );
-        // Newline is NOT inblank per c:50 — must be preserved.
         assert_eq!(
-            histreduceblanks("a\nb"),
-            "a\nb",
-            "c:50 — newline not in inblank; passes through unchanged"
+            reduce_blanks(" print  lead", &[1, 6, 8, 12], true),
+            " print lead",
+            "c:1205 — HIST_IGNORE_SPACE keeps the leading spaces"
         );
-        // CR is NOT inblank.
         assert_eq!(
-            histreduceblanks("a\rb"),
-            "a\rb",
-            "CR not in inblank class; must NOT be collapsed"
+            reduce_blanks("x   ", &[0, 1], false),
+            "x",
+            "c:1243 — an all-inblank tail is truncated"
         );
-        // NBSP (\u{A0}) is NOT inblank either.
         assert_eq!(
-            histreduceblanks("a\u{A0}b"),
-            "a\u{A0}b",
-            "NBSP not in inblank; must NOT be collapsed"
+            reduce_blanks("print a  # c", &[0, 5, 6, 7], false),
+            "print a  # c",
+            "c:1245 — a comment tail is not a word and is kept as typed"
         );
-        // Leading/trailing spaces stripped (c:1241).
-        assert_eq!(histreduceblanks("   x"), "x");
-        assert_eq!(histreduceblanks("x   "), "x");
-        // But leading newline is NOT stripped (newline not inblank).
-        assert_eq!(histreduceblanks("\nx"), "\nx");
+        assert_eq!(
+            reduce_blanks("print  a \r", &[0, 5, 7, 8], false),
+            "print a \r",
+            "c:1237 — CR is not inblank, so the tail is copied down, not cut"
+        );
     }
 
     /// Pin `digitcount` to its canonical C body at `Src/hist.c:573-589`.
@@ -7858,66 +7953,76 @@ mod subst_modifier_tests {
     /// Single space stays single.
     #[test]
     fn histreduceblanks_single_space_stays_one() {
-        assert_eq!(histreduceblanks("a b"), "a b");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("a b"), "a b");
     }
 
     /// Run of spaces collapses to one.
     #[test]
     fn histreduceblanks_multi_space_collapses_to_one() {
-        assert_eq!(histreduceblanks("a     b"), "a b");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("a     b"), "a b");
     }
 
     /// Tab counts as inblank — collapses to single space.
     #[test]
     fn histreduceblanks_tab_collapses_with_spaces() {
-        assert_eq!(histreduceblanks("a \t  b"), "a b");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("a \t  b"), "a b");
     }
 
     /// Leading whitespace trimmed.
     #[test]
     fn histreduceblanks_leading_whitespace_trimmed() {
-        assert_eq!(histreduceblanks("   hello"), "hello");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("   hello"), "hello");
     }
 
     /// Trailing whitespace trimmed.
     #[test]
     fn histreduceblanks_trailing_whitespace_trimmed() {
-        assert_eq!(histreduceblanks("hello   "), "hello");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("hello   "), "hello");
     }
 
     /// Both leading AND trailing trimmed.
     #[test]
     fn histreduceblanks_both_ends_trimmed() {
-        assert_eq!(histreduceblanks("  hi  "), "hi");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("  hi  "), "hi");
     }
 
     /// Empty input → empty output.
     #[test]
     fn histreduceblanks_empty_input_returns_empty() {
-        assert_eq!(histreduceblanks(""), "");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line(""), "");
     }
 
     /// All-whitespace input → empty after trim.
     #[test]
     fn histreduceblanks_all_whitespace_becomes_empty() {
-        assert_eq!(histreduceblanks("     "), "");
-        assert_eq!(histreduceblanks("\t\t  \t"), "");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("     "), "");
+        assert_eq!(reduce_line("\t\t  \t"), "");
     }
 
     /// Embedded newline is NOT treated as inblank — preserved as-is.
     /// (c:50 — `inblank` is space/tab ONLY; newline is preserved.)
     #[test]
     fn histreduceblanks_newline_preserved_not_collapsed() {
+        let _g = crate::test_util::global_state_lock();
         // Newlines stay; surrounding spaces collapse normally.
-        let r = histreduceblanks("a\nb");
+        let r = reduce_line("a\nb");
         assert_eq!(r, "a\nb", "newline must be preserved");
     }
 
     /// Multiple newlines stay; flanking spaces don't get consumed.
     #[test]
     fn histreduceblanks_multiple_newlines_preserved() {
-        // Pin contract: newlines are not in inblank → preserved exactly.
-        let r = histreduceblanks("a\n\nb");
+        let _g = crate::test_util::global_state_lock();
+        // Each newline is a recorded word; nothing between words to close.
+        let r = reduce_blanks("a\n\nb", &[0, 1, 1, 2, 2, 3, 3, 4], false);
         assert_eq!(r, "a\n\nb");
     }
 
@@ -7925,17 +8030,18 @@ mod subst_modifier_tests {
     /// treated as a "run" because newline breaks continuity.
     #[test]
     fn histreduceblanks_space_around_newline_preserved() {
-        // Trim only happens at the very ends, not inside.
-        let r = histreduceblanks("a \n b");
-        // Each space around \n is its own (already single) run; newline
-        // resets prev_space; the second space starts a new run.
+        let _g = crate::test_util::global_state_lock();
+        // Words `a`, `\n`, `b` with one-byte gaps: already minimal (c:1211).
+        let r = reduce_blanks("a \n b", &[0, 1, 2, 3, 4, 5], false);
         assert_eq!(r, "a \n b");
     }
 
-    /// Mixed: leading + multi + trailing all trimmed/collapsed.
+    /// Mixed: leading spaces dropped (no HIST_IGNORE_SPACE), each gap reduced
+    /// to its first byte (c:1224), all-blank tail truncated (c:1243).
     #[test]
     fn histreduceblanks_complex_input_normalizes() {
-        assert_eq!(histreduceblanks("   a   b\t\tc   "), "a b c");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("   a   b\t\tc   "), "a b\tc");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -8016,40 +8122,52 @@ mod subst_modifier_tests {
     /// Empty input → empty output.
     #[test]
     fn hist_corpus_histreduceblanks_empty_is_empty() {
-        assert_eq!(histreduceblanks(""), "");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line(""), "");
     }
 
     /// All-spaces input collapses to nothing (trimmed).
     #[test]
     fn hist_corpus_histreduceblanks_all_spaces_to_empty() {
-        assert_eq!(histreduceblanks("     "), "");
-        assert_eq!(histreduceblanks("\t\t\t"), "");
-        assert_eq!(histreduceblanks(" \t \t "), "");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("     "), "");
+        assert_eq!(reduce_line("\t\t\t"), "");
+        assert_eq!(reduce_line(" \t \t "), "");
     }
 
     /// Single non-space char passes through.
     #[test]
     fn hist_corpus_histreduceblanks_single_char() {
-        assert_eq!(histreduceblanks("x"), "x");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("x"), "x");
     }
 
     /// Tab counts as inblank; mixed space+tab runs collapse to one space.
     #[test]
     fn hist_corpus_histreduceblanks_mixed_space_tab() {
-        assert_eq!(histreduceblanks("a \t \t b"), "a b");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("a \t \t b"), "a b");
     }
 
     /// Multibyte characters pass through unchanged.
     #[test]
     fn hist_corpus_histreduceblanks_multibyte_passthrough() {
-        assert_eq!(histreduceblanks("日 本"), "日 本");
-        assert_eq!(histreduceblanks("日   本"), "日 本");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line("日 本"), "日 本");
+        assert_eq!(reduce_line("日   本"), "日 本");
     }
 
-    /// Newlines preserved with exact count (not in inblank class).
+    /// Newlines preserved with exact count. The lexer records each newline
+    /// as a word of its own, so adjacent words leave no gap to close (zsh
+    /// stores `{ print a<NL><NL><NL>print  b }` as
+    /// `{ print a<NL><NL><NL>print b }`).
     #[test]
     fn hist_corpus_histreduceblanks_newlines_exact_count() {
-        assert_eq!(histreduceblanks("a\n\n\nb"), "a\n\n\nb");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            reduce_blanks("a\n\n\nb", &[0, 1, 1, 2, 2, 3, 3, 4, 4, 5], false),
+            "a\n\n\nb"
+        );
     }
 
     /// `hist_is_in_word` round-trips with `hist_in_word`.
@@ -8165,49 +8283,50 @@ mod subst_modifier_tests {
     #[test]
     fn histreduceblanks_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks(""), "");
+        assert_eq!(reduce_line(""), "");
     }
 
     /// c:1240 — `histreduceblanks` collapses multiple spaces to one.
     #[test]
     fn histreduceblanks_collapses_runs_of_spaces() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("a    b"), "a b");
-        assert_eq!(histreduceblanks("a  b  c"), "a b c");
+        assert_eq!(reduce_line("a    b"), "a b");
+        assert_eq!(reduce_line("a  b  c"), "a b c");
     }
 
-    /// c:1240 — `histreduceblanks` collapses tabs same as spaces.
+    /// c:1224 — a gap shrinks to the ONE byte that followed the word, so a
+    /// tab separator stays a tab (zsh stores `a<TAB><TAB>b` as `a<TAB>b`).
     #[test]
     fn histreduceblanks_collapses_tabs_to_space() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("a\tb"), "a b", "tab → space");
-        assert_eq!(histreduceblanks("a\t\t\tb"), "a b", "tab run → 1 space");
-        assert_eq!(histreduceblanks("a \t \tb"), "a b", "mixed run → 1 space");
+        assert_eq!(reduce_line("a\tb"), "a\tb", "single tab gap is already minimal");
+        assert_eq!(reduce_line("a\t\t\tb"), "a\tb", "tab run → the first tab");
+        assert_eq!(reduce_line("a \t \tb"), "a b", "mixed run → its first byte, a space");
     }
 
     /// c:1240 — strips leading whitespace.
     #[test]
     fn histreduceblanks_strips_leading_whitespace() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("   abc"), "abc");
-        assert_eq!(histreduceblanks("\t\tabc"), "abc");
+        assert_eq!(reduce_line("   abc"), "abc");
+        assert_eq!(reduce_line("\t\tabc"), "abc");
     }
 
     /// c:1240 — strips trailing whitespace.
     #[test]
     fn histreduceblanks_strips_trailing_whitespace() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("abc   "), "abc");
-        assert_eq!(histreduceblanks("abc\t\t"), "abc");
+        assert_eq!(reduce_line("abc   "), "abc");
+        assert_eq!(reduce_line("abc\t\t"), "abc");
     }
 
     /// c:1240 — pure whitespace input returns empty.
     #[test]
     fn histreduceblanks_only_whitespace_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("   "), "");
-        assert_eq!(histreduceblanks("\t\t\t"), "");
-        assert_eq!(histreduceblanks(" \t \t "), "");
+        assert_eq!(reduce_line("   "), "");
+        assert_eq!(reduce_line("\t\t\t"), "");
+        assert_eq!(reduce_line(" \t \t "), "");
     }
 
     /// c:1240 — `histreduceblanks` is idempotent.
@@ -8215,8 +8334,8 @@ mod subst_modifier_tests {
     fn histreduceblanks_is_idempotent() {
         let _g = crate::test_util::global_state_lock();
         for input in &["a  b", "   foo", "x\ty\tz", "  hello world  "] {
-            let once = histreduceblanks(input);
-            let twice = histreduceblanks(&once);
+            let once = reduce_line(input);
+            let twice = reduce_line(&once);
             assert_eq!(once, twice, "must be idempotent on {:?}", input);
         }
     }
@@ -8225,8 +8344,8 @@ mod subst_modifier_tests {
     #[test]
     fn histreduceblanks_single_space_preserved() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(histreduceblanks("a b"), "a b");
-        assert_eq!(histreduceblanks("hello world"), "hello world");
+        assert_eq!(reduce_line("a b"), "a b");
+        assert_eq!(reduce_line("hello world"), "hello world");
     }
 
     /// c:50 — inblank is space/tab ONLY; newline is NOT collapsed.
@@ -8234,7 +8353,7 @@ mod subst_modifier_tests {
     fn histreduceblanks_preserves_newlines() {
         let _g = crate::test_util::global_state_lock();
         // Newline is not inblank → preserved (and bordering chars too).
-        let r = histreduceblanks("a\nb");
+        let r = reduce_line("a\nb");
         assert!(r.contains('\n'), "newline preserved in {:?}", r);
     }
 
@@ -8316,19 +8435,21 @@ mod subst_modifier_tests {
     /// c:1549 — `histreduceblanks("")` empty returns empty String.
     #[test]
     fn histreduceblanks_empty_returns_empty_pin() {
-        assert_eq!(histreduceblanks(""), "");
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(reduce_line(""), "");
     }
 
     /// c:1549 — `histreduceblanks` is pure.
     #[test]
     fn histreduceblanks_is_pure() {
+        let _g = crate::test_util::global_state_lock();
         for s in ["", "abc", "  spaces  ", "\ttabs\t", "no\nnewlines\nhere"] {
-            let first = histreduceblanks(s);
+            let first = reduce_line(s);
             for _ in 0..3 {
                 assert_eq!(
-                    histreduceblanks(s),
+                    reduce_line(s),
                     first,
-                    "histreduceblanks({:?}) must be pure",
+                    "reduce_line({:?}) must be pure",
                     s
                 );
             }
