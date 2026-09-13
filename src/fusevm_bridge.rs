@@ -3375,7 +3375,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // See BUILTIN_PREFORK_CUT_CHECK.
     vm.register_builtin(BUILTIN_PREFORK_CUT_CHECK, |_vm, _argc| {
-        Value::Bool(PREFORK_CUT.with(|c| c.get()))
+        // c:Src/subst.c:118-121 — prefork's word loop also returns once
+        // errflag is set, before expanding the next word.
+        let errflag_set = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR
+            != 0;
+        Value::Bool(PREFORK_CUT.with(|c| c.get()) || errflag_set)
     });
     // See BUILTIN_GLOBLIST. c:Src/subst.c:488-498 globlist:
     //     badcshglob = 0;
@@ -16391,8 +16396,9 @@ pub const BUILTIN_EXEC_DASH: u16 = 687;
 /// one value per word (an Array where a glob expanded).
 pub const BUILTIN_GLOBLIST: u16 = 688;
 /// c:Src/subst.c:142-147 — `if (!(node = stringsubst(…))) return;`: prefork
-/// stops at a NULL paramsubst (a failed `(e)` re-lex). No args; pushes
-/// Bool(PREFORK_CUT) without clearing it. The compiler checks it after each
+/// stops at a NULL paramsubst (a failed `(e)` re-lex), and c:118-121 stops it
+/// before the next word once errflag is set. No args; pushes
+/// Bool(PREFORK_CUT || errflag & ERRFLAG_ERROR) without clearing either. The compiler checks it after each
 /// expansion segment of a word (true: keep the prefix assembled so far, plus
 /// a literal `"` for an opening DQ, and skip the word's remaining segments,
 /// c:1878) and after each word (true: push the later words as their

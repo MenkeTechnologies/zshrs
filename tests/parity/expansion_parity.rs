@@ -1334,3 +1334,28 @@ mod tilde_flag_inside_double_quotes_does_not_glob {
         assert_parity(r#"a='zz_no*'; print -r -- ${~a}; echo rc=$?"#);
     }
 }
+
+/// c:Src/subst.c:118-121 — prefork returns before the next word once errflag
+/// is set, so after an expansion error no later word of the command is
+/// expanded. A later subscript used to clear the error again (its lexer runs
+/// hbegin, c:Src/hist.c:1115), and a later `$( )` still ran.
+mod expansion_error_stops_the_later_words {
+    use super::*;
+
+    #[test]
+    fn a_later_subscript_does_not_revive_the_command() {
+        assert_parity(r#"foo=(1 2 3); n=1; print ${foo[*]:$n:1} "${foo[*]:n}" ${foo[*]: -1}; echo rc=$?"#);
+        assert_parity(r#"x=abc; print "${x:n}" ${x[1]}; echo rc=$?"#);
+    }
+
+    #[test]
+    fn a_later_substitution_does_not_run() {
+        assert_parity(r#"x=abc; print "${x:n}" $(print ran >&2); echo rc=$?"#);
+        assert_parity(r#"print ${.} `print ran >&2` z; echo rc=$?"#);
+    }
+
+    #[test]
+    fn words_without_an_error_all_expand() {
+        assert_parity(r#"x=abc; a=(1 2); print ${x[1]} ${a[2]} $(print ok) "${x:1}"; echo rc=$?"#);
+    }
+}

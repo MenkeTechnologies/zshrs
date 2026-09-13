@@ -3612,7 +3612,23 @@ impl ZshCompiler {
             // stays as the lexer left it and only globlist still runs over it
             // (`x ${(e)a} ${(e)a} y` → `no matches found: ${(e)a}`). The pad
             // taken on the cut pushes those words unexpanded.
-            if argv_index + 1 < argv_words.len() && expansion_may_null_prefork(word) {
+            // c:Src/subst.c:118-121 — prefork also returns before the next word
+            // once errflag is set, so a later word never expands after an
+            // expansion error. That is only observable when a later word
+            // could run anything (a substitution, a subscript whose lexer
+            // clears ERRFLAG_ERROR in hbegin, c:Src/hist.c:1115), so the check
+            // is emitted only when one follows: `print "${x:n}" ${a[*]:1}`
+            // printed its words after `unrecognized modifier`.
+            let later_word_expands = argv_words[argv_index + 1..].iter().any(|w| {
+                use crate::ported::zsh_h::{OutangProc, Qstring, Qtick, Stringg, Tick};
+                w.chars().any(|c| {
+                    matches!(c, '$' | '`' | Stringg | Qstring | Tick | Qtick | OutangProc)
+                        || (c == crate::ported::zsh_h::Inang && w.contains(crate::ported::zsh_h::Inpar))
+                })
+            });
+            if argv_index + 1 < argv_words.len()
+                && (expansion_may_null_prefork(word) || later_word_expands)
+            {
                 self.builder.emit(
                     Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_PREFORK_CUT_CHECK, 0),
                     0,
