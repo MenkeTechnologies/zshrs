@@ -430,3 +430,29 @@ mod scalar_assignment_never_globs {
         }
     }
 }
+
+/// c:Src/subst.c:4737 `chrealpath(&copy, 'A', 1)` — for mode 'A' chrealpath
+/// runs chabspath FIRST (c:Src/hist.c:1988-1990), so `..` collapses lexically
+/// before realpath(3) resolves a symlink. `:P` skips that step
+/// (c:4787-4796) and still resolves the link before climbing.
+mod modifier_a_collapses_dotdot_before_symlinks {
+    use super::*;
+
+    #[test]
+    fn dotdot_after_a_symlink_is_lexical_for_a() {
+        let d = mkdir_with_files(&[]);
+        let setup = "mkdir -p T/dir3/subdir; touch T/hello; ln -s dir3/subdir T/link; cd T; ";
+        assert_parity_in(d.path(), &format!("{setup}print -r -- ${{${{:-link/../hello}}:A}}"));
+        assert_parity_in(d.path(), &format!("{setup}() {{ print -r -- ${{1:A}} }} link/../../hello"));
+        assert_parity_in(d.path(), &format!("{setup}print -r -- ${{${{:-link/../hello}}:P}}"));
+    }
+
+    #[test]
+    fn nonexistent_components_unchanged() {
+        let d = mkdir_with_files(&[]);
+        assert_parity_in(
+            d.path(),
+            "print -r -- ${${:-/a/b/../c}:A} ${${:-/a/b/../c}:P} ${${:-/a/./b}:A} ${${:-/a/./b}:P}",
+        );
+    }
+}

@@ -27259,73 +27259,26 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     crate::ported::utils::xsymlink(&abs) // c:4795
                 }
                 'A' => {
-                    // c:4585 (:A / :P absolute + resolve symlinks)
-                    // zsh `:A` / `:P` do what realpath(3) does —
-                    // resolve every symlink in the path. xsymlinks
-                    // alone normalises `.` / `..` without following
-                    // links; std::fs::canonicalize REQUIRES the
-                    // entire path to exist. For non-existent leafs
-                    // (common — temp files, pre-mkdir paths), we
-                    // walk component-by-component, canonicalize the
-                    // LONGEST EXISTING prefix, then re-append the
-                    // tail. Mirrors what realpath(3) on Linux/glibc
-                    // does and what zsh's xsymlinks does in C with
-                    // its `physical = 1` walk.
-                    let canon = std::fs::canonicalize(w)
-                        .ok()
-                        .map(|p| p.to_string_lossy().into_owned());
-                    if let Some(c) = canon {
-                        Some(c)
-                    } else {
-                        // Walk parents to find longest existing prefix.
-                        let mut p = std::path::PathBuf::from(w);
-                        let mut tail: Vec<std::ffi::OsString> = Vec::new();
-                        let resolved_prefix = loop {
-                            if let Ok(rp) = std::fs::canonicalize(&p) {
-                                break Some(rp);
-                            }
-                            match (
-                                p.parent().map(|x| x.to_path_buf()),
-                                p.file_name().map(|x| x.to_os_string()),
-                            ) {
-                                (Some(parent), Some(file)) if !parent.as_os_str().is_empty() => {
-                                    tail.push(file);
-                                    p = parent;
-                                }
-                                _ => break None,
-                            }
-                        };
-                        if let Some(mut rp) = resolved_prefix {
-                            for t in tail.into_iter().rev() {
-                                rp.push(t);
-                            }
-                            Some(rp.to_string_lossy().into_owned())
-                        } else if modifier == 'A' {
-                            // Nothing along the path resolved. `:A` still
-                            // collapses `.`/`..` LEXICALLY, because C routes it
-                            // through `chrealpath(&copy, 'A', 1)` (c:4737) and
-                            // chrealpath's mode-'A' branch runs chabspath FIRST
-                            // (c:1988-1990) — before realpath is ever tried.
-                            xsymlinks(w).ok()
-                        } else {
-                            // `:P` must NOT collapse. C reaches it by a
-                            // different route (c:4787-4796): cwd-prepend, then
-                            // `xsymlink(copy, 1)` → `chrealpath(&s, 'P', heap)`
-                            // — mode 'P', which SKIPS chabspath and goes
-                            // straight to the realpath backoff. When nothing
-                            // resolves, chrealpath's `real == NULL` branch
-                            // (c:2047) hands back `nonreal`, i.e. the original
-                            // string untouched.
-                            //
-                            // So `.`/`..` only ever collapse through realpath(3)
-                            // — which cannot collapse them across a component
-                            // that does not exist:
-                            //     /a/b/../c   :A → /a/c        :P → /a/b/../c
-                            //     /a/./b      :A → /a/b        :P → /a/./b
-                            //     /usr/bin/../bin  both → /usr/bin  (it exists)
-                            // Sharing one arm made `:P` behave as `:A`.
-                            Some(w.to_string())
+                    // c:Src/subst.c:4737 — `chrealpath(&copy, 'A', 1)`. For mode
+                    // 'A', chrealpath FIRST runs chabspath (c:Src/hist.c:1988-1990):
+                    // the word is made absolute and `.`/`..` collapse LEXICALLY.
+                    // Only then does the realpath backoff (c:2008-2048) resolve
+                    // symlinks, on the already-collapsed path. The ported
+                    // `hist::chrealpath` leaves that first step to its caller.
+                    //
+                    // Resolving the uncollapsed word let a symlink before `..`
+                    // move the climb: with `link -> dir3/subdir`,
+                    // `${${:-link/../hello}:A}` gave `$PWD/dir3/hello` where zsh
+                    // gives `$PWD/hello`. `:P` has its own arm above and never
+                    // collapses (c:4787-4796, mode 'P' skips chabspath).
+                    //
+                    // C ignores chrealpath's status and keeps whatever `copy`
+                    // holds, so a failed step leaves the word as it stands.
+                    match crate::ported::hist::chabspath(w) {
+                        Some(abs) => {
+                            Some(crate::ported::hist::chrealpath(&abs, b'A', true).unwrap_or(abs))
                         }
+                        None => Some(w.to_string()),
                     }
                 }
                 'c' => {
