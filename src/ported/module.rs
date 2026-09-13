@@ -1554,6 +1554,12 @@ impl modulestab {
             ("zsh/curses", &["zcurses"][..]),
             ("zsh/db/gdbm", &["ztie", "zuntie", "zgdbmpath"][..]),
             ("zsh/param/private", &["private"][..]),
+            // c:Src/Modules/newuser.mdd — `link=dynamic`, no builtins;
+            // its whole body is boot_ (newuser.c). newuser.rs ports it
+            // and every lifecycle dispatch arm below names it, but it
+            // was missing here, so `module_linked` said no and
+            // `zmodload zsh/newuser` failed where zsh loads it.
+            ("zsh/newuser", &[][..]),
             // c:Src/Modules/compctl.c — statically-linked completion
             // module providing the compctl/compcall builtins. zsh
             // exposes it as autoloadable; `zmodload zsh/compctl`

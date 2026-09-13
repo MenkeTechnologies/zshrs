@@ -1234,6 +1234,20 @@ mod example_module {
     }
 }
 
+// ───────────────────────── zsh/newuser ─────────────────────────
+
+mod newuser_module {
+    use super::*;
+
+    /// newuser.mdd has no builtins, only a boot_; zsh loads it and
+    /// `zmodload -e` then reports it. zshrs left it off the linked
+    /// module list, so the load failed with rc=1.
+    #[test]
+    fn zmodload_newuser_loads() {
+        assert_parity("zmodload zsh/newuser 2>/dev/null; echo $?; zmodload -e zsh/newuser; echo $?");
+    }
+}
+
 // ───────────────────────── zsh/zutil extra ─────────────────────────
 
 mod zutil_extra {
