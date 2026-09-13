@@ -146,12 +146,19 @@ pub fn body_text(mut mark: BodyMark) -> Option<String> {
     mark.closed = true;
     let captured = captured_since(mark.cap_pos, CAP_ALIAS_NAME);
     close_capture();
+    // The capture holds the body as the parse saw it — post alias expansion,
+    // like the wordcode C stores (c:Src/lex.c:1928) — on every input source,
+    // so it wins over the raw `LEX_INPUT` slice. The slice is the fallback for
+    // a body whose characters never passed through `hgetc`.
+    if !captured.is_empty() {
+        return Some(captured);
+    }
     if end > mark.lex_pos {
         if let Some(s) = input_slice(mark.lex_pos, end) {
             return Some(s);
         }
     }
-    Some(captured).filter(|s| !s.is_empty())
+    None
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!

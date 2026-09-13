@@ -7754,33 +7754,33 @@ pub(crate) fn funcdef_note_rcquotes(name: &str, body: &str, rcquotes: bool) {
 
 /// !!! WARNING: RUST-ONLY HELPER STATE — NO C COUNTERPART !!!
 ///
-/// Digests of function bodies whose PARSE expanded at least one alias.
+/// Digests of function bodies the parser captured, which are ALIAS-RESOLVED.
 ///
 /// C's par_funcdef compiles the body to wordcode after alias expansion, so
 /// `functions` (getpermtext, c:Src/hashtable.c:954) shows exactly what the
-/// parse saw: `alias ll=…` defined after `f(){ ll x }` was parsed — the whole
-/// `-c` string is parsed before it runs (c:Src/init.c:1568 execstring) — or a
-/// body loaded under `autoload -U` (c:Src/exec.c:5746 `noaliases`) still lists
-/// `ll x`. zshrs keeps the raw source and re-lexes it to print, so the parser
-/// records, per body digest, whether its parse expanded an alias; a body
-/// recorded as unexpanded is re-lexed with aliases off. Keyed by digest like
-/// [`FUNCDEF_LEX_RCQUOTES`], so a body re-parsed under a different alias state
-/// simply updates its entry.
-static FUNCDEF_ALIAS_EXPANDED: Mutex<Option<HashMap<[u8; 32], bool>>> = Mutex::new(None);
+/// parse saw, whatever the alias table holds later: an alias removed or
+/// redefined after the definition changes nothing, and one defined after the
+/// parse (a `-c` string is parsed whole, c:Src/init.c:1568 execstring) never
+/// appears. `funcdef_capture::body_text` hands the parser that same
+/// post-expansion text, so re-lexing it with aliases ON expands a second time
+/// — `alias ls='ls -G'` listed `ls -G -G x` — and a body recorded here is
+/// always re-lexed with aliases off. Keyed by digest like
+/// [`FUNCDEF_LEX_RCQUOTES`]; text that did not come from a capture
+/// (`functions[f]=…`, an autoload file) has no entry and keeps the live table.
+static FUNCDEF_ALIAS_RESOLVED: Mutex<Option<std::collections::HashSet<[u8; 32]>>> =
+    Mutex::new(None);
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
 ///
-/// Called by the parser right after it captures a function body:
-/// `alias_snap` is `lex::LEX_ALIAS_PUSHES` sampled when the body capture
-/// opened. See [`FUNCDEF_ALIAS_EXPANDED`].
-pub(crate) fn funcdef_note_alias_expansion(body: Option<&str>, alias_snap: u64) {
+/// Called by the parser right after it captures a function body. See
+/// [`FUNCDEF_ALIAS_RESOLVED`].
+pub(crate) fn funcdef_note_resolved_body(body: Option<&str>) {
     let Some(body) = body else { return };
-    let expanded = crate::ported::lex::LEX_ALIAS_PUSHES.get() != alias_snap;
     let digest = crate::autoload_cache::source_digest(body);
-    FUNCDEF_ALIAS_EXPANDED
+    FUNCDEF_ALIAS_RESOLVED
         .lock()
-        .get_or_insert_with(HashMap::new)
-        .insert(digest, expanded);
+        .get_or_insert_with(std::collections::HashSet::new)
+        .insert(digest);
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
@@ -7803,25 +7803,21 @@ pub(crate) fn funcdef_note_alias_expansion(body: Option<&str>, alias_snap: u64) 
 pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
     // c:Src/hashtable.c:954 renders the STORED wordcode, where every alias the
     // body's parse expanded is already baked in and nothing else can expand.
-    // The re-lex runs with `noaliases` (c:Src/lex.c:135) when the body is
-    // known to carry no expansion: the parser recorded that no alias fired
-    // inside it (FUNCDEF_ALIAS_EXPANDED), or — for an autoload body not yet
-    // parsed, as after `autoload +X` — the function was loaded under
-    // `autoload -U` (PM_UNALIASED, c:Src/exec.c:5746) or from a `.zwc` whose
-    // text is already resolved. Any other body keeps the live alias table.
+    // The re-lex runs with `noaliases` (c:Src/lex.c:135) whenever the text is
+    // already resolved: the parser captured it (FUNCDEF_ALIAS_RESOLVED), or —
+    // for an autoload body not yet parsed, as after `autoload +X` — it was
+    // loaded under `autoload -U` (PM_UNALIASED, c:Src/exec.c:5746) or rendered
+    // from a `.zwc`. Any other body keeps the live alias table.
     let noaliases = crate::ported::lex::noaliases();
-    let parsed_expanded = FUNCDEF_ALIAS_EXPANDED
+    let captured = FUNCDEF_ALIAS_RESOLVED
         .lock()
         .as_ref()
-        .and_then(|map| map.get(&crate::autoload_cache::source_digest(body)).copied());
-    let deparse_noaliases = match parsed_expanded {
-        Some(expanded) => !expanded,
-        None => {
-            crate::ported::utils::getshfunc(name).is_some_and(|f| {
-                (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0
-            }) || autoload_body_from_wordcode(name, body)
-        }
-    };
+        .is_some_and(|set| set.contains(&crate::autoload_cache::source_digest(body)));
+    let deparse_noaliases = captured
+        || crate::ported::utils::getshfunc(name).is_some_and(|f| {
+            (f.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0
+        })
+        || autoload_body_from_wordcode(name, body);
     if deparse_noaliases {
         crate::ported::lex::set_noaliases(true); // c:Src/lex.c:1909
     }

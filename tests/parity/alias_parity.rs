@@ -375,6 +375,27 @@ mod listing_matches_the_parse {
         assert_parity("alias ll='print aliased'\neval 'f(){ ll x }'\nfunctions f; f");
     }
 
+    /// The listing is the parse's text, not the live alias table's. zshrs used
+    /// to store raw source and re-lex it with the current aliases, so a body
+    /// listed `ll x` once `ll` was gone, `print B x` once it was redefined,
+    /// and `ls -G -G x` for `alias ls='ls -G'` — the expansion text holds
+    /// `ls` again, and only the parse's `inuse` guard (c:Src/lex.c:1916)
+    /// stopped it expanding twice.
+    #[test]
+    fn alias_changed_after_the_parse_does_not_change_the_listing() {
+        assert_parity("alias ll='print aliased'\neval 'f(){ ll x }'\nunalias ll\nfunctions f; f");
+        assert_parity("alias ll='print A'\neval 'f(){ ll x }'\nalias ll='print B'\nfunctions f; which f; f");
+        assert_parity("alias b='print' a='b  x'\neval 'f(){ a y; }'\nunalias a b\nfunctions f; f");
+        assert_parity(
+            "ls(){ print -r -- \"[$*]\" }\nalias ls='ls -G'\neval 'f(){ ls x }'\nfunctions f; print -r -- ${functions[f]}; f",
+        );
+        // A sourced file parses one event at a time, like a script.
+        let d = tempfile::TempDir::new().expect("tmp");
+        let script = d.path().join("defs.zsh");
+        std::fs::write(&script, "alias ll='print aliased'\nf(){ ll x }\nunalias ll\n").expect("write");
+        assert_parity(&format!("source {}; functions f; f", script.display()));
+    }
+
     #[test]
     fn autoload_u_body_lists_unexpanded() {
         let d = tempfile::TempDir::new().expect("tmp");

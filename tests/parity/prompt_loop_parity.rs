@@ -176,10 +176,13 @@ print -r -- 'll z' > $OUTFILE.d/h
 preexec(){ print -r -- "P [$2] [$3]" >> $OUTFILE }
 alias b='print' a='b  x' ll='print  aliased'
 alias -s txt='print  SUF'
+alias sr='sr -G'
 f(){ a y; ll z; }
 g(){ ll x
 }
 s(){ foo.txt 1; }
+r(){ sr x; }
+functions r >> $OUTFILE
 foo.txt 2 >> $OUTFILE
 print -r -- "[$(foo.txt 3)]" >> $OUTFILE
 foo.txt;print z >> $OUTFILE

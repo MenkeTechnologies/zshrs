@@ -3840,7 +3840,6 @@ fn checkalias(lextext: &str) -> bool {
             // `funcdef_capture::src_capture_mark_alias_name`).
             crate::funcdef_capture::src_capture_mark_alias_name(lextext);
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
-            LEX_ALIAS_PUSHES.set(LEX_ALIAS_PUSHES.get() + 1);
             inpush(&alias.text, INP_ALIAS, Some((lextext.to_string(), alias.node.flags)));
             // c:1929-1930 — `if (an->text[0] == ' ' && !(an->node.flags & ALIAS_GLOBAL))
             //                  aliasspaceflag = 1;`
@@ -3892,7 +3891,6 @@ fn checkalias(lextext: &str) -> bool {
                         crate::funcdef_capture::src_capture_mark_alias_name(lextext);
                         inpush(lextext, INP_ALIAS, Some((suffix.to_string(), alias.node.flags)));
                         inpush(" ", INP_ALIAS, None);
-                        LEX_ALIAS_PUSHES.set(LEX_ALIAS_PUSHES.get() + 1);
                         inpush(&alias.text, INP_ALIAS, None);
                         // c:1941 — `an->inuse = 1;`.
                         let guard = sufaliastab_lock().read().expect("sufaliastab poisoned");
@@ -5002,17 +5000,6 @@ pub fn set_nocorrect(v: i32) {
 /// Port of `int noaliases` from `Src/lex.c:135`. Suppresses alias
 /// expansion. par_case saves and restores this around the case-word
 /// + `in` lex so the literal `in` keyword isn't alias-expanded.
-thread_local! {
-    /// !!! WARNING: RUST-ONLY HELPER STATE !!!
-    ///
-    /// Count of alias expansions the lexer has pushed (`inpush(an->text,
-    /// INP_ALIAS, an)`, c:1928 / c:1938-1940). C bakes an expansion into the
-    /// function wordcode at parse time; zshrs stores the body as raw source
-    /// and re-lexes it for `functions`, so the parser samples this around a
-    /// body to record whether any alias fired inside it
-    /// (`vm_helper::funcdef_note_alias_expansion`).
-    pub static LEX_ALIAS_PUSHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
 
 pub fn noaliases() -> bool {
     LEX_NOALIASES.get()
@@ -5437,7 +5424,16 @@ pub(crate) fn hgetc() -> Option<char> {
         (f & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
             == crate::ported::zsh_h::INP_ALIAS
     };
-    if counts_lineno {
+    // The `counts_lineno` gate exists for the here-document re-lex, which
+    // `parsestrnoerr` pushes with flags `0`. An alias frame and an INP_CONT
+    // continuation frame are never that — they carry text the parse is
+    // consuming — and under `strin` (an `eval` string, an autoload body) the
+    // gate refused both: the alias body went missing (`eval 'f(){ ll e }'`
+    // listed `e`), and so did the word terminator `checkalias` re-routes into
+    // an INP_CONT frame (`print aliasede`).
+    let cont_frame = via_inbuf
+        && (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_CONT) != 0;
+    if counts_lineno || alias_only || cont_frame {
         let flags = if alias_only { crate::funcdef_capture::CAP_ALIAS_TEXT } else { 0 };
         crate::funcdef_capture::src_capture_add(c, flags);
     }
