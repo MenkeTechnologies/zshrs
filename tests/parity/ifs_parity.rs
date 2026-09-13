@@ -101,6 +101,16 @@ mod equals_split {
     fn equals_split_uses_ifs() {
         assert_parity(r#"X="a:b:c"; IFS=:; f() { echo $#; }; f $=X"#);
     }
+
+    /// c:Src/subst.c:2567 + c:3913 — `=` splits inside double quotes too, so
+    /// a whole-word `"${=…}"` is one word per field, not a joined scalar.
+    #[test]
+    fn equals_split_inside_double_quotes_keeps_fields() {
+        assert_parity(r#"print -l "${=$(print two words)}""#);
+        assert_parity(r#"x="two words"; print -l "${=x:-y}" "${=${x}}" "${=x/o/o}""#);
+        assert_parity(r#"x="two words"; a=("${=x:-y}"); print $#a; for i in "${(j: :)=x}"; do print -r "<$i>"; done"#);
+        assert_parity(r#"x="two words"; print -l "${==x:-y}" "${=x:-y}""""#);
+    }
 }
 
 mod sh_word_split {

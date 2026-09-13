@@ -14533,6 +14533,22 @@ fn is_distribute_expansion(s: &str) -> bool {
             // `setopt rcexpandparam`, `foo${^^a}bar` → "foo1 2 3bar".
             return !inner.starts_with("^^");
         }
+        // c:Src/subst.c:2558-2569 — an unparenthesised `=` sets `spbreak = 2`
+        // (a doubled `==` clears it), and c:3913 `force_split = !ssub &&
+        // (spbreak || spsep)` splits the value even inside double quotes: C
+        // tests `qt` only in c:1707's SH_WORD_SPLIT default, not here. The
+        // result is the same array shape `(s:…:)` produces below, so it has to
+        // distribute too. Unlisted, a whole-word `"${=x:-y}"` compiled to the
+        // DQ concat (BUILTIN_CONCAT_DISTRIBUTE argc 1), which sepjoins arrays,
+        // and zsh's `two` `words` came back as the single word `two words`.
+        // The flag loop runs after a `(flags)` group, so look past one.
+        let after_flags = inner
+            .strip_prefix('(')
+            .and_then(|r| r.split_once(')'))
+            .map_or(inner, |(_, tail)| tail);
+        if after_flags.starts_with('=') && !after_flags.starts_with("==") {
+            return true;
+        }
         if let Some(rest) = inner.strip_prefix('(') {
             if let Some(close) = rest.find(')') {
                 let flags = &rest[..close];
