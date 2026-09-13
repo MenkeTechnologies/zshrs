@@ -520,3 +520,16 @@ mod zsh_subshell_in_process_substitutions {
         assert_parity(r#"print >(print $ZSH_SUBSHELL) >/dev/null; sleep 0.2"#);
     }
 }
+
+/// c:Src/subst.c:1707-1708 — `spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
+/// !(pf_flags & PREFORK_SINGLE) && !qt`: SH_WORD_SPLIT never splits a quoted
+/// expansion, so `"${scalar[@]}"` stays one word.
+mod shwordsplit_quoted_scalar_splat {
+    use super::*;
+
+    #[test]
+    fn quoted_scalar_splat_is_one_word() {
+        assert_parity(r#"set -- one "two three" four; setopt shwordsplit; var=$@; printf "[%s]\n" "${var[@]}""#);
+        assert_parity(r#"setopt shwordsplit; var="a b"; printf "[%s]" "${var[@]}"; x=("${var[@]}"); print $#x; printf "[%s]" ${var[@]}"#);
+    }
+}

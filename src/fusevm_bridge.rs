@@ -7144,7 +7144,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // non-DQ splices (compile_zsh.rs:6149), and that builtin maps an
                             // empty Str to an empty array.
                             Value::str(String::new())
-                        } else if opt_state_get("shwordsplit").unwrap_or(false) {
+                        } else if opt_state_get("shwordsplit").unwrap_or(false)
+                            // c:Src/subst.c:1707-1708 — `spbreak = (pf_flags &
+                            // PREFORK_SHWORDSPLIT) && … && !qt`: a quoted
+                            // `"${scalar[@]}"` (argc 4, see below) is never split.
+                            && argc != 4
+                        {
                             // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
                             // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
                             // not a naive `split().filter(non-empty)`: only the
