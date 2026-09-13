@@ -693,4 +693,13 @@ mod array_splice_edge_empties_take_affixes {
         assert_parity(r#"a=("" x ""); print -rl -- p${a[@]}q ""${a[@]} ""${a[@]}"" | wc -l"#);
         assert_parity(r#"a=(x "" y); print -rl -- p${a[@]}q ${a[@]} "${a[@]}" | wc -l"#);
     }
+
+    /// The same order for the positional splat: `$@`, `${@}`, `$*`, `$argv`.
+    #[test]
+    fn affixed_positional_splat_keeps_edge_elements() {
+        assert_parity(r#"set -- "" x ""; print -rl -- p$@q p${@}q p$*q p$argv q p${argv}q"#);
+        assert_parity(r#"set -- "" x; print -rl -- p$@; set -- x ""; print -rl -- $@q; set -- "" ""; print -rl -- p$@q"#);
+        assert_parity(r#"set -- "" x ""; a=(p$@q); print $#a; for i in p$@q; do print -r "<$i>"; done; print -rl -- $@ | wc -l"#);
+        assert_parity(r#"setopt rcexpandparam; set -- "" x ""; print -rl -- p$@q; v=p$@q; print -r "[$v]""#);
+    }
 }
