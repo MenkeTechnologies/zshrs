@@ -134,13 +134,14 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
     ret
 }
 
-/// Port of `bin_cap()` — non-Linux stub. C uses `bin_notavail`
-/// (cap.c:115); we mirror the behaviour by emitting the same
-/// "not available on this host" error.
+/// Port of `bin_cap()` — no-libcap stub. zsh 5.9.x cap.c has
+/// `#else /* !HAVE_CAP_GET_PROC */ # define bin_cap bin_notavail`
+/// (same for getcap/setcap); upstream 54669 (1426a4dfdc) later dropped
+/// the stubs and stopped building the module without --enable-cap.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
-    zwarnnam(nam, "not available on this host");
-    1
+    // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
+    crate::ported::builtin::bin_notavail(nam, _argv, _ops, _func)
 }
 
 // =====================================================================
@@ -205,8 +206,8 @@ pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
 /// Port of `bin_getcap()` — non-Linux stub.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
-    zwarnnam(nam, "not available on this host");
-    1
+    // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
+    crate::ported::builtin::bin_notavail(nam, _argv, _ops, _func)
 }
 
 // =====================================================================
@@ -274,8 +275,8 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
 /// Port of `bin_setcap()` — non-Linux stub.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
 pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
-    zwarnnam(nam, "not available on this host");
-    1
+    // c:Src/builtin.c:7596 bin_notavail — "not available on this system".
+    crate::ported::builtin::bin_notavail(nam, _argv, _ops, _func)
 }
 
 // =====================================================================
