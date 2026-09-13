@@ -1215,8 +1215,14 @@ fn stringsubst(
                 // (c:1878 `*s++ = '\0'`) and ends prefork without an error.
                 if PARAMSUBST_NULL.with(|c| c.replace(false)) {
                     list.setdata(node_idx, chars[..pos].iter().collect::<String>());
+                    PREFORK_STOPPED.with(|c| c.set(true)); // c:327 → prefork c:145-146
                     return None;
                 }
+                // This paramsubst returned a node: any NULL met by a prefork
+                // nested INSIDE it (a multsub/singsub of its operands) stopped
+                // only that inner prefork, not this one (c:142-147 returns from
+                // the inner call alone).
+                PREFORK_STOPPED.with(|c| c.set(false));
                                                                  // c:3929-3932 — apply the `isarr` paramsubst just computed to
                                                                  // THIS list. C does it inside paramsubst (it holds `l`); the
                                                                  // Rust port hands the bit back through PARAMSUBST_LF_ARRAY.
@@ -3504,6 +3510,16 @@ thread_local! {
     /// (`*s++ = '\0'`, c:1878). zshrs's paramsubst returns a tuple, so the
     /// failure rides here from the eval arm to stringsubst, which takes it.
     pub static PARAMSUBST_NULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// True when the most recent top-level stringsubst returned NULL because of
+    /// a PARAMSUBST_NULL (c:Src/subst.c:326-327), i.e. prefork stopped early
+    /// (c:142-147) and left the rest of its list unexpanded. C's caller sees
+    /// that directly in prefork's truncated list; zshrs's bridge runs prefork
+    /// as one op per word and needs the fact handed back. subst.rs only SETS
+    /// it (and clears it when a NULL seen inside a nested expansion did not
+    /// stop the enclosing prefork); the bridge takes it with `replace(false)`
+    /// after each prefork/stringsubst call it makes.
+    pub static PREFORK_STOPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 
@@ -28915,6 +28931,34 @@ mod tests {
             crate::ported::options::opt_state_set("extendedglob", prev);
         }
         out
+    }
+
+    // PREFORK_STOPPED: set when a failed `(e)` re-lex ends the top-level
+    // prefork (c:Src/subst.c:326-327 → c:142-147), left false when the NULL
+    // happened inside a nested operand that the enclosing prefork survives.
+    // Input is tokenized first, as the lexer hands words to prefork.
+    #[test]
+    fn prefork_stopped_marks_only_the_top_level_null() {
+        let _g = crate::test_util::global_state_lock();
+        let tok = |s: &str| -> String {
+            let mut w = s.to_string();
+            crate::ported::glob::shtokenize(&mut w);
+            w
+        };
+        errflag.store(0, Ordering::Relaxed);
+        setsparam("__pfs_a", "$(");
+        setsparam("__pfs_b", "ok");
+        PREFORK_STOPPED.with(|c| c.set(false));
+        let _ = singsub(&tok("x${(e)__pfs_a}z"));
+        assert!(PREFORK_STOPPED.with(|c| c.replace(false)), "top-level NULL must set it");
+        let _ = singsub(&tok("m${__pfs_b}n"));
+        assert!(!PREFORK_STOPPED.with(|c| c.replace(false)), "a plain word must leave it false");
+        let _ = singsub(&tok("${__pfs_unset:-${(e)__pfs_a}}"));
+        assert!(
+            !PREFORK_STOPPED.with(|c| c.replace(false)),
+            "a NULL inside a nested operand does not stop the enclosing prefork"
+        );
+        errflag.store(0, Ordering::Relaxed);
     }
 
     // ── Multibyte (non-ASCII) identifier names, braced read ──────────
