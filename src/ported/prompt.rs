@@ -1012,17 +1012,24 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             }
                         }
                     }
-                    // c:Src/prompt.c:481-483 — `S`: shell elapsed seconds
-                    // (zmonotime - shtimer) >= arg. Without `zmonotime`/
-                    // `shtimer` wired, approximate via process-start time;
-                    // for the bare `%(S.A.B)` form (arg=0) result is
-                    // always true. Bug #602.
+                    // c:Src/prompt.c:481-483 — `case 'S': if (zmonotime(NULL) -
+                    // shtimer.tv_sec >= arg) test = 1;`. The port's shtimer
+                    // holds wall-clock time (params.rs shtimer_lock), so the
+                    // current time comes from the same clock that
+                    // intsecondsgetfn reads for $SECONDS; `SECONDS=N`
+                    // moves shtimer and therefore this test too.
                     b'S' => {
-                        if arg <= 0 {
-                            test = 1;
+                        let timer_sec = crate::ported::params::shtimer_lock()
+                            .lock()
+                            .expect("shtimer poisoned")
+                            .as_secs() as i64;
+                        let now_sec = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        if now_sec - timer_sec >= arg as i64 {
+                            test = 1; // c:483
                         }
-                        // For arg > 0 we'd need the shtimer start; not
-                        // worth approximating, leave test=0.
                     }
                     // c:Src/prompt.c:414-438 — `t`/`T`/`d`/`D`/`w` compare
                     // `arg` against a `localtime` field:

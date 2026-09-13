@@ -729,3 +729,16 @@ mod promptsubst_pre_pass {
         assert_parity(r#"setopt promptsubst; PS1='${MY_VAR}'; MY_VAR=now; print -P "$PS1""#);
     }
 }
+
+/// c:Src/prompt.c:481-483 — `%(NS.a.b)` is true when the shell has run for
+/// at least N seconds (`zmonotime(NULL) - shtimer.tv_sec >= arg`), and
+/// `SECONDS=N` moves shtimer. The port only answered true for N <= 0.
+mod elapsed_seconds_ternary {
+    use super::*;
+
+    #[test]
+    fn seconds_test_tracks_shtimer() {
+        assert_parity(r#"SECONDS=100; print -P '%(100S.t.f) %(130S.t.f) %(0S.t.f) %(S.t.f)'"#);
+        assert_parity(r#"SECONDS=40; sec=$SECONDS; eval "print -P '%(${sec}S.true.false) %($((sec+30))S.true.false)'""#);
+    }
+}
