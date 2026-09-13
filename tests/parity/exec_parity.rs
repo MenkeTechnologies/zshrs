@@ -410,3 +410,27 @@ mod exec_argv0_is_not_globbed {
         assert_parity(&format!("{DIR}(exec -c /bin/echo foo*)"));
     }
 }
+
+/// c:Src/exec.c:2458-2465 — addfd moves each member of a multio out of the
+/// script's fd range with `movefd`, so the concatenator for `3<a 3<b` owns
+/// fd 3 without disturbing its own members. A member opened at the lowest
+/// free fd landed on 3 itself; the concatenator pipe was `dup2`'d over it,
+/// the producer read its own empty pipe, and the command hung.
+mod input_multio_on_a_non_zero_fd {
+    use super::*;
+
+    #[test]
+    fn file_members_reach_the_command_through_a_dup() {
+        assert_parity(
+            "d=$(mktemp -d); print out1 >$d/o1; print out2 >$d/o2; cat 3<$d/o1 3<$d/o2 <&3 </dev/null; print rc=$?; command rm -rf $d",
+        );
+    }
+
+    #[test]
+    fn heredoc_and_herestring_members_reach_the_command_through_a_dup() {
+        assert_parity("cat 3<<x 3<<y <&3\nfoo\nx\nbar\ny\nprint rc=$?");
+        assert_parity(
+            "d=$(mktemp -d); print out1 >$d/o1; cat 3<$d/o1 3<<<here <&3; print rc=$?; command rm -rf $d",
+        );
+    }
+}

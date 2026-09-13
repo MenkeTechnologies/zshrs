@@ -11257,7 +11257,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 _ => fs::File::open(source).map(|f| f.into_raw_fd()),
             };
             match open_result {
-                Ok(tfd) => {
+                Ok(opened) => {
+                    // c:Src/exec.c:2458-2465 — addfd moves every multio member
+                    // out of the script's fd range (`fdN = movefd(fd1)`,
+                    // `fdN = movefd(fd2)`). A member opened by `open` gets the
+                    // LOWEST free descriptor, which for `cat 3<o1 3<o2 <&3` is
+                    // 3 itself: the `dup2` of the concatenator pipe onto fd 3
+                    // below then closed o1, the producer read its own empty
+                    // pipe instead, and the command hung.
+                    let tfd = crate::ported::utils::movefd(opened);
                     if i == 0 {
                         unsafe {
                             libc::dup2(tfd, fd);
@@ -11333,9 +11341,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         break;
                     }
                 }
-                unsafe {
-                    libc::close(sfd);
-                }
+                // zclose, not close: movefd marked the member FDT_INTERNAL
+                // (c:Src/utils.c:2007-2010), and zclose clears that entry.
+                let _ = crate::ported::utils::zclose(sfd);
             }
             // Closing w (the write_end) at scope drop signals EOF
             // to the consumer.
