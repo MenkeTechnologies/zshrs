@@ -1469,6 +1469,15 @@ fn glob_match(pattern: &str, s: &str, home: &str) -> bool {
         if expanded == s {
             return true;
         }
+        // p10k:2031 `[[ $_p9k__cwd == ${(e)~a} ]]` — `~a` makes the class a
+        // PATTERN, i.e. its `*`/`?`/`[` are glob tokens. patcompile reads
+        // tokens, not raw metacharacters (c:Src/pattern.c patcompile), so the
+        // text is tokenized first as every other patcompile caller does.
+        // Untokenized, `~/*` and `*` compiled as literal strings: only the
+        // exact `~` and `/etc` arms could ever match, and a subdirectory of
+        // $HOME got no class, no HOME_SUB_ICON and the DEFAULT colours.
+        let mut expanded = expanded;
+        crate::ported::glob::tokenize(&mut expanded);
         if let Some(prog) = crate::ported::pattern::patcompile(&expanded, 0, None) {
             if crate::ported::pattern::pattry(&prog, s) {
                 return true;
@@ -1808,6 +1817,22 @@ fn dir_segments() -> Vec<Segment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// p10k:2029-2035 — `[[ $_p9k__cwd == ${(e)~a} ]]` matches each
+    /// DIR_CLASSES pattern as a GLOB. The patterns were handed to patcompile
+    /// untokenized, so `*` was literal: a subdirectory of $HOME matched no
+    /// class and lost HOME_SUB_ICON, and `*` never caught the default.
+    #[test]
+    fn dir_class_patterns_glob() {
+        let _g = crate::test_util::global_state_lock();
+        let home = "/Users/someone";
+        assert!(glob_match("~", "/Users/someone", home)); // exact HOME
+        assert!(glob_match("~/*", "/Users/someone/Library/Caches", home));
+        assert!(!glob_match("~/*", "/Users/other/x", home));
+        assert!(!glob_match("~/*", "/Users/someone", home)); // HOME itself is `~`
+        assert!(glob_match("/etc|/etc/*", "/etc/ssh", home));
+        assert!(glob_match("*", "/opt/homebrew", home)); // DEFAULT catch-all
+    }
 
     #[test]
     fn exit2str_maps_signals_verbosely() {
