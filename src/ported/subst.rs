@@ -4286,10 +4286,17 @@ pub fn paramsubst(
     // Unlike `singsub_replstr` the result is NOT untokenized — c:3412 has no
     // `untokenize`, because the pattern's tokens are exactly what patcompile
     // needs.
+    // Whether GLOBSUBST was in force when the last `pat_operand` literalized its
+    // splices — `pat_display` needs it after `pat_operand` has restored the option.
+    let pat_operand_globsubst = std::cell::Cell::new(false);
     let pat_operand = |raw_pat: &str| -> String {
         let saved_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         let saved_carrier = TILDE_GLOBSUBST_CARRIER.with(|c| c.get());
-        let mut out = literalize_spliced_metas(&singsub(&pretokenize_src_pat(raw_pat))); // c:3412
+        let spliced = singsub(&pretokenize_src_pat(raw_pat)); // c:3412
+        // Read after `singsub`: a nested `${~…}` flips GLOBSUBST there, and
+        // `literalize_spliced_metas` reads the same state.
+        pat_operand_globsubst.set(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
+        let mut out = literalize_spliced_metas(&spliced);
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) != saved_globsubst {
             crate::ported::options::opt_state_set("globsubst", saved_globsubst);
         }
@@ -4323,6 +4330,40 @@ pub fn paramsubst(
             );
         }
         out
+    };
+
+    // c:Src/glob.c:2672-2673 — `zerr("bad pattern: %s", pat)` prints the operand
+    // through nicezputs (c:Src/utils.c:316), i.e. untokenized (c:5871). By then
+    // prefork's remnulargs (c:Src/subst.c:169) has stripped every Bnull, so a
+    // source escape or quote shows as its bare character: `"${x//\\(/X}"` reports
+    // `\(`, one backslash.
+    //
+    // !!! WARNING: RUST-ONLY HELPER !!! — no C counterpart. `pat_operand` hands
+    // back patcompile's input encoding instead, where `\X` spells "literal X"
+    // (see `literalize_spliced_metas`), so printing it raw doubled every
+    // backslash. With GLOBSUBST off every `\` pair in that string is such an
+    // encoding escape, so one level is dropped. With GLOBSUBST on, a spliced
+    // `\X` is the value's own text (c:Src/glob.c:3597-3605 keeps it as
+    // Bnullkeep, which untokenizes back to `\`) and cannot be told apart from a
+    // kept source escape, so the operand is shown unchanged.
+    let pat_display = |p: &str| -> String {
+        let shown = if pat_operand_globsubst.get() {
+            p.to_string()
+        } else {
+            let mut s = String::with_capacity(p.len());
+            let mut it = p.chars();
+            while let Some(c) = it.next() {
+                if c == '\\' {
+                    if let Some(next) = it.next() {
+                        s.push(next);
+                        continue;
+                    }
+                }
+                s.push(c);
+            }
+            s
+        };
+        crate::ported::utils::nicedup(&shown, 0)
     };
 
     // Check what follows the $
@@ -14940,7 +14981,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", p));
+                    zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -16146,7 +16187,7 @@ pub fn paramsubst(
                     )
                 };
                 if !pat.is_empty() && prog_opt.is_none() {
-                    zerr(&format!("bad pattern: {}", pat));
+                    zerr(&format!("bad pattern: {}", pat_display(&pat)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -17103,7 +17144,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", pat_body));
+                    zerr(&format!("bad pattern: {}", pat_display(&pat_body)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -17780,7 +17821,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", p));
+                    zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -18156,7 +18197,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", p));
+                    zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -18438,7 +18479,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", p));
+                    zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
@@ -18706,7 +18747,7 @@ pub fn paramsubst(
                     )
                     .is_none()
                 {
-                    zerr(&format!("bad pattern: {}", p));
+                    zerr(&format!("bad pattern: {}", pat_display(&p)));
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }

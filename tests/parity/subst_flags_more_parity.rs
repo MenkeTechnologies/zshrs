@@ -662,3 +662,97 @@ mod modifier_repetition_count {
         assert_parity(r#"print ${${:-aaa}:fs/a/b/}"#);
     }
 }
+
+/// c:Src/glob.c:2672-2673 — a pattern operand that fails `patcompile` is
+/// reported with `zerr("bad pattern: %s", pat)`, and zerrmsg prints `%s`
+/// through nicezputs (c:Src/utils.c:316), which untokenizes it
+/// (c:Src/utils.c:5871). prefork's remnulargs (c:Src/subst.c:169) has already
+/// stripped the Bnull markers, so a quoted or escaped character shows as the
+/// bare character: `"${x//\\(/X}"` reports `\(`.
+///
+/// zshrs printed its own patcompile input encoding, where `\X` spells a literal
+/// X, so every source escape and every literalized splice gained a backslash.
+/// The diagnostic is the whole defect, so these rows compare stderr.
+mod bad_pattern_diagnostic_is_untokenized {
+    use super::*;
+
+    fn same(script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fc", script])
+            .output()
+            .expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        let shown = |o: &std::process::Output| {
+            (
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                o.status.code().unwrap_or(-1),
+            )
+        };
+        assert_eq!(
+            shown(&z),
+            shown(&r),
+            "divergence (stdout, stderr, exit) on script:\n{script}"
+        );
+    }
+
+    /// The reported repro, in an anonymous function, a named one and at top level.
+    #[test]
+    fn escaped_paren_in_replace_reports_one_backslash() {
+        same(r#"x='a(b'; () { print -r -- "${x//\\(/X}" }"#);
+        same(r#"x='a(b'; f() { print -r -- "${x//\\(/X}" }; f"#);
+        same(r#"x='a(b'; print -r -- "${x//\\(/X}""#);
+        same(r#"x='a(b'; print -r -- ${x//\\(/X}"#);
+    }
+
+    /// Every pattern operator reaches the same diagnostic.
+    #[test]
+    fn every_pattern_operator() {
+        same(r#"x='a(b'; print -r -- "${x/\\(/X}""#);
+        same(r#"x='a(b'; print -r -- "${x#\\(}""#);
+        same(r#"x='a(b'; print -r -- "${x%\\(}""#);
+        same(r#"x='a(b'; print -r -- "${x:#\\(}""#);
+        same(r#"x='a(b'; print -r -- "${(M)x:#\\(}""#);
+    }
+
+    /// Source quoting of any kind shows as the bare character.
+    #[test]
+    fn source_escapes_and_quotes() {
+        same(r#"x='a(b'; print -r -- "${x//\\\\(/X}""#);
+        same(r#"x='a(b'; print -r -- ${x//\((/X}"#);
+        same(r#"x='a(b'; print -r -- ${x//'\('(/X}"#);
+        same(r#"x='a(b'; print -r -- ${x//'('(/X}"#);
+        same(r#"x='a(b'; print -r -- "${x//[\\/X}""#);
+        same(r#"x='a(b'; print -r -- ${x//\*(/X}"#);
+        same(r#"x='a(b'; print -r -- "${x//*\\(/X}""#);
+        same(r#"x='a(b'; print -r -- "${x//é\\(/X}""#);
+    }
+
+    /// A spliced value is printed as the value's own text.
+    #[test]
+    fn spliced_values() {
+        same(r#"x='a(b'; p='\('; print -r -- "${x//$p(/X}""#);
+        same(r#"x='a(b'; p='\'; print -r -- "${x//$p(/X}""#);
+        same(r#"x='a(b'; y='('; print -r -- "${x//${(b)y}(/X}""#);
+        same(r#"x='a(b'; y='('; print -r -- "${x//${(q)y}(/X}""#);
+    }
+
+    /// Rows that already agreed: an unescaped metacharacter, a `~` splice, a
+    /// GLOBSUBST splice, and SH_GLOB's literal parens.
+    #[test]
+    fn controls_that_already_agreed() {
+        same(r#"x='a(b'; print -r -- "${x//(/X}""#);
+        same(r#"x='a(b'; print -r -- "${x//[/X}""#);
+        same(r#"x='a(b'; p='\('; print -r -- "${x//${~p}(/X}""#);
+        same(r#"setopt globsubst; x='a(b'; p='\('; print -r -- "${x//$p(/X}""#);
+        same(r#"setopt shglob; x='a(b'; print -r -- "${x//\\(|/X}""#);
+        same(r#"x='a(b'; print -r -- "${x//\(/X}""#);
+    }
+}
