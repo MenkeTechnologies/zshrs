@@ -7530,6 +7530,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if argc == 3 {
                     // BUILTIN_FORCE_SPLIT is c:3932 at the compile site.
                     Value::str(val)
+                } else if defer_to_word {
+                    // c:3932 sepsplit, then c:184-187 on the FINISHED word: the
+                    // enclosing word's end-of-word drop removes the truly empty
+                    // edge fields after its text is glued on and strips the c:36
+                    // `nulstring` markers. `setopt shwordsplit; IFS=:; a=(a ""
+                    // b); print -rl -- x${a[@]}y` is `xa` `` `by`.
+                    Value::array(
+                        crate::ported::utils::sepsplit(&val, None, false)
+                            .into_iter()
+                            .map(Value::str)
+                            .collect(),
+                    )
                 } else {
                     splice_words_value(sepsplit_c3932(&val, false))
                 }
