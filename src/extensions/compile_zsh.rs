@@ -1322,7 +1322,17 @@ impl ZshCompiler {
         // (c:Src/exec.c:2891-2907). Compile it into a sub-chunk + emit
         // BUILTIN_RUN_BG with one proc.
         let mut sub = ZshCompiler::new();
+        // c:Src/exec.c:2916-2918 + c:4417 — see compile_pipe_stages: a SIMPLE
+        // command forked for `cmd &` leaves through `_realexit()` without
+        // reaching `sublist_done`, so its child fires no ZERR.
+        let async_simple = matches!(pipe.cmd, ZshCommand::Simple(_));
+        if async_simple {
+            sub.errexit_suppress_depth += 1;
+        }
         sub.compile_pipe(pipe);
+        if async_simple {
+            sub.errexit_suppress_depth -= 1;
+        }
         let sub_end = sub.builder.current_pos();
         for patch in std::mem::take(&mut sub.return_patches) {
             sub.builder.patch_jump(patch, sub_end);
@@ -1603,7 +1613,7 @@ impl ZshCompiler {
     /// The per-stage text is the same deparse C would produce for that ONE
     /// command, because in C each proc's text is `getjobtext()` over the single
     /// command's wordcode, never over the whole pipeline.
-    fn compile_pipe_stages(&mut self, pipe: &ZshPipe) -> Vec<(u16, String)> {
+    fn compile_pipe_stages(&mut self, pipe: &ZshPipe, async_job: bool) -> Vec<(u16, String)> {
         // cmdstack: direct port of Src/exec.c:1991-2039 execpline2.
         // C structure (recursive):
         //   if WC_PIPE_END:
@@ -1692,7 +1702,22 @@ impl ZshCompiler {
                 if install_at_top {
                     sub.emit_stage_fds_install();
                 }
+                // c:Src/exec.c:2916-2918 + c:4417 — a background stage that is
+                // a SIMPLE command runs in a child that `_realexit()`s straight
+                // out of execcmd_exec, never reaching execlist's `sublist_done`
+                // (c:1571-1603), so no ZERR / errexit check fires for it. A
+                // compound stage runs a list in the child, whose own checks do
+                // fire. The trap itself survives the fork: entersubsh drops
+                // traps for `sig <= SIGCOUNT` only (c:1127-1131) and SIGZERR is
+                // SIGCOUNT+1 (c:Src/signals.h:34).
+                let async_simple = async_job && stage_is_simple;
+                if async_simple {
+                    sub.errexit_suppress_depth += 1;
+                }
                 sub.compile_command(stage_cmd);
+                if async_simple {
+                    sub.errexit_suppress_depth -= 1;
+                }
                 if sub.stage_fds_pending {
                     // No dispatch arm consumed the install — rather than
                     // run a stage whose output never reaches the pipe,

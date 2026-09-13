@@ -180,3 +180,26 @@ mod combined_with_subshell {
         assert_parity(r#"(trap 'echo inside' EXIT); echo after"#);
     }
 }
+
+/// c:Src/exec.c:2916-2918 + c:4417 — a background SIMPLE command's child
+/// leaves execcmd_exec through `_realexit()` and never reaches execlist's
+/// `sublist_done`, so the ZERR trap (which survives the fork: SIGZERR is
+/// SIGCOUNT+1, past entersubsh's c:1127-1131 loop) does not fire for it. A
+/// compound or function job runs a list in the child, where it does fire.
+mod zerr_in_background_child {
+    use super::*;
+
+    #[test]
+    fn simple_command_job_fires_no_zerr() {
+        assert_parity(r#"trap "print Z" ZERR; false & wait; print end"#);
+        assert_parity(r#"trap "print Z" ZERR; /usr/bin/false & wait; print end"#);
+        assert_parity(r#"trap "print Z" ZERR; false | false & wait; print end"#);
+    }
+
+    #[test]
+    fn compound_and_function_jobs_still_fire() {
+        assert_parity(r#"trap "print Z" ZERR; { false } & wait; print end"#);
+        assert_parity(r#"trap "print Z" ZERR; (false) & wait; print end"#);
+        assert_parity(r#"trap "print Z" ZERR; f(){ false; print in }; f & wait; print end"#);
+    }
+}
