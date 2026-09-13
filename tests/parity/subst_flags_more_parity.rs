@@ -780,3 +780,17 @@ mod e_flag_unclosed_brace_fails_the_command {
         assert_parity("print -r -- \"\\${\"; print after");
     }
 }
+
+/// c:Src/subst.c:4472-4481 — `(e)` parses the value (subst_parse_str) and
+/// points the stringsubst cursor back at it, so the text is expanded exactly
+/// once, quoted or not.
+mod e_flag_expands_the_value_once {
+    use super::*;
+
+    #[test]
+    fn side_effects_run_once_unquoted() {
+        assert_parity(r#"n=0; a='$((n++))'; print -r -- ${(e)a}; print n=$n"#);
+        assert_parity(r#"a='$(print -u2 side)'; { print -r -- ${(e)a}x; } 2>&1"#);
+        assert_parity(r#"a=('$((n++))' '$((n++))'); n=0; print -r -- ${(e)a}; print n=$n"#);
+    }
+}

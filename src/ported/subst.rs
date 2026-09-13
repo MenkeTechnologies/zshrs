@@ -23429,6 +23429,9 @@ pub fn paramsubst(
                     if ms_isarr && ms_parts.len() > 1 {
                         return ms_parts;
                     }
+                    // c:4480 — this multsub was the one re-scan; see the
+                    // scalar arm below.
+                    return vec![_j];
                 }
                 vec![esub(s)]
             };
@@ -23494,8 +23497,15 @@ pub fn paramsubst(
                         if isarr == 0 {
                             isarr = 1;
                         }
-                        done = true;
+                    } else {
+                        // c:4480 — the re-scan runs ONCE. This multsub WAS the
+                        // re-scan; running `esub` over the same text again
+                        // expanded it a second time: `a='$((n++))'; print
+                        // ${(e)a}` printed 1 and left n=2 (zsh: 0, n=1), and a
+                        // parse error in the text was reported twice.
+                        value = ms_joined;
                     }
+                    done = true;
                 }
                 if !done {
                     value = esub(&value); // c:2268
