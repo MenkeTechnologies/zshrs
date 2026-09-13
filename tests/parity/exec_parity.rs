@@ -326,3 +326,16 @@ mod dynamic_first_word_inline_env {
         assert_parity(r#"X=y =printenv X; print -r -- "after=[$X]""#);
     }
 }
+
+/// c:Src/exec.c:3928-3931 — `zwarn("failed to close file descriptor %d:
+/// %e", fn->fd1, errno)`. `%e` is zerrmsg's errno arm (c:Src/utils.c:352-368):
+/// strerror with the first letter lowered and no `(os error N)` suffix, which
+/// is what the Display of a Rust `io::Error` appends.
+mod varid_close_error_text {
+    use super::*;
+
+    #[test]
+    fn close_failure_uses_zsh_errno_text() {
+        assert_parity(r#"myfd=99; { exec {myfd}>&- } 2>&1; print rc=$?"#);
+    }
+}

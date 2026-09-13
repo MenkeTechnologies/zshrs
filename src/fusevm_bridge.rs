@@ -8557,7 +8557,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     crate::ported::utils::zwarn(&format!(
                         "failed to close file descriptor {}: {}",
                         fd1,
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(
+                            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                        ) // c:Src/exec.c:3929 `%e`
                     ));
                     return Value::Status(1);
                 }
@@ -8627,7 +8629,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if write_fd < 0 {
                 crate::ported::utils::zwarn(&format!(
                     "can't create temp file for here document: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(
+                        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                    ) // c:Src/exec.c:3828 `%e`
                 ));
                 return Value::Status(1);
             }
@@ -8735,7 +8739,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::utils::zerr(&format!(
                 "cannot move fd {}: {}",
                 fd,
-                std::io::Error::last_os_error()
+                crate::ported::utils::zsh_errno_msg(
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                ) // c:Src/exec.c:2463 `%e`
             ));
             return Value::Status(1);
         }
@@ -10702,7 +10708,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if write_fd < 0 {
             crate::ported::utils::zwarn(&format!(
                 "can't create temp file for here document: {}",
-                std::io::Error::last_os_error()
+                crate::ported::utils::zsh_errno_msg(
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                ) // c:Src/exec.c:3828 `%e`
             ));
             return Value::Status(1);
         }
