@@ -3832,6 +3832,10 @@ fn checkalias(lextext: &str) -> bool {
                 // lexstop (input.c:322), iblank(' ') → no push. Same
                 // net effect; nothing to unget.
             }
+            // !!! RUST-ONLY !!! — the name leaves the function-body source
+            // here, as it leaves the token stream in C (see
+            // `funcdef_capture::src_capture_mark_alias_name`).
+            crate::funcdef_capture::src_capture_mark_alias_name(lextext);
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
             inpush(&alias.text, INP_ALIAS, Some(lextext.to_string()));
             // c:1929-1930 — `if (an->text[0] == ' ' && !(an->node.flags & ALIAS_GLOBAL))
@@ -3874,6 +3878,10 @@ fn checkalias(lextext: &str) -> bool {
                         // popped FIRST (re-emitted to extend the
                         // current token), then space, then the alias
                         // body. C does it the same way.
+                        // !!! RUST-ONLY !!! — the typed word is replaced by
+                        // its re-pushed copy below; drop the original from
+                        // the function-body source.
+                        crate::funcdef_capture::src_capture_mark_alias_name(lextext);
                         inpush(lextext, INP_ALIAS, Some(suffix.to_string()));
                         inpush(" ", INP_ALIAS, None);
                         inpush(&alias.text, INP_ALIAS, None);
@@ -5217,11 +5225,11 @@ pub(crate) fn hgetc() -> Option<char> {
         // !!! RUST-ONLY (no C counterpart) !!! — same argument as the
         // `LEX_UNGET_HPTR` block above, for the function-body echo buffer:
         // put back exactly what `hungetc` took, decided at unget time.
-        if crate::funcdef_capture::LEX_UNGET_SRCCAP
+        if let Some(flags) = crate::funcdef_capture::LEX_UNGET_SRCCAP
             .with_borrow_mut(|b| b.pop_front())
-            .unwrap_or(false)
+            .flatten()
         {
-            crate::funcdef_capture::src_capture_add(c);
+            crate::funcdef_capture::src_capture_add(c, flags);
         }
         // c:input.c:327 — re-reading the un-gotten char consumes it like
         // any other read (C's ingetc `inbufct--`). Mirror it so the
@@ -5398,18 +5406,19 @@ pub(crate) fn hgetc() -> Option<char> {
     // double-count them in `$LINENO`.
     //
     // Characters an alias expansion pushed (`inpush(..., INP_ALIAS)`,
-    // c:Src/lex.c:1928) are not source text either: the parser records the
-    // alias NAME it already read, and a re-parse of the captured text expands
-    // it again. Recording the body as well turned `ll x` (alias
-    // ll='print aliased') into `llprint aliased x`. Same gate `ihwaddc` puts
-    // on the history line (c:Src/hist.c:360).
+    // c:Src/lex.c:1928) are flagged CAP_ALIAS_TEXT: a function body keeps
+    // them (zsh compiles the body after alias expansion), while the preexec
+    // event source drops them because its re-parse expands the alias name
+    // again (`funcdef_capture::event_text`). Same frame test `ihwaddc`
+    // applies to the history line (c:Src/hist.c:360).
     let alias_only = via_inbuf && {
         let f = crate::ported::input::inbufflags.with(|f| f.get());
         (f & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
             == crate::ported::zsh_h::INP_ALIAS
     };
-    if counts_lineno && !alias_only {
-        crate::funcdef_capture::src_capture_add(c);
+    if counts_lineno {
+        let flags = if alias_only { crate::funcdef_capture::CAP_ALIAS_TEXT } else { 0 };
+        crate::funcdef_capture::src_capture_add(c, flags);
     }
 
     Some(c)
@@ -5480,15 +5489,7 @@ fn hungetc(c: char) {
     // re-read in `hgetc` restores it (see `LEX_UNGET_SRCCAP`). The
     // `ends_with` test keeps the pair honest when the character was never
     // recorded (capture closed, or the `counts_lineno` gate refused it).
-    // An alias-frame character was never recorded (see the `alias_only` gate
-    // in `hgetc`), so it must not take back a recorded one that happens to
-    // match — c:Src/hist.c:1009, the same gate `ihungetc` applies.
-    let alias_only = {
-        let f = crate::ported::input::inbufflags.with(|f| f.get());
-        (f & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
-            == crate::ported::zsh_h::INP_ALIAS
-    };
-    let did_capture = !alias_only && crate::funcdef_capture::src_capture_back(c);
+    let did_capture = crate::funcdef_capture::src_capture_back(c);
     crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.push_front(did_capture));
     if c == '\n' {
         // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||

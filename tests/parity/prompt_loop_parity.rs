@@ -156,6 +156,58 @@ fn preexec_args_driver(hist_setup: &str) -> String {
     )
 }
 
+/// A function body is compiled AFTER alias expansion, so every listing of it
+/// shows the expansion and keeps showing it once the alias is gone — while
+/// preexec's `$2`/`$3` for the same line, rendered from the event, must not
+/// show the expansion twice. Both come from one source capture in zshrs
+/// (`funcdef_capture`), which is why they are pinned together: the capture
+/// once recorded `ll x` as `llprint aliased x` for both, and a fix aimed at
+/// the event alone listed the body as `ll x` after `unalias`.
+///
+/// No pty: the interactive `-s` stdin reader goes through the same
+/// `hgetc` path as a terminal, and everything is written to `$OUTFILE`.
+fn alias_body_driver() -> String {
+    let script = r#"
+unsetopt promptcr promptsp
+HISTFILE=/dev/null
+mkdir -p $OUTFILE.d
+print -r -- 'll w' > $OUTFILE.d/k
+print -r -- 'll z' > $OUTFILE.d/h
+preexec(){ print -r -- "P [$2] [$3]" >> $OUTFILE }
+alias b='print' a='b  x' ll='print  aliased'
+f(){ a y; ll z; }
+g(){ ll x
+}
+functions f g >> $OUTFILE
+whence -c g >> $OUTFILE
+which f >> $OUTFILE
+print -r -- ${functions[f]} >> $OUTFILE
+fpath=($OUTFILE.d $fpath)
+autoload k; k >> $OUTFILE; functions k >> $OUTFILE
+zcompile $OUTFILE.d/h; autoload h; h >> $OUTFILE; functions h >> $OUTFILE
+unalias a b ll
+print UNALIASED >> $OUTFILE
+functions f g >> $OUTFILE
+print -r -- ${functions[g]} >> $OUTFILE
+"#;
+    format!(
+        r#"
+print -r -- {} | PS1= RPS1= PROMPT= $UNDER_TEST -f -i -s >/dev/null 2>&1
+rm -rf $OUTFILE.d
+"#,
+        sq(script)
+    )
+}
+
+#[test]
+fn function_bodies_store_alias_expansions_and_preexec_does_not_repeat_them() {
+    assert_same_dump(
+        &alias_body_driver(),
+        "functions/whence/which/$functions listings of alias-using bodies, before and after unalias, \
+         plus preexec $2/$3 of the defining lines",
+    );
+}
+
 #[test]
 fn preexec_args_match_with_default_history_options() {
     assert_same_dump(

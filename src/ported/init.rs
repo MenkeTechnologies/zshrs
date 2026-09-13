@@ -2406,7 +2406,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         // compile it to an Eprog only if a preexec hook is present.
         let event_mark = (toplevel != 0).then(crate::funcdef_capture::body_mark_begin);
         prog = crate::ported::parse::parse_event(ENDINPUT as i32); // c:156
-        let event_src = event_mark.and_then(crate::funcdef_capture::body_text);
+        let event_src = event_mark.and_then(crate::funcdef_capture::event_text);
         if prog.is_none() {
             // c:156
             hend(None); // c:158

@@ -52,13 +52,23 @@ pub static LEX_SRC_CAPTURE_DEPTH: std::cell::Cell<usize>
     = const { std::cell::Cell::new(0) };
 /// !!! WARNING: RUST-ONLY HELPER STATE !!!
 ///
+/// One flag byte per character of [`LEX_SRC_CAPTURE`], built from
+/// [`CAP_ALIAS_TEXT`] and [`CAP_ALIAS_NAME`]. zsh compiles a function body
+/// AFTER alias expansion, so [`body_text`] keeps expansion text and drops the
+/// alias names it replaced; [`event_text`] does the reverse, because its
+/// re-parse expands each alias name again.
+pub static LEX_SRC_CAPTURE_ALIAS: std::cell::RefCell<Vec<u8>>
+    = const { std::cell::RefCell::new(Vec::new()) };
+/// !!! WARNING: RUST-ONLY HELPER STATE !!!
+///
 /// Lockstep companion to `lex::LEX_UNGET_BUF`, exactly like
-/// `lex::LEX_UNGET_HPTR`: one flag per queued character recording whether
-/// `hungetc` removed it from [`LEX_SRC_CAPTURE`], so the matching
-/// re-read in `hgetc` puts back exactly what was taken. Without it a
+/// `lex::LEX_UNGET_HPTR`: one entry per queued character, `Some(flags)` when
+/// `hungetc` removed it from [`LEX_SRC_CAPTURE`] (carrying its
+/// [`LEX_SRC_CAPTURE_ALIAS`] flags) and `None` when it did not, so the
+/// matching re-read in `hgetc` puts back exactly what was taken. Without it a
 /// capture that opens or closes between the unget and the re-read
 /// gains or loses one character.
-pub static LEX_UNGET_SRCCAP: std::cell::RefCell<std::collections::VecDeque<bool>>
+pub static LEX_UNGET_SRCCAP: std::cell::RefCell<std::collections::VecDeque<Option<u8>>>
     = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 }
 
@@ -134,16 +144,27 @@ pub fn body_mark_restart(mark: &mut BodyMark) {
 pub fn body_text(mut mark: BodyMark) -> Option<String> {
     let end = pos();
     mark.closed = true;
-    let captured = LEX_SRC_CAPTURE.with_borrow(|b| {
-        // `hungetc` can pop a character that predates the mark, so clamp,
-        // and land on a char boundary (a partially-rewound multibyte char
-        // would otherwise panic the slice).
-        let mut start = mark.cap_pos.min(b.len());
-        while start > 0 && !b.is_char_boundary(start) {
-            start -= 1;
+    let captured = captured_since(mark.cap_pos, CAP_ALIAS_NAME);
+    close_capture();
+    if end > mark.lex_pos {
+        if let Some(s) = input_slice(mark.lex_pos, end) {
+            return Some(s);
         }
-        b[start..].to_string()
-    });
+    }
+    Some(captured).filter(|s| !s.is_empty())
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// [`body_text`] for a top-level EVENT whose text will be parsed again
+/// (loop()'s preexec `$2`/`$3`, src/ported/init.rs). Keeps the alias NAMES
+/// and leaves out what their expansions pushed: the re-parse expands each
+/// name again, so keeping both would render `ll x` (alias ll='print aliased')
+/// as `llprint aliased x`. See [`LEX_SRC_CAPTURE_ALIAS`].
+pub fn event_text(mut mark: BodyMark) -> Option<String> {
+    let end = pos();
+    mark.closed = true;
+    let captured = captured_since(mark.cap_pos, CAP_ALIAS_TEXT);
     close_capture();
     if end > mark.lex_pos {
         if let Some(s) = input_slice(mark.lex_pos, end) {
@@ -161,6 +182,7 @@ fn close_capture() -> usize {
     LEX_SRC_CAPTURE_DEPTH.set(depth);
     if depth == 0 {
         LEX_SRC_CAPTURE.with_borrow_mut(|b| b.clear());
+        LEX_SRC_CAPTURE_ALIAS.with_borrow_mut(|m| m.clear());
     }
     depth
 }
@@ -174,19 +196,80 @@ fn close_capture() -> usize {
 pub fn src_capture_reset() {
     LEX_SRC_CAPTURE_DEPTH.set(0);
     LEX_SRC_CAPTURE.with_borrow_mut(|b| b.clear());
+    LEX_SRC_CAPTURE_ALIAS.with_borrow_mut(|m| m.clear());
     LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.clear());
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
 ///
-/// Echo one consumed character into [`LEX_SRC_CAPTURE`]. Returns whether it
-/// was recorded, so `hungetc`'s pop and `hgetc`'s re-read stay symmetric.
-/// Called from `hgetc` (src/ported/lex.rs) only.
-pub fn src_capture_add(c: char) -> bool {
+/// [`LEX_SRC_CAPTURE_ALIAS`] flag: an alias expansion pushed this character
+/// (`inpush(an->text, INP_ALIAS, an)`, c:Src/lex.c:1928).
+pub const CAP_ALIAS_TEXT: u8 = 1;
+/// [`LEX_SRC_CAPTURE_ALIAS`] flag: this character belongs to an alias name the
+/// lexer replaced with its expansion.
+pub const CAP_ALIAS_NAME: u8 = 2;
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// The capture from byte offset `cap_pos` on, without the characters whose
+/// flags intersect `drop`.
+fn captured_since(cap_pos: usize, drop: u8) -> String {
+    LEX_SRC_CAPTURE.with_borrow(|b| {
+        // `hungetc` can pop a character that predates the mark, so clamp,
+        // and land on a char boundary (a partially-rewound multibyte char
+        // would otherwise panic the slice).
+        let mut start = cap_pos.min(b.len());
+        while start > 0 && !b.is_char_boundary(start) {
+            start -= 1;
+        }
+        let skip = b[..start].chars().count();
+        LEX_SRC_CAPTURE_ALIAS.with_borrow(|flags| {
+            b[start..]
+                .chars()
+                .enumerate()
+                .filter(|&(i, _)| flags.get(skip + i).copied().unwrap_or(0) & drop == 0)
+                .map(|(_, c)| c)
+                .collect()
+        })
+    })
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// Mark the alias name the lexer is about to replace (`inpush(an->text,
+/// INP_ALIAS, an)`, c:Src/lex.c:1928, and the suffix-alias pushes at
+/// c:1938-1940) as [`CAP_ALIAS_NAME`]. By then `hungetc` has already taken
+/// back the character that ended the word, so the capture ends with `name`;
+/// when it does not (capture closed, name not recorded) nothing is marked.
+pub fn src_capture_mark_alias_name(name: &str) {
+    if LEX_SRC_CAPTURE_DEPTH.get() == 0 || name.is_empty() {
+        return;
+    }
+    LEX_SRC_CAPTURE.with_borrow(|b| {
+        if b.ends_with(name) {
+            let n = name.chars().count();
+            LEX_SRC_CAPTURE_ALIAS.with_borrow_mut(|flags| {
+                let len = flags.len();
+                for f in &mut flags[len.saturating_sub(n)..] {
+                    *f |= CAP_ALIAS_NAME;
+                }
+            });
+        }
+    });
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// Echo one consumed character into [`LEX_SRC_CAPTURE`] with its
+/// [`LEX_SRC_CAPTURE_ALIAS`] flags. Returns whether it was recorded, so
+/// `hungetc`'s pop and `hgetc`'s re-read stay symmetric. Called from `hgetc`
+/// (src/ported/lex.rs) only.
+pub fn src_capture_add(c: char, flags: u8) -> bool {
     if LEX_SRC_CAPTURE_DEPTH.get() == 0 {
         return false;
     }
     LEX_SRC_CAPTURE.with_borrow_mut(|b| b.push(c));
+    LEX_SRC_CAPTURE_ALIAS.with_borrow_mut(|m| m.push(flags));
     true
 }
 
@@ -194,18 +277,19 @@ pub fn src_capture_add(c: char) -> bool {
 ///
 /// Undo the last [`src_capture_add`], but only if the buffer really ends
 /// with `c` — a character the `counts_lineno` gate refused was never
-/// recorded and must not be taken from an earlier one. Returns whether
-/// anything was removed. Called from `hungetc` (src/ported/lex.rs) only.
-pub fn src_capture_back(c: char) -> bool {
+/// recorded and must not be taken from an earlier one. Returns the removed
+/// character's flags, or `None` when nothing was removed, so the re-read in
+/// `hgetc` restores both. Called from `hungetc` (src/ported/lex.rs) only.
+pub fn src_capture_back(c: char) -> Option<u8> {
     if LEX_SRC_CAPTURE_DEPTH.get() == 0 {
-        return false;
+        return None;
     }
     LEX_SRC_CAPTURE.with_borrow_mut(|b| {
         if b.ends_with(c) {
             b.pop();
-            true
+            Some(LEX_SRC_CAPTURE_ALIAS.with_borrow_mut(|m| m.pop()).unwrap_or(0))
         } else {
-            false
+            None
         }
     })
 }

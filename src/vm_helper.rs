@@ -3996,7 +3996,7 @@ impl ShellExecutor {
             // Event source for preexec's `$2`/`$3` — see run_preexec_hook.
             let event_mark = toplevel.then(crate::funcdef_capture::body_mark_begin);
             let prog = crate::ported::parse::parse_event(ENDINPUT); // c:156
-            let event_src = event_mark.and_then(crate::funcdef_capture::body_text);
+            let event_src = event_mark.and_then(crate::funcdef_capture::event_text);
             let Some(prog) = prog else {
                 // c:159-174 — no event this pass. Break on clean EOF or on a
                 // parse error (`!toplevel` makes C's LEXERR arm
