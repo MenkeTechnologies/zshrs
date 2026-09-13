@@ -1206,7 +1206,18 @@ fn stringsubst(
                 // (the `(e)` re-lex failure) leaves the word cut at the `$`
                 // (c:1878 `*s++ = '\0'`) and ends prefork without an error.
                 if PARAMSUBST_NULL.with(|c| c.replace(false)) {
-                    list.setdata(node_idx, chars[..pos].iter().collect::<String>());
+                    let prefix: String = chars[..pos].iter().collect();
+                    let done = PARAMSUBST_NULL_NODES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+                    // c:4383-4394 — the first processed element was joined to the
+                    // text before the `$` (strcatsub over ostr) and the rest were
+                    // inserted after it; `arr=(p x '$(' q); print -rl -- A"${(@e)arr}"B`
+                    // is `A"p` and `x`.
+                    let mut it = done.into_iter();
+                    list.setdata(node_idx, format!("{}{}", prefix, it.next().unwrap_or_default()));
+                    let mut at = node_idx;
+                    for rest in it {
+                        at = list.insertlinknode(at, rest);
+                    }
                     PREFORK_STOPPED.with(|c| c.set(true)); // c:327 → prefork c:145-146
                     return None;
                 }
@@ -3578,6 +3589,15 @@ thread_local! {
     /// failure rides here from the eval arm to stringsubst, which takes it.
     pub static PARAMSUBST_NULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// The array elements an `(e)` expansion had already put into the word list
+    /// when a later element's re-lex returned NULL (c:Src/subst.c:4383-4394
+    /// inserts each element as it goes, the first one joined to the text before
+    /// the `$`). C leaves those nodes in the list; zshrs's paramsubst returns a
+    /// tuple, so they ride here to the stringsubst NULL handler with
+    /// PARAMSUBST_NULL.
+    pub static PARAMSUBST_NULL_NODES: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
     /// True when the most recent top-level stringsubst returned NULL because of
     /// a PARAMSUBST_NULL (c:Src/subst.c:326-327), i.e. prefork stopped early
     /// (c:142-147) and left the rest of its list unexpanded. C's caller sees
@@ -3613,6 +3633,7 @@ pub fn paramsubst(
     // so never reaches the stringsubst that takes it) must not cut this
     // expansion's word: C's NULL is this call's return value, nothing more.
     PARAMSUBST_NULL.with(|c| c.set(false));
+    PARAMSUBST_NULL_NODES.with(|c| c.borrow_mut().clear());
     // c:Src/utils.c:4347-4350 — wcsitype(IIDENT): under MULTIBYTE (and not
     // POSIXIDENTIFIERS) any non-ASCII alphanumeric is a valid identifier char
     // (iswalnum), so zsh accepts `${日}`, `${café}`, `${π}`. The name-scan
@@ -22902,6 +22923,9 @@ pub fn paramsubst(
                 for (i, s) in elems.iter().enumerate() {
                     let v = esub_multi(s);
                     if PARAMSUBST_NULL.with(|c| c.get()) {
+                        // c:4383-4394 — elements 1..N-1 are already nodes of the
+                        // word list when element N returns NULL.
+                        PARAMSUBST_NULL_NODES.with(|c| *c.borrow_mut() = elems[..i].to_vec());
                         return elems[..i].to_vec(); // c:4394 return NULL
                     }
                     out.extend(v);
