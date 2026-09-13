@@ -89,10 +89,6 @@ mod dollar_paren_subst {
     /// head and then dropped the character the scan stopped on, so the
     /// substitution never closed: `unmatched "` inside double quotes, a parse
     /// error in an assignment.
-    ///
-    /// Unquoted `print $(( a[ ))` is not pinned here: the lexer now hands the
-    /// compiler a command substitution, but compile_zsh's `strip_arith_subst`
-    /// still classifies the text as arithmetic by balancing its parens.
     #[test]
     fn invalid_math_substitution_reparses_as_a_subshell() {
         assert_parity(r#"print "$(( a[ ))"; print rc=$?"#);
