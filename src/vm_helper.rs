@@ -1536,21 +1536,6 @@ impl ShellExecutor {
             .map(|m| m.remove(name));
     }
 
-    /// Read a regular (non-global) alias value. Reads canonical
-    /// `aliastab` (Src/hashtable.c:1186). Filters out aliases that
-    /// have the ALIAS_GLOBAL flag set so the regular-alias slot is
-    /// distinct from the global-alias slot, mirroring C's two
-    /// separate dispatch paths via `aliasflags` checks.
-    pub fn alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
-        let a = tab.get(name)?;
-        if (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0 {
-            None
-        } else {
-            Some(a.text.clone())
-        }
-    }
-
     /// Set a regular alias. Writes canonical aliastab with
     /// ALIAS_GLOBAL bit cleared.
     pub fn set_alias(&mut self, name: String, value: String) {

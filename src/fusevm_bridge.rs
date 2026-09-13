@@ -17990,66 +17990,11 @@ impl fusevm::ShellHost for ZshrsHost {
             }
         }
 
-        // c:Src/lex.c — alias expansion is a LEXER-TIME pass, not a
-        // run-time lookup. zsh parses the whole `-c` argument (or
-        // script) before executing, so aliases defined in the same
-        // parse unit don't apply to commands parsed earlier. Only at
-        // an INTERACTIVE prompt does each line parse separately with
-        // the latest aliastab visible.
-        //
-        // Gate the run-time alias-rewrite path on `interactive` so
-        // `alias hi='echo hello'; hi` in `-c` mode falls through to
-        // "command not found" (matching zsh) while interactive REPL
-        // input still re-parses with the live aliastab.
-        let interactive = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
-        let already_expanding = if interactive {
-            crate::ported::hashtable::aliastab_lock()
-                .read()
-                .ok()
-                .and_then(|tab| {
-                    tab.get(name)
-                        .map(|a| a.inuse.load(std::sync::atomic::Ordering::Relaxed) != 0)
-                })
-                .unwrap_or(false)
-        } else {
-            true // suppress lookup entirely in non-interactive mode
-        };
-        let alias_body = if already_expanding {
-            None
-        } else {
-            with_executor(|exec| exec.alias(name))
-        };
-        if let Some(body) = alias_body {
-            let combined = if args.is_empty() {
-                body
-            } else {
-                let quoted: Vec<String> = args
-                    .iter()
-                    .map(|a| {
-                        let escaped = a.replace('\'', "'\\''");
-                        format!("'{}'", escaped)
-                    })
-                    .collect();
-                format!("{} {}", body, quoted.join(" "))
-            };
-            // Bump inuse → run → clear, matching C's lexer behavior.
-            if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
-                if let Some(a) = tab.get(name) {
-                    a.inuse.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-            let status = with_executor(|exec| exec.execute_script(&combined).unwrap_or(1));
-            if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
-                if let Some(a) = tab.get(name) {
-                    let _ = a.inuse.fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |n| Some((n - 1).max(0)),
-                    );
-                }
-            }
-            return Some(status);
-        }
+        // c:Src/lex.c:1928 — an alias is replaced by its text while the line is
+        // LEXED; nothing consults the alias table once the command runs. The
+        // dispatch-time rewrite that used to sit here (gated on INTERACTIVE)
+        // expanded the already-expanded command name a second time:
+        // `alias ls='ls -G'; ls x` ran `ls -G -G x`, and `\ls` picked it up.
 
         // $_ pre-body bump and pending-underscore tracking are
         // ZshrsHost-only concerns (prompt rendering). Apply BEFORE

@@ -252,6 +252,62 @@ fn function_bodies_store_alias_expansions_and_preexec_does_not_repeat_them() {
     );
 }
 
+/// An alias is a LEXER substitution (c:Src/lex.c:1928); once the line is
+/// parsed nothing looks at the alias table again. zshrs also rewrote the
+/// command name through `aliastab` at DISPATCH time whenever INTERACTIVE was
+/// set (fusevm_bridge.rs, "Gate the run-time alias-rewrite path"), so a
+/// self-referencing alias expanded twice — `alias ls='ls -G'; ls x` ran
+/// `ls -G -G x` — a quoted `\ls` / `"ls"` picked the alias up, and an alias
+/// defined earlier on the same line applied to that line.
+fn alias_dispatch_script() -> &'static str {
+    r#"unsetopt promptcr promptsp
+HISTFILE=/dev/null
+ls(){ print -r -- "ARGV[$*]" >> $OUTFILE }
+alias ls='ls -G'
+ls plain
+\ls quoted
+"ls" dq
+eval 'ls evald'
+f(){ ls infn; }
+f
+alias hi='print -r -- HELLO >> $OUTFILE'; hi 2>/dev/null
+hi
+"#
+}
+
+/// Interactive shell reading the lines from `-s` stdin.
+fn alias_dispatch_stdin_driver() -> String {
+    format!(
+        "print -r -- {} | PS1= RPS1= PROMPT= $UNDER_TEST -f -i -s >/dev/null 2>&1\n",
+        sq(alias_dispatch_script())
+    )
+}
+
+/// The same lines typed at a real terminal through zpty.
+fn alias_dispatch_pty_driver() -> String {
+    let typed: String = alias_dispatch_script()
+        .lines()
+        .map(|l| format!("zpty -w w {}; pump\n", sq(l)))
+        .collect();
+    format!("export ZSHRS_HISTORY=0\n{OPEN_PUMPED}{typed}zpty -d w\n")
+}
+
+#[test]
+fn an_interactive_alias_expands_once_from_stdin() {
+    assert_same_dump(
+        &alias_dispatch_stdin_driver(),
+        "interactive -s: self-referencing alias, quoted name, same-line alias",
+    );
+}
+
+#[test]
+fn an_interactive_alias_expands_once_at_a_terminal() {
+    assert_same_dump(
+        &alias_dispatch_pty_driver(),
+        "zpty terminal: self-referencing alias, quoted name, same-line alias",
+    );
+}
+
 #[test]
 fn preexec_args_match_with_default_history_options() {
     assert_same_dump(
