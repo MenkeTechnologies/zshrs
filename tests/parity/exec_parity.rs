@@ -590,3 +590,30 @@ mod eval_context_for_equalsubst_and_exit_traps {
         assert_parity(r#"TRAPEXIT() { print -r - $zsh_eval_context }"#);
     }
 }
+
+/// c:Src/exec.c:3523-3525 — an error from prefork (the word expansions,
+/// c:3357-3359) aborts the command with `if (!lastval) lastval = 1`, so a
+/// non-zero status from the previous command survives. A globlist error
+/// (c:3755-3762) still sets `lastval = 1`, and `command` hands a glob error to
+/// the forked child while a prefork error happens in the shell.
+mod expansion_error_keeps_nonzero_status {
+    use super::*;
+
+    #[test]
+    fn prefork_error_keeps_status() {
+        assert_parity(r#"(exit 5); print ${.n.s.k}"#);
+        assert_parity(r#"nosuchcmd_zz; print ${.n.s.k}"#);
+        assert_parity(r#"f() { (exit 5); : $(( 1 + )) }; f"#);
+        assert_parity(r#"(exit 5); builtin print ${.n.s.k}"#);
+        assert_parity(r#"(exit 5); command print ${.n.s.k}"#);
+        assert_parity(r#"true; print ${.n.s.k}"#);
+    }
+
+    #[test]
+    fn glob_error_sets_one() {
+        assert_parity(r#"(exit 5); print x(a)"#);
+        assert_parity(r#"(exit 5); builtin print x(a)"#);
+        assert_parity(r#"{ (exit 5); command ls zzq*; print $?; (exit 5); command print x(a); print $? } 2>&1"#);
+        assert_parity(r#"(exit 5); print /nonexist*"#);
+    }
+}

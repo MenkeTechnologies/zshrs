@@ -1252,6 +1252,48 @@ fn module_gated_files_builtin(name: &str) -> bool {
     )
 }
 
+thread_local! {
+    /// Set when a command-word glob (BUILTIN_GLOB_EXPAND / BUILTIN_GLOBLIST)
+    /// is what raised errflag, so the abort takes C's globlist status
+    /// (c:Src/exec.c:3760 `lastval = 1`) rather than the prefork one
+    /// (c:3523 `if (!lastval) lastval = 1`).
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C knows which of the two checks
+    /// it is at; zshrs expands and globs each word in one pass and reaches
+    /// a single gate at dispatch.
+    static GLOB_WORD_ERRFLAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run a command-word glob and note whether it raised errflag.
+fn glob_word_noting_errflag(raw: Value, skip_glob: bool) -> Value {
+    use std::sync::atomic::Ordering;
+    let before = crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR;
+    let out = glob_expand_word_value(raw, skip_glob);
+    if before == 0
+        && crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0
+    {
+        GLOB_WORD_ERRFLAG.with(|c| c.set(true));
+    }
+    out
+}
+
+/// Status for a command whose words raised errflag, stored into LASTVAL:
+/// c:Src/exec.c:3760-3761 `lastval = 1` after a globlist error, else
+/// c:3523-3524 `if (!lastval) lastval = 1` after a prefork error.
+fn words_errflag_status() -> i32 {
+    use std::sync::atomic::Ordering;
+    let status = if GLOB_WORD_ERRFLAG.with(|c| c.replace(false)) {
+        1 // c:3761
+    } else {
+        match crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) {
+            0 => 1, // c:3524
+            lastval => lastval,
+        }
+    };
+    crate::ported::builtin::LASTVAL.store(status, Ordering::Relaxed);
+    status
+}
+
 /// Consume the `-` precommand carrier (see BUILTIN_EXEC_DASH).
 pub(crate) fn take_exec_dash() -> bool {
     EXEC_DASH.with(|c| c.replace(false))
@@ -1389,6 +1431,15 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         if ef != 0 && hard == 0 && builtin_is_assign_family(name) {
             // c:4287 — execbuiltin skipped; lastval unchanged.
             return crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+        }
+        // c:Src/exec.c:3523-3525 — an expansion error in the command words
+        // (prefork, c:3357-3359) ends the command before anything runs:
+        //     if (errflag) { if (!lastval) lastval = 1; … return; }
+        // so the previous command's non-zero status survives
+        // (`nosuchcmd; print ${.bad}` exits 127). A glob failure took the
+        // c:3760 `lastval = 1` return above; a HARD error keeps status 1.
+        if ef != 0 && hard == 0 {
+            return words_errflag_status();
         }
     }
     if let Some(status) = try_user_fn_override(name, &args) {
@@ -2374,8 +2425,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
         {
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed); // c:3761
-            return Value::Status(1); // c:3762 goto err
+            // c:3523-3525 / c:3760-3762 — see words_errflag_status.
+            return Value::Status(words_errflag_status());
         }
         let Some((name, rest)) = args.split_first() else {
             // `builtin` with no args → list builtins (zsh emits nothing,
@@ -2543,8 +2594,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
         if expansion_error && (dispatch.has_command_vv || dispatch.is_builtin) {
-            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed); // c:3761
-            return Value::Status(1); // c:3762 goto err
+            // c:3523-3525 / c:3760-3762 — see words_errflag_status.
+            return Value::Status(words_errflag_status());
         }
         if dispatch.has_command_vv {
             // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
@@ -2621,6 +2672,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             exec.current_command_glob_failed.set(false);
             f
         });
+        // A prefork error (c:3357-3359, a bad `${…}` or math) happens BEFORE
+        // that fork, in the shell: c:3523-3525 keeps a non-zero lastval and
+        // errflag ends the list (`command print ${.bad}` after `(exit 5)`
+        // exits 5). Only a globlist error belongs to the forked child.
+        if expansion_error && !glob_failed && !GLOB_WORD_ERRFLAG.with(|c| c.get()) {
+            return Value::Status(words_errflag_status());
+        }
+        GLOB_WORD_ERRFLAG.with(|c| c.set(false));
         if glob_failed || expansion_error {
             crate::ported::utils::errflag.fetch_and(
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -3275,7 +3334,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if stopped || i >= 64 || mask & (1u64 << i) == 0 {
                 out.push(word);
             } else {
-                out.push(glob_expand_word_value(word, noglob)); // c:495 zglob
+                out.push(glob_word_noting_errflag(word, noglob)); // c:495 zglob
             }
         }
         for v in out {
@@ -6466,7 +6525,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let raw = vm.pop();
         let noglob =
             opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
-        glob_expand_word_value(raw, noglob)
+        glob_word_noting_errflag(raw, noglob)
     });
     // Redirect-target variant of BUILTIN_GLOB_EXPAND. c:Src/glob.c:
     // 2161-2167 xpandredir — `prefork(&fake, isset(MULTIOS) ? 0 :
@@ -10798,6 +10857,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         use std::sync::atomic::Ordering;
         let line = vm.pop().to_int();
         SUBLIST_SERIAL.with(|c| c.set(c.get().wrapping_add(1)));
+        GLOB_WORD_ERRFLAG.with(|c| c.set(false));
         if line >= 0 {
             set_lineno_impl(line); // c:1451
         }
@@ -13313,7 +13373,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             .skip(1)
                             .any(|c| c == crate::ported::zsh_h::Equals);
                         if is_glob_pre {
-                            exec.expand_glob(&s_tok)
+                            // c:Src/exec.c:3755-3762 — an error raised here is a
+                            // globlist error (`lastval = 1`); see GLOB_WORD_ERRFLAG.
+                            let ef = || {
+                                crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                                    & crate::ported::zsh_h::ERRFLAG_ERROR
+                            };
+                            let before = ef();
+                            let globbed = exec.expand_glob(&s_tok);
+                            if before == 0 && ef() != 0 {
+                                GLOB_WORD_ERRFLAG.with(|c| c.set(true));
+                            }
+                            globbed
                         } else if has_nonleading_equals
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {
@@ -14150,8 +14221,15 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
         crate::ported::subst::paramsubst(body, 0, qt, pf_flags, &mut ret_flags);
     crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved_defer));
     IN_BRIDGE_PARAMSUBST.with(|c| c.set(reentered));
+    // c:Src/exec.c:3523-3525 — an expansion error aborts the command with
+    // `if (errflag) { if (!lastval) lastval = 1; …`: a non-zero status from
+    // the previous command survives (`nosuchcmd; print ${.bad}` exits 127).
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-        with_executor(|exec| exec.set_last_status(1));
+        with_executor(|exec| {
+            if exec.last_status() == 0 {
+                exec.set_last_status(1);
+            }
+        });
     }
     // c:Src/lex.c untokenize — the final argv pass C runs on every
     // expanded word (glob.c:1862 / exec.c) DROPS the Nularg
