@@ -7088,7 +7088,16 @@ mod tests {
     #[test]
     fn module_params_are_autoload_stubs_until_read() {
         let _g = crate::test_util::global_state_lock();
-        // `jobstates` is never touched by shell startup, unlike `aliases`.
+        // `jobstates` is not touched by shell STARTUP, but
+        // `MATERIALIZED_MODULE_PARAMS` is a process-global side-set and 10k
+        // tests share one process — `compsys::_jobs` and friends read the job
+        // parameters, so by the time this runs the stub may already have been
+        // materialized. The lock serialises but restores nothing, so put the
+        // name back to its untouched state here rather than assume nothing
+        // else in the binary ever reads it. The assertions below are
+        // unchanged: an untouched stub reads as a stub, and a read
+        // materializes it.
+        unmark_module_param_used("jobstates");
         assert!(
             module_param_is_autoload_stub("jobstates"),
             "untouched module param must read as a stub"

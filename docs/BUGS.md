@@ -60489,3 +60489,31 @@ Not reproduced as a user-visible symptom: a pty completion listing at
 `COLUMNS=40` lays out identically in zsh and zshrs both before and after. The
 fix is port fidelity plus the cross-test failure it caused; no shell-level
 repro is claimed.
+
+---
+
+## #1150 — a shared-process test asserted an untouched module-parameter stub without establishing that precondition — fixed
+
+**Status:** `fixed` 2026-09-13.
+
+`MATERIALIZED_MODULE_PARAMS` (`src/vm_helper.rs`) models C's `PM_AUTOLOAD`
+(`Src/params.c:563-585` `loadparamnode`) as a process-global side-set: a module
+parameter is an unmaterialized stub until something reads it, and
+`$parameters` types a stub as `undefined`
+(`Src/Modules/parameter.c:49-50`).
+
+`module_params_are_autoload_stubs_until_read` opened by asserting
+`jobstates` IS a stub, on the reasoning that shell startup never touches it.
+That holds for startup but not for the test binary: all ~10.5k lib tests share
+one process, and the completion tests that exercise the job parameters
+materialize it first. `global_state_lock()` serialises the tests but restores
+nothing, so the assertion failed in a full serial run and passed in isolation.
+
+**Fix.** `src/vm_helper.rs` — the test calls the existing
+`unmark_module_param_used("jobstates")` first, putting the name back to its
+untouched state instead of assuming nothing else in the binary reads it. Both
+assertions are unchanged: an untouched stub still has to read as a stub, and a
+read still has to materialize it.
+
+Serial `cargo test --lib -- --test-threads=1`: this name no longer appears in
+the failure list.
