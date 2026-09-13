@@ -486,3 +486,24 @@ mod prefix_assignment_to_a_special_integer {
         assert_parity(r#"{ UID=x /usr/bin/true; print rc=$? } 2>&1"#);
     }
 }
+
+/// c:Src/exec.c:3775-3777 — `if (input) addfd(forked, save, mfds, 0, input,
+/// 0, NULL);` puts a pipeline stage's input pipe into mfds[0] before the
+/// stage's own redirections are walked, so an input redirection becomes the
+/// multio's second member (c:2447-2480): the stage reads the pipe, then the
+/// file. Only the stage command's own list is seeded; a redirection inside
+/// a `{ … }` stage is a separate execcmd.
+mod pipeline_input_seeds_the_input_multio {
+    use super::*;
+
+    #[test]
+    fn stage_redirection_reads_pipe_then_source() {
+        assert_parity(r#"cd "${TMPDIR:-/tmp}"; print o1 >zr_o1; print o2 >zr_o2; print o3 >zr_o3; cat zr_o1 | cat <zr_o2; cat zr_o1 | cat <zr_o2 <zr_o3; cat zr_o1 | cat <<<hs; f() { cat }; cat zr_o1 | f <zr_o2; command rm -f zr_o1 zr_o2 zr_o3"#);
+        assert_parity(r#"cd "${TMPDIR:-/tmp}"; print o1 >zr_p1; print o2 >zr_p2; cat zr_p1 | read x <zr_p2; print "[$x]"; cat zr_p1 | while read l; do print "<$l>"; done <zr_p2; command rm -f zr_p1 zr_p2"#);
+    }
+
+    #[test]
+    fn unseeded_forms_still_replace() {
+        assert_parity(r#"cd "${TMPDIR:-/tmp}"; print o1 >zr_q1; print o2 >zr_q2; setopt nomultios; cat zr_q1 | cat <zr_q2; unsetopt nomultios; cat zr_q1 | { cat <zr_q2 }; cat <<<x; print y | cat <<<z; command rm -f zr_q1 zr_q2"#);
+    }
+}

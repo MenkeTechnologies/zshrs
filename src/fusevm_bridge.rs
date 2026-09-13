@@ -545,6 +545,21 @@ thread_local! {
     /// dispatch, inside its sublist; a compound command's body starts a new
     /// sublist first.
     static REDIR_SCOPE_OPENED: std::cell::Cell<(u64, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// c:Src/exec.c:3775-3777 — `if (input) addfd(forked, save, mfds, 0,
+    /// input, 0, NULL);` seeds `mfds[0]` with the pipeline input BEFORE the
+    /// stage command's redirect list is walked, so an input redirection
+    /// joins the pipe as a second multio member (`cat o1 | cat <o2` reads
+    /// both). BUILTIN_PIPE_FDS_INSTALL records the sublist serial it
+    /// installed the pipe in; the redirect scope that opens in the same
+    /// sublist (the stage command's own) turns it into PIPE_INPUT_SCOPE.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C does both steps inside one
+    /// execcmd_exec call; zshrs splits them across two VM ops.
+    static PIPE_INPUT_INSTALLED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Redirect-stack depth of the scope whose fd-0 redirection must keep
+    /// the pipeline input as its first multio member; consumed by the first
+    /// such redirection.
+    static PIPE_INPUT_SCOPE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// Register the session executor pointer (called from
@@ -11373,7 +11388,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0);
         }
 
-        if entries.len() == 1 {
+        // c:Src/exec.c:3775-3777 — a pipeline stage's input pipe is already
+        // mfds[0]'s first member, so even one source concatenates.
+        let pipe_seed = with_executor(|exec| take_pipe_input_seed(exec, fd));
+        if entries.len() == 1 && pipe_seed.is_none() {
             // Single member after splicing — plain replace.
             let (op_byte, source) = &entries[0];
             with_executor(|exec| {
@@ -11404,7 +11422,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Open every source in redirect order; numeric `<&N` dups
         // resolve against the LIVE fd table. First member replaces
         // the fd (c:2448-2450) so later self-dups see it.
-        let mut source_fds: Vec<i32> = Vec::with_capacity(entries.len());
+        let mut source_fds: Vec<i32> = Vec::with_capacity(entries.len() + 1);
+        source_fds.extend(pipe_seed);
         for (i, (op_byte, source)) in entries.iter().enumerate() {
             let open_result: std::io::Result<i32> = match *op_byte {
                 r::DUP_READ | r::DUP_WRITE => match source.trim_start_matches('&').parse::<i32>() {
@@ -11463,69 +11482,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
 
         // Create the concatenator pipe.
-        let (read_end, write_end) = match os_pipe::pipe() {
-            Ok(p) => p,
-            Err(_) => {
-                for f in &source_fds {
-                    unsafe {
-                        libc::close(*f);
-                    }
-                }
-                return Value::Status(1);
-            }
-        };
-        // dup the pipe read-end onto fd before spawning the
-        // producer; close the original read_end so the consumer
-        // (reading via fd) is the sole reference until scope-end.
-        let read_dup = unsafe { libc::dup(AsRawFd::as_raw_fd(&read_end)) };
-        drop(read_end);
-        if read_dup < 0 {
-            for f in &source_fds {
-                unsafe {
-                    libc::close(*f);
-                }
-            }
+        if !with_executor(|exec| multios_read_concat(exec, fd, source_fds)) {
             return Value::Status(1);
         }
-        unsafe {
-            libc::dup2(read_dup, fd);
-            libc::close(read_dup);
-        }
-        // Spawn the producer.
-        let source_fds_for_thread = source_fds.clone();
-        let handle = std::thread::spawn(move || {
-            let mut w = write_end;
-            let mut buf = [0u8; 8192];
-            for sfd in source_fds_for_thread {
-                loop {
-                    let n = unsafe {
-                        libc::read(sfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                    };
-                    if n <= 0 {
-                        break;
-                    }
-                    let n = n as usize;
-                    if std::io::Write::write_all(&mut w, &buf[..n]).is_err() {
-                        break;
-                    }
-                }
-                // zclose, not close: movefd marked the member FDT_INTERNAL
-                // (c:Src/utils.c:2007-2010), and zclose clears that entry.
-                let _ = crate::ported::utils::zclose(sfd);
-            }
-            // Closing w (the write_end) at scope drop signals EOF
-            // to the consumer.
-        });
-        with_executor(|exec| {
-            // Track using a closed-write sentinel — the producer
-            // owns write_end so we just need to join. Use -1 fd
-            // marker meaning "no fd to close".
-            if let Some(top) = exec.multios_scope_stack.last_mut() {
-                top.push((-1, handle));
-            } else {
-                let _ = handle.join();
-            }
-        });
         Value::Status(0)
     });
     // c:Src/exec.c:3978-3986 — nullexec==1 marker. See the const's
@@ -11598,6 +11557,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if in_fd != libc::STDIN_FILENO {
                     libc::close(in_fd);
                 }
+                // c:3775-3776 — the pipe is mfds[0]'s first member.
+                PIPE_INPUT_INSTALLED.with(|c| c.set(Some(SUBLIST_SERIAL.with(|s| s.get()))));
             }
             if out_fd >= 0 {
                 libc::dup2(out_fd, libc::STDOUT_FILENO);
@@ -16686,6 +16647,113 @@ fn multios_body_fd(body: &str, append_newline: bool) -> std::io::Result<i32> {
     }
 }
 
+/// c:Src/exec.c:3775-3777 + c:2447-2480 addfd — when `fd` is 0 and the
+/// top redirect scope is the pipeline stage command's own list, take the
+/// pipeline input as the input multio's first member: returns a private
+/// dup of the pipe (above the script's fd range). One-shot per scope. With
+/// MULTIOS unset C's addfd replaces the pipe instead (c:2418), so the seed is
+/// dropped.
+fn take_pipe_input_seed(exec: &ShellExecutor, fd: i32) -> Option<i32> {
+    if fd != 0
+        || PIPE_INPUT_SCOPE.with(|c| c.get()) != Some(exec.redirect_scope_stack.len())
+    {
+        return None;
+    }
+    PIPE_INPUT_SCOPE.with(|c| c.set(None));
+    if !opt_state_get("multios").unwrap_or(true) {
+        return None;
+    }
+    let dup = unsafe { libc::dup(0) };
+    (dup >= 0).then(|| crate::ported::utils::movefd(dup)) // c:2458 `fdN = movefd(fd1)`
+}
+
+/// The concatenating half of an input multio (c:Src/exec.c:2447-2480): a
+/// pipe onto `fd` fed by a thread that reads every member in order. The
+/// members are closed by the thread; the join is tracked on the top multios
+/// scope. Returns false when the pipe cannot be created (members closed).
+fn multios_read_concat(exec: &mut ShellExecutor, fd: i32, source_fds: Vec<i32>) -> bool {
+    let (read_end, write_end) = match os_pipe::pipe() {
+        Ok(p) => p,
+        Err(_) => {
+            for f in &source_fds {
+                unsafe {
+                    libc::close(*f);
+                }
+            }
+            return false;
+        }
+    };
+    // dup the pipe read-end onto fd before spawning the
+    // producer; close the original read_end so the consumer
+    // (reading via fd) is the sole reference until scope-end.
+    let read_dup = unsafe { libc::dup(AsRawFd::as_raw_fd(&read_end)) };
+    drop(read_end);
+    if read_dup < 0 {
+        for f in &source_fds {
+            unsafe {
+                libc::close(*f);
+            }
+        }
+        return false;
+    }
+    unsafe {
+        libc::dup2(read_dup, fd);
+        libc::close(read_dup);
+    }
+    // macOS raises a write's SIGPIPE on the process, not the writing
+    // thread, so the thread mask below does not cover it there; mark the
+    // write end itself instead.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        // <sys/fcntl.h>: `#define F_SETNOSIGPIPE 73` (absent from the libc crate).
+        const F_SETNOSIGPIPE: libc::c_int = 73;
+        libc::fcntl(AsRawFd::as_raw_fd(&write_end), F_SETNOSIGPIPE, 1);
+    }
+    // Spawn the producer.
+    let handle = std::thread::spawn(move || {
+        // !!! WARNING: RUST-ONLY !!! C's multio concatenator is a forked
+        // child (c:Src/exec.c:2472 `zfork`), so a reader that stops early
+        // (`read x`) SIGPIPEs only that child. This producer is a thread of
+        // the shell: block SIGPIPE here so the write fails with EPIPE
+        // instead of killing the shell. A write-raised SIGPIPE is directed at
+        // the writing thread, so the mask covers it.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGPIPE);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        }
+        let mut w = write_end;
+        let mut buf = [0u8; 8192];
+        for sfd in source_fds {
+            loop {
+                let n = unsafe { libc::read(sfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+                if n <= 0 {
+                    break;
+                }
+                let n = n as usize;
+                if std::io::Write::write_all(&mut w, &buf[..n]).is_err() {
+                    break;
+                }
+            }
+            // zclose, not close: movefd marked the member FDT_INTERNAL
+            // (c:Src/utils.c:2007-2010), and zclose clears that entry.
+            let _ = crate::ported::utils::zclose(sfd);
+        }
+        // Closing w (the write_end) at scope drop signals EOF
+        // to the consumer.
+    });
+    // Track using a closed-write sentinel — the producer
+    // owns write_end so we just need to join. Use -1 fd
+    // marker meaning "no fd to close".
+    if let Some(top) = exec.multios_scope_stack.last_mut() {
+        top.push((-1, handle));
+    } else {
+        let _ = handle.join();
+    }
+    true
+}
+
 /// One member of an input multio applied as a plain replacement (the
 /// NO_MULTIOS and single-member paths): a here-document / here-string body
 /// goes through `multios_body_fd` and addfd's save + dup2 (c:2421-2443);
@@ -18853,6 +18921,29 @@ impl ShellExecutor {
     }
     /// `host_apply_redirect` — see implementation.
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
+        // c:Src/exec.c:3775-3777 — in a pipeline stage whose input is the
+        // pipe, mfds[0] already holds it, so `<file` / `<&N` becomes the
+        // multio's second member (c:2447-2480) instead of replacing it.
+        if fd == 0
+            && matches!(op_byte, r::READ | r::DUP_READ)
+            && target.trim_start_matches('&') != "-"
+        {
+            if let Some(seed) = take_pipe_input_seed(self, 0) {
+                self.host_apply_redirect(0, op_byte, target);
+                let member = if self.redirect_failed {
+                    -1
+                } else {
+                    unsafe { libc::dup(0) }
+                };
+                if member < 0 {
+                    let _ = crate::ported::utils::zclose(seed);
+                    return;
+                }
+                let member = crate::ported::utils::movefd(member); // c:2465
+                multios_read_concat(self, 0, vec![seed, member]);
+                return;
+            }
+        }
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
         // fd byte the parser supplied (the lexer's tokfd clamp makes the
         // raw value unreliable for these forms).
@@ -19303,6 +19394,11 @@ impl ShellExecutor {
         self.multios_scope_stack.push(Vec::new());
         let serial = SUBLIST_SERIAL.with(|c| c.get());
         REDIR_SCOPE_OPENED.with(|c| c.set((serial, self.redirect_scope_stack.len())));
+        // c:Src/exec.c:3775-3777 — only the stage command's own redirect
+        // list (same sublist as the pipe install) sees the seeded mfds[0].
+        if PIPE_INPUT_INSTALLED.with(|c| c.take()) == Some(serial) {
+            PIPE_INPUT_SCOPE.with(|c| c.set(Some(self.redirect_scope_stack.len())));
+        }
     }
 
     /// Restore every redirect scope opened above `depth`.
@@ -19383,6 +19479,9 @@ impl ShellExecutor {
         if self.pipe_output_scope == Some(self.redirect_scope_stack.len()) {
             self.pipe_output_scope = None;
         }
+        if PIPE_INPUT_SCOPE.with(|c| c.get()).is_some_and(|d| d > self.redirect_scope_stack.len()) {
+            PIPE_INPUT_SCOPE.with(|c| c.set(None));
+        }
     }
 
     /// Set up `content` as stdin (fd 0) for the next command.
@@ -19399,6 +19498,20 @@ impl ShellExecutor {
     /// reader/writer coupling — matching C exactly, including
     /// lseek-ability of fd 0, which pipes don't give.
     pub fn host_set_pending_stdin(&mut self, content: String) {
+        // c:Src/exec.c:3775-3777 — a here-document or here-string on a
+        // pipeline stage fed by a pipe joins the pipe as mfds[0]'s second
+        // member (c:2447-2480): `cat o1 | cat <<<hs` reads o1 then hs.
+        if let Some(seed) = take_pipe_input_seed(self, 0) {
+            self.host_set_pending_stdin(content);
+            let member = unsafe { libc::dup(0) };
+            if member < 0 {
+                let _ = crate::ported::utils::zclose(seed);
+                return;
+            }
+            let member = crate::ported::utils::movefd(member); // c:2465
+            multios_read_concat(self, 0, vec![seed, member]);
+            return;
+        }
         // c:4673 — `gettempfile(NULL, 1, &s)`.
         let mut tmp = std::env::temp_dir();
         tmp.push(format!(
