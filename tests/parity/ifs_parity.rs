@@ -708,6 +708,14 @@ mod quoted_empty_literal_anchors_edge_field {
         assert_parity(r#"s=" a"; print -rl -- """${=s}" x"${s}" "${s}"; a=(x "" y); print -rl -- ""${a}"" | wc -l"#);
     }
 
+    /// An operator expansion beside a quoted literal keeps its own quoting.
+    #[test]
+    fn operator_expansion_beside_quoted_literal() {
+        assert_parity(r#"setopt shwordsplit; s=" a"; print -rl -- """${s:-q}" ""${s:-q} "${s:-q}""" """${s#q}" ""${s#q}"" ${s:-q}"#);
+        assert_parity(r#"setopt shwordsplit; s=" a b "; print -rl -- ""${s/a/c}; print -rl -- ""${nope:- a b }"" x"${s:-q}"y"#);
+        assert_parity(r#"print -r -- ${nope:-'~'}x; a=(x "" y); print -rl -- ""${a:-q}""; u=; print -rl -- ""${u:-} | wc -l"#);
+    }
+
     /// The positional splat beside a quoted empty literal.
     #[test]
     fn positional_splat_beside_quoted_literal() {

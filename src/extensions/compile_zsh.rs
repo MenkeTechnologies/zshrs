@@ -8944,7 +8944,29 @@ impl ZshCompiler {
         // paramsubst with qt propagated via Qstring tokens.
         let raw_dq_word = word_is_single_dq_span(s);
         let in_dq = raw_dq_word || self.dq_context_depth > 0;
-        if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
+        // A quote span OUTSIDE the `${…}` braces that is not one double-quoted
+        // span around the whole word (`""${s:-q}`, `"""${s:-q}"`, `"${s#q}"""`)
+        // glues quoted text to the expansion. `untoked` has lost those quotes,
+        // so the lowering would expand the quoted `"${s:-q}"` part as an
+        // unquoted one and split it (c:Src/subst.c:36 — the Dnull pairs stay in
+        // the word). Decline; the segment path keeps each part's quoting.
+        // Quotes INSIDE the braces (`${x:-'~'}`) are the modifier's own text.
+        let quoted_affix = !raw_dq_word && {
+            let mut depth = 0i32;
+            s.chars().any(|c| match c {
+                crate::ported::zsh_h::Inbrace => {
+                    depth += 1;
+                    false
+                }
+                crate::ported::zsh_h::Outbrace => {
+                    depth = (depth - 1).max(0);
+                    false
+                }
+                '\u{9d}' | '\u{9e}' => depth == 0,
+                _ => false,
+            })
+        };
+        if (!has_bnull || modifier_safe_with_bnull) && !in_dq && !quoted_affix {
             if let Some(mut modifier) = parsed_mod {
                 // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word
                 // AFTER `stringsubst`, so a `~` the LEXER turned into a `Tilde`
