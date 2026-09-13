@@ -28518,6 +28518,23 @@ fn assoc_contains(name: &str) -> bool {
     if crate::vm_helper::magic_special_shadowed_by_nonhash(resolved.as_str()) {
         return false;
     }
+    // c:Src/params.c:1090-1115 — the same shadow, once `unset`: the local
+    // node stays in paramtab (its scope still owns it) flagged PM_UNSET, and
+    // C's lookup still finds THAT node, so the magic scanfn stays
+    // unreachable. The name-matched PARTAB row below would answer for the
+    // global special instead. Same c:Src/subst.c:2813 test `arrays_contains`
+    // applies: unset and not declared is not a hash.
+    //   f(){ local -A commands; unset commands; print $+commands }; f   → 0
+    if paramtab().read().ok().is_some_and(|tab| {
+        tab.get(resolved.as_str()).is_some_and(|pm| {
+            let f = pm.node.flags as u32;
+            (f & PM_SPECIAL) == 0
+                && (f & crate::ported::zsh_h::PM_DECLARED) == 0
+                && (f & crate::ported::zsh_h::PM_UNSET) != 0
+        })
+    }) {
+        return false;
+    }
     if paramtab_hashed_storage()
         .lock()
         .map_or(false, |s| s.contains_key(resolved.as_str()))

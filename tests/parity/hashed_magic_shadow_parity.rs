@@ -254,3 +254,20 @@ mod unshadowed_magic_rows_still_work {
         assert_parity(r#"print "[$(( ${#options} > 100 ))]""#);
     }
 }
+
+/// The hash shadow once `unset`: the local node stays in paramtab flagged
+/// PM_UNSET (its scope owns it), so C's lookup still finds it and the magic
+/// row stays unreachable (c:Src/params.c:1090-1115, c:Src/subst.c:2805/2813).
+mod unset_hash_shadow_still_hides {
+    use super::*;
+
+    #[test]
+    fn unset_commands_shadow_is_not_set() {
+        assert_parity(r#"f(){ local -A commands; unset commands; print in $+commands }; f; print out $+commands"#);
+    }
+
+    #[test]
+    fn unset_aliases_shadow_has_no_type() {
+        assert_parity(r#"zmodload zsh/parameter; f(){ local -A aliases=(a b); unset aliases; print "[${(t)aliases}]" }; f"#);
+    }
+}
