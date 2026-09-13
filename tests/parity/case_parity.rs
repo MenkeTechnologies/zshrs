@@ -390,3 +390,25 @@ mod case_word_sees_inherited_status {
         );
     }
 }
+
+/// c:Src/parse.c:1395-1397 — `incmdpos = 1; incasepat = 0; zshlex();` after
+/// `esac`: the next word is in command position, so a closing `fi`, `done` or
+/// (under IGNORE_BRACES) `}` right after `esac` is a reserved word.
+mod reserved_word_right_after_esac {
+    use super::*;
+
+    #[test]
+    fn a_closer_directly_after_esac_parses() {
+        assert_parity("if true; then case a in a) print x;; esac fi");
+        assert_parity("for i in 1; do case $i in 1) print one;; esac done");
+        assert_parity("setopt ignorebraces; eval '{ case a in a) print x;; esac }'");
+        assert_parity("emulate sh -c 'f() { case a in a) print x;; esac }; f'");
+    }
+
+    #[test]
+    fn separated_forms_are_unchanged() {
+        assert_parity("if true; then case a in a) print x;; esac; fi");
+        assert_parity("{ case a in a) print x;; esac }");
+        assert_parity("case a in a) print x;; esac; print after");
+    }
+}

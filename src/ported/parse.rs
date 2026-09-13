@@ -1747,6 +1747,11 @@ fn par_case() -> Option<ZshCommand> {
         let is_esac = tok() == ESAC
             || (tok() == STRING_LEX && tokstr().map(|s| s == "esac").unwrap_or(false));
         if (use_brace && tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
+            // c:1395-1397 — `incmdpos = 1; incasepat = 0; zshlex();`: the word
+            // after `esac` is in command position, so a closing `fi` / `done`
+            // / `}` right after it is still a reserved word. Without it
+            // `if true; then case a in a) print x;; esac fi` was a parse error.
+            set_incmdpos(true);
             set_incasepat(0);
             zshlex();
             break;
