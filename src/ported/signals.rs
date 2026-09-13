@@ -1639,7 +1639,11 @@ pub fn endtrapscope() {
             TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166
             TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
             trapisfunc.store(0, Ordering::SeqCst); // c:1168
+            // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap")`: the body runs
+            // with "trap" appended to zsh_eval_context (c:Src/exec.c:1251).
+            let _trap_ctx = crate::ported::exec::EvalContextFrame::push("trap");
             let _ = crate::ported::exec::execute_script(&body); // c:1170 eprog body
+            drop(_trap_ctx);
             let new_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1177
             let new_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1178
             TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180 execrestore

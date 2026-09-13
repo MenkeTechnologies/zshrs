@@ -7427,6 +7427,12 @@ pub fn doshfunc(
     // real `endparamscope()` now runs at its C position above, so the
     // pop loop observes the genuine post-decrement level, and the
     // trap body executes in the caller's param scope as C does.
+    //
+    // The function body's "shfunc" context was pushed by runshfunc's
+    // execode (c:Src/exec.c:5960 → c:1251) and popped when that execode
+    // returned, before doshfunc reaches endtrapscope; a function-scoped
+    // EXIT trap therefore sees the CALLER's context plus its own "trap".
+    drop(_eval_ctx_guard);
     crate::ported::signals::endtrapscope();
 
     // c:6116-6117 — TRAP_STATE_PRIMED branch: bump trap_return back.

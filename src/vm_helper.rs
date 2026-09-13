@@ -3710,7 +3710,11 @@ impl ShellExecutor {
             // guard: signals zsh does deliver from inside a trap body (e.g.
             // `trap 'kill -USR1 $$' EXIT`) must still dispatch.
             crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
+            // c:Src/signals.c:1170 — `execode((Eprog)sigfn, 1, 0, "trap")`:
+            // the EXIT body sees "trap" in zsh_eval_context (c:Src/exec.c:1251).
+            let trap_ctx = crate::ported::exec::EvalContextFrame::push("trap");
             let _ = self.execute_script_zsh_pipeline(&action);
+            drop(trap_ctx);
             crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
             self.set_last_status(status);
         }

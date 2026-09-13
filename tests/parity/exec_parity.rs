@@ -569,3 +569,24 @@ mod command_substitution_with_stdout_closed {
         assert_parity(r#"{ { x=$(print b >&2) } >&-; print ok; { : $(print c >&2) } >&-; print ok2 } 2>&1"#);
     }
 }
+
+/// c:Src/exec.c:1251 execode appends its label to `zsh_eval_context`:
+/// `=( )` runs its body with "equalsubst" (c:5044), and an EXIT trap's eval
+/// list with "trap" (c:Src/signals.c:1170). A function-scoped EXIT trap runs
+/// after runshfunc's "shfunc" frame has been popped.
+mod eval_context_for_equalsubst_and_exit_traps {
+    use super::*;
+
+    #[test]
+    fn equalsubst_is_labelled() {
+        assert_parity(r#"contextfn() { print -r - $zsh_eval_context }; cat =( contextfn ); cat <(contextfn)"#);
+    }
+
+    #[test]
+    fn exit_trap_bodies_are_labelled_trap() {
+        assert_parity(r#"contextfn() { print -r - $zsh_eval_context }; () { trap contextfn EXIT }"#);
+        assert_parity(r#"trap 'print -r - $zsh_eval_context' EXIT"#);
+        assert_parity(r#"f() { trap 'print -r - $zsh_eval_context' EXIT; }; f"#);
+        assert_parity(r#"TRAPEXIT() { print -r - $zsh_eval_context }"#);
+    }
+}

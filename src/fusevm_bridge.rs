@@ -17326,6 +17326,8 @@ impl fusevm::ShellHost for ZshrsHost {
                     // Clear the inherited pending-file list so this child never
                     // unlinks the PARENT's =() temp files when its own commands
                     // dispatch (fork copies the list; unlink hits the shared fs).
+                    // c:Src/exec.c:5044 — `execode(prog, 0, 1, "equalsubst")`.
+                    std::mem::forget(crate::ported::exec::EvalContextFrame::push("equalsubst"));
                     PSUB_PENDING_FILES.with(|v| v.borrow_mut().clear());
                     unsafe {
                         libc::dup2(fd, libc::STDOUT_FILENO);
