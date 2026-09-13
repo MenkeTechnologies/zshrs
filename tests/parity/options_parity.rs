@@ -305,3 +305,26 @@ mod path_dirs_slash_command {
         assert_parity("setopt pathdirs; path=(/bin); nodir/nocmd 2>&1; echo rc=$?");
     }
 }
+
+/// c:Src/exec.c:2573 — `flags = !(addflags & ADDVAR_RESTORE) ? ASSPM_WARN :
+/// 0;` "Don't do this if there is a list of variables marked to be restored
+/// after the command, since then the assignment is implicitly scoped." A
+/// prefix assignment that is restored afterwards (c:4144-4145, and the forked
+/// external's c:4346-4347) never warns under WARN_CREATE_GLOBAL; one that
+/// persists (a POSIX special builtin, c:4122-4123 do_save = 0) still does.
+mod warn_create_global_prefix_assignment {
+    use super::*;
+
+    #[test]
+    fn restored_prefix_assignments_do_not_warn() {
+        assert_parity(
+            r#"setopt warn_create_global; f(){ foo=bar /usr/bin/true; foo=bar :; foo=(a b) :; integer n; n=3 :; print ok }; f 2>&1"#,
+        );
+    }
+
+    #[test]
+    fn persisting_and_plain_assignments_still_warn() {
+        assert_parity(r#"setopt warn_create_global posix_builtins; f(){ foo=bar :; print ok $foo }; f 2>&1"#);
+        assert_parity(r#"setopt warn_create_global; f(){ foo=bar; print ok }; f 2>&1"#);
+    }
+}

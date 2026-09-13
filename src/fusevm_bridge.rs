@@ -8003,11 +8003,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // assignments have committed) — otherwise every assignment
             // the command itself makes gets recorded and then reverted
             // (`X=y . file` wiped every global the file defined).
-            if exec
+            let prefix_restored = exec
                 .inline_env_stack
                 .last()
-                .is_some_and(|frame| frame.recording)
-            {
+                .is_some_and(|frame| frame.recording);
+            if prefix_restored {
                 save_inline_prefix_param(exec, &name);
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
@@ -8058,6 +8058,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 None
             };
+            // c:Src/exec.c:2573 — `flags = !(addflags & ADDVAR_RESTORE) ?
+            // ASSPM_WARN : 0;`, with the comment "Don't do this if there is a
+            // list of variables marked to be restored after the command, since
+            // then the assignment is implicitly scoped." A prefix assignment
+            // recorded into the open inline-env frame is exactly that: it is
+            // put back by restore_params when the command returns (c:4144-4145
+            // `if (restorelist) flags |= ADDVAR_RESTORE;`, and c:4346-4347 for
+            // an external's forked child). The non-recording arms (POSIX
+            // special builtins, the do_save = 0 case) and plain assignments
+            // keep the warning.
+            let asg_flags = if prefix_restored {
+                0
+            } else {
+                crate::ported::zsh_h::ASSPM_WARN as i32
+            };
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
             // through setiparam so the param is PM_INTEGER + inherits
@@ -8068,9 +8083,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // not a scalar holding "6.28".
             if int_assign {
                 if let Some(fusevm::Value::Int(i)) = value_raw {
-                    crate::ported::params::setiparam(&name, i);
+                    crate::ported::params::assigniparam(&name, i, asg_flags);
                 } else {
-                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
+                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
                 }
             } else if float_assign {
                 if let Some(fusevm::Value::Float(f)) = value_raw {
@@ -8083,17 +8098,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // True floats (non-integral) reach setnparam →
                     // PM_FFLOAT so `typeset -p b` shows `typeset -F …`.
                     if f.fract() == 0.0 && f.is_finite() && f.abs() <= i64::MAX as f64 {
-                        crate::ported::params::setiparam(&name, f as i64);
+                        crate::ported::params::assigniparam(&name, f as i64, asg_flags);
                     } else {
                         let mnval = crate::ported::math::mnumber {
                             l: 0,
                             d: f,
                             type_: crate::ported::math::MN_FLOAT,
                         };
-                        crate::ported::params::setnparam(&name, mnval);
+                        crate::ported::params::assignnparam(&name, mnval, asg_flags);
                     }
                 } else {
-                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
+                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
                 }
             } else {
                 // c:Src/exec.c:2554-2567 — GLOB_ASSIGN. When the
@@ -8143,9 +8158,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if matches.len() <= 1 {
                                 let v = matches.into_iter().next().unwrap_or_default();
                                 assign_failed =
-                                    crate::ported::params::setsparam(&name, &v).is_none();
+                                    crate::ported::params::assignsparam(&name, &v, asg_flags).is_none();
                             } else {
-                                crate::ported::params::setaparam(&name, matches);
+                                crate::ported::params::assignaparam(&name, matches, asg_flags);
                             }
                         }
                         // errflag set → globlist already reported
@@ -8158,7 +8173,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // createparam refusal at c:1108-1118) fails the
                 // assignment with status 1.
                 if !globbed {
-                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
+                    assign_failed = crate::ported::params::assignsparam(&name, &value, asg_flags).is_none();
                 }
             }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
