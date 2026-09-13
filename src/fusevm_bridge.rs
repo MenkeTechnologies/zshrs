@@ -522,10 +522,16 @@ pub fn register_session_executor(exec: &mut ShellExecutor) {
 /// first `execode`. Without an active context those sourced bodies
 /// `try_with_executor` → `None` → no-op, so the shell silently ignored
 /// the user's dotfiles. The scope is entered once around the startup
-/// sourcing window and dropped before the loop begins — deliberately NOT
-/// a global fallback inside `execute_script_zsh_pipeline`, which would
-/// re-enter the executor on nested command substitution and block on
-/// input.
+/// sourcing window and dropped before the loop begins.
+///
+/// `execute_script_zsh_pipeline` now carries the same session-executor
+/// rung of its own (exec.rs), since `execstring` callers that fire
+/// BETWEEN commands — `checksched`, `dotrap` — have no active context
+/// either and were silently dropping their command. That rung is reached
+/// only when `CURRENT_EXECUTOR` is unset, so a nested command
+/// substitution (which always runs inside a chunk, and therefore inside
+/// an `ExecutorContext`) takes the active-executor path as before and
+/// never re-enters the session executor.
 pub fn with_session_context<R>(f: impl FnOnce() -> R) -> R {
     let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
     match ptr {
