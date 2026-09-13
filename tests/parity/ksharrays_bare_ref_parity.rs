@@ -714,3 +714,27 @@ fn ksh_emulation_bare_special_hash_reads_key_zero() {
         "divergence on:\n{s}"
     );
 }
+
+/// c:Src/params.c:2286-2288 — under KSH_ARRAYS a bare array name is narrowed
+/// to element 0, but a `[*]` / `[@]` subscript keeps the whole array. The
+/// compiled `${NAME[*]:off:len}` substring used to drop the `[*]`, so the
+/// slice ran over element 0; a `(@)` flag adds no subscript and narrows.
+#[test]
+fn star_subscript_substring_keeps_the_array() {
+    if !zsh_available() {
+        return;
+    }
+    let rs = zshrs_bin();
+    let rs = rs.to_str().expect("utf-8 path");
+    for s in [
+        r#"setopt ksharrays; foo=(1 2 3); print ${foo[*]:1:1}; print "${foo[*]:1:1}" ${foo[*]:0:2} ${foo[*]:1}"#,
+        r#"setopt ksharrays; foo=(1 2 3); print ${foo[@]:1:1} ${foo:1:1}; print -r -- "${(@)foo:1:2}" ${(@)foo:1:1}"#,
+        r#"foo=(1 2 3); print ${foo[*]:1:1} ${foo[@]:1:1} "${foo[*]:1:2}" ${(@)foo:1:1}; print -rl -- "${(@)foo:1}""#,
+    ] {
+        assert_eq!(
+            run(zsh_path(), &["-f", "-c"], s),
+            run(rs, &["--zsh", "-f", "-c"], s),
+            "divergence on:\n{s}"
+        );
+    }
+}

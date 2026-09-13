@@ -16635,14 +16635,16 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             let len_str: Option<String> = split_at.map(|i| chars[i + 1..].iter().collect());
             let off_str = off_str.trim().to_string();
             let len_str = len_str.map(|s| s.trim().to_string());
-            // Re-attach `[@]` / `[*]` suffix to the name when had_at
-            // was true so the runtime substring handler can route to
-            // the array-splice path. Without this, `${a[@]:1}` was
-            // bound to plain `a` and returned a joined scalar.
-            let runtime_name = if had_at {
-                format!("{}[@]", name)
-            } else {
-                name.clone()
+            // Re-attach the `[@]` / `[*]` suffix the source carried so the
+            // runtime substring handler reaches paramsubst with the subscript.
+            // Without it `${a[@]:1}` was bound to plain `a` and returned a
+            // joined scalar, and `${a[*]:1:1}` under KSH_ARRAYS became the bare
+            // name, which c:Src/params.c:2286-2288 narrows to element 0
+            // (`setopt ksharrays; foo=(1 2 3); print ${foo[*]:1:1}` → empty
+            // where zsh prints `2`).
+            let runtime_name = match splat_suffix {
+                Some(sfx) => format!("{}{}", name, sfx),
+                None => name.clone(),
             };
             // Literal-only fast path: integer offset (and length).
             if let (Ok(offset), len_opt) = (
