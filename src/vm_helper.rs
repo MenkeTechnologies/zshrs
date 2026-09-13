@@ -7810,14 +7810,32 @@ static FUNCDEF_LEX_RCQUOTES: Mutex<Option<HashMap<String, ([u8; 32], bool)>>> = 
 /// (c:Src/exec.c:5389 `shf->funcdef = …`, where C bakes the same fact
 /// into the wordcode instead).
 pub(crate) fn funcdef_note_rcquotes(name: &str, body: &str, rcquotes: bool) {
+    let digest = crate::autoload_cache::source_digest(body);
+    // The state the body was LEXED under wins when the parser recorded it
+    // (see FUNCDEF_PARSE_RCQUOTES); install time is only the fallback.
+    let rcquotes = FUNCDEF_PARSE_RCQUOTES
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&digest).copied())
+        .unwrap_or(rcquotes);
     FUNCDEF_LEX_RCQUOTES
         .lock()
         .get_or_insert_with(HashMap::new)
         .insert(
             name.to_string(),
-            (crate::autoload_cache::source_digest(body), rcquotes),
+            (digest, rcquotes),
         );
 }
+
+/// !!! WARNING: RUST-ONLY HELPER STATE — NO C COUNTERPART !!!
+///
+/// RCQUOTES as it stood when the parser lexed each captured function body,
+/// keyed by the body digest. C bakes the `''` decision into the wordcode at
+/// lex time (c:Src/lex.c:1326-1328), and zsh lexes one list at a time, so
+/// `setopt rcquotes; f() { print 'a''b' }` on ONE line lexes `f` before the
+/// option is on and prints `'a''b'`, while a definition on a later line (or
+/// through `eval`) prints `'a'b'`. Install time cannot tell those apart.
+static FUNCDEF_PARSE_RCQUOTES: Mutex<Option<HashMap<[u8; 32], bool>>> = Mutex::new(None);
 
 /// !!! WARNING: RUST-ONLY HELPER STATE — NO C COUNTERPART !!!
 ///
@@ -7848,6 +7866,12 @@ pub(crate) fn funcdef_note_resolved_body(body: Option<&str>) {
         .lock()
         .get_or_insert_with(std::collections::HashSet::new)
         .insert(digest);
+    // Same parse-time capture point: record the RCQUOTES the body was lexed
+    // under (FUNCDEF_PARSE_RCQUOTES).
+    FUNCDEF_PARSE_RCQUOTES
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(digest, crate::ported::zsh_h::isset(crate::ported::zsh_h::RCQUOTES));
 }
 
 /// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!

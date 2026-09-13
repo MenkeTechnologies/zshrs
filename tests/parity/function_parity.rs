@@ -697,3 +697,25 @@ mod anonymous_function_argument_words {
         assert_parity("{ print a } always { print b }");
     }
 }
+
+/// c:Src/lex.c:1326-1328 — `''` inside single quotes is resolved while the
+/// definition is LEXED, and zsh lexes a whole list before running it. So
+/// `setopt rcquotes; f() { print 'a''b' }` on one line lexes `f` before the
+/// option is on and `functions f` prints `'a''b'`. A definition lexed after the
+/// option is set prints `'a'b'`. zshrs recorded the state at install time.
+mod rcquotes_state_of_the_defining_lex {
+    use super::*;
+
+    #[test]
+    fn a_definition_on_the_setopt_line_keeps_both_quotes() {
+        assert_parity("setopt rcquotes; f() { print 'a''b' }; unsetopt rcquotes; functions f");
+        assert_parity("setopt rcquotes; f() { print 'a''b' }; functions f; f");
+    }
+
+    #[test]
+    fn definitions_lexed_under_other_option_states() {
+        assert_parity("setopt rcquotes; eval \"f() { print 'a''b' }\"; unsetopt rcquotes; functions f");
+        assert_parity("setopt rcquotes\nf() { print 'a''b' }\nunsetopt rcquotes\nfunctions f");
+        assert_parity("f() { print 'a''b' }; setopt rcquotes; functions f");
+    }
+}
