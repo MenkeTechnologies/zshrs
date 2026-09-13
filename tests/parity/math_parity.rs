@@ -923,3 +923,20 @@ mod whole_array_subscript_in_math {
         assert_parity("arr=(1 2); print $(( arr[2] + arr[(i)2] ))");
     }
 }
+
+/// c:Src/utils.c:2511 — `zwarn("number truncated after %d digits: %s",
+/// …, inp)` prints `inp`, which points at the digits inside the whole
+/// expression buffer, so the rest of the expression follows the number.
+/// zshrs handed zstrtol only the digit run.
+mod truncated_number_warning_shows_the_rest {
+    use super::*;
+
+    #[test]
+    fn warning_prints_the_expression_tail() {
+        assert_parity("print $(( 9223372036854775808 / -1 )) 2>&1");
+        assert_parity("print $(( 99999999999999999999 + 1 )) 2>&1");
+        assert_parity("print $(( 0x1ffffffffffffffff )) 2>&1");
+        assert_parity("print $(( 0x1_ffff_ffff_ffff_ffff_f )) 2>&1");
+        assert_parity("print $(( -9223372036854775809 )) 2>&1");
+    }
+}

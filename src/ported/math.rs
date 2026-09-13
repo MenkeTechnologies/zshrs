@@ -1047,16 +1047,15 @@ pub(crate) fn lexconstant() -> i32 {
                         break;
                     }
                 }
-                let hex_str: String = m_input_slice(hex_start, m_pos())
-                    .chars()
-                    .filter(|&c| c != '_')
-                    .collect();
                 // c:Src/math.c lexconstant — zsh parses every integer base via
                 // zstrtol, which truncates on overflow with a
                 // "number truncated after N digits" warning (utils.c:2511).
                 // i64::from_str_radix just errored to 0 on a >63-bit hex
                 // literal (0xFFFFFFFFFFFFFFFF). Route through the port.
-                let val = crate::ported::utils::zstrtol(&hex_str, 16).0;
+                // c:Src/utils.c:2511 — the warning prints `inp`, the rest of the
+                // expression from the digits on, so hand zstrtol the whole tail
+                // (underscores are its business, c:Src/math.c lexconstant).
+                let val = crate::ported::utils::zstrtol_underscore(&m_input_slice_from(hex_start), 16, true).0;
                 m_lastbase_set(16);
                 m_yyval_set(if m_force_float() {
                     mnumber {
@@ -1398,7 +1397,9 @@ pub(crate) fn lexconstant() -> i32 {
         Ok(n) => n,
         Err(_) if !int_str.is_empty() && int_str.chars().all(|c| c.is_ascii_digit()) => {
             // zstrtol emits the "number truncated after N digits" warning itself.
-            crate::ported::utils::zstrtol_underscore(&int_str, 10, false).0
+            // c:Src/utils.c:2511 — the warning prints `inp`, the rest of
+            // the expression from the digits on, not just the digit run.
+            crate::ported::utils::zstrtol_underscore(&m_input_slice_from(num_start), 10, true).0
         }
         Err(_) => 0,
     };
