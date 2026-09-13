@@ -2172,6 +2172,19 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // put us here deliberately (c:1419 consumes the trigger and then
     // falls into `case Inpar`).
     let inpar_active = { zpc_special.lock().unwrap()[ZPC_INPAR as usize] == b'(' };
+    // c:1312-1313 — the literal run ends on `memchr(zpc_special, *patparse,
+    // ZPC_NO_KSH_GLOB)`, and c:1430-1444 DPUTS that `case Quest` / `case Star`
+    // / `case Inbrack` are never reached with the slot at Marker. So after
+    // `disable -p '?'` / `'*'` / `'['` (c:471-476 masks the slot) the byte is
+    // an ordinary string character, like `(` and `<` above and below.
+    let (quest_active, star_active, inbrack_active) = {
+        let sp = zpc_special.lock().unwrap();
+        (
+            sp[ZPC_QUEST as usize] == b'?',
+            sp[ZPC_STAR as usize] == b'*',
+            sp[ZPC_INBRACK as usize] == b'[',
+        )
+    };
     let off = patparse_off.load(Ordering::Relaxed);
     let parse = patparse.lock().unwrap();
     if off >= parse.len() {
@@ -2231,7 +2244,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // Atom dispatch. Each arm sets `*tail_out` to the offset of the
     // last opcode emitted by this piece (for simple atoms, tail = head).
     let atom = match dispatch_c {
-        b'?' => {
+        b'?' if quest_active => {
+            // c:1430
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp |= P_SIMPLE;
             *flagp &= !P_PURESTR;
@@ -2239,14 +2253,15 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             *tail_out = h;
             h as i64
         }
-        b'*' => {
+        b'*' if star_active => {
+            // c:1436
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp &= !P_PURESTR;
             let h = patnode(P_STAR);
             *tail_out = h;
             h as i64
         }
-        b'[' => {
+        b'[' if inbrack_active => {
             // c:Src/pattern.c:1438 `case Inbrack` + c:1497-1498 —
             // `if (*patparse != Outbrack) return 0;`: an ACTIVE `[`
             // (token-derived; the patcompile entry normalization maps
@@ -2971,7 +2986,12 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 let stop_here = match b {
                     b'(' => inpar_active,
                     b')' => inpar_active || paren != 0,
-                    b'?' | b'*' | b'[' | b'|' | b'\\' | b'<' => true,
+                    // c:1312-1313 — a disabled `?` / `*` / `[` is not in
+                    // zpc_special, so it stays in the literal run.
+                    b'?' => quest_active,
+                    b'*' => star_active,
+                    b'[' => inbrack_active,
+                    b'|' | b'\\' | b'<' => true,
                     b'^' => sp_hat_lit == b'^',
                     b'#' => sp_hash_lit == b'#',
                     // c:950 / c:1312-1317 — `/` is ZPC_SLASH, a segment

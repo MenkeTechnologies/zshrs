@@ -422,3 +422,28 @@ mod shglob_paren_grouping {
         assert_full_parity(r#"a=('x)--y' z); print -r -- ${a:#*)--*}"#);
     }
 }
+
+/// c:Src/pattern.c:471-476 — `disable -p` masks a token's `zpc_special` slot,
+/// and c:1312-1313 ends a literal run only on a byte still in `zpc_special`,
+/// so a disabled `*` / `?` / `[` is an ordinary character in every pattern
+/// consumer. The port hardcoded those three as specials, and its compiled-
+/// pattern cache keyed only on options, so a pattern compiled before the
+/// `disable -p` kept matching as a wildcard afterwards.
+mod disabled_pattern_characters {
+    use super::*;
+
+    #[test]
+    fn disabled_star_quest_and_bracket_are_literal() {
+        assert_parity(r#"disable -p '*'; [[ zzqq = z*q ]]; echo $?; [[ 'z*q' = z*q ]]; echo $?"#);
+        assert_parity(r#"disable -p '?'; [[ fog = f?g ]]; echo $?; [[ 'f?g' = f?g ]]; echo $?"#);
+        assert_parity(r#"disable -p '['; [[ fog = [f]og ]]; echo $?; [[ '[f]og' = [f]og ]]; echo $?"#);
+    }
+
+    #[test]
+    fn a_pattern_compiled_before_the_disable_is_not_reused() {
+        assert_parity(
+            r#"[[ forthcoming = f*g ]]; echo $?; disable -p '*'; [[ forthcoming = f*g ]]; echo $?; enable -p '*'; [[ forthcoming = f*g ]]; echo $?"#,
+        );
+        assert_parity(r#"x=forthcoming; print ${x/f*g/R}; disable -p '*'; print ${x/f*g/R} ${x#f*}"#);
+    }
+}

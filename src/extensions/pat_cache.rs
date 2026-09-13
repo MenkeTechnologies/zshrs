@@ -35,8 +35,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-/// (pattern text, inflags, option fingerprint).
-type Key = (String, i32, u8);
+/// (pattern text, inflags, option fingerprint, `disable -p` bitmask).
+///
+/// The last field is `savepatterndisables()` (c:Src/pattern.c:4220): the
+/// per-token disables also shape `zpc_special` in `patcompcharsset`
+/// (c:471-476), so `[[ x = f*g ]]` compiled before `disable -p '*'` must not
+/// be served after it.
+type Key = (String, i32, u8, u32);
 
 // Two-level cache. L1 is thread-local and LOCK-FREE — the common hit takes
 // no lock, so a hot loop (`repeat 20000 { [[ x == pat ]] }`) doesn't pay
@@ -73,7 +78,12 @@ fn opt_fingerprint() -> u8 {
 /// lock-free thread-local L1 first, then the shared L2 (promoting an L2 hit
 /// into L1).
 pub fn get(exp: &str, inflags: i32) -> Option<Patprog> {
-    let key = (exp.to_string(), inflags, opt_fingerprint());
+    let key = (
+        exp.to_string(),
+        inflags,
+        opt_fingerprint(),
+        crate::ported::pattern::savepatterndisables(),
+    );
     if let Some(p) = L1.with(|c| c.borrow().get(&key).cloned()) {
         return Some(p);
     }
@@ -86,7 +96,12 @@ pub fn get(exp: &str, inflags: i32) -> Option<Patprog> {
 
 /// Store a freshly-compiled pattern in both cache levels.
 pub fn put(exp: &str, inflags: i32, prog: &Patprog) {
-    let key = (exp.to_string(), inflags, opt_fingerprint());
+    let key = (
+        exp.to_string(),
+        inflags,
+        opt_fingerprint(),
+        crate::ported::pattern::savepatterndisables(),
+    );
     if let Ok(mut m) = L2.write() {
         if m.len() >= MAX_ENTRIES {
             m.clear();
