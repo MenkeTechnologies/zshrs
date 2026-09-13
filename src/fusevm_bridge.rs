@@ -1294,6 +1294,28 @@ fn words_errflag_status() -> i32 {
     status
 }
 
+thread_local! {
+    /// c:Src/subst.c:142-147 / c:326-327 — paramsubst returned NULL (a failed
+    /// `(e)` re-lex), so prefork stops: the current word ends at the `$`
+    /// (c:1878) and the later words of the same list stay unexpanded. Read,
+    /// never cleared, by BUILTIN_PREFORK_CUT_CHECK; cleared at the sublist
+    /// prologue and when the command dispatches.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C's NULL return unwinds prefork's
+    /// loop in one step; zshrs expands a command's words across many VM ops.
+    static PREFORK_CUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Take `subst::PARAMSUBST_NULL` right after a direct paramsubst call and
+/// turn it into the PREFORK_CUT carrier.
+fn take_paramsubst_null() -> bool {
+    let null_return = crate::ported::subst::PARAMSUBST_NULL.with(|c| c.replace(false));
+    if null_return {
+        PREFORK_CUT.with(|c| c.set(true));
+    }
+    null_return
+}
+
 /// Consume the `-` precommand carrier (see BUILTIN_EXEC_DASH).
 pub(crate) fn take_exec_dash() -> bool {
     EXEC_DASH.with(|c| c.replace(false))
@@ -1302,6 +1324,8 @@ pub(crate) fn take_exec_dash() -> bool {
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // c:Src/exec.c:772-776 — BINF_DASH only changes an external's argv[0].
     take_exec_dash();
+    PREFORK_CUT.with(|c| c.set(false)); // the words are complete
+
     // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close any
     // `>(cmd)` write ends owned by this command once it finishes
     // (drops on every return path below).
@@ -3312,6 +3336,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_EXEC_DASH, |_vm, _argc| {
         EXEC_DASH.with(|c| c.set(true));
         Value::Int(0)
+    });
+    // See BUILTIN_PREFORK_CUT_CHECK.
+    vm.register_builtin(BUILTIN_PREFORK_CUT_CHECK, |_vm, _argc| {
+        Value::Bool(PREFORK_CUT.with(|c| c.get()))
     });
     // See BUILTIN_GLOBLIST. c:Src/subst.c:488-498 globlist:
     //     badcshglob = 0;
@@ -10858,6 +10886,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let line = vm.pop().to_int();
         SUBLIST_SERIAL.with(|c| c.set(c.get().wrapping_add(1)));
         GLOB_WORD_ERRFLAG.with(|c| c.set(false));
+        PREFORK_CUT.with(|c| c.set(false));
         if line >= 0 {
             set_lineno_impl(line); // c:1451
         }
@@ -14219,8 +14248,14 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     }
     let (_full, _pos, nodes) =
         crate::ported::subst::paramsubst(body, 0, qt, pf_flags, &mut ret_flags);
+    let null_return = take_paramsubst_null();
     crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved_defer));
     IN_BRIDGE_PARAMSUBST.with(|c| c.set(reentered));
+    if null_return {
+        // c:Src/subst.c:1878/326-327 — the word ends at this `$`; nothing of
+        // this expansion is kept. See BUILTIN_PREFORK_CUT_CHECK.
+        return Value::str(String::new());
+    }
     // c:Src/exec.c:3523-3525 — an expansion error aborts the command with
     // `if (errflag) { if (!lastval) lastval = 1; …`: a non-zero status from
     // the previous command survives (`nosuchcmd; print ${.bad}` exits 127).
@@ -16261,6 +16296,14 @@ pub const BUILTIN_EXEC_DASH: u16 = 687;
 /// `for (…; !errflag && node; …)`), leaving later words as they are. Pushes
 /// one value per word (an Array where a glob expanded).
 pub const BUILTIN_GLOBLIST: u16 = 688;
+/// c:Src/subst.c:142-147 — `if (!(node = stringsubst(…))) return;`: prefork
+/// stops at a NULL paramsubst (a failed `(e)` re-lex). No args; pushes
+/// Bool(PREFORK_CUT) without clearing it. The compiler checks it after each
+/// expansion segment of a word (true: keep the prefix assembled so far, plus
+/// a literal `"` for an opening DQ, and skip the word's remaining segments,
+/// c:1878) and after each word (true: push the later words as their
+/// unexpanded source text).
+pub const BUILTIN_PREFORK_CUT_CHECK: u16 = 689;
 
 /// EXTEND step of typeset paren-init packing. Pops `argc` values:
 /// [base, e1, …, eN] — base is either the opener (`name=(` /
@@ -18818,6 +18861,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // name that is not a function falls through to the external spawn,
         // which still needs the carrier.
         let exec_dash = take_exec_dash();
+        PREFORK_CUT.with(|c| c.set(false)); // the words are complete
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
         if status.is_none() {
             EXEC_DASH.with(|c| c.set(exec_dash));
@@ -19732,6 +19776,7 @@ impl ShellExecutor {
         // c:Src/exec.c:772-776 — BINF_DASH reaches `execute()` only; every
         // other route below runs the command without it.
         let exec_dash = EXEC_DASH.with(|c| c.replace(false));
+        PREFORK_CUT.with(|c| c.set(false)); // the words are complete
         // Native p10k API: the `p10k(){ zshrs-p10k-api "$@" }` stub's
         // body lands here (the name is neither function nor builtin).
         // Route into the engine instead of a PATH miss.

@@ -631,3 +631,15 @@ mod eight_bit_ifs_without_multibyte {
         assert_parity(r#"unsetopt multibyte; IFS=: ; s=$'a\xe9:b\x90'; print -rl -- ${=s} | od -c"#);
     }
 }
+
+/// c:Src/subst.c:142-147 / c:326-327 — a NULL paramsubst (a failed `(e)`
+/// re-lex) ends prefork. The unquoted whole word it was in stays as an empty
+/// word, since prefork returns before its empty-node removal.
+mod e_flag_null_keeps_empty_word {
+    use super::*;
+
+    #[test]
+    fn whole_word_is_kept_empty() {
+        assert_parity(r#"a='$('; print -rl -- x ${(e)a} y; v=${(e)a}; print "[$v]"; arr=(one ${(e)a} two); print $#arr"#);
+    }
+}
