@@ -30,7 +30,10 @@ use zsh::zsh_h::{
 fn elt(s: &str, len: i32) -> sortelt {
     sortelt {
         orig: s.to_string(),
-        cmp: s.to_string(),
+        // `cmp` holds the UNMETAFIED bytes, which is why it is a `Vec<u8>` and
+        // not a `String` (zsh_h.rs:1389-1396): these fixtures are plain ASCII,
+        // so the two spellings coincide and the bytes are the string's own.
+        cmp: s.as_bytes().to_vec(),
         origlen: len,
         len,
     }
