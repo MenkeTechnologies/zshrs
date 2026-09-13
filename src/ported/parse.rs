@@ -3777,7 +3777,11 @@ pub fn yyerror(noerr: i32) {
     // names the token it died on.
     let t_opt: Option<String> = crate::ported::lex::LEX_ZSHLEXTEXT
         .with_borrow(|t| t.clone())
-        .map(|raw| crate::ported::lex::untokenize(&raw).to_string());
+        // C's `untokenize` maps EVERY token through `ztokens`, quote markers
+        // included (Snull → `'`, Dnull → `"`); zshrs's `lex::untokenize` is
+        // the value-stream variant that drops them, so `[[ x = "a\\b"( ]]`
+        // reported `a\\b( ]]` where zsh reports `"a\\b"( ]]`.
+        .map(|raw| crate::ported::lex::untokenize_ztokens(&raw));
     let t_bytes: Vec<u8> = t_opt
         .as_ref()
         .map(|s| s.as_bytes().to_vec())

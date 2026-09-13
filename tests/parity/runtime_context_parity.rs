@@ -330,6 +330,20 @@ mod control_and_history {
 mod cond_parse_errors {
     use super::*;
 
+    /// yyerror names the token with C's `untokenize` (c:Src/parse.c:2739),
+    /// which maps the quote markers back through `ztokens`; zshrs used the
+    /// value-stream untokenize that drops them, so the quotes vanished from
+    /// the message: `a\\b( ]]` where zsh says `"a\\b"( ]]`.
+    #[test]
+    fn parse_error_text_keeps_the_quotes_of_a_quoted_word() {
+        assert_stderr_parity(r#"[[ x = "a\\b"( ]]"#);
+        assert_stderr_parity(r#"[[ x = 'a\b'( ]]"#);
+        assert_stderr_parity(r#"[[ x = "a b"( ]]"#);
+        assert_stderr_parity(r#"[[ x = $'a\\b'( ]]"#);
+        // Control: an unquoted word already matched.
+        assert_stderr_parity(r#"[[ x = ab( ]]"#);
+    }
+
     /// A literal word renders identically in both shells.
     #[test]
     fn literal_word_is_reported_verbatim() {
