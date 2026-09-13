@@ -14906,22 +14906,17 @@ pub fn bin_read(
         let mut b = [0u8; 1];
         loop {
             let n = unsafe { libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1) };
-            let _diag_errno = io::Error::last_os_error().raw_os_error();
-            if n <= 0 && std::path::Path::new("/tmp/ZSHRS_READ_DIAG").exists() {
-                use std::io::Write as _;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/zshrs_readbyte.log")
-                {
-                    let _ = writeln!(f, "read_byte fd={} n={} errno={:?}", fd, n, _diag_errno);
-                }
-            }
+            // c:6671-6674 — `while ((val = read(readfd, bptr, nchars)) < 0) {
+            // if (errno != EINTR || errflag || …) break; }`. errno must be
+            // taken straight after the read: a diagnostic `Path::exists()`
+            // used to sit between the two, and its failing stat(2) replaced
+            // EINTR with ENOENT, so any signal landing during the read (a
+            // SIGCHLD, a trapped USR1) ended it as a read error with status 1.
+            let err = io::Error::last_os_error();
             match n {
                 1 => return Ok(Some(b[0])),
                 0 => return Ok(None),
                 -1 => {
-                    let err = io::Error::last_os_error();
                     if err.kind() == io::ErrorKind::Interrupted {
                         continue;
                     }
