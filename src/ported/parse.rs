@@ -9951,6 +9951,11 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
             zerr("parse error: expected `done'");
             return None;
         }
+        // c:1175 / c:1537 / c:1586 — `incmdpos = 0; zshlex();`: the word after
+        // the loop closer is not in command position, so under IGNORE_BRACES a
+        // `}` there is an ordinary word and `{ for i in 1; do :; done }` is a
+        // parse error, as in zsh.
+        set_incmdpos(false);
         zshlex();
         Some(body)
     } else if tok() == INBRACE_TOK {
@@ -9961,6 +9966,8 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
             zerr("parse error: expected `}'");
             return None;
         }
+        // c:1182 / c:1544 — the brace form clears incmdpos the same way.
+        set_incmdpos(false);
         zshlex();
         Some(body)
     } else if foreach_style || isset(CSHJUNKIELOOPS) {

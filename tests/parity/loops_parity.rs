@@ -486,3 +486,26 @@ mod word_list_expansion_error {
         assert_parity("for w in a b; do print $w; done; print rc=$?");
     }
 }
+
+/// c:Src/parse.c:1175 / :1537 / :1586 (and :1182 / :1544 for the brace form)
+/// — `incmdpos = 0; zshlex();` after the loop closer. Under IGNORE_BRACES a
+/// bare `}` is a reserved word only in command position, so `{ for …; done }`
+/// is a parse error in zsh. zshrs lexed past `done` in command position.
+mod closing_brace_after_done_under_ignorebraces {
+    use super::*;
+
+    #[test]
+    fn a_brace_right_after_done_is_a_parse_error() {
+        assert_parity("setopt ignorebraces; eval '{ for i in 1; do print $i; done }' 2>/dev/null; print rc=$?");
+        assert_parity("setopt ignorebraces; eval '{ while false; do :; done }' 2>/dev/null; print rc=$?");
+        assert_parity("setopt ignorebraces; eval '{ select x in; do :; done }' 2>/dev/null; print rc=$?");
+    }
+
+    #[test]
+    fn other_closers_and_the_default_options_are_unchanged() {
+        assert_parity("setopt ignorebraces; eval '{ if true; then print t; fi }'; print rc=$?");
+        assert_parity("setopt ignorebraces; eval '{ repeat 1 print r }'; print rc=$?");
+        assert_parity("{ for i in 1; do print $i; done }; for i in 1 2; do print $i; done | cat");
+        assert_parity("for i in 1; { print brace $i }; print next");
+    }
+}
