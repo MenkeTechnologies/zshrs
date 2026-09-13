@@ -742,3 +742,17 @@ mod elapsed_seconds_ternary {
         assert_parity(r#"SECONDS=40; sec=$SECONDS; eval "print -P '%(${sec}S.true.false) %($((sec+30))S.true.false)'""#);
     }
 }
+
+/// c:Src/prompt.c:931-938 — `%x` goes through `promptpath(…, arg, 0)`, so
+/// `%Nx` keeps the last N components of the file name and `%-Nx` the first
+/// N, like `%Nd`. The port printed the whole name whatever N was.
+mod script_file_name_components {
+    use super::*;
+
+    #[test]
+    fn numeric_argument_trims_the_file_name() {
+        assert_parity(
+            r#"d=$(mktemp -d); mkdir -p $d/sub/dir; print 'print -P "%1x|%2x|%-1x"' > $d/sub/dir/sfile; source $d/sub/dir/sfile; command rm -rf $d"#,
+        );
+    }
+}

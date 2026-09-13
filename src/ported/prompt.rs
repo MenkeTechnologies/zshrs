@@ -1783,7 +1783,11 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             })
                             .unwrap_or_else(|| "zsh".to_string())
                     };
-                    stradd(bv, &nam);
+                    // c:934 / c:937 — `promptpath(…, arg, 0)`: `%Nx` keeps the
+                    // last N path components and `%-Nx` the first N, like `%Nd`.
+                    // The port stradd'ed the whole name and ignored N.
+                    let s = promptpath(&nam, arg as usize, false, "");
+                    stradd(bv, &s);
                 }
                 // c:Src/prompt.c:889-900 — `%e` (function-stack depth):
                 //   int depth = 0;
