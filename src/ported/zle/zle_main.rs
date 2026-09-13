@@ -2308,9 +2308,12 @@ pub const MAXFOUND: usize = 4; // c:1925
 #[allow(non_camel_case_types)]
 pub struct findfunc {
     // c:1927
-    /// Target Thingy we're searching for; matched against scan key.
-    /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
-    pub func: Option<usize>, // c:1928
+    /// Target Thingy we're searching for; matched against each binding.
+    /// !!! WARNING: TYPE DIVERGENCE — C holds the `Thingy` pointer and
+    /// compares pointers (c:1939). zshrs's keymap entries are separate
+    /// `Thingy` values per binding, so identity is the thingy NAME, the
+    /// same key `thingytab` uses.
+    pub func: Option<String>, // c:1928
     /// Hit counter; capped at MAXFOUND.
     pub found: usize, // c:1929
     /// Accumulated message: " is on KEY1 KEY2 ..." or similar.
@@ -2322,53 +2325,51 @@ pub struct findfunc {
 /// from `Src/Zle/zle_main.c:1935`. Per-keymap scan callback for
 /// `describe-key-briefly`: when `func` matches the target in `ff`,
 /// appends `" <seq>"` to `ff.msg`, capped at MAXFOUND hits.
-pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {
+pub fn scanfindfunc(seq: &[u8], func: Option<&Thingy>, ff: &mut findfunc) {
     // c:1935
-    const MAXFOUND: usize = 3; // c:1957
-                               // c:1939 — `if (func != ff->func) return`. Compare by widget name.
-    let want = ff.func.map(|i| i.to_string()).unwrap_or_default();
-    if !want.is_empty() && func != want {
+    // c:1939 — `if(func != ff->func) return;` (identity by name, see findfunc).
+    if func.map(|t| t.nam.as_str()) != ff.func.as_deref() {
         return;
     }
-    // c:1942 — `if (!ff->found++) ff->msg = appstr(...," is on")`.
+    // c:1941-1942 — `if (!ff->found++) ff->msg = appstr(ff->msg, " is on");`
     if ff.found == 0 {
         ff.msg.push_str(" is on");
     }
     ff.found += 1;
     if ff.found <= MAXFOUND {
-        // c:1944
+        // c:1943
+        let b = crate::ported::zle::zle_utils::bindztrdup(seq); // c:1944
         ff.msg.push(' '); // c:1946
-        ff.msg.push_str(seq); // c:1947 bindztrdup
+        ff.msg.push_str(&b); // c:1947
     }
 }
 
-/// Where is command
-/// Port of whereis(UNUSED(char **args)) from zle_main.c
-pub fn whereis(widget_name: &str) -> Vec<String> {
-    let mut bindings = Vec::new();
-    let tab = keymapnamtab().lock().unwrap();
-    for (name, node) in tab.iter() {
-        let km = &node.keymap;
-        // Check single char bindings
-        for (i, opt) in km.first.iter().enumerate() {
-            if let Some(t) = opt {
-                if t.nam == widget_name {
-                    bindings.push(format!("{}:{}", name, printbind(&[i as u8])));
-                }
-            }
-        }
-
-        // Check multi-char bindings
-        for (seq, kb) in &km.multi {
-            if let Some(ref t) = kb.bind {
-                if t.nam == widget_name {
-                    bindings.push(format!("{}:{}", name, printbind(seq)));
-                }
-            }
-        }
+/// Port of `int whereis(UNUSED(char **args))` from
+/// `Src/Zle/zle_main.c:1954-1972` — the `where-is` widget.
+pub fn whereis() -> i32 {
+    // c:1954
+    let mut ff = findfunc::default(); // c:1956
+    // c:1958-1959 — `if (!(ff.func = executenamedcommand("Where is: "))) return 1;`
+    let Some(name) = crate::ported::zle::zle_misc::executenamedcommand("Where is: ") else {
+        return 1; // c:1959
+    };
+    ff.found = 0; // c:1960
+    ff.msg = crate::ported::utils::nicedup(&name, 0); // c:1961
+    ff.func = Some(name);
+    // c:1962 — `scankeymap(curkeymap, 1, scanfindfunc, &ff);`
+    let km_name = curkeymapname().clone();
+    if let Some(km) = openkeymap(&km_name) {
+        crate::ported::zle::zle_keymap::scankeymap(&km, 1, &mut |seq, func, _str| {
+            scanfindfunc(seq, func, &mut ff)
+        });
     }
-
-    bindings
+    if ff.found == 0 {
+        ff.msg.push_str(" is not bound to any key"); // c:1963-1964
+    } else if ff.found > MAXFOUND {
+        ff.msg.push_str(" et al"); // c:1965-1966
+    }
+    crate::ported::zle::zle_utils::showmsg(&ff.msg); // c:1967
+    0 // c:1969
 }
 
 /// Port of `int recursiveedit(UNUSED(char **args))` from
@@ -3462,7 +3463,7 @@ mod ztmout_findfunc_tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let mut f = findfunc {
-            func: Some(42),
+            func: Some("beginning-of-line".to_string()),
             found: 0,
             msg: String::new(),
         };
@@ -4885,32 +4886,52 @@ mod tests {
         assert_eq!(KUNGETBUF.lock().unwrap().len(), 6);
     }
 
-    /// c:1142 — `whereis(unknown)` returns empty Vec.
-    #[test]
-    fn whereis_unknown_widget_returns_empty() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        let r = whereis("__definitely_not_a_widget_xyz__");
-        assert!(r.is_empty(), "unknown widget → empty");
-    }
-
-    /// c:1142 — `whereis` returns Vec<String> (type pin).
-    #[test]
-    fn whereis_returns_vec_string_type() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        let _: Vec<String> = whereis("any");
-    }
-
-    /// c:1142 — `whereis` is deterministic.
-    #[test]
-    fn whereis_is_deterministic() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        let first = whereis("unknown_xyz");
-        for _ in 0..5 {
-            assert_eq!(whereis("unknown_xyz"), first);
+    fn thingy_named(nam: &str) -> Thingy {
+        Thingy {
+            nam: nam.to_string(),
+            flags: 0,
+            rc: 0,
+            widget: None,
         }
+    }
+
+    /// c:1939 — a binding to a different widget (or an unbound slot) adds
+    /// nothing; `whereis` then reports "is not bound to any key" (c:1963-1964).
+    #[test]
+    fn scanfindfunc_ignores_other_widgets() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut ff = findfunc {
+            func: Some("beginning-of-line".to_string()),
+            found: 0,
+            msg: "beginning-of-line".to_string(),
+        };
+        scanfindfunc(b"x", Some(&thingy_named("end-of-line")), &mut ff);
+        scanfindfunc(b"y", None, &mut ff);
+        assert_eq!(ff.found, 0);
+        assert_eq!(ff.msg, "beginning-of-line");
+    }
+
+    /// c:1941-1947 — the first hit adds " is on", every hit up to MAXFOUND
+    /// (4, c:1925) appends " <seq>", later hits only count, so `whereis`
+    /// can add " et al" (c:1965-1966).
+    #[test]
+    fn scanfindfunc_lists_up_to_maxfound_then_only_counts() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let t = thingy_named("beginning-of-line");
+        let mut ff = findfunc {
+            func: Some("beginning-of-line".to_string()),
+            found: 0,
+            msg: "beginning-of-line".to_string(),
+        };
+        for seq in [b"a", b"b", b"c", b"d", b"e"] {
+            scanfindfunc(seq, Some(&t), &mut ff);
+        }
+        assert_eq!(ff.found, 5);
+        // c:Src/Zle/zle_utils.c:1281 — bindztrdup double-quotes each sequence.
+        assert_eq!(ff.msg, r#"beginning-of-line is on "a" "b" "c" "d""#);
+        assert!(ff.found > MAXFOUND);
     }
 
     /// c:1280 — `resetprompt` is idempotent / safe.
@@ -5019,15 +5040,6 @@ mod tests {
         let _: i32 = describekeybriefly();
     }
 
-    /// c:1142 — `whereis("")` empty widget returns empty Vec.
-    #[test]
-    fn whereis_empty_widget_returns_empty() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        let r = whereis("");
-        assert!(r.is_empty(), "empty widget → empty Vec");
-    }
-
     /// c:1173 — `recursiveedit` returns i32 (compile-time type pin).
     #[test]
     fn recursiveedit_returns_i32_type() {
@@ -5042,19 +5054,6 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = execimmortal("", &[]);
-    }
-
-    /// c:1142 — `whereis` is deterministic for stable lookup.
-    #[test]
-    fn whereis_stable_lookup_deterministic() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        for w in ["", "forward-char", "__nonexistent_widget__"] {
-            let first = whereis(w);
-            for _ in 0..3 {
-                assert_eq!(whereis(w), first, "whereis({:?}) must be deterministic", w);
-            }
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -5150,13 +5149,5 @@ mod tests {
             "execimmortal exit code {} must fit u8",
             r
         );
-    }
-
-    /// c:1142 — `whereis` returns Vec<String> (compile-time pin, alt).
-    #[test]
-    fn whereis_returns_vec_string_pin_alt() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        let _: Vec<String> = whereis("any");
     }
 }

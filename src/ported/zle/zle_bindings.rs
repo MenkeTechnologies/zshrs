@@ -890,6 +890,8 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // via `bindk->nam` check. The Rust dispatch path doesn't
         // need a fn pointer for them; mapped here so the keymap
         // lookup yields a valid `Thingy` rather than no-op.
+        // c:Src/Zle/zle_main.c:1954 — iwidgets.list `where-is` → whereis.
+        "where-is" => Some(|_| super::zle_main::whereis()),
         "execute-named-cmd" => Some(|_| 0),
         "execute-last-named-cmd" => Some(|_| 0),
         // Remaining iwidgets.list entries — each maps to its already-

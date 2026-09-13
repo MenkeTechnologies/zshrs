@@ -147,7 +147,6 @@ zpty -w -n w $'\r'"#,
 /// `where-is` (c:Src/Zle/zle_main.c:1956-1972) reads a widget name through
 /// the same `Where is: ` prompt and reports its bindings with showmsg.
 #[test]
-#[ignore = "zshrs gap: the where-is widget has no dispatch arm and whereis in zle_main.rs is not the C widget"]
 fn where_is_reports_the_bindings_of_a_named_widget() {
     assert_same_verdict(
         &driver(
