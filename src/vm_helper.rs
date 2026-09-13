@@ -5811,9 +5811,15 @@ impl ShellExecutor {
             hashed_prog = None;
         }
         let mut spawn_arg0: String = cmd.to_string();
-        // c:Src/exec.c:772-776 — "if the pre-command `-' was given, we add
-        // `-' to the front of argv[0] for this command."
-        if crate::fusevm_bridge::take_exec_dash() {
+        // c:Src/exec.c:758-776 — "If ARGV0 is in the commands environment, we
+        // use that as argv[0] for this external command" and unsetenv it; else
+        // "if the pre-command `-' was given, we add `-' to the front of
+        // argv[0] for this command."
+        let exec_dash = crate::fusevm_bridge::take_exec_dash();
+        let argv0_env = std::env::var("ARGV0").ok(); // c:760 zgetenv("ARGV0")
+        if let Some(z) = &argv0_env {
+            spawn_arg0 = z.clone(); // c:761
+        } else if exec_dash {
             spawn_arg0 = format!("-{}", cmd); // c:775-776
         }
         let mut spawn_args: Vec<String> = args.to_vec();
@@ -5824,6 +5830,9 @@ impl ShellExecutor {
             {
                 use std::os::unix::process::CommandExt as _;
                 command.arg0(&spawn_arg0);
+            }
+            if argv0_env.is_some() {
+                command.env_remove("ARGV0"); // c:768 unsetenv("ARGV0")
             }
             // c:Src/exec.c execute — C unmetafies every arg before the
             // execve (the child must see raw bytes, not the shell's

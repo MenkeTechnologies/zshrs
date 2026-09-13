@@ -533,3 +533,15 @@ mod shwordsplit_quoted_scalar_splat {
         assert_parity(r#"setopt shwordsplit; var="a b"; printf "[%s]" "${var[@]}"; x=("${var[@]}"); print $#x; printf "[%s]" ${var[@]}"#);
     }
 }
+
+/// c:Src/exec.c:758-770 — "If ARGV0 is in the commands environment, we use
+/// that as argv[0] for this external command", then `unsetenv("ARGV0")` so
+/// the command does not inherit it.
+mod argv0_environment_variable {
+    use super::*;
+
+    #[test]
+    fn sets_argv0_and_is_not_exported() {
+        assert_parity(r#"ARGV0=foo /bin/sh -c 'echo $0'; ARGV0=foo sh -c 'echo $0'; ARGV0=foo /usr/bin/env | grep -c ARGV0"#);
+    }
+}
