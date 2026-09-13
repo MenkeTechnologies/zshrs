@@ -367,6 +367,22 @@ mod split_flag_over_nested_substitution {
     }
 }
 
+/// c:Src/subst.c:566-620 — multsub splits a `${=x:-word}` default word on
+/// every ISEP char, a `Dash` token included once the loop turns it back into
+/// `-`, and skips the whole run of separators after a cut.
+mod default_word_split_on_non_whitespace_ifs {
+    use super::*;
+
+    #[test]
+    fn dash_and_dot_separators_split_the_default_word() {
+        assert_parity(
+            r#"f() { local IFS=.-; print -l ${=1:-1-2.3-4}; }; f
+g() { local IFS=-; print -rl -- ${=1:-a--b} ${=1:--a}; }; g
+h() { local IFS=:; print -rl -- ${=1:-:a::b:}; }; h"#,
+        );
+    }
+}
+
 /// c:Src/params.c:1741-1760 — a lowercase `(i)`/`(r)` scan of an association
 /// that matches nothing yields an empty SCALAR (only `(I)`/`(R)` accept an
 /// empty array), so RC_EXPAND_PARAM keeps the surrounding word.

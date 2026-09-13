@@ -1701,10 +1701,81 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     let mut list = LinkList::default(); // c:565
     list.push_back(x.clone()); // c:565
 
+    // c:566-620 — the source-word caller (c:3216-3218, PREFORK_SHWORDSPLIT |
+    // PREFORK_SPLIT) gets C's own loop: a `Dash` token is turned back into
+    // `-` where the loop visits it (c:574-575); an unquoted, non-token ISEP
+    // char ends the node and the run of non-token ISEP chars after it is
+    // skipped (c:580-586), so no empty field is produced between separators
+    // (`IFS=-; ${=1:-a--b}` is `a` `-b`: the run stops at the second Dash
+    // token, which starts the next node unconverted).
+    if pf_flags & PREFORK_SPLIT != 0 && pf_flags & PREFORK_SHWORDSPLIT != 0 {
+        let is_tok = |c: char| matches!(c as u32, 0x80..=0x9F); // c:576 itok
+        let mut chars: Vec<char> = x.chars().collect();
+        let mut nodes: Vec<String> = Vec::new();
+        let mut start = 0_usize;
+        let mut ended_on_sep = false;
+        let (mut inq, mut inp) = (false, 0_i32); // c:569
+        let mut i = 0_usize;
+        while i < chars.len() {
+            if chars[i] == Dash {
+                chars[i] = '-'; // c:574-575
+            }
+            let mut rawc: Option<char> = None;
+            let c = chars[i];
+            if is_tok(c) {
+                rawc = Some(c); // c:576-579
+            } else {
+                // !!! RUST-ONLY DIVERGENCE: the default word reaches here as raw
+                // source, so a `$( … )` paren may still be ASCII where C always
+                // sees Inpar/Outpar. Track it the same way so the command
+                // substitution stays one node until prefork runs it.
+                if c == '(' {
+                    inp += 1;
+                } else if c == ')' {
+                    inp -= 1;
+                }
+                if !inq && inp == 0 && is_ifs_sep(c) {
+                    nodes.push(chars[start..i].iter().collect()); // c:582 `*x = '\0'`
+                    i += 1;
+                    while i < chars.len() {
+                        if is_tok(chars[i]) {
+                            rawc = Some(chars[i]); // c:584-588
+                            break;
+                        }
+                        if !is_ifs_sep(chars[i]) {
+                            break; // c:590-591
+                        }
+                        i += 1;
+                    }
+                    if i >= chars.len() {
+                        ms_flags |= MULTSUB_WS_AT_END; // c:594
+                        ended_on_sep = true;
+                        break;
+                    }
+                    start = i; // c:597 insertlinknode(&foo, n, x)
+                }
+            }
+            match rawc {
+                Some(Dnull) | Some(Snull) | Some(Tick) => inq = !inq, // c:601-606
+                Some(Inpar) => inp += 1,                               // c:607-609
+                Some(Outpar) => inp -= 1,                              // c:610-612
+                Some(Bnull) | Some(Bnullkeep) => i += 1,               // c:613-618
+                _ => {}
+            }
+            i += 1;
+        }
+        if !ended_on_sep {
+            nodes.push(chars[start..].iter().collect());
+        }
+        list = LinkList::default();
+        for n in nodes {
+            list.push_back(n);
+        }
+    } else if pf_flags & PREFORK_SPLIT != 0 {
     // C lines 568-619: PREFORK_SPLIT walks chars looking for ISEP
     // separators outside quotes/parens. On hit, NUL-terminate and
-    // start a new linknode.
-    if pf_flags & PREFORK_SPLIT != 0 {
+    // start a new linknode. This spacesplit-shaped form serves the value
+    // callers that pass PREFORK_SPLIT alone (`${=var}`, cmdsubst output).
         // c:567 — split on IFS, faithfully mirroring `spacesplit`
         // (Src/utils.c:3711): IFS chars come in two classes — IWSEP
         // (space/tab/newline; the leading strip above already removed a
