@@ -58,7 +58,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN, OPEN_PUMPED};
+use crate::zpty_probe::{assert_same_dump, assert_same_verdict, sq, DRAIN, OPEN, OPEN_PUMPED};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Hook functions — these DO run, and must keep running
@@ -119,6 +119,65 @@ fn periodic_runs_on_its_period() {
 #[test]
 fn chpwd_runs_on_a_directory_change() {
     assert_same_verdict(&hooks_driver(), "CHPWD", "chpwd ran after cd");
+}
+
+/// What `preexec` is HANDED, not just whether it runs. `Src/init.c` loop()
+/// passes `$1` = the history line when `curline.histnum == curhist`, `$2` =
+/// `getjobtext(prog)` and `$3` = `getpermtext(prog)`. Every plugin that
+/// times or records commands (p10k, atuin-style hooks) reads them.
+///
+/// The typed lines cover each history bookkeeping path in `hend`: a plain
+/// line, a duplicate (reuses the top entry, c:Src/hist.c:1612), a
+/// leading-space line (HIST_IGNORE_SPACE temporary entry dropped by the next
+/// line, c:1574), extra blanks (HIST_REDUCE_BLANKS), an alias, a function
+/// definition and a two-line `for`.
+fn preexec_args_driver(hist_setup: &str) -> String {
+    let setup = format!(
+        r#"HISTFILE=$OUTFILE.hist; {hist_setup}; alias ll="print  aliased"; preexec(){{ print -r -- "[$1] [$2] [$3]" >> $OUTFILE }}"#
+    );
+    let lines = [
+        "print one",
+        "print two",
+        "print two",
+        " print  three",
+        "print   \"a  b\"   c",
+        "ll x",
+        "f() { print x; }",
+        "for i in 1; do",
+        " print $i; done",
+    ];
+    let typed: String = lines
+        .iter()
+        .map(|l| format!("zpty -w w {}; pump\n", sq(l)))
+        .collect();
+    format!(
+        "export ZSHRS_HISTORY=0\n{OPEN_PUMPED}zpty -w w {}; pump\n{typed}zpty -d w\nrm -f $OUTFILE.hist\n",
+        sq(&setup)
+    )
+}
+
+#[test]
+fn preexec_args_match_with_default_history_options() {
+    assert_same_dump(
+        &preexec_args_driver(":"),
+        "preexec $1/$2/$3 with no history options",
+    );
+}
+
+/// The option set that exposed the `$1` gaps: HIST_IGNORE_DUPS emptied `$1`
+/// for a duplicate, HIST_IGNORE_SPACE + HIST_REDUCE_BLANKS stripped the
+/// leading space and emptied the line after it, SHARE_HISTORY emptied it
+/// once another session had written the file.
+#[test]
+fn preexec_args_match_with_dup_space_blank_share_options() {
+    assert_same_dump(
+        &preexec_args_driver(
+            "setopt extendedhistory histexpiredupsfirst histfindnodups histignoredups \
+             histignorespace histreduceblanks histsubstpattern sharehistory; \
+             HISTSIZE=999999999 SAVEHIST=99999999",
+        ),
+        "preexec $1/$2/$3 under hist_ignore_dups/space, reduce_blanks, share_history",
+    );
 }
 
 

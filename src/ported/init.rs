@@ -19,7 +19,7 @@ use crate::ported::signals_h::dont_queue_signals;
 use crate::ported::text::getpermtext;
 use crate::ported::utils::{callhookfunc, errflag, movefd, unmeta, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
-    eprog, hookdef, interact, islogin, isset, jobbing, Eprog, CONTINUEONERROR, EMULATE_KSH,
+    eprog, hookdef, interact, islogin, isset, jobbing, CONTINUEONERROR, EMULATE_KSH,
     EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOKF_ALL,
     HOOK_SUFFIX, HUP, IGNOREEOF, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND,
     TERM_BAD, TERM_NOUP, TERM_UNKNOWN, ZEXIT_NORMAL, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
@@ -2397,7 +2397,16 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         use_exit_printed.store(0, Ordering::SeqCst); // c:153
         intr(); // c:154
         crate::ported::lex::lexinit(); // c:155
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // C's parse_event builds the event's wordcode Eprog, and the preexec
+        // call below renders `$2`/`$3` from it (c:210-211 getjobtext /
+        // getpermtext). zshrs's parse_event returns the fusevm AST, which the
+        // text renderers cannot walk, so record the event's source as the
+        // lexer consumes it (the same echo buffer funcdef bodies use) and
+        // compile it to an Eprog only if a preexec hook is present.
+        let event_mark = (toplevel != 0).then(crate::funcdef_capture::body_mark_begin);
         prog = crate::ported::parse::parse_event(ENDINPUT as i32); // c:156
+        let event_src = event_mark.and_then(crate::funcdef_capture::body_text);
         if prog.is_none() {
             // c:156
             hend(None); // c:158
@@ -2495,39 +2504,49 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     }
                     drop(hr);
                     drop(cl);
-                    // c:199 — addlinknode(args, dupstring(getjobtext(prog, NULL)))
-                    // Eprog↔ZshProgram bridge not yet in place; pass a
-                    // freshly-allocated empty eprog so getjobtext/getpermtext
-                    // return their NULL-prog representation. Real text comes
-                    // from src/vm_helper once that bridge lands.
-                    let placeholder: Eprog = Box::new(eprog {
-                        flags: 0,
-                        len: 0,
-                        npats: 0,
-                        nref: 0,
-                        pats: Vec::new(),
-                        prog: Vec::new(),
-                        strs: None,
-                        shf: None,
-                        dump: None,
-                        strs_metafied: false, // no pool (strs: None) — flag unused
+                    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                    // `prog` here is the fusevm AST, not a wordcode Eprog, so
+                    // compile the event source captured around parse_event
+                    // (see `event_mark` above) into the Eprog C would hold.
+                    // The compile is silent (`noerrs`) and leaves errflag as
+                    // it found it: it is a rendering aid, and a construct the
+                    // wordcode parser cannot take must not print an error or
+                    // stop the command. Such an event gets empty `$2`/`$3`.
+                    let event_prog: Option<eprog> = event_src.as_deref().and_then(|src| {
+                        let noerrs = crate::ported::utils::noerrs_lock();
+                        let saved_noerrs = std::mem::replace(&mut *noerrs.lock().unwrap(), 1);
+                        let saved_errflag = errflag.load(Ordering::SeqCst);
+                        // The event was lexed with `strin == 0`, where a `#`
+                        // starts a comment only under INTERACTIVECOMMENTS in
+                        // an interactive stdin shell (c:Src/lex.c:678-681).
+                        // parse_string lexes under `strin`, which would turn
+                        // comments on; `nocomments` restores that decision,
+                        // the way getoutput does around its own parse_string
+                        // (c:Src/exec.c:4720-4723).
+                        let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
+                        crate::ported::lex::LEX_NOCOMMENTS.with(|c| {
+                            c.set(
+                                interact()
+                                    && isset(SHINSTDIN)
+                                    && !isset(crate::ported::zsh_h::INTERACTIVECOMMENTS),
+                            )
+                        });
+                        let p = crate::ported::exec::parse_string(src, 0);
+                        crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
+                        errflag.store(saved_errflag, Ordering::SeqCst);
+                        *noerrs.lock().unwrap() = saved_noerrs;
+                        p
                     });
-                    let placeholder2: Eprog = Box::new(eprog {
-                        flags: 0,
-                        len: 0,
-                        npats: 0,
-                        nref: 0,
-                        pats: Vec::new(),
-                        prog: Vec::new(),
-                        strs: None,
-                        shf: None,
-                        dump: None,
-                        strs_metafied: false, // no pool (strs: None) — flag unused
-                    });
-                    let job_text = crate::ported::text::getjobtext(placeholder, None); // c:199
+                    // c:210 — addlinknode(args, dupstring(getjobtext(prog, NULL)))
+                    // c:211 — addlinknode(args, cmdstr = getpermtext(prog, NULL, 0))
+                    let (job_text, cmdstr) = match event_prog {
+                        Some(p) => (
+                            crate::ported::text::getjobtext(Box::new(p.clone()), None), // c:210
+                            getpermtext(Box::new(p), None, 0),                          // c:211
+                        ),
+                        None => (String::new(), String::new()),
+                    };
                     args.push(crate::ported::mem::dupstring(&job_text));
-                    // c:200 — getpermtext(prog, NULL, 0)
-                    let cmdstr = getpermtext(placeholder2, None, 0); // c:200
                     args.push(cmdstr.clone());
                     callhookfunc(
                         // c:202

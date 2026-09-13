@@ -5396,7 +5396,19 @@ pub(crate) fn hgetc() -> Option<char> {
     // (c:Src/lex.c:1719-1720). Recording both passes would duplicate every
     // here-document line inside a function body, the same way it used to
     // double-count them in `$LINENO`.
-    if counts_lineno {
+    //
+    // Characters an alias expansion pushed (`inpush(..., INP_ALIAS)`,
+    // c:Src/lex.c:1928) are not source text either: the parser records the
+    // alias NAME it already read, and a re-parse of the captured text expands
+    // it again. Recording the body as well turned `ll x` (alias
+    // ll='print aliased') into `llprint aliased x`. Same gate `ihwaddc` puts
+    // on the history line (c:Src/hist.c:360).
+    let alias_only = via_inbuf && {
+        let f = crate::ported::input::inbufflags.with(|f| f.get());
+        (f & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
+            == crate::ported::zsh_h::INP_ALIAS
+    };
+    if counts_lineno && !alias_only {
         crate::funcdef_capture::src_capture_add(c);
     }
 
@@ -5468,7 +5480,15 @@ fn hungetc(c: char) {
     // re-read in `hgetc` restores it (see `LEX_UNGET_SRCCAP`). The
     // `ends_with` test keeps the pair honest when the character was never
     // recorded (capture closed, or the `counts_lineno` gate refused it).
-    let did_capture = crate::funcdef_capture::src_capture_back(c);
+    // An alias-frame character was never recorded (see the `alias_only` gate
+    // in `hgetc`), so it must not take back a recorded one that happens to
+    // match — c:Src/hist.c:1009, the same gate `ihungetc` applies.
+    let alias_only = {
+        let f = crate::ported::input::inbufflags.with(|f| f.get());
+        (f & (crate::ported::zsh_h::INP_ALIAS | crate::ported::zsh_h::INP_HIST))
+            == crate::ported::zsh_h::INP_ALIAS
+    };
+    let did_capture = !alias_only && crate::funcdef_capture::src_capture_back(c);
     crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.push_front(did_capture));
     if c == '\n' {
         // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
