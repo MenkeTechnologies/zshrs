@@ -60226,3 +60226,56 @@ Regression tests: `tests/parity/metasort_unmetafy_parity.rs`, twelve probes
 pinned to the oracle's own stdout BYTES (hex, because the expectations are not
 valid UTF-8) under both `LC_ALL=C` and `LC_ALL=en_US.UTF-8` — the two locales
 legitimately disagree for some inputs and both answers are zsh's.
+
+## #1146 — the runtime `stringsubst` process-substitution branch deletes `<(…)` / `>(…)` instead of running it — open (blocked)
+
+**Where.** `src/ported/subst.rs` `stringsubst`, the first-pass arm at ~652-695
+(`if (c == Inang || c == OUTANGPROC || (pos == 0 && c == Equals)) && chars[pos+1] == Inpar`).
+Its own comment says the real `getproc` / `getoutputfile` call "needs fork/exec
+… Until that lands". The body walks to the matching `Outpar` and
+`chars.drain(start..pos)`, so a word that reaches this pass with a process
+substitution loses the whole span and expands to its prefix and suffix alone.
+That is a structural shell, not a port of `c:Src/subst.c:245-274`, which
+calls `getproc(str, &rest)` (or `getoutputfile` for a leading `=(`) and splices
+`prefix + subst + rest`.
+
+**Why it is not wired to the existing port.** `getproc` and `getoutputfile`
+are fully ported in `src/ported/exec.rs` (4529 and 4377, no callers today).
+`getproc` keeps C's guard at `c:Src/exec.c:5068-5071`:
+
+    if (thisjob == -1) { zerr("process substitution %s cannot be used here", cmd); return NULL; }
+
+In C that guard passes at top level because `execpline` sets
+`thisjob = newjob = initjob()` (`c:Src/exec.c:1756`) before the command's words
+are preforked. zshrs has no such store on the ordinary command path.
+`jobs::THISJOB` is written only by:
+
+* `src/fusevm_bridge.rs:11490-11503`, the dynamic external-command path
+  (`$p hi`), right before `execcmd_exec`;
+* `src/fusevm_bridge.rs:3854`, `3934` and `7105`, the forked async-pipeline
+  paths, after the words were already expanded;
+* `src/ported/jobs.rs:2035` (`clearjobtab`, subshell setup).
+
+A compiled builtin or function call (`print …`) never has a current job while
+its words expand, so a faithful `getproc` call from this branch would print
+"process substitution … cannot be used here" for every use. Replacing the
+drain with that call would trade a silent deletion for a spurious error.
+
+**What currently avoids it.** The compiler handles process substitution
+itself (`ProcessSubIn` / `ProcessSubOut`, `src/fusevm_bridge.rs` `process_sub_in`),
+both for whole words and, since `ff5e01b008`, for `<(…)` / `>(…)` embedded in a
+word (`compile_word_str` splits the tokenized word). No measured shape reaches
+the runtime placeholder with a real `Inang` token today:
+`eval 'print P=<(print hi)'`, `eval 'cat <(print hi)'`,
+`x='P=<(print hi)'; eval print $x` and aliases all compile and match zsh;
+`x='<(print hi)'; print ${~x}` and `${(e)x}` do not re-tokenize the text in
+either shell (zsh reports `unknown file attribute: i` / prints it literally,
+and so does zshrs). There is therefore no user-visible divergence to pin yet.
+
+**Prerequisite for the port.** The command path in `src/fusevm_bridge.rs`
+that runs compiled simple commands and builtins needs the `c:Src/exec.c:1756`
+`thisjob = newjob = initjob()` store (restored like `c:1388` `thisjob = otj`)
+before word expansion, as the dynamic-external path at 11490-11503 already
+does. With that in place the subst.rs branch becomes
+`subst = if c == Equals { getoutputfile(..) } else { getproc(..) }` followed by
+the `c:250-273` splice, replacing the drain.
