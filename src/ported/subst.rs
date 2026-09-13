@@ -15497,7 +15497,7 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix(":-") {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let default_tokenized: String = rest_raw.chars().skip(2).collect();
-                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                let default: &str = if !default_tokenized.is_empty() {
                     default_tokenized.as_str()
                 } else {
                     default
@@ -15699,7 +15699,7 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let default_tokenized: String = rest_raw.chars().skip(1).collect();
-                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                let default: &str = if !default_tokenized.is_empty() {
                     default_tokenized.as_str()
                 } else {
                     default
@@ -15841,7 +15841,7 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix(":=") {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let default_tokenized: String = rest_raw.chars().skip(2).collect();
-                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                let default: &str = if !default_tokenized.is_empty() {
                     default_tokenized.as_str()
                 } else {
                     default
@@ -15915,7 +15915,7 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix('=') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let default_tokenized: String = rest_raw.chars().skip(1).collect();
-                let default: &str = if default_tokenized.chars().count() == default.chars().count() {
+                let default: &str = if !default_tokenized.is_empty() {
                     default_tokenized.as_str()
                 } else {
                     default
@@ -15990,7 +15990,7 @@ pub fn paramsubst(
             } else if let Some(alt) = r.strip_prefix(":+") {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let alt_tokenized: String = rest_raw.chars().skip(2).collect();
-                let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                let alt: &str = if !alt_tokenized.is_empty() {
                     alt_tokenized.as_str()
                 } else {
                     alt
@@ -16091,7 +16091,7 @@ pub fn paramsubst(
             } else if let Some(alt) = r.strip_prefix('+') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
                 let alt_tokenized: String = rest_raw.chars().skip(1).collect();
-                let alt: &str = if alt_tokenized.chars().count() == alt.chars().count() {
+                let alt: &str = if !alt_tokenized.is_empty() {
                     alt_tokenized.as_str()
                 } else {
                     alt

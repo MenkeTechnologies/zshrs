@@ -206,6 +206,15 @@ mod alternate_word_split_flags {
         assert_parity(r#"set Make "a b" c; print -rl -- ${=1+"$@"} ${=1:+"$@"}"#);
         assert_parity(r#"x=1; print -rl -- ${=x+a b} ${=x:+c d} ${x+e f}"#);
     }
+
+    /// c:Src/subst.c:3207-3228 — the default/alternate/assign word reaches
+    /// multsub with its lexer tokens, so a quoted span is one node of the
+    /// forced split and a tilde in `:=` still expands.
+    #[test]
+    fn quoted_spans_in_the_word_survive_a_forced_split() {
+        assert_parity(r#"print -rl -- ${=x:-'p q' r} ${=x:-"a \" b" c} ${=x:-"$(echo s t)" u}"#);
+        assert_parity(r#"unset z; print -rl -- ${z:=~/w "a b"}"#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
