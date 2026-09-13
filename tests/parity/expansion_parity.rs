@@ -232,6 +232,15 @@ mod alternate_word_split_flags {
         assert_parity(r#"cd "$(mktemp -d)" && touch boringfile && print -r -- ${${~:-*}//x/y} ${${~:-*}#x} ${${~:-*}%x} ${${~:-*}:#x}"#);
         assert_parity(r#"cd "$(mktemp -d)" && touch boringfile && print -r -- ${${~:-*}} ${${~:-*}:u} ${(U)${~:-*}} ${${~:-*}[1]}"#);
     }
+
+    /// c:Src/subst.c:3307-3310 — an `(A)` assignment leaves `isarr = 1`, so the
+    /// single-field collapse (c:3921-3924, `!isarr`) does not scalarize the
+    /// one-element array the outer expansion reads.
+    #[test]
+    fn split_array_assignment_keeps_array_shape() {
+        assert_parity(r#"unset array; print ${#${(A)=array=word}} ${${(A)=b=word}[1]} ${#${(A)=c=a b c}}"#);
+        assert_parity(r#"s=word; print ${#${=s}} ${#${(s: :)s}}"#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

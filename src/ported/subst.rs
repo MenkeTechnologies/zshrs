@@ -6191,6 +6191,10 @@ pub fn paramsubst(
         let mut spbreak_cleared = false;
         // c:2603 — `globsubst = 2` when this spec carries a single `~`.
         let mut globsubst_forced = false;
+        // c:3307-3310 — `isarr = 1; arrasg = 0;` after an `(A)` assignment: the
+        // value is the assigned array, which the c:3921-3924 single-field
+        // collapse (`force_split && !isarr`) must not turn back into a scalar.
+        let mut arrasg_assigned = false;
         // !!! WARNING: C clears its local globsubst after the default/alternate
         // word (c:3231-3233) and keeps only the tokens the word's own unquoted
         // substitutions produced under GLOB_SUBST. The port has no token-carrying
@@ -15907,6 +15911,10 @@ pub fn paramsubst(
                         // c:3263 (A) with (s) separator or `=` word-split
                         let parts = split_arrasg(&value);
                         exec_assignaparam(&var_name, parts);
+                        // c:3307-3310 — `aval = getfn(pm); isarr = 1;`
+                        split_parts = crate::ported::subst::arrays_get(&var_name);
+                        isarr = 1;
+                        arrasg_assigned = true;
                     } else if arrasg == 2 {
                         // c:3263 (AA) with (s) separator or `=` word-split
                         let parts = split_arrasg(&value);
@@ -15982,6 +15990,10 @@ pub fn paramsubst(
                         };
                         if arrasg == 1 {
                             exec_assignaparam(&var_name, split_arrasg(&value));
+                            // c:3307-3310 — `aval = getfn(pm); isarr = 1;`
+                            split_parts = crate::ported::subst::arrays_get(&var_name);
+                            isarr = 1;
+                            arrasg_assigned = true;
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
                         } else {
@@ -16057,6 +16069,10 @@ pub fn paramsubst(
                         };
                         if arrasg == 1 {
                             exec_assignaparam(&var_name, split_arrasg(&value));
+                            // c:3307-3310 — `aval = getfn(pm); isarr = 1;`
+                            split_parts = crate::ported::subst::arrays_get(&var_name);
+                            isarr = 1;
+                            arrasg_assigned = true;
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
                         } else {
@@ -23891,7 +23907,8 @@ pub fn paramsubst(
             // `isarr = nojoin ? 1 : 2` at c:3927 ever gets a chance, so even
             // `(@f)` stays scalar when the split yields one field —
             // `"${${(@f)$(echo hello)}[1]}"` is `h`, not `hello`.
-            let forced_split_to_one = (spsep.is_some() || force_split) && parts.len() == 1;
+            let forced_split_to_one =
+                (spsep.is_some() || force_split) && parts.len() == 1 && !arrasg_assigned; // c:3921-3924 `!isarr`
             // c:Src/subst.c:3881 `if (isarr) l->list.flags |= LF_ARRAY; else … &= ~LF_ARRAY;`
             // LF_ARRAY tracks `isarr`, NOT `nojoin`. The `(@)` word-flag sets
             // nojoin=2 (force-no-join) but does NOT make a SCALAR array-shaped:
