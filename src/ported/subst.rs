@@ -3552,6 +3552,16 @@ thread_local! {
     pub static DEFAULT_WORD_GLOB_PENDING: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
     /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// c:Src/subst.c:3231-3233 — after a default/alternate word's multsub,
+    /// `if (globsubst != 2) globsubst = 0;`: unless the spec forced `~`, the
+    /// final strcatsub (c:4352/4397/4436/4475) adds no glob tokens, so
+    /// `setopt globsubst; foo='boring*'; ${foo+"$foo"}` stays `boring*`. C's
+    /// globsubst is a paramsubst local; the port reads the global option at
+    /// the word's GLOB_SUBST expansion, so the `-`/`:-`/`+`/`:+` arms set this
+    /// for the bridge to read and clear.
+    pub static DEFAULT_WORD_GLOBSUBST_OFF: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
     /// Set by the bridge's `array_index_lookup` for the ONE paramsubst it
     /// runs on `${name[<already-expanded key>]}`. C checks bracket balance
     /// on the RAW subscript text (c:Src/params.c:2029-2045) and never sees the
@@ -6179,6 +6189,56 @@ pub fn paramsubst(
         // multsub. C's spbreak is one local; the port recomputes it from
         // pf_flags at the join/split block, so the reset has to be carried.
         let mut spbreak_cleared = false;
+        // c:2603 — `globsubst = 2` when this spec carries a single `~`.
+        let mut globsubst_forced = false;
+        // !!! WARNING: C clears its local globsubst after the default/alternate
+        // word (c:3231-3233) and keeps only the tokens the word's own unquoted
+        // substitutions produced under GLOB_SUBST. The port has no token-carrying
+        // value, so it hands the bridge two carriers instead: OFF (no glob of
+        // the finished value) and PENDING (glob it anyway), the latter set when
+        // an unquoted inner substitution delivered pattern characters.
+        let default_word_globsubst = |word: &str, value: &str, forced: bool| {
+            use crate::ported::zsh_h::{Bnull, Dnull, Qstring, Qtick, Snull, Stringg, Tick};
+            if forced {
+                return; // c:3232 `globsubst != 2`
+            }
+            DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.set(true));
+            if !crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) {
+                return;
+            }
+            let mut quote: Option<char> = None;
+            let mut escaped = false;
+            let mut unquoted_subst = false;
+            for c in word.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match quote {
+                    Some(q) => {
+                        if c == q {
+                            quote = None;
+                        }
+                    }
+                    None => {
+                        if c == Dnull || c == Snull || c == '"' || c == '\'' {
+                            quote = Some(c);
+                        } else if c == Bnull || c == '\\' {
+                            escaped = true;
+                        } else if matches!(c, '$' | '`') || [Stringg, Qstring, Tick, Qtick].contains(&c) {
+                            unquoted_subst = true;
+                        }
+                    }
+                }
+            }
+            if unquoted_subst {
+                let mut tokenized = value.to_string();
+                crate::ported::glob::tokenize(&mut tokenized);
+                if crate::ported::pattern::haswilds(&tokenized) {
+                    DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
+                }
+            }
+        };
 
         // c:Src/subst.c:3229-3232 — after the default/assign word's
         // `multsub`, C runs `spbreak = 0; if (globsubst != 2) globsubst = 0;`.
@@ -6356,6 +6416,7 @@ pub fn paramsubst(
                         ));
                         opt_state_set("globsubst", true);
                     }
+                    globsubst_forced = true; // c:2603 `globsubst = 2`
                     idx += 1;
                 }
                 continue;
@@ -15638,6 +15699,7 @@ pub fn paramsubst(
                     };
                     let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
                     value = ms_joined;
+                    default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
@@ -15747,6 +15809,7 @@ pub fn paramsubst(
                     };
                     let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(default, split_flags);
                     value = ms_joined;
+                    default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
@@ -16071,6 +16134,7 @@ pub fn paramsubst(
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
+                    default_word_globsubst(alt, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
@@ -16145,6 +16209,7 @@ pub fn paramsubst(
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
+                    default_word_globsubst(alt, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
                         if isarr == 0 {
