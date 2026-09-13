@@ -1270,17 +1270,21 @@ pub fn bin_zle_complete(name: &str, args: &[String], _ops: &options, _func: i32)
     } else {
         format!(".{}", args[1])
     };
+    rthingy(&lookup); // c:609
     let comp_widget = {
         let tab = thingytab().lock().unwrap();
-        tab.get(&lookup).and_then(|t| t.widget.clone())
+        tab.get(&lookup).and_then(|t| t.widget.clone()) // c:610 cw = t->widget
     };
-    let Some(cw) = comp_widget else {
-        return 1; // c:613-614
+    unrefthingy(&lookup); // c:611
+    // c:612-615 — `if (!cw || !(cw->flags & ZLE_ISCOMP)) {
+    //     zwarnnam(name, "invalid widget `%s'", args[1]); return 1; }`
+    let cw = match comp_widget {
+        Some(cw) if (cw.flags & ZLE_ISCOMP) != 0 => cw,
+        _ => {
+            crate::ported::utils::zwarnnam(name, &format!("invalid widget `{}'", args[1])); // c:613
+            return 1; // c:614
+        }
     };
-    // c:612 — `if (!cw || !(cw->flags & ZLE_ISCOMP)) return 1`.
-    if (cw.flags & ZLE_ISCOMP) == 0 {
-        return 1;
-    }
     // c:619 — `w->u.comp.fn = cw->u.fn`. Extract the base widget's
     // internal fn pointer; bail if the base isn't WIDGET_INT (the
     // C check `cw->flags & ZLE_ISCOMP` guarantees this in practice
@@ -1303,10 +1307,11 @@ pub fn bin_zle_complete(name: &str, args: &[String], _ops: &options, _func: i32)
             func: args[2].clone(), // c:621
         },
     });
-    rthingy(&args[0]);
+    rthingy(&args[0]); // c:622 rthingy(args[0])
     if bindwidget(w.clone(), &args[0]) != 0 {
         // c:622
-        freewidget(w);
+        freewidget(w); // c:623
+        crate::ported::utils::zwarnnam(name, &format!("widget name `{}' is protected", args[0])); // c:624
         return 1; // c:625
     }
     0 // c:629

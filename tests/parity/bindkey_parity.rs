@@ -311,3 +311,40 @@ fn bindkey_dash_a_vicmd_dash_L_emits_dash_a_prefix() {
     // per bindlistout c:1191.
     assert_contains_in_both("bindkey -a -L", r#"bindkey -a"#);
 }
+
+// ─── zle -C failure diagnostics (c:Src/Zle/zle_thingy.c:609-626) ───
+//
+// `bin_zle_complete` resolves the base through `rthingy` / `unrefthingy`
+// (c:609-611) and warns on both failure arms. The harness compares stdout
+// and exit status, so the diagnostics are folded into stdout with `2>&1`.
+
+#[test]
+fn zle_dash_C_warns_on_unknown_base_widget() {
+    // c:613 `zwarnnam(name, "invalid widget `%s'", args[1])`; zshrs returned
+    // 1 silently. The failed lookup must also leave `$widgets` unchanged.
+    assert_parity(
+        "zmodload zsh/zleparameter; a=${#widgets}; zle -C zzq-c zzq-nosuch _f 2>&1; print rc=$? $(( ${#widgets} - a ))",
+    );
+}
+
+#[test]
+fn zle_dash_C_warns_on_non_completion_base_widget() {
+    // Same arm, `cw` exists but lacks ZLE_ISCOMP.
+    assert_parity("zle -C zzq-c .self-insert _f 2>&1; print rc=$?");
+}
+
+#[test]
+fn zle_dash_C_warns_on_protected_widget_name() {
+    // c:622-626 — bindwidget refuses a TH_IMMORTAL name and C warns
+    // "widget name `%s' is protected"; the builtin stays bound.
+    assert_parity(
+        "zmodload zsh/zleparameter; zle -C .accept-line complete-word _f 2>&1; print rc=$? ${widgets[.accept-line]}",
+    );
+}
+
+#[test]
+fn zle_dash_C_valid_declaration_stays_silent() {
+    assert_parity(
+        "zmodload zsh/zleparameter; zle -C zzq-ok complete-word _f 2>&1; print rc=$? ${widgets[zzq-ok]}",
+    );
+}
