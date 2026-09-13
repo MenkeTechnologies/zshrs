@@ -340,6 +340,28 @@ pub struct ZshCompiler {
     /// `false` immediately before `compile_word_str` and skip the
     /// GLOB_SUBST_EXPAND emit when it comes back `true`.
     pub word_emitted_glob: bool,
+    /// Set while `compile_simple` compiles one argument word of a command
+    /// whose argv is globbed as a list. c:Src/exec.c:3357-3359 prefork runs
+    /// over the WHOLE argv first and c:3755-3757 `globlist(args, 0)` globs it
+    /// afterwards, stopping at the first error (c:Src/subst.c:494). While
+    /// set, [`ZshCompiler::emit_word_glob_expand`] records the word as
+    /// glob-eligible in `argv_word_globs` instead of emitting the per-word
+    /// op, and the argv loop emits one `BUILTIN_GLOBLIST` after every word
+    /// has been expanded.
+    pub argv_glob_defer: bool,
+    /// Whether the argument word just compiled under `argv_glob_defer`
+    /// wanted filename generation on an assembled VALUE (the
+    /// BUILTIN_GLOB_EXPAND shape).
+    pub argv_word_globs: bool,
+    /// Set by `compile_simple` for an argument word whose value no later
+    /// per-word op rewrites (no BUILTIN_GLOB_SUBST_EXPAND, no
+    /// BUILTIN_MAGIC_EQUALS_PREFORK). Only such a word may leave
+    /// BUILTIN_EXPAND_TEXT still carrying its glob tokens.
+    pub argv_text_defer_ok: bool,
+    /// Whether the argument word just compiled went through
+    /// BUILTIN_EXPAND_TEXT mode 10 and so reaches BUILTIN_GLOBLIST as
+    /// tokenized text.
+    pub argv_word_text_globs: bool,
 }
 
 impl Default for ZshCompiler {
@@ -388,6 +410,10 @@ impl ZshCompiler {
             word_seg_depth: 0,
             assign_builtin_arg_depth: 0,
             word_emitted_glob: false,
+            argv_glob_defer: false,
+            argv_word_globs: false,
+            argv_text_defer_ok: false,
+            argv_word_text_globs: false,
         }
     }
 
@@ -410,6 +436,17 @@ impl ZshCompiler {
     /// results C already treats as final (c:Src/glob.c `globlist` steps
     /// past the nodes `zglob` produced). See `word_emitted_glob`.
     fn emit_word_glob_expand(&mut self) {
+        // c:Src/exec.c:3755-3757 — a command's argv is globbed as one list
+        // after prefork has expanded every word; `compile_simple` collects
+        // the eligible words and emits BUILTIN_GLOBLIST once (see
+        // `argv_glob_defer`). Only the argument word itself is deferred: a
+        // redirect target (xpandredir, c:Src/glob.c:2161) and a sub-segment
+        // of a larger word keep their own op.
+        if self.argv_glob_defer && self.redir_word_depth == 0 && self.word_seg_depth == 0 {
+            self.argv_word_globs = true;
+            self.word_emitted_glob = true;
+            return;
+        }
         let builtin = self.glob_expand_builtin();
         self.builder.emit(Op::CallBuiltin(builtin, 0), 0);
         self.word_emitted_glob = true;
@@ -3255,7 +3292,18 @@ impl ZshCompiler {
         // paren-init arm packs its elements back into one via
         // BUILTIN_TYPESET_PAREN_PACK).
         let mut postassigns_started = false;
-        for word in &simple.words[precmd_skip + 1..] {
+        // c:Src/exec.c:3357-3359 prefork expands the whole argv, then
+        // c:3755-3757 `globlist(args, 0)` globs it, stopping at the first
+        // error (c:Src/subst.c:494): `print nomatch* =nosuchcmd` reports
+        // `nosuchcmd not found`, not the no-match. BUILTIN_GLOBLIST takes a
+        // 64-bit eligibility mask; a longer argv, and the typeset family
+        // (whose postassign words glob inside their own span), keep the
+        // per-word op.
+        let argv_words = &simple.words[precmd_skip + 1..];
+        let globlist_argv = !head_is_typeset_family && argv_words.len() <= 63;
+        let mut globlist_mask: u64 = 0;
+        let mut globlist_text_mask: u64 = 0;
+        for (argv_index, word) in argv_words.iter().enumerate() {
             // c:Src/parse.c:1986-1989 / c:2008-2050 — from a typeset-family
             // command's first `NAME=…` argument on, every word is a postassign,
             // globbed in execcmd_exec's builtin branch (c:Src/exec.c:4167-4285)
@@ -3391,6 +3439,29 @@ impl ZshCompiler {
                 self.assign_context_depth += 1;
             }
             self.word_emitted_glob = false;
+            // Raw-word tilde probe: the lexer emits TOKEN chars where it
+            // already recognised the shape — Equals = \u{8d}, Tilde =
+            // \u{98} (zsh_h.rs:161/183) — and leaves literals elsewhere
+            // (e.g. '~' after ':' in a path-list value). Accept every
+            // '='/':' × '~' spelling combination.
+            let word_has_assign_tilde =
+                ["=~", ":~", "=\u{98}", ":\u{98}", "\u{8d}~", "\u{8d}\u{98}"]
+                    .iter()
+                    .any(|p| word.contains(p));
+            // See the BUILTIN_MAGIC_EQUALS_PREFORK emit below.
+            let magic_prefork = (head_is_magic_equals
+                || (head_is_typeset_magic && word_has_assign_tilde))
+                && !word.contains('\u{9d}')
+                && !word.contains('\u{9e}')
+                && !word.contains('\u{9f}');
+            let word_globsubst = has_unquoted_param_or_subst(word);
+            let outer_glob_defer = std::mem::replace(&mut self.argv_glob_defer, globlist_argv);
+            let outer_word_globs = std::mem::replace(&mut self.argv_word_globs, false);
+            let outer_text_ok = std::mem::replace(
+                &mut self.argv_text_defer_ok,
+                globlist_argv && !word_globsubst && !magic_prefork,
+            );
+            let outer_text_globs = std::mem::replace(&mut self.argv_word_text_globs, false);
             if head_is_typeset_family
                 && !simple.typeset_reswd
                 && is_typeset_scalar_assign(word)
@@ -3402,6 +3473,16 @@ impl ZshCompiler {
             } else {
                 self.compile_word_str(word);
             }
+            if self.argv_word_globs {
+                globlist_mask |= 1u64 << argv_index;
+            }
+            if self.argv_word_text_globs {
+                globlist_text_mask |= 1u64 << argv_index;
+            }
+            self.argv_glob_defer = outer_glob_defer;
+            self.argv_word_globs = outer_word_globs;
+            self.argv_text_defer_ok = outer_text_ok;
+            self.argv_word_text_globs = outer_text_globs;
             if arg_is_assign {
                 self.assign_context_depth -= 1;
             }
@@ -3423,7 +3504,7 @@ impl ZshCompiler {
             // the fully assembled word — which is exactly C's single
             // `globlist` pass, substituted metachars included — so a
             // second pass here would re-glob generated filenames.
-            if has_unquoted_param_or_subst(word) && !self.word_emitted_glob {
+            if word_globsubst && !self.word_emitted_glob {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
                     0,
@@ -3444,25 +3525,30 @@ impl ZshCompiler {
             // quoted text is inert. Magic-equals expansion only acts
             // on UNQUOTED `=`/`~` anyway, so a word carrying quoted
             // spans skips the prefork emit entirely.
-            // Raw-word tilde probe: the lexer emits TOKEN chars where it
-            // already recognised the shape — Equals = \u{8d}, Tilde =
-            // \u{98} (zsh_h.rs:161/183) — and leaves literals elsewhere
-            // (e.g. '~' after ':' in a path-list value). Accept every
-            // '='/':' × '~' spelling combination.
-            let word_has_assign_tilde =
-                ["=~", ":~", "=\u{98}", ":\u{98}", "\u{8d}~", "\u{8d}\u{98}"]
-                    .iter()
-                    .any(|p| word.contains(p));
-            if (head_is_magic_equals || (head_is_typeset_magic && word_has_assign_tilde))
-                && !word.contains('\u{9d}')
-                && !word.contains('\u{9e}')
-                && !word.contains('\u{9f}')
-            {
+            // (`magic_prefork` above.)
+            if magic_prefork {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_MAGIC_EQUALS_PREFORK, 1),
                     0,
                 );
             }
+        }
+
+        // c:Src/exec.c:3755-3757 `globlist(args, 0)` — filename generation
+        // over the expanded argv, in order, stopping at the first error.
+        // Stack: the argv values, the assembled-value mask, the
+        // tokenized-text mask (EXPAND_TEXT mode 10 words).
+        if globlist_mask | globlist_text_mask != 0 {
+            self.builder.emit(Op::LoadInt(globlist_mask as i64), 0);
+            self.builder.emit(Op::LoadInt(globlist_text_mask as i64), 0);
+            self.builder.emit(
+                Op::CallBuiltin(
+                    crate::fusevm_bridge::BUILTIN_GLOBLIST,
+                    (argv_words.len() + 2) as u8,
+                ),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
         }
 
         // Every word from the first postassign on has been expanded: close
@@ -9518,6 +9604,27 @@ impl ZshCompiler {
         } else {
             base_mode
         };
+        // Mode 10: "unquoted command argument, glob deferred" — mode 0 but the
+        // glob-eligible words come back still tokenized instead of globbed.
+        // c:Src/exec.c:3357-3359 preforks the whole argv before c:3755-3757
+        // `globlist(args, 0)`; compile_simple emits BUILTIN_GLOBLIST for the
+        // word (see `argv_glob_defer`). Only a whole argument word whose
+        // value nothing else rewrites before the globlist qualifies
+        // (`argv_text_defer_ok`), and not a `${x:-*file}` default word, whose
+        // glob BUILTIN_DEFAULT_WORD_GLOB owns.
+        let defer_text_glob = mode == 0
+            && self.argv_glob_defer
+            && self.argv_text_defer_ok
+            && self.redir_word_depth == 0
+            && self.word_seg_depth == 0
+            && !default_word_glob_bracket;
+        let mode = if defer_text_glob {
+            self.argv_word_text_globs = true;
+            self.word_emitted_glob = true;
+            10
+        } else {
+            mode
+        };
         let idx = self.builder.add_constant(Value::str(preserved.as_str()));
         self.builder.emit(Op::LoadConst(idx), 0);
         self.builder.emit(Op::LoadInt(mode as i64), 0);
@@ -9538,9 +9645,12 @@ impl ZshCompiler {
         // pattern words that also need expand_glob to run from the
         // brace-expand builtin (kept legacy-compatible).
         let preserved_str = preserved.as_str();
+        // Mode 10 already brace-expanded inside EXPAND_TEXT, and its
+        // still-tokenized result must reach BUILTIN_GLOBLIST as is.
         let brace_emitted = !preserved_str.is_empty()
             && (preserved_str.contains('\u{8f}') || preserved_str.contains('\u{87}'))
-            && self.dq_context_depth == 0;
+            && self.dq_context_depth == 0
+            && !defer_text_glob;
         if brace_emitted {
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0),

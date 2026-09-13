@@ -1277,6 +1277,42 @@ fn glob_word_noting_errflag(raw: Value, skip_glob: bool) -> Value {
     out
 }
 
+/// Glob one BUILTIN_EXPAND_TEXT mode-10 result inside BUILTIN_GLOBLIST.
+/// EXPAND_TEXT left the glob-eligible words tokenized (their `haswilds`
+/// test, c:Src/glob.c:1230, ran on the tokenized word) and every other word
+/// untokenized, so the token test picks the same words out again; noglob was
+/// already applied there. The glob call and the empty-result shapes are the
+/// ones mode 0 uses.
+fn glob_tokenized_word(raw: Value) -> Value {
+    use std::sync::atomic::Ordering;
+    let words: Vec<String> = match &raw {
+        Value::Array(items) => items.iter().map(|v| v.to_str()).collect(),
+        other => vec![other.to_str()],
+    };
+    if !words.iter().any(|w| crate::ported::pattern::haswilds(w)) {
+        return raw;
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(words.len());
+    for w in words {
+        if !crate::ported::pattern::haswilds(&w) {
+            parts.push(w);
+            continue;
+        }
+        let ef = || crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR;
+        let before = ef();
+        let globbed = with_executor(|exec| exec.expand_glob(&w));
+        if before == 0 && ef() != 0 {
+            GLOB_WORD_ERRFLAG.with(|c| c.set(true)); // c:Src/exec.c:3760-3761
+        }
+        parts.extend(globbed);
+    }
+    if parts.len() == 1 {
+        Value::str(parts.into_iter().next().unwrap_or_default())
+    } else {
+        Value::array(parts.into_iter().map(Value::str).collect())
+    }
+}
+
 /// Status for a command whose words raised errflag, stored into LASTVAL:
 /// c:Src/exec.c:3760-3761 `lastval = 1` after a globlist error, else
 /// c:3523-3524 `if (!lastval) lastval = 1` after a prefork error.
@@ -3348,8 +3384,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `badcshglob` stays with the per-word glob path (glob_expand_word_value
     // feeds consume_badcshglob), so only the loop shape changes here.
     vm.register_builtin(BUILTIN_GLOBLIST, |vm, argc| {
+        let text_mask = vm.pop().to_int() as u64;
         let mask = vm.pop().to_int() as u64;
-        let n = (argc as usize).saturating_sub(1);
+        let n = (argc as usize).saturating_sub(2);
         let mut words: Vec<Value> = (0..n).map(|_| vm.pop()).collect();
         words.reverse();
         let noglob =
@@ -3359,8 +3396,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let stopped = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR)
                 != 0; // c:494 `!errflag`
-            if stopped || i >= 64 || mask & (1u64 << i) == 0 {
+            let bit = if i < 64 { 1u64 << i } else { 0 };
+            if stopped || (mask | text_mask) & bit == 0 {
                 out.push(word);
+            } else if text_mask & bit != 0 {
+                out.push(glob_tokenized_word(word)); // c:495 zglob
             } else {
                 out.push(glob_word_noting_errflag(word, noglob)); // c:495 zglob
             }
@@ -13423,7 +13463,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             .chars()
                             .skip(1)
                             .any(|c| c == crate::ported::zsh_h::Equals);
-                        if is_glob_pre {
+                        if is_glob_pre && mode == 10 {
+                            // Mode 10: the command's BUILTIN_GLOBLIST globs this
+                            // word after every argument has been expanded
+                            // (c:Src/exec.c:3357-3359 then c:3755-3757).
+                            vec![s_tok]
+                        } else if is_glob_pre {
                             // c:Src/exec.c:3755-3762 — an error raised here is a
                             // globlist error (`lastval = 1`); see GLOB_WORD_ERRFLAG.
                             let ef = || {
@@ -16324,8 +16369,10 @@ pub const BUILTIN_TYPESET_RESWD: u16 = 686;
 pub const BUILTIN_EXEC_DASH: u16 = 687;
 /// c:Src/exec.c:3755-3757 `globlist(args, 0)` over the WHOLE argument list,
 /// after prefork has expanded every word (c:3357-3359). Stack: the N
-/// expanded word values in source order, then an Int bitmask whose bit i
-/// marks word i as glob-eligible; argc = N + 1 (N <= 63). Globs the
+/// expanded word values in source order, then two Int bitmasks: bit i of the
+/// first marks word i as an assembled value to glob like BUILTIN_GLOB_EXPAND,
+/// bit i of the second marks it as a BUILTIN_EXPAND_TEXT mode-10 result that
+/// still carries its glob tokens; argc = N + 2 (N <= 63). Globs the
 /// eligible words in order and stops at the first error (c:Src/subst.c:494
 /// `for (…; !errflag && node; …)`), leaving later words as they are. Pushes
 /// one value per word (an Array where a glob expanded).

@@ -456,3 +456,34 @@ mod modifier_a_collapses_dotdot_before_symlinks {
         );
     }
 }
+
+/// c:Src/exec.c:3357-3359 prefork expands the whole argv (c:Src/subst.c:100-193)
+/// and c:3755-3757 `globlist(args, 0)` globs it afterwards, stopping at the
+/// first error (c:Src/subst.c:494). An `=cmd` failure in a LATER word is
+/// therefore reported before an earlier word's glob runs. Redirect targets
+/// (c:Src/glob.c:2161 xpandredir) and assignment values stay per word.
+mod argv_prefork_before_glob {
+    use super::*;
+
+    fn run(script: &str) {
+        let d = mkdir_with_files(&["a1", "a2"]);
+        assert_parity_in(d.path(), &format!("{script} 2>&1; echo rc=$?"));
+    }
+
+    #[test]
+    fn a_later_equals_failure_wins_over_an_earlier_glob() {
+        run(r#"print 3 [[ a == *\\(* ]]"#);
+        run("print [[ ==");
+        run("print nomatch_zz* =nosuchcmd_zz");
+    }
+
+    #[test]
+    fn orders_that_already_agreed() {
+        run("print == [[");
+        run("print a* =nosuchcmd_zz");
+        run("print =nosuchcmd_zz a*");
+        run("print [ =nosuchcmd_zz");
+        run("print =ls a*");
+        run("setopt nonomatch; print [[ ==");
+    }
+}
