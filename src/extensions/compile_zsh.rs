@@ -194,14 +194,16 @@ pub struct ZshCompiler {
     /// body — matching zsh's `lineno = 1` reset on function entry
     /// (Src/init.c:1588).
     pub lineno_offset: u64,
-    /// Add this to each pipe's `lineno` AFTER subtracting
-    /// `lineno_offset`. Used by command-substitution sub-VM
-    /// compilation to anchor the inner program's lineno to the
-    /// outer's `$LINENO` at the `$(…)` site, so xtrace inside the
-    /// cmdsubst renders the OUTER line number (matching zsh's
-    /// behaviour where execlist's `oldlineno` flows into the inner
-    /// program's lineno scope).
-    pub lineno_addend: u64,
+    /// `$LINENO` at the `$(…)` site when this compiler builds a command
+    /// substitution body. C parses that body with `parse_string(cmd, 0)`
+    /// (c:Src/exec.c:4778), which does NOT reset `lineno`, so the body's
+    /// first line carries the outer value and each further line adds one:
+    /// inner line N is `outer + N - 1`. That includes an outer 0 — the first
+    /// line of a function body — which `outer - 1` as an unsigned addend
+    /// could not express: `g(){ print $(print $LINENO) }` printed 1, and
+    /// every error inside such a substitution said `g:1:` where zsh says
+    /// `g:`.
+    pub nested_lineno_base: Option<u64>,
     /// Counts the number of CS_* pushes that have been emitted at
     /// the current compile cursor and have NOT yet been matched by
     /// an emitted pop. When a `return`/`exit` jump is emitted, all
@@ -254,7 +256,7 @@ pub struct ZshCompiler {
     pub is_function_body: bool,
     /// Effective LINENO of the sublist whose body is currently
     /// being compiled. Set by `compile_sublist` after applying the
-    /// `lineno_offset` / `lineno_addend` adjustments. Used by
+    /// `lineno_offset` / `nested_lineno_base` adjustments. Used by
     /// `compile_for_words` / `compile_for_positional` /
     /// `compile_for_arith` so the per-iteration `name=value`
     /// xtrace renders the for-statement's line, not whatever
@@ -365,7 +367,7 @@ impl ZshCompiler {
             synthetic_dq_wrap_depth: 0,
             array_whole_assign: false,
             lineno_offset: 0,
-            lineno_addend: 0,
+            nested_lineno_base: None,
             cmd_stack_depth: 0,
             try_block_depth: 0,
             try_loop_base: Vec::new(),
@@ -804,15 +806,7 @@ impl ZshCompiler {
         // (first_body_line = 1), that's 0, which we'd misread as
         // "outer script". Distinguish via a fn-body marker.
         let _ = effective_offset;
-        let rel_line = if self.is_function_body {
-            // Function body: offset = max(1, lineno_offset) so
-            // inline `f() { body }` (lineno_offset=0) maps body
-            // line 1 → 0 (zsh's def-line subtraction).
-            let off = self.lineno_offset.max(1);
-            raw_line.saturating_sub(off) + self.lineno_addend
-        } else {
-            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend
-        };
+        let rel_line = self.rel_lineno(raw_line) as u64;
         // Record the line of the sublist currently being compiled.
         // Loop bodies (for, while, repeat) read this to restore
         // LINENO at the top of each iteration so the per-iter
@@ -997,16 +991,24 @@ impl ZshCompiler {
     }
 
     /// Body-relative `$LINENO` for a raw parser line, using the same
-    /// `lineno_offset` / `lineno_addend` / function-body rules as
+    /// `lineno_offset` / `nested_lineno_base` / function-body rules as
     /// [`Self::compile_list`]'s SET_LINENO emit. Factored out so the
     /// per-pipeline update in [`Self::compile_sublist`] (c:Src/exec.c:2056)
     /// computes the identical value.
     fn rel_lineno(&self, raw_line: u64) -> i64 {
+        // Function body: offset = max(1, lineno_offset) so inline
+        // `f() { body }` (lineno_offset=0) maps body line 1 → 0 (zsh's
+        // def-line subtraction). Inside a command substitution the shift
+        // keeps its previous `outer - 1` value (saturating).
         let v = if self.is_function_body {
             let off = self.lineno_offset.max(1);
-            raw_line.saturating_sub(off) + self.lineno_addend
+            raw_line.saturating_sub(off) + self.nested_lineno_base.unwrap_or(1).saturating_sub(1)
+        } else if let Some(base) = self.nested_lineno_base {
+            // c:Src/exec.c:4778 — `parse_string(cmd, 0)` continues the outer
+            // lineno: line N of the substitution is `outer + N - 1`.
+            base + raw_line.saturating_sub(1)
         } else {
-            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend
+            raw_line.saturating_sub(self.lineno_offset).max(1)
         };
         v as i64
     }

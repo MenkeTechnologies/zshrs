@@ -6450,8 +6450,8 @@ impl ShellExecutor {
         // Anchor the inner program's lineno to the outer's current
         // $LINENO so xtrace inside the cmdsubst renders the outer
         // line. zsh's execlist preserves lineno across the inner
-        // exec — for our sub-VM (fresh compile) we use lineno_addend
-        // to shift inner's line N → outer_lineno + (N - 1).
+        // exec — for our sub-VM (fresh compile) nested_lineno_base maps
+        // inner line N → outer_lineno + (N - 1), outer 0 included.
         let outer_lineno: u64 = self
             .scalar("LINENO")
             .and_then(|s| s.parse::<u64>().ok())
@@ -6473,7 +6473,7 @@ impl ShellExecutor {
         let mut cmd_status: Option<i32> = None;
         if let Some(prog) = prog {
             let mut compiler = crate::compile_zsh::ZshCompiler::new();
-            compiler.lineno_addend = outer_lineno.saturating_sub(1);
+            compiler.nested_lineno_base = Some(outer_lineno); // c:Src/exec.c:4778
             let chunk = compiler.compile(&prog);
             if !chunk.ops.is_empty() {
                 crate::fusevm_disasm::maybe_print_stdout("run_command_substitution", &chunk);

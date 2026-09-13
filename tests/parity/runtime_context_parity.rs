@@ -112,6 +112,29 @@ mod special_parameters {
         assert_parity("print -r -- \"$LINENO\"\nprint -r -- \"$LINENO\"\nf(){ print -r -- \"$LINENO\" }\nf\n");
     }
 
+    /// A command substitution is parsed with `parse_string(cmd, 0)`
+    /// (c:Src/exec.c:4778), which keeps the caller's `lineno`: its first line
+    /// is the line of the `$(…)`, including 0 on the first line of a function
+    /// body. zshrs anchored it at `outer - 1` with an unsigned shift that
+    /// could not go below zero, so the substitution started at 1.
+    #[test]
+    fn lineno_inside_a_command_substitution_continues_the_callers_line() {
+        assert_parity(r#"g(){ print L=$LINENO C=$(print $LINENO) T=`print $LINENO`; }; g"#);
+        assert_parity("g(){ print C=$(print $LINENO\nprint $LINENO); }; g");
+        // Control: a later body line already carried its number in.
+        assert_parity("g(){\n:\nprint C=$(print $LINENO)\n}; g");
+    }
+
+    /// The same line number prefixes every diagnostic from inside the
+    /// substitution (c:Src/utils.c:301 prints `N: ` only when `lineno` is
+    /// non-zero): zsh says `g: command not found`, zshrs said `g:1: …`.
+    #[test]
+    fn a_diagnostic_inside_a_function_command_substitution_has_no_line_number() {
+        assert_stderr_parity(r#"g(){ print -r -- $(nonexist sub); }; g"#);
+        assert_stderr_parity(r#"g(){ print -r -- $(print ${nope?boom}); }; g"#);
+        assert_stderr_parity(r#"alias ll=x; g(){ print -r -- $(ll sub); }; unalias ll; g"#);
+    }
+
     /// `$_` holds the last argument of the previous command.
     #[test]
     fn underscore_holds_the_previous_commands_last_argument() {
