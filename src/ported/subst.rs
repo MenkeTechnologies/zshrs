@@ -1210,6 +1210,13 @@ fn stringsubst(
                     ret_flags, // c:237
                 ); // c:237
                 IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1)); // c:237 paramsub_nest--
+                // c:326-327 — `if (errflag || !node) return NULL;`. A NULL node
+                // (the `(e)` re-lex failure) leaves the word cut at the `$`
+                // (c:1878 `*s++ = '\0'`) and ends prefork without an error.
+                if PARAMSUBST_NULL.with(|c| c.replace(false)) {
+                    list.setdata(node_idx, chars[..pos].iter().collect::<String>());
+                    return None;
+                }
                                                                  // c:3929-3932 — apply the `isarr` paramsubst just computed to
                                                                  // THIS list. C does it inside paramsubst (it holds `l`); the
                                                                  // Rust port hands the bit back through PARAMSUBST_LF_ARRAY.
@@ -3488,6 +3495,15 @@ thread_local! {
     /// BUILTIN_DEFAULT_WORD_GLOB_RESET / consumed by BUILTIN_DEFAULT_WORD_GLOB.
     pub static DEFAULT_WORD_GLOB_BARS: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// C's paramsubst returns a NULL LinkNode when the `(e)` re-lex fails
+    /// (`if (eval && subst_parse_str(&x, …)) return NULL;`, c:Src/subst.c:4346,
+    /// 4394, 4413, 4433, 4472). No message and no errflag: stringsubst hands the
+    /// NULL up (c:326-327) and prefork returns (c:142-147), so the word keeps
+    /// only what preceded the `$`, which paramsubst had already cut
+    /// (`*s++ = '\0'`, c:1878). zshrs's paramsubst returns a tuple, so the
+    /// failure rides here from the eval arm to stringsubst, which takes it.
+    pub static PARAMSUBST_NULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 
@@ -3510,6 +3526,10 @@ pub fn paramsubst(
     ret_flags: &mut i32, // c:1625
 ) -> (String, usize, Vec<String>) {
     // c:1625
+    // A stale PARAMSUBST_NULL from a caller that runs paramsubst directly (and
+    // so never reaches the stringsubst that takes it) must not cut this
+    // expansion's word: C's NULL is this call's return value, nothing more.
+    PARAMSUBST_NULL.with(|c| c.set(false));
     // c:Src/utils.c:4347-4350 — wcsitype(IIDENT): under MULTIBYTE (and not
     // POSIXIDENTIFIERS) any non-ASCII alphanumeric is a valid identifier char
     // (iswalnum), so zsh accepts `${日}`, `${café}`, `${π}`. The name-scan
@@ -22679,7 +22699,10 @@ pub fn paramsubst(
                     } else {
                         match subst_parse_str(&bare, single_e, quoteerr) {
                             Some(parsed) => singsub(&parsed),
-                            None => singsub(&bare),
+                            None => {
+                                PARAMSUBST_NULL.with(|c| c.set(true)); // c:4346 return NULL
+                                String::new()
+                            }
                         }
                     };
                     flag.set(prev);
@@ -22712,7 +22735,10 @@ pub fn paramsubst(
                         flag.set(true);
                         let r = match subst_parse_str(s, single_e, quoteerr) {
                             Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT),
-                            None => multsub(s, PREFORK_NOSHWORDSPLIT),
+                            None => {
+                                PARAMSUBST_NULL.with(|c| c.set(true)); // c:4394/4413/4433 return NULL
+                                (String::new(), Vec::new(), false, 0)
+                            }
                         };
                         flag.set(prev);
                         r
@@ -22777,7 +22803,10 @@ pub fn paramsubst(
                         flag.set(true);
                         let r = match subst_parse_str(&value, single_e, quoteerr) {
                             Some(parsed) => multsub(&parsed, PREFORK_NOSHWORDSPLIT), // c:4472 + c:4480
-                            None => multsub(&value, PREFORK_NOSHWORDSPLIT),
+                            None => {
+                                PARAMSUBST_NULL.with(|c| c.set(true)); // c:4472 return NULL
+                                (String::new(), Vec::new(), false, 0)
+                            }
                         };
                         flag.set(prev);
                         r

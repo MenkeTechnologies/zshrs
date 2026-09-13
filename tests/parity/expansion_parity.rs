@@ -1109,3 +1109,29 @@ mod equals_command_lookup {
         assert_parity("x==ls:foo; print -r -- $x");
     }
 }
+
+/// A failed `(e)` re-lex is C's silent `return NULL` (c:Src/subst.c:4346/4394/
+/// 4413/4433/4472): the word is cut at the `$` (c:1878) and prefork stops, with
+/// no message and status 0. These go through subst.rs's own prefork.
+mod eval_flag_failed_relex_is_null {
+    use super::*;
+
+    #[test]
+    fn assignment_gets_empty_value() {
+        assert_parity(r#"a='$('; v=${(e)a}; print -r -- "[$v]""#);
+        assert_parity(r#"a='`'; v=${(e)a}; print -r -- "[$v]""#);
+        assert_parity(r#"a='$(('; v=${(e)a}; print -r -- "[$v]""#);
+    }
+
+    #[test]
+    fn default_operand_and_nested_form() {
+        assert_parity(r#"a='$('; v=${x:-${(e)a}}; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; print -r -- "[${${(e)a}}]""#);
+    }
+
+    /// A later, unrelated expansion is not cut by the NULL.
+    #[test]
+    fn later_expansions_are_unaffected() {
+        assert_parity(r#"a='$('; v=${(e)a}; b=ok; print -r -- "[$v] [${b}] m${b}n""#);
+    }
+}
