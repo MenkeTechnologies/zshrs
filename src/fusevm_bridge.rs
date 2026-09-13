@@ -3239,6 +3239,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         EXEC_DASH.with(|c| c.set(true));
         Value::Int(0)
     });
+    // See BUILTIN_GLOBLIST. c:Src/subst.c:488-498 globlist:
+    //     badcshglob = 0;
+    //     for (node = firstnode(list); !errflag && node; node = next)
+    //         { next = nextnode(node); zglob(list, node, nocheck); }
+    // `badcshglob` stays with the per-word glob path (glob_expand_word_value
+    // feeds consume_badcshglob), so only the loop shape changes here.
+    vm.register_builtin(BUILTIN_GLOBLIST, |vm, argc| {
+        let mask = vm.pop().to_int() as u64;
+        let n = (argc as usize).saturating_sub(1);
+        let mut words: Vec<Value> = (0..n).map(|_| vm.pop()).collect();
+        words.reverse();
+        let noglob =
+            opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
+        let mut out: Vec<Value> = Vec::with_capacity(n);
+        for (i, word) in words.into_iter().enumerate() {
+            let stopped = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR)
+                != 0; // c:494 `!errflag`
+            if stopped || i >= 64 || mask & (1u64 << i) == 0 {
+                out.push(word);
+            } else {
+                out.push(glob_expand_word_value(word, noglob)); // c:495 zglob
+            }
+        }
+        for v in out {
+            vm.push(v);
+        }
+        Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_END, |_vm, _argc| {
         let word_failed = TYPESET_WORD_GLOB_FAILED.with(|c| c.replace(false));
         let postassign_failed =
@@ -16152,6 +16181,14 @@ pub const BUILTIN_TYPESET_RESWD: u16 = 686;
 /// EXEC_DASH carrier. c:Src/exec.c:772-776 — an external command then gets
 /// argv[0] `-name`; a function or builtin runs unchanged.
 pub const BUILTIN_EXEC_DASH: u16 = 687;
+/// c:Src/exec.c:3755-3757 `globlist(args, 0)` over the WHOLE argument list,
+/// after prefork has expanded every word (c:3357-3359). Stack: the N
+/// expanded word values in source order, then an Int bitmask whose bit i
+/// marks word i as glob-eligible; argc = N + 1 (N <= 63). Globs the
+/// eligible words in order and stops at the first error (c:Src/subst.c:494
+/// `for (…; !errflag && node; …)`), leaving later words as they are. Pushes
+/// one value per word (an Array where a glob expanded).
+pub const BUILTIN_GLOBLIST: u16 = 688;
 
 /// EXTEND step of typeset paren-init packing. Pops `argc` values:
 /// [base, e1, …, eN] — base is either the opener (`name=(` /
