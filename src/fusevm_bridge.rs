@@ -13620,7 +13620,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // for the glob call; the untokenized form still
                         // drives the non-glob arms below.
                         let s_tok = s.clone();
-                        let s = crate::lex::untokenize(&s);
+                        // c:36 `nulstring` — a segment (mode 11) of a word
+                        // whose end-of-word drop is still to run keeps the
+                        // Nularg that marks a split's empty field, as
+                        // `paramsubst_to_value_pf` does; untokenize would fold
+                        // it to "", which that drop cannot tell from a truly
+                        // empty node. The drop removes the marker (c:170).
+                        let nul = crate::ported::zsh_h::Nularg;
+                        let s = if mode == 11
+                            && s.contains(nul)
+                            && crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0
+                        {
+                            s.split(nul)
+                                .map(crate::lex::untokenize)
+                                .collect::<Vec<_>>()
+                                .join(&nul.to_string())
+                        } else {
+                            crate::lex::untokenize(&s)
+                        };
                         // c:Src/exec.c:2603-2613 — only an assignment VALUE
                         // skips globlist without GLOB_ASSIGN, and that value
                         // arrives here in mode 8, which `noglob` above already

@@ -345,7 +345,16 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // the sentinel.) Collapsing it here dropped the field entirely.
                 let mut s = data.to_string();
                 crate::ported::glob::remnulargs(&mut s);
-                if s == "\u{a1}" && flags & PREFORK_SUBEXP == 0 {
+                // A word whose segments are preforked one at a time
+                // (`PARAMSUBST_AFFIXES_DEFERRED`) runs c:183-186 at its end,
+                // after the affixes are glued on, and needs the sentinel to
+                // tell a c:36 `nulstring` field from a truly empty node there:
+                // `IFS=:; s=a::b; print -rl -- x${=s[1,4]}y` is `xa` `` `by`.
+                // That end-of-word drop strips the marker afterwards.
+                if s == "\u{a1}"
+                    && flags & PREFORK_SUBEXP == 0
+                    && PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) == 0
+                {
                     s.clear();
                 }
                 let data = s;

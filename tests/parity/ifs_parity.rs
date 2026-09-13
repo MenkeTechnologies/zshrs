@@ -653,6 +653,16 @@ mod nulstring_fields_survive_affixes {
         assert_parity(r#"IFS=": "; s=" a : :b"; print -rl -- x${=s}y"#);
     }
 
+    /// The same `nulstring` field through an operator on the split value
+    /// (subscript, substring, pattern removal, substitution).
+    #[test]
+    fn equals_split_with_operator_keeps_middle_empty_field() {
+        assert_parity(r#"IFS=:; s=a::b; print -rl -- x${=s[1,4]}y x${=s[1,-1]}y x${=s:0:4}y | wc -l"#);
+        assert_parity(r#"IFS=:; s=a::b; print -rl -- x${=s#q}y x${=s//q/r}y; a=(x${=s[1,4]}y); print $#a"#);
+        assert_parity(r#"IFS=:; s=:a::b:; print -rl -- x${=s#q}y; IFS=": "; s=" a : :b "; print -rl -- x${=s#q}y"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; s=a::b; print -rl -- x${s#q}y; unsetopt shwordsplit; print -rl -- x${${=s}[@]}y"#);
+    }
+
     #[test]
     fn whitespace_edges_and_shwordsplit_unchanged() {
         assert_parity(r#"s=" foo bar "; print -rl -- x${=s} ${=s}y x${=s}y ${=s}"#);
