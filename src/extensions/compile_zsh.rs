@@ -11099,6 +11099,43 @@ impl ZshCompiler {
                 return;
             }
         }
+        // c:Src/cond.c:86-112 — COND_NOT keeps a status other than 0/1, COND_AND
+        // returns any non-zero left status, COND_OR goes on to the right on 1
+        // or 3. A `-o` leaf yields 3 for an unknown option (c:502-514), and
+        // the Bool form below collapses that to 1, which `!` then flipped to
+        // 0. A tree that holds a `-o` is therefore evaluated on integer
+        // statuses.
+        if cond_has_option_test(c) {
+            let saved_cond = self.in_cond_operand;
+            self.in_cond_operand = true;
+            self.singsub_depth += 1;
+            self.compile_cond_status(c);
+            self.singsub_depth -= 1;
+            self.in_cond_operand = saved_cond;
+            self.emit_cmd_pop();
+            // [s] → COND_STATUS_FROM_BOOL on `s == 0` for its bad-pattern 2 and
+            // globsubst-carrier handling → [s, r]. Keep `s` where r is 1 (s is
+            // 1 or 3), otherwise r (0, or 2 for a bad pattern).
+            self.builder.emit(Op::Dup, 0);
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::NumEq, 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STATUS_FROM_BOOL, 1),
+                0,
+            );
+            self.builder.emit(Op::Dup, 0);
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::NumEq, 0);
+            let keep_r = self.builder.emit(Op::JumpIfFalse(0), 0);
+            self.builder.emit(Op::Pop, 0);
+            let done = self.builder.emit(Op::Jump(0), 0);
+            self.builder.patch_jump(keep_r, self.builder.current_pos());
+            self.builder.emit(Op::Swap, 0);
+            self.builder.emit(Op::Pop, 0);
+            self.builder.patch_jump(done, self.builder.current_pos());
+            self.builder.emit(Op::SetStatus, 0);
+            return;
+        }
         // Result on stack: bool. Status set after this returns.
         // Mark that operands are being compiled inside `[[ … ]]` so a process
         // substitution in an operand is rejected (c:Src/exec.c:4918 — a cond
@@ -11310,6 +11347,64 @@ impl ZshCompiler {
                     push_lit(self, " ");
                     push_word(self, arg);
                 }
+            }
+        }
+    }
+
+    /// Push a `[[ ]]` tree's integer status (0 true, 1 false, 3 unknown
+    /// option), for a tree holding a `-o` test. Port of evalcond's
+    /// COND_NOT / COND_AND / COND_OR arms (c:Src/cond.c:86-112); every other
+    /// leaf is the Bool form turned into 0 or 1.
+    fn compile_cond_status(&mut self, c: &crate::parse::ZshCond) {
+        match c {
+            ZshCond::Not(inner) => {
+                // c:90-93 — `return (ret == 0 || ret == 1) ? !ret : ret;`
+                self.compile_cond_status(inner);
+                self.builder.emit(Op::Dup, 0);
+                self.builder.emit(Op::LoadInt(2), 0);
+                self.builder.emit(Op::NumLt, 0);
+                let keep = self.builder.emit(Op::JumpIfFalse(0), 0);
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.emit(Op::Swap, 0);
+                self.builder.emit(Op::Sub, 0);
+                self.builder.patch_jump(keep, self.builder.current_pos());
+            }
+            ZshCond::And(a, b) => {
+                // c:95-102 — the right side runs only when the left returned 0.
+                self.compile_cond_status(a);
+                self.builder.emit(Op::Dup, 0);
+                let keep = self.builder.emit(Op::JumpIfTrue(0), 0);
+                self.builder.emit(Op::Pop, 0);
+                self.compile_cond_status(b);
+                self.builder.patch_jump(keep, self.builder.current_pos());
+            }
+            ZshCond::Or(a, b) => {
+                // c:103-112 — the right side runs when the left returned 1 or 3.
+                self.compile_cond_status(a);
+                self.builder.emit(Op::Dup, 0);
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.emit(Op::BitAnd, 0);
+                let keep = self.builder.emit(Op::JumpIfFalse(0), 0);
+                self.builder.emit(Op::Pop, 0);
+                self.compile_cond_status(b);
+                self.builder.patch_jump(keep, self.builder.current_pos());
+            }
+            ZshCond::Unary(op, arg) if crate::lex::untokenize(op) == "-o" => {
+                // c:502-514 — optison: 0 set, 1 unset, 3 no such option.
+                self.compile_word_str(arg);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_CHECK_TRISTATE, 1),
+                    0,
+                );
+            }
+            leaf => {
+                self.compile_cond_expr(leaf);
+                let false_arm = self.builder.emit(Op::JumpIfFalse(0), 0);
+                self.builder.emit(Op::LoadInt(0), 0);
+                let end = self.builder.emit(Op::Jump(0), 0);
+                self.builder.patch_jump(false_arm, self.builder.current_pos());
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.patch_jump(end, self.builder.current_pos());
             }
         }
     }
@@ -13118,6 +13213,19 @@ fn render_pipe_for_debug(pipe: &crate::parse::ZshPipe, job: bool) -> String {
 /// `WC_COND_TYPE(code) <= COND_OR`, i.e. for `COND_NOT` (0), `COND_AND` (1)
 /// and `COND_OR` (2) (`Src/zsh.h:660-662`) — a unary or binary test is never
 /// wrapped, so `! -z y` stays bare.
+/// True when a `[[ ]]` tree holds a `-o` test anywhere, so its status can be
+/// 3 (no such option, c:Src/cond.c:502-514) and has to be evaluated on
+/// integer statuses rather than Bools.
+fn cond_has_option_test(c: &crate::parse::ZshCond) -> bool {
+    use crate::parse::ZshCond;
+    match c {
+        ZshCond::Not(inner) => cond_has_option_test(inner),
+        ZshCond::And(a, b) | ZshCond::Or(a, b) => cond_has_option_test(a) || cond_has_option_test(b),
+        ZshCond::Unary(op, _) => crate::lex::untokenize(op) == "-o",
+        _ => false,
+    }
+}
+
 fn render_cond_for_debug(cond: &crate::parse::ZshCond) -> String {
     use crate::parse::ZshCond;
     /// c:881/889/900/910/920 `taddstr("( ")` … c:874 `taddstr(" )")`.

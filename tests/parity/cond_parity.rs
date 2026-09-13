@@ -1117,3 +1117,29 @@ mod lt_gt_missing_operand {
         assert_parity("[[ a < b ]] && print lt");
     }
 }
+
+/// c:Src/cond.c:86-112 — COND_NOT keeps a status other than 0/1, COND_AND
+/// returns a non-zero left status, COND_OR goes on to the right on 1 or 3. A
+/// `-o` test of an unknown option is 3 (c:502-514); zshrs evaluated composite
+/// conds on Bools, so `!` turned that 3 into 0 and `&&`/`||` into 1.
+mod unknown_option_status_through_not_and_or {
+    use super::*;
+
+    #[test]
+    fn status_three_survives_not_and_or() {
+        assert_parity("[[ ! -o invalidoption ]] 2>/dev/null; echo n:$?");
+        assert_parity("[[ -o invalidoption && -n x ]] 2>/dev/null || echo a:$?");
+        assert_parity("[[ ! ( -o invalidoption ) ]] 2>/dev/null; echo p:$?");
+        assert_parity("[[ ! -n x || -o invalidoption ]] 2>/dev/null; echo o:$?");
+        assert_parity("[[ -n x && ! -o invalidoption ]] 2>/dev/null; echo q:$?");
+    }
+
+    #[test]
+    fn the_right_side_still_decides_where_c_evaluates_it() {
+        assert_parity("[[ -o invalidoption || -z nonempty ]] 2>/dev/null; echo $?");
+        assert_parity("[[ -o invalidoption || -n nonempty ]] 2>/dev/null; echo $?");
+        assert_parity("[[ -o invalidoption ]] 2>/dev/null; echo b:$?");
+        assert_parity("[[ -o errexit && -n x ]]; echo $?; [[ ! -o errexit ]]; echo $?; [[ -o errexit || -n x ]]; echo $?");
+        assert_parity("[[ -o invalidoption || x == [a- ]] 2>/dev/null; echo bad:$?");
+    }
+}
