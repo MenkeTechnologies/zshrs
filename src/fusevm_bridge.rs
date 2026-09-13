@@ -9473,7 +9473,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // parameter is a hash, so `h[1,2]=Z` is the ordinary key `1,2`.
         // The compile-time split cannot know the type, so it defers here.
         let marker = popped.pop().map_or(String::new(), |v| v.to_str());
-        let scalar_rhs = marker == "2"; // c:1515 deferral
+        // Marker 3 is the scalar-RHS form of `+=` (old slice already
+        // concatenated in, like 2); it differs only for a numeric target.
+        let scalar_append = marker == "3";
+        let scalar_rhs = marker == "2" || scalar_append; // c:1515 deferral
         let key_src = if scalar_rhs {
             popped.pop().map(|v| v.to_str())
         } else {
@@ -9819,10 +9822,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // for `a=hello; a[2,3]=XYZ`. Detect PM_SCALAR and route
             // through assignstrvalue (which does scalar splice via
             // the PM_SCALAR arm at params.rs:3709-3789).
-            let is_scalar = taken.as_ref().map_or(false, |pm| {
-                crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
-                    == crate::ported::zsh_h::PM_SCALAR
-            });
+            //
+            // Only a SCALAR RHS takes that route: it is assignsparam
+            // (c:Src/params.c:3183), whose assignstrvalue also covers an
+            // integer/float target (c:2777 — the whole value is replaced,
+            // `integer i=5; i[1,2]=3` gives 3). An ARRAY RHS is assignaparam
+            // → setarrvalue, which rejects every non-array target
+            // (c:2896-2900 "attempt to assign array value to non-array":
+            // `s=abc; s[2]=(x y)`).
+            let target_type = taken
+                .as_ref()
+                .map(|pm| crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32));
+            let is_scalar = scalar_rhs
+                && target_type.is_some_and(|t| {
+                    t & (crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_HASHED) == 0
+                });
+            // c:Src/params.c:3250-3266 — `+=` on a subscripted integer/float:
+            //     case PM_INTEGER: case PM_EFLOAT: case PM_FFLOAT:
+            //         zsfree(val); unqueue_signals();
+            //         zerr("attempt to add to slice of a numeric variable");
+            //         return NULL;
+            if scalar_append
+                && target_type.is_some_and(|t| {
+                    t == crate::ported::zsh_h::PM_INTEGER
+                        || t == crate::ported::zsh_h::PM_EFLOAT
+                        || t == crate::ported::zsh_h::PM_FFLOAT
+                })
+            {
+                if let (Some(pm), Ok(mut tab)) = (taken, crate::ported::params::paramtab().write()) {
+                    tab.insert(name, pm);
+                }
+                crate::ported::utils::zerr("attempt to add to slice of a numeric variable"); // c:3264
+                return;
+            }
             let mut v = crate::ported::zsh_h::value {
                 pm: taken,
                 arr: Vec::new(),

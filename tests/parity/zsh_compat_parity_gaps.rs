@@ -48224,3 +48224,25 @@ mod probe_sweep_2026_06_12_f {
         probe_f_psub_source_cnf => (r#"probe f psub source cnf"#, r###"print -l 'definitely_not_a_cmd_zz a' 'print mid' > ${TMPDIR:-/tmp}/zsprobe_cnf.zsh; source ${TMPDIR:-/tmp}/zsprobe_cnf.zsh 2>/dev/null; print rc=$?"###);
     }
 }
+
+/// c:Src/params.c:3183 assignsparam vs c:3383 assignaparam — a subscripted
+/// assignment with a SCALAR value splices into a scalar and replaces an
+/// integer/float whole (assignstrvalue, c:2777); an ARRAY value goes to
+/// setarrvalue, which rejects any non-array target (c:2896-2900).
+mod subscripted_assignment_to_a_non_array {
+    use super::*;
+
+    #[test]
+    fn array_value_into_a_scalar_is_an_error() {
+        assert_parity(r#"{ s=abc; s[2]=(x y); print -r -- $s } 2>&1; print rc=$?"#, "subscripted_non_array_1");
+        assert_parity(r#"{ s=abc; s[2]+=(x y); print -r -- $s } 2>&1; print rc=$?"#, "subscripted_non_array_2");
+        assert_parity(r#"{ s=abc; s[2,3]=(x y); print -r -- $s } 2>&1; print rc=$?"#, "subscripted_non_array_3");
+    }
+
+    #[test]
+    fn scalar_value_into_a_numeric_range_replaces_it() {
+        assert_parity(r#"i=5; integer i; i[1,2]=3; print -r -- $i"#, "subscripted_non_array_4");
+        assert_parity(r#"float f=1.5; f[1,2]=3; print -r -- $f"#, "subscripted_non_array_5");
+        assert_parity(r#"a=hello; a[2,3]=XYZ; b=hello; b[2,3]+=X; print -r -- $a $b"#, "subscripted_non_array_6");
+    }
+}
