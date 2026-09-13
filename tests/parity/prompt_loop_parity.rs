@@ -199,6 +199,42 @@ rm -rf $OUTFILE.d
     )
 }
 
+/// preexec's `$2` is `getjobtext()` (Src/text.c:315), which writes into a
+/// JOBTEXTSIZE buffer: a word that does not fit is dropped WHOLE (`taddstr`,
+/// c:151-156) and the buffer's last slot never survives (`taddchr`, c:131-134).
+/// The limit counts METAFIED bytes, so a `$` token is one byte and each IMETA
+/// byte of real text is two. Lengths go in with the text, so a cut one word
+/// early or late is visible.
+fn job_text_limit_driver() -> String {
+    let script = r#"
+unsetopt promptcr promptsp
+HISTFILE=/dev/null
+preexec(){ print -r -- "${#2} [$2]" >> $OUTFILE }
+v=1
+: aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff gggggggggg hhhhhhhhhh
+: aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffff $v gggggggggg hhhhhhhhhh
+: aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffff —— gggggggggg hhhhhhhhhh
+: aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff ggg h i j k l m n o p
+: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+: aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff | cat | cat | cat
+{ : aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff; : x; : y; }
+"#;
+    format!(
+        r#"
+print -r -- {} | PS1= RPS1= PROMPT= LC_ALL=en_US.UTF-8 $UNDER_TEST -f -i -s >/dev/null 2>&1
+"#,
+        sq(script)
+    )
+}
+
+#[test]
+fn preexec_job_text_is_cut_where_getjobtext_cuts_it() {
+    assert_same_dump(
+        &job_text_limit_driver(),
+        "preexec $2 past JOBTEXTSIZE: whole words dropped, metafied widths",
+    );
+}
+
 #[test]
 fn function_bodies_store_alias_expansions_and_preexec_does_not_repeat_them() {
     assert_same_dump(

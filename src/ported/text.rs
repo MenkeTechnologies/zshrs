@@ -92,17 +92,63 @@ pub fn taddchr(c: i32) {
 }
 
 /// Port of `taddstr(const char *s)` from `Src/text.c:146`.
+///
+/// Against the fixed job buffer the string goes in WHOLE or not at all
+/// (c:151-156): zsh cuts job text at a word boundary, so a line that runs past
+/// JOBTEXTSIZE loses its trailing words rather than half of one.
 pub fn taddstr(s: &str) {
     let nl = tnewlins.with(|c| *c.borrow());
-    if nl {
-        tbuf.with(|tb| tb.borrow_mut().extend_from_slice(s.as_bytes()));
-    } else {
-        for &b in s.as_bytes() {
-            let ch = if b == b'\n' { b' ' } else { b };
-            tpush(ch as i32);
+    tbuf.with(|tb| {
+        let mut v = tb.borrow_mut();
+        let before = v.len();
+        if nl {
+            v.extend_from_slice(s.as_bytes()); // c:160-161 memcpy
+        } else {
+            // c:163-164 — `*tptr++ = (c == '\n' ? ' ' : c);`
+            v.extend(s.bytes().map(|b| if b == b'\n' { b' ' } else { b }));
         }
-    }
+        // c:151-156 — `while (tptr + sl >= tlim) { if (!tbuf) return; … }`
+        if let Some(lim) = tlim.with(|l| *l.borrow()) {
+            if tbuf_cwidth!(&v) >= lim {
+                v.truncate(before);
+            }
+        }
+    });
 }
+
+/// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+///
+/// `tptr - tbuf` as C measures it: the text buffer holds METAFIED bytes, so a
+/// token (`Pound`..`Nularg`) is one byte and every IMETA byte of real text is
+/// two (`Meta` + byte^32). zshrs's buffer holds UTF-8, where a token char takes
+/// two bytes and nothing is escaped, so a plain byte count cuts job text in the
+/// wrong place: `ffffffff $v gggggggggg` kept `ggggggggg` where zsh stops
+/// after `$v`. A raw byte that is not UTF-8 counts as the one byte it is.
+macro_rules! tbuf_cwidth {
+    ($buf:expr) => {{
+        let mut width = 0usize;
+        for chunk in ($buf).utf8_chunks() {
+            for ch in chunk.valid().chars() {
+                let code = ch as u32;
+                if code < 0x100
+                    && (crate::ported::ztype_h::itok(code as u8) || code == Meta as u32)
+                {
+                    width += 1;
+                } else {
+                    let mut enc = [0u8; 4];
+                    width += ch
+                        .encode_utf8(&mut enc)
+                        .bytes()
+                        .map(|b| 1 + crate::ported::ztype_h::imeta(b) as usize)
+                        .sum::<usize>();
+                }
+            }
+            width += chunk.invalid().len();
+        }
+        width
+    }};
+}
+use tbuf_cwidth;
 
 /// Port of `taddlist(Estate state, int num)` from `Src/text.c:170`.
 fn taddlist(state: &mut estate, num: i32) {
@@ -247,7 +293,9 @@ pub fn getjobtext(mut prog: Eprog, c: Option<usize>) -> String {
         strs_offset: 0,
     };
     tbuf.with(|tb| tb.borrow_mut().clear());
-    tlim.with(|l| *l.borrow_mut() = Some(JOBTEXTSIZE));
+    // c:334-335 — `tptr = jbuf; tlim = tptr + JOBTEXTSIZE - 1;` (one byte
+    // is kept for the closing NUL).
+    tlim.with(|l| *l.borrow_mut() = Some(JOBTEXTSIZE - 1));
     tpending.with(|p| *p.borrow_mut() = None);
     tindent.with(|t| *t.borrow_mut() = 0);
     // c:332 — `tnewlins = 0;`. This is the ONE flag that distinguishes job
@@ -295,12 +343,16 @@ fn tpush(c: i32) {
     let b = c as u8;
     tbuf.with(|tb| {
         let mut v = tb.borrow_mut();
-        if let Some(max) = tlim.with(|l| *l.borrow()) {
-            if v.len() >= max {
-                return;
+        // c:130 — `*tptr++ = c;`
+        v.push(b);
+        // c:131-134 — `if (tptr == tlim) { if (!tbuf) { tptr--; return; } … }`.
+        // A fixed job buffer (tlim set, tbuf NULL) backs the pointer off, so the
+        // next character — or the closing NUL — overwrites this one.
+        if let Some(lim) = tlim.with(|l| *l.borrow()) {
+            if tbuf_cwidth!(&v) >= lim {
+                v.pop();
             }
         }
-        v.push(b);
     });
 }
 
