@@ -12389,7 +12389,6 @@ impl ZshCompiler {
         ac.expr();
         let new_slots = ac.slots.clone();
         let new_next = ac.next_slot;
-        let assigned_names = ac.assigned.clone();
         let chunk = ac.builder.build();
 
         // Inline ArithCompiler's emitted ops into ours, remapping const
@@ -12440,33 +12439,11 @@ impl ZshCompiler {
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(result_slot), 0);
 
-        // c:Src/math.c:1364-1372 — only an `OP_E2`/`OP_E2IO` operator
-        // reaches `setmathvar`. Writing back every identifier the
-        // expression MENTIONS would assign to names it only read.
-        //
-        // The write goes through `setmathvar` (c:972), not the generic
-        // scalar store: `typeset -i x; (( x = 3.7 ))` must land 3, and
-        // `typeset -F f; (( f = 1 ))` must land 1.000000000 — the
-        // PM_INTEGER / FORCEFLOAT coercions live in setmathvar and
-        // nowhere else.
-        let mut assigned: Vec<&String> = pre_load_names
-            .iter()
-            .filter(|n| assigned_names.contains(*n))
-            .collect();
-        // Deterministic emission order — `assigned` is a HashSet.
-        assigned.sort();
-        for name in assigned {
-            if let Some(&slot) = new_slots.get(name) {
-                let name_const = self.builder.add_constant(Value::str(name.as_str()));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::GetSlot(slot), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2),
-                    0,
-                );
-                self.builder.emit(Op::Pop, 0); // discard Status(0)
-            }
-        }
+        // No write-back pass here: every assignment operator already went
+        // through `setmathvar` at its own position in the expression
+        // (ArithCompiler::emit_setmathvar, c:Src/math.c:1364-1372), which is
+        // what lets `(( y = 3, x = 5/0 ))` keep y and store nothing after
+        // the error.
 
         self.builder.emit(Op::GetSlot(result_slot), 0);
     }

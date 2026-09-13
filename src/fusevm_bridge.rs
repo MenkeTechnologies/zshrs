@@ -6357,6 +6357,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_MATH_VAR, |vm, _argc| {
         let value = arith_pop_mnumber(vm);
         let name = vm.pop().to_str();
+        // c:Src/math.c:1161 — `op()` begins `if (errflag) return;`, so an
+        // assignment operator reached after a math error (`x %= 0`, the
+        // `y = 3` of `(( x = 5/0, y = 3 ))`) stores nothing.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            return Value::Status(0);
+        }
         // c:Src/math.c:395 `xstack = stack` / c:455 `stack = xstack` —
         // `setmathvar` also memoises the value in the math-local read
         // cache (`mptr->pval`, c:340-343), which in C belongs to the

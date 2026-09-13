@@ -133,6 +133,22 @@ impl<'a> ArithCompiler<'a> {
     }
 
     /// Get or allocate a slot for a variable name.
+    /// c:Src/math.c:1364-1372 — an assignment operator stores through
+    /// `setmathvar` at its own position in the expression, so a store
+    /// that ran before an error survives it (`(( y = 3, x = 5/0 ))` keeps
+    /// y) and one reached after it never happens (c:1161 `if (errflag)
+    /// return;`, enforced by BUILTIN_SET_MATH_VAR). Stack-neutral.
+    fn emit_setmathvar(&mut self, name: &str, slot: u16) {
+        let name_const = self.builder.add_constant(Value::str(name));
+        self.builder.emit(Op::LoadConst(name_const), 0);
+        self.builder.emit(Op::GetSlot(slot), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
+    }
+
     pub fn slot_for(&mut self, name: &str) -> u16 {
         if let Some(&slot) = self.slots.get(name) {
             return slot;
@@ -708,6 +724,7 @@ impl<'a> ArithCompiler<'a> {
                     self.assign_expr();
                     self.builder.emit(Op::Dup, 0);
                     self.builder.emit(Op::SetSlot(slot), 0);
+                    self.emit_setmathvar(&name, slot);
                     return;
                 }
                 if let Some(binop) = compound_assign_op(tok) {
@@ -719,6 +736,7 @@ impl<'a> ArithCompiler<'a> {
                     self.emit_binop(binop);
                     self.builder.emit(Op::Dup, 0);
                     self.builder.emit(Op::SetSlot(slot), 0);
+                    self.emit_setmathvar(&name, slot);
                     return;
                 }
                 // Not an assignment — rewind and re-parse as a value.
@@ -985,18 +1003,20 @@ impl<'a> ArithCompiler<'a> {
                 let _ = self.next_tok();
                 let (_, var_name) = self.next_tok();
                 let slot = self.slot_for(&var_name);
-                self.assigned.insert(var_name);
+                self.assigned.insert(var_name.clone());
                 self.builder.emit(Op::PreIncSlot(slot), 0);
+                self.emit_setmathvar(&var_name, slot);
             }
             Tok::PreDec => {
                 let _ = self.next_tok();
                 let (_, var_name) = self.next_tok();
                 let slot = self.slot_for(&var_name);
-                self.assigned.insert(var_name);
+                self.assigned.insert(var_name.clone());
                 self.builder.emit(Op::GetSlot(slot), 0);
                 self.builder.emit(Op::Dec, 0);
                 self.builder.emit(Op::Dup, 0);
                 self.builder.emit(Op::SetSlot(slot), 0);
+                self.emit_setmathvar(&var_name, slot);
             }
             _ => self.primary_expr(),
         }
@@ -1025,6 +1045,7 @@ impl<'a> ArithCompiler<'a> {
                         self.builder.emit(Op::Dup, 0); // keep old value
                         self.builder.emit(Op::Inc, 0);
                         self.builder.emit(Op::SetSlot(slot), 0);
+                        self.emit_setmathvar(&name, slot);
                     }
                     Tok::PreDec => {
                         let _ = self.next_tok();
@@ -1032,6 +1053,7 @@ impl<'a> ArithCompiler<'a> {
                         self.builder.emit(Op::Dup, 0);
                         self.builder.emit(Op::Dec, 0);
                         self.builder.emit(Op::SetSlot(slot), 0);
+                        self.emit_setmathvar(&name, slot);
                     }
                     _ => {}
                 }

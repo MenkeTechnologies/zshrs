@@ -940,3 +940,23 @@ mod truncated_number_warning_shows_the_rest {
         assert_parity("print $(( -9223372036854775809 )) 2>&1");
     }
 }
+
+/// c:Src/math.c:1161 — `op()` returns on errflag before it stores, and each
+/// assignment operator stores at its own position in the expression
+/// (c:1364-1372), so a store before the error survives and one after it
+/// never happens.
+mod store_around_a_math_error {
+    use super::*;
+
+    #[test]
+    fn compound_assignment_that_errors_stores_nothing() {
+        assert_parity("x=7; (( x %= 0 )) 2>/dev/null; print $x");
+        assert_parity("x=7; (( x /= 0 )) 2>/dev/null; print $x");
+    }
+
+    #[test]
+    fn store_before_the_error_survives_and_after_it_does_not() {
+        assert_parity("(( x = 5/0, y = 3 )) 2>/dev/null; print y=$y x=$x ${+x}");
+        assert_parity("(( y = 3, x = 5/0, z = 4 )) 2>/dev/null; print y=$y x=$x z=$z");
+    }
+}
