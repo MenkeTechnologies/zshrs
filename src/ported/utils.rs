@@ -15420,11 +15420,14 @@ mod tests {
         if !isset(MULTIBYTE) {
             return;
         }
-        // C: `pm->gsu.s->{get,set}fn(pm, val)`. Mirror via paramtab.
-        let saved = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
+        // Snapshot the store `ifssetfn` writes: the `ifs` global itself
+        // (`None` is an unset IFS, c:Src/params.c:4748). A paramtab read finds
+        // no IFS node in a bare test process and yields "", and restoring that
+        // left an EMPTY IFS behind, so every later typtab test saw no
+        // separators.
+        let saved = crate::ported::params::ifs_lock()
+            .lock()
+            .map(|g| g.clone())
             .unwrap_or_default();
         // ifssetfn ignores its `_pm` arg (the C `gsu.s->setfn` receives
         // the param but the IFS callback only touches the global `ifs`
@@ -15444,7 +15447,8 @@ mod tests {
             "c:4367 — IFS membership through canonical global"
         );
         // Restore.
-        do_set(&mut dummy, saved);
+        *crate::ported::params::ifs_lock().lock().expect("ifs poisoned") = saved;
+        crate::ported::utils::inittyptab();
     }
 
     /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is
