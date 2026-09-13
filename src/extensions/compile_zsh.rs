@@ -4660,8 +4660,12 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(src_const), 0);
                     // Scalar splice pre-concats the old slice above (when
                     // appending), so the handler keeps plain-replace
-                    // semantics — pass append=0 (marker 2 = scalar RHS).
-                    self.builder.emit(Op::LoadInt(2), 0);
+                    // semantics: marker 2 = scalar RHS. Marker 3 = scalar RHS
+                    // of a `+=`, the same splice, which lets the handler
+                    // raise c:Src/params.c:3264 "attempt to add to slice of
+                    // a numeric variable" for an integer/float target.
+                    self.builder
+                        .emit(Op::LoadInt(if assign.append { 3 } else { 2 }), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 5),
                         0,

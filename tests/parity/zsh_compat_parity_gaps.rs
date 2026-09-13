@@ -48245,4 +48245,13 @@ mod subscripted_assignment_to_a_non_array {
         assert_parity(r#"float f=1.5; f[1,2]=3; print -r -- $f"#, "subscripted_non_array_5");
         assert_parity(r#"a=hello; a[2,3]=XYZ; b=hello; b[2,3]+=X; print -r -- $a $b"#, "subscripted_non_array_6");
     }
+
+    /// c:Src/params.c:3250-3266 — `+=` on a subscripted integer/float is
+    /// "attempt to add to slice of a numeric variable" (c:3264) and ends the
+    /// command list; a plain `=` into the same range still replaces it.
+    #[test]
+    fn scalar_append_into_a_numeric_range_is_an_error() {
+        assert_parity(r#"{ float f=1; f[1,2]+=3; print -r -- $f } 2>&1; print rc=$?"#, "subscripted_non_array_7");
+        assert_parity(r#"{ integer i=12; i[1,2]+=3; print -r -- $i } 2>&1; print rc=$?"#, "subscripted_non_array_8");
+    }
 }
