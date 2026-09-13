@@ -2868,17 +2868,10 @@ pub fn zshrs_main() {
         #[cfg(feature = "daemon")]
         completed_c.store(true, std::sync::atomic::Ordering::SeqCst);
         let duration_ns_total = start.elapsed().as_nanos() as i64;
-        let duration = duration_ns_total / 1_000_000;
-
-        // Track in local history
-        if let Some(engine) = executor.history() {
-            let cwd = std::env::current_dir()
-                .ok()
-                .map(|p| p.to_string_lossy().to_string());
-            if let Ok(id) = engine.add(code, cwd.as_deref()) {
-                let _ = engine.update_last(id, duration, executor.last_status());
-            }
-        }
+        // No history entry for a `-c` string: zsh stops history for any
+        // non-interactive input (c:Src/hist.c:1120 — `stophist = (!interact
+        // || unset(SHINSTDIN)) ? 2 : 0`). Recording it here put every test
+        // and script invocation into the user's history store.
 
         // Daemon history_append (broadcasts long_cmd_complete on its end).
         #[cfg(feature = "daemon")]
