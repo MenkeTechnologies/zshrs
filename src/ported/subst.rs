@@ -737,28 +737,16 @@ fn stringsubst(
         // `\u{9d}~\u{9d}<match-1>` (SNULLs leaked through, broke the
         // string).
         if c == '\u{9d}' {
-            // c:237
-            // Find matching close-Snull.
+            // c:282-331 — C's stringsubst has no plain-Snull arm: the quoted
+            // span is passed over untouched and prefork's remnulargs (c:170)
+            // strips the markers. Deleting them here lost them when an `(e)`
+            // NULL stops prefork before c:170: `a='$('; v=''${(e)a}` is `''`.
             let mut end = pos + 1; // c:237
             while end < chars.len() && chars[end] != '\u{9d}' {
-                // c:237
-                end += 1; // c:237
-            } // c:237
-              // Splice out the opening + closing markers; body stays.
-            let prefix: String = chars[..pos].iter().collect(); // c:237
-            let body: String = chars[pos + 1..end].iter().collect(); // c:237
-            let suffix: String = if end < chars.len() {
-                // c:237
-                chars[end + 1..].iter().collect() // c:237
-            } else {
-                // c:237
-                String::new() // c:237
-            }; // c:237
-            str3 = format!("{}{}{}", prefix, body, suffix); // c:237
-            chars = str3.chars().collect(); // c:237
-            pos += body.chars().count(); // c:237
-            list.setdata(node_idx, str3.clone()); // c:237
-            continue; // c:237
+                end += 1;
+            }
+            pos = (end + 1).min(chars.len());
+            continue;
         } // c:237
           // Lexer-emitted double-quote marker (`\u{9e}`, Dnull). C does NOT
           // remove inull markers here: they must survive stringsubst so

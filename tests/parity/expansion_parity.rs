@@ -1187,6 +1187,15 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"arr=('$(' q); print -rl -- A"${(@e)arr}"B; print rc=$?"#);
     }
 
+    /// c:Src/subst.c:282-331 — stringsubst leaves the `''`/`""` markers for
+    /// remnulargs (c:170), which never runs once the `(e)` NULL stops prefork.
+    #[test]
+    fn empty_quotes_before_the_cut_survive() {
+        assert_parity(r#"a='$('; v=''${(e)a}; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; v=""${(e)a}; print -r -- "[$v]""#);
+        assert_parity(r#"a='$('; print -r -- x''${(e)a}z; v=p'q r'${(e)a}; print -r -- "[$v]""#);
+    }
+
     /// multsub adds no remnulargs of its own (c:Src/subst.c:625-657), so the
     /// quote tokens before the cut survive into the word.
     #[test]
