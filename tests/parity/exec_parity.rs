@@ -557,3 +557,15 @@ mod invalid_multibyte_ifs {
         assert_parity(r#"{ IFS=$'\x80'; echo x; print -r ${(q)IFS}; v='a b'; print -rl -- ${=v} } 2>&1"#);
     }
 }
+
+/// c:Src/exec.c:4753 getoutput — `mpipe` puts both pipe ends above the
+/// script's fd range and the forked child `redup`s the write end onto fd 1,
+/// so a command substitution runs even when the shell's stdout is closed.
+mod command_substitution_with_stdout_closed {
+    use super::*;
+
+    #[test]
+    fn body_still_runs() {
+        assert_parity(r#"{ { x=$(print b >&2) } >&-; print ok; { : $(print c >&2) } >&-; print ok2 } 2>&1"#);
+    }
+}

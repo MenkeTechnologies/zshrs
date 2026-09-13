@@ -18407,18 +18407,26 @@ impl fusevm::ShellHost for ZshrsHost {
         // capturing stdout. The current executor remains active via the
         // thread-local — the nested VM uses CallBuiltin to dispatch shell
         // ops back through `with_executor`.
+        // c:Src/exec.c:4800 getoutput — `mpipe(pipes)`: both ends are moved
+        // out of the script's fd range (c:Src/utils.c:2210 mpipe → movefd),
+        // so a closed stdout cannot hand the pipe fd 1 itself.
         let (read_end, write_end) = match os_pipe::pipe() {
             Ok(p) => p,
             Err(_) => return String::new(),
         };
+        let read_end = unsafe {
+            <os_pipe::PipeReader as std::os::fd::FromRawFd>::from_raw_fd(crate::ported::utils::movefd(
+                std::os::fd::IntoRawFd::into_raw_fd(read_end),
+            ))
+        };
+        // A closed fd 1 is saved as -1 and restored by closing it again
+        // (c:Src/utils.c:2047-2048 redup: `if (x < 0) zclose(y)`). Bailing out
+        // here skipped the body entirely: `{ x=$(print b >&2) } >&-` lost `b`.
         let saved_stdout = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD, 10) };
-        if saved_stdout < 0 {
-            return String::new();
-        }
         let saved_stderr = unsafe { libc::fcntl(libc::STDERR_FILENO, libc::F_DUPFD, 10) };
         let write_fd = AsRawFd::as_raw_fd(&write_end);
         unsafe {
-            libc::dup2(write_fd, libc::STDOUT_FILENO);
+            libc::dup2(write_fd, libc::STDOUT_FILENO); // c:4840 redup(pipes[1], 1)
         }
         drop(write_end);
 

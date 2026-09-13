@@ -6425,12 +6425,12 @@ impl ShellExecutor {
         // c:Src/utils.c:1996 — `movefd(dup(fd))`: saved copies of the
         // user-visible fds are shell-internal, so they too must live
         // at fd >= 10 / FDT_INTERNAL.
+        // A CLOSED stdout saves as -1 and is closed again on the way out
+        // (c:Src/utils.c:2047-2048 redup `if (x < 0) zclose(y)`). C's forked
+        // getoutput child needs no save at all (c:4840 `redup(pipes[1], 1)`),
+        // so the body runs either way: bailing out here lost everything the
+        // body did, `{ x=$(print b >&2) } >&-` never printed `b`.
         let saved_stdout = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
-        if saved_stdout < 0 {
-            crate::ported::utils::zclose(read_fd);
-            crate::ported::utils::zclose(write_fd);
-            return String::new();
-        }
         // Flush Rust's stdout BufWriter against the ORIGINAL fd before
         // dup2 swaps fd 1 to the capture pipe. Without this, bytes left
         // buffered by a prior `print -n` get drained to fd 1 AFTER the
@@ -7006,10 +7006,14 @@ impl ShellExecutor {
             crate::ported::utils::zclose(saved_stderr_for_trap);
         }
         // Restore stdout and read what was captured.
-        unsafe {
-            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+        if saved_stdout >= 0 {
+            unsafe {
+                libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+            }
+            crate::ported::utils::zclose(saved_stdout);
+        } else {
+            unsafe { libc::close(libc::STDOUT_FILENO) }; // c:2048 zclose(y)
         }
-        crate::ported::utils::zclose(saved_stdout);
         // Collect the concurrently-drained output. With fd 1 restored
         // above, the last shell-side write end is closed, so the reader
         // hits EOF and join() returns the full buffer regardless of
