@@ -454,3 +454,23 @@ args ${a[3,-1]}; args "${(@)a[x,-1]}"; args "${(j:,:)a[x,-1]}"; echo"#,
         );
     }
 }
+
+/// c:Src/subst.c:1551 — under `(~)` the flag argument is shtokenized, so a
+/// command-argument word built with it reaches globlist (c:Src/exec.c:3755)
+/// with active pattern characters. The compiler's `${(flags)NAME}` fast path
+/// returned plain text, so the joined `*` never globbed.
+mod tokenized_flag_argument_reaches_globlist {
+    use super::*;
+
+    #[test]
+    fn joined_star_globs_as_an_argument() {
+        assert_parity(r#"a=(zz_no 1); print -r -- ${(~j.*.)a}; echo rc=$?"#);
+        assert_parity(r#"a=(x y); print -r -- ${(j.*.)a} ${(~j.-.)a}"#);
+    }
+
+    #[test]
+    fn padding_string_globs_as_an_argument() {
+        assert_parity(r#"x=a; print -r -- ${(~l:5::*:)x}; echo rc=$?"#);
+        assert_parity(r#"x=a; y=${(~l:5::*:)x}; print -r -- $y"#);
+    }
+}

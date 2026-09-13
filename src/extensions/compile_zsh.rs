@@ -7951,7 +7951,14 @@ impl ZshCompiler {
                 // the sort/unique block runs unguarded.
                 let dq_wrapped = (word_is_single_dq_span(s))
                     || (self.dq_context_depth - self.cond_glob_suppress_depth) > 0;
-                if dq_wrapped {
+                // c:Src/subst.c:1551 — under `(~)` untok_and_escape shtokenizes
+                // the flag arguments, so a `(j)`/`(s)`/`(l)`/`(r)` argument
+                // enters the value as pattern tokens that globlist
+                // (c:Src/exec.c:3755) or the `[[ ]]` pattern match then act on.
+                // BUILTIN_PARAM_FLAG hands back plain text, so such a word takes
+                // the text-expansion path, whose multsub keeps the tokens.
+                let tok_args = flag_group_tokenizes_args(&untoked);
+                if dq_wrapped || tok_args {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
                 } else {
@@ -8448,7 +8455,11 @@ impl ZshCompiler {
         // (including the special `\(#e)` / `\(#s)` anchor cases).
         // Without this, `${(M)arr:#*\\(#e)}` falls through to the
         // EXPAND_TEXT bridge which scalar-flattens.
-        let try_bridge_array = !has_bnull || (untoked.starts_with("${(") && untoked.contains(":#"));
+        // A `(~)` word leaves through the text-expansion path instead (see
+        // `flag_group_tokenizes_args`).
+        let try_bridge_array = (!has_bnull
+            || (untoked.starts_with("${(") && untoked.contains(":#")))
+            && !flag_group_tokenizes_args(&untoked);
         // Guard: this fast path is for a SINGLE `${(flags)…}` expansion.
         // `strip_prefix("${") + strip_suffix('}')` alone does NOT verify the
         // leading `${` matches the FINAL `}` — for two adjacent expansions
@@ -8641,10 +8652,17 @@ impl ZshCompiler {
         }
         if !has_bnull {
             if let Some(inner) = whole_word_brace(&untoked) {
-                let has_array_op = inner.contains(":|")
-                    || inner.contains(":*")
-                    || inner.contains(":^^")
-                    || inner.contains(":^");
+                // The operator follows the name, never the `(flags)` group:
+                // a flag argument such as `(l:5::*:)` spells `:*` too, and
+                // read as SUB_INTERSECT it bypassed the flag handling.
+                let after_flags = inner
+                    .strip_prefix('(')
+                    .and_then(|r| r.split_once(')'))
+                    .map_or(inner, |(_, tail)| tail);
+                let has_array_op = after_flags.contains(":|")
+                    || after_flags.contains(":*")
+                    || after_flags.contains(":^^")
+                    || after_flags.contains(":^");
                 if has_array_op {
                     // Prefix with Qstring (\u{8c}) to signal DQ to
                     // paramsubst_to_value via the body's leading
@@ -14911,6 +14929,19 @@ fn expansion_may_null_prefork(s: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// Whether the untokenized word `${(…)…}` carries the `~` flag
+/// (c:Src/subst.c:2159-2161 `case '~': tok_arg = !tok_arg`), which makes
+/// untok_and_escape shtokenize the later flag arguments (c:1551). The
+/// compiler's direct paramsubst fast paths return plain text and lose those
+/// tokens, so such a word takes the text-expansion path. Flag arguments may
+/// themselves contain `~` (`(j.~.)`); that only routes a word the slower way.
+fn flag_group_tokenizes_args(untoked: &str) -> bool {
+    untoked
+        .strip_prefix("${(")
+        .and_then(|rest| rest.split_once(')'))
+        .is_some_and(|(group, _)| group.contains('~'))
 }
 
 fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
