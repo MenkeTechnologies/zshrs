@@ -237,3 +237,22 @@ mod large_numbers {
         assert_parity_in(d.path(), "print -l <1000-2000> | sort -n");
     }
 }
+
+/// c:Src/lex.c:1201-1206 — an unquoted `<N-M>` is lexed as Inang … Outang
+/// wherever it sits in the word, and haswilds fires on Inang
+/// (c:Src/pattern.c:4362-4364). After a parameter expansion zshrs never
+/// emitted the glob op, so `$x<1-2>` stayed literal.
+mod after_expansion {
+    use super::*;
+
+    #[test]
+    fn range_after_parameter_globs() {
+        let d = tdir();
+        make_files(d.path(), &["a1", "a2", "a3"]);
+        assert_parity_in(d.path(), "x=a; print -l $x<1-2>");
+        assert_parity_in(d.path(), "print -l ${x:-a}<1-2>");
+        assert_parity_in(d.path(), "x=a; print -l ${x}<2->");
+        // Quoted: literal in both.
+        assert_parity_in(d.path(), "x=a; print -l \"$x<1-2>\"");
+    }
+}

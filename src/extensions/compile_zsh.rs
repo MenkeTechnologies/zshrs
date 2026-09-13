@@ -8727,6 +8727,12 @@ impl ZshCompiler {
                                 '*' | '\u{87}' | '?' | '\u{97}' | '[' | '\u{91}' => {
                                     needs_glob = true;
                                 }
+                                // c:Src/lex.c:1201-1206 — an unquoted `<N-M>`
+                                // numeric range is lexed as Inang … Outang, and
+                                // haswilds fires on Inang (c:Src/pattern.c:4362-
+                                // 4364). Missing here, `$x<1-2>` never reached
+                                // filename generation while `a<1-2>` did.
+                                '<' | '\u{94}' => needs_glob = true,
                                 // c:Src/pattern.c:4326-4335 — haswilds
                                 // fires on ANY Inpar TOKEN unless SHGLOB
                                 // is set; the runtime zglob short-
