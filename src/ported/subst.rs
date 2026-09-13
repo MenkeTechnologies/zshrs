@@ -10724,7 +10724,9 @@ pub fn paramsubst(
                         // replaces the special's paramtab node with a plain one, so
                         // the magic getfn must not answer for this read.
                         .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
-                    let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
+                    // c:Src/params.c:1618 — `mathevalarg`, which reports a bad
+                    // expression instead of reading it as index 0.
+                    let idx_n: i64 = crate::ported::math::mathevalarg(sub.trim()); // c:1618
                     let len = arr.len() as i64;
                     let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
                     let i = if ksh_arrays {
@@ -24983,12 +24985,18 @@ pub fn paramsubst(
                     range_bounds = Some((lo, hi));
                     getarrvalue(&arr, lo, hi).join(" ") // c:1625
                 } else if let Some(idx) = sub.parse::<i32>().ok().or_else(|| {
-                    // c:Src/params.c:1419-1432 — getarg routes a
-                    // numeric subscript through mathevali so
-                    // `${a[1+1]}`, `${a[i+1]}`, `${a[n]}` all
-                    // evaluate as math. Direct port of the
-                    // mathevali(sub) call inside getindex.
-                    crate::ported::math::mathevali(sub).ok().map(|v| v as i32)
+                    // c:Src/params.c:1618 — getarg evaluates a non-flag
+                    // subscript with `r = mathevalarg(s, &s)`, which REPORTS a
+                    // bad expression (`k="1)"; $arr[$k]` → "bad math
+                    // expression: unexpected ')'", errflag set) instead of
+                    // reading it as no element. `mathevali(...).ok()` dropped
+                    // the error and printed nothing at status 0.
+                    let r = crate::ported::math::mathevalarg(sub); // c:1618
+                    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                        None
+                    } else {
+                        Some(r as i32)
+                    }
                 }) {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
@@ -25057,7 +25065,9 @@ pub fn paramsubst(
                         // replaces the special's paramtab node with a plain one, so
                         // the magic getfn must not answer for this read.
                         .filter(|_| !crate::vm_helper::magic_special_shadowed(&var_name))?;
-                    let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
+                    // c:Src/params.c:1618 — `mathevalarg`, which reports a bad
+                    // expression instead of reading it as index 0.
+                    let idx_n: i64 = crate::ported::math::mathevalarg(sub.trim()); // c:1618
                     let len = arr.len() as i64;
                     let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
                     let i = if ksh_arrays {
@@ -25186,9 +25196,20 @@ pub fn paramsubst(
                     // accepted bare integers, so a subscript carrying an
                     // expanded `$#var` (→ "3%2+1") failed parse and returned
                     // empty.
-                    crate::ported::math::mathevali(sub.trim())
-                        .ok()
-                        .map(|v| v as i32)
+                    //
+                    // c:Src/params.c:1618 — `mathevalarg`, which REPORTS a bad
+                    // expression (`s=hello; k="1)"; $s[$k]`) where
+                    // `mathevali(...).ok()` dropped it and printed nothing.
+                    {
+                        let r = crate::ported::math::mathevalarg(sub.trim()); // c:1618
+                        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                            != 0
+                        {
+                            None
+                        } else {
+                            Some(r as i32)
+                        }
+                    }
                 }) {
                     // c:1625
                     let n = chars_v.len() as i32; // c:1625

@@ -586,3 +586,22 @@ mod unclosed_subscript_is_invalid {
         assert_parity(r#"a=(1 2); print ${+a[1]} $+a[1] ${+a[5]}"#);
     }
 }
+
+/// c:Src/params.c:1618 — the UNBRACED `$name[…]` subscript is evaluated by
+/// the same `mathevalarg` as the braced one, which reports a bad expression.
+mod unbraced_expanded_subscript_math_error {
+    use super::*;
+
+    #[test]
+    fn array_scalar_and_special_array_report_the_error() {
+        assert_parity(r#"{ arr=(x y); k="1)"; print $arr[$k]; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ arr=(x y); k="(1"; print "$arr[$k]"; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ s=hello; k="1)"; print $s[$k]; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ f(){ k="1)"; print $funcstack[$k]; print rc=$? }; f } 2>&1"#);
+    }
+
+    #[test]
+    fn valid_expressions_still_index() {
+        assert_parity(r#"arr=(x y z); k=2; i=1; s=hello; print $arr[$k] $arr[i+1] $arr[-1] $s[2] $s[-1]"#);
+    }
+}
