@@ -1249,7 +1249,7 @@ pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
 /// C emits WC_PIPE wordcodes per command; same flow.
 fn par_pline() -> Option<ZshPipe> {
     let lineno = toklineno();
-    let cmd = par_cmd()?;
+    let cmd = par_cmd(false)?;
 
     // Check for | or |&
     let mut merge_stderr = false;
@@ -1290,7 +1290,7 @@ fn par_pline() -> Option<ZshPipe> {
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
 /// Inpar subshell / Inbrace current-shell / TIME / NOCORRECT,
 /// else simple). Direct port of zsh/Src/parse.c:958 `par_cmd`.
-fn par_cmd() -> Option<ZshCommand> {
+fn par_cmd(zsh_construct: bool) -> Option<ZshCommand> {
     // Parse leading redirections
     let mut redirs = Vec::new();
     while IS_REDIROP(tok()) {
@@ -1355,14 +1355,14 @@ fn par_cmd() -> Option<ZshCommand> {
         }
         INPAR_TOK => {
             cmdpush(CS_SUBSH as u8); // c:1012
-            let c = par_subsh();
+            let c = par_subsh(zsh_construct);
             cmdpop(); // c:1014
             c
         }
         INOUTPAR => parse_anon_funcdef(),
         INBRACE_TOK => {
             cmdpush(CS_CURSH as u8); // c:1017
-            let c = parse_cursh();
+            let c = parse_cursh(zsh_construct);
             cmdpop(); // c:1019
             c
         }
@@ -1402,7 +1402,11 @@ fn par_cmd() -> Option<ZshCommand> {
         // silently treated trailing words as a new command, masking
         // syntax errors like `{ echo a; } b c`. Mirror C's strict
         // post-compound terminator check. Bug #146 in docs/BUGS.md.
-        if !matches!(inner, ZshCommand::Simple(_))
+        // With zsh_construct set (an anonymous function's `( … )` / `{ … }`
+        // body, c:2114) the words that follow are that function's arguments
+        // (c:2148-2167), not a stray word after a compound command.
+        if !zsh_construct
+            && !matches!(inner, ZshCommand::Simple(_))
             && tok() == STRING_LEX
             && COND_LIST_DEPTH.with(|d| d.get()) == 0
         {
@@ -2428,7 +2432,7 @@ fn par_repeat() -> Option<ZshCommand> {
 /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
 /// fork-isolates execution in the executor.
-fn par_subsh() -> Option<ZshCommand> {
+fn par_subsh(zsh_construct: bool) -> Option<ZshCommand> {
     zshlex(); // skip (
               // c:Src/parse.c:par_subsh — `parse_event(OUTPAR)` parses until
               // the matching `)`. zshrs's previous port called bare
@@ -2453,6 +2457,7 @@ fn par_subsh() -> Option<ZshCommand> {
         yyerror(0); // c:1631 YYERRORV — sets ERRFLAG_ERROR (c:2751)
         return None;
     }
+    set_incmdpos(!zsh_construct); // c:1632
     zshlex(); // c:1633
     Some(ZshCommand::Subsh(Box::new(prog)))
 }
@@ -2787,7 +2792,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         // can list it (fusevm shfuncs render from this raw `body`, not
         // getpermtext — hashtable.rs:1397). Without it `function f () print x`
         // listed as `f () { }` (empty).
-        par_cmd().map(|cmd| {
+        par_cmd(false).map(|cmd| {
             let body_source = crate::funcdef_capture::body_text(body_mark)
                 .map(|s| {
                     s.trim()
@@ -9262,7 +9267,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                     } else if !matches!(tok(), ENDINPUT | OUTBRACE_TOK | SEPER | NEWLIN) {
                         // No-brace one-line body: `foo() echo hello`.
                         // Parse a single command for the body.
-                        let body_cmd = par_cmd();
+                        let body_cmd = par_cmd(false);
                         if let Some(cmd) = body_cmd {
                             let body_list = ZshList {
                                 sublist: ZshSublist {
@@ -10032,21 +10037,22 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // `f() () print hi` nests one as another function's body. A bodyless `()`
     // is a parse error in zsh ("parse error near `()'"), which par_cmd()
     // produces naturally when the next token can't start a command (`}`, EOF).
-    // The previous port returned an empty subshell here, so `() print hi`
-    // hit the outer "parse error near `print'" and bare `()` wrongly succeeded.
-    if tok() != INBRACE_TOK {
+    let (body, body_source) = if tok() != INBRACE_TOK {
         if unset(SHORTLOOPS) {
             // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
             zerr("parse error: short function body form requires SHORTLOOPS option");
             return None;
         }
-        // c:1747-1748 — `else par_list1(&c)`: ONE command is the body.
+        // c:2114 — `par_cmd(&c, argc == 0)`: for an anonymous function
+        // zsh_construct is set, so a `( … )` / `{ … }` body leaves the NEXT
+        // word out of command position (c:1632, c:2118-2128) and
+        // `() (cat $1 $2) <(print a) =(print b)` reads its arguments as words.
         // Slice the raw body text (body_start was captured before the body
         // token was lexed, above) so `functions`/`typeset -f` can render it:
         // fusevm shfuncs carry no C-shaped Eprog, so hashtable.rs:1397-1414
         // renders from this raw `body` string, not getpermtext. Without it the
         // body listed as `f () { }` (empty).
-        let cmd = par_cmd()?;
+        let cmd = par_cmd(true)?;
         let body_source = crate::funcdef_capture::body_text(body_mark)
             .map(|s| {
                 s.trim()
@@ -10070,34 +10076,30 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
             },
             flags: ListFlags::default(),
         };
-        static ANON_UNBRACED_COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = ANON_UNBRACED_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!("_zshrs_anon_{}", n);
-        // No trailing args for the unbraced form (the whole command IS the
-        // body); call with an empty arg list so the anon fn still executes.
-        return Some(ZshCommand::FuncDef(ZshFuncDef {
-            names: vec![name],
-            body: Box::new(ZshProgram { lists: vec![list] }),
-            tracing: false,
-            auto_call_args: Some(Vec::new()),
-            body_source,
-        }));
-    }
-    zshlex(); // skip {
-              // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
-              // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
-              // parse stops cleanly at `}` rather than hitting the top-level
-              // stray-`}` arm (#168). Bug #167 family.
-    let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-    // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
-    // gate as the named-funcdef path. Bug #405 sibling.
-    if tok() != OUTBRACE_TOK {
-        zerr("parse error: expected `}'");
-        return None;
-    }
-    zshlex();
-    // Collect trailing args AND redirections, interleaved in any order,
-    // until a separator. zsh's anon-fn form `() { body } a b c` runs
+        (ZshProgram { lists: vec![list] }, body_source)
+    } else {
+        zshlex(); // skip {
+                  // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
+                  // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
+                  // parse stops cleanly at `}` rather than hitting the top-level
+                  // stray-`}` arm (#168). Bug #167 family.
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+        // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
+        // gate as the named-funcdef path. Bug #405 sibling.
+        if tok() != OUTBRACE_TOK {
+            zerr("parse error: expected `}'");
+            return None;
+        }
+        // c:2102-2105 — `if (argc == 0) { /* Anonymous function, possibly
+        // with arguments */ incmdpos = 0; }`: the words after `}` are the
+        // function's arguments, so `() { echo $1 } (y|z)*` lexes `(y|z)*` as
+        // a glob word rather than a subshell.
+        set_incmdpos(false);
+        zshlex();
+        (body, None)
+    };
+    // c:2148-2167 — collect trailing args AND redirections, interleaved in any
+    // order, until a separator. zsh's anon-fn form `() { body } a b c` runs
     // body with $1=a, $2=b, $3=c; redirs apply to that invocation:
     // `() { read v; print $1 $v } <input1 Shirley >output1 dude`
     // (c:Src/parse.c par_simple — the anon function is a simple command
@@ -10135,7 +10137,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         body: Box::new(body),
         tracing: false,
         auto_call_args: Some(args),
-        body_source: None,
+        body_source,
     });
     // Wrap in Redirected so the redirs bracket the single invocation
     // (compile_zsh.rs:929 wraps the body in a WithRedirectsBegin/End
@@ -10158,7 +10160,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 /// par_cmd at parse.c:958-1085 handles Inbrace → emit WC_CURSH
 /// and recurses into the list. zshrs's parse_cursh extracts that
 /// arm into a dedicated method.
-fn parse_cursh() -> Option<ZshCommand> {
+fn parse_cursh(zsh_construct: bool) -> Option<ZshCommand> {
     zshlex(); // skip {
               // c:Src/parse.c:par_subsh — pass OUTBRACE_TOK as the explicit
               // body terminator so the inner parse stops cleanly at `}` rather
@@ -10192,7 +10194,7 @@ fn parse_cursh() -> Option<ZshCommand> {
     // turning `always { ... }` into a Simple `{` `echo` … and the
     // try/always pairing is silently lost.
     {
-        set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
+        set_incmdpos(!zsh_construct); // parse.c:1632 incmdpos = !zsh_construct
         zshlex();
 
         // Check for 'always'
@@ -10334,7 +10336,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // can list it (fusevm shfuncs render from this raw `body`, not
         // getpermtext — hashtable.rs:1397). Without it `f() print x` listed as
         // `f () { }` (empty).
-        match par_cmd() {
+        match par_cmd(false) {
             Some(cmd) => {
                 let body_source = crate::funcdef_capture::body_text(body_mark)
                     .map(|s| {

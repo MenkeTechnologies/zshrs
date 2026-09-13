@@ -670,3 +670,30 @@ mod bang_without_a_following_command {
         assert_parity("! true; print $?");
     }
 }
+
+/// c:Src/parse.c:2102-2105 / c:2114-2128 — after an anonymous function's body
+/// `incmdpos = 0` (a `( … )` body gets it through par_subsh's zsh_construct,
+/// c:1632), so the words that follow are its arguments, globbed and
+/// process-substituted like any others. zshrs lexed them in command position:
+/// `(y|z)*` became a subshell and `<(…)` a redirection, both parse errors.
+mod anonymous_function_argument_words {
+    use super::*;
+
+    #[test]
+    fn glob_and_process_substitution_arguments() {
+        assert_parity("() (cat $1 $2) <(print process expanded) =(print expanded to file)");
+        assert_parity("() (print sub $*) x y");
+        assert_parity("() { print $# } (y|z)(N) a");
+        assert_parity("() { print $1 $3; cat $2 } some <(print ps) b");
+    }
+
+    #[test]
+    fn existing_forms_are_unchanged() {
+        assert_parity("() { print This has arguments $*; } of all sorts; print After the function");
+        assert_parity("() { echo empty };(echo here)");
+        assert_parity("() print hi");
+        assert_parity("{ print x } y");
+        assert_parity("( print x ) y");
+        assert_parity("{ print a } always { print b }");
+    }
+}
