@@ -22816,6 +22816,29 @@ pub fn paramsubst(
         // (e) eval — re-substitute the result. Per-element on arrays.
         // Direct port of subst.c:2268 eval bit which iterates aval.
         if eval {
+            // c:Src/subst.c:4226-4231 — `if (isarr && ssub) { val = sepjoin(aval,
+            // NULL, 1); isarr = 0; }` runs before both eval sites (the array
+            // insert loop and the scalar c:4472 re-lex), so under PREFORK_SINGLE
+            // the value is re-lexed as ONE joined string: `arr=(p x '$(' q);
+            // v=${(@e)arr}` fails on the whole text and assigns nothing.
+            if (pf_flags & PREFORK_SINGLE) != 0 {
+                let joined_src = split_parts
+                    .take()
+                    .or_else(|| if isarr != 0 { arrays_get(&var_name) } else { None });
+                if let Some(parts) = joined_src {
+                    value = crate::ported::utils::sepjoin(&parts, None); // c:4228
+                    // !!! WARNING: C clears isarr here (c:4229). The port keeps the
+                    // joined text as a ONE-element aval instead: with split_parts
+                    // cleared, the `(@)` emission below re-fetches the parameter
+                    // by name and discards `value`. One element re-lexes exactly
+                    // like C's scalar (a failure leaves no element before it) and
+                    // joins back to the same word.
+                    split_parts = Some(vec![value.clone()]);
+                    if isarr == 0 {
+                        isarr = 1;
+                    }
+                }
+            }
             // c:2268
             // c:4346 — `if (eval && subst_parse_str(&x, (qt && !nojoin),
             // quoteerr))`. Each element is re-lexed via subst_parse_str (which

@@ -1198,6 +1198,17 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"arr=(p x '$('); v=("${(@e)arr}"); print $#v; print -rl -- $v"#);
     }
 
+    /// c:Src/subst.c:4226-4231 — under PREFORK_SINGLE the array is joined
+    /// before the re-lex, so a scalar assignment keeps only the text before
+    /// the `$`, never the elements.
+    #[test]
+    fn a_scalar_assignment_joins_before_the_relex() {
+        assert_parity(r#"arr=(p x '$(' q); v="${(@e)arr}"; print -r -- "[$v]""#);
+        assert_parity(r#"arr=(p x '$(' q); v=${(@e)arr}; print -r -- "[$v]""#);
+        assert_parity(r#"arr=(p x '$(' q); v=A${(@e)arr}B; print -r -- "[$v]""#);
+        assert_parity(r#"b=B; arr=('$b' x); v=${(@e)arr}; print -r -- "[$v]""#);
+    }
+
     /// c:Src/subst.c:282-331 — stringsubst leaves the `''`/`""` markers for
     /// remnulargs (c:170), which never runs once the `(e)` NULL stops prefork.
     #[test]
