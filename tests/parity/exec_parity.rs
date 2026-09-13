@@ -359,3 +359,29 @@ mod exec_under_posix_builtins {
         assert_parity(r#"(setopt posixbuiltins; exec print hi 2>&1; print no); print rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:4147-4154 — `addvars(state, varspc, flags); if (errflag) {
+/// …; lastval = 1; …; goto done; }`: an expansion error in a prefix
+/// assignment skips the command. For an external command the assignments run
+/// in the forked child (c:4343-4350 `if (errflag) _exit(1);`), so the shell
+/// sees status 1 and carries on; for a shell function they run in the shell,
+/// whose errflag ends the script with status 1.
+mod prefix_assignment_error_skips_the_command {
+    use super::*;
+
+    #[test]
+    fn external_command_status_one_and_the_script_continues() {
+        assert_parity(r#"x=${bad?err} /bin/echo ran 2>&1; print rc=$?; print next"#);
+        assert_parity(r#"x=keep; x=${bad?err} /bin/echo ran; print rc=$? x=$x"#);
+        assert_parity(r#"x=$((1/0)) /bin/echo ran; print rc=$?; print next"#);
+        assert_parity(r#"x=${bad?err} /bin/echo ran && print and || print or; print end"#);
+        assert_parity(r#"c=/bin/echo; x=${bad?err} $c ran; print rc=$?; print next"#);
+        assert_parity(r#"g(){ x=${bad?err} /bin/echo ran; print in rc=$?; }; g; print out rc=$?"#);
+    }
+
+    #[test]
+    fn shell_function_ends_the_script_with_status_one() {
+        assert_parity(r#"f(){ print fn }; x=${bad?err} f; print rc=$?; print next"#);
+        assert_parity(r#"f(){ print fn }; x=$((1/0)) f; print rc=$?"#);
+    }
+}

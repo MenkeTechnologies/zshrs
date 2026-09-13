@@ -502,6 +502,18 @@ thread_local! {
     /// suppress compile-time globbing), so quoting can no longer be recovered
     /// from the value bytes — this flag carries the compile-time decision.
     static SET_VAR_GLOB_ELIGIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// c:Src/exec.c:4147-4154 — `addvars(state, varspc, flags); if (errflag)
+    /// { …; lastval = 1; fixfds(save); goto done; }`: an expansion error in
+    /// the prefix assignments of `X=… cmd` skips `cmd`. Set by
+    /// BUILTIN_SEAL_INLINE_ENV (the point right after those assignments),
+    /// consumed by the dispatch that would run the command, and cleared by
+    /// BUILTIN_END_INLINE_ENV so it never outlives the command.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C tests errflag inline between
+    /// addvars and the dispatch in one function; here those are separate
+    /// VM ops, and errflag alone cannot tell this skip from an error raised
+    /// by the command words, which C handles at c:3760 instead.
+    static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Register the session executor pointer (called from
@@ -8965,9 +8977,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 frame.recording = false;
             }
         });
+        // c:Src/exec.c:4147-4148 — `addvars(state, varspc, flags); if
+        // (errflag) {` — see PREFIX_ASSIGN_FAILED.
+        let failed = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
+        PREFIX_ASSIGN_FAILED.with(|c| c.set(failed));
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
+        PREFIX_ASSIGN_FAILED.with(|c| c.set(false));
         with_executor(|exec| {
             if let Some(frame) = exec.inline_env_stack.pop() {
                 frame.restore(); // c:Src/exec.c:4519 restore_params
@@ -11575,6 +11594,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
         {
+            // c:Src/exec.c:4343-4350 — when the error came from the prefix
+            // assignments and the expanded name is an external command, they
+            // ran in the forked child (`addvars(…); if (errflag) _exit(1);`):
+            // the shell sees status 1 and its errflag is untouched.
+            if PREFIX_ASSIGN_FAILED.with(|c| c.replace(false)) {
+                if let Some(name) = args.first() {
+                    let is_external = !with_executor(|exec| exec.function_exists(name))
+                        && !crate::ported::builtin::createbuiltintable().contains_key(name.as_str());
+                    if is_external {
+                        // Both bits: `${name?msg}` also sets ERRFLAG_HARD.
+                        crate::ported::utils::errflag.fetch_and(
+                            !(crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        with_executor(|exec| exec.set_last_status(1));
+                    }
+                }
+            }
             return Value::Status(1);
         }
         if args.is_empty() {
@@ -18150,7 +18187,15 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.redirect_failed = false;
             f
         });
-        if redir_failed {
+        // c:Src/exec.c:4147-4154 — a failed prefix assignment skips the
+        // command with `lastval = 1` in the same way. For an external the
+        // assignments run in the forked child (c:4343-4350 `addvars(…); if
+        // (errflag) _exit(1);`), so the shell again only sees status 1:
+        //   x=${bad?err} /bin/echo ran; print rc=$?     zsh: rc=1
+        // while a shell function runs them in the shell, whose errflag ends
+        // the list.
+        let prefix_failed = PREFIX_ASSIGN_FAILED.with(|c| c.replace(false));
+        if redir_failed || prefix_failed {
             // c:Src/exec.c:3719 forks an external command (execcmd_fork)
             // BEFORE the redirection loop at c:3785, so a redirection that
             // `zerr`s (`<&""` → "file number expected", c:Src/glob.c:2192)
@@ -18168,10 +18213,14 @@ impl fusevm::ShellHost for ZshrsHost {
             let is_external = !with_executor(|exec| exec.function_exists(name))
                 && !crate::ported::builtin::createbuiltintable().contains_key(name);
             if is_external {
-                crate::ported::utils::errflag.fetch_and(
-                    !crate::ported::zsh_h::ERRFLAG_ERROR,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                // A `${name?msg}` in the prefix assignments also sets
+                // ERRFLAG_HARD; the forked child took both bits with it.
+                let bits = if prefix_failed {
+                    crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD
+                } else {
+                    crate::ported::zsh_h::ERRFLAG_ERROR
+                };
+                crate::ported::utils::errflag.fetch_and(!bits, std::sync::atomic::Ordering::Relaxed);
             }
             with_executor(|exec| exec.set_last_status(1));
             return Some(1);
