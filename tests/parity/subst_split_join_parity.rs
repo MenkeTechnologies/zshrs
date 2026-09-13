@@ -367,6 +367,20 @@ mod split_flag_over_nested_substitution {
     }
 }
 
+/// c:Src/params.c:1741-1760 — a lowercase `(i)`/`(r)` scan of an association
+/// that matches nothing yields an empty SCALAR (only `(I)`/`(R)` accept an
+/// empty array), so RC_EXPAND_PARAM keeps the surrounding word.
+mod assoc_scan_miss_is_scalar {
+    use super::*;
+
+    #[test]
+    fn rcexpandparam_keeps_word_for_lowercase_miss() {
+        assert_parity(
+            r#"setopt rcexpandparam; typeset -A h; h=(X x); print S key=$h[(i)y] val=$h[(r)Y]; print S k=$h[(I)y] a=${h[(r)X]} b=$h[(i)X]"#,
+        );
+    }
+}
+
 /// Errors a nested or re-lexed value must raise instead of passing through.
 mod flag_value_errors {
     use super::*;

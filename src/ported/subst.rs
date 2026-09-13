@@ -9666,8 +9666,19 @@ pub fn paramsubst(
                     // `split_parts = Some(out.clone())` with
                     // `isarr = -1` (empty array) or `isarr = 1`
                     // (populated).
-                    split_parts = Some(out.clone());
-                    isarr = if out.is_empty() { -1 } else { 1 };
+                    // c:Src/params.c:1741-1760 — only a `down` scan ((I)/(R),
+                    // SCANPM_MATCHMANY) accepts an empty `getvaluearr` as the
+                    // result. A lowercase (i)/(r) miss falls through to
+                    // `if (!ta || !*ta) return !down;`, which leaves no array:
+                    // the reference is an empty SCALAR, so the word survives
+                    // RC_EXPAND_PARAM (`print S key=$h[(i)y]` keeps `key=`).
+                    if out.is_empty() && !return_all {
+                        split_parts = None;
+                        isarr = 0;
+                    } else {
+                        split_parts = Some(out.clone());
+                        isarr = if out.is_empty() { -1 } else { 1 };
+                    }
                     // c:Src/params.c:1513-1531 — the mask the scan hands to a
                     // CHAINED subscript (`${A[(K)pat][N]}`). C only augments the
                     // mask when the caller passed neither `(k)` nor `(v)`:
