@@ -4577,18 +4577,21 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
         }
     };
 
-    // Read FD_PRELEN+1 u32 words = 52 bytes.
-    let mut buf_bytes = vec![0u8; (FD_PRELEN + 1) * 4];
-    if f.read_exact(&mut buf_bytes).is_err() {
+    // c:3261 `wordcode buf[FD_PRELEN + 1];` + c:3268 `read(fd, buf, (FD_PRELEN + 1) *
+    // sizeof(wordcode))` — the words are read straight into the wordcode
+    // buffer, in host byte order; `fdmagic` below is what detects a file
+    // written with the other order (c:3270, c:3285-3301).
+    let mut buf: Vec<u32> = vec![0u32; FD_PRELEN + 1];
+    // SAFETY: a byte view of the u32 buffer, as C's `read(fd, buf, n *
+    // sizeof(wordcode))`; u32 has no padding and every bit pattern is valid.
+    let buf_bytes =
+        unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4) };
+    if f.read_exact(buf_bytes).is_err() {
         if err != 0 {
             warn_nam(&format!("invalid zwc file: {}", name)); // c:3277
         }
         return None;
     }
-    let mut buf: Vec<u32> = buf_bytes
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
 
     // c:3270 — magic + version check against `ZSH_VERSION` (C global;
     // zshrs mirrors it in `patchlevel::ZSH_VERSION`).
@@ -4617,14 +4620,14 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
     // Else seek to `fdother(buf)` and re-read.
     if fdmagic(&buf) != FD_MAGIC {
         let other = fdother(&buf) as u64; // c:3290
-        if f.seek(SeekFrom::Start(other)).is_err() || f.read_exact(&mut buf_bytes).is_err() {
+        // c:3292-3294 — re-read the other copy's prefix into the same buffer.
+        // SAFETY: byte view of the u32 buffer, as above.
+        let buf_bytes =
+            unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 4) };
+        if f.seek(SeekFrom::Start(other)).is_err() || f.read_exact(buf_bytes).is_err() {
             warn_nam(&format!("invalid zwc file: {}", name)); // c:3295
             return None;
         }
-        buf = buf_bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
     }
 
     let total_words = fdheaderlen(&buf) as usize; // c:3286/3299
@@ -4633,18 +4636,23 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
         return None;
     }
 
-    // Read the remaining header words.
-    let mut head: Vec<u32> = Vec::with_capacity(total_words);
-    head.extend_from_slice(&buf);
-    let remaining_words = total_words - (FD_PRELEN + 1);
-    if remaining_words > 0 {
-        let mut rest_bytes = vec![0u8; remaining_words * 4]; // c:3305
-        if f.read_exact(&mut rest_bytes).is_err() {
+    // c:3287/3300 `head = zhalloc(len)`, c:3302 `memcpy(head, buf, (FD_PRELEN +
+    // 1) * sizeof(wordcode))`, c:3304-3305 `read(fd, head + (FD_PRELEN + 1),
+    // len)` — the rest of the header is read straight into the words after
+    // the prefix, one read, no per-word conversion. Converting byte chunks
+    // one word at a time was most of `compinit`'s cost here: every
+    // `autoload -r` lookup re-reads each digest header on $fpath, which C
+    // does too (check_dump_file maps a digest only for a non-test lookup).
+    let mut head: Vec<u32> = vec![0u32; total_words];
+    head[..FD_PRELEN + 1].copy_from_slice(&buf); // c:3302
+    let rest = &mut head[FD_PRELEN + 1..];
+    if !rest.is_empty() {
+        // SAFETY: byte view of the u32 words, as above.
+        let rest_bytes =
+            unsafe { std::slice::from_raw_parts_mut(rest.as_mut_ptr() as *mut u8, rest.len() * 4) };
+        if f.read_exact(rest_bytes).is_err() {
             warn_nam(&format!("invalid zwc file: {}", name)); // c:3307
             return None;
-        }
-        for c in rest_bytes.chunks_exact(4) {
-            head.push(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
         }
     }
     Some(head) // c:3311
