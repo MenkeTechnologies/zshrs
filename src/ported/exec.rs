@@ -9367,7 +9367,11 @@ pub fn run_function_body(name: &str, args: &[String]) -> Option<i32> {
 /// Run a script source string on the live executor. `Ok(0)` when no
 /// executor is in scope.
 pub fn execute_script(src: &str) -> Result<i32, String> {
-    if let Some(r) = crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(src)) {
+    // c:1228 execstring → execode: no end-of-script hooks (see
+    // ShellExecutor::execute_string_without_exit_hooks).
+    if let Some(r) =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.execute_string_without_exit_hooks(src))
+    {
         return r;
     }
     // No active VM context: the loop()/zsh_main exit path where `zexit`
@@ -9377,7 +9381,7 @@ pub fn execute_script(src: &str) -> Result<i32, String> {
     SESSION_EXECUTOR.with(|c| match c.get() {
         Some(ptr) => {
             let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
-            unsafe { (*ptr).execute_script(src) }
+            unsafe { (*ptr).execute_string_without_exit_hooks(src) }
         }
         None => Ok(0),
     })
@@ -9409,7 +9413,7 @@ pub fn execute_script(src: &str) -> Result<i32, String> {
 /// printed nothing.
 pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
     if let Some(r) =
-        crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script_zsh_pipeline(src))
+        crate::fusevm_bridge::try_with_executor(|exec| exec.execute_string_without_exit_hooks(src))
     {
         return r;
     }
@@ -9421,7 +9425,7 @@ pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
         // `vm.run()`), so this cannot alias a live `&mut ShellExecutor`.
         Some(ptr) => {
             let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
-            unsafe { (*ptr).execute_script_zsh_pipeline(src) }
+            unsafe { (*ptr).execute_string_without_exit_hooks(src) }
         }
         None => Ok(0),
     })

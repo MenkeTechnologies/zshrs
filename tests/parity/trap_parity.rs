@@ -231,3 +231,23 @@ mod chld_trap_for_background_children {
         assert_parity(r#"trap 'print C' CHLD; /usr/bin/true; print fg"#);
     }
 }
+
+/// c:Src/exec.c:1228-1245 — `eval` runs its string through execstring/execode,
+/// which runs no EXIT trap. The script's EXIT trap belongs to zexit
+/// (c:Src/builtin.c:6037-6043) and a function's to endtrapscope
+/// (c:Src/signals.c:880). Firing the end-of-script hooks after every `eval`
+/// ran the trap in the middle of the script.
+mod exit_trap_not_fired_by_eval {
+    use super::*;
+
+    #[test]
+    fn script_exit_trap_waits_for_the_end() {
+        assert_parity(r#"trap "print T" EXIT; eval "print e"; print after"#);
+        assert_parity(r#"emulate sh -c 'trap "print T" EXIT'; eval :; print after"#);
+    }
+
+    #[test]
+    fn function_exit_trap_waits_for_the_function_end() {
+        assert_parity(r#"f(){ trap "print T" EXIT; eval "print e"; print in; }; f; print after"#);
+    }
+}

@@ -2239,8 +2239,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             1
         } else {
             with_executor(|exec| {
-                // c:6175 execode
-                exec.execute_script(&src).unwrap_or(1)
+                // c:6175 execode — no end-of-script hooks (c:Src/builtin.c:6213)
+                exec.execute_string_without_exit_hooks(&src).unwrap_or(1)
             })
         };
         crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
@@ -5873,7 +5873,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // → `[][outer]`), so one save/clear/restore serves both.
                     let saved = crate::ported::params::getsparam(&rplyvar);
                     crate::ported::params::unsetparam(&rplyvar);
-                    let st = exec.execute_script(&body).unwrap_or(0);
+                    let st = exec.execute_string_without_exit_hooks(&body).unwrap_or(0);
                     exec.set_last_status(st);
                     let reply = crate::ported::params::getsparam(&rplyvar).unwrap_or_default();
                     match saved {
@@ -5895,7 +5895,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // is why an ARRAY result stays an array
                     // (D10nofork.ztst "Basic substitution, brace quoting,
                     // and array result").
-                    let st = exec.execute_script(&body).unwrap_or(0);
+                    let st = exec.execute_string_without_exit_hooks(&body).unwrap_or(0);
                     exec.set_last_status(st);
                     match exec.array(&rplyvar) {
                         Some(items) => {
@@ -17611,7 +17611,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // Execute the trap body. Errors during trap execution
             // don't bubble — zsh ignores trap-body errors.
             with_executor(|exec| {
-                let _ = exec.execute_script(&body);
+                let _ = exec.execute_string_without_exit_hooks(&body);
             });
         }
         with_executor(|exec| {

@@ -3821,6 +3821,19 @@ impl ShellExecutor {
         self.run_chunk_with_exit_hooks(chunk, "execute_script_zsh_pipeline")
     }
 
+    /// Run a source string the way C's `execstring` does (c:Src/exec.c:1228
+    /// → `execode`, c:1245): parse, execute, return the status. No `EXIT`
+    /// trap, `TRAPEXIT` or `zshexit` hook runs here. In C those belong to
+    /// `zexit` (c:Src/builtin.c:6037-6043) and to the end of a function's
+    /// trap scope (`endtrapscope`, c:Src/signals.c:880), never to the end of
+    /// an `eval`, a trap body or a `sched` command. Firing them there ran a
+    /// script's EXIT trap in the middle of the script:
+    /// `trap 'print T' EXIT; eval :; print after` printed T before `after`.
+    pub fn execute_string_without_exit_hooks(&mut self, script: &str) -> Result<i32, String> {
+        let chunk = self.compile_script_isolated(script)?;
+        self.run_chunk(chunk, "execstring")
+    }
+
     /// Run the TEXT that `getpermtext` reconstructed from an already-compiled
     /// `.zwc` program.
     ///
@@ -8172,7 +8185,7 @@ impl ShellExecutor {
             .and_then(|t| t.get(signal).cloned());
         if let Some(body) = action {
             if !body.is_empty() {
-                let _ = self.execute_script(&body);
+                let _ = self.execute_string_without_exit_hooks(&body);
             }
         }
     }
