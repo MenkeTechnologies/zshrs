@@ -4920,6 +4920,7 @@ pub fn bin_typeset(
         // at c:2960-3030 where typeset_single is called on both names;
         // if the scalar had a value it gets passed to tiedarrsetfn
         // which splits on the tieddata joinchar (c:4370-4381 sepsplit).
+        let rhs_given = aval_opt.is_some() || sval_opt.is_some();
         let init_arr: Vec<String> = if let Some(arr) = aval_opt {
             arr
         } else if let Some(sval) = sval_opt.as_deref() {
@@ -4954,6 +4955,19 @@ pub fn bin_typeset(
         } else {
             Vec::new()
         };
+        // c:2983-2989 — the array half is created with an EMPTY value
+        // (`asg2.value.array = (LinkList)0`), and the initial value is only
+        // stored afterwards through the normal assignment path, c:3018-3025:
+        //     if (asg->value.array)
+        //         assignaparam(asg->name, zlinklist2array(asg->value.array, 1), flags);
+        //     else if (asg0.value.scalar || oldval)
+        //         assignsparam(asg0.name, oldval, 0);   /* via tiedarrsetfn */
+        // That path is what applies the attributes the halves were just given,
+        // most visibly PM_UNIQUE: `typeset -T -U P p=(a b a)` yields `a:b`.
+        // Writing `init_arr` straight into both halves skipped it. The scalar
+        // spellings are replayed as the array `init_arr` already split them
+        // into, which is what tiedarrsetfn's sepsplit would produce.
+        let assign_initial = rhs_given || !init_arr.is_empty();
 
         // Install the array side first (matching C c:2980 "Do it
         // first because we need the address"). Build a plain
@@ -4999,7 +5013,7 @@ pub fn bin_typeset(
         let mut apm = param::default();
         apm.node.nam = aname.to_string();
         apm.node.flags = ((PM_ARRAY | PM_TIED) | (tie_attr & !PM_EXPORTED)) as i32;
-        apm.u_arr = Some(init_arr.clone());
+        apm.u_arr = Some(if assign_initial { Vec::new() } else { init_arr.clone() }); // c:2984
         apm.ename = Some(sname.to_string());
         apm.level = locallevel.load(Relaxed) as i32;
         // c:2982-2989 — `tdp = (Tieddata) zalloc(sizeof *tdp);
@@ -5017,7 +5031,7 @@ pub fn bin_typeset(
         spm.node.nam = sname.to_string();
         spm.node.flags = ((PM_SCALAR | PM_TIED) | tie_attr) as i32; // c:2999 scalar carries full `on`
         spm.ename = Some(aname.to_string());
-        spm.u_str = Some(init_arr.join(&joinsep));
+        spm.u_str = Some(if assign_initial { String::new() } else { init_arr.join(&joinsep) });
         spm.u_tied = Some(Box::new(tdp));
         spm.level = locallevel.load(Relaxed) as i32;
         // c:Src/builtin.c:1956 — `static const struct gsu_scalar
@@ -5082,6 +5096,12 @@ pub fn bin_typeset(
             }
             tab.insert(aname.to_string(), Box::new(apm));
             tab.insert(sname.to_string(), Box::new(spm));
+        }
+        // c:3018-3025 — store the initial value now that both halves exist.
+        // flags 0: the `[k]=v` (ASG_KEY_VALUE) form is not tracked on this
+        // path, the same as the already-tied arm above.
+        if assign_initial {
+            let _ = crate::ported::params::assignaparam(aname, init_arr, 0); // c:3020
         }
         unqueue_signals();
         return 0;

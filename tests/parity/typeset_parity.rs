@@ -1093,3 +1093,40 @@ mod type_change_from_array {
         assert_parity(r#"typeset -A h=(k v); typeset -i h; print "[$h]" ${(t)h}"#);
     }
 }
+
+/// c:Src/builtin.c:2983-2989 + c:3018-3025 — `typeset -T` creates the array
+/// half empty and stores the initial value through the normal assignment
+/// path, which applies the attributes just given (PM_UNIQUE).
+mod tied_initial_value_through_assignment {
+    use super::*;
+
+    /// zsh `a:b` / `a b`; zshrs `a:b:a` / `a b a`.
+    #[test]
+    fn unique_tie_dedups_array_initial_value() {
+        assert_parity(r#"typeset -T -U P p=(a b a); print $P; print $p"#);
+    }
+
+    /// Scalar-side initial value.
+    #[test]
+    fn unique_tie_dedups_scalar_initial_value() {
+        assert_parity(r#"typeset -T -U P=a:b:a p; print $P; print $p"#);
+    }
+
+    /// An existing scalar adopted by the tie.
+    #[test]
+    fn unique_tie_dedups_inherited_scalar() {
+        assert_parity(r#"P=a:b:a; typeset -T -U P p; print $P ${#p}"#);
+    }
+
+    /// Function-local tie.
+    #[test]
+    fn unique_local_tie_dedups() {
+        assert_parity(r#"f(){ local -T -U P p=(x y x); print $P }; f"#);
+    }
+
+    /// Controls: no -U keeps duplicates; an empty scalar value is one element.
+    #[test]
+    fn plain_tie_and_empty_value_unchanged() {
+        assert_parity(r#"typeset -T P=a:b:a p; print $P ${#p}; typeset -T -U Q="" q; print "[$Q]" ${#q}"#);
+    }
+}
