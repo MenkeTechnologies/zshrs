@@ -7958,7 +7958,13 @@ impl ZshCompiler {
                 // BUILTIN_PARAM_FLAG hands back plain text, so such a word takes
                 // the text-expansion path, whose multsub keeps the tokens.
                 let tok_args = flag_group_tokenizes_args(&untoked);
-                if dq_wrapped || tok_args {
+                // c:Src/subst.c:1878 / c:326-327 — an `(e)` NULL leaves the word
+                // as its node text up to the `$`, quote tokens included
+                // (`v=""${(e)a}` is `""`). `untoked` has already dropped the
+                // quotes this fast path would need, so a quoted `(e)` word
+                // takes the text-expansion path, which keeps them.
+                let cut_keeps_quotes = has_quote_markers && expansion_may_null_prefork(s);
+                if dq_wrapped || tok_args || cut_keeps_quotes {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
                 } else {

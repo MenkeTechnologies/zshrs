@@ -1302,3 +1302,17 @@ mod eval_flag_null_in_quoted_word {
         assert_parity(r#"a='$('; v=${(e)a}; print -r -- "[$v]""#);
     }
 }
+
+/// c:Src/subst.c:1878, 326-327 — a word cut by an `(e)` NULL is its node text
+/// up to the `$`, so an empty quote pair before the expansion survives as
+/// `""`. The compiler's `${(flags)NAME}` fast path read the untokenized word,
+/// which had already lost the pair.
+mod eval_flag_null_keeps_a_leading_empty_quote {
+    use super::*;
+
+    #[test]
+    fn empty_double_quotes_before_the_cut() {
+        assert_parity(r#"a='$('; v=""${(e)a}; print -r -- "[$v]"; print -r -- ""${(e)a} x"#);
+        assert_parity(r#"b=ok; v=""${(e)b}; print -r -- "[$v]" ""${(e)b}x"#);
+    }
+}
