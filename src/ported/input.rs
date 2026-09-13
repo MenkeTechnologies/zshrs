@@ -41,7 +41,7 @@ struct instacks {
     bufpos: usize,         // c:110 char *bufptr offset
     bufct: i32,            // c:112 int bufct — inbufct AT PUSH TIME (spans lower CONT frames)
     flags: i32,            // c:112 int flags
-    alias: Option<String>, // c:111 Alias alias
+    alias: Option<(String, i32)>, // c:111 Alias alias — (an->node.nam, an->node.flags)
 }
 
 /// Initial input stack size
@@ -873,7 +873,7 @@ pub fn input_hasalias() -> Option<String> {
             let frame = &st[instackptr];
             if frame.alias.is_some() {
                 // c:843
-                alias_nam = frame.alias.clone(); // c:844
+                alias_nam = frame.alias.as_ref().map(|(nam, _)| nam.clone()); // c:844
             }
             flags = frame.flags; // c:845
         });
@@ -905,7 +905,7 @@ pub fn inerrflush() {
 /// Port of `inpush(char *str, int flags, Alias inalias)` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
-pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
+pub fn inpush(str: &str, flags: i32, inalias: Option<(String, i32)>) {
     // c:675
     // c:687 — `inbufflags &= ~(INP_ALCONT|INP_HISTCONT);` — the
     // continuation markers describe the frame BELOW; strip them from
@@ -1011,7 +1011,7 @@ pub fn inpoptop() {
     if let Some(entry) = instack.with(|st| st.borrow_mut().pop()) {
         // c:770-778 — if (instacktop->alias) { alias->inuse = 0; if trailing
         //               space → inalmore=1; histbackword(); }
-        if let Some(name) = &entry.alias {
+        if let Some((name, alias_flags)) = &entry.alias {
             // c:771 — `char *t = instacktop->alias->text;` — the check
             // below is against the ALIAS BODY, not the saved outer
             // buffer (`entry.buf` is the frame being restored; the
@@ -1019,7 +1019,17 @@ pub fn inpoptop() {
             let alias_text: Option<String> = {
                 // READ guard: `inuse` is atomic, so clearing it never
                 // splits the copy-on-write table (see `alias::inuse`).
-                let tab = aliastab_lock().read().expect("aliastab poisoned");
+                // `instacktop->alias` points into whichever table the node
+                // came from. A suffix alias (ALIAS_SUFFIX, set by `alias -s`,
+                // c:Src/builtin.c:4480) lives in sufaliastab; looking only in
+                // aliastab left it marked in use after its first expansion, so
+                // `!an->inuse` (c:Src/lex.c:1936) refused it from then on.
+                let lock = if (alias_flags & crate::ported::zsh_h::ALIAS_SUFFIX) != 0 {
+                    crate::ported::hashtable::sufaliastab_lock()
+                } else {
+                    aliastab_lock()
+                };
+                let tab = lock.read().expect("aliastab poisoned");
                 match tab.get(name) {
                     Some(a) => {
                         a.inuse.store(0, std::sync::atomic::Ordering::Relaxed); // c:773
@@ -1043,7 +1053,7 @@ pub fn inpoptop() {
         // INP_ALCONT: C would keep it reachable above `instacktop` for
         // `inungetc` (c:587-605) to walk back onto.
         if (entry.flags & INP_ALCONT) != 0 {
-            if let Some(name) = &entry.alias {
+            if let Some((name, _)) = &entry.alias {
                 crate::alias_input_frames::push(name);
             }
         } else {
@@ -1951,7 +1961,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_input();
         inpush("", 0, None);
-        inpush("", 0, Some("alias_name".to_string()));
+        inpush("", 0, Some(("alias_name".to_string(), 0)));
     }
 
     /// c:63 — `shinbufreset` is idempotent.
@@ -2102,7 +2112,7 @@ mod tests {
     fn inpush_with_alias_name_no_panic() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
-        inpush("expanded", 0, Some("ll".to_string()));
+        inpush("expanded", 0, Some(("ll".to_string(), 0)));
     }
 
     /// c:523/580 — `inpoptop` + `inpop` are no-ops on empty stack.

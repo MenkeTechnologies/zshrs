@@ -175,10 +175,15 @@ print -r -- 'll w' > $OUTFILE.d/k
 print -r -- 'll z' > $OUTFILE.d/h
 preexec(){ print -r -- "P [$2] [$3]" >> $OUTFILE }
 alias b='print' a='b  x' ll='print  aliased'
+alias -s txt='print  SUF'
 f(){ a y; ll z; }
 g(){ ll x
 }
-functions f g >> $OUTFILE
+s(){ foo.txt 1; }
+foo.txt 2 >> $OUTFILE
+print -r -- "[$(foo.txt 3)]" >> $OUTFILE
+foo.txt;print z >> $OUTFILE
+functions f g s >> $OUTFILE
 whence -c g >> $OUTFILE
 which f >> $OUTFILE
 print -r -- ${functions[f]} >> $OUTFILE

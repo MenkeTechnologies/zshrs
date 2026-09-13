@@ -3709,6 +3709,79 @@ fn checkalias(lextext: &str) -> bool {
         }
     }
 
+    // !!! ORDERING DIVERGENCE ADAPTER — C's inungetc returns a character to
+    // the CURRENT input frame (inbufptr--), which the alias inpush that
+    // follows then covers, so that character is read AFTER the alias body.
+    // zshrs's hungetc queues it in LEX_UNGET_BUF, which hgetc drains BEFORE
+    // any inbuf frame. Both alias arms need the C order — the regular arm for
+    // the character its own hgetc/hungetc probe returns (c:1923-1924), the
+    // suffix arm for the word terminator gettokstr gave back — so the pending
+    // ungets move into an INP_CONT frame pushed UNDER the alias frames: alias
+    // body → separator → terminator → rest of line. Only plain chars move —
+    // ingetc skips itok bytes (input.rs c:328), which must stay in
+    // LEX_UNGET_BUF to survive.
+    let reroute_pending_ungets = || {
+        let all_plain = LEX_UNGET_BUF.with_borrow(|b| {
+            b.iter()
+                .all(|&ch| !((ch as u32) < 256 && crate::ztype_h::itok(ch as u8)))
+        });
+        if all_plain {
+            let pending: String =
+                LEX_UNGET_BUF.with_borrow_mut(|b| b.drain(..).collect());
+            // These characters LEAVE the unget queue for an
+            // inbuf frame, so their re-read goes back through
+            // `ihgetc` -> `hwaddc` (c:459) rather than the
+            // flag-driven advance in `hgetc`. Undo the rewinds
+            // `hungetc` recorded for them here so the cursor is
+            // handed over exactly where `ihwaddc` expects it;
+            // from this point on C's own guard (c:360) governs,
+            // including its refusal under INP_ALIAS.
+            let rewound: Vec<bool> =
+                LEX_UNGET_HPTR.with_borrow_mut(|b| b.drain(..).collect());
+            // !!! RUST-ONLY !!! — the same handover for the
+            // function-body echo buffer: these characters leave
+            // the unget queue, so their re-read comes back
+            // through the FRESH-read arm of `hgetc` (which calls
+            // `src_capture_add` itself). Drop the stale flags or
+            // every later unget pops the wrong one.
+            crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.clear());
+            let restore: usize = pending
+                .chars()
+                .zip(rewound.iter())
+                .filter(|(_, &r)| r)
+                .map(|(ch, _)| ch.len_utf8())
+                .sum();
+            if restore != 0 {
+                let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
+                crate::ported::hist::hptr.store(pos + restore, Ordering::SeqCst);
+            }
+            // `hungetc` bumped `inbufct` for each queued char
+            // under LEXFLAGS_ZLE (c:input.c:558-559), expecting
+            // `hgetc`'s unget-pop to take it back on re-read.
+            // These chars leave the unget queue for an inbuf
+            // frame instead, so that pop never runs for them —
+            // and `inpush` below adds their length AGAIN for an
+            // INP_CONT frame. Undo the unget bump here so the
+            // count is not doubled. Without it `inbufct` stayed
+            // one high for the rest of the line, and `gotword`
+            // (c:lex.c:1884, `nwe = zlemetall + 1 - inbufct`)
+            // placed the completion word END one column short of
+            // the cursor: with `alias ls='grc --colour=on ls'`,
+            // `ls -<TAB>` never matched the cursor word, so
+            // `get_comp_string` returned an EMPTY word
+            // (`clwpos == -1`, `wb == we == zlemetacs`) and
+            // completion offered every file in the directory,
+            // narrowing to nothing as more was typed.
+            if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+                let n = pending.chars().count() as i32;
+                crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - n));
+            }
+            if !pending.is_empty() {
+                inpush(&pending, INP_CONT, None);
+            }
+        }
+    };
+
     // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
     // aliastab->getnode(aliastab, zshlextext);`
     let alias_clone: Option<alias> = {
@@ -3747,81 +3820,11 @@ fn checkalias(lextext: &str) -> bool {
                 if let Some(c) = hgetc() {
                     // c:1923
                     hungetc(c); // c:1924
-                                // !!! ORDERING DIVERGENCE ADAPTER — C's inungetc
-                                // returns the char to the CURRENT input frame
-                                // (inbufptr--), which the alias inpush below then
-                                // covers, so the terminator is read AFTER the alias
-                                // body. zshrs's hungetc pushes into LEX_UNGET_BUF,
-                                // which hgetc drains BEFORE any inbuf frame — so the
-                                // terminator (blank / `;` / `\n`) would be consumed
-                                // ahead of the alias text: `alias git=hub; git
-                                // status` fused to `hubstatus`, and the line's `\n`
-                                // ran early (PS2 prompt mid-command). Re-route the
-                                // pending ungets into an INP_CONT frame pushed UNDER
-                                // the separator/alias frames so read order matches C:
-                                // alias body → separator → terminator → line rest.
-                                // Only plain chars are re-routed — ingetc skips itok
-                                // bytes (input.rs c:328), which must stay in
-                                // LEX_UNGET_BUF to survive.
-                    let all_plain = LEX_UNGET_BUF.with_borrow(|b| {
-                        b.iter()
-                            .all(|&ch| !((ch as u32) < 256 && crate::ztype_h::itok(ch as u8)))
-                    });
-                    if all_plain {
-                        let pending: String =
-                            LEX_UNGET_BUF.with_borrow_mut(|b| b.drain(..).collect());
-                        // These characters LEAVE the unget queue for an
-                        // inbuf frame, so their re-read goes back through
-                        // `ihgetc` -> `hwaddc` (c:459) rather than the
-                        // flag-driven advance in `hgetc`. Undo the rewinds
-                        // `hungetc` recorded for them here so the cursor is
-                        // handed over exactly where `ihwaddc` expects it;
-                        // from this point on C's own guard (c:360) governs,
-                        // including its refusal under INP_ALIAS.
-                        let rewound: Vec<bool> =
-                            LEX_UNGET_HPTR.with_borrow_mut(|b| b.drain(..).collect());
-                        // !!! RUST-ONLY !!! — the same handover for the
-                        // function-body echo buffer: these characters leave
-                        // the unget queue, so their re-read comes back
-                        // through the FRESH-read arm of `hgetc` (which calls
-                        // `src_capture_add` itself). Drop the stale flags or
-                        // every later unget pops the wrong one.
-                        crate::funcdef_capture::LEX_UNGET_SRCCAP.with_borrow_mut(|b| b.clear());
-                        let restore: usize = pending
-                            .chars()
-                            .zip(rewound.iter())
-                            .filter(|(_, &r)| r)
-                            .map(|(ch, _)| ch.len_utf8())
-                            .sum();
-                        if restore != 0 {
-                            let pos = crate::ported::hist::hptr.load(Ordering::SeqCst);
-                            crate::ported::hist::hptr.store(pos + restore, Ordering::SeqCst);
-                        }
-                        // `hungetc` bumped `inbufct` for each queued char
-                        // under LEXFLAGS_ZLE (c:input.c:558-559), expecting
-                        // `hgetc`'s unget-pop to take it back on re-read.
-                        // These chars leave the unget queue for an inbuf
-                        // frame instead, so that pop never runs for them —
-                        // and `inpush` below adds their length AGAIN for an
-                        // INP_CONT frame. Undo the unget bump here so the
-                        // count is not doubled. Without it `inbufct` stayed
-                        // one high for the rest of the line, and `gotword`
-                        // (c:lex.c:1884, `nwe = zlemetall + 1 - inbufct`)
-                        // placed the completion word END one column short of
-                        // the cursor: with `alias ls='grc --colour=on ls'`,
-                        // `ls -<TAB>` never matched the cursor word, so
-                        // `get_comp_string` returned an EMPTY word
-                        // (`clwpos == -1`, `wb == we == zlemetacs`) and
-                        // completion offered every file in the directory,
-                        // narrowing to nothing as more was typed.
-                        if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
-                            let n = pending.chars().count() as i32;
-                            crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - n));
-                        }
-                        if !pending.is_empty() {
-                            inpush(&pending, INP_CONT, None);
-                        }
-                    }
+                    // Without the re-route the terminator (blank / `;` / `\n`)
+                    // was read ahead of the alias text: `alias git=hub; git
+                    // status` fused to `hubstatus`, and the line's `\n` ran
+                    // early (PS2 prompt mid-command).
+                    reroute_pending_ungets();
                     // ASCII-only: see the truncation note in `gettokstr`.
                     if !(c.is_ascii() && crate::ztype_h::iblank(c as u8)) {
                         // c:1925
@@ -3838,7 +3841,7 @@ fn checkalias(lextext: &str) -> bool {
             crate::funcdef_capture::src_capture_mark_alias_name(lextext);
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
             LEX_ALIAS_PUSHES.set(LEX_ALIAS_PUSHES.get() + 1);
-            inpush(&alias.text, INP_ALIAS, Some(lextext.to_string()));
+            inpush(&alias.text, INP_ALIAS, Some((lextext.to_string(), alias.node.flags)));
             // c:1929-1930 — `if (an->text[0] == ' ' && !(an->node.flags & ALIAS_GLOBAL))
             //                  aliasspaceflag = 1;`
             // Drives HISTIGNORESPACE's alias-leading-space suppression
@@ -3879,11 +3882,15 @@ fn checkalias(lextext: &str) -> bool {
                         // popped FIRST (re-emitted to extend the
                         // current token), then space, then the alias
                         // body. C does it the same way.
+                        // The word's terminator was handed back by
+                        // gettokstr; in C it sits in the current frame,
+                        // under the three pushes below.
+                        reroute_pending_ungets();
                         // !!! RUST-ONLY !!! — the typed word is replaced by
                         // its re-pushed copy below; drop the original from
                         // the function-body source.
                         crate::funcdef_capture::src_capture_mark_alias_name(lextext);
-                        inpush(lextext, INP_ALIAS, Some(suffix.to_string()));
+                        inpush(lextext, INP_ALIAS, Some((suffix.to_string(), alias.node.flags)));
                         inpush(" ", INP_ALIAS, None);
                         LEX_ALIAS_PUSHES.set(LEX_ALIAS_PUSHES.get() + 1);
                         inpush(&alias.text, INP_ALIAS, None);
