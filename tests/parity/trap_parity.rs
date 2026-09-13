@@ -251,3 +251,32 @@ mod exit_trap_not_fired_by_eval {
         assert_parity(r#"f(){ trap "print T" EXIT; eval "print e"; print in; }; f; print after"#);
     }
 }
+
+/// c:Src/exec.c:1651-1659 — ZERR runs for a failing sublist unless
+/// `donetrap` is already set. A subshell is a fork: the ZERR its body runs
+/// sets `donetrap` in the child only, so the parent runs ZERR again for the
+/// subshell's own non-zero status. An async `( … )` child leaves through
+/// `_realexit()` (c:4417) with no outer check, so `(false) &` stays at one.
+mod zerr_after_a_failing_subshell {
+    use super::*;
+
+    #[test]
+    fn parent_runs_zerr_for_the_subshell_status() {
+        assert_parity("TRAPZERR() { print ZERR; }; (false); echo rc=$?");
+        assert_parity("TRAPZERR() { print ZERR; }; f() { (false) }; f; echo rc=$?");
+        assert_parity(
+            "TRAPZERR() { print ZERR trapped; }; testfn() { setopt localoptions $2; print $1 before; false; print $1 after; }; (testfn on errexit); testfn off",
+        );
+    }
+
+    #[test]
+    fn a_succeeding_subshell_runs_no_zerr() {
+        assert_parity("TRAPZERR() { print ZERR; }; (true); echo rc=$?; false; echo rc2=$?");
+    }
+
+    #[test]
+    fn async_subshells_keep_one_zerr() {
+        assert_parity(r#"trap "print Z" ZERR; (false) & wait; print end"#);
+        assert_parity(r#"trap "print Z" ZERR; ( (false) ) & wait; print end"#);
+    }
+}

@@ -5192,6 +5192,11 @@ pub struct SubshForkCopy {
     schedcmds: Option<Box<crate::ported::builtins::sched::schedcmd>>,
     /// `shtimer` (`Src/params.c:147`) — assigning `SECONDS` moves it.
     shtimer: std::time::Duration,
+    /// `donetrap` (`Src/exec.c:1413`) — a ZERR trap that ran inside the body
+    /// sets it (`c:1658`) in the forked child only. The parent's own check
+    /// for the subshell's failing status (`c:1651-1659`) must still see the
+    /// value it had on entry, or `(false)` runs ZERR once instead of twice.
+    donetrap: i32,
 }
 
 impl SubshForkCopy {
@@ -5266,6 +5271,7 @@ impl SubshForkCopy {
                 .lock()
                 .map(|t| *t)
                 .unwrap_or_default(),
+            donetrap: DONETRAP.load(Ordering::Relaxed),
         }
     }
 
@@ -5334,6 +5340,7 @@ impl SubshForkCopy {
         if let Ok(mut t) = crate::ported::params::shtimer_lock().lock() {
             *t = self.shtimer;
         }
+        DONETRAP.store(self.donetrap, Ordering::Relaxed);
         if let Ok(mut t) = crate::ported::hashtable::aliastab_lock().write() {
             t.restore(self.aliastab);
         }
