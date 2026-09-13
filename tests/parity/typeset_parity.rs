@@ -1229,3 +1229,33 @@ mod typeset_slice_assignment {
         assert_parity("zmodload zsh/parameter; g=(a b c); typeset g[2]=x; typeset g[3]=(y z); print $g ${(k)parameters[(I)g\\[*]}");
     }
 }
+
+/// c:Src/Modules/param_private.c:175 — `private` moves the new parameter into
+/// the surrounding scope (`hn->level -= 1`), and the parameter still goes away
+/// when that function's scope ends, bringing back what it hid. For an
+/// associative array zshrs keeps the pairs outside the Param, and the saved
+/// outer row stayed tagged with the pre-decrement level, so it was never put
+/// back: the private's pairs leaked into the caller.
+mod private_assoc_restored_at_scope_end {
+    use super::*;
+
+    #[test]
+    fn outer_association_comes_back_after_the_function() {
+        assert_parity(
+            "zmodload zsh/param/private; typeset -A h=(top level); f() { local -PA h=(in fn); print F ${(kv)h} }; f; print T ${(kv)h} ${(t)h}",
+        );
+        assert_parity(
+            "zmodload zsh/param/private; typeset -A h=(top level); f() { private -A h; h=(in fn); print F ${(kv)h} }; f; print T ${(kv)h}",
+        );
+        assert_parity(
+            "zmodload zsh/param/private; f() { local -PA h=(in fn); print F ${(kv)h} }; f; print T ${+h}",
+        );
+    }
+
+    #[test]
+    fn scalar_and_array_privates_are_unchanged() {
+        assert_parity(
+            "zmodload zsh/param/private; x=top; typeset -a a=(top level); f() { private x=inner; local -Pa a=(in fn); g }; g() { print X $x $a }; f; print T $x $a",
+        );
+    }
+}

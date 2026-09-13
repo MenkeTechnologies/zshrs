@@ -241,8 +241,31 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
         (*hn).node.flags |= (PM_HIDE | PM_SPECIAL | PM_REMOVABLE | PM_RO_BY_DESIGN) as i32;
     }
     // c:175 — `hn->level -= 1;`  (move into the surrounding scope)
+    let promoted_from = unsafe { (*hn).level };
     unsafe {
         (*hn).level -= 1;
+    }
+    // !!! RUST-ONLY ADJUSTMENT — NO C COUNTERPART !!!
+    // C keeps an associative array's pairs on the Param itself (`u.hash`),
+    // so moving the node to the surrounding scope moves its pairs with it.
+    // zshrs keeps them in the name-keyed `paramtab_hashed_storage`, and the
+    // row the private displaced was saved on PARAMTAB_HASHED_SHADOW_STACK
+    // tagged with the level createparam stamped (the bumped scope of
+    // bin_private's own startparamscope, c:250). endparamscope pops a frame
+    // only when its tag equals the level of the node it unwinds, so after the
+    // decrement above the frame no longer matched: the function's scope end
+    // never put the outer row back, and `f() { local -PA h=(in fn) }; f`
+    // left `h` holding `in fn` at top level. Retag the frame with the node's
+    // new level so the pop that removes this private also restores the row.
+    let name = unsafe { (*hn).node.nam.clone() };
+    if let Some(stk_mtx) = crate::ported::params::PARAMTAB_HASHED_SHADOW_STACK.get() {
+        if let Ok(mut stk) = stk_mtx.lock() {
+            if let Some((lvl, _)) = stk.get_mut(&name).and_then(|frames| frames.last_mut()) {
+                if *lvl == promoted_from {
+                    *lvl = promoted_from - 1;
+                }
+            }
+        }
     }
 }
 
