@@ -605,3 +605,15 @@ mod unbraced_expanded_subscript_math_error {
         assert_parity(r#"arr=(x y z); k=2; i=1; s=hello; print $arr[$k] $arr[i+1] $arr[-1] $s[2] $s[-1]"#);
     }
 }
+
+/// c:Src/params.c:2029-2045 — `$+name[` with no closing bracket is an
+/// invalid subscript, same as the braced `${+name[…}`.
+mod unbraced_chkset_unclosed_subscript {
+    use super::*;
+
+    #[test]
+    fn unclosed_is_invalid_and_closed_still_answers() {
+        assert_parity(r#"{ a=(1 2); print $+a[1; print rc=$? } 2>&1"#);
+        assert_parity(r#"a=(1 2); print $+a[1] $+a[5] $+a $+b"#);
+    }
+}

@@ -24503,24 +24503,34 @@ pub fn paramsubst(
         if name_end > name_start {
             // Optional `[subscript]`, depth-tracked — same walk as the `+` arm.
             let mut sub_end = name_end;
-            if chars.get(sub_end).copied() == Some('[') {
+            // An unquoted bracket reaches here as the Inbrack / Outbrack TOKEN
+            // (c:Src/lex.c LX2_INBRACK / LX2_OUTBRACK); inside double quotes
+            // it stays the raw character. Accept both spellings.
+            let is_open = |c: char| c == '[' || c == crate::ported::zsh_h::Inbrack;
+            let is_close = |c: char| c == ']' || c == crate::ported::zsh_h::Outbrack;
+            if chars.get(sub_end).copied().is_some_and(is_open) {
                 let mut depth = 1;
                 let mut q = sub_end + 1;
                 while q < chars.len() && depth > 0 {
-                    match chars[q] {
-                        '[' => depth += 1,
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
+                    if is_open(chars[q]) {
+                        depth += 1;
+                    } else if is_close(chars[q]) {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
                         }
-                        _ => {}
                     }
                     q += 1;
                 }
-                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                if depth == 0 && q < chars.len() && is_close(chars[q]) {
                     sub_end = q + 1;
+                } else {
+                    // c:Src/params.c:2029-2045 — no closing `]` (`$+a[1`):
+                    // the subscript runs to the end of the text and
+                    // getindex's parse_subscript rejects it ("invalid
+                    // subscript"), so hand the whole of it to the braced
+                    // form rather than leaving `[1` behind as glob text.
+                    sub_end = chars.len();
                 }
             }
             let name_with_sub: String = chars[name_start..sub_end].iter().collect();
@@ -24569,24 +24579,34 @@ pub fn paramsubst(
             // Walk bracketed subscript depth-tracked so `$+arr[$a[1]]`
             // works. Same as the bare-name `$NAME[SUB]` arm below.
             let mut sub_end = name_end;
-            if chars.get(sub_end).copied() == Some('[') {
+            // An unquoted bracket reaches here as the Inbrack / Outbrack TOKEN
+            // (c:Src/lex.c LX2_INBRACK / LX2_OUTBRACK); inside double quotes
+            // it stays the raw character. Accept both spellings.
+            let is_open = |c: char| c == '[' || c == crate::ported::zsh_h::Inbrack;
+            let is_close = |c: char| c == ']' || c == crate::ported::zsh_h::Outbrack;
+            if chars.get(sub_end).copied().is_some_and(is_open) {
                 let mut depth = 1;
                 let mut q = sub_end + 1;
                 while q < chars.len() && depth > 0 {
-                    match chars[q] {
-                        '[' => depth += 1,
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
+                    if is_open(chars[q]) {
+                        depth += 1;
+                    } else if is_close(chars[q]) {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
                         }
-                        _ => {}
                     }
                     q += 1;
                 }
-                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                if depth == 0 && q < chars.len() && is_close(chars[q]) {
                     sub_end = q + 1;
+                } else {
+                    // c:Src/params.c:2029-2045 — no closing `]` (`$+a[1`): the
+                    // subscript runs to the end of the text and getindex's
+                    // parse_subscript rejects it ("invalid subscript"), so the
+                    // braced form must receive all of it rather than leaving
+                    // `[1` behind as glob text ("bad pattern: 1[1").
+                    sub_end = chars.len();
                 }
             }
             // Synthesize `${+NAME[SUB]}` and recurse.
