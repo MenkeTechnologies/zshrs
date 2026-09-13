@@ -195,6 +195,14 @@ mod cmdsubst_split {
     fn cmdsubst_with_ifs_colon() {
         assert_parity(r#"IFS=:; f() { echo $#; }; f $(echo a:b:c)"#);
     }
+
+    /// An IFS the command substitution's body changes does not split the
+    /// parent's words afterwards.
+    #[test]
+    fn body_ifs_change_does_not_leak_into_parent_splitting() {
+        assert_parity(r#"IFS=:; print -r $(IFS=,; :); s="p,q"; print -rl -- ${=s}; s="p:q"; print -rl -- ${=s}"#);
+        assert_parity(r#"IFS=:; print -r $(IFS=,); s="p:q"; print -rl -- ${=s}"#);
+    }
 }
 
 mod ifs_in_read {

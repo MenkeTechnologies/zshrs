@@ -6875,8 +6875,22 @@ impl ShellExecutor {
                     // affects re-lexing — the parent is already compiled — and
                     // leaving it at the body's value is strictly less divergent
                     // than the prior behavior, which leaked the whole IFS.
-                    if let Ok(mut g) = crate::ported::params::ifs_lock().lock() {
-                        *g = ifs_snap;
+                    // Except when the body CHANGED IFS: its `ifssetfn` (or the
+                    // unset's c:Src/params.c:4748-4749) already rebuilt the typtab
+                    // that word splitting reads, so the parent's table has to come
+                    // back with its value (`IFS=:; print $(IFS=,; :); s="p,q";
+                    // print -rl -- ${=s}` is one word in zsh). Only that case
+                    // rebuilds, so the per-cmdsub race above does not return.
+                    let ifs_changed = crate::ported::params::ifs_lock()
+                        .lock()
+                        .map(|mut g| {
+                            let changed = *g != ifs_snap;
+                            *g = ifs_snap;
+                            changed
+                        })
+                        .unwrap_or(false);
+                    if ifs_changed {
+                        crate::ported::utils::inittyptab();
                     }
                     if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                         *t = traps_snap;
