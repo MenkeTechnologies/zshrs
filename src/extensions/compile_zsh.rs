@@ -3750,8 +3750,12 @@ impl ZshCompiler {
             // (c:Src/lex.c:38 ztokens) routes the call through
             // host_exec_external with cmd=`\grep`, missing the PATH
             // hit and falling to "command not found: \grep".
+            // c:Src/exec.c:3246 — the `-` precommand (BINF_DASH) is stripped by
+            // the precommand walk like `noglob`, so the command word is the
+            // one after it: `- /bin/echo hi` runs /bin/echo, not a function
+            // named `-`.
             let cleaned_first = {
-                let mut tmp = first.to_string();
+                let mut tmp = dispatch_first_raw.to_string();
                 crate::ported::glob::remnulargs(&mut tmp);
                 if tmp == crate::ported::zsh_h::Nularg.to_string() {
                     tmp.clear();

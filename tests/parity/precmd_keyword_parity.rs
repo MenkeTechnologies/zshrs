@@ -225,3 +225,24 @@ mod precedence {
         assert_parity(r#"builtin command echo hi"#);
     }
 }
+
+/// c:Src/builtin.c:42 `BIN_PREFIX("-", BINF_DASH)` + Src/exec.c:3104-3187 — `-`
+/// is a precommand modifier stripped before the command name is resolved.
+/// zshrs's function/external dispatch looked up a command literally named `-`.
+mod dash_precommand_runs_the_next_word {
+    use super::*;
+
+    #[test]
+    fn the_word_after_the_dash_is_the_command() {
+        assert_parity("- /bin/echo hi; print rc=$?");
+        assert_parity("f(){ print f $1 }; - f x; print rc=$?");
+        assert_parity("- nosuchcmd 2>/dev/null; print rc=$?");
+        assert_parity("- - /bin/echo hi; print rc=$?");
+    }
+
+    #[test]
+    fn other_precommands_are_unchanged() {
+        assert_parity("- print hi; exec - /bin/echo hi");
+        assert_parity("noglob /bin/echo *.none; nocorrect /bin/echo nc; /bin/echo plain");
+    }
+}
