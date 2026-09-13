@@ -274,3 +274,27 @@ mod export_special_with_nul {
         );
     }
 }
+
+/// POSIX_BUILTINS readonly rules (c:Src/builtin.c:2194-2206, c:2283-2286):
+/// a valueless `readonly NAME` leaves NAME unset but listed, re-declaring it
+/// readonly is idempotent, and `typeset +r` on it is refused. B02typeset.ztst
+/// "readonly with POSIX_BUILTINS".
+mod posix_builtins_readonly {
+    use super::*;
+
+    #[test]
+    fn valueless_readonly_stays_unset_and_is_listed() {
+        assert_parity("setopt posixbuiltins; readonly pbro; print ${+pbro}; readonly -p | grep -x 'readonly pbro'; typeset -gr pbro; print ${+pbro}");
+    }
+
+    #[test]
+    fn plus_r_on_posix_readonly_is_refused() {
+        assert_parity("(setopt posixbuiltins; readonly pbro; typeset -g +r pbro 2>/dev/null); echo $?");
+    }
+
+    #[test]
+    fn valueless_export_stays_unset() {
+        assert_parity("setopt posixbuiltins; export eu; print ${+eu}; export -p | grep -x 'export eu'");
+    }
+
+}

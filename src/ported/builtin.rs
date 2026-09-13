@@ -4370,7 +4370,12 @@ pub fn bin_typeset(
                     // PM_DEFAULTED (declared-but-unset) ones name-only
                     // and drops the rest. Keep DEFAULTED here so
                     // `typeset -n` lists placeholder refs by name.
-                    if (f & PM_UNSET) != 0 && (f & PM_DEFAULTED) != PM_DEFAULTED {
+                    // c:Src/params.c:6137-6146 — an unset parameter is still shown,
+                    // name only, by the POSIX `readonly -p` / `export -p` forms
+                    // when it carries that attribute.
+                    let posix_unset_shown = (printflags & (PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0
+                        && (f & (PM_READONLY | PM_EXPORTED)) != 0;
+                    if (f & PM_UNSET) != 0 && (f & PM_DEFAULTED) != PM_DEFAULTED && !posix_unset_shown {
                         return false;
                     }
                     // Unloaded-module names print as autoload stubs
@@ -7667,6 +7672,37 @@ pub fn bin_typeset(
                             && (f & (PM_READONLY | PM_EXPORTED)) != 0)
                 })
                 .unwrap_or(true);
+            // c:2194-2206 — POSIXBUILTINS applies stricter readonly rules:
+            //     if ((on & (PM_READONLY|PM_EXPORTED)) &&
+            //         (!usepm || (pm->node.flags & PM_UNSET)) && !ASG_VALUEP(asg))
+            //         on |= PM_UNSET;
+            //     else if (usepm && (pm->node.flags & PM_READONLY) &&
+            //              !(on & PM_READONLY) && func != BIN_EXPORT) {
+            //         zerr("read-only variable: %s", pm->node.nam);
+            //         return NULL;
+            //     }
+            // So `readonly NAME` leaves NAME unset, and `typeset +r NAME` on it
+            // is refused.
+            let entry_flags: Option<u32> = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32));
+            let posix_strict = isset(POSIXBUILTINS) && !OPT_ISSET(&ops, b'p'); // c:2194
+            let usepm_entry = entry_flags.is_some() && usepm_at_entry;
+            let posix_keep_unset = posix_strict
+                && (on as u32 & (PM_READONLY | PM_EXPORTED)) != 0
+                && (!usepm_entry || entry_flags.is_some_and(|f| (f & PM_UNSET) != 0)); // c:2198-2201
+            if posix_strict
+                && !posix_keep_unset
+                && usepm_entry
+                && entry_flags.is_some_and(|f| (f & PM_READONLY) != 0)
+                && (on as u32 & PM_READONLY) == 0
+                && func != BIN_EXPORT
+            {
+                zerr(&format!("read-only variable: {}", arg)); // c:2204
+                returnval = 1;
+                continue; // c:2205 return NULL
+            }
             let saved_val =
                 if (off as u32 & PM_NAMEREF) != 0 && crate::ported::params::is_nameref(arg) {
                     paramtab()
@@ -7719,7 +7755,10 @@ pub fn bin_typeset(
                     })
                 })
                 .unwrap_or((false, false));
-            let was_fresh = saved_val.is_none() && !already_typed;
+            // c:2058-2060 — under POSIXBUILTINS an UNSET readonly/exported
+            // parameter is still reused (`usepm`), and the reuse arm never
+            // assigns; creating it here would trip its own readonly bit.
+            let was_fresh = saved_val.is_none() && !already_typed && !(posix_keep_unset && usepm_entry);
             if was_fresh {
                 // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
                 // flags=0: a typeset-driven create never trips
@@ -8057,6 +8096,16 @@ pub fn bin_typeset(
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
                         pm.node.flags &= !off_in_mask;
+                    }
+                }
+            }
+            // c:2201 `on |= PM_UNSET` / c:2283-2286 "Keep unset if using readonly
+            // in POSIX mode" — the valueless declaration leaves the parameter
+            // unset after its attributes are stamped.
+            if posix_keep_unset {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags |= PM_UNSET as i32;
                     }
                 }
             }
