@@ -12716,11 +12716,25 @@ pub fn paramsubst(
             // c:Src/subst.c:2954 — the KSHARRAYS clamp on an EMPTY array lands
             // past the end of the vector, so C answers `vunset = 1` and the
             // reference is unset rather than set-and-empty.
+            // c:Src/subst.c:2805 — `(v->pm && (v->pm->node.flags & PM_UNSET))`
+            // ⇒ vunset, on PM_UNSET ALONE. `arrays_contains`/`assoc_contains`
+            // answer the c:2813 `(t)` question instead, where PM_DECLARED
+            // keeps a `setopt typesettounset; local -a h` node counting; for
+            // set-ness that node is unset (`print $+h` → 0). A PM_SPECIAL
+            // node is left to the value stores (`_` is decided by
+            // vars_contains, which already reads PM_UNSET).
+            let node_unset_c2805 = paramtab().read().ok().is_some_and(|tab| {
+                tab.get(&var_name).is_some_and(|pm| {
+                    let f = pm.node.flags as u32;
+                    (f & crate::ported::zsh_h::PM_UNSET) != 0
+                        && (f & crate::ported::zsh_h::PM_SPECIAL) == 0
+                })
+            });
             !ksh_clamped_past_end_c2954!()
                 && (used_subexp
                     || vars_contains(&var_name)
-                    || arrays_contains(&var_name)
-                    || assoc_contains(&var_name)
+                    || (!node_unset_c2805
+                        && (arrays_contains(&var_name) || assoc_contains(&var_name)))
                     || positional_set)
         };
 

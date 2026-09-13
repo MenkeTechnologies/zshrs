@@ -1184,3 +1184,15 @@ mod assoc_bad_key_value_status {
         assert_parity(r#"typeset -A m=(k); print rc=$?"#);
     }
 }
+
+/// c:Src/subst.c:2805 — `$+name` is decided by PM_UNSET alone; PM_DECLARED
+/// only keeps the `(t)` tag alive (c:2813). A `setopt typesettounset`
+/// declaration is declared-but-unset.
+mod typesettounset_declaration_is_unset {
+    use super::*;
+
+    #[test]
+    fn local_array_and_hash_are_not_set() {
+        assert_parity(r#"setopt typesettounset; f(){ local -a h; print $+h; local -A g; print $+g; local s; print $+s }; f"#);
+    }
+}
