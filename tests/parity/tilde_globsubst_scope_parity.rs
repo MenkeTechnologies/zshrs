@@ -276,3 +276,39 @@ mod globsubst_that_is_really_on_still_globs {
         assert_parity(r#"cm='[0-9]'; v='a1|b'; print -r -- ${~v#*${~cm}}"#);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. A `${~…}` / default-word result inside a larger word globs with the WORD.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// c:Src/subst.c:165-191 then c:Src/exec.c:3755-3757 — `prefork` finishes the
+/// whole word before `globlist` runs, so the glob tokens a `${~…}` or a default
+/// word leaves in its value are matched against the ASSEMBLED word. zshrs globbed
+/// the substitution by itself and then attached the literal text:
+/// `print ${~:-bor*}x` printed `boringfilex` where zsh reports no match.
+mod substitution_segment_globs_with_the_assembled_word {
+    use super::assert_parity;
+
+    const DIR: &str = "cd \"$(mktemp -d)\" && touch boringfile && ";
+
+    #[test]
+    fn suffix_joins_the_pattern() {
+        assert_parity(&format!("{DIR}print ${{~:-bor*}}x"));
+        assert_parity(&format!("{DIR}print ${{~x:-bor*}}x"));
+        assert_parity(&format!("{DIR}print ${{${{~:-bor*}}}}x"));
+        assert_parity(&format!("{DIR}print ${{${{:-bor*}}}}x"));
+    }
+
+    #[test]
+    fn prefix_joins_the_pattern() {
+        assert_parity(&format!("{DIR}print x${{~:-bor*}}"));
+        assert_parity(&format!("{DIR}print ${{~:-bor*}}\"x\""));
+    }
+
+    #[test]
+    fn assembled_word_that_matches_still_globs() {
+        assert_parity(&format!("{DIR}print ${{~x:-b*}}ingfile ${{~:-bor*}}"));
+        assert_parity(&format!("{DIR}a=( ${{~x:-bor}}ing* ); print $#a $a"));
+        assert_parity(&format!("{DIR}setopt nonomatch; print ${{~:-bor*}}x"));
+    }
+}

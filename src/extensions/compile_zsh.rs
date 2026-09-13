@@ -9789,6 +9789,17 @@ impl ZshCompiler {
         // `filesub`'s colon-walk is an assignment-only rule (c:Src/subst.c:689),
         // so `case /usr/bin:~/bin in` keeps the literal `~/bin` as zsh does.
         let mode = self.text_mode_for_context(base_mode);
+        // c:Src/subst.c:165-191 + c:Src/exec.c:3755-3757 — filename generation
+        // runs once over the FINISHED word (`globlist` after `prefork`), never
+        // over one substitution inside it. Reached as a segment of a larger word
+        // (word_seg_depth > 0), this text still carries the glob tokens its
+        // default word or `~` flag left in the value, and mode 0 globbed them on
+        // the spot: `print ${~:-bor*}x` matched `boringfile` and then appended
+        // `x`, where zsh globs `bor*x` and reports "no matches found". Mode 11
+        // expands like mode 0 without the glob; the enclosing word's own glob op
+        // (the `${~` needs_glob scan, or the DEFAULT_WORD_GLOB bracket) runs on
+        // the assembled word.
+        let mode = if mode == 0 && self.word_seg_depth > 0 { 11 } else { mode };
         // Mode 10: "unquoted command argument, glob deferred" — mode 0 but the
         // glob-eligible words come back still tokenized instead of globbed.
         // c:Src/exec.c:3357-3359 preforks the whole argv before c:3755-3757

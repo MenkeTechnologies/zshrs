@@ -13500,6 +13500,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `case` word (c:Src/loop.c:610-612) and a `[[ … ]]`
                     // operand (c:Src/cond.c:53) are never filename-generated.
                     || mode == 9
+                    // Mode 11 = a segment of a larger word (see compile_zsh's
+                    // text-expansion arm): c:Src/exec.c:3755-3757 globs the
+                    // assembled word, so the segment itself is not globbed.
+                    || mode == 11
                     // c:Src/exec.c:2603-2613 — a scalar `NAME=VALUE` is
                     // preforked PREFORK_SINGLE|PREFORK_ASSIGN (mode 8) and
                     // reaches globlist only under GLOB_ASSIGN; without it the
