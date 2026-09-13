@@ -7379,7 +7379,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_CONCAT_DISTRIBUTE distributes element-wise. Without
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
-        let rc_expand = with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
+        // `isset` is the single atomic load C's `isset(RCEXPANDPARAM)` is
+        // (c:Src/zsh.h:2557); `opt_state_get` re-resolved the name through the
+        // option table under a lock on every parameter read.
+        let rc_expand = isset(crate::ported::zsh_h::RCEXPANDPARAM);
         // c:Src/subst.c — under KSHARRAYS a bare `$name` (no [@]/[*] subscript;
         // this GET_VAR path only handles the bare form) is element 1 ONLY — a
         // scalar. RC_EXPAND_PARAM then has a single value to distribute, so
@@ -7445,7 +7448,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // a Value::Array so `arr=(${aliases})` distributes into
         // multiple elements, matching zsh's array-context word
         // splitting for assoc-bare references.
-        let magic_vals = with_executor(|exec| {
+        // Only a name that is a special hash or array row, or a module
+        // parameter that autoloads, can answer here. For every other name
+        // `partab_array_get` / `partab_scan_keys` return None after their
+        // shadow check, module gate and bookkeeping insert — work that cost
+        // about a third of each parameter read in compinit. The AUTOLOAD
+        // check keeps `mark_module_param_used`'s first-touch load for those.
+        let partab_candidate = crate::ported::modules::parameter::PARTAB
+            .iter()
+            .any(|e| e.name == name.as_str())
+            || crate::ported::modules::parameter::PARTAB_ARRAY
+                .iter()
+                .any(|e| e.name == name.as_str())
+            || crate::vm_helper::AUTOLOAD_PARAMS.iter().any(|(p, _)| *p == name.as_str());
+        let magic_vals = if !partab_candidate {
+            None
+        } else {
+            with_executor(|exec| {
             sync_status(exec);
             // Canonical PARTAB dispatch (Src/Modules/parameter.c:2235-
             // 2298 + SPECIALPMDEFs in mapfile/terminfo/termcap/system/
@@ -7464,7 +7483,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 None
             }
-        });
+            })
+        };
         if let Some(vals) = magic_vals {
             // Distinguish "name IS a magic-assoc with no entries"
             // (return Array(empty)) from "name is unknown — fall
@@ -7475,7 +7495,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // order is optiontab bucket order (OPTIONTAB), so zsh 5.9
             // prints `off` (posixargzero) for
             // `setopt ksharrays; print $options`.
-            if opt_state_get("ksharrays").unwrap_or(false) {
+            if isset(crate::ported::zsh_h::KSHARRAYS) {
                 // c:Src/params.c:2342-2350 — a PM_HASHED special takes the
                 // same `!v->scanflags && EMULATION(EMULATE_KSH)` arm as a
                 // plain association: `s = "[0]"; getindex(...)`, i.e. the
@@ -7514,14 +7534,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // based first-element-only semantics). Direct port of
             // Src/params.c getstrvalue's KSH_ARRAYS gate which
             // returns aval[0] instead of the whole array.
-            let ksh_arrays = opt_state_get("ksharrays").unwrap_or(false);
+            let ksh_arrays = isset(crate::ported::zsh_h::KSHARRAYS);
             if let Some(arr) = exec.array(&name) {
                 if ksh_arrays {
                     return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
                 }
-                return Some((arr.clone(), in_dq));
+                return Some((arr, in_dq));
             }
-            if exec.assoc(&name).is_some() {
+            // Existence only: `exec.assoc()` cloned the whole map to answer it.
+            if exec.has_assoc(&name) {
                 // c:Src/params.c:2351-2358 — under KSH EMULATION a bare
                 // `$assoc` is `${assoc[0]}` (a KEY-"0" lookup), so it is
                 // EMPTY unless the hash actually has a key "0". This is
@@ -7681,7 +7702,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // parameter fires "parameter not set" diagnostic and aborts
         // the substitution. Direct port of the noerrs gate at c:1689
         // (zerr + errflag). Matches `set -u` POSIX semantics.
-        if !is_known && opt_state_get("nounset").unwrap_or(false) {
+        // `nounset` is the negated alias of UNSET (c:Src/options.c optns), so
+        // this is C's `unset(UNSET)`: one atomic load, not a name lookup.
+        if !is_known && !isset(crate::ported::zsh_h::UNSET) {
             crate::ported::utils::zerr(&format!("{}: parameter not set", name));
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -7710,7 +7733,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // shwordsplit arm (fusevm_bridge.rs:2200). Without this, bare
         // `$s` in `print $s` stayed a single arg even with the option
         // set, breaking POSIX-style scalar word-splitting.
-        if !in_dq && opt_state_get("shwordsplit").unwrap_or(false) {
+        if !in_dq && isset(crate::ported::zsh_h::SHWORDSPLIT) {
             // c:1705 — `spbreak = (pf_flags & PREFORK_SHWORDSPLIT) && !qt`,
             // then c:3902 `force_split = !ssub && (spbreak || spsep)` and
             // c:3921 `aval = sepsplit(val, spsep, 0, 1)`. SH_WORD_SPLIT runs
