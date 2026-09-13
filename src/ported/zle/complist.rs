@@ -3257,7 +3257,18 @@ pub fn clprintm(
                 if idx < mtab_guard.len() {
                     mtab_guard[idx] = Some(m_ref.clone()); // c:1767/1773
                     if let Some(grp) = g {
-                        mgtab_guard[idx] = Some(grp.clone()); // c:1768/1774
+                        // MGTAB gets its OWN bound check. C indexes mgtab and
+                        // mtab with the same pointer arithmetic off two arrays
+                        // it resizes together (c:1444 clears them as a pair),
+                        // so one test covers both there. In Rust an
+                        // out-of-range write PANICS rather than corrupting the
+                        // neighbouring allocation, and nothing in this block
+                        // enforces the coupling — the resize (:4028/:4030) and
+                        // the clear (:7059/:7060) are elsewhere. The sibling
+                        // site at :2586 already tests the two separately.
+                        if idx < mgtab_guard.len() {
+                            mgtab_guard[idx] = Some(grp.clone()); // c:1768/1774
+                        }
                     }
                 }
             }
@@ -3345,7 +3356,11 @@ pub fn clprintm(
                 if idx < mtab_guard.len() {
                     mtab_guard[idx] = Some(m_ref.clone()); // c:1823/1829
                     if let Some(grp) = g {
-                        mgtab_guard[idx] = Some(grp.clone()); // c:1824/1830
+                        // Same MGTAB bound check as the sibling site above —
+                        // see the note there.
+                        if idx < mgtab_guard.len() {
+                            mgtab_guard[idx] = Some(grp.clone()); // c:1824/1830
+                        }
                     }
                 }
             }

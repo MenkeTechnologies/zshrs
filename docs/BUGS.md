@@ -60296,3 +60296,151 @@ addprocs (`src/ported/exec.rs:4529`, `c:Src/exec.c:5090`) and the
 `pipestatus` / reaper interplay those paths carry today. That is a job-model
 change across the compiler and the bridge, not a local fix; the subst.rs branch
 stays as documented above until it lands.
+## #1147 — a QUOTED array splat lost its empty elements as soon as the word carried a prefix or suffix — fixed
+
+`#1129`'s explicitly-named open residue.
+
+```console
+$ a=(x '' y); for w in PRE"${a[@]}"POST; do print -r -- "<$w>"; done
+  zsh  : <PREx> <> <yPOST>        zshrs: <PREx> <yPOST>          # before
+$ set -- x '' y; for w in PRE"$@"POST; do print -r -- "<$w>"; done
+  zsh  : <PREx> <> <yPOST>        zshrs: <PREx> <yPOST>          # before
+$ a=(x '' y); f(){ print -r -- $# }; f PRE"${a[@]}"POST
+  zsh  : 3                        zshrs: 2                       # before
+```
+
+Only a MIDDLE empty was lost. `a=('' '')` and `a=('' x '')` already matched,
+because the splice glues `PRE` onto the first element and `POST` onto the
+last, so a boundary empty is a non-empty word by the time the drop runs. The
+bare `"${a[@]}"` with no affixes matched too — that word emits no end-of-word
+drop at all.
+
+**Root cause.** c:`Src/subst.c:4387`, `:4404`, `:4426` — every node the array
+emit block produces passes
+
+```c
+	if (qt && !*y && isarr != 2)
+	    y = dupstring(nulstring);
+```
+
+and `nulstring` (c:36, `{Nularg, '\0'}`) is NON-empty, so prefork's
+`if (*(char *)getdata(node))` at c:183 keeps the node, c:186's `uremnode`
+never sees it, and `remnulargs` (c:170) turns it back into `""` afterwards.
+
+That rule has a cut-off no compile-time gate can express: c:4261
+`if ((!aval[0] || !aval[1]) && !plan9)` claims the ZERO- and ONE-element cases
+FIRST and strips the surrounding `Dnull` markers (c:4272-4274
+`*--aptr = '\0', fstr++`), so those nodes really are empty and c:186 does
+delete them — which is why `a=(); b=(); "${a[@]}""${b[@]}"` is zero words
+while `a=(x '' y); PRE"${a[@]}"POST` is three. Element count is a RUN-time
+fact.
+
+zshrs renders `nulstring` and a genuine empty element identically as
+`String::new()`, and `src/extensions/compile_zsh.rs:8855` emits an
+unconditional `BUILTIN_ARRAY_DROP_EMPTY` for every splice-shaped word that is
+not whole-word double-quoted — `PRE"${a[@]}"POST` is not (its `Dnull` pair
+covers only the middle segment), so the quoted splat's empty node went through
+a drop meant for the unquoted one.
+
+**Fix** — the quotedness is compile-time and the element count is run-time, so
+the two halves are carried separately and meet at the drop.
+
+* `src/extensions/compile_zsh.rs` `${NAME[@]}` fast path — the quoted splice
+  takes its own `BUILTIN_ARRAY_ALL` argc **4**. It could not share `is_star`'s
+  argc 0: the unquoted for-list splat (`for i in $a`, same file) already
+  spells itself argc 0 and must keep dropping. `is_star` keeps 0 and routes to
+  `BUILTIN_ARRAY_JOIN_STAR`, which never sees 4.
+* `src/fusevm_bridge.rs` `QUOTED_SPLICE_KEEPS_EMPTIES` — set by the READ,
+  which is where the count is known: `BUILTIN_ARRAY_ALL` on argc 4, and
+  `get_var_impl`'s `@`/`*` arm under `force_dq` for the `"$@"` spelling (`*`
+  excluded — c:3032's quoted `sepjoin` has already collapsed it to one
+  scalar). `note_quoted_splice_elems` applies c:4261's `n >= 2`.
+* `BUILTIN_ARRAY_DROP_EMPTY` consumes it and returns the word untouched.
+
+The bit is word-scoped in three ways, because a whole-word `"${a[@]}"` emits
+no drop and would otherwise leave it standing for the NEXT word:
+`open_deferred_affix_word` clears it, `note_array_empties_elidable` (its exact
+complement — that read's `qt` is 0) clears it, and every non-quoted
+`BUILTIN_ARRAY_ALL` / `$@` read passes a count of 0.
+
+**Residue.** The bit is per-WORD where C's `nulstring` is per-NODE, so a word
+mixing a quoted and an unquoted splat (`PRE"${a[@]}"${b[@]}POST`) keeps both
+sets of empties where C keeps only the quoted one. A faithful per-node port
+would store `Nularg` in the element itself, but the compiled path has no
+`remnulargs` at the end of every route the value can take, so the marker would
+reach argv on any route that emits no drop.
+
+`tests/parity/ifs_parity.rs::quoted_splat_keeps_nulstring_c4387` — 22 cells,
+6 of which reproduce on the pre-fix binary and 16 of which are the guards
+(c:4261's zero/one-element cases, the unquoted splat, the next-word leak, the
+SH_WORD_SPLIT `nulstring` fields, `"${a[*]}"`, `"${(@)a}"`, `${a}POST`).
+
+---
+
+## #1148 — `_xft_fonts`' native port kept the trailing empty field and interpreted `\t\n` inside double quotes — fixed
+
+**Status:** `fixed` 2026-09-09. Supersedes the diagnosis in **#1098**, which no
+longer reproduces.
+
+`#1098` blamed the `fc-list `/`fc-match ` +1 divergence on the expansion engine
+double-splitting an unquoted command substitution nested inside `${…}`. That is
+no longer true. All five of its cases now agree, measured against
+`/opt/homebrew/bin/zsh` 5.9.2 and `./target/debug/zshrs`:
+
+```
+                                          zsh   zshrs
+a=( ${(s:,:)s} )                          n=2   n=2
+b=( ${(s:,:)"$(print -rn -- $s)"} )       n=2   n=2
+c=( ${(s:,:)$(print -rn -- $s)} )         n=2   n=2
+d=( ${(s:,:)${s}} )                       n=2   n=2
+e=( ${(s:,:)$(<<<$s)} )                   n=2   n=2
+```
+
+and the consumer expansion itself agrees at 800 elements in both shells, both
+standalone and evaluated *inside* the live completion (a `compadd` wrapper
+installed through `comptab_parity.py --init-extra` recomputed
+`${(us:,:)$(_call_program fonts fc-list -f '%\{family\},' 2>/dev/null)}` at the
+point of the call: `A=800 B=800 C=800` on both sides).
+
+The surviving +1 was never in `subst.rs`. zshrs does not run the shell
+`_xft_fonts` at all — `src/compsys/ported/X/Type/_xft_fonts.rs` is a native
+port, and the same `compadd` wrapper shows it: `funcstack` reads
+`compadd,_wanted,_xft_fonts,…` where zsh reads
+`compadd,_all_labels,_wanted,_xft_fonts,…`, and the shell-visible `suf` is
+`n=0` where zsh sees `n=3`. Two bugs lived in that port.
+
+**1. `parse_fonts_text` kept empty fields.** It did a plain `split(',')`.
+`fc-list -f '%{family},'` terminates every record with `,`, so the final field
+was `""` and became an 801st match. zsh's unquoted split removes empty fields
+in every position, not just trailing:
+
+```
+${(us:,:)$(print -rn -- 'a,,b,')}  -> n=2 [a|b]
+${(us:,:)$(print -rn -- ',a,b')}   -> n=2 [a|b]
+${(us:,:)$(print -rn -- '')}       -> n=0
+```
+
+The same rule applies to the other two capture parsers in the file, whose
+results are also spliced unquoted (`f ${${(f)"$(printf 'p=1\nq=\nr=3')"}##*=}`
+is `n=2` in zsh), so `parse_font_attr_text` and `parse_elements_text` drop
+empties too.
+
+**2. `suf`'s `-r` argument had real control characters.** sh:7 is
+`suf=( -S: -r "-: \t\n\-" )`. Inside double quotes zsh escapes only
+`$ ` `` ` `` `"` `\` and newline, so the value is the nine literal bytes
+`-`, `:`, ` `, `\`, `t`, `\`, `n`, `\`, `-`:
+
+```
+% suf=( -S: -r "-: \t\n\-" ); print -rn -- "$suf[3]" | od -c
+0000000    -   :       \   t   \   n   \   -
+```
+
+The Rust literal was `"-: \t\n\\-"`, which is a real tab and a real newline —
+captured verbatim off the wire from the harness, zsh passed compadd
+`'-: \t\n\-'` and zshrs passed `'-: <TAB><NL>\-'`. Now `"-: \\t\\n\\-"`.
+
+**Known residue, not fixed here:** the native port has no shell function frame,
+so `funcstack` omits `_all_labels`/`_description` and a caller's `local`s
+(`suf`) are invisible to anything dynamically scoped underneath it. That is
+structural to every `src/compsys/ported/**` port, not specific to
+`_xft_fonts`, and it does not affect the emitted match list.

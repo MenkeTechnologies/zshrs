@@ -6412,3 +6412,79 @@ gstack
 # list_outgrows_the_screen` and `asklist_is_silent_when_the_list_fits_the_
 # screen` (src/ported/zle/compresult.rs). Not added to the corpus: the cell
 # passes, and a PTY cell for it would only re-measure the settle window.
+# ══════════════════════════════════════════════════════════════════════════
+# 'getconf ' ROOT-CAUSED 2026-09-13 — TWO makearray PASSES, not one, and the
+# second exclusion is libc qsort's TIE PERMUTATION.  Supersedes the
+# 2026-09-06 "NOT FIXED, how zsh reaches TWO exclusions is not derivable
+# from the C" blocker and REFUTES the 5.9.2-`asp`-loop hypothesis.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# The C (5.9.2, /tmp/zsh592/Src/Zle/compcore.c:3303-3318, the `-o nosort`
+# branch, which is the live one because `_description` turns `-V` into
+# `-o nosort -J -default-` at Core/_description:47-49) marks exactly ONE
+# element of a two-element equal-`str` run, in BOTH trees.  The fork's
+# `bp = ++sp` (~/forkedRepos/zsh/Src/Zle/compcore.c:3310) and 5.9.2's
+# `bp = ++asp` + `asp--` differ only for runs of THREE or more.  So the
+# second exclusion does not come from one pass of the dedup loop at all.
+#
+# It comes from a SECOND pass.  `_setup:3` is `local nm="$compstate[nmatches]"`
+# and `compstate[nmatches]`'s getter is `get_nmatches` (5.9.2
+# Src/Zle/complete.c:1405-1409), whose body is `permmatches(0)` — which calls
+# `makearray` again for every group whose `g->new` is set (c:3456-3459).  Flag
+# writes land on the LIVE `g->lmatches` matches and accumulate (`|=`), so each
+# `_description`/`_requested`/`_next_label` call in a completion function is
+# another marking pass over the same match objects.  Each pass re-`qsort`s a
+# fresh copy; when the array has grown between passes, macOS libc `qsort`
+# permutes the TIED pair the other way, the other copy gets CMF_MULT, and both
+# copies end up hidden from the listing.
+#
+# _getconf:99-101 (`_requested -V restconfig`) is exactly such a call AFTER the
+# pathkeys adds at :94-95 — which is why deleting the restconfig block makes
+# both shells agree and why one single restkey is enough to split them.
+#
+# MEASURED, self-contained fixture (both `compadd`s into one `-o nosort -J g1`
+# group, `PIPE_BUF` added twice, `-S ''` then `-S ' '`; the ONLY difference
+# between the two runs is one `: $compstate[nmatches]` between the adds and a
+# trailing one-element `compadd`):
+#
+#   comptab_screen.py --shell "/opt/homebrew/bin/zsh -f -i" --init fx_probe.zsh \
+#     --buffer 'zzq ' --keys tab,y --rows 220 --cols 110 --env ZZREAD=...
+#
+#     ZZREAD=''  (no mid-completion read)  163 added, 162 listed, PIPE_BUF x1
+#     ZZREAD=1   (one extra makearray pass) 163 added, 161 listed, PIPE_BUF x0
+#   zshrs, same two runs:                   163 added, 162 listed, PIPE_BUF x1
+#
+# Varying the filler size with the read in place (2,3,5,8,12,20,40,80,160 per
+# array) hides BOTH copies at every size but the 6-match one, so the flip is
+# systematic for this layout rather than occasional.  With the extra pass but
+# NO growth between passes (trailing add removed) real zsh hides ONE — the
+# decisive proof that a single sort permutation excludes exactly one and that
+# the doubling is cross-pass accumulation.
+#
+# Same mechanism explains the previously unexplained `-S ''` variant: with an
+# exactly-equal pair the mark is `bp[0]->flags = CMF_DELETE` (c:3306), one copy
+# per pass, and the flag PERSISTS on the list, so the compaction at c:3319-3330
+# on the second pass drops BOTH -> nmatches 295 -> 293, which is what was
+# measured.
+#
+# zshrs side: `get_nmatches` (src/ported/zle/complete.rs:2334-2341) does call
+# `permmatches(0)`, and `permmatches` hands `makearray` the shared `Arc`
+# (src/ported/zle/compcore.rs:6446-6465) so marks persist across passes exactly
+# as in C.  The port's pairwise rewrite of the run-walk
+# (src/ported/zle/compcore.rs:6196-6222) is equivalent to 5.9.2 for MULT/NOLIST
+# accounting.  The single behavioural difference is the SORT: `qsort_tolerant`
+# (src/tolerant_sort.rs:18-27) is a STABLE merge sort, deliberately, so ties
+# keep input order in every pass, the same copy is marked twice, and exactly one
+# stays hidden.
+#
+# NOT FIXED, and not fixable without emulating macOS libc `qsort`'s permutation
+# of tied elements at two different array lengths — the same class already
+# recorded as unmatchable for `ktrace -`.  Note also that the oracle behaviour
+# is libc-specific, not a zsh guarantee: any stable `qsort` implementation
+# makes zsh itself list PIPE_BUF once, i.e. agree with zshrs (NOT verified on
+# glibc here — no Linux host in this session).
+#
+# Cell state unchanged, re-measured 2026-09-13 with a private 5.9.2-only dump:
+#   scripts/comptab_parity.py --zsh /opt/homebrew/bin/zsh --dump <dump> \
+#     --case 'getconf ' --keys tab
+#   zsh 293 possibilities (147 lines) / zshrs 294 — fp b29792c9a7, 1 FAIL.
