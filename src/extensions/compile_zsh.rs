@@ -4830,7 +4830,18 @@ impl ZshCompiler {
                                                // key containing `]`.
                 let src_const = self.builder.add_constant(Value::str(trace_key.as_str()));
                 self.builder.emit(Op::LoadConst(src_const), 0);
-                if key_has_expansion {
+                if assign.append {
+                    // c:Src/params.c:3250-3266 — assignsparam with
+                    // ASSPM_AUGMENT on a subscripted integer/float is "attempt
+                    // to add to slice of a numeric variable" (c:3264). The
+                    // value above is already the pre-concatenated one, so the
+                    // append bit only lets the handler raise that error:
+                    //   argc 6 = [name, key, value, key_src, dynamic, append]
+                    self.builder.emit(Op::LoadInt(key_has_expansion as i64), 0);
+                    self.builder.emit(Op::LoadInt(1), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 6), 0);
+                } else if key_has_expansion {
                     self.builder.emit(Op::LoadInt(1), 0);
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 5), 0);

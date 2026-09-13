@@ -48254,4 +48254,13 @@ mod subscripted_assignment_to_a_non_array {
         assert_parity(r#"{ float f=1; f[1,2]+=3; print -r -- $f } 2>&1; print rc=$?"#, "subscripted_non_array_7");
         assert_parity(r#"{ integer i=12; i[1,2]+=3; print -r -- $i } 2>&1; print rc=$?"#, "subscripted_non_array_8");
     }
+
+    /// The single-index form reaches the same c:Src/params.c:3264 error; a
+    /// `+=` on an element of a real array or hash still appends.
+    #[test]
+    fn scalar_append_into_a_numeric_element_is_an_error() {
+        assert_parity(r#"{ integer i; i[2]+=6; print -r -- $i } 2>&1; print rc=$?"#, "subscripted_non_array_9");
+        assert_parity(r#"{ float f=1; k=1; f[$k]+=3; print -r -- $f } 2>&1; print rc=$?"#, "subscripted_non_array_10");
+        assert_parity(r#"a=(x y); a[2]+=z; typeset -A h; h[k]=v; h[k]+=w; print -r -- $a $h[k]"#, "subscripted_non_array_11");
+    }
 }
