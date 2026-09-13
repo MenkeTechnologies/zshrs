@@ -4969,95 +4969,192 @@ pub fn histfileIsLocked() -> i32 {
     }
 }
 
-/// Port of `bufferwords()` from `Src/hist.c:3385`. — C decl `bufferwords(LinkList list, char *buf, int *index, int flags)`.
-/// Rust idiom replacement: char-by-char tokenizer covers the C
-/// shparser callout (`(z)` flag at subst.c:4186 always passes
-/// `NULL, 0`). The returned `(words, cursor_word_idx)` pair lets
-/// `${(z)var}` callers (which want just `words`) take `.0` while
-/// `bufferwords` callers that need the cursor index get `.1`.
-pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
-    let mut words: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
-    let flush = |out: &mut Vec<String>, cur: &mut String| {
-        if !cur.is_empty() {
-            out.push(std::mem::take(cur));
-        }
+/// Port of `bufferwords()` from `Src/hist.c:3385` — C decl `bufferwords(LinkList list, char *buf, int *index, int flags)`.
+///
+/// Runs the real lexer over a line and returns its words, as `(z)`/`(Z)`,
+/// history word splitting and `$historywords` need. `cursor` is None for C's
+/// `buf != NULL` arm (c:3412-3429: the cursor sits past the end) and Some for
+/// the `buf == NULL` editor-line arm (c:3430-3462), whose line the Rust
+/// callers pass in; the `chline` prefix of a continuation line (c:3438-3452)
+/// is not modelled. Returns the words and C's `*index`, the word the cursor
+/// is in.
+pub fn bufferwords(buf: &str, cursor: Option<usize>, flags: i32) -> (Vec<String>, usize) {
+    use crate::ported::lex::{
+        ctxtlex, incond, noaliases, set_incmdpos, set_incond, set_noaliases, tok, tokfd, tokstr,
+        tokstrings, untokenize_ztokens, LEX_INPUT, LEX_LEXFLAGS, LEX_NOCOMMENTS, LEX_POS,
     };
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            ' ' | '\t' | '\n' => {
-                flush(&mut words, &mut cur);
-                i += 1;
-            }
-            ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
-                flush(&mut words, &mut cur);
-                let mut tok = String::new();
-                tok.push(c);
-                while i + 1 < chars.len()
-                    && chars[i + 1] == c
-                    && matches!(c, '&' | '|' | ';' | '<' | '>')
-                {
-                    tok.push(c);
-                    i += 1;
-                }
-                words.push(tok);
-                i += 1;
-            }
-            '\'' => {
-                i += 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    cur.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    i += 1;
-                }
-            }
-            '"' => {
-                i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        i += 1;
-                        cur.push(chars[i]);
-                        i += 1;
-                        continue;
+    use crate::ported::zle::compcore::{ADDEDX, WB, WE, ZLEMETALL};
+    use crate::ported::zsh_h::{
+        BANG_TOK, DAMPER, DBAR, DINBRACK, DINPAR, DOUTPAR, ENDINPUT, ENVARRAY, FOR, INPAR_TOK,
+        IS_REDIROP, LEXERR, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
+        NEWLIN, OUTPAR_TOK, RCQUOTES,
+    };
+    let mut list: Vec<String> = Vec::new();
+    // c:3387-3391
+    let (mut num, mut cur, mut got) = (0i32, -1i32, false);
+    let ne = *crate::ported::utils::noerrs_lock().lock().unwrap();
+    let (owb, owe, oadx) = (WB.load(SeqCst), WE.load(SeqCst), ADDEDX.load(SeqCst));
+    let (onc, ona) = (LEX_NOCOMMENTS.get(), noaliases());
+    let (ocs, oll) = (ZLEMETACS.load(SeqCst), ZLEMETALL.load(SeqCst));
+    let mut forloop = 0i32;
+    let rcquotes = crate::ported::zsh_h::isset(RCQUOTES);
+    let mut envarray = false;
+
+    // c:3397-3402 — "With RC_QUOTES, 'foo '' bar' comes back as 'foo ' bar'.
+    // That's not very useful." — the option is off for the duration.
+    crate::ported::options::opt_state_set("rcquotes", false);
+    ADDEDX.store(0, SeqCst); // c:3403
+    crate::ported::utils::set_noerrs(1); // c:3404
+    crate::ported::context::zcontext_save(); // c:3405
+    LEX_LEXFLAGS.set(flags | LEXFLAGS_ACTIVE); // c:3406
+    // c:3410-3411
+    LEX_NOCOMMENTS.set(flags & (LEXFLAGS_COMMENTS_KEEP | LEXFLAGS_COMMENTS_STRIP) == 0);
+    // c:3415-3426 — the copy with a space appended (`addedspaceptr`).
+    let mut p = String::with_capacity(buf.len() + 1);
+    p.push_str(buf);
+    p.push(' ');
+    // The lexer reads LEX_INPUT ahead of the input stack: park it so hgetc
+    // takes the pushed frame, exactly as parsestrnoerr does (lex.rs).
+    let saved_lex_input = LEX_INPUT.with_borrow_mut(std::mem::take);
+    let saved_lex_pos = LEX_POS.replace(0);
+    LEX_LEXSTOP.set(false);
+    crate::ported::input::inpush(&p, 0, None); // c:3427 / c:3459
+    match cursor {
+        None => {
+            // c:3428-3429 — `zlemetall = strlen(p); zlemetacs = zlemetall + 1;`
+            let ll = p.chars().count() as i32;
+            ZLEMETALL.store(ll, SeqCst);
+            ZLEMETACS.store(ll + 1, SeqCst);
+        }
+        Some(cs) => {
+            // c:3435-3436 — `zlemetall = ll + 1; zlemetacs = cs;`
+            ZLEMETALL.store(buf.chars().count() as i32 + 1, SeqCst);
+            ZLEMETACS.store(cs as i32, SeqCst);
+        }
+    }
+    // c:3463-3464
+    if ZLEMETACS.load(SeqCst) != 0 {
+        ZLEMETACS.fetch_sub(1, SeqCst);
+    }
+    strinbeg(0); // c:3465
+    set_noaliases(true); // c:3466
+    loop {
+        // c:3468-3471
+        if incond() != 0 {
+            let t = tok();
+            let rest = t != DINBRACK && t != INPAR_TOK && t != DBAR && t != DAMPER && t != BANG_TOK;
+            set_incond(1 + rest as i32);
+        }
+        ctxtlex(); // c:3472
+        let t = tok();
+        if t == ENDINPUT || t == LEXERR {
+            break; // c:3473-3474
+        }
+        // c:3479-3482 — after an array assignment, back to start-of-command.
+        if t == OUTPAR_TOK && envarray {
+            set_incmdpos(true);
+            envarray = false;
+        }
+        // c:3483-3515 — `for (( a ; b ; c ))` arrives as FOR, DINPAR, DINPAR,
+        // DINPAR, DOUTPAR; `forloop` counts the stages down.
+        if t == FOR {
+            forloop = 5;
+        } else {
+            match forloop {
+                1 => {
+                    if t != DOUTPAR {
+                        forloop = 0;
                     }
-                    cur.push(chars[i]);
-                    i += 1;
                 }
-                if i < chars.len() {
-                    i += 1;
+                2 | 3 | 4 => {
+                    if t != DINPAR {
+                        forloop = 0;
+                    }
                 }
-            }
-            '\\' if i + 1 < chars.len() => {
-                cur.push(chars[i + 1]);
-                i += 2;
-            }
-            _ => {
-                cur.push(c);
-                i += 1;
+                _ => {}
             }
         }
-    }
-    flush(&mut words, &mut cur);
-    // Find which word index the cursor is in (best-effort).
-    let mut pos = 0;
-    let mut word_idx = 0;
-    for (i, word) in line.split_whitespace().enumerate() {
-        if let Some(start) = line[pos..].find(word) {
-            let wstart = pos + start;
-            let wend = wstart + word.len();
-            if cursor_pos >= wstart && cursor_pos <= wend {
-                word_idx = i;
-                break;
+        if let Some(ts) = tokstr() {
+            // c:3516-3541
+            let raw = match t {
+                ENVARRAY => {
+                    envarray = true;
+                    format!("{}=(", ts)
+                }
+                DINPAR if forloop != 0 => format!("{};", ts),
+                DINPAR => format!("(({}))", ts),
+                _ => ts,
+            };
+            if !raw.is_empty() {
+                // c:3543 `untokenize(p);` — every token back to its source char.
+                let mut w = untokenize_ztokens(&raw);
+                // c:3544-3558 — read past the added space: drop it again.
+                if crate::ported::input::ingetptr().is_empty() && w.ends_with(' ') {
+                    w.pop();
+                }
+                list.push(w); // c:3559
+                num += 1; // c:3560
             }
-            pos = wend;
+        } else if cursor.is_none() {
+            // c:3562-3572 — `else if (buf)`: punctuation words by their text.
+            if IS_REDIROP(t) && tokfd() >= 0 {
+                let text = tokstrings.get(t as usize).copied().flatten().unwrap_or("");
+                list.push(format!("{}{}", tokfd(), text)); // c:3563-3567
+                num += 1;
+            } else if t != NEWLIN {
+                if let Some(text) = tokstrings.get(t as usize).copied().flatten() {
+                    list.push(text.to_string()); // c:3568-3571
+                    num += 1;
+                }
+            }
+        }
+        // c:3573-3582
+        if forloop != 0 {
+            if forloop == 1 {
+                list.push("))".to_string());
+            }
+            forloop -= 1;
+        }
+        // c:3583-3586
+        if !got && LEX_LEXFLAGS.get() == 0 {
+            got = true;
+            cur = num - 1;
+        }
+        if errflag.load(SeqCst) & ERRFLAG_INT != 0 {
+            break; // c:3587
         }
     }
-    (words, word_idx)
+    // c:3588-3601 — a lexer error keeps the unfinished rest as one word.
+    if cursor.is_none() && tok() == LEXERR {
+        if let Some(ts) = tokstr().filter(|s| !s.is_empty()) {
+            let mut w = untokenize_ztokens(&ts);
+            if w.ends_with(' ') {
+                w.pop();
+            }
+            list.push(w);
+            num += 1;
+        }
+    }
+    // c:3602-3603
+    if cur < 0 && num > 0 {
+        cur = num - 1;
+    }
+    set_noaliases(ona); // c:3604
+    strinend(); // c:3605
+    crate::ported::input::inpop(); // c:3606
+    errflag.fetch_and(!ERRFLAG_ERROR, SeqCst); // c:3607
+    LEX_NOCOMMENTS.set(onc); // c:3608
+    crate::ported::utils::set_noerrs(ne); // c:3609
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
+    crate::ported::context::zcontext_restore(); // c:3610
+    ZLEMETACS.store(ocs, SeqCst); // c:3611
+    ZLEMETALL.store(oll, SeqCst); // c:3612
+    WB.store(owb, SeqCst); // c:3613
+    WE.store(owe, SeqCst); // c:3614
+    ADDEDX.store(oadx, SeqCst); // c:3615
+    crate::ported::options::opt_state_set("rcquotes", rcquotes); // c:3616
+    (list, cur.max(0) as usize) // c:3618-3621
 }
 
 /// Port of `histsplitwords()` from `Src/hist.c:3650`. — C decl `histsplitwords(char *lineptr, short **wordsp, int *nwordsp, int *nwordposp, int uselex)`.
@@ -5073,7 +5170,7 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
     // c:3650
     if uselex {
         // c:3662-3663 — wordlist = bufferwords(NULL, lineptr, NULL, LEXFLAGS_COMMENTS_KEEP);
-        let (lexed, _) = bufferwords(line, 0);
+        let (lexed, _) = bufferwords(line, None, crate::ported::zsh_h::LEXFLAGS_COMMENTS_KEEP);
 
         let bytes = line.as_bytes();
         let mut lptr: usize = 0;
@@ -6286,6 +6383,9 @@ mod histsplitwords_uselex_tests {
     /// `line`. `echo hi` → two words with the expected spans.
     #[test]
     fn uselex_matches_simple_words() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         let line = "echo hi";
         let words = histsplitwords(line, true);
         assert_eq!(words, vec![(0, 4), (5, 7)]);
@@ -6305,6 +6405,9 @@ mod histsplitwords_uselex_tests {
     /// uselex=false and returns a non-empty wordset.
     #[test]
     fn uselex_falls_back_on_lex_disagreement() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         // bufferwords splits `a;b` into `["a", ";", "b"]`; raw line
         // matches each char-by-char, so this should succeed without
         // falling back. Pin success path.
@@ -6318,6 +6421,9 @@ mod histsplitwords_uselex_tests {
     /// their original byte spans.
     #[test]
     fn uselex_handles_compound_operators() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         let line = "a && b";
         let words = histsplitwords(line, true);
         // Each word's span must lie within the line.
@@ -6345,6 +6451,9 @@ mod histsplitwords_uselex_tests {
     /// produce truncated spans for the `bar` word.
     #[test]
     fn uselex_distinguishes_semicolon_from_double() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         let line = "foo ;; bar";
         let words = histsplitwords(line, true);
         // Every word span must lie within the line.

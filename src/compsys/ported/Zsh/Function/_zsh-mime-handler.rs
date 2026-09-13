@@ -35,15 +35,21 @@ fn compute_end_offset(nwords: usize, current: i64) -> i64 {
 
 /// sh:13/15 — `${(z)"$(…)"}` then `"${(@Q)words}"`.
 ///
-/// `(z)` runs the shell word-splitter (`bufferwords`) over the handler's
-/// quoted output; `(Q)` then removes one level of quoting from each word.
-/// The codebase's `bufferwords` port already strips quotes while it
-/// tokenises (see `Src/hist.c` `(z)` callout), so the split and the
-/// subsequent `(Q)` dequote collapse into this single call — the words it
-/// returns are already unquoted, which is exactly what `words=("${(@Q)words}")`
-/// leaves behind.
+/// `(z)` runs the shell word-splitter (`bufferwords`, c:Src/subst.c:4185-4199
+/// with `shsplit = LEXFLAGS_ACTIVE`) over the handler's quoted output; the
+/// words keep their quoting, as C's lexer returns them. `(Q)` then removes one
+/// level from each word the way the paramsubst Q flag does
+/// (c:Src/subst.c:4101 `parse_subst_string`, then `remnulargs` + `untokenize`).
 fn rebuild_words(handler_output: &str) -> Vec<String> {
-    bufferwords(handler_output, 0).0
+    bufferwords(handler_output, None, crate::ported::zsh_h::LEXFLAGS_ACTIVE)
+        .0
+        .into_iter()
+        .map(|word| {
+            let mut w = crate::ported::lex::parse_subst_string(&word).unwrap_or(word);
+            crate::ported::glob::remnulargs(&mut w);
+            crate::ported::lex::untokenize(&w)
+        })
+        .collect()
 }
 
 /// sh:17 — `CURRENT = ${#words} - end_offset` after `$words` was rebuilt.
@@ -120,6 +126,9 @@ mod tests {
 
     #[test]
     fn rebuild_words_splits_and_unquotes() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         // Handler prints a fully-quoted command line; (z)+(Q) yields the
         // executable words with quoting removed.
         let out = "open '/tmp/my file.pdf'";
@@ -131,6 +140,9 @@ mod tests {
 
     #[test]
     fn rebuild_words_plain_line() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(
             rebuild_words("xpdf report.pdf"),
             vec!["xpdf".to_string(), "report.pdf".to_string()]
@@ -139,6 +151,9 @@ mod tests {
 
     #[test]
     fn rebuild_words_empty_output() {
+        // bufferwords runs the real lexer, which needs the initialised
+        // type table and options a shell sets up at startup.
+        let _g = crate::test_util::global_state_lock();
         assert!(rebuild_words("").is_empty());
     }
 

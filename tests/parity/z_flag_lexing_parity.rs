@@ -133,3 +133,42 @@ fn an_open_brace_parameter_keeps_its_body_in_one_word() {
 fn bar_amp_is_one_token() {
     assert_same_words(&["a |& b", "a || b | c"]);
 }
+
+/// c:Src/subst.c:4185-4199 → c:Src/hist.c:3385 bufferwords — `(z)` runs the
+/// real lexer. zshrs's hand-rolled splitter got these token shapes wrong:
+/// `for ((…;…;…))` pieces (c:3483-3515), a non-arithmetic `((…) …)` as nested
+/// parens, `repeat N (x)`, `$(…)` as one word, and `b=()` as ENVARRAY then
+/// OUTPAR (c:3479-3482).
+mod real_lexer_token_shapes {
+    use super::*;
+
+    #[test]
+    fn arithmetic_grouping_and_array_assignment_shapes() {
+        assert_same_words(&[
+            "for (( i = 1 ; i < 10 ; i++ ))",
+            "((0.25542 * 60) - 15)*60",
+            "repeat $( : foo bar; echo 4) (x)",
+            "a=(foo) b=() c=() d=(bar)",
+            "a 2>(x)",
+            "echo \"a b\" 'c d' $x ${y:-1 2} `cmd` $(( 1 + 2 )) <<< in 2>&1 >> out",
+        ]);
+    }
+
+    /// c:Src/lex.c:717-718 — with COMMENTS_STRIP a stripped comment ending a
+    /// line still yields the newline separator, but one running to the end of
+    /// input yields ENDINPUT.
+    #[test]
+    fn stripped_comments_and_separators() {
+        if !zsh_available() {
+            return;
+        }
+        let script = "line=$'A line with # someone\\'s comment\\nanother line # (1 more\\nanother one'; print -l ${(Z+C+)line}; foo='a # comment'; print -l \"${(Z+C+)foo}\"; print MID; print -l \"${(Z+c+)foo}\"";
+        let z = Command::new(zsh_path()).args(["-fc", script]).output().expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(String::from_utf8_lossy(&z.stdout), String::from_utf8_lossy(&r.stdout));
+    }
+}

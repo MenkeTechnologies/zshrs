@@ -1461,7 +1461,15 @@ fn gettok() -> lextok {
         loop {
             let c = hgetc();
             match c {
-                Some('\n') | None => break,
+                Some('\n') => break,
+                // c:692 — `while ((c = ingetc()) != '\n' && !lexstop)`: end of input
+                // inside the comment IS lexstop, which c:704 (KEEP: no
+                // hungetc) and c:717-718 (STRIP: ENDINPUT, not NEWLIN) test.
+                // hgetc reports it as None without setting LEX_LEXSTOP.
+                None => {
+                    LEX_LEXSTOP.set(true);
+                    break;
+                }
                 Some(c) => {
                     if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
                         add(c);

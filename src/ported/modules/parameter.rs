@@ -3212,7 +3212,7 @@ pub fn histwgetfn(pm: *mut param) -> Vec<String> {
         .iter()
         .collect();
     let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let (bw, _) = crate::ported::hist::bufferwords(&zleline, cursor);
+    let (bw, _) = crate::ported::hist::bufferwords(&zleline, Some(cursor), 0);
     // c:1239-1241 — `for (n = firstnode(ll); n; incnode(n)) pushnode(l, getdata(n));`
     //
     // `pushnode` PREPENDS, so walking `ll` front-to-back and pushing each

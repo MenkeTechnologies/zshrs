@@ -966,7 +966,7 @@ pub fn insertlastword() -> i32 {
         }
         let cur_line: String = ZLELINE.lock().unwrap().iter().collect(); // re-read after foredel
         let cur_pos = ZLECS.load(Ordering::SeqCst);
-        let (ws, _) = bufferwords(&cur_line, cur_pos); // c:692
+        let (ws, _) = bufferwords(&cur_line, Some(cur_pos), 0); // c:692
         if ws.is_empty() {
             return 1; // c:694
         }
