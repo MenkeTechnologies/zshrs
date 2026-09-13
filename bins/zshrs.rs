@@ -2876,6 +2876,23 @@ pub fn zshrs_main() {
             });
         }
 
+        // c:Src/init.c:1563-1566 — init_misc, after the init scripts and
+        // before `execstring(cmd, 0, 1, "cmdarg")`:
+        //     if (SHIN >= 10) close(SHIN);
+        //     SHIN = movefd(open("/dev/null", O_RDONLY | O_NOCTTY));
+        // The descriptor is the shell's input for a `-c` run and occupies the
+        // first internal slot, so the first `exec {fd}>file` gets 11, as in zsh.
+        {
+            let old_shin = zsh::ported::input::SHIN.with(|s| s.get());
+            if old_shin >= 10 {
+                let _ = zsh::ported::utils::zclose(old_shin); // c:1565
+            }
+            let devnull = unsafe {
+                libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)
+            };
+            let shin = zsh::ported::utils::movefd(devnull); // c:1566
+            zsh::ported::input::SHIN.with(|s| s.set(shin));
+        }
         let start = Instant::now();
         let result = executor.execute_script(code);
         #[cfg(feature = "daemon")]

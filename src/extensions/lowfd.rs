@@ -59,8 +59,21 @@ const FIRST_INTERNAL_FD: RawFd = 10;
 /// are never part of the reservation — `exec 3>out` starts at 3.
 const FIRST_SCRIPT_FD: RawFd = 3;
 
-/// How many slots the guard can hold at most: the whole script range.
-const SCRIPT_FD_SLOTS: usize = (FIRST_INTERNAL_FD - FIRST_SCRIPT_FD) as usize;
+/// Where the shell's EXTENSION descriptors (the log, the SQLite databases)
+/// land. C zsh has none of these; the descriptors it does keep for itself
+/// (SHIN, c:Src/init.c:1566, and each `movefd`) sit just above
+/// [`FIRST_INTERNAL_FD`], and `{var}` redirections take the lowest free
+/// descriptor from 10 up (c:Src/exec.c:2404 `movefd`). With the extensions
+/// parked at 10-13, `exec {fd}>file` got 14 where zsh gives 11.
+///
+/// !!! WARNING: RUST-ONLY CONSTANT — NO C COUNTERPART !!! The guard holds
+/// everything below this floor during an extension open, so the kernel's
+/// lowest-free-descriptor rule hands out >= 50.
+const EXTENSION_FD_FLOOR: RawFd = 50;
+
+/// How many slots the guard can hold at most: everything from the first
+/// script descriptor up to [`EXTENSION_FD_FLOOR`].
+const SCRIPT_FD_SLOTS: usize = (EXTENSION_FD_FLOOR - FIRST_SCRIPT_FD) as usize;
 
 /// Upper bound of the sweep that registers freshly-landed internal
 /// descriptors in the fdtable.
@@ -71,7 +84,7 @@ const SCRIPT_FD_SLOTS: usize = (FIRST_INTERNAL_FD - FIRST_SCRIPT_FD) as usize;
 /// past anything the shell opens for itself. A descriptor that somehow
 /// lands above it simply stays unregistered — the behaviour before this
 /// sweep existed — rather than costing a longer scan on every open.
-const FD_SCAN_LIMIT: RawFd = 64;
+const FD_SCAN_LIMIT: RawFd = 96;
 
 /// Is `fd` open in this process?
 fn fd_is_open(fd: RawFd) -> bool {
@@ -152,7 +165,7 @@ impl LowFdGuard {
             // handle may itself land inside the range being reserved. When it
             // does it counts as one of the reserved slots and is released with
             // the rest; otherwise it is a plain temporary closed below.
-            let devnull_is_held = (FIRST_SCRIPT_FD..FIRST_INTERNAL_FD).contains(&devnull);
+            let devnull_is_held = (FIRST_SCRIPT_FD..EXTENSION_FD_FLOOR).contains(&devnull);
             if devnull_is_held {
                 held.push(devnull);
             }
@@ -171,7 +184,7 @@ impl LowFdGuard {
                 if fd < 0 {
                     break;
                 }
-                if fd >= FIRST_INTERNAL_FD {
+                if fd >= EXTENSION_FD_FLOOR {
                     libc::close(fd);
                     break;
                 }

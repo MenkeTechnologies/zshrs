@@ -549,3 +549,19 @@ mod return_restores_redirect {
         );
     }
 }
+
+/// c:Src/exec.c:2404 — a `{var}` redirection takes `movefd`'s lowest free
+/// descriptor at or above 10. In a `-c` shell zsh already holds 10 for SHIN
+/// (c:Src/init.c:1566, `/dev/null`), so the first allocation is 11. zshrs's own
+/// log and database descriptors used to sit at 10-13 and pushed it to 14.
+mod varid_descriptor_numbers {
+    use super::*;
+
+    #[test]
+    fn first_allocations_match_zsh() {
+        assert_parity_in(
+            &std::env::temp_dir(),
+            "exec {a}>/dev/null; exec {b}>/dev/null; print $a $b; exec {a}>&- {b}>&-; exec {c}>/dev/null; print $c",
+        );
+    }
+}
