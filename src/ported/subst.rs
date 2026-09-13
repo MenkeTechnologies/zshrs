@@ -24163,9 +24163,13 @@ pub fn paramsubst(
                 // c:36 `nulstring` in its empty fields: non-empty at c:183,
                 // hence KEPT (`setopt shwordsplit; IFS=:; s='a::b'; P${s}S`
                 // is `Pa` `` `bS`). See `PARAMSUBST_EMPTIES_DEFERRED`.
-                if !force_split && spsep.is_none() {
-                    PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.set(true));
-                }
+                // A split's IFS-non-whitespace empty fields are c:36
+                // `nulstring` (the Nularg these nodes still carry), which
+                // c:183 finds non-empty; only the truly empty nodes (the
+                // IFS-whitespace edges, a real array's empties) are here, so
+                // every deferred skip is owed to the end-of-word drop. The
+                // bridge keeps the Nularg through the word for that drop.
+                PARAMSUBST_EMPTIES_DEFERRED.with(|c| c.set(true));
             }
             let first = nodes.first().cloned().unwrap_or_default();
             if nodes.len() > 1 {

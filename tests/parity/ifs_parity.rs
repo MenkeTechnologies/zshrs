@@ -638,3 +638,25 @@ mod equals_split_fields_splice_with_affixes {
         assert_parity(r#"s="a b"; print -rl -- x${=s}y x${=s} "split ${=s} wise""#);
     }
 }
+
+/// c:Src/utils.c:3730-3760 + c:Src/subst.c:36 / :183-186 — an empty field
+/// between two IFS-non-whitespace separators is `nulstring` and survives the
+/// word's empty-node removal even when the split fields take the word's text;
+/// only the IFS-whitespace edges are deleted when nothing attaches to them.
+mod nulstring_fields_survive_affixes {
+    use super::*;
+
+    #[test]
+    fn equals_split_keeps_middle_empty_field() {
+        assert_parity(r#"IFS=:; s=":a::b:"; print -rl -- x${=s}y; print -rl -- x${=s}"#);
+        assert_parity(r#"IFS=:; s="a::b"; print -rl -- x${=s}y ${=s}y; a=(x${=s}y); print $#a"#);
+        assert_parity(r#"IFS=": "; s=" a : :b"; print -rl -- x${=s}y"#);
+    }
+
+    #[test]
+    fn whitespace_edges_and_shwordsplit_unchanged() {
+        assert_parity(r#"s=" foo bar "; print -rl -- x${=s} ${=s}y x${=s}y ${=s}"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; s=":a::b:"; print -rl -- x${s}y x${s} ${s}"#);
+        assert_parity(r#"a=(x '' y); print -rl -- p${a}q p${a[@]}q; set -- x '' y; print -rl -- p$@q"#);
+    }
+}

@@ -1829,6 +1829,24 @@ fn join_c3914(elems: Vec<String>, ifs: Option<&str>) -> JoinC3914 {
 ///   (c:`Src/utils.c:3734` / c:3757) and c:186 DOES delete it — unless the
 ///   caller is attaching it to neighbouring text, which is what `keep_empties`
 ///   (the `BUILTIN_FORCE_SPLIT` argc contract) says.
+/// c:Src/glob.c:3663 `remnulargs` for a finished word: remove the c:36
+/// `nulstring` markers a deferring word kept through its segments (see
+/// BUILTIN_FORCE_SPLIT and `paramsubst_to_value_pf`), once the end-of-word drop
+/// has decided which empty nodes survive. A marker-free value is returned as is.
+fn strip_nulstring_markers(v: Value) -> Value {
+    let nul = crate::ported::zsh_h::Nularg;
+    match v {
+        Value::Array(items) if items.iter().any(|x| x.as_str_cow().contains(nul)) => Value::array(
+            items
+                .iter()
+                .map(|x| Value::str(x.as_str_cow().replace(nul, "")))
+                .collect(),
+        ),
+        Value::Str(s) if s.contains(nul) => Value::str(s.replace(nul, "")),
+        other => other,
+    }
+}
+
 fn sepsplit_c3932(s: &str, keep_empties: bool) -> Vec<String> {
     let raw = crate::ported::utils::sepsplit(s, None, false);
     let nulstring = crate::ported::zsh_h::Nularg.to_string();
@@ -6028,6 +6046,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // multsub PREFORK_SPLIT (full IFS-split). Bug #166.
     vm.register_builtin(BUILTIN_ARRAY_DROP_EMPTY, |vm, _argc| {
         let v = vm.pop();
+        strip_nulstring_markers(drop_word_empties(v))
+    });
+    // The c:183-186 decision of BUILTIN_ARRAY_DROP_EMPTY, before c:170's
+    // remnulargs (strip_nulstring_markers) runs on the survivors.
+    fn drop_word_empties(v: Value) -> Value {
         // End of word: whatever `ARRAY_EMPTIES_ELIDABLE` was carrying is
         // spent here even though this builtin drops unconditionally, so a
         // following word starts from a clean bit.
@@ -6053,7 +6076,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Str(s) if s.is_empty() => Value::array(Vec::new()),
             other => other,
         }
-    });
+    }
 
     // Opens (argc 0) / closes (argc 1) a word whose literals the compiler
     // attaches itself — see `BUILTIN_WORD_DEFER_EMPTIES`. Pushes nothing
@@ -6089,6 +6112,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `ARRAY_EMPTIES_ELIDABLE` bit `get_var_impl` sets on the array read.
     vm.register_builtin(BUILTIN_WORD_ELIDE_EMPTY, |vm, argc| {
         let v = vm.pop();
+        strip_nulstring_markers(elide_word_empties(v, argc))
+    });
+    // The c:183-186 decision of BUILTIN_WORD_ELIDE_EMPTY, before c:170's
+    // remnulargs (strip_nulstring_markers) runs on the survivors.
+    fn elide_word_empties(v: Value, argc: u8) -> Value {
         // `PARAMSUBST_EMPTIES_DEFERRED` is the same bit reported from the
         // other direction: `paramsubst` skipped c:186 for a genuine array
         // reference because this word opened with
@@ -6129,7 +6157,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             other => other,
         }
-    });
+    }
 
     // zsh nofork command substitution (c:Src/subst.c:1904-2100) — and the
     // ksh93 funsub / mksh valsub it subsumes. See the BUILTIN_KSH_FUNSUB
@@ -6470,7 +6498,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:3932 — `sepsplit(val, spsep, 0, 1)`; spsep NULL → spacesplit, plus
         // c:184-187's empty-word removal. See `sepsplit_c3932` for the
         // `nulstring`-vs-`""` rule that decides which empties survive.
-        let out = sepsplit_c3932(&s, keep_empties);
+        // c:36 `nulstring` — inside a word whose end-of-word drop is still to
+        // run (BUILTIN_WORD_DEFER_EMPTIES opened it), an IFS-non-whitespace
+        // empty field keeps its Nularg so that drop can tell it from the
+        // IFS-whitespace edges it must delete (c:183-186), then removes the
+        // marker (c:170 remnulargs). `IFS=:; s=a::b; print -rl -- x${=s}y`
+        // is `xa` `` `by`.
+        let out = if keep_empties
+            && crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0
+        {
+            crate::ported::utils::sepsplit(&s, None, false) // c:3932, Nularg kept
+        } else {
+            sepsplit_c3932(&s, keep_empties)
+        };
         if out.is_empty() {
             // c:3922-3923 — `if (!aval || !aval[0]) val = dupstring("");`:
             // the split produced nothing, so the value is the empty SCALAR.
@@ -14531,6 +14571,8 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // expansion result is never tilde-expanded), not inside `"…"` (`qt`), and
     // not while `SKIP_FILESUB` marks a `${var/pat/repl}` pattern context where
     // a literal `~` must survive.
+    // The word this expansion belongs to runs its own end-of-word drop.
+    let keep_nulargs = saved_defer > 0 && !reentered;
     let do_filesub = !qt
         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
         && !crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
@@ -14547,7 +14589,18 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
             } else {
                 n
             };
-            crate::ported::lex::untokenize(&n)
+            // c:36 `nulstring` survives for the word's end-of-word drop (see
+            // BUILTIN_WORD_ELIDE_EMPTY / BUILTIN_ARRAY_DROP_EMPTY): untokenize
+            // would fold it to "", which that drop cannot tell from a real
+            // empty node.
+            if keep_nulargs && n.contains(crate::ported::zsh_h::Nularg) {
+                n.split(crate::ported::zsh_h::Nularg)
+                    .map(crate::ported::lex::untokenize)
+                    .collect::<Vec<_>>()
+                    .join(&crate::ported::zsh_h::Nularg.to_string())
+            } else {
+                crate::ported::lex::untokenize(&n)
+            }
         })
         .collect();
     let value = nodes_to_value(nodes);
