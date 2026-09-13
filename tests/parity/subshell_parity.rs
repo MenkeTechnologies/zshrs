@@ -213,3 +213,25 @@ mod with_command_subst {
         assert_parity(r#"X=outer; Y=$(X=inside; echo $X); echo "Y=$Y X=$X""#);
     }
 }
+
+/// c:Src/exec.c::entersubsh — `( … )` runs in a forked child, so a NOMATCH
+/// error inside it (c:Src/glob.c:1877) ends only that child. zshrs runs the
+/// subshell in process and left the per-command glob-failed flag set when the
+/// body ended on the failing word; the parent's NEXT command consumed it and
+/// returned 1 without running.
+mod nomatch_isolation {
+    use super::*;
+
+    #[test]
+    fn a_nomatch_inside_a_subshell_does_not_skip_the_parents_next_command() {
+        assert_parity(r#"( y_nomatch_* ); print a; print b"#);
+        assert_parity(r#"( y_nomatch_* ) || print or-branch; print c"#);
+        assert_parity(r#"( y[[b] ); print rc=$?"#);
+        assert_parity(r#"( builtin y[[b] ); print rc=$?"#);
+        // `$(( y[[b] ))` is not math: it re-reads as `$( ( y[[b] ) )`.
+        assert_parity(r#"x=$(( y[[b] )); print rc=$? "[$x]""#);
+        assert_parity(r#"(( y[[b] )); print rc=$?"#);
+        // Control: in the CURRENT shell the same error ends the script.
+        assert_parity(r#"{ y[[b] }; print not-reached"#);
+    }
+}

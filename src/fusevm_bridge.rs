@@ -17218,6 +17218,15 @@ impl fusevm::ShellHost for ZshrsHost {
             });
         }
         with_executor(|exec| {
+            // c:Src/exec.c::entersubsh — the subshell is a forked child, so a
+            // NOMATCH failure raised inside it (c:Src/glob.c:1877) lives and
+            // dies with that process. The per-command glob-failed cell is the
+            // in-process stand-in for that failure, and a body like `( y* )`
+            // ends before any command boundary consumes it: the parent's NEXT
+            // command then read it and returned 1 without running
+            // (`( y* ); print a` lost `print a`, `( y* ) || print x` lost
+            // the or-branch).
+            exec.current_command_glob_failed.set(false);
             if let Some(snap) = exec.subshell_snapshots.pop() {
                 // c:Src/exec.c::entersubsh fork semantics — `loops` /
                 // `breaks` / `contflag` are process globals the child
