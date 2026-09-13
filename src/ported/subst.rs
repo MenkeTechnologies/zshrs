@@ -24769,10 +24769,10 @@ pub fn paramsubst(
         // matched just "a". zsh never word-splits a SINGLE-context expansion.
         if pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt {
             // c:1705
-            let words = value
-                .split_whitespace()
-                .map(String::from)
-                .collect::<Vec<String>>(); // c:1625
+            // c:Src/subst.c:3913-3915 — `aval = sepsplit(val, spsep, 0, 1);`:
+            // the split is on $IFS, so a non-whitespace IFS char separates too
+            // (`setopt shwordsplit; IFS=.-; foo=1-2.3; ${1:-$foo}` is 1 2 3).
+            let words = crate::ported::utils::sepsplit(&value, None, false); // c:3915
             if words.len() > 1 {
                 // c:1625
                 let prefix: String = chars[..start_pos].iter().collect(); // c:1625

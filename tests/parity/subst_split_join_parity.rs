@@ -381,6 +381,15 @@ g() { local IFS=-; print -rl -- ${=1:-a--b} ${=1:--a}; }; g
 h() { local IFS=:; print -rl -- ${=1:-:a::b:}; }; h"#,
         );
     }
+
+    /// c:Src/subst.c:3913-3915 — the `$foo` inside the default word is split
+    /// by sepsplit on $IFS, so a non-whitespace IFS char separates its value.
+    #[test]
+    fn parameter_value_in_the_default_word_splits_on_ifs() {
+        assert_parity(
+            r#"f() { local IFS=.-; local foo=1-2.3-4; print -l ${=1:-1-2.3-4} ${=1:-$foo} }; f"#,
+        );
+    }
 }
 
 /// c:Src/params.c:1741-1760 — a lowercase `(i)`/`(r)` scan of an association
