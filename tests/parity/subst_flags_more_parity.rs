@@ -809,3 +809,19 @@ mod e_flag_unclosed_brace_message {
         assert_parity(r#"{ a='x${y'; v=${(e)a}; } 2>&1"#);
     }
 }
+
+/// c:Src/subst.c:2741 + c:Src/params.c:2381-2506 — `(P)` fetches the name
+/// with `fetchvalue`/`getstrvalue` without VALFLAG_SUBST, and the
+/// PM_LOWER/PM_UPPER fold happens only inside that flag's block. The name is
+/// the stored text, not the case-folded one (Test/B02typeset.ztst "Upper case
+/// conversion, does not apply to values used internally").
+mod p_flag_reads_the_unfolded_name {
+    use super::*;
+
+    #[test]
+    fn upper_and_lower_names() {
+        assert_parity(r#"typeset -u c=upper; upper=VAL; UPPER=BIG; print ${(P)c} $c"#);
+        assert_parity(r#"typeset -l c=LOWER; LOWER=v2; lower=v3; print ${(P)c} $c"#);
+        assert_parity(r#"typeset -u c=upper; upper=VAL; UPPER=BIG; print ${(P)${c}}"#);
+    }
+}

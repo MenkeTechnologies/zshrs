@@ -8331,7 +8331,29 @@ pub fn paramsubst(
                 sub_is_splat = false; // c:2806 — and so is its splat verdict
             } else {
                 // c:2741
-                let target = vars_get(&var_name) // c:2741
+                // c:2741 — `val = getstrvalue(v)` on a value fetched WITHOUT
+                // VALFLAG_SUBST (that flag is set only for the final fetch,
+                // c:2965). getstrvalue's PM_LOWER / PM_UPPER fold sits inside
+                // `if (v->valflags & VALFLAG_SUBST)` (c:Src/params.c:2381-2506),
+                // so the name is the STORED text: `typeset -u c=upper;
+                // print ${(P)c}` dereferences `upper`, not `UPPER`.
+                // `vars_get` (getsparam) always applies the fold, so a scalar
+                // carrying either flag is read from its stored string instead.
+                let unfolded: Option<String> = paramtab().read().ok().and_then(|t| {
+                    t.get(var_name.as_str()).and_then(|pm| {
+                        let f = pm.node.flags as u32;
+                        if crate::ported::zsh_h::PM_TYPE(f) == crate::ported::zsh_h::PM_SCALAR
+                            && (f & (crate::ported::zsh_h::PM_LOWER | crate::ported::zsh_h::PM_UPPER)) != 0
+                            && (f & crate::ported::zsh_h::PM_UNSET) == 0
+                        {
+                            pm.u_str.clone()
+                        } else {
+                            None
+                        }
+                    })
+                });
+                let target = unfolded
+                    .or_else(|| vars_get(&var_name)) // c:2741
                     .or_else(|| arrays_get(&var_name).map(|a| a.join(" "))) // c:2741
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
