@@ -1144,7 +1144,34 @@ fn par_sublist() -> Option<ZshSublist> {
         zshlex();
     }
 
-    let pipe = par_pline()?;
+    // c:882-883 (par_sublist2) — `if (!par_pline(cmplx) && !f) return -1;`:
+    // after `coproc` or `!` a missing pipeline is not an error, so `{ ! }`,
+    // `( ! )` and `fn() { ! }` parse, and the empty pipeline runs as a null
+    // command (status 0, negated to 1). An error par_pline itself raised
+    // still fails the sublist.
+    let errflag_before = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+    let pipe = match par_pline() {
+        Some(p) => p,
+        // A `|` / `|&` with no command before it is still an error, reported
+        // by the caller at that token (`{ ! | }` → "parse error near `|'").
+        None if (flags.not || flags.coproc)
+            && !matches!(tok(), BAR_TOK | BARAMP)
+            && crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                == errflag_before =>
+        {
+            ZshPipe {
+                cmd: ZshCommand::Simple(ZshSimple {
+                    assigns: Vec::new(),
+                    words: Vec::new(),
+                    redirs: Vec::new(),
+                }),
+                next: None,
+                lineno: toklineno(),
+                merge_stderr: false,
+            }
+        }
+        None => return None,
+    };
 
     // Check for && or ||
     let next = match tok() {

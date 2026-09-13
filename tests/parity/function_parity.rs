@@ -647,3 +647,26 @@ mod rcquotes_deparse {
         );
     }
 }
+
+/// c:Src/parse.c:882-883 (par_sublist2) — `if (!par_pline(cmplx) && !f)
+/// return -1;`: after `!` a missing pipeline is not an error, and the empty
+/// pipeline negates to status 1. zshrs reported "parse error near `}'".
+mod bang_without_a_following_command {
+    use super::*;
+
+    #[test]
+    fn a_bare_bang_parses_and_negates_to_one() {
+        assert_parity("fn() { ! {!} && ! (!) || ! {!} }; functions -x2 fn");
+        assert_parity("fn() { ! }; functions fn; false; fn; print $?");
+        assert_parity("( ! ); print $?");
+        assert_parity("false; { ! }; print $?");
+        assert_parity("if !; then print t; else print f; fi");
+        assert_parity("{ ! } | cat; print $?");
+    }
+
+    #[test]
+    fn an_operator_with_no_command_is_still_an_error() {
+        assert_parity("{ ! | }; print $?");
+        assert_parity("! true; print $?");
+    }
+}
