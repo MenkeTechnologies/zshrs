@@ -1282,3 +1282,30 @@ mod kshtypeset_through_a_precommand_modifier {
         assert_parity("setopt kshtypeset; builtin print y=$(echo g h)");
     }
 }
+
+/// c:Src/parse.c:1931-1932 — only the TYPESET reserved word (enabled, unquoted)
+/// gives WC_TYPESET assignment arguments. `\typeset`, `"typeset"`, `noglob
+/// typeset` and a reserved word turned off with `disable -r` are ordinary
+/// builtins, whose `name=$(…)` word splits unless KSH_TYPESET is set
+/// (c:Src/exec.c:3353-3355, c:Src/subst.c:103). zshrs decided from the name.
+mod typeset_name_not_spelled_as_the_reserved_word {
+    use super::*;
+
+    #[test]
+    fn a_non_reserved_spelling_splits_the_substitution() {
+        assert_parity("\\typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("\"typeset\" y=$(echo g h); print -r -- \"[$y]\"");
+        assert_parity("noglob typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("disable -r typeset; eval 'typeset y=$(echo g h)'; print -r -- \"[$y]\" ${+h}");
+        assert_parity("disable -r typeset; eval \"fn(){ typeset foo=\\`echo one word=two\\`; print \\$foo; print \\$word; }\"; fn");
+        assert_parity("setopt kshtypeset; \\typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+    }
+
+    #[test]
+    fn the_reserved_word_keeps_assignment_arguments() {
+        assert_parity("typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("nocorrect typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("f(){ local y=$(echo g h); print -r -- \"[$y]\" ${+h}; }; f");
+        assert_parity("typeset -a a=(1 2) b; a+=(3); print $a; local x=1 y=(p q); print $x $y");
+    }
+}

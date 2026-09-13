@@ -136,6 +136,19 @@ pub struct ZshSimple {
     pub words: Vec<String>,
     /// `redirs` field.
     pub redirs: Vec<ZshRedir>,
+    /// c:Src/parse.c:1931-1932 — the command word was the TYPESET reserved
+    /// word (`typeset`, `local`, `export`, … while enabled and unquoted), so
+    /// C emits WC_TYPESET and its `NAME=value` arguments are assignments.
+    /// The same name reached any other way (`builtin typeset`, `\typeset`,
+    /// after `disable -r typeset`) is an ordinary BINF_MAGICEQUALS builtin
+    /// (c:Src/exec.c:3353-3355). Absent in older serialized trees, where
+    /// every typeset-family command was treated as the reserved word.
+    #[serde(default = "typeset_reswd_default")]
+    pub typeset_reswd: bool,
+}
+
+fn typeset_reswd_default() -> bool {
+    true
 }
 
 /// An assignment
@@ -681,6 +694,7 @@ mod tests {
                 varid: None,
                 heredoc_idx: None,
             }],
+            typeset_reswd: false,
         };
         let json = serde_json::to_string(&simple).expect("serialize");
         let back: ZshSimple = serde_json::from_str(&json).expect("deserialize");

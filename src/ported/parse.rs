@@ -1164,6 +1164,7 @@ fn par_sublist() -> Option<ZshSublist> {
                     assigns: Vec::new(),
                     words: Vec::new(),
                     redirs: Vec::new(),
+                    typeset_reswd: false,
                 }),
                 next: None,
                 lineno: toklineno(),
@@ -2875,6 +2876,7 @@ pub fn par_dinbrack() -> Option<()> {
 /// inout-par `()` that converts a simple command into an inline
 /// function definition.
 fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
+    let mut typeset_reswd = false;
     let mut assigns = Vec::new();
     let mut words = Vec::new();
     // c:1840 — `char *hasalias = input_hasalias();` — the alias (if any)
@@ -2988,6 +2990,10 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 zshlex();
             }
             STRING_LEX | TYPESET => {
+                // c:1931-1932 — the reserved-word head decides WC_TYPESET.
+                if words.is_empty() && tok() == TYPESET {
+                    typeset_reswd = true;
+                }
                 let s = tokstr();
                 if let Some(s) = s {
                     words.push(s);
@@ -3166,6 +3172,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
         assigns,
         words,
         redirs,
+        typeset_reswd,
     }))
 }
 
@@ -9157,6 +9164,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                             assigns: Vec::new(),
                             words: body_argv,
                             redirs: Vec::new(),
+                            typeset_reswd: false,
                         });
                         let body_list = ZshList {
                             sublist: ZshSublist {

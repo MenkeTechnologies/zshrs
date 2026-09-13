@@ -353,6 +353,7 @@ impl<'a> Walker<'a> {
                         assigns: vec![],
                         words: vec![],
                         redirs: vec![],
+                        typeset_reswd: false,
                     }),
                     next: None,
                     lineno: 0,
@@ -401,6 +402,7 @@ impl<'a> Walker<'a> {
                         assigns: leading_assigns,
                         words: vec![],
                         redirs: leading_redirs,
+                        typeset_reswd: false,
                     });
                 }
             };
@@ -434,6 +436,7 @@ impl<'a> Walker<'a> {
                         assigns: leading_assigns,
                         words,
                         redirs: leading_redirs,
+                        typeset_reswd: false,
                     });
                 }
                 x if x == WC_TYPESET => {
@@ -460,6 +463,7 @@ impl<'a> Walker<'a> {
                         assigns: leading_assigns,
                         words,
                         redirs: leading_redirs,
+                        typeset_reswd: true, // c:Src/parse.c:1931-1932 — WC_TYPESET
                     });
                 }
                 _ => {
@@ -483,6 +487,7 @@ impl<'a> Walker<'a> {
                     assigns: vec![],
                     words: vec![],
                     redirs: vec![],
+                    typeset_reswd: false,
                 });
             }
         };
@@ -510,6 +515,7 @@ impl<'a> Walker<'a> {
                     assigns: vec![],
                     words: vec![],
                     redirs: vec![],
+                    typeset_reswd: false,
                 })
             }
             x if x == WC_TRY => ZshCommand::Try(self.decode_try(data)),
@@ -517,6 +523,7 @@ impl<'a> Walker<'a> {
                 assigns: vec![],
                 words: vec![],
                 redirs: vec![],
+                typeset_reswd: false,
             }),
         }
     }
@@ -990,6 +997,7 @@ fn empty_sublist() -> ZshSublist {
                 assigns: vec![],
                 words: vec![],
                 redirs: vec![],
+                typeset_reswd: false,
             }),
             next: None,
             lineno: 0,

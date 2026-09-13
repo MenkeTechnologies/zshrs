@@ -2499,6 +2499,7 @@ impl ZshCompiler {
                 assigns: simple.assigns.clone(),
                 words: simple.words[1..].to_vec(),
                 redirs: simple.redirs.clone(),
+                typeset_reswd: simple.typeset_reswd,
             };
             self.compile_simple(&inner);
             return;
@@ -2515,6 +2516,7 @@ impl ZshCompiler {
                 assigns: simple.assigns.clone(),
                 words: simple.words[1..].to_vec(),
                 redirs: simple.redirs.clone(),
+                typeset_reswd: simple.typeset_reswd,
             };
             // Wrap in setopt noglob ... unsetopt noglob via a runtime
             // option toggle. Push "noglob"+true via SET_OPT, recurse to
@@ -2968,6 +2970,7 @@ impl ZshCompiler {
                         assigns: simple.assigns.clone(),
                         words: simple.words[1..].to_vec(),
                         redirs: simple.redirs.clone(),
+                        typeset_reswd: simple.typeset_reswd,
                     };
                     self.compile_simple(&inner);
                     return;
@@ -3343,7 +3346,8 @@ impl ZshCompiler {
             // stored only "not" and exported stray `a`/`tty` names
             // from the split remainder). Non-assignment args
             // (`export PATH`) keep normal word semantics.
-            let arg_is_assign = head_is_typeset_family && is_typeset_scalar_assign(word);
+            let arg_is_assign =
+                head_is_typeset_family && simple.typeset_reswd && is_typeset_scalar_assign(word);
             // c:Src/exec.c par_simple/addvars — the assignment (no-split)
             // treatment belongs to the VALUE of a `NAME=VALUE` argument, not
             // to every word of a BINF_ASSIGN command. A bare `$name` argument
@@ -3372,7 +3376,17 @@ impl ZshCompiler {
                 self.assign_context_depth += 1;
             }
             self.word_emitted_glob = false;
-            self.compile_word_str(word);
+            if head_is_typeset_family
+                && !simple.typeset_reswd
+                && is_typeset_scalar_assign(word)
+                && needs_word_split(word)
+            {
+                // Not the reserved word (`\typeset`, `"typeset"`, `disable -r
+                // typeset`): c:Src/exec.c:3353-3355 / c:Src/subst.c:103.
+                self.emit_asssub_assign_word(word);
+            } else {
+                self.compile_word_str(word);
+            }
             if arg_is_assign {
                 self.assign_context_depth -= 1;
             }
