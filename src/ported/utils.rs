@@ -2000,6 +2000,11 @@ pub fn preprompt() {
                 }
             }
         }
+        // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+        // child that is not `thisjob`, run now that JOBTAB is unlocked.
+        for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
     }
 
     // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status

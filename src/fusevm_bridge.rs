@@ -19905,6 +19905,14 @@ pub(crate) fn set_lineno_impl(n: i64) -> fusevm::Value {
 /// Body of `BUILTIN_DONETRAP_RESET`, factored out for the same reason.
 /// c:Src/exec.c:1455 `donetrap = 0`.
 pub(crate) fn donetrap_reset_impl() -> fusevm::Value {
+        // c:Src/jobs.c:651-652 — a CHLD trap update_bg_job owed while the
+        // shell was not in a wait loop. C runs it from the SIGCHLD handler;
+        // a trap body run from zshrs's handler can block on a mutex the
+        // interrupted statement holds, so it runs here, at the next
+        // statement prologue (c:Src/exec.c:1451-1455).
+        for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
         // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
         // Reset before each top-level statement so the next
         // sublist's ERREXIT_CHECK fires the ZERR trap on its FIRST

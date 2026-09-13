@@ -782,6 +782,18 @@ pub fn update_job(job: &mut job) -> bool {
     true
 }
 
+/// c:Src/jobs.c:651-652 — `if (sigtrapped[SIGCHLD] && job != thisjob)
+/// dotrap(SIGCHLD);` at the end of update_job.
+///
+/// !!! WARNING: RUST-ONLY STATIC — C RUNS THE TRAP INLINE !!!
+/// update_bg_job runs with the JOBTAB mutex held (from the SIGCHLD handler
+/// among others), and a trap body run there can block on a mutex the
+/// interrupted code holds. update_bg_job counts each owed trap here instead,
+/// and the shell runs `dotrap(SIGCHLD)` (which returns when no CHLD trap is
+/// set) from the main thread: the `wait` loops, preprompt, bin_fg's opening
+/// sweep, and the next statement prologue.
+pub static CHLD_TRAP_PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// `lastval2` — Src/jobs.c global. Set to last-pipeline exit status.
 pub static LASTVAL2: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
@@ -821,6 +833,12 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
             }
         }
         update_job(&mut jn[ji]);
+        // c:Src/jobs.c:651-652 — `if (sigtrapped[SIGCHLD] && job != thisjob)
+        // dotrap(SIGCHLD);` — owed once the table is unlocked; see
+        // CHLD_TRAP_PENDING.
+        if ji as i32 != thisjob {
+            CHLD_TRAP_PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         // c:Src/jobs.c:639-643 — update_job's report tail:
         //     if ((isset(NOTIFY) || job == thisjob) && (jn->stat & STAT_LOCKED)) {
         //         if (printjob(jn, !!isset(LONGLISTJOBS), 0) && zleactive)
@@ -3107,6 +3125,11 @@ pub fn bin_fg(
             update_bg_job(&mut tab, pid, status);
         }
     }
+    // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+    // child that is not `thisjob`, run now that JOBTAB is unlocked.
+    for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::signals::dotrap(libc::SIGCHLD);
+    }
 
     // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`. (The routing
     // block above already swept STAT_CHANGED entries; this re-walk is
@@ -3280,6 +3303,9 @@ pub fn bin_fg(
                     // the trap from this site so function-form
                     // TRAPCHLD() {…} and string-form `trap '…' CHLD`
                     // both reach userspace. Bug #531 in docs/BUGS.md.
+                    // This site fires below for every reaped child itself, so
+                    // drop the one update_bg_job just recorded.
+                    crate::ported::jobs::CHLD_TRAP_PENDING.store(0, std::sync::atomic::Ordering::SeqCst);
                     let chld_trapped = crate::ported::signals::sigtrapped
                         .lock()
                         .ok()
@@ -3423,6 +3449,11 @@ pub fn bin_fg(
                         update_bg_job(&mut tab, pid, status);
                         scanjobs(&mut tab);
                     }
+                    // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+                    // child that is not `thisjob`, run now that JOBTAB is unlocked.
+                    for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+                        crate::ported::signals::dotrap(libc::SIGCHLD);
+                    }
                 }
             }
             continue; // c:2574
@@ -3475,6 +3506,11 @@ pub fn bin_fg(
             crate::ported::signals_h::dont_queue_signals();
             let mut interrupted = None;
             loop {
+                // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+                // child that is not `thisjob`, run now that JOBTAB is unlocked.
+                for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+                    crate::ported::signals::dotrap(libc::SIGCHLD);
+                }
                 let next_pid = {
                     let tab = table.lock().expect("jobtab poisoned");
                     match tab.get(p as usize) {
@@ -3551,6 +3587,11 @@ pub fn bin_fg(
                         update_job(j);
                     }
                 }
+            }
+            // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+            // child that is not `thisjob`, run now that JOBTAB is unlocked.
+            for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::signals::dotrap(libc::SIGCHLD);
             }
             crate::ported::signals_h::restore_queue_signals(q); // c:1715 / c:1744
             if let Some(st) = interrupted {

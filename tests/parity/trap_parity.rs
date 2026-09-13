@@ -203,3 +203,31 @@ mod zerr_in_background_child {
         assert_parity(r#"trap "print Z" ZERR; f(){ false; print in }; f & wait; print end"#);
     }
 }
+
+/// c:Src/jobs.c:651-652 — update_job ends with `if (sigtrapped[SIGCHLD] &&
+/// job != thisjob) dotrap(SIGCHLD);`, so the CHLD trap runs whenever a
+/// background child changes state: during a foreground command, during
+/// `wait PID`, and once per child (Test/A05execution.ztst "Background job exit
+/// does not affect reaping foreground job"). A foreground command's own exit
+/// is `thisjob` and runs no trap.
+mod chld_trap_for_background_children {
+    use super::*;
+
+    #[test]
+    fn fires_while_a_foreground_command_runs() {
+        assert_parity(r#"callfromchld() { true && { print CHLD } }; TRAPCHLD() { callfromchld }; sleep 0.2 & sleep 0.7; print OK"#);
+        assert_parity(r#"trap 'print C' CHLD; /usr/bin/true & sleep 0.4; print OK"#);
+        assert_parity(r#"TRAPCHLD() { print C }; sleep 0.1 & sleep 0.2 & sleep 0.6; print OK"#);
+    }
+
+    #[test]
+    fn fires_once_per_child_under_wait() {
+        assert_parity(r#"trap 'print C' CHLD; sleep 0.1 & wait $!; print OK"#);
+        assert_parity(r#"trap 'print C' CHLD; sleep 0.1 & wait; print OK"#);
+    }
+
+    #[test]
+    fn a_foreground_command_runs_no_trap() {
+        assert_parity(r#"trap 'print C' CHLD; /usr/bin/true; print fg"#);
+    }
+}
