@@ -15608,7 +15608,12 @@ pub fn bin_read(
     if partial_eof {
         return 1;
     }
-    0
+    // c:Src/builtin.c:7116-7121 — "The following is to ensure a failure to
+    // set the parameter causes a non-zero status return."
+    //     return errflag;
+    // A readonly target makes setsparam zerr (errflag set); returning 0
+    // left `(typeset -r foo; read foo) <<<bar` exiting 0.
+    errflag.load(Relaxed)
 }
 
 /// Port of `zread()` from `Src/builtin.c:7134`.

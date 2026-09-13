@@ -284,3 +284,20 @@ mod array_with_echo {
         assert_parity(r#"read -A array <<<'a b c'; print ${(j.:.)array}"#);
     }
 }
+
+/// A failed assignment of the reply is a non-zero status: bin_read ends
+/// with `return errflag` (c:Src/builtin.c:7116-7121). The port returned 0,
+/// so the subshell below exited 0 in zshrs and 1 in zsh (B04read.ztst).
+mod failed_assignment_status {
+    use super::*;
+
+    #[test]
+    fn readonly_reply_makes_subshell_exit_1() {
+        assert_parity("(typeset -r foo; read foo) <<<bar 2>/dev/null; echo rc=$?");
+    }
+
+    #[test]
+    fn readonly_second_of_two_vars_makes_subshell_exit_1() {
+        assert_parity("(typeset -r y; read x y) <<<'a b' 2>/dev/null; echo rc=$?");
+    }
+}
