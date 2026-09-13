@@ -641,7 +641,19 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 return r;
             }
             if let Some(msg) = err_to_propagate {
-                m_error_set(msg);
+                // c:2639 `return matheval(getstrvalue(v));` — the nested
+                // mathevall reports its own error with zerr (c:420 and friends)
+                // and sets errflag at the point of the read. Inside a running
+                // evaluation (`$(( x ))`, `let`) the port hands the message to
+                // the outer frame, which reports it. The compiled `(( x ))`
+                // path reads the operand through BUILTIN_GET_MATH_VAR with no
+                // evaluation open (mlevel 0), so nothing ever reported it and
+                // the statement returned 1 instead of 2.
+                if M_LEVEL.with(|c| c.get()) == 0 {
+                    crate::ported::utils::zerr(&msg);
+                } else {
+                    m_error_set(msg);
+                }
             }
             // Non-numeric and non-evaluable string: fall through.
         }

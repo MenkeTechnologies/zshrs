@@ -1034,3 +1034,26 @@ mod character_code_of_a_parameter {
         assert_parity(r#"for x in 65 128 233 20320; do print ${(#)x}; done | while read line; do print $(( #line )); done"#);
     }
 }
+
+/// c:Src/params.c:2639 — a scalar operand that is not a number is evaluated
+/// with `matheval(getstrvalue(v))`, and that nested evaluation reports its
+/// own parse error and sets errflag, so `(( x ))` with `x="foo bar"` prints
+/// "bad math expression" and returns 2. The compiled `(( ))` statement read
+/// the operand outside any evaluation frame and dropped the error (status 1).
+mod non_numeric_scalar_operand {
+    use super::*;
+
+    #[test]
+    fn arithmetic_statement_reports_the_operand_error() {
+        assert_parity(r#"x="foo bar"; (( x )) 2>&1; echo rc=$?"#);
+        assert_parity(r#"y="1 +"; (( y )) 2>&1; echo rc=$?"#);
+        assert_parity(r#"result="foo bar"; arg=3; (( arg < result )) 2>&1; echo rc=$?"#);
+        assert_parity(r#"f() { local r="a b"; (( r )); echo in=$? }; f 2>&1; echo out=$?"#);
+    }
+
+    #[test]
+    fn evaluable_and_numeric_scalars_are_unchanged() {
+        assert_parity(r#"v="2*3"; (( v == 6 )); echo rc=$?; echo $(( v + 1 )); n=42; (( n == 42 )); echo rc=$?"#);
+        assert_parity(r#"x="foo bar"; echo $(( x )) 2>&1; let x 2>&1; echo rc=$?"#);
+    }
+}
