@@ -199,3 +199,18 @@ mod with_relative_paths {
         assert_parity(r#"cd /tmp; pushd .. >/dev/null; pwd"#);
     }
 }
+
+/// c:Src/builtin.c:1097 — CDABLE_VARS resolves the head of the argument with
+/// getnameddir(), which only accepts a parameter whose value begins with `/`
+/// (c:Src/utils.c:1257-1260). A relative value is not a named directory, so
+/// `cd` fails; the port read the parameter directly and changed into it.
+mod cdable_vars_named_directory {
+    use super::*;
+
+    #[test]
+    fn relative_value_is_not_a_cdable_var() {
+        assert_parity(
+            r#"d=$(mktemp -d); cd $d; mkdir tmpcd; setopt cdablevars; v1=tmpcd; (cd v1) 2>&1; v2=$d/tmpcd; (cd v2 && print ok ${PWD:t}); (cd v2/ && print slash ${PWD:t}); cd /; command rm -rf $d"#,
+        );
+    }
+}

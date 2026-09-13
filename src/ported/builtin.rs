@@ -2507,10 +2507,13 @@ pub fn cd_able_vars(s: &str) -> Option<String> {
     if head.is_empty() {
         return None;
     }
-    // c:1116 — `if ((val = getsparam(s))) { ret = tricat(val, tail, "") }`.
-    //          C reads $head from paramtab; was reading OS env, missing
-    //          CDABLEVARS-style assignments like `proj=$HOME/src`.
-    getsparam(head).map(|val| format!("{}{}", val, tail))
+    // c:1097 — `s = getnameddir(s);`. The head is resolved as a NAMED
+    // DIRECTORY, not as a raw parameter read: getnameddir
+    // (c:Src/utils.c:1257-1260) only accepts a parameter whose value begins
+    // with `/`, so `cdablevar1=tmpcd; cd cdablevar1` fails with "no such
+    // file or directory" while `cdablevar2=$PWD/tmpcd` works.
+    // c:1100-1101 — `if (s && *rest) s = dyncat(s, rest);`
+    crate::ported::utils::getnameddir(head).map(|val| format!("{}{}", val, tail))
 }
 
 /// Port of `cd_try_chdir()` from `Src/builtin.c:1116`.
