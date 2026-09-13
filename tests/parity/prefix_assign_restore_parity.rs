@@ -225,3 +225,21 @@ fn a_tied_pair_loses_its_partner_like_zsh() {
         ],
     );
 }
+
+/// An ARRAY-valued prefix assignment. `save_params` walks every WC_ASSIGN in
+/// the chain whatever its type (c:Src/exec.c:4473-4511), so `z=(9 8 7) f`
+/// is snapshotted and put back exactly like a scalar prefix. The array
+/// assignment builtin never recorded into the frame, so the value leaked out
+/// of the call.
+#[test]
+fn an_array_valued_prefix_assignment_is_restored() {
+    assert_matches_oracle(
+        "array-valued prefix assignment",
+        &[
+            "z=(1 2); f(){ print -r -- in=${#z}; }; z=(9 8 7) f; print -r -- ${#z} ${(t)z}",
+            "typeset -A H=(m n); f(){ print -r -- in=${(kv)H}; }; H=(o p) f; \
+             print -r -- ${H[m]} ${(t)H}",
+            "unset z; f(){ :; }; z=(9 8 7) f; print -r -- ${+z}",
+        ],
+    );
+}

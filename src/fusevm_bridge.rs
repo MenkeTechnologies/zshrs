@@ -1632,6 +1632,119 @@ fn param_value_elems_c2916(exec: &mut ShellExecutor, name: &str) -> (Vec<String>
 }
 
 /// Register all zsh builtins with the VM.
+/// c:Src/exec.c:4473-4509 (`save_params`) — the per-name body of the loop,
+/// run for a prefix assignment while its inline-env frame is still recording.
+/// Shared by the scalar (BUILTIN_SET_VAR) and array (BUILTIN_SET_ARRAY)
+/// assignment builtins: C walks every WC_ASSIGN in the chain regardless of
+/// its type (c:4510-4511 advances over WC_ASSIGN_SCALAR and array words alike).
+fn save_inline_prefix_param(exec: &mut ShellExecutor, name: &str) {
+    let name = name.to_string();
+    let prev_env = env::var(&name).ok();
+    // c:Src/exec.c:4476 — `pm = paramtab->getnode(paramtab, s)`.
+    // c:4491-4493 — an existing name is SNAPSHOTTED, not removed:
+    // `tpm = zshcalloc(...); tpm->node.nam = ztrdup(pm->node.nam);
+    //  copyparam(tpm, pm, 0);` — the WHOLE Param, type flags and
+    // value union together. Saving only `getsparam(name)` (a
+    // scalar string) is what destroyed every non-scalar: an array
+    // came back as the IFS-joined string retyped to PM_SCALAR, and
+    // an association came back as None — the scalar getter has
+    // nothing to read for a PM_HASHED param — so the restore took
+    // the "did not exist" arm and unset it outright.
+    let pm_snapshot: Option<crate::ported::zsh_h::param> = {
+        let live = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&name).map(|p| (**p).clone()));
+        // c:4480 / c:4494 — three arms, and the third saves
+        // nothing: a PM_SPECIAL that is also PM_READONLY leaves
+        // `tpm` NULL and only joins the remove list (c:4504).
+        let fakecopy = live.as_ref().map(|p| {
+            (p.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0
+        });
+        let live = match (live, fakecopy) {
+            (Some(p), Some(true))
+                if (p.node.flags & crate::ported::zsh_h::PM_READONLY as i32) != 0 =>
+            {
+                None
+            }
+            (other, _) => other,
+        };
+        live.map(|mut tpm| {
+            // c:Src/params.c:1273-1291 — copyparam reads the value
+            // back through the type's GSU getfn rather than trusting
+            // the union slot it already holds, because a special's or
+            // a tied scalar's value does not live there.
+            match crate::ported::zsh_h::PM_TYPE(tpm.node.flags as u32) {
+                crate::ported::zsh_h::PM_INTEGER => {
+                    // c:1279 — `tpm->u.val = pm->gsu.i->getfn(pm);`
+                    tpm.u_val = crate::ported::params::getiparam(&name);
+                }
+                crate::ported::zsh_h::PM_EFLOAT
+                | crate::ported::zsh_h::PM_FFLOAT => {
+                    // c:1283 — `tpm->u.dval = pm->gsu.f->getfn(pm);`
+                    tpm.u_dval = crate::ported::params::getnparam(&name).1;
+                }
+                crate::ported::zsh_h::PM_ARRAY => {
+                    // c:1286 — `tpm->u.arr = zarrdup(pm->gsu.a->getfn(pm));`
+                    tpm.u_arr = crate::ported::params::getaparam(&name);
+                }
+                crate::ported::zsh_h::PM_HASHED => {
+                    // c:1289 — `tpm->u.hash = copyparamtable(...)`.
+                    // See `hashed_snapshot` below for where the pairs go.
+                }
+                _ => {
+                    // c:1276 — `tpm->u.str = ztrdup(pm->gsu.s->getfn(pm));`
+                    tpm.u_str = crate::ported::params::getsparam(&name);
+                }
+            }
+            // c:1269-1272 / c:1301-1302 — the `!fakecopy` postlude:
+            // the copy is going back into the parameter table as a
+            // REAL parameter, so it stops being special and gets the
+            // standard get/set vtable for its type. That is what
+            // makes a user's `typeset -T PAIR pair` scalar come back
+            // as a plain scalar holding the joined string instead of
+            // re-reading the partner array the prefix assignment
+            // just overwrote.
+            if fakecopy == Some(false) {
+                tpm.node.flags &= !(crate::ported::zsh_h::PM_SPECIAL as i32); // c:1271
+                crate::ported::params::assigngetset(&mut tpm); // c:1302
+            }
+            tpm
+        })
+    };
+    // !!! RUST-ONLY FIELD — THE SECOND HALF OF c:1289 !!!
+    // C keeps an association's pairs in `pm->u.hash`, so
+    // `copyparam`'s `copyparamtable` copy travels inside the Param
+    // above and `restore_params`' `tpm->gsu.h->setfn(tpm, pm->u.hash)`
+    // (c:4561) puts them back. zshrs keeps them in the name-keyed
+    // `paramtab_hashed_storage` instead, OUTSIDE the Param —
+    // `arrhashsetfn`, the only writer of whole associations, never
+    // populates `u_hash` at all (the same structural mismatch
+    // `stdunsetfn` documents at params.rs:11044). So the pairs have
+    // to be carried alongside the node and put back alongside it.
+    let hashed_snapshot = if pm_snapshot.as_ref().is_some_and(|p| {
+        crate::ported::zsh_h::PM_TYPE(p.node.flags as u32)
+            == crate::ported::zsh_h::PM_HASHED
+    }) {
+        crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&name).cloned())
+    } else {
+        None
+    };
+    exec.inline_env_stack
+        .last_mut()
+        .unwrap()
+        .saved
+        .push(crate::vm_helper::SavedInlineParam {
+            name: name.clone(),
+            pm: pm_snapshot,
+            hashed: hashed_snapshot,
+            prev_env,
+        });
+}
+
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // src/ported/ reaches the live executor (param store, function
     // dispatch, nested script/cmdsubst exec) through the
@@ -3857,6 +3970,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::bash_arrays::clear(&name);
         }
         let blocked = with_executor(|exec| {
+            // c:Src/exec.c:4473-4509 save_params — an ARRAY prefix
+            // assignment (`z=(9 8 7) f`) is a WC_ASSIGN in the same chain
+            // as a scalar one, so it is snapshotted the same way and put
+            // back by restore_params when the command returns.
+            if exec
+                .inline_env_stack
+                .last()
+                .is_some_and(|frame| frame.recording)
+            {
+                save_inline_prefix_param(exec, &name);
+            }
             // Assoc init `typeset -A m; m=(k v k v ...)` — route to
             // canonical sethparam (Src/params.c:3602) which parses the
             // flat (k,v) pair list internally.
@@ -7636,110 +7760,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .last()
                 .is_some_and(|frame| frame.recording)
             {
-                let prev_env = env::var(&name).ok();
-                // c:Src/exec.c:4476 — `pm = paramtab->getnode(paramtab, s)`.
-                // c:4491-4493 — an existing name is SNAPSHOTTED, not removed:
-                // `tpm = zshcalloc(...); tpm->node.nam = ztrdup(pm->node.nam);
-                //  copyparam(tpm, pm, 0);` — the WHOLE Param, type flags and
-                // value union together. Saving only `getsparam(name)` (a
-                // scalar string) is what destroyed every non-scalar: an array
-                // came back as the IFS-joined string retyped to PM_SCALAR, and
-                // an association came back as None — the scalar getter has
-                // nothing to read for a PM_HASHED param — so the restore took
-                // the "did not exist" arm and unset it outright.
-                let pm_snapshot: Option<crate::ported::zsh_h::param> = {
-                    let live = crate::ported::params::paramtab()
-                        .read()
-                        .ok()
-                        .and_then(|t| t.get(&name).map(|p| (**p).clone()));
-                    // c:4480 / c:4494 — three arms, and the third saves
-                    // nothing: a PM_SPECIAL that is also PM_READONLY leaves
-                    // `tpm` NULL and only joins the remove list (c:4504).
-                    let fakecopy = live.as_ref().map(|p| {
-                        (p.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0
-                    });
-                    let live = match (live, fakecopy) {
-                        (Some(p), Some(true))
-                            if (p.node.flags & crate::ported::zsh_h::PM_READONLY as i32) != 0 =>
-                        {
-                            None
-                        }
-                        (other, _) => other,
-                    };
-                    live.map(|mut tpm| {
-                        // c:Src/params.c:1273-1291 — copyparam reads the value
-                        // back through the type's GSU getfn rather than trusting
-                        // the union slot it already holds, because a special's or
-                        // a tied scalar's value does not live there.
-                        match crate::ported::zsh_h::PM_TYPE(tpm.node.flags as u32) {
-                            crate::ported::zsh_h::PM_INTEGER => {
-                                // c:1279 — `tpm->u.val = pm->gsu.i->getfn(pm);`
-                                tpm.u_val = crate::ported::params::getiparam(&name);
-                            }
-                            crate::ported::zsh_h::PM_EFLOAT
-                            | crate::ported::zsh_h::PM_FFLOAT => {
-                                // c:1283 — `tpm->u.dval = pm->gsu.f->getfn(pm);`
-                                tpm.u_dval = crate::ported::params::getnparam(&name).1;
-                            }
-                            crate::ported::zsh_h::PM_ARRAY => {
-                                // c:1286 — `tpm->u.arr = zarrdup(pm->gsu.a->getfn(pm));`
-                                tpm.u_arr = crate::ported::params::getaparam(&name);
-                            }
-                            crate::ported::zsh_h::PM_HASHED => {
-                                // c:1289 — `tpm->u.hash = copyparamtable(...)`.
-                                // See `hashed_snapshot` below for where the pairs go.
-                            }
-                            _ => {
-                                // c:1276 — `tpm->u.str = ztrdup(pm->gsu.s->getfn(pm));`
-                                tpm.u_str = crate::ported::params::getsparam(&name);
-                            }
-                        }
-                        // c:1269-1272 / c:1301-1302 — the `!fakecopy` postlude:
-                        // the copy is going back into the parameter table as a
-                        // REAL parameter, so it stops being special and gets the
-                        // standard get/set vtable for its type. That is what
-                        // makes a user's `typeset -T PAIR pair` scalar come back
-                        // as a plain scalar holding the joined string instead of
-                        // re-reading the partner array the prefix assignment
-                        // just overwrote.
-                        if fakecopy == Some(false) {
-                            tpm.node.flags &= !(crate::ported::zsh_h::PM_SPECIAL as i32); // c:1271
-                            crate::ported::params::assigngetset(&mut tpm); // c:1302
-                        }
-                        tpm
-                    })
-                };
-                // !!! RUST-ONLY FIELD — THE SECOND HALF OF c:1289 !!!
-                // C keeps an association's pairs in `pm->u.hash`, so
-                // `copyparam`'s `copyparamtable` copy travels inside the Param
-                // above and `restore_params`' `tpm->gsu.h->setfn(tpm, pm->u.hash)`
-                // (c:4561) puts them back. zshrs keeps them in the name-keyed
-                // `paramtab_hashed_storage` instead, OUTSIDE the Param —
-                // `arrhashsetfn`, the only writer of whole associations, never
-                // populates `u_hash` at all (the same structural mismatch
-                // `stdunsetfn` documents at params.rs:11044). So the pairs have
-                // to be carried alongside the node and put back alongside it.
-                let hashed_snapshot = if pm_snapshot.as_ref().is_some_and(|p| {
-                    crate::ported::zsh_h::PM_TYPE(p.node.flags as u32)
-                        == crate::ported::zsh_h::PM_HASHED
-                }) {
-                    crate::ported::params::paramtab_hashed_storage()
-                        .lock()
-                        .ok()
-                        .and_then(|m| m.get(&name).cloned())
-                } else {
-                    None
-                };
-                exec.inline_env_stack
-                    .last_mut()
-                    .unwrap()
-                    .saved
-                    .push(crate::vm_helper::SavedInlineParam {
-                        name: name.clone(),
-                        pm: pm_snapshot,
-                        hashed: hashed_snapshot,
-                        prev_env,
-                    });
+                save_inline_prefix_param(exec, &name);
                 let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
                 // c:Src/params.c:5354
             }
