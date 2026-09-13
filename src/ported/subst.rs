@@ -4428,13 +4428,18 @@ pub fn paramsubst(
             }
             end += 1;
         } // c:utils.c:2422
-          // No closing `}` — emit "bad substitution" and bail.
-          // Direct port of zsh's zerr("closing brace missing") at
-          // subst.c around line 1885.
+          // No closing `}`. C has no up-front brace check: its name scan
+          // runs to the end of the string and the test after it rejects
+          // anything but `}` or an operator (c:2994-3003):
+          //     if (inbrace) { c = *s; if (!IS_DASH(c) && c != '+' && …
+          //         c != '}' && c != Outbrace) { zerr("bad substitution");
+          //         return NULL; } }
+          // `a='${'; print ${(e)a}` said "closing brace missing", text that
+          // appears nowhere in zsh.
         if end >= chars.len() || depth != 0 {
-            zerr("closing brace missing"); // c:1885
-            errflag_set_error(); // c:1885
-            return (String::new(), chars.len(), vec![]); // c:1885
+            zerr("bad substitution"); // c:3002
+            errflag_set_error(); // c:3002 (zerr sets ERRFLAG_ERROR)
+            return (String::new(), chars.len(), vec![]); // c:3003 return NULL
         }
         let mut body: String = chars[pos..end].iter().collect(); // c:1885
         let new_pos = if end < chars.len() { end + 1 } else { end };

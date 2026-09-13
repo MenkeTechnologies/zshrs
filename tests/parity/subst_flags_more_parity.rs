@@ -794,3 +794,18 @@ mod e_flag_expands_the_value_once {
         assert_parity(r#"a=('$((n++))' '$((n++))'); n=0; print -r -- ${(e)a}; print n=$n"#);
     }
 }
+
+/// c:Src/subst.c:2994-3003 — an unclosed `${` has no closing-brace check of
+/// its own in C: the name scan runs off the end and the operator test after it
+/// fails with `zerr("bad substitution")`. zsh has no "closing brace missing"
+/// message.
+mod e_flag_unclosed_brace_message {
+    use super::*;
+
+    #[test]
+    fn unclosed_brace_reports_bad_substitution_once() {
+        assert_parity(r#"{ a='${'; print -r -- ${(e)a}; } 2>&1"#);
+        assert_parity(r#"{ a='${x'; print -r -- "${(e)a}"; } 2>&1"#);
+        assert_parity(r#"{ a='x${y'; v=${(e)a}; } 2>&1"#);
+    }
+}
