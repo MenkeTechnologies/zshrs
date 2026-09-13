@@ -1187,6 +1187,17 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"arr=('$(' q); print -rl -- A"${(@e)arr}"B; print rc=$?"#);
     }
 
+    /// c:Src/subst.c:4383-4394 — every element processed before the failing
+    /// one is already a node of the word, so all of them survive the cut, not
+    /// only the first.
+    #[test]
+    fn later_nodes_before_the_failure_survive() {
+        assert_parity(r#"arr=(p x '$(' q); print -rl -- A"${(@e)arr}"B; print rc=$?"#);
+        assert_parity(r#"arr=(p x '$(' q); print -rl -- "${(@e)arr}"; print rc=$?"#);
+        assert_parity(r#"arr=(p x '$(' q); print -rl -- A${(@e)arr}B later; print rc=$?"#);
+        assert_parity(r#"arr=(p x '$('); v=("${(@e)arr}"); print $#v; print -rl -- $v"#);
+    }
+
     /// c:Src/subst.c:282-331 — stringsubst leaves the `''`/`""` markers for
     /// remnulargs (c:170), which never runs once the `(e)` NULL stops prefork.
     #[test]

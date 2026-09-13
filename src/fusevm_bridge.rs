@@ -1315,6 +1315,21 @@ fn glob_tokenized_word(raw: Value, noglob: bool) -> Value {
     }
 }
 
+/// The value of a word whose prefork an `(e)` NULL stopped
+/// (c:Src/subst.c:142-147): each node left in the list, rendered with its quote
+/// tokens (c:Src/exec.c:2134 untokenize), one word per node.
+fn stopped_nodes_value(nodes: Vec<String>) -> Value {
+    let mut words: Vec<Value> = nodes
+        .iter()
+        .map(|n| Value::str(crate::ported::lex::untokenize_ztokens(n)))
+        .collect();
+    match words.len() {
+        0 => Value::str(String::new()),
+        1 => words.remove(0),
+        _ => Value::array(words),
+    }
+}
+
 /// Run the filesub BUILTIN_EXPAND_TEXT mode 10 deferred on one word's
 /// elements (c:Src/subst.c:178-182, `flags` 0 for a command argument).
 fn filesub_deferred_word(raw: Value) -> Value {
@@ -13180,7 +13195,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Previous Rust port returned Value::str("") which
                     // surfaced as ONE empty arg. Bug #120 in
                     // docs/BUGS.md.
-                    if nodes.is_empty() {
+                    if crate::ported::subst::PREFORK_STOPPED.with(|c| c.get()) {
+                        // An `(e)` NULL stopped prefork: every node already in
+                        // the list stays (c:Src/subst.c:4383-4394 inserted the
+                        // elements before the failing one, the first joined to
+                        // the text before the `$`), unexpanded, with its quote
+                        // tokens rendered by untokenize (c:Src/exec.c:2134).
+                        stopped_nodes_value(nodes)
+                    } else if nodes.is_empty() {
                         Value::array(Vec::new())
                     } else if nodes.len() == 1 {
                         Value::str(crate::ported::lex::untokenize(
@@ -13209,8 +13231,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // PREFORK_CUT tells the words that follow to stay unexpanded.
                 if crate::ported::subst::PREFORK_STOPPED.with(|c| c.replace(false)) {
                     PREFORK_CUT.with(|c| c.set(true));
-                    let opened_dq = mode == 1 || text.starts_with('"'); // mode 1 is always a "…" argv word
-                    return Value::str(format!("{}{}", if opened_dq { "\"" } else { "" }, result_value.to_str()));
+                    // The stopped nodes are rendered WITH their quote tokens
+                    // (stopped_nodes_value, or ztokens for mode 5), so a lexer
+                    // Dnull already shows as `"`. Only an ASCII `"` that this
+                    // handler stripped above still has to be put back.
+                    let opened_dq = text.starts_with('"');
+                    let quote = if opened_dq { "\"" } else { "" };
+                    // The quote belongs to the FIRST node, the one holding the
+                    // text before the `$`; later nodes are whole elements.
+                    return match result_value {
+                        Value::Array(items) if !items.is_empty() => {
+                            let mut words: Vec<Value> = items.iter().cloned().collect();
+                            words[0] = Value::str(format!("{}{}", quote, words[0].to_str()));
+                            Value::array(words)
+                        }
+                        other => Value::str(format!("{}{}", quote, other.to_str())),
+                    };
                 }
                 result_value
             }
@@ -13359,14 +13395,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // never ran. PREFORK_CUT keeps the later words unexpanded.
                 if crate::ported::subst::PREFORK_STOPPED.with(|c| c.replace(false)) {
                     PREFORK_CUT.with(|c| c.set(true));
-                    let head = nodes.into_iter().next().unwrap_or_default();
-                    // remnulargs (c:170) never ran either, so C's node still
-                    // holds its quote tokens and untokenize (c:Src/exec.c:2134)
-                    // renders them through ztokens. (multsub's own remnulargs
-                    // pass, which C's multsub c:625-657 does not have, strips
-                    // them before this point today: `print x"q"${(e)a}z` gives
-                    // `xq` where zsh gives `x"q"`.)
-                    return Value::str(crate::ported::lex::untokenize_ztokens(&head));
+                    // remnulargs (c:170) never ran either, so C's nodes still
+                    // hold their quote tokens and untokenize (c:Src/exec.c:2134)
+                    // renders them through ztokens. Every node before the cut
+                    // stays: `(@e)` inserted the earlier elements
+                    // (c:Src/subst.c:4383-4394), so `A${(@e)arr}B` with
+                    // arr=(p x '$(') is `Ap` and `x`.
+                    return stopped_nodes_value(nodes);
                 }
                 // Read immediately: brace expansion / filesub / glob below can
                 // re-enter paramsubst and overwrite the cell. `seg_is_array` is
