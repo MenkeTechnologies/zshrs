@@ -8675,6 +8675,22 @@ pub fn bin_functions(
         let newsh = unsafe {
             let mut copy = (*src_ptr).clone();
             copy.node.nam = dst_name.clone();
+            // c:3424-3428 — `if (newsh->node.flags & PM_LOADDIR) {
+            //     newsh->node.flags &= ~PM_LOADDIR;
+            //     newsh->filename = tricat(shf->filename, "/", shf->node.nam);
+            // } else newsh->filename = ztrdup(shf->filename);`
+            // A PM_LOADDIR filename is the DIRECTORY the file came from, and
+            // the file is found by appending the function's own name. The
+            // copy has a different name, so the full path is fixed here from
+            // the ORIGINAL name; keeping PM_LOADDIR made `%x` in `cp` report
+            // `dir/cp` instead of `dir/af`.
+            if (copy.node.flags as u32 & PM_LOADDIR) != 0 {
+                copy.node.flags &= !(PM_LOADDIR as i32); // c:3425
+                copy.filename = (*src_ptr)
+                    .filename
+                    .as_ref()
+                    .map(|dir| format!("{}/{}", dir, (*src_ptr).node.nam)); // c:3426
+            }
             Box::into_raw(Box::new(copy))
         };
         if let Ok(mut t) = shfunctab_lock().write() {

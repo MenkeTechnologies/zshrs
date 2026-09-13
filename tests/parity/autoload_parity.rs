@@ -598,3 +598,27 @@ fn hyphenated_ksh_style_autoload_runs_on_first_call() {
         assert_eq!(r.exit, z.exit, "exit divergence on: {script}");
     }
 }
+
+/// c:Src/builtin.c:3424-3428 — `functions -c OLD NEW` copies an autoloaded
+/// function. A PM_LOADDIR filename is only the directory, and the file is
+/// found by appending the function's name, so C clears PM_LOADDIR and stores
+/// `DIR/OLD` in the copy. The port kept PM_LOADDIR, so the copy reported
+/// `DIR/NEW` as its file (`%x`, `$functions_source`).
+#[test]
+fn copied_autoload_function_keeps_the_original_file() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("line_info"),
+        "\nprint -P \"%1x:%I is where we are.\"\n",
+    )
+    .unwrap();
+    let script = "fpath=(.); autoload -Uz line_info; functions -c line_info preserve_file; preserve_file; line_info";
+    let z = run_zsh_in(d.path(), script);
+    let r = run_zshrs_in(d.path(), script);
+    assert_eq!(z.stdout, "line_info:2 is where we are.\nline_info:2 is where we are.\n", "zsh sanity");
+    assert_eq!(r.stdout, z.stdout);
+    assert_eq!(r.exit, z.exit);
+}
