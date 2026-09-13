@@ -841,3 +841,27 @@ mod mergein_non_number_external {
         assert_parity_in(d.path(), "{ /bin/cat <&''; print in $?; }; print out $?");
     }
 }
+
+/// zsh has no `cat` / `env` / `head` builtin, so the name reaches
+/// execcmd_fork (c:Src/exec.c:3719) before the redirection loop
+/// (c:3785): a bad `<&` word fails in the child and the shell continues
+/// with status 1. zshrs's in-process stand-ins must fail the same way,
+/// while a real zsh builtin or a function stays fatal.
+mod mergein_non_number_extension_builtin {
+    use super::*;
+
+    #[test]
+    fn external_stand_ins_continue_with_status_one() {
+        let d = tdir();
+        assert_parity_in(d.path(), "{ cat <&''; print after $?; } 2>&1");
+        assert_parity_in(d.path(), "{ env <&''; print after $?; } 2>&1");
+        assert_parity_in(d.path(), "{ head <&''; print after $?; } 2>&1");
+    }
+
+    #[test]
+    fn builtins_and_functions_stay_fatal() {
+        let d = tdir();
+        assert_parity_in(d.path(), "{ f(){ :; }; f <&''; print never; } 2>&1");
+        assert_parity_in(d.path(), "{ typeset x <&''; print never; } 2>&1");
+    }
+}

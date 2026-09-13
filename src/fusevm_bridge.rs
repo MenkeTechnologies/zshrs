@@ -1822,6 +1822,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     f
                 });
                 if redir_failed {
+                    // c:Src/exec.c:3719 forks the external command these
+                    // shadows stand in for BEFORE the redirection loop at
+                    // c:3785, so a redirection `zerr` (`cat <&""` → "file
+                    // number expected") lands in the child: the shell only
+                    // sees status 1 (c:252-256 execerr in the child) and runs
+                    // the next command. Same rule as call_function's arm.
+                    crate::ported::utils::errflag.fetch_and(
+                        !crate::ported::zsh_h::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    crate::ported::builtin::LASTVAL
+                        .store(1, std::sync::atomic::Ordering::Relaxed);
                     return Value::Status(1);
                 }
                 // `[builtins].coreutils_shadows = off` in
@@ -2436,6 +2448,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // c:Src/exec.c:3484 — BINF_COMMAND suppresses it too.
             let _forced = crate::ported::zle::complete::ForcedBuiltinGuard::enter();
             return Value::Status(dispatch_builtin_raw(&n, r));
+        }
+        // c:Src/exec.c:3719 forks the external command before the redirection
+        // loop at c:3785, so a redirection that failed (`command cat <&""` →
+        // "file number expected") fails in the child: the command never runs
+        // and the shell continues with status 1. The redirect arm only
+        // records the failure; without consuming it here `command cat` ran
+        // the real cat on the untouched stdin and blocked.
+        let redir_failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if redir_failed {
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
         }
         // c:Src/exec.c:3275-3278 — `command NAME` asks for the thing on
         // `PATH`, not the in-process one. The host-registered native commands
@@ -17873,11 +17904,14 @@ impl fusevm::ShellHost for ZshrsHost {
             //   /bin/cat <&""; print after $?     zsh: after 1
             // zshrs applies redirections in the shell before choosing what
             // runs, so the errflag landed in the shell and ended the script.
-            // For a name that resolves to neither a function nor a builtin,
-            // take the error back out of the shell's errflag.
+            // For a name that resolves to neither a function nor a zsh
+            // builtin, take the error back out of the shell's errflag. A
+            // zshrs extension builtin counts as external here: zsh has no
+            // such builtin, so the same name reaches execcmd_fork there
+            // (an in-process stand-in for `env`, `cat`, … must fail like the
+            // command it stands in for: `env <&""; print after` continues).
             let is_external = !with_executor(|exec| exec.function_exists(name))
-                && !crate::ported::builtin::createbuiltintable().contains_key(name)
-                && !crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name);
+                && !crate::ported::builtin::createbuiltintable().contains_key(name);
             if is_external {
                 crate::ported::utils::errflag.fetch_and(
                     !crate::ported::zsh_h::ERRFLAG_ERROR,
