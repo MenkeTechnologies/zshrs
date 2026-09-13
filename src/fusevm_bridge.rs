@@ -523,6 +523,20 @@ thread_local! {
     /// VM ops, and errflag alone cannot tell this skip from an error raised
     /// by the command words, which C handles at c:3760 instead.
     static PREFIX_ASSIGN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Counts sublists (bumped by BUILTIN_STMT_PROLOGUE_FAST). Together with
+    /// REDIR_SCOPE_OPENED it tells a builtin whether the redirect scope on
+    /// top of the stack belongs to its own command.
+    ///
+    /// !!! WARNING: RUST-ONLY CARRIER !!! C's `execcmd_exec` holds the
+    /// command's `save[]` array locally and tests `save[1] == -2`
+    /// (c:Src/exec.c:4300); zshrs keeps one shared scope stack for simple
+    /// and compound commands alike.
+    static SUBLIST_SERIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// `(SUBLIST_SERIAL, stack depth)` recorded when the newest redirect
+    /// scope opened. A simple command opens its scope right before its own
+    /// dispatch, inside its sublist; a compound command's body starts a new
+    /// sublist first.
+    static REDIR_SCOPE_OPENED: std::cell::Cell<(u64, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Register the session executor pointer (called from
@@ -1453,7 +1467,35 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     crate::ported::params::set_zunderscore(std::slice::from_ref(&underscore)); // c:3546
     let q = crate::ported::signals_h::queue_signal_level(); // c:3997
     crate::ported::signals_h::dont_queue_signals(); // c:4231
+    // c:Src/exec.c:4300 `save[1] == -2` — this command's own redirections
+    // did not touch fd 1.
+    let stdout_unredirected = with_executor(|exec| {
+        let depth = exec.redirect_scope_stack.len();
+        let own_scope = REDIR_SCOPE_OPENED.with(|c| c.get())
+            == (SUBLIST_SERIAL.with(|c| c.get()), depth);
+        !(own_scope
+            && exec
+                .redirect_scope_stack
+                .last()
+                .is_some_and(|top| top.iter().any(|&(fd, _)| fd == 1)))
+    });
     let ret = dispatch_builtin_raw(name, args);
+    // c:Src/exec.c:4298-4305
+    //     fflush(stdout);
+    //     if (save[1] == -2) {
+    //         if (ferror(stdout)) {
+    //             zwarn("write error: %e", errno);
+    //             clearerr(stdout);
+    //         }
+    //     } else
+    //         clearerr(stdout);
+    let ferror = crate::stdout_ferror::take_stdout_ferror();
+    if ferror != 0 && stdout_unredirected {
+        crate::ported::utils::zwarn(&format!(
+            "write error: {}",
+            crate::ported::utils::zsh_errno_msg(ferror)
+        ));
+    }
     // c:Src/exec.c:4289-4293 — "In case of interruption assume builtin
     // status is less useful than what interrupt set":
     //     if (!(errflag & ERRFLAG_INT)) lastval = ret;
@@ -10620,6 +10662,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_STMT_PROLOGUE_FAST, |vm, _argc| {
         use std::sync::atomic::Ordering;
         let line = vm.pop().to_int();
+        SUBLIST_SERIAL.with(|c| c.set(c.get().wrapping_add(1)));
         if line >= 0 {
             set_lineno_impl(line); // c:1451
         }
@@ -19150,6 +19193,8 @@ impl ShellExecutor {
         }
         self.redirect_scope_stack.push(Vec::new());
         self.multios_scope_stack.push(Vec::new());
+        let serial = SUBLIST_SERIAL.with(|c| c.get());
+        REDIR_SCOPE_OPENED.with(|c| c.set((serial, self.redirect_scope_stack.len())));
     }
 
     /// Restore every redirect scope opened above `depth`.

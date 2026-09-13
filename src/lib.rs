@@ -182,6 +182,10 @@ pub mod reaped_status;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;
+/// `stdout_ferror` submodule — the `ferror(stdout)` indicator for builtin
+/// output, which `std::io::Stdout` cannot report for a closed fd 1.
+#[path = "extensions/stdout_ferror.rs"]
+pub mod stdout_ferror;
 /// `shout` submodule — buffered terminal-output stream for the ZLE display
 /// (the stdio buffering C gets from libc's `FILE *shout`).
 #[path = "extensions/shout.rs"]

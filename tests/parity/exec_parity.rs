@@ -447,3 +447,25 @@ mod builtin_prefix_on_a_disabled_builtin {
         assert_parity(r#"disable echo; { builtin echo hi; } 2>&1; print rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:4298-4305 — after a builtin, `if (save[1] == -2) { if
+/// (ferror(stdout)) { zwarn("write error: %e", errno); clearerr(stdout); } }
+/// else clearerr(stdout);`. Output to a closed stdout is reported unless the
+/// command's own redirections moved fd 1.
+mod write_error_on_a_closed_stdout {
+    use super::*;
+
+    #[test]
+    fn builtin_output_to_a_closed_stdout_warns() {
+        assert_parity(r#"{ { print a } >&-; print ok } 2>&1"#);
+        assert_parity(r#"{ { echo a; printf b } >&-; print ok } 2>&1"#);
+        assert_parity(r#"{ f() { print a }; f >&-; print ok } 2>&1"#);
+        assert_parity(r#"{ eval "print a" >&-; print ok } 2>&1"#);
+    }
+
+    #[test]
+    fn own_redirection_of_fd_1_clears_the_error() {
+        assert_parity(r#"{ print a >&-; print ok } 2>&1"#);
+        assert_parity(r#"{ { print -n "" } >&-; print ok } 2>&1"#);
+    }
+}

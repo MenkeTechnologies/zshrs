@@ -12254,8 +12254,7 @@ pub fn bin_print(
             // c:Src/builtin.c:5408 — `print_val(unmetafy(stringval,
             // &curlen))`: printf's values are unmetafied before the
             // write. Decode Meta-char pairs to raw bytes. Bug #127.
-            let _ = lk.write_all(&crate::ported::utils::unmetafy_str(&out));
-            let _ = lk.flush();
+            crate::stdout_ferror::fwrite_stdout(&mut lk, &[&crate::ported::utils::unmetafy_str(&out)]);
         }
         // c:5464 — a `%d`/`%i` math-operand error makes printf exit 1
         // (output already emitted).
@@ -12736,8 +12735,7 @@ pub fn bin_print(
             use std::io::Write as _;
             let stdout = io::stdout();
             let mut lk = stdout.lock();
-            let _ = lk.write_all(&body_bytes); // c:5124
-            let _ = lk.write_all(final_term); // c:5132
+            crate::stdout_ferror::fwrite_stdout(&mut lk, &[&body_bytes, final_term]); // c:5124, c:5132
                                               // c:Src/builtin.c — C printf goes through libc fwrite to
                                               // stdout (fd 1) which is unbuffered when the builtin runs
                                               // under a redirect (because dup2 to fd 1 puts the file
