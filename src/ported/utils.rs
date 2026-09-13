@@ -2669,28 +2669,10 @@ pub fn adjustwinsize(from: i32) {
         // c:1898
         let shtty = SHTTY.load(Ordering::Relaxed);
         if shtty == -1 {
-            // c:1900
-            // !!! RUST-ONLY SEEDING !!! C's c:1901 is a bare `return;`, because
-            // by the time anything can reach this branch `setupvals`'s own
-            // `adjustwinsize(0)` (Src/init.c:1276) has already filled
-            // `shttyinfo.winsize`, so `zterm_lines`/`zterm_columns` are
-            // positive no matter which way the probe went. zshrs has no cached
-            // `winsize` struct, so without these two calls a shell with no tty
-            // leaves both globals at 0 and `zlevargetfn` (c:Src/params.c:362-363,
-            // IPDEF5) answers `$LINES`/`$COLUMNS` with 0. Seed, then return
-            // as C does — the results are deliberately discarded.
-            //
-            // Seed ONLY on the setupvals-style call (from 0), the one that in
-            // C fills `shttyinfo.winsize` before anything else runs. A
-            // `zlevarsetfn` call (from 2/3, c:Src/params.c:4232) has just
-            // stored the user's value in the global (c:4230) and C returns
-            // here leaving it untouched — `f(){ local +h COLUMNS; print
-            // $COLUMNS }` prints 0 because createparam's zlevarsetfn stored
-            // 0. Re-seeding there replaced it with the 80 fallback.
-            if from == 0 {
-                let _ = adjustcolumns();
-                let _ = adjustlines();
-            }
+            // c:1900 — no tty: `zterm_lines` / `zterm_columns` keep what
+            // setupvals imported from the environment (c:Src/init.c:1294-1305),
+            // or 0. `zsh -fc 'print $COLUMNS $LINES' </dev/null` with no
+            // controlling tty prints `0 0`.
             return; // c:1901
         }
         #[cfg(unix)]
