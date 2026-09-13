@@ -367,6 +367,23 @@ mod split_flag_over_nested_substitution {
     }
 }
 
+/// `(~)` tokenizes the flag argument (c:Src/subst.c:1549 `if (tok_arg)
+/// shtokenize(dst);`), so a `(j)` separator or `(s)` delimiter is a
+/// pattern character, not a literal one.
+mod tilde_flag_tokenizes_the_argument {
+    use super::*;
+
+    #[test]
+    fn join_separator_is_a_pattern_operator() {
+        assert_parity(r#"a=(x y); b=(x y z xy); print -r -- ${b:#${(~j.|.)a}} "${(@)b:#${(~j.|.)a}}""#);
+    }
+
+    #[test]
+    fn split_delimiter_is_a_star_token() {
+        assert_parity(r#"x="a*b"; print -rl -- ${(~s.*.)x}"#);
+    }
+}
+
 /// An array range subscript sets `isarr` from `scanflags` whether or not
 /// it selects anything (c:Src/subst.c:2915-2916), so an EMPTY slice inside
 /// double quotes still joins (c:2798) to one empty word; `(@)` and the

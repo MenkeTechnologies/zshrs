@@ -3344,16 +3344,12 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
         }
     };
 
-    // C: `if (tok_arg) shtokenize(dst);` — re-tokenize for pattern
-    // matching contexts. Rust's shtokenize returns Vec<GlobToken>;
-    // we render back to a string via untokenize roundtrip until a
-    // proper Vec<GlobToken>-aware caller exists.
+    // c:1549 — `if (tok_arg) shtokenize(dst);`. The `(~)` flag makes the
+    // flag argument a pattern: `foo=("|" "?"); [[ "|" = ${(~j.|.)foo} ]]`
+    // matches because the join separator is the Bar token, not a literal `|`.
+    let mut result = result;
     if tok_arg {
-        // c:1549
-        // shtokenize call elided — same as c:823 / c:830 above (the
-        // tokenized form isn't consumed by current zshrs pipeline).
-        // Result kept as-is; tok_arg is a hint for downstream glob
-        // engines that consume the tokenized form directly.
+        crate::ported::glob::shtokenize(&mut result); // c:1549
     }
     result // c:1553
 } // c:1554
