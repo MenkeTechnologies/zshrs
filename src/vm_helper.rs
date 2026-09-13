@@ -4724,8 +4724,6 @@ impl ShellExecutor {
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
-        // c:Src/exec.c:772-776 — a function runs unchanged under `-`.
-        crate::fusevm_bridge::take_exec_dash();
         // Held for the WHOLE call, not just the load: an autoloaded function is
         // registered TWICE — once when its file's text defines it, and again
         // (unchanged) when its chunk is compiled at call time — and the second

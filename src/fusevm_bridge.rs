@@ -18575,7 +18575,14 @@ impl fusevm::ShellHost for ZshrsHost {
         // `dispatch_function_call` (which itself wraps the canonical
         // `doshfunc` port from `Src/exec.c:5823`). Single doshfunc
         // call-site keeps scope-mgmt invariants in one place.
+        // c:Src/exec.c:772-776 — a function runs unchanged under `-`; only a
+        // name that is not a function falls through to the external spawn,
+        // which still needs the carrier.
+        let exec_dash = take_exec_dash();
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
+        if status.is_none() {
+            EXEC_DASH.with(|c| c.set(exec_dash));
+        }
 
         // Anonymous functions (`() { … } args`, compiled by
         // parse_anon_funcdef as `_zshrs_anon_N` / `_zshrs_anon_kw_N`)
