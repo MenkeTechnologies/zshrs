@@ -6170,8 +6170,19 @@ impl ShellExecutor {
                     Ok(contents) => {
                         return contents.trim_end_matches('\n').to_string();
                     }
-                    Err(_) => {
-                        eprintln!("zshrs:1: no such file or directory: {}", resolved);
+                    Err(e) => {
+                        // c:Src/exec.c:4797-4800 — `zwarn("%e: %s", errno, s);
+                        // lastval = cmdoutval = 1; return newlinklist();`.
+                        // zwarn carries the real `<script>:<line>:` prefix.
+                        crate::ported::utils::zwarn(&format!(
+                            "{}: {}",
+                            crate::ported::utils::zsh_errno_msg(
+                                e.raw_os_error().unwrap_or(libc::ENOENT)
+                            ),
+                            resolved
+                        ));
+                        self.set_last_status(1); // c:4799
+                        crate::ported::exec::cmdoutval.store(1, Ordering::Relaxed);
                         return String::new();
                     }
                 }

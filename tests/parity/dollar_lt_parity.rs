@@ -228,3 +228,19 @@ mod special_chars {
         assert_parity_in(d.path(), "X=$(< bytes.dat); printf '%s' \"$X\" | wc -c");
     }
 }
+
+/// c:Src/exec.c:4797-4800 — a `$(< file)` that cannot be opened reports
+/// `zwarn("%e: %s", errno, s)` and sets `lastval = cmdoutval = 1`. zshrs
+/// printed a hardcoded `zshrs:1:` prefix and left `$?` at 0.
+mod unreadable_file {
+    use super::*;
+
+    #[test]
+    fn missing_file_warns_with_line_and_sets_status() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "exec 2>&1\nprint hi\nx=$(< nofile); print rc=$?\nprint $(< nofile) st=$?",
+        );
+    }
+}
