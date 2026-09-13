@@ -290,6 +290,18 @@ mod literal_percent {
 
     /// A bare `%` at end of format is an invalid directive (rc 1), not a
     /// literal `%` (c:builtin.c:5430-5436). Preceding output is emitted.
+    /// `%*%` is an invalid directive whether or not an argument is left for
+    /// the `*` width (c:builtin.c:5172 only takes an immediately doubled
+    /// `%%`), and the message quotes the source text, not the substituted
+    /// width. zshrs printed `%` with rc 0 once the args ran out, and named
+    /// `%3%` when one was supplied.
+    #[test]
+    fn star_width_percent_is_invalid_directive() {
+        assert_parity(
+            r#"e=$(mktemp); printf '[%*%]\n' 2>$e; echo " rc=$?"; printf '%*%\n' 3 2>$e; cat $e; rm -f $e"#,
+        );
+    }
+
     #[test]
     fn bare_trailing_percent_errors() {
         assert_parity(r#"printf '%'; echo " rc=$?""#);

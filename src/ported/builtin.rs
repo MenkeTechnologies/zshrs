@@ -19097,13 +19097,6 @@ fn printf_format(
                     spec.push_str(&digits);
                 }
             }
-            // A precision `*` with NO matching arg emits nothing into `spec`
-            // (default precision), so the `%`-conversion invalid-directive
-            // check below can't see it. Track it separately: `printf '%.*%'`
-            // (no arg) is still an invalid directive in zsh (the format
-            // carried a precision), exit 1. Src/builtin.c reaches the switch
-            // with a non-`%%` `d` buffer regardless of the runtime arg.
-            let mut saw_prec_star = false;
             loop {
                 match iter.peek() {
                     // c:Src/builtin.c:4791+ — printf flag chars. The `'`
@@ -19216,7 +19209,6 @@ fn printf_format(
                 if iter.peek() == Some(&'*') {
                     iter.next();
                     raw.push('*');
-                    saw_prec_star = true;
                     // c:5250-5273 — `if (idigit(*++c))`: `%.*n$d` names the
                     // argument that supplies the precision.
                     if matches!(iter.peek(), Some(&d) if d.is_ascii_digit()) {
