@@ -618,6 +618,16 @@ mod default_word_whitespace_edges {
         assert_parity(r#"setopt shwordsplit; t() { print -r $#: "$@" }; t ${:- foo bar } "x${:- foo bar }y"; v=${:- foo bar }; t "[$v]""#);
         assert_parity(r#"t() { print -r $#: "$@" }; t x${:- foo bar }y"#);
     }
+
+    /// c:Src/subst.c:566-625 — the operand's own prefork prunes the empty
+    /// node a leading non-whitespace separator leaves, before the affixes.
+    #[test]
+    fn non_whitespace_separator_edges() {
+        assert_parity(r#"setopt shwordsplit; IFS=:; print -rl -- x${:-:a::b:}y x${:-:a::b:} ${:-:a::b:}y x${:-:a}y x${:-a:}y"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; x=1; print -rl -- x${u-:a::b:}y x${x:+:a::b:}y; a=(x${:-:a::b:}y); print $#a"#);
+        assert_parity(r#"IFS=:; print -rl -- x${=:-:a::b:}y; a=("" x ""); print -rl -- p${:-${a[@]}}q"#);
+        assert_parity(r#"setopt shwordsplit; IFS=": "; print -rl -- x${:-:a}y x${:- :a: }y; IFS=:; print -rl -- x${u:=:a::b:}y"#);
+    }
 }
 
 /// c:Src/subst.c:4366-4437 — the fields of a `${=…}` split take the word's

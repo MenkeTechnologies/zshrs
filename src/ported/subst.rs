@@ -3646,6 +3646,21 @@ pub fn paramsubst(
     // expansion's word: C's NULL is this call's return value, nothing more.
     PARAMSUBST_NULL.with(|c| c.set(false));
     PARAMSUBST_NULL_NODES.with(|c| c.borrow_mut().clear());
+    // !!! RUST-ONLY ADAPTER !!! `multsub` for a `${name-word}` / `${name+word}`
+    // family OPERAND (c:3226 / c:3313). C's multsub preforks the operand as its
+    // own list (c:625) and prefork's c:183-186 prunes THAT list's empty nodes
+    // before this function glues the word's text on (c:4366-4437):
+    // `setopt shwordsplit; IFS=:; print -rl -- x${:-:a::b:}y` splits to ``, `a`,
+    // `b` (c:580-597), drops the leading ``, and prints `xa` `b` `y`.
+    // `PARAMSUBST_AFFIXES_DEFERRED` describes the compiled word being assembled,
+    // not this inner list, so it is suspended for the call; without that the
+    // inner prefork kept the `` and the prefix landed on it (`x` `a` `b` `y`).
+    let multsub_operand = |s: &str, pf_flags: i32| {
+        let saved = PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.replace(0));
+        let result = multsub(s, pf_flags);
+        PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved));
+        result
+    };
     // c:Src/utils.c:4347-4350 — wcsitype(IIDENT): under MULTIBYTE (and not
     // POSIXIDENTIFIERS) any non-ASCII alphanumeric is a valid identifier char
     // (iswalnum), so zsh accepts `${日}`, `${café}`, `${π}`. The name-scan
@@ -15730,7 +15745,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(default, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
@@ -15861,7 +15876,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(default, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
                     if ms_isarr && !ms_parts.is_empty() {
@@ -15925,7 +15940,7 @@ pub fn paramsubst(
                 // split. Only the (s:…:) flag (spsep) re-splits.
                 if arrasg != 0 && spsep.is_none() && !force_split {
                     let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                    let (joined, parts, isarr_rhs, _ms) = multsub(default, PREFORK_NOSHWORDSPLIT);
+                    let (joined, parts, isarr_rhs, _ms) = multsub_operand(default, PREFORK_NOSHWORDSPLIT);
                     gs_restore(__gs); // c:Src/subst.c:3231-3232
                     value = joined.clone();
                     // c:Src/subst.c:3282-3293 — a SCALAR (non-isarr) RHS
@@ -16020,7 +16035,7 @@ pub fn paramsubst(
                     if arrasg != 0 && spsep.is_none() && !force_split {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         let (joined, parts, isarr_rhs, _ms) =
-                            multsub(default, PREFORK_NOSHWORDSPLIT);
+                            multsub_operand(default, PREFORK_NOSHWORDSPLIT);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
@@ -16099,7 +16114,7 @@ pub fn paramsubst(
                     if arrasg != 0 && spsep.is_none() && !force_split {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
                         let (joined, parts, isarr_rhs, _ms) =
-                            multsub(default, PREFORK_NOSHWORDSPLIT);
+                            multsub_operand(default, PREFORK_NOSHWORDSPLIT);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
@@ -16217,7 +16232,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(alt, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(alt, split_flags);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
@@ -16313,7 +16328,7 @@ pub fn paramsubst(
                     } else {
                         PREFORK_NOSHWORDSPLIT // c:3226
                     };
-                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub(alt, split_flags);
+                    let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(alt, split_flags);
                     force_split = false; // c:3230
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
