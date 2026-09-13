@@ -98,6 +98,45 @@ pub fn decode_script_bytes(bytes: &[u8]) -> String {
     }
 }
 
+/// Regroup the Meta-pair bytes a `$'…'` decoder produced.
+///
+/// c:Src/utils.c:7289-7294 — getkeystring's GETKEY_DOLLAR_QUOTE arm
+/// metafies only `imeta` bytes; every other byte of `$'\xc2\xa3'` is
+/// stored raw, so the two bytes ARE the UTF-8 `£` the multibyte pattern
+/// code reads. zshrs's `$'…'` decoders emit each byte >= 0x80 as a Meta
+/// pair, which left `£` as two opaque metafied bytes that never compared
+/// equal to a literal `£` (a real `char` in this pipeline). Each run of
+/// Meta pairs is decoded exactly as script input is: valid UTF-8 becomes
+/// chars, anything else stays Meta-encoded.
+pub fn regroup_meta_utf8(s: String) -> String {
+    if !s.contains('\u{83}') {
+        return s;
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\u{83}' {
+            if let Some(&n) = it.peek() {
+                if (0x80..=0xff).contains(&(n as u32)) {
+                    it.next();
+                    bytes.push((n as u32 as u8) ^ 32);
+                    continue;
+                }
+            }
+        }
+        if !bytes.is_empty() {
+            out.push_str(&decode_script_bytes(&bytes));
+            bytes.clear();
+        }
+        out.push(c);
+    }
+    if !bytes.is_empty() {
+        out.push_str(&decode_script_bytes(&bytes));
+    }
+    out
+}
+
 /// Read a script file as raw bytes and decode it losslessly.
 ///
 /// Replaces `fs::read_to_string` on every path that loads shell CODE

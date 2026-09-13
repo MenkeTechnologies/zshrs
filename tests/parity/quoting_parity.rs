@@ -213,6 +213,18 @@ mod ansi_c_quote {
     fn ansi_quote_no_escapes_passes_through() {
         assert_parity(r#"echo $'hello'"#);
     }
+
+    /// c:Src/utils.c:7289-7294 — getkeystring's GETKEY_DOLLAR_QUOTE arm
+    /// metafies only imeta bytes, so `$'\xc2\xa3'` holds the raw UTF-8 bytes
+    /// of `£` and matches a literal `£` as one character. zshrs Meta-encoded
+    /// every byte >= 0x80, leaving two opaque bytes that never matched.
+    #[test]
+    fn ansi_quote_hex_bytes_form_a_utf8_char() {
+        assert_parity(r#"v=$'\xc2\xa3'; [[ $v = £ ]] && print y || print n; print ${#v}"#);
+        assert_parity(r#"v=a$'\xe2\x9c\x93'b; [[ $v = a✓b ]] && print y || print n; print -rn -- $v | wc -c"#);
+        // Control: an invalid lone byte still survives as one raw byte.
+        assert_parity(r#"v=$'\xff'; print ${#v}; print -rn -- $v | od -An -tx1"#);
+    }
 }
 
 mod backslash_escape {

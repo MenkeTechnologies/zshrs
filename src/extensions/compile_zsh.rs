@@ -17881,7 +17881,8 @@ fn decode_ansi_c(body: &str) -> String {
             None => out.push('\\'),
         }
     }
-    out
+    // c:Src/utils.c:7289-7294 — only imeta bytes are metafied.
+    crate::script_bytes::regroup_meta_utf8(out)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

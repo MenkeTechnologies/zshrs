@@ -6085,7 +6085,9 @@ pub fn untokenize(s: &str) -> String {
             // strings the same way.
             if (c == Qstring || c == Stringg) && i + 1 < chars.len() && chars[i + 1] == Snull {
                 let (decoded, end) = getkeystring_dollar_quote(&chars, i + 2);
-                result.push_str(&decoded);
+                // c:Src/utils.c:7289-7294 — only imeta bytes are metafied;
+                // see script_bytes::regroup_meta_utf8.
+                result.push_str(&crate::script_bytes::regroup_meta_utf8(decoded));
                 // `end` points at the closing `Snull` (or end of
                 // string if unterminated); skip past it.
                 i = if end < chars.len() { end + 1 } else { end };
