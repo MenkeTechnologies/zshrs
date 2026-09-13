@@ -663,6 +663,17 @@ mod nulstring_fields_survive_affixes {
         assert_parity(r#"IFS=": "; s=" a : :b"; print -rl -- x${=s}y"#);
     }
 
+    /// c:Src/subst.c:3911-3934 — under SH_WORD_SPLIT a splat read's elements
+    /// are joined on IFS[0] and re-split, or kept when `nojoin` leaves them.
+    #[test]
+    fn shwordsplit_splat_read_rejoins_its_elements() {
+        assert_parity(r#"setopt shwordsplit; IFS=:; s=a::b; print -rl -- x${${=s}[@]}y ${${=s}[@]}"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; a=(a "" b); print -rl -- ${${a}[@]} ${(@)a} ${${a}[*]} ${(@)${a}}; f() { print $#; }; f ${a[@]} ${(@)a}"#);
+        assert_parity(r#"setopt shwordsplit; IFS=; a=(x y); print -rl -- ${${a}[@]} ${(@)a}"#);
+        assert_parity(r#"setopt shwordsplit; unset IFS; a=("p q" r); print -rl -- ${${a}[@]} ${(@)a}"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; s=":a::b:"; print -rl -- ${(@)${=s}} "${(@)${=s}}"; a=(a "" b); v=${(@)a}; print -r "[$v]""#);
+    }
+
     /// The same `nulstring` field through an operator on the split value
     /// (subscript, substring, pattern removal, substitution).
     #[test]

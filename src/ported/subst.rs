@@ -23344,8 +23344,30 @@ pub fn paramsubst(
                                                                                                // `split_parts.is_none()`), so those inner spaces survived.
                                                                                                // `(@)`/`(*)` (nojoin != 0) and an explicit `(j:…:)` sep keep their
                                                                                                // shape, exactly as the C condition says.
-        if spbreak && !in_ssub && sep.is_none() && nojoin == 0 {
-            if let Some(parts) = split_parts.clone() {
+        // c:3911 `if (isarr || …)` — the elements are `aval`. A splat read
+        // (`${a[@]}`, `${(@)a}`, a nested `${${…}[@]}`, which lives in its temp
+        // array) keeps them in the parameter rather than in `split_parts`, with
+        // `value` only a space-joined rendering, so fetch them the way the later
+        // splat arms do. Without this, `setopt shwordsplit; IFS=:; a=(a "" b);
+        // print -rl -- ${${a}[@]}` re-split the space-joined text on `:` and
+        // printed the single word `a  b` (zsh: `a` `` `b`).
+        let aval_c3911: Option<Vec<String>> = split_parts.clone().or_else(|| {
+            if isarr != 0 && (subscript.is_none() || splat_sub!().is_some()) {
+                arrays_get(&var_name)
+            } else {
+                None
+            }
+        });
+        // c:3914-3928 — join when `nojoin == 0`, or for the element-split hack
+        // (`spsep || nojoin == 2 || (!ifs && isarr < 0)`; the `spsep` split is
+        // the (s) arm above), both with a NULL separator here.
+        let ifs_unset = vars_get("IFS").is_none();
+        if spbreak
+            && !in_ssub
+            && sep.is_none()
+            && (nojoin == 0 || nojoin == 2 || (ifs_unset && isarr < 0))
+        {
+            if let Some(parts) = aval_c3911.clone() {
                 if parts.len() > 1 {
                     value = crate::ported::utils::sepjoin(&parts, None); // c:3909
                     split_parts = None; // c:3910 `isarr = 0`
@@ -23353,7 +23375,11 @@ pub fn paramsubst(
                 }
             }
         }
-        if spbreak && !in_ssub && split_parts.is_none() {
+        // c:3931 `if (force_split && !isarr)` — an array that was not joined
+        // above (IFS set but empty: c:1817 `nojoin` 1) keeps its elements:
+        // `setopt shwordsplit; IFS=; a=(x y); print -rl -- ${${a}[@]}` is `x` `y`.
+        let unjoined_array = isarr != 0 && aval_c3911.is_some();
+        if spbreak && !in_ssub && split_parts.is_none() && !unjoined_array {
             // Same signal the (s)/(f) arm raises above: this paramsubst is a
             // SPLIT, so a nesting reader must apply C's prefork empty-node
             // deletion (c:Src/subst.c:184 `else if (!keep) uremnode`) to the
