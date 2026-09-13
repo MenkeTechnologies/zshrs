@@ -8601,6 +8601,20 @@ impl ZshCompiler {
                         let in_dq_ba = (word_is_single_dq_span(s)
                             && self.synthetic_dq_wrap_depth == 0)
                             || self.dq_context_depth > 0;
+                        // c:Src/lex.c dquote_parse — inside `"…"` EVERY `$` is the
+                        // Qstring token, the nested ones included, and stringsubst
+                        // derives each substitution's `qt` from that token
+                        // (c:Src/subst.c:283). `inner` comes from `untoked`, which
+                        // folds Qstring to a plain `$`, so a NESTED `${s}` in
+                        // `"${(@)${s}}"` re-expanded as unquoted and SH_WORD_SPLIT
+                        // split it (c:1707 spbreak needs `!qt`): zsh prints one
+                        // line, zshrs printed `` `foo` `bar` ``. Rebuild the body
+                        // from the tokenized word, keeping the Qstring tokens.
+                        let inner_safe = if in_dq_ba {
+                            dq_bridge_body_keeping_qstring(s).unwrap_or(inner_safe)
+                        } else {
+                            inner_safe
+                        };
                         let body_text = if in_dq_ba {
                             format!("\u{8c}{}", inner_safe)
                         } else {
@@ -15927,6 +15941,30 @@ pub(crate) enum ParamModifierKind {
 /// inner). Used by the `BUILTIN_BRIDGE_BRACE_ARRAY` path so quoted
 /// pattern bodies (e.g. `${(M)a:#"*"}`) reach paramsubst with
 /// backslash-escaped metachars instead of bare glob characters.
+/// The body of a double-quoted whole-word `"${…}"` for BUILTIN_BRIDGE_BRACE_ARRAY,
+/// untokenized like `untoked` except that every Qstring (`\u{8c}`) survives.
+/// `s` is the lexer's word: an optional Dnull pair around `Qstring Inbrace …
+/// Outbrace` (a segment of a DQ parent arrives without the Dnulls). Returns
+/// `None` for any other shape, and the caller keeps its plain body.
+fn dq_bridge_body_keeping_qstring(s: &str) -> Option<String> {
+    use crate::ported::zsh_h::{Dnull, Inbrace, Outbrace, Qstring};
+    let unwrapped = s
+        .strip_prefix(Dnull)
+        .and_then(|r| r.strip_suffix(Dnull))
+        .unwrap_or(s);
+    let body = unwrapped.strip_prefix(Qstring)?.strip_prefix(Inbrace)?.strip_suffix(Outbrace)?;
+    let mut out = String::with_capacity(body.len());
+    let mut buf = [0u8; 4];
+    for c in body.chars() {
+        if c == Qstring {
+            out.push(c);
+        } else {
+            out.push_str(&crate::lex::untokenize(c.encode_utf8(&mut buf)));
+        }
+    }
+    Some(out)
+}
+
 fn strip_brace_wrap_for_bridge(s: &str) -> Option<String> {
     use crate::ported::zsh_h::{Inbrace, Outbrace, Stringg};
     let inner_raw = s

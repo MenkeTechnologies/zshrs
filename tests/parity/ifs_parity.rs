@@ -577,3 +577,24 @@ mod for_list_bare_parameter {
         assert_parity(r#"set -- "a b" c; for w in $argv; do print -r "[$w]"; done; typeset -A h; h=(k v); for w in $h; do print -r "[$w]"; done"#);
     }
 }
+
+/// c:Src/lex.c dquote_parse — every `$` inside `"…"` is the Qstring token, so
+/// a substitution NESTED in a quoted `${(@)…}` still expands with `qt`
+/// (c:Src/subst.c:283) and c:1707's `spbreak` stays off: SH_WORD_SPLIT does
+/// not split the inner value.
+mod nested_substitution_in_quoted_at_flag {
+    use super::*;
+
+    #[test]
+    fn inner_value_is_not_word_split() {
+        assert_parity(r#"setopt shwordsplit; s=" foo bar "; print -rl -- "${(@)${:-x${s}y}}""#);
+        assert_parity(r#"setopt shwordsplit; s=" foo bar "; print -rl -- "${(@)${s}}" "${(@)${s/o/o}}" "${(@)${:-$s}}""#);
+    }
+
+    #[test]
+    fn explicit_splits_still_apply() {
+        assert_parity(r#"s=" foo bar "; print -rl -- "${(@)${=s}}""#);
+        assert_parity(r#"a=(p 'q r'); print -rl -- "${(@)${a}}" "${(@)${(s: :)${:-a b}}}""#);
+        assert_parity(r#"setopt shwordsplit; s=" foo bar "; print -rl -- ${(@)${:-x${s}y}}"#);
+    }
+}
