@@ -423,3 +423,26 @@ mod tilde_in_substitution_default {
         assert_parity(r#"unset ZR_T; print -r -- $(( ${#ZR_T:-~} == ${#HOME} ))"#);
     }
 }
+
+/// c:Src/subst.c:792-794 — an unknown `~user` is an error only under
+/// `isset(NOMATCH) && isset(EXECOPT)`; otherwise filesubstr returns 0 and the
+/// word stays literal.
+mod unknown_user_follows_nomatch {
+    use super::*;
+
+    #[test]
+    fn nonomatch_keeps_the_word_literal() {
+        assert_parity(r#"setopt nonomatch; print ~nosuchuser_zz; echo rc=$?"#);
+        assert_parity(r#"unsetopt nomatch; print ~nosuchuser_zz/a b=~nosuchuser_zz x; echo rc=$?"#);
+    }
+
+    #[test]
+    fn nomatch_still_reports_the_user() {
+        assert_parity(r#"setopt nomatch; print ~nosuchuser_zz; echo rc=$?"#);
+    }
+
+    #[test]
+    fn plus_tilde_control() {
+        assert_parity(r#"setopt nonomatch; cd /tmp && print ~+"#);
+    }
+}

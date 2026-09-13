@@ -2539,8 +2539,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             // getpwnam resolves. Caller keeps the literal (filesub's
             // unwrap_or_else); zsh's exit-status fallout comes from
             // errflag being set so the command exits non-zero.
-            zerr(&format!("no such user or named directory: {}", user));
-            errflag_set_error();
+            // c:Src/subst.c:792-794 — `if (isset(NOMATCH) && isset(EXECOPT))
+            // zerr(…); return 0;`: without NOMATCH the word stays literal
+            // (`setopt nonomatch; print ~nosuchuser` prints `~nosuchuser`).
+            if isset(crate::ported::zsh_h::NOMATCH) && isset(crate::ported::zsh_h::EXECOPT) {
+                zerr(&format!("no such user or named directory: {}", user));
+                errflag_set_error();
+            }
             return None;
         }
         return None;
