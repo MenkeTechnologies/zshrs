@@ -26204,6 +26204,26 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
                         i = name_end;
                         continue;
                     }
+                    // A bare `$#` — the positional count, which is what singsub
+                    // (c:4490 → paramsubst's `#` special) splices in. Only when
+                    // the next character cannot continue a `$#…` reference:
+                    // `$#-`, `$#?`, `$#*`, `$#@`, `$#!`, `$#$`, `$##` and
+                    // `$#{…}` / `$#[…]` / `$#(…)` mean something else and still
+                    // go through singsub.
+                    let bare = match bytes.get(i + 2).copied() {
+                        None => true,
+                        Some(c) => matches!(
+                            c,
+                            ' ' | '\t' | '\n' | ')' | '+' | '/' | '%' | '<' | '>' | '=' | '&'
+                                | '|' | '^' | ',' | ';' | ':'
+                        ),
+                    };
+                    if bare {
+                        let count = arrays_get("@").map(|a| a.len()).unwrap_or(0);
+                        out.push_str(&count.to_string());
+                        i += 2;
+                        continue;
+                    }
                 }
                 out.push(bytes[i]);
                 i += 1;
@@ -26213,7 +26233,21 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     };
     // C: `singsub(&a);` — parameter-substitute the math expression
     // before evaluation. Without this `${(($n+1))}` won't see $n.
-    let expanded = singsub(&expr); // c:4490
+    //
+    // When the text holds nothing singsub could change — no `$`, backquote,
+    // `~`, backslash or lexer token, and no leading `=` for filesub — the
+    // call hands it back unchanged, so the prefork/stringsubst walk is
+    // skipped. compinit's `(( ! $# ))` / `while (( $# ))` loops reach here
+    // tens of thousands of times with a `$#` the pass above already replaced.
+    let needs_singsub = expr.starts_with('=')
+        || expr
+            .chars()
+            .any(|c| matches!(c, '$' | '`' | '~' | '\\') || (c as u32) >= 0x80);
+    let expanded = if needs_singsub {
+        singsub(&expr) // c:4490
+    } else {
+        expr.into_owned()
+    };
 
     // C: `v = matheval(a);` — evaluate via Src/math.c::matheval.
     // Use the global matheval; resolves variables via env lookups
