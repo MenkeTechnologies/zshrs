@@ -812,3 +812,19 @@ mod empty_errwrite_target {
         assert_parity_in(d.path(), "{ print hi &>''; print rc=$? } 2>&1");
     }
 }
+
+/// c:Src/exec.c:252-256 execerr — `redir_err = lastval = 1;` when a
+/// builtin's `<&` word is not a file number (c:Src/glob.c:2191-2192). The
+/// errflag ends the script with that 1; zshrs exited 0.
+mod mergein_non_number_builtin {
+    use super::*;
+
+    #[test]
+    fn builtin_exits_one() {
+        let d = tdir();
+        assert_parity_in(d.path(), "print hi <&''");
+        assert_parity_in(d.path(), "true <&''; print never");
+        assert_parity_in(d.path(), "typeset x <&''");
+    }
+}
+

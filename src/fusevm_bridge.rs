@@ -1218,6 +1218,12 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
             crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
         }
+        // c:Src/exec.c:252-256 execerr — `redir_err = lastval = 1;`. The
+        // redirect arm already stored it, but the statement prologue between
+        // the Redirect op and this call (BUILTIN_XTRACE_ARGS) copies the VM's
+        // stale status back over LASTVAL, and the errflag abort that follows
+        // exits with LASTVAL: `print hi <&""` exited 0 where zsh exits 1.
+        crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
         return 1;
     }
     // c:Src/glob.c:1876-1880 NOMATCH path — when expand_glob() failed
