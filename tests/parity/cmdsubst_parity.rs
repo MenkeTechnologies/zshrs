@@ -102,6 +102,20 @@ mod dollar_paren_subst {
         assert_parity(r#"(( a[ )); print rc=$?"#);
     }
 
+    /// The compiler must take the lexer's verdict. Unquoted, `$(( a[ ))`
+    /// balances as TEXT, and compile_zsh's `strip_arith_subst` evaluated it as
+    /// arithmetic (`0`) although the lexer had read a command substitution;
+    /// `$(( a] ))` came out as "bad math expression" instead of running `a]`.
+    #[test]
+    fn unquoted_invalid_math_substitution_runs_the_subshell() {
+        assert_parity(r#"print $(( a[ )); print rc=$?"#);
+        assert_parity(r#"print $(( a[1 )); print rc=$?"#);
+        assert_parity(r#"print $(( a] )); print rc=$?"#);
+        // Controls: real arithmetic, and a substitution opening with a subshell.
+        assert_parity(r#"print $(( 2 * 3 )) $((7/2))"#);
+        assert_parity(r#"f(){ print "!$1!" }; print $((f a); f b)"#);
+    }
+
     /// An unterminated `((` is a lexer error whose message names what the
     /// math scan collected (c:Src/lex.c:788-791 leaves `tokstr` on the lexer
     /// buffer): zsh says "parse error near ` 1 +'"; zshrs named the wrong

@@ -8486,7 +8486,12 @@ impl ZshCompiler {
         // Avoids the float-only Op::Div in ArithCompiler.
         if !has_bnull {
             let preserved_for_arith = crate::lex::untokenize_preserve_quotes(s);
-            if let Some(expr) = strip_arith_subst(&preserved_for_arith) {
+            // Only a word the lexer tokenized as `$((…))` math: `$(( a[ ))`
+            // balances as text but was re-read as a command substitution
+            // (c:Src/lex.c:520-531) and ran as `0` here.
+            if let Some(expr) = strip_arith_subst(&preserved_for_arith)
+                .filter(|_| is_lexer_math_subst(s))
+            {
                 let idx = self.builder.add_constant(Value::str(expr.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
@@ -8512,7 +8517,7 @@ impl ZshCompiler {
             // a `$(...)` body for run_command_substitution (BUILTIN_
             // CMD_SUBST_TEXT routes through it) — getoutput handles both
             // forms identically once the inner command text is isolated.
-            let cmdsub_inner = strip_cmd_subst(&preserved_for_cmdsub)
+            let cmdsub_inner = strip_cmd_subst(&preserved_for_cmdsub, is_lexer_math_subst(s))
                 .or_else(|| strip_backtick_subst(&preserved_for_cmdsub));
             if let Some(inner) = cmdsub_inner {
                 let idx = self.builder.add_constant(Value::str(inner));
@@ -14942,7 +14947,25 @@ fn strip_backtick_subst(s: &str) -> Option<&str> {
     Some(inner)
 }
 
-fn strip_cmd_subst(s: &str) -> Option<&str> {
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Whether the lexer read this word's leading `$((` as ARITHMETIC. C decides
+/// once, in `cmd_or_math_sub` (c:Src/lex.c:555-567): the math scan succeeds
+/// and the next character is the second `)`, and the word then holds
+/// `String`/`Qstring` + `Inparmath`; anything else is rewound and re-read as a
+/// command substitution, which holds `Inpar`. The compiler sees the untokenized
+/// text too, where balanced parens say nothing — `$(( a[ ))` is balanced text
+/// but a command substitution to the lexer — so it must read the token.
+fn is_lexer_math_subst(tokenized: &str) -> bool {
+    use crate::ported::zsh_h::{Inparmath, Qstring, Stringg};
+    let mut chars = tokenized.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some(c), Some(Inparmath)) if c == Stringg || c == Qstring
+    )
+}
+
+fn strip_cmd_subst(s: &str, lexer_math: bool) -> Option<&str> {
     if !s.starts_with("$(") || !s.ends_with(')') {
         return None;
     }
@@ -14954,8 +14977,9 @@ fn strip_cmd_subst(s: &str) -> Option<&str> {
     // output must still be IFS word-split like any other `$(…)`.
     // Rejecting every `$((` here sent those words to the generic expand
     // bridge, which emits ONE unsplit word: `print $((f a); f b)` printed
-    // the two outputs on separate lines instead of `!a! !b!`.
-    if s.starts_with("$((") && strip_arith_subst(s).is_some() {
+    // the two outputs on separate lines instead of `!a! !b!`. The verdict is
+    // the lexer's (`is_lexer_math_subst`), not a paren count over the text.
+    if lexer_math {
         return None;
     }
     // Verify the closing `)` at the end matches the OPENING `$(` at the
