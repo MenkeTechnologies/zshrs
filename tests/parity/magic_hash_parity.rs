@@ -365,8 +365,21 @@ mod local_shadow {
     /// Whole-hash reassignment after unsetting the shadow lands in the
     /// local, not in aliastab: zsh `c d`, zshrs printed the real aliases.
     #[test]
-    #[ignore = "zshrs gap: params.rs whole-assoc magic dispatch ignores a PM_UNSET local shadow"]
     fn reassign_after_unset_of_aliases_shadow() {
         assert_parity("alias a1=b; f(){ local -A aliases=(a b); unset aliases; aliases=(c d); print ${(kv)aliases} }; f; print ${(k)aliases}");
+    }
+
+    /// `(kv)` on a NON-hash local named after a magic hash reads the local.
+    /// c:Src/params.c:1090-1115 createparam puts a plain node in paramtab, so
+    /// fetchvalue never reaches the alias scanfn. The `(kv)` arm fell back to
+    /// aliastab by name without asking whether the magic row was still the
+    /// visible binding: zsh `c d` / `scal`, zshrs printed every alias.
+    #[test]
+    fn kv_on_nonhash_shadow_of_aliases() {
+        assert_parity("alias zz=yy; f(){ local -a aliases=(c d); print -r -- ${(kv)aliases} }; f");
+        assert_parity("alias zz=yy; f(){ local aliases=scal; print -r -- ${(kv)aliases} }; f");
+        assert_parity("alias zz=yy; f(){ local -a aliases=(c d); print -r -- ${(v)aliases} ${(k)aliases} $aliases }; f");
+        assert_parity("alias zz=yy; f(){ local -A aliases=(k v); print -r -- ${(kv)aliases} }; f");
+        assert_parity("alias zz=yy; f(){ local -a aliases=(c d) }; f; print -r -- ${(kv)aliases[zz]}");
     }
 }

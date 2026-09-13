@@ -13444,7 +13444,18 @@ pub fn paramsubst(
                     }
                     out
                 })
-                .or_else(|| match var_name.as_str() {
+                // c:Src/params.c:1090-1115 createparam — a `local aliases` /
+                // `local -a aliases` replaces the special's paramtab node with a
+                // plain one, so C's fetchvalue finds that node and the magic
+                // scanfn is unreachable. The by-name fallback below reads the
+                // real alias table directly, so it must stand down for a
+                // non-hash shadow, exactly as `assoc_contains` does. A hash
+                // shadow (`local -A aliases`) was served by `assoc_get` above.
+                .or_else(|| {
+                    if crate::vm_helper::magic_special_shadowed_by_nonhash(&var_name) {
+                        return None;
+                    }
+                    match var_name.as_str() {
                     "aliases" => aliastab_lock().read().ok().map(|t| {
                         let mut entries: Vec<(String, String)> =
                             t.iter().map(|(k, v)| (k.clone(), v.text.clone())).collect();
@@ -13464,6 +13475,7 @@ pub fn paramsubst(
                                 })
                                 .collect()
                         }),
+                    }
                 })
                 // c:Src/subst.c — on an indexed array, `(kv)` mirrors
                 // `(k)` and `(v)`: each returns the array values
