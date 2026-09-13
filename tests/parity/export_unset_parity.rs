@@ -304,3 +304,23 @@ mod posix_builtins_readonly {
         assert_parity("function { emulate -L sh; MANPATH=/bin; export MANPATH; readonly MANPATH; readonly -p; }");
     }
 }
+
+/// c:Src/exec.c:758-768 — for an external command zsh takes ARGV0 from the
+/// command's environment as argv[0] and then `unsetenv("ARGV0")`, so
+/// `/usr/bin/env` never lists it. zshrs's in-process `env` stand-in printed
+/// and passed on the shell's ARGV0. An ARGV0 given to env as its own operand
+/// is not the shell's and still passes through.
+mod env_does_not_see_argv0 {
+    use super::*;
+
+    #[test]
+    fn shell_argv0_is_removed_from_env() {
+        assert_parity(r#"ARGV0=foo env | grep -c '^ARGV0='; FOO=bar env | grep '^FOO='"#);
+        assert_parity(r#"export ARGV0=bar; env | grep -c '^ARGV0='; env /bin/sh -c 'echo ${ARGV0-unset}'"#);
+    }
+
+    #[test]
+    fn argv0_operand_of_env_still_passes_through() {
+        assert_parity(r#"env ARGV0=x /usr/bin/env | grep '^ARGV0='; ARGV0=foo env ARGV0=y /bin/sh -c 'echo $ARGV0'"#);
+    }
+}

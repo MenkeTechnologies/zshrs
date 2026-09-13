@@ -8411,11 +8411,17 @@ impl ShellExecutor {
 
         // Build the env: optionally clear, drop -u names, apply
         // assignments.
+        // c:Src/exec.c:758-768 — zsh runs `env` as an external command, and
+        // for every external command "If ARGV0 is in the commands environment,
+        // we use that as argv[0]" and then `unsetenv("ARGV0")`. So `env` never
+        // sees the shell's ARGV0: `ARGV0=foo env` does not list it. An ARGV0
+        // given to env itself (`env ARGV0=x cmd`) is env's own operand and
+        // still passes through below.
         let env_overrides: Vec<(String, String)> = if clear_env {
             assignments.clone()
         } else {
             let mut out: Vec<(String, String)> = std::env::vars()
-                .filter(|(k, _)| !unset.contains(k))
+                .filter(|(k, _)| k != "ARGV0" && !unset.contains(k)) // c:768
                 .collect();
             for (k, v) in &assignments {
                 out.retain(|(ek, _)| ek != k);
