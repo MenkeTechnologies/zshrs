@@ -660,3 +660,24 @@ mod nulstring_fields_survive_affixes {
         assert_parity(r#"a=(x '' y); print -rl -- p${a}q p${a[@]}q; set -- x '' y; print -rl -- p$@q"#);
     }
 }
+
+/// c:Src/subst.c:36 — a quoted EMPTY literal (`""`, `''`) keeps its Dnull/Snull
+/// in the word, so the first node (leading literal) or the last node (trailing
+/// literal) of a split or array expansion is non-empty at c:183 and survives.
+mod quoted_empty_literal_anchors_edge_field {
+    use super::*;
+
+    #[test]
+    fn shwordsplit_edges() {
+        assert_parity(r#"setopt shwordsplit; s=" a"; print -rl -- ""$s ''$s; s="a "; print -rl -- $s"""#);
+        assert_parity(r#"setopt shwordsplit; s=" a b "; t() { print -r $#: "$@" }; t ""$s"" ""$s$s"""#);
+        assert_parity(r#"setopt shwordsplit; e=; print -rl -- ""$e | wc -l; s=" a"; print -rl -- x""$s"#);
+    }
+
+    #[test]
+    fn equals_split_and_arrays() {
+        assert_parity(r#"s=" a"; print -rl -- ""${=s} ""${=s}""; s="a "; print -rl -- ${=s}''"#);
+        assert_parity(r#"a=("" x ""); print -rl -- ""$a"" | wc -l; a=(x y); print -rl -- "${a[@]}" x"${a[@]}"y"#);
+        assert_parity(r#"setopt shwordsplit rcexpandparam; s=" a"; print -rl -- ""$s | wc -l"#);
+    }
+}

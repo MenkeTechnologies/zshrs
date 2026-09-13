@@ -1833,6 +1833,21 @@ fn join_c3914(elems: Vec<String>, ifs: Option<&str>) -> JoinC3914 {
 /// `nulstring` markers a deferring word kept through its segments (see
 /// BUILTIN_FORCE_SPLIT and `paramsubst_to_value_pf`), once the end-of-word drop
 /// has decided which empty nodes survive. A marker-free value is returned as is.
+/// argc bits the compiler adds to the segment path's end-of-word drop
+/// (BUILTIN_ARRAY_DROP_EMPTY / BUILTIN_WORD_ELIDE_EMPTY) when the word's first
+/// or last segment is a quoted empty literal (`""`, `''`). c:Src/subst.c:36 —
+/// the lexer leaves its Dnull/Snull in the word, so the node that literal is
+/// glued to is non-empty at c:183 and survives: the first node for a leading
+/// literal, the last for a trailing one (c:4366-4437).
+pub const WORD_DROP_KEEPS_FIRST: u8 = 4;
+/// See [`WORD_DROP_KEEPS_FIRST`].
+pub const WORD_DROP_KEEPS_LAST: u8 = 8;
+
+/// Whether node `i` (of `0..=last`) is anchored by a quoted empty literal.
+fn word_drop_keeps(argc: u8, i: usize, last: usize) -> bool {
+    (i == 0 && argc & WORD_DROP_KEEPS_FIRST != 0) || (i == last && argc & WORD_DROP_KEEPS_LAST != 0)
+}
+
 fn strip_nulstring_markers(v: Value) -> Value {
     let nul = crate::ported::zsh_h::Nularg;
     match v {
@@ -6044,13 +6059,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (zsh-specific — scalar word splitting is off by default).
     // Distinct from BUILTIN_WORD_SPLIT which routes through
     // multsub PREFORK_SPLIT (full IFS-split). Bug #166.
-    vm.register_builtin(BUILTIN_ARRAY_DROP_EMPTY, |vm, _argc| {
+    vm.register_builtin(BUILTIN_ARRAY_DROP_EMPTY, |vm, argc| {
         let v = vm.pop();
-        strip_nulstring_markers(drop_word_empties(v))
+        strip_nulstring_markers(drop_word_empties(v, argc))
     });
     // The c:183-186 decision of BUILTIN_ARRAY_DROP_EMPTY, before c:170's
     // remnulargs (strip_nulstring_markers) runs on the survivors.
-    fn drop_word_empties(v: Value) -> Value {
+    fn drop_word_empties(v: Value, argc: u8) -> Value {
         // End of word: whatever `ARRAY_EMPTIES_ELIDABLE` was carrying is
         // spent here even though this builtin drops unconditionally, so a
         // following word starts from a clean bit.
@@ -6066,10 +6081,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         match v {
             Value::Array(items) => {
+                if argc & (WORD_DROP_KEEPS_FIRST | WORD_DROP_KEEPS_LAST) != 0 && plan9_active() {
+                    // c:4341 — under plan9 the quoted-empty affix is glued to
+                    // every element, so no node of the word is empty.
+                    return Value::Array(items);
+                }
+                let last = items.len().saturating_sub(1);
                 let filtered: Vec<Value> = items
                     .iter()
-                    .filter(|x| !x.to_str().is_empty())
-                    .cloned()
+                    .enumerate()
+                    .filter(|(i, x)| word_drop_keeps(argc, *i, last) || !x.to_str().is_empty())
+                    .map(|(_, x)| x.clone())
                     .collect();
                 Value::array(filtered)
             }
@@ -6134,7 +6156,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // affix is glued to EVERY element, so no node of the word can be
         // empty and c:186 removes nothing: `setopt rcexpandparam;
         // a=("" y); print -rl -- $a''` is `` `y`.
-        if argc == 2 && plan9_active() {
+        if argc & 2 != 0 && plan9_active() {
             return v;
         }
         if !elidable {
@@ -6143,10 +6165,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         match v {
             Value::Array(items) => {
                 // `items` is an `Arc<Vec<Value>>`; borrow rather than move.
+                let last = items.len().saturating_sub(1);
                 let kept: Vec<Value> = items
                     .iter()
-                    .filter(|x| !x.to_str().is_empty())
-                    .cloned()
+                    .enumerate()
+                    .filter(|(i, x)| word_drop_keeps(argc, *i, last) || !x.to_str().is_empty())
+                    .map(|(_, x)| x.clone())
                     .collect();
                 // c:4245 — an array reference that ends up empty is still an
                 // ARRAY for the plan9 word-removal rule, not a scalar.

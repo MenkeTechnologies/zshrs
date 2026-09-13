@@ -7596,7 +7596,13 @@ impl ZshCompiler {
         // per subst.c:3901-3920 — `force_split = !ssub && spbreak`,
         // so `ssub=true` makes the split a no-op and the joined
         // value is assigned. We detect via `scalar_assign_depth`.
-        if !has_bnull {
+        // `untoked` has lost the quote markers, so `""${=s}` / `${=s}''` would read as
+        // the bare `${=s}` here and lose the quoted empty literal the word carries
+        // (c:Src/subst.c:36 — its Dnull/Snull keeps the node it lands on). Only a word
+        // that IS one double-quoted span takes this path with markers; any other
+        // quoted word goes to the segment splitter, which keeps the literal.
+        let quoted_affix = has_quote_markers && !word_is_single_dq_span(s);
+        if !has_bnull && !quoted_affix {
             if let Some((force_split, name, splice)) = parse_forced_split_brace(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -7777,7 +7783,10 @@ impl ZshCompiler {
             // handler's own DQ-aware split logic produces the right
             // result. Quoted `"${a[*]}"` falls through to the slow
             // paramsubst path.
-            let take_fast = !is_star || !dq_for_splice;
+            // Same quoted-affix exclusion as the `${=NAME}` fast path above:
+            // `""${a[@]}""` must keep its quoted empty literals.
+            let take_fast = (!is_star || !dq_for_splice)
+                && !(has_quote_markers && !word_is_single_dq_span(s));
             if take_fast {
                 if let Some(name) = array_splice_ref(&untoked) {
                     let idx = self.builder.add_constant(Value::str(name));
@@ -9575,13 +9584,30 @@ impl ZshCompiler {
                 // (`print -rl -- ""`) must keep its literal empty. Quoted words
                 // keep empties (nulstring), and a scalar-assignment RHS is
                 // joined below rather than split into words.
+                // c:Src/subst.c:36 — a quoted EMPTY literal (`""`, `''`) at the
+                // start or end of the word keeps its Dnull/Snull, so the node it
+                // lands on (the first / the last, c:4366-4437) is non-empty at
+                // c:183 and survives the drop: `setopt shwordsplit; s=' a';
+                // print -rl -- ""$s` is `` `a`. See WORD_DROP_KEEPS_FIRST.
+                let quoted_empty_lit = |seg: Option<&WordSegment>| {
+                    matches!(seg, Some(WordSegment::Literal(lit)) if crate::lex::untokenize(lit).is_empty())
+                };
+                let anchor_bits = if quoted_empty_lit(segs.first()) {
+                    crate::fusevm_bridge::WORD_DROP_KEEPS_FIRST
+                } else {
+                    0
+                } | if quoted_empty_lit(segs.last()) {
+                    crate::fusevm_bridge::WORD_DROP_KEEPS_LAST
+                } else {
+                    0
+                };
                 if !parent_is_dq
                     && (has_splice_seg || has_distribute_seg || has_plan9_seg || has_plan9_off_seg)
                     && self.scalar_assign_depth == 0
                     && self.assign_builtin_arg_depth == 0
                 {
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1 | anchor_bits),
                         0,
                     );
                 } else if !parent_is_dq
@@ -9610,7 +9636,7 @@ impl ZshCompiler {
                         WordSegment::Literal(lit) => crate::lex::untokenize(lit).is_empty(),
                         _ => false,
                     });
-                    let argc = if has_empty_quoted_lit { 2 } else { 1 };
+                    let argc = if has_empty_quoted_lit { 2 } else { 1 } | anchor_bits;
                     // Same c:183-186 removal for the PLAIN `${arr}` / `$arr`
                     // segment shape, which every predicate above misses: it is
                     // neither a splice (`[@]`/`$@`), a distribute (`(@)`/`(f)`)
