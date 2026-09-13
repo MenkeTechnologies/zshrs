@@ -7019,6 +7019,12 @@ pub fn paramsubst(
                             || bc == '0'
                             || bc == '-' || bc == '\u{9b}' /* Dash */
                             || bc == '$' || bc == Stringg
+                    } else if body_chars[name_start].is_ascii_digit() {
+                        // c:Src/params.c:2210-2212 — `if (idigit(c = *s)) ppar =
+                        // zstrtol(s, &s, 10);`: a positional name is its digits
+                        // only, so `${1a}` leaves `a` for the c:Src/subst.c:
+                        // 2994-3004 "bad substitution" gate.
+                        bc.is_ascii_digit()
                     } else {
                         bc.is_ascii_alphanumeric() || bc == '_' || is_mb_ident(bc)
                     };

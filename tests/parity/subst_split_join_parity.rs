@@ -392,6 +392,27 @@ h() { local IFS=:; print -rl -- ${=1:-:a::b:}; }; h"#,
     }
 }
 
+/// c:Src/params.c:2210-2212 reads a positional name as its digits only, so
+/// anything but an operator or `}` after them is c:Src/subst.c:2994-3004's
+/// "bad substitution".
+mod positional_name_is_digits_only {
+    use super::*;
+
+    #[test]
+    fn letters_after_the_digits_are_a_bad_substitution() {
+        assert_parity(r#"print ${1a}; echo rc=$?"#);
+        assert_parity(r#"x=${12a}; echo rc=$?"#);
+        assert_parity(r#"print "${1_}"; echo rc=$?"#);
+    }
+
+    #[test]
+    fn valid_positional_and_identifier_shapes() {
+        assert_parity(
+            r#"set -- p q r s t u v w x y z; a1=A; print ${1} ${10} ${a1} ${#1} ${10:-x} ${11-d} $1a ${1}a ${1[1]} ${1:u}"#,
+        );
+    }
+}
+
 /// c:Src/params.c:1741-1760 — a lowercase `(i)`/`(r)` scan of an association
 /// that matches nothing yields an empty SCALAR (only `(I)`/`(R)` accept an
 /// empty array), so RC_EXPAND_PARAM keeps the surrounding word.
