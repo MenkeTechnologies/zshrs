@@ -381,6 +381,14 @@ g() { local s1=foo; local -a val=(s1); print ${${(P)val}[1,2]} }; g; echo rc=$?"
         );
     }
 
+    /// c:Src/subst.c:4137-4150 — under `(X)` the `(Q)` re-lex reports a
+    /// malformed value and ends the expansion; without `(X)` it is silent.
+    #[test]
+    fn qx_reports_an_unmatched_quote() {
+        assert_parity(r#"foo='unmatched "'; print ${(QX)foo}; echo rc=$?"#);
+        assert_parity(r#"foo='unmatched "'; print -r -- ${(Q)foo}; echo rc=$?"#);
+        assert_parity(r#"a=('"x"' 'y'); print -r -- ${(QX)a}; echo rc=$?"#);
+    }
 }
 
 /// `(~)` tokenizes the flag argument (c:Src/subst.c:1549 `if (tok_arg)

@@ -22031,6 +22031,26 @@ pub fn paramsubst(
         let joined_scalar_c3907 = dq_collapsed || sep_forced_join || ssub_join_c3903; // c:3907
         if quotemod < 0 {
             // c:4030 if (quotemod) — negative arm (Q)
+            // c:Src/subst.c:4096-4110 / 4137-4150 — every value is re-lexed with
+            // `parse_subst_string`; errors are reported only under `(X)`
+            // (`if (!quoteerr) noerrs = 1;`), where a failed parse ends the
+            // expansion: `else if (haserr || errflag) { zerr("parse error in
+            // parameter value"); return NULL; }`. The lexer's own diagnostic
+            // (`unmatched "`) is printed first and its errflag keeps the second
+            // message quiet, as in zsh.
+            if quoteerr {
+                let to_parse: Vec<String> = match split_parts.as_ref() {
+                    Some(parts) if !joined_scalar_c3907 => parts.clone(),
+                    _ => vec![value.clone()],
+                };
+                for v in &to_parse {
+                    if crate::ported::lex::parse_subst_string(v).is_err() || errflag_set() {
+                        zerr("parse error in parameter value"); // c:4147
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new()); // c:4148
+                    }
+                }
+            }
             if joined_scalar_c3907 {
                 // c:4065 `if (isarr) { per element } else { … }` — the DQ
                 // collapse (c:3032-3034) already joined with `sep`/`$IFS[1]`
