@@ -2186,7 +2186,13 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             0, // c:1530
             HFILE_USE_OPTIONS as i32 | HFILE_FAST as i32,
         );
-        // curline.histnum = curhist + 1                                     // c:1531
+        // c:1531 — `curline.histnum = curhist+1;`. readhistfile just
+        // appended other sessions' lines and advanced curhist; without this
+        // the next prepnexthistent numbers this line past curline.histnum,
+        // and loop()'s preexec check (c:Src/init.c:206) passes `$1` empty.
+        if let Some(cl) = curline.lock().unwrap().as_mut() {
+            cl.histnum = curhist.load(SeqCst) + 1; // c:1531
+        }
     }
     let flag = histdone.load(SeqCst); // c:1533
     histdone.store(0, SeqCst); // c:1534
@@ -2280,7 +2286,11 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         if idx < ring.len() && (ring[idx].node.flags as u32 & HIST_TMPSTORE) != 0 {
             if idx == 0 {
                 // c:1573 he == hist_ring
-                curhist.fetch_sub(1, SeqCst); // c:1574
+                // c:1574 — `curline.histnum = curhist--;`
+                let old = curhist.fetch_sub(1, SeqCst);
+                if let Some(cl) = curline.lock().unwrap().as_mut() {
+                    cl.histnum = old; // c:1574
+                }
             }
             ring.remove(idx); // c:1575 freehistnode
             histlinect.fetch_sub(1, SeqCst);
@@ -2336,6 +2346,13 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
                     // c:1603 histstrcmp
                     overwrite_old = top.node.flags as u32 & HIST_OLD; // c:1610
                     he_idx = Some(0);
+                    // c:1612 — `curline.histnum = curhist;`. The line reuses
+                    // the top entry instead of taking a new number, so
+                    // curline must name that entry or preexec's `$1`
+                    // (c:Src/init.c:206) goes empty for an ignored duplicate.
+                    if let Some(cl) = curline.lock().unwrap().as_mut() {
+                        cl.histnum = curhist.load(SeqCst); // c:1612
+                    }
                 }
             }
         }
