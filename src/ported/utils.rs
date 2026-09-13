@@ -11702,7 +11702,55 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
     // This port's `^` arm consumes its base character inline, which cannot
     // express that, so the flag carries the state to the modifier arm instead.
     let mut pending_control = false;
+    // (output length, control, meta) recorded by a `\C`/`\M` escape.
+    let mut pending_mask: Option<(usize, u32, u32)> = None;
+    // !!! WARNING: C applies a pending `\C`/`\M` modifier to `t[-1]` at the
+    // bottom of the loop iteration that emitted the next character
+    // (c:Src/utils.c:7261-7275), after that iteration decoded its own escape
+    // (`\130`, `\x58`, `\e` …). The escape arms here leave the loop body from
+    // many places, so the masks are applied to the last emitted unit at the
+    // start of the next iteration and after the loop instead.
+    let apply_pending_mask = |result: &mut String, pending: &mut Option<(usize, u32, u32)>| {
+        let Some((mark, control, meta)) = *pending else {
+            return;
+        };
+        if result.len() <= mark {
+            return;
+        }
+        *pending = None;
+        let mut units: Vec<char> = result.chars().collect();
+        let Some(last) = units.pop() else {
+            return;
+        };
+        let metafied = units.last() == Some(&'\u{83}');
+        let mut byte = if metafied { (last as u32) ^ 32 } else { last as u32 };
+        if byte > 0xff {
+            return; // a multibyte character: left as emitted
+        }
+        if metafied {
+            units.pop();
+        }
+        if meta == 2 {
+            byte |= 0x80; // c:7261-7264
+        }
+        if control == 1 {
+            byte = if byte == '?' as u32 { 0x7f } else { byte & 0x9f }; // c:7265-7271
+        }
+        if meta == 1 {
+            byte |= 0x80; // c:7272-7275
+        }
+        *result = units.into_iter().collect();
+        let b_ = byte as u8;
+        if b_ < 0x80 {
+            result.push(b_ as char);
+        } else {
+            // c:7289-7294 — a byte >= 0x80 is metafied.
+            result.push('\u{83}');
+            result.push(char::from(b_ ^ 32));
+        }
+    };
     while let Some(c) = chars.next() {
+        apply_pending_mask(&mut result, &mut pending_mask);
         consumed += c.len_utf8();
         // c:utils.c:7194 — `^X` caret notation. A bare `^` (not a backslash
         // escape) followed by any char applies the control mask to it, but
@@ -12133,101 +12181,14 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
                     }
                     break;
                 }
-                // Read one base character (allowing nested simple escapes).
-                let base: Option<char> = if chars.peek() == Some(&'\\') {
-                    chars.next();
-                    consumed += 1;
-                    match chars.next() {
-                        Some('n') => {
-                            consumed += 1;
-                            Some('\n')
-                        }
-                        Some('t') => {
-                            consumed += 1;
-                            Some('\t')
-                        }
-                        Some('r') => {
-                            consumed += 1;
-                            Some('\r')
-                        }
-                        Some('a') => {
-                            consumed += 1;
-                            Some('\x07')
-                        }
-                        Some('b') => {
-                            consumed += 1;
-                            Some('\x08')
-                        }
-                        Some('e') | Some('E') => {
-                            consumed += 1;
-                            Some('\x1b')
-                        }
-                        Some('f') => {
-                            consumed += 1;
-                            Some('\x0c')
-                        }
-                        Some('v') => {
-                            consumed += 1;
-                            Some('\x0b')
-                        }
-                        Some('\\') => {
-                            consumed += 1;
-                            Some('\\')
-                        }
-                        Some('\'') => {
-                            consumed += 1;
-                            Some('\'')
-                        }
-                        Some('"') => {
-                            consumed += 1;
-                            Some('"')
-                        }
-                        Some(other) => {
-                            consumed += 1;
-                            Some(other)
-                        }
-                        None => None,
-                    }
-                } else {
-                    chars.next().inspect(|c| {
-                        consumed += c.len_utf8();
-                    })
-                };
-                if let Some(ch) = base {
-                    let mut byte = ch as u32;
-                    // c:7261-7264 — `if (meta == 2) { t[-1] |= 0x80; meta = 0; }`
-                    // runs BEFORE the control mask: `\M` seen while control was
-                    // already pending sets the high bit first.
-                    if meta == 2 {
-                        byte |= 0x80;
-                    }
-                    // c:7265-7271 — control mask (`\C-?` → 0x7f, else & 0x9f).
-                    if control == 1 {
-                        if byte == '?' as u32 {
-                            byte = 0x7f;
-                        } else {
-                            byte &= 0x9f;
-                        }
-                    }
-                    // c:7272-7275 — `if (meta) { t[-1] |= 0x80; }` — the
-                    // meta==1 order, applied AFTER the mask.
-                    if meta == 1 {
-                        byte |= 0x80;
-                    }
-                    // c:7289-7294 — a masked byte >= 0x80 is metafied so it
-                    // unmetafies back to the single raw byte on output.
-                    if byte <= 0xff {
-                        let b_ = byte as u8;
-                        if b_ < 0x80 {
-                            result.push(b_ as char);
-                        } else {
-                            result.push('\u{83}');
-                            result.push(char::from(b_ ^ 32));
-                        }
-                    } else if let Some(c) = char::from_u32(byte) {
-                        result.push(c);
-                    }
-                }
+                // c:7044-7047 — `control = 1; continue;` (and `meta = 1 +
+                // control`, c:7034): the modifier does not read its base
+                // character itself. The next loop iteration decodes whatever
+                // follows — a plain char or a full escape such as `\130` /
+                // `\x58` / `\e` — and c:7261-7275 masks the byte it emitted.
+                // Reading a restricted base here turned `\C-\130` into
+                // `\C-\1` + `30` (0x11 `3` `0`) where zsh gives 0x18.
+                pending_mask = Some((result.len(), control, meta));
             }
             // c:utils.c:7180-7184 — default arm. With GETKEY_EMACS
             // set, drop the backslash; otherwise keep `\<char>`.
@@ -12260,6 +12221,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             }
         }
     }
+    apply_pending_mask(&mut result, &mut pending_mask);
     (result, consumed)
 }
 

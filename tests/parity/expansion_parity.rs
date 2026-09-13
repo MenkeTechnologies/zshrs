@@ -949,6 +949,18 @@ mod flag_arg_delimiters {
     fn g_flag_bracket_delim() {
         assert_parity("v='a\\tb'; print -r -- ${(g[o])v}");
     }
+
+    /// c:Src/utils.c:7031-7047 + 7261-7275 — `\C`/`\M` only record the mask;
+    /// the next iteration decodes a full escape (octal, hex, `\e`) and the
+    /// mask lands on the byte it emitted.
+    #[test]
+    fn g_flag_control_and_meta_take_a_full_escape() {
+        assert_parity(r#"foo="^X"; bar="\\C-\\130"; [[ ${(g:c:)foo} == ${(g:oe:)bar} ]]; echo rc=$?"#);
+        assert_parity(
+            r#"for b in "\\C-\\x58" "\\M-\\C-\\x41" "\\C-\\e" "\\C-?" "\\M-\\C-?" "\\C-\\M-?" "\\M--" "^\\M-a"; do print -rn -- ${(g:oce:)b} | od -An -tx1; done"#,
+        );
+        assert_parity(r#"b="\\C-\\130"; print -rn -- ${(g:e:)b} | od -An -tx1"#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
