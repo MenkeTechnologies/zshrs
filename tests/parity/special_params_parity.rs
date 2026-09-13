@@ -478,3 +478,77 @@ mod prompt_alias_group {
         assert_parity(r#"PROMPT=abc; PROMPT+=X; PS1=fresh; print "[$PS1][$PROMPT][$prompt]""#);
     }
 }
+
+/// c:Src/builtin.c:2608-2632 — a local that keeps a special's struct and is
+/// declared WITHOUT a value is re-initialised to empty through the special's
+/// own setfn, unless the saved node is PM_NORESTORE or PM_READONLY. The outer
+/// value comes back when the scope ends.
+mod local_special_starts_empty {
+    use super::*;
+
+    /// Tied array half: zsh `F=[] 0`, zshrs showed the outer `/g1:/g2`.
+    #[test]
+    fn tied_array_half_empties_the_scalar_half() {
+        assert_parity(r#"f(){ local +h -a fpath; print "F=[$FPATH] ${#FPATH}"; }; FPATH=/g1:/g2; f; print "[$FPATH]""#);
+    }
+
+    /// `local -a path` (no +h) is the same arm.
+    #[test]
+    fn local_path_empties_path_scalar() {
+        assert_parity(r#"f(){ local -a path; print "P=[$PATH]"; }; PATH=/g1:/g2; f; print "[$PATH]""#);
+    }
+
+    /// Scalar half of a tied pair.
+    #[test]
+    fn tied_scalar_half_empties_the_array_half() {
+        assert_parity(r#"f(){ local +h CDPATH; print "[$cdpath] [$CDPATH]" }; cdpath=(/a /b); f; print $CDPATH"#);
+    }
+
+    /// Plain scalar specials.
+    #[test]
+    fn scalar_specials_start_empty() {
+        assert_parity(r#"f(){ local +h IFS WORDCHARS HOME TERM; print -r "[$IFS][$WORDCHARS][$HOME][$TERM]" }; TERM=vt100; f; print ${#IFS} ${#WORDCHARS} ${#HOME} $TERM"#);
+    }
+
+    /// `histchars` is set to "" through histcharssetfn, which in C gives
+    /// three NUL history characters (`len ? x[0] : '\0'`), so it reads
+    /// empty. The port treats "" as C's NULL and resets `!^#`.
+    #[test]
+    #[ignore = "zshrs gap: params.rs histcharssetfn treats an empty string as NULL and restores !^#"]
+    fn histchars_starts_empty() {
+        assert_parity(r#"f(){ local +h histchars; print -r "[$histchars]" }; f; print $histchars"#);
+    }
+
+    /// Integer special.
+    #[test]
+    fn integer_specials_start_at_zero() {
+        assert_parity(r#"f(){ local +h TRY_BLOCK_ERROR; print "[$TRY_BLOCK_ERROR]" }; f"#);
+    }
+
+    /// `COLUMNS` is zeroed through zlevarsetfn; C's adjustwinsize returns
+    /// early without a terminal, so it stays 0. The port re-derives 80.
+    #[test]
+    #[ignore = "zshrs gap: utils.rs adjustwinsize re-derives COLUMNS after zlevarsetfn stores 0"]
+    fn columns_starts_at_zero() {
+        assert_parity(r#"f(){ local +h COLUMNS; print "[$COLUMNS]" }; COLUMNS=77; f; print $COLUMNS"#);
+    }
+
+    /// `argv` inside a nested function.
+    #[test]
+    fn argv_starts_empty() {
+        assert_parity(r#"f(){ g(){ local +h -a argv; print "in [$argv] $#" }; g x y; print "f $# $*" }; f a b"#);
+    }
+
+    /// Magic hash: the alias class is flushed inside the scope and restored.
+    #[test]
+    fn alias_hash_starts_empty_and_comes_back() {
+        assert_parity(r#"zmodload zsh/parameter; alias a1=b; g(){ local +h -A aliases; print "[${(k)aliases}]"; alias | wc -l }; g; alias a1"#);
+    }
+
+    /// Controls: read-only specials keep their value, a value given on the
+    /// declaration wins, and a function table is not flushed.
+    #[test]
+    fn readonly_and_valued_declarations_unchanged() {
+        assert_parity(r#"zmodload zsh/parameter; x(){ :; }; f(){ local +h status ARGC; local +h IFS=:; local +h -A functions builtins; print "[$status][$ARGC][$IFS][${(k)functions}][${+builtins[print]}]" }; f a; print ${#IFS}"#);
+    }
+}

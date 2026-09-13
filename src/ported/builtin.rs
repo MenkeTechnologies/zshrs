@@ -6208,6 +6208,12 @@ pub fn bin_typeset(
             } else {
                 None
             };
+            // c:2608-2609 — set below, inside the newspecial block, when the
+            // declaration carries no value and the saved node is neither
+            // PM_NORESTORE nor PM_READONLY; acted on once the paramtab lock
+            // is released, because every special setfn re-enters paramtab.
+            let mut empty_special_type: Option<u32> = None;
+            let hash_row_writable = special_hash_snapshot.is_some();
             let _ = createparam(
                 arg_name,
                 kind as i32 | PM_LOCAL as i32 | if keep_special { PM_SPECIAL as i32 } else { 0 },
@@ -6287,9 +6293,53 @@ pub fn bin_typeset(
                             if special_hash_snapshot.is_some() {
                                 old.u_arr = special_hash_snapshot.take(); // c:1289
                             }
+                            // c:2608-2609 — `else if (newspecial != NS_NONE &&
+                            //     !(pm->old->node.flags & (PM_NORESTORE|PM_READONLY)))`,
+                            // the arm taken when `ASG_VALUEP(asg)` is false.
+                            if !arg.contains('=')
+                                && (old.node.flags as u32
+                                    & (crate::ported::zsh_h::PM_NORESTORE | PM_READONLY))
+                                    == 0
+                            {
+                                empty_special_type = Some(PM_TYPE(old.node.flags as u32));
+                            }
                         }
                     }
                 }
+            }
+            // c:2610-2632 — "We need to use the special setting function to
+            // re-initialise the special parameter to empty." The local keeps the
+            // special's accessors, so each type is written through the
+            // name-routed setter that reaches them: `local -a path` empties
+            // $PATH as well, `local +h IFS` clears the field separators.
+            match empty_special_type {
+                Some(t) if t == PM_SCALAR || t == PM_NAMEREF => {
+                    let _ = setsparam(arg_name, ""); // c:2617 gsu.s->setfn(pm, "")
+                }
+                Some(t) if t == PM_INTEGER => {
+                    let _ = setiparam(arg_name, 0); // c:2620 gsu.i->setfn(pm, 0)
+                }
+                Some(t) if t == PM_EFLOAT || t == PM_FFLOAT => {
+                    // c:2624 gsu.f->setfn(pm, 0.0)
+                    let zero = mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: crate::ported::zsh_h::MN_FLOAT,
+                    };
+                    let _ = crate::ported::params::setnparam(arg_name, zero);
+                }
+                Some(t) if t == PM_ARRAY => {
+                    let _ = setaparam(arg_name, Vec::new()); // c:2627 mkarray(NULL)
+                }
+                // c:2630 gsu.h->setfn(pm, newparamtable(17, ...)) — an empty table
+                // through the whole-hash setfn (setpmraliases flushes the class,
+                // setpmfunctions adds nothing). Read-only rows never get here in
+                // C (c:2609); zshrs's seeded rows do not all carry PM_READONLY,
+                // so gate on the same writable-row test the snapshot uses.
+                Some(t) if t == PM_HASHED && hash_row_writable => {
+                    let _ = crate::ported::params::assignaparam(arg_name, Vec::new(), 0);
+                }
+                _ => {}
             }
         }
 
