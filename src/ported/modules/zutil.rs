@@ -693,6 +693,25 @@ impl ZFormat {
                 *idx += 1;
             }
 
+            // c:849-856 — "next char isn't a legal spec char -- unwind, treat
+            // the sequence literally":
+            //   if (!testit && (!*s || *s == '%' || *s == ')' || *s == '-' || *s == '.')) {
+            //       if (!quote) start += (s - start == 1 && (*s == '%' || *s == ')'));
+            //       s = start;
+            //   }
+            // After the unwind `*s` is `%` (or `)`), never a registered spec, so
+            // the raw-copy arm below emits exactly one character.
+            let mut start = start;
+            if !testit {
+                let at = bytes.get(*idx).copied();
+                if matches!(at, None | Some('%') | Some(')') | Some('-') | Some('.')) {
+                    if *idx - start == 1 && matches!(at, Some('%') | Some(')')) {
+                        start += 1; // c:854 (quote is never set on this path)
+                    }
+                    *idx = start; // c:855
+                }
+            }
+
             if testit && *idx < bytes.len() {
                 // Ternary expression — zutil.c:847-887.
                 let testval: i64 = min.or(max).unwrap_or(0);
@@ -765,10 +784,19 @@ impl ZFormat {
             }
 
             // Plain `%X` spec (zutil.c:890-922).
-            if *idx < bytes.len() {
+            if *idx >= bytes.len() {
+                // c:952-964 with `*s == '\0'` — no spec char (`%(` or `%-`
+                // at the end): `len = s - start + 1` copies the sequence up
+                // to the terminator verbatim.
+                for &c in &bytes[start..] {
+                    out.push(c);
+                }
+                continue;
+            }
+            {
                 let spec_char = bytes[*idx];
                 *idx += 1;
-                if let Some(spec_val) = specs.get(&spec_char) {
+                if let Some(spec_val) = specs.get(&spec_char).filter(|_| *idx - 1 != start) {
                     let mut val_chars: Vec<char> = spec_val.chars().collect();
                     let len = val_chars.len() as i64;
                     let len = match max {
@@ -4024,15 +4052,11 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
     // The original C uses an output-buffer with growable backing;
     // we use a Rust String with push_* helpers. The recursive
     // descent + (skip || actval) pattern is the same.
-    // Per zsh/Src/Modules/zutil.c::bin_zformat lines 975-976:
-    // `specs['%']` and `specs[')']` are pre-populated to literal "%" and ")"
-    // BEFORE the recursive walk, which is why `%%` produces `%` and
-    // `%)` produces `)` even though no caller registers them. Rebuild
-    // a private copy of the specs map with those defaults injected,
-    // unless the caller explicitly overrode them.
-    let mut effective: HashMap<char, String> = specs.clone();
-    effective.entry('%').or_insert_with(|| "%".to_string());
-    effective.entry(')').or_insert_with(|| ")".to_string());
+    // bin_zformat (c:1026-1032) never registers `%` or `)` as specs — it
+    // rejects them as spec names. `%%` → `%` and `%)` → `)` come from the
+    // unwind at c:849-856 inside the walker, which also keeps a lone
+    // trailing `%` and an unterminated `%(` as literal text.
+    let effective = specs;
 
     let bytes: Vec<char> = format.chars().collect();
     let mut out = String::with_capacity(bytes.len() + 16);

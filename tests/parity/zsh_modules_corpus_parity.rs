@@ -1546,3 +1546,18 @@ mod contrib {
         );
     }
 }
+
+/// c:Src/Modules/zutil.c:849-856 — in `zformat -f/-F` a `%` not followed by a
+/// legal spec character unwinds and is copied literally: `%%` gives `%`, a lone
+/// trailing `%` stays `%`, and an unterminated `%(` stays `%(` (c:952-964).
+/// The port seeded fake `%`/`)` specs instead, so a trailing `%` and `%(`
+/// vanished and `%%%` lost its last character.
+mod zformat_literal_percent {
+    use super::*;
+
+    #[test]
+    fn percent_runs_and_trailing_sequences_stay_literal() {
+        assert_parity(r#"zmodload zsh/zutil; for 1 in % %% %%% %%%% %%%%% %%%%%%; do zformat -F REPLY $1 && print -r - "[$REPLY]"; done"#);
+        assert_parity(r#"zmodload zsh/zutil; zformat -F REPLY '%(' && print -r - "[$REPLY]"; zformat -f REPLY '%(' && print -r - "[$REPLY]"; zformat -f REPLY '%)|%-|%.|%%s' s:X && print -r - "[$REPLY]""#);
+    }
+}
