@@ -1316,3 +1316,21 @@ mod eval_flag_null_keeps_a_leading_empty_quote {
         assert_parity(r#"b=ok; v=""${(e)b}; print -r -- "[$v]" ""${(e)b}x"#);
     }
 }
+
+/// c:Src/subst.c:2634-2636 — "Don't activate special pattern characters if
+/// inside quotes": `if (qt) globsubst = 0;`, so `${~a}` inside double quotes
+/// never globs.
+mod tilde_flag_inside_double_quotes_does_not_glob {
+    use super::*;
+
+    #[test]
+    fn quoted_tilde_substitution_stays_literal() {
+        assert_parity(r#"a='*'; print -r -- "${~a}" "x${~a}" "${~a}"y; echo rc=$?"#);
+        assert_parity(r#"a=(q '*'); print -r -- "${~a}" "${~a[2]}"; echo rc=$?"#);
+    }
+
+    #[test]
+    fn unquoted_tilde_substitution_still_globs() {
+        assert_parity(r#"a='zz_no*'; print -r -- ${~a}; echo rc=$?"#);
+    }
+}

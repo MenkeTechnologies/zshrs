@@ -7462,7 +7462,12 @@ impl ZshCompiler {
                     // word_seg_depth > 0) the parent word's assembled-scalar
                     // glob owns filename generation — globbing this segment in
                     // isolation would drop the surrounding parts.
+                    // c:Src/subst.c:2634-2636 — "Don't activate special
+                    // pattern characters if inside quotes": `if (qt) globsubst
+                    // = 0;`. A whole-word `"${~a}"` reaches here with the quotes
+                    // already untokenized away and dq_context_depth still 0.
                     if self.dq_context_depth == 0
+                        && !word_is_single_dq_span(s)
                         && self.scalar_assign_depth == 0
                         && self.word_seg_depth == 0
                     {
@@ -9250,6 +9255,12 @@ impl ZshCompiler {
                 // the word here. `$~~` / `${~~` toggle globsubst OFF (no flag).
                 for seg in &segs {
                     if let WordSegment::Expansion(e) = seg {
+                        // c:Src/subst.c:2634-2636 `if (qt) globsubst = 0;` — a
+                        // `$~` inside double quotes (Qstring `$`) forces nothing:
+                        // `"x${~a}"` stays literal.
+                        if e.starts_with(crate::ported::zsh_h::Qstring) {
+                            continue;
+                        }
                         let u = crate::lex::untokenize(e);
                         let is_gs = u
                             .strip_prefix("$~")
