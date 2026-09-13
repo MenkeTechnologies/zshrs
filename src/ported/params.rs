@@ -5680,11 +5680,31 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
     } else if t == PM_INTEGER {
         // c:2874 — `pm->gsu.i->setfn(pm, val.u.l)`. For MN_FLOAT
         // input, C truncates to integer via `(zlong)val.u.d`.
-        pm.u_val = if (val.type_ & MN_INTEGER) != 0 {
+        let n = if (val.type_ & MN_INTEGER) != 0 {
             val.l
         } else {
             val.d as i64
         };
+        // c:2874 dispatches the param's OWN integer set-function. Most
+        // integer params carry `varinteger_gsu`, whose setfn is the plain
+        // store below — but `$LINES` / `$COLUMNS` are declared
+        // `IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)`
+        // (c:Src/params.c:362-363), and `zlevarsetfn` (c:4226) additionally
+        // publishes the value into the `zterm_lines` / `zterm_columns`
+        // GLOBAL that every C-side reader consults.
+        //
+        // The port inlined the store and never dispatched, which left
+        // `zlevarsetfn` with zero call sites: an explicit `COLUMNS=61` moved
+        // the parameter and nothing else. Readers that go through
+        // `adjustcolumns()` (c:1858, a cached read of `zterm_columns`) kept
+        // the geometry the last `adjustwinsize` probe cached — so in any
+        // shell that had probed a tty, `COLUMNS=61` was ignored by the
+        // completion-list layout while `$COLUMNS` itself read 61.
+        if matches!(pm.node.nam.as_str(), "LINES" | "COLUMNS") {
+            zlevarsetfn(pm, n); // c:2874 via zlevar_gsu
+        } else {
+            pm.u_val = n; // c:2874 via varinteger_gsu
+        }
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
         // c:2878 — `pm->gsu.f->setfn(pm, val.u.d)`. MN_INTEGER input
         // gets promoted via `(double)val.u.l`.

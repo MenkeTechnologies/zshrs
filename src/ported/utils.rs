@@ -17178,6 +17178,49 @@ mod tests {
             "COLUMNS=61 must be what the zterm_columns readers see (c:Src/params.c:362)"
         );
     }
+
+    /// The same contract as the test above, but with `zterm_columns` ALREADY
+    /// seeded — which is the only state that can catch the real defect.
+    ///
+    /// `adjustcolumns` (c:Src/utils.c:1858) is a cached read: a non-zero
+    /// `zterm_columns` short-circuits every fallback. So with the global at 0
+    /// the test above passes even when the assignment never reaches it,
+    /// because `adjustcolumns` then falls through to `getsparam("COLUMNS")`
+    /// and finds the parameter. Seed the global first and the fallback is
+    /// unreachable, so the only way to observe 61 is the `setfn` dispatch
+    /// C makes at `Src/params.c:2874` (`pm->gsu.i->setfn(pm, val.u.l)` →
+    /// `zlevarsetfn`, c:4226-4230, whose `*p = x` IS the global).
+    ///
+    /// That dispatch was missing: `setnumvalue`'s PM_INTEGER arm stored
+    /// `pm.u_val` directly, leaving `zlevarsetfn` with zero call sites in the
+    /// tree. Any test that ran after one which probed a tty (there is one
+    /// eight tests earlier in this very module) saw the stale probe value.
+    #[test]
+    fn explicit_columns_assignment_overrides_an_already_cached_zterm_columns() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_columns = ZTERM_COLUMNS.load(Ordering::SeqCst);
+        let saved_shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(-1, Ordering::Relaxed); // c:1900
+
+        // Stand in for a completed `adjustwinsize` probe (c:1862).
+        ZTERM_COLUMNS.store(77, Ordering::SeqCst);
+        setiparam("COLUMNS", 61); // c:4230 via c:2874 setfn dispatch
+        let seen = adjustcolumns();
+        let global = ZTERM_COLUMNS.load(Ordering::SeqCst);
+
+        crate::ported::init::SHTTY.store(saved_shtty, Ordering::Relaxed);
+        ZTERM_COLUMNS.store(saved_columns, Ordering::SeqCst);
+
+        assert_eq!(
+            global, 61,
+            "the assignment must land in the zterm_columns GLOBAL, not just \
+             the parameter (c:Src/params.c:4230 `*p = x`)"
+        );
+        assert_eq!(
+            seen, 61,
+            "a cached zterm_columns must not survive an explicit COLUMNS="
+        );
+    }
 }
 
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A

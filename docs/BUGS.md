@@ -60444,3 +60444,48 @@ so `funcstack` omits `_all_labels`/`_description` and a caller's `local`s
 (`suf`) are invisible to anything dynamically scoped underneath it. That is
 structural to every `src/compsys/ported/**` port, not specific to
 `_xft_fonts`, and it does not affect the emitted match list.
+
+---
+
+## #1149 — `setnumvalue` stored PM_INTEGER directly instead of dispatching the param's set-function, so `zlevarsetfn` had zero call sites and `COLUMNS=N` never reached `zterm_columns` — fixed
+
+**Status:** `fixed` 2026-09-13.
+
+```console
+$ # with zterm_columns already seeded by an adjustwinsize probe (any tty):
+$ #   COLUMNS=61  ->  adjustcolumns() still returns the cached 77
+```
+
+`Src/params.c:2874` is `pm->gsu.i->setfn(pm, val.u.l)` — every integer
+parameter is written through its OWN set-function. Most carry
+`varinteger_gsu`, whose setfn is a plain store, but `$LINES` and `$COLUMNS`
+are declared `IPDEF5("LINES", &zterm_lines, zlevar_gsu)` /
+`IPDEF5("COLUMNS", &zterm_columns, zlevar_gsu)` (`Src/params.c:362-363`), and
+`zlevarsetfn` (`Src/params.c:4226-4232`) does `*p = x` where `p` IS the
+`zterm_lines` / `zterm_columns` global, then `adjustwinsize(2 + (p ==
+&zterm_columns))`.
+
+zshrs's `setnumvalue` inlined the store — `pm.u_val = …` — and never
+dispatched. The port HAS a faithful `zlevarsetfn` (it stores the param, mirrors
+the global and calls `adjustwinsize(2|3)`); it simply had **zero call sites in
+the tree**, so an explicit `COLUMNS=61` moved the parameter and nothing else.
+
+`adjustcolumns` (`Src/utils.c:1858`) is a cached read of that global, so the
+divergence is only observable once something has seeded it — which
+`adjustwinsize` does on the first tty probe. That is why the existing
+`explicit_columns_assignment_reaches_the_zterm_columns_readers` test passed
+alone (global at 0 → the `getsparam("COLUMNS")` fallback answered) and failed
+whenever it ran after `adjustwinsize_seeds_lines_columns_from_shtty`, eight
+tests earlier in the same module, which leaves the global at the pty's 77.
+
+**Fix.** `src/ported/params.rs` — `setnumvalue`'s PM_INTEGER arm dispatches
+`zlevarsetfn` for `LINES` / `COLUMNS` and keeps the plain store for every other
+integer param (the `varinteger_gsu` setfn). New test
+`explicit_columns_assignment_overrides_an_already_cached_zterm_columns` seeds
+the global first so the fallback is unreachable and only the dispatch can
+satisfy it; it fails with the dispatch reverted.
+
+Not reproduced as a user-visible symptom: a pty completion listing at
+`COLUMNS=40` lays out identically in zsh and zshrs both before and after. The
+fix is port fidelity plus the cross-test failure it caused; no shell-level
+repro is claimed.
