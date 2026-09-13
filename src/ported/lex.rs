@@ -624,9 +624,20 @@ fn cmd_or_math() -> i32 {
     // which fills lexbuf with ONLY the inner expression, then checks
     // for the closing `)`. The surrounding `((` / `))` are NOT added
     // to lexbuf.
-    if dquote_parse(')', false).is_err() {
+    if let Err(stopped) = dquote_parse(')', false) {
         // c:506 — `cmdpop();` before rewind to command-parse path.
         cmdpop();
+        // c:516-519 — `else if (lexstop) return CMD_OR_MATH_ERR;` — the scan
+        // ran off the end; there is nothing to give back.
+        if LEX_LEXSTOP.get() {
+            return CMD_OR_MATH_ERR;
+        }
+        // c:521-522 — `hungetc(c); lexstop = 0;` — dquote_parse consumed the
+        // character it stopped on (`err = c`, c:1673); give it back before
+        // the rest of the body.
+        if let Some(stopped) = stopped {
+            hungetc(stopped);
+        }
         // Back up and try as command
         // c:Src/lex.c:523 — `while (lexbuf.len > oldlen && !(errflag &
         // ERRFLAG_ERROR))`. The errflag term was missing, and C's
@@ -758,10 +769,10 @@ fn cmd_or_math_sub() -> i32 {
             // gettok `((` caller), which would double-consume the
             // body when chained here.
             cmdpush(CS_MATHSUBST as u8);
-            let dq_ok = dquote_parse(')', false).is_ok();
+            let dq = dquote_parse(')', false); // c:503
             cmdpop();
 
-            if dq_ok {
+            if dq.is_ok() {
                 // c:511 — `c = hgetc(); if (c == ')') return MATH;`
                 let c2 = hgetc();
                 if c2 == Some(')') {
@@ -790,13 +801,15 @@ fn cmd_or_math_sub() -> i32 {
                 // c:519 — `else if (lexstop) return CMD_OR_MATH_ERR;`
                 return CMD_OR_MATH_ERR;
             } else {
-                // c:522 — `hungetc(c); lexstop = 0;` — push back the
-                // char dquote_parse stopped on (caller-side handled
-                // via `dquote_parse` return value in C; in Rust we
-                // approximate by pushing nothing here — dquote_parse
-                // already left the stream positioned at the offending
-                // char, but our impl signals failure through Err
-                // without consuming it).
+                // c:521-522 — `hungetc(c); lexstop = 0;` — push back the
+                // character dquote_parse stopped on. dquote_parse CONSUMED
+                // it (it is `err = c`, c:1673), so `$(( a[ ))` lost its first
+                // `)`: the rewind re-lexed `( a[ ` with one `)` left, and the
+                // command substitution never closed ("parse error near
+                // `$(( a[ ))'", or "unmatched \"" inside double quotes).
+                if let Err(Some(stopped)) = dq {
+                    hungetc(stopped);
+                }
                 LEX_LEXSTOP.set(false);
             }
 
@@ -1328,9 +1341,13 @@ fn gettok() -> lextok {
         // ';' : ')', 0); cmdpop();`
         let end_char = if LEX_INFOR.get() > 0 { ';' } else { ')' };
         cmdpush(CS_MATH as u8);
-        let parse_ok = dquote_parse(end_char, false).is_ok();
+        let dq = dquote_parse(end_char, false);
         cmdpop();
-        if !parse_ok {
+        if let Err(stopped) = dq {
+            // c:643-645 — `if (c || …) { hungetc(c); return LEXERR; }`
+            if let Some(stopped) = stopped {
+                hungetc(stopped);
+            }
             return LEXERR;
         }
         // c:638 — `*lexbuf.ptr = '\0';`
@@ -1606,7 +1623,15 @@ fn gettok() -> lextok {
                                 set_tokstr(None);
                                 return INPAR_TOK;
                             }
-                            CMD_OR_MATH_ERR | _ => return LEXERR,
+                            // c:788-791 — `tokstr` already points at the
+                            // lexbuf cmd_or_math filled, so yyerror names
+                            // it: `(( 1 +` → "parse error near ` 1 +'".
+                            CMD_OR_MATH_ERR | _ => {
+                                set_tokstr(Some(
+                                    LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()),
+                                ));
+                                return LEXERR;
+                            }
                         }
                     }
                     hungetc('(');
@@ -3025,7 +3050,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 /// Direct port of `dquote_parse` from `Src/lex.c:1486`. Reads chars
 /// until `endchar` is seen at depth 0, handling escapes, `${...}`,
 /// `$(...)`, backtick, `$((...))`, and inner `"..."`.
-fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
+///
+/// C returns `err`, and on a non-EOF error `err = c` (c:1664-1673): the
+/// character the scan stopped on, which `cmd_or_math` and the `((` arm of
+/// gettok push back before re-lexing. `Err(Some(c))` carries that character;
+/// `Err(None)` is the EOF exit (`err = intick || endchar || err`, c:1659) and a
+/// failed nested `$(`, where C's value is not a character either.
+fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
     // c:1490-1491 —
     //     int math = endchar == ')' || endchar == ']' || infor;
     //     int zlemath = math && zlemetacs > zlemetall + addedx - inbufct;
@@ -3045,7 +3076,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
     // (eight `return`s plus two `?`s); holding the body in an immediately
     // called closure funnels them all back here, and the build gate admits
     // no second module-level `fn` to split it into.
-    let body = || -> Result<(), ()> {
+    let body = || -> Result<(), Option<char>> {
         let mut pct = 0; // parenthesis count
         let mut brct = 0; // bracket count
         let mut bct = 0; // brace count (for ${...})
@@ -3079,16 +3110,20 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
         loop {
             let c = hgetc();
             let c = match c {
-                Some(c) if c == endchar && intick == 0 && bct == 0 => {
-                    if is_math && (pct > 0 || brct > 0) {
-                        add(c);
-                        if c == ')' {
-                            pct -= 1;
-                        } else if c == ']' {
-                            brct -= 1;
-                        }
-                        continue;
-                    }
+                // c:1492-1494 — the loop runs while `c != endchar || bct ||
+                // (math && (pct > 0 || brct > 0)) || intick`; only its negation
+                // ends the scan. An endchar still inside math parens or
+                // brackets goes through the switch below, where `)` / `]`
+                // with nothing of its own kind open is an error (c:1603-1612).
+                // The port used to add it and decrement the count, so
+                // `$(( a[ ))` ran `pct` negative to EOF instead of stopping on
+                // the first `)`.
+                Some(c)
+                    if c == endchar
+                        && intick == 0
+                        && bct == 0
+                        && !(is_math && (pct > 0 || brct > 0)) =>
+                {
                     cleanup(intick, bct);
                     return Ok(());
                 }
@@ -3096,7 +3131,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 None => {
                     LEX_LEXSTOP.set(true);
                     cleanup(intick, bct);
-                    return Err(());
+                    return Err(None); // c:1659 — lexstop
                 }
             };
 
@@ -3165,7 +3200,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 // && endchar == '"';` — under CSHJUNKIEQUOTES, a bare `\n`
                 // inside `"..."` is an error (unterminated string).
                 '\n' if !sub && isset(CSHJUNKIEQUOTES) && endchar == '"' => {
-                    return Err(());
+                    return Err(Some(c)); // c:1673 — `err = c`
                 }
 
                 '$' => {
@@ -3180,7 +3215,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                             match cmd_or_math_sub() {
                                 CMD_OR_MATH_CMD => add(Outpar),
                                 CMD_OR_MATH_MATH => add(Outparmath),
-                                CMD_OR_MATH_ERR | _ => return Err(()),
+                                CMD_OR_MATH_ERR | _ => return Err(None),
                             }
                         }
                         Some('[') => {
@@ -3281,7 +3316,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 ')' => {
                     if !is_math || bct == 0 {
                         if pct == 0 && is_math {
-                            return Err(());
+                            return Err(Some(c)); // c:1604 err = 1, c:1673 err = c
                         }
                         pct -= 1;
                     }
@@ -3298,7 +3333,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                 ']' => {
                     if !is_math || bct == 0 {
                         if brct == 0 && is_math {
-                            return Err(());
+                            return Err(Some(c)); // c:1612 err = 1, c:1673 err = c
                         }
                         brct -= 1;
                     }
@@ -3318,7 +3353,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
                         r?;
                         add(Dnull);
                     } else {
-                        return Err(());
+                        return Err(Some(c)); // c:1623 err = 1, c:1673 err = c
                     }
                 }
 

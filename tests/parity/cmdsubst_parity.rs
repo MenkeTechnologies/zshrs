@@ -81,6 +81,52 @@ mod dollar_paren_subst {
         assert_parity(r#"echo "result: $(echo embedded)""#);
     }
 
+    /// `$((` that is not valid math is re-read as a command substitution
+    /// holding a subshell (c:Src/lex.c:520-531): `$(( a[ ))` runs `( a[ )`,
+    /// which fails on the bad pattern and substitutes nothing. The math scan
+    /// must stop ON the `)` that closes nothing (c:1492-1494, c:1603-1605) and
+    /// hand it back to be re-read (c:521). zshrs let that `)` through its loop
+    /// head and then dropped the character the scan stopped on, so the
+    /// substitution never closed: `unmatched "` inside double quotes, a parse
+    /// error in an assignment.
+    ///
+    /// Unquoted `print $(( a[ ))` is not pinned here: the lexer now hands the
+    /// compiler a command substitution, but compile_zsh's `strip_arith_subst`
+    /// still classifies the text as arithmetic by balancing its parens.
+    #[test]
+    fn invalid_math_substitution_reparses_as_a_subshell() {
+        assert_parity(r#"print "$(( a[ ))"; print rc=$?"#);
+        assert_parity(r#"print "$(( a[1 ))"; print rc=$?"#);
+        assert_parity(r#"x=$(( a[ )); print rc=$? "[$x]""#);
+        // Control: the `((` command form already re-read correctly.
+        assert_parity(r#"(( a[ )); print rc=$?"#);
+    }
+
+    /// An unterminated `((` is a lexer error whose message names what the
+    /// math scan collected (c:Src/lex.c:788-791 leaves `tokstr` on the lexer
+    /// buffer): zsh says "parse error near ` 1 +'"; zshrs named the wrong
+    /// token (`+`, `(`) because the scan never reported running out of input.
+    #[test]
+    fn unterminated_double_paren_reports_the_math_text() {
+        if !zsh_available() {
+            return;
+        }
+        for script in ["(( 1 +", "(("] {
+            let z = Command::new(zsh_path()).args(["-fc", script]).output().expect("zsh");
+            let r = Command::new(zshrs_bin())
+                .args(["--zsh", "-f", "-c", script])
+                .env_remove("ZSHRS_CACHE")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .expect("zshrs");
+            assert_eq!(
+                (String::from_utf8_lossy(&z.stderr), z.status.code()),
+                (String::from_utf8_lossy(&r.stderr), r.status.code()),
+                "stderr/status divergence on {script:?}"
+            );
+        }
+    }
+
     #[test]
     fn cmdsubst_with_pipeline_inside() {
         assert_parity(r#"echo $(echo 'a b c' | tr ' ' '\n' | sort)"#);
