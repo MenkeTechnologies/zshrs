@@ -375,3 +375,18 @@ mod tied_separator_bytes {
     }
 }
 
+/// A function-level `typeset` of a tied special keeps the special's peer
+/// name (C reuses the special's own struct, c:Src/builtin.c:2385-2393), so a
+/// following `typeset -UT` on the pair is a legal re-tie. B02typeset.ztst "OK
+/// to run typeset -T on tied specials as long as peer and joinchar are
+/// unchanged" (the harness runs the chunk inside a function).
+mod local_special_keeps_peer {
+    use super::*;
+
+    #[test]
+    fn retie_after_local_typeset_of_special() {
+        assert_parity(
+            "f(){ typeset MANPATH >/dev/null; manpath=(/ /); typeset -UT MANPATH manpath; print $manpath }; f",
+        );
+    }
+}

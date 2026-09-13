@@ -2743,7 +2743,16 @@ pub fn createparam(
             base: 0,
             width: 0,
             env: None,
-            ename: None,
+            // c:Src/builtin.c:2385-2393 — for the newspecial shadow (flagged by
+            // the caller ORing PM_SPECIAL into `flags`) C keeps the special's
+            // OWN struct and moves only the saved state into `tpm`, so
+            // `pm->ename` — the tied peer, MANPATH→manpath — survives. A plain
+            // parameter is `zshcalloc`ed (c:1136) with no peer.
+            ename: if (flags as u32 & PM_SPECIAL) != 0 {
+                oldpm.as_ref().and_then(|o| o.ename.clone())
+            } else {
+                None
+            },
             old: oldpm, // c:1137 pm->old = oldpm
             // c:1136 — C: `pm = zshcalloc(sizeof *pm)`. calloc
             // zeroes pm.level so a freshly created GLOBAL assignment
@@ -2852,7 +2861,10 @@ pub fn createparam(
                     old.gsu_s.clone(),
                     old.gsu_i.clone(),
                     old.gsu_f.clone(),
-                    PM_TYPE(old.node.flags as u32),
+                    // c:Src/builtin.c:2384 `on |= pm->node.flags & PM_TIED;` rides
+                    // along with the type: the shadow of MANPATH/PATH is still the
+                    // tied half, so bin_typeset's re-tie test (c:2899) sees it.
+                    PM_TYPE(old.node.flags as u32) | (old.node.flags as u32 & PM_TIED),
                 ))
             } else {
                 None
