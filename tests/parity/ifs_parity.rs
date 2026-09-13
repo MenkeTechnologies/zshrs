@@ -191,6 +191,14 @@ mod for_loop_iteration {
         assert_parity(r#"setopt shwordsplit; IFS=:; set -- a::b "" :c:; for i in $@; do print "<$i>"; done; for i in $* z; do print "<$i>"; done"#);
         assert_parity(r#"set -- a "" b; for i in $@ $*; do print "<$i>"; done; setopt shwordsplit; set -- "" x ""; for i in $@; do print "<$i>"; done"#);
     }
+
+    /// c:Src/loop.c execfor — `for i;` iterates the positional parameters
+    /// verbatim, never split.
+    #[test]
+    fn for_without_in_iterates_positionals_verbatim() {
+        assert_parity(r#"setopt shwordsplit; set -- "a b" c; for i; do print "<$i>"; done; for i do print "<$i>"; done"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; set -- a::b "" :c:; for i; do print "<$i>"; done; unsetopt shwordsplit; for i; do print "<$i>"; done"#);
+    }
 }
 
 mod cmdsubst_split {

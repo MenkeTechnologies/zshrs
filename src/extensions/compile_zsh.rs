@@ -10223,11 +10223,16 @@ impl ZshCompiler {
     }
 
     fn compile_for_positional(&mut self, var: &str, body: &crate::parse::ZshProgram) {
-        // Push GET_VAR("@") which returns Value::Array of positionals.
+        // c:Src/loop.c execfor — with no `in` list the words are the
+        // positional parameters themselves (`addlinknode(args,
+        // dupstring(*x))` over `pparams`), never expanded, so never split or
+        // emptied. The quoted read returns them verbatim; the unquoted
+        // GET_VAR re-splits them under SH_WORD_SPLIT (`setopt shwordsplit;
+        // set -- "a b" c; for i; do …` is `a b`, `c` in zsh).
         let at_const = self.builder.add_constant(Value::str("@"));
         self.builder.emit(Op::LoadConst(at_const), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR_DQ, 1), 0);
         // Then flatten + iterate, same shape as compile_for_words' tail.
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, 1),
