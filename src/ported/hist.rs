@@ -1215,6 +1215,23 @@ pub fn herrflush() {
     //       int c = ingetc();
     //       if (!lexstop) { hwaddc(c); addtoline(c); }
     //   }
+    //
+    // !!! WARNING: SPLIT INPUT BUFFERS !!! C has one input buffer: `hungetc`
+    // puts characters back into `inbuf`, so this drain reads them first, and
+    // `ingetc` records each character in the raw buffer while `lex_add_raw`
+    // is set (c:Src/input.c:360-361). This port keeps the lexer's pushback in
+    // `lex::LEX_UNGET_BUF` and does the raw recording in `lex::hgetc`, not in
+    // `input::ingetc`. While skipcomm is recording a command substitution
+    // (c:Src/lex.c:2217), read the pushback through `hgetc` (its pushback
+    // arm records raw and does no history expansion) and record the rest
+    // below. Otherwise the drained input vanished from the word:
+    // `${(z)…}` of `echo $(|||) bar` gave `$(|||` for zsh's `$(|||) bar`.
+    let recording_raw = crate::ported::lex::LEX_LEX_ADD_RAW.get() != 0;
+    if recording_raw {
+        while crate::ported::lex::LEX_UNGET_BUF.with_borrow(|b| !b.is_empty()) {
+            crate::ported::lex::hgetc();
+        }
+    }
     loop {
         let inbufct = crate::ported::input::inbufct.with(|c| c.get());
         if inbufct <= 0 {
@@ -1226,11 +1243,15 @@ pub fn herrflush() {
             // c:494 (!strin || lex_add_raw)
             break;
         }
-        let c = ingetc() // c:495 ingetc()
-            .map(|ch| ch as i32)
-            .unwrap_or(-1);
+        let ch = ingetc(); // c:495 ingetc()
+        let c = ch.map(|ch| ch as i32).unwrap_or(-1);
         if !lexstop.load(SeqCst) {
             // c:496 if (!lexstop)
+            if recording_raw {
+                if let Some(ch) = ch {
+                    crate::ported::lex::zshlex_raw_add(ch); // c:Src/input.c:360-361
+                }
+            }
             ihwaddc(c); // c:497 hwaddc(c)
             iaddtoline(c); // c:498 addtoline(c)
         }

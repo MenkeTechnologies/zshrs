@@ -164,16 +164,26 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     ps.infor = infor();
     ps.inrepeat_ = inrepeat();
     ps.intypeset = intypeset();
-    // parse.c:312-317 — wordcode buffer state. STUB until Phase 9b
-    // (zshrs has no ecbuf yet).
-    ps.eclen = 0;
-    ps.ecused = 0;
-    ps.ecnpats = 0;
-    ps.ecbuf = None;
-    ps.ecstrs = None;
-    ps.ecsoffs = 0;
-    ps.ecssub = 0;
-    ps.ecnfunc = 0;
+    // c:310-318 — the wordcode buffer being built. A nested parse's
+    // `init_parse` (c:513-522) resets all of it, so without this an
+    // enclosing wordcode parse (`zcompile` reaching a `$(…)`, whose
+    // skipcomm runs `parse_event(OUTPAR)`) lost everything it had emitted.
+    //
+    // !!! WARNING: COPIED, NOT HANDED OVER !!! C moves the buffer into `ps`
+    // and sets `ecbuf = NULL` (c:318); every C nested parse then starts
+    // with `init_parse`. The copy leaves the thread-locals readable for a
+    // Rust nested parse that skips `init_parse`, where C would dereference
+    // NULL; `parse_context_restore` overwrites them either way.
+    ps.eclen = ECLEN.get();
+    ps.ecused = ECUSED.get();
+    ps.ecnpats = ECNPATS.get();
+    ps.ecbuf = Some(ECBUF.with_borrow(|b| b.clone()));
+    ps.ecstrs = ECSTRS_TREE.with_borrow(|t| t.clone());
+    ps.ecstrs_index = ECSTRS_INDEX.with_borrow(|m| m.clone());
+    ps.ecstrs_reverse = ECSTRS_REVERSE.with_borrow(|m| m.clone());
+    ps.ecsoffs = ECSOFFS.get();
+    ps.ecssub = ECSSUB.get();
+    ps.ecnfunc = ECNFUNC.get();
     set_incmdpos(true);
     set_incond(0);
     set_inredir(false);
@@ -209,8 +219,17 @@ pub fn parse_context_restore(ps: &parse_stack) {
     set_infor(ps.infor);
     set_inrepeat(ps.inrepeat_);
     set_intypeset(ps.intypeset);
-    // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
-    // STUB until Phase 9b.
+    // c:330-331, c:345-352 — drop the nested buffer, put the saved one back.
+    ECLEN.set(ps.eclen);
+    ECUSED.set(ps.ecused);
+    ECNPATS.set(ps.ecnpats);
+    ECBUF.with_borrow_mut(|b| *b = ps.ecbuf.clone().unwrap_or_default());
+    ECSTRS_TREE.with_borrow_mut(|t| *t = ps.ecstrs.clone());
+    ECSTRS_INDEX.with_borrow_mut(|m| *m = ps.ecstrs_index.clone());
+    ECSTRS_REVERSE.with_borrow_mut(|m| *m = ps.ecstrs_reverse.clone());
+    ECSOFFS.set(ps.ecsoffs);
+    ECSSUB.set(ps.ecssub);
+    ECNFUNC.set(ps.ecnfunc);
 
     // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
     // error flag so the outer parse sees a clean state.
@@ -846,40 +865,75 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
 }
 
 /// Port of `par_event()` from `Src/parse.c:635`.
-/// Parse one event (sublist with optional separator). Returns true if
-/// an event was successfully parsed, false on EOF / endtok.
 ///
-/// zshrs port note: the C version emits wordcodes via ecadd/
-/// set_list_code; zshrs's parser builds AST nodes via
-/// par_sublist + par_list. Same flow, different output.
+/// ```text
+/// event : ENDINPUT
+///       | SEPER
+///       | sublist [ SEPER | AMPER | AMPERBANG ]
+/// ```
+///
+/// Returns 1/true when an event (or the closing `endtok`) was parsed. A
+/// sublist followed by anything but a separator, `endtok` or ENDINPUT is
+/// a syntax error: `tok` becomes LEXERR and the error is reported here.
+///
+/// !!! WARNING: AST, NOT WORDCODE !!! C emits the list code with
+/// `ecadd`/`set_list_code` (c:649-668) and patches `Z_END` into the last
+/// one (c:688); this port drives the AST `par_sublist` and keeps only the
+/// token walk and the error handling. Its one caller, `parse_event` with a
+/// closing token (skipcomm's `parse_event(OUTPAR)`), throws the program
+/// away, as C does with `dummy_eprog` (c:626-629).
 pub fn par_event(endtok: lextok) -> bool {
-    // parse.c:639-643 — skip leading SEPERs.
+    // c:639-643
     while tok() == SEPER {
-        // parse.c:640-641 — at top-level (endtok == ENDINPUT),
-        // a SEPER on a fresh line ends the event.
         if isnewlin() > 0 && endtok == ENDINPUT {
             return false;
         }
         zshlex();
     }
-    // parse.c:644-647 — terminate on EOF or matching close-token.
+    // c:644-647
     if tok() == ENDINPUT {
         return false;
     }
     if tok() == endtok {
         return true;
     }
-    // parse.c:649-... — drive par_sublist + handle terminator.
-    // zshrs's par_sublist already builds the AST node directly.
-    match par_sublist() {
-        Some(_) => {
-            // parse.c:651-693 — terminator handling. zshrs's
-            // par_list wraps this; for parse_event we just
-            // confirm the sublist parsed.
-            true
+
+    // c:651-669
+    let mut r = false;
+    if par_sublist().is_some() {
+        let t = tok();
+        if t == ENDINPUT || t == endtok {
+            r = true; // c:652-654
+        } else if t == SEPER {
+            // c:655-659
+            if isnewlin() <= 0 || endtok != ENDINPUT {
+                zshlex();
+            }
+            r = true;
+        } else if t == AMPER || t == AMPERBANG {
+            zshlex(); // c:660-668
+            r = true;
         }
-        None => false,
     }
+    if !r {
+        // c:670-682
+        set_tok(LEXERR);
+        if errflag.load(Ordering::Relaxed) != 0 {
+            yyerror(0);
+            return false;
+        }
+        yyerror(1);
+        crate::ported::hist::herrflush();
+        if *crate::ported::utils::noerrs_lock().lock().unwrap() != 2 {
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+        }
+        return false;
+    }
+    // c:684-691
+    if !par_event(endtok) {
+        return errflag.load(Ordering::Relaxed) == 0;
+    }
+    true
 }
 
 /// Port of `parse_list()` from `Src/parse.c:697` — C signature `parse_list(void)`. C-shape entry
@@ -5772,6 +5826,7 @@ pub fn dump_autoload(
 /// parse.c:447-453 including the conditional cmp chain
 /// (nfunc → hashval → strcmp), so corpus inputs where C's eccstr BST walk
 /// finds-or-misses match get the same outcome on the Rust side.
+#[derive(Debug, Clone)]
 struct EccstrNode {
     left: Option<Box<EccstrNode>>,
     right: Option<Box<EccstrNode>>,
@@ -5854,16 +5909,23 @@ pub struct parse_stack {
     pub inrepeat_: i32,
     /// C: `int intypeset` (zsh.h:3110).
     pub intypeset: bool,
-    // ── Wordcode-buffer state — STUB until Phase 9b ──
-    // C `Wordcode ecbuf` (zsh.h:3112) + `Eccstr ecstrs` (zsh.h:3113) +
-    // `int eclen/ecused/ecnpats/ecsoffs/ecssub/ecnfunc` (zsh.h:3112-3114).
-    // zshrs hasn't emitted wordcode yet — these fields exist to
-    // preserve the C shape but read/write nothing until P9b lands.
+    // ── Wordcode-buffer state (zsh.h:3112-3115) ──
+    // C `int eclen, ecused, ecnpats; Wordcode ecbuf; Eccstr ecstrs;
+    // int ecsoffs, ecssub, ecnfunc;` — the ECBUF family of thread-locals
+    // above, saved so a nested parse (skipcomm's `parse_event(OUTPAR)`,
+    // whose `init_parse` resets them) cannot clobber an enclosing wordcode
+    // parse such as `zcompile`'s.
     pub eclen: i32,
     pub ecused: i32,
     pub ecnpats: i32,
     pub ecbuf: Option<Vec<u32>>,
-    pub ecstrs: Option<Vec<u8>>,
+    /// C `Eccstr ecstrs` — the long-string BST (`ECSTRS_TREE`).
+    ecstrs: Option<Box<EccstrNode>>,
+    /// !!! WARNING: NOT IN PARSE_STACK — Rust-only !!! The lookup index
+    /// (`ECSTRS_INDEX`) and reverse map (`ECSTRS_REVERSE`) this port keeps
+    /// beside the BST; C reaches both through `ecstrs` alone.
+    ecstrs_index: std::collections::HashMap<(i32, String), u32>,
+    ecstrs_reverse: std::collections::HashMap<u32, Vec<u8>>,
     pub ecsoffs: i32,
     pub ecssub: i32,
     pub ecnfunc: i32,

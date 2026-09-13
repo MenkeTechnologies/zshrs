@@ -246,6 +246,42 @@ mod backticks {
     }
 }
 
+/// c:Src/lex.c:2155-2292 — skipcomm parses the body of `$( … )` with
+/// `parse_event(OUTPAR)` (c:2236) and keeps the raw text as the word. The
+/// parser, not a paren counter, decides where the body ends, so a `)` that
+/// is a case pattern, part of `${…}`, quoted, escaped, commented out or in a
+/// here-document does not close it, and a body that does not parse is a
+/// syntax error of the enclosing command (c:2244-2245 `lexstop = 1`).
+mod body_is_parsed {
+    use super::*;
+
+    #[test]
+    fn a_body_that_does_not_parse_is_a_syntax_error() {
+        assert_parity("print start; echo $(|||) bar; print end");
+        assert_parity("print start; echo $(a;;b) x; print end");
+        assert_parity("print start; echo $(echo }) y; print end");
+    }
+
+    #[test]
+    fn a_close_paren_the_parser_owns_does_not_end_the_body() {
+        assert_parity("echo $(case x in x) echo c;; esac) y");
+        assert_parity("echo $(case x in (x) echo c;; esac) y");
+        assert_parity("echo $(echo ${x:-a)b}) z");
+        assert_parity("echo $(echo \"(\" ) q; echo $(echo \\)) r; echo $(echo 'a)b') aa");
+        assert_parity("echo $( # c )\necho hi) s");
+        assert_parity("echo $(cat <<EOF\na ) b\nEOF\n) w");
+        assert_parity("echo $(cat <<\\EOF\n$x ) b\nEOF\n) w");
+    }
+
+    #[test]
+    fn separators_and_nesting_inside_the_body() {
+        assert_parity("echo $(echo a; ) x; echo $(<<<x cat) bb; echo $(()) cc");
+        assert_parity("echo $(echo $(echo n)) dd; echo $(echo `echo bq`) ee");
+        assert_parity(r#"x=$(print -r -- "$(echo "in ) q")"); print -r -- $x"#);
+        assert_parity("cat <(echo p) =(echo e) 2>/dev/null | head -1");
+    }
+}
+
 mod nested {
     use super::*;
 

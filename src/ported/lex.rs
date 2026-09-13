@@ -4398,537 +4398,143 @@ pub fn zshlex_raw_back_to_mark(mark: i64) {
     });
 }
 
-/// Skip over `(...)` for command-style substitutions: `$(...)`,
-/// `<(...)`, `>(...)`. Direct port of zsh/Src/lex.c:2080-end
-/// `skipcomm`. Per the C source comment: "we'll parse the input
-/// until we find an unmatched closing parenthesis. However, we'll
-/// throw away the result of the parsing and just keep the string
-/// we've built up on the way."
+/// Port of `skipcomm()` from `Src/lex.c:2082`, the default build (the
+/// `#else` half, c:2155-2292; the `ZSH_OLD_SKIPCOMM` paren counter is not
+/// compiled into zsh). C's comment (c:2072-2077): "we'll parse the input
+/// until we find an unmatched closing parenthesis.  However, we'll throw
+/// away the result of the parsing and just keep the string we've built up
+/// on the way."
 ///
-/// zshrs port note: the C source uses zcontext_save/restore +
-/// strinbeg/inpush to set up an isolated lex context for the
-/// throw-away parse. zshrs's standalone walker tracks paren
-/// depth directly without re-entering the parser. Same
-/// invariant: stops at the matching `)`.
+/// The body of `$(…)`, `<(…)`, `>(…)` or `=(…)` is parsed with
+/// `parse_event(OUTPAR)` inside a saved lexer/parser context, while every
+/// character read is also recorded in the raw buffer (`lex_add_raw`,
+/// c:2215-2217). That raw text becomes the word. A body that does not parse
+/// up to its `)` sets `lexstop` (c:2236-2246), which the caller turns into
+/// LEXERR: `echo $(|||) bar` is a parse error, and `${(z)}` keeps
+/// `$(|||) bar` as one word.
+///
+/// Returns `Err` when `lexstop` is set on the way out (C returns `lexstop`).
 fn skipcomm() -> Result<(), ()> {
-    // c:2094-2225 — `skipcomm`. Captures the verbatim text of a
-    // `$(...)` / `<(...)` / `>(...)` body into the parent token via
-    // C's lex_add_raw / lexbuf_raw mechanism (lex.c:2098-2149):
-    //   1. add(Inpar) — outer lexbuf gets `(` (the marker form).
-    //   2. Copy outer tokstr/lexbuf into new_tokstr/new_lexbuf so the
-    //      raw buffer starts seeded with the prefix already lexed
-    //      (e.g. `$(` plus anything before).
-    //   3. zcontext_save_partial — saves AND resets lexbuf, lexbuf_raw,
-    //      lex_add_raw to fresh.
-    //   4. tokstr_raw = new_tokstr; lexbuf_raw = new_lexbuf — the raw
-    //      buffer now mirrors the outer's pre-call lexbuf.
-    //   5. lex_add_raw = old + 1 — turns on raw-recording so every
-    //      char hgetc reads also lands in lexbuf_raw.
-    //   6. Walk the inner body via hgetc/add. lexbuf gets the
-    //      throw-away tokenized form; lexbuf_raw accumulates the
-    //      verbatim chars.
-    //   7. Capture new_tokstr/new_lexbuf from the raw buffer.
-    //   8. zcontext_restore_partial restores outer lex state.
-    //   9. If outer lex_add_raw == 0: tokstr = new_tokstr; lexbuf =
-    //      new_lexbuf — outer's lexbuf is REPLACED with the captured
-    //      raw body (which already contains the `$(` prefix from step
-    //      4 plus the body chars). If outer lex_add_raw != 0 (nested
-    //      cmd-sub), propagate the raw vars.
-    let new_lex_add_raw = LEX_LEX_ADD_RAW.get() + 1;
-    let outer_was_recording = LEX_LEX_ADD_RAW.get() != 0;
+    // c:2158 — `int save_infor = infor;`
+    let save_infor = LEX_INFOR.get();
 
-    cmdpush(CS_CMDSUBST as u8);
+    LEX_INFOR.set(0); // c:2161
+    cmdpush(CS_CMDSUBST as u8); // c:2162
     SETPARBEGIN!(); // c:2163
-    add(Inpar);
+    add(Inpar); // c:2164
 
-    // c:2096-2143 — save outer tokstr/lexbuf into the variables that
-    // will become tokstr_raw/lexbuf_raw post-save.
-    let new_tokstr_init: Option<String>;
-    let new_lexbuf_init_ptr: Option<String>;
-    let new_lexbuf_init_siz: i32;
-    let new_lexbuf_init_len: i32;
-    if outer_was_recording {
-        // Nested: propagate the existing raw buffers.
-        new_tokstr_init = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
-        let (p, s, l) = LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
-        new_lexbuf_init_ptr = p;
-        new_lexbuf_init_siz = s;
-        new_lexbuf_init_len = l;
+    let new_lex_add_raw = LEX_LEX_ADD_RAW.get() + 1; // c:2166
+    let new_tokstr: Option<String>;
+    let (new_ptr, new_siz, new_len): (Option<String>, i32, i32);
+    let outer_add_raw = LEX_LEX_ADD_RAW.get();
+    if outer_add_raw == 0 {
+        // c:2183-2184 — `new_tokstr = tokstr; new_lexbuf = lexbuf;`: the raw
+        // record starts from the word built so far (`…$(`).
+        new_tokstr = tokstr();
+        (new_ptr, new_siz, new_len) = LEX_LEXBUF.with_borrow(|b| (b.ptr.clone(), b.siz, b.len));
+        // c:2196-2197 — inside an alias expansion keep the whole remaining
+        // text for the command in parentheses.
+        if crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS != 0 {
+            crate::ported::input::inbufflags
+                .with(|f| f.set(f.get() | crate::ported::zsh_h::INP_RAW_KEEP));
+        }
+        crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE); // c:2198
+        hist_in_word(1); // c:2199
     } else {
-        // Top-level: seed raw with current tokstr/lexbuf.
-        new_tokstr_init = tokstr();
-        let (p, s, l) = LEX_LEXBUF.with_borrow(|b| (b.ptr.clone(), b.siz, b.len));
-        new_lexbuf_init_ptr = p;
-        new_lexbuf_init_siz = s;
-        new_lexbuf_init_len = l;
+        // c:2210-2211 — nested substitution: keep extending the raw record
+        // the enclosing skipcomm started; this body's own string is not
+        // needed until the top level recovers the lot.
+        new_tokstr = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+        (new_ptr, new_siz, new_len) =
+            LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
+        crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE); // c:2213
     }
-
-    crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
-    hist_in_word(1);
-
-    // c:2147-2149 — install seeded raw buffers + enable recording.
-    set_tokstr(new_tokstr_init);
-    LEX_LEXBUF.with_borrow_mut(|b| {
-        b.ptr = new_lexbuf_init_ptr.clone();
-        b.siz = if new_lexbuf_init_siz == 0 {
-            256
-        } else {
-            new_lexbuf_init_siz
-        };
-        b.len = new_lexbuf_init_len;
-    });
-    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = tokstr());
+    // c:2215-2217
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = new_tokstr);
     LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-        b.ptr = new_lexbuf_init_ptr;
-        b.siz = if new_lexbuf_init_siz == 0 {
-            256
-        } else {
-            new_lexbuf_init_siz
-        };
-        b.len = new_lexbuf_init_len;
+        b.ptr = new_ptr;
+        b.siz = new_siz;
+        b.len = new_len;
     });
     LEX_LEX_ADD_RAW.set(new_lex_add_raw);
+    // c:2218-2234 — no ZLE specials down here, and no LEXFLAGS_NEWLINE:
+    // parse_event needs embedded newlines to be real separators when it
+    // looks for the OUTPAR token.
+    LEX_LEXFLAGS.set(LEX_LEXFLAGS.get() & !(LEXFLAGS_ZLE | LEXFLAGS_NEWLINE));
+    LEX_DBPARENS.set(false); // c:2234 — restored by zcontext_restore_partial
 
-    // RAII: cleanup on every exit path. Captures the raw body, restores
-    // outer lex state, then (if outer wasn't recording) overwrites the
-    // restored outer lexbuf with the raw body — the trick that makes
-    // the parent token contain the verbatim `$(...)` text.
-    struct SkipcommGuard {
-        outer_was_recording: bool,
-    }
-    impl Drop for SkipcommGuard {
-        fn drop(&mut self) {
-            // c:2185-2186 — capture the raw form before restore.
-            let new_tokstr = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
-            let (new_lexbuf_ptr, new_lexbuf_siz, new_lexbuf_len) =
-                LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
-            let new_lexstop = LEX_LEXSTOP.get();
-
-            hist_in_word(0);
-            crate::ported::context::zcontext_restore_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
-
-            // c:2196-2217 — splice raw back into outer lexbuf, or
-            // propagate to outer raw if outer was recording.
-            if self.outer_was_recording {
-                LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = new_tokstr);
-                LEX_LEXBUF_RAW.with_borrow_mut(|b| {
-                    b.ptr = new_lexbuf_ptr;
-                    b.siz = new_lexbuf_siz;
-                    b.len = new_lexbuf_len;
-                });
-            } else {
-                // c:2204-2207 — strip the trailing `)` that hgetc
-                // recorded into the raw buffer (closing paren).
-                let mut final_ptr = new_lexbuf_ptr;
-                let mut final_len = new_lexbuf_len;
-                if !new_lexstop {
-                    if let Some(ref mut s) = final_ptr {
-                        if s.ends_with(')') {
-                            s.pop();
-                            final_len -= 1;
-                        }
-                    }
+    // c:2236-2246
+    if crate::ported::parse::parse_event(OUTPAR_TOK).is_none() || tok() != OUTPAR_TOK {
+        if crate::ported::input::strin.with(|s| s.get()) != 0 {
+            // c:2238-2243 — "Get the rest of the string raw since we don't
+            // know where this token ends."
+            //
+            // !!! WARNING: `hgetc`, NOT `ingetc` !!! C's `ingetc` feeds the
+            // raw record itself (c:Src/input.c:360-361); in this port that
+            // call lives in `hgetc` (see `zshlex_raw_add` there), and
+            // `hgetc` reports end of input as `None` instead of setting
+            // `lexstop`.
+            while !LEX_LEXSTOP.get() {
+                if hgetc().is_none() {
+                    LEX_LEXSTOP.set(true);
                 }
-                set_tokstr(final_ptr.clone());
-                LEX_LEXBUF.with_borrow_mut(|b| {
-                    b.ptr = final_ptr;
-                    b.siz = new_lexbuf_siz;
-                    b.len = final_len;
-                });
-                // c:2283 — `lexstop = new_lexstop;`. Comment at
-                // c:2255-2259: "We're also going to propagate the
-                // lexical state: if we couldn't parse the command
-                // substitution we can't continue."
-                // `zcontext_restore_partial` above put back the
-                // lexstop from BEFORE the body was read, so an
-                // unterminated `$(`/`<(`/`>(` looked terminated to
-                // the caller. gettokstr's `else if (e == '(')` arm
-                // then took its `default: peek = LEXERR; goto brk;`
-                // exit (lex.c:1044-1046) with `lexstop == 0`, so the
-                // `brk:` epilogue's `hungetc(c)` (lex.c:1444) pushed
-                // the `$` back onto zshrs's lexer-level unget
-                // queue — `c` is still the `$` on that path. C's
-                // `inungetc` returns that byte to the input FRAME,
-                // which `get_comp_string`'s `inpop` (c:1461)
-                // discards; zshrs's queue outlives the frame, so the
-                // stray `$` prefixed the next word the lexer built —
-                // `echo $(gr<TAB>` re-lexed the substitution body
-                // `grx` as `$grx`.
-                LEX_LEXSTOP.set(new_lexstop);
             }
-            // c:2287-2288 — `if (!lexstop) SETPAREND`.
-            let lexstop_now = LEX_LEXSTOP.get();
-            if !lexstop_now {
-                SETPAREND!();
-            }
-            cmdpop();
+        } else {
+            LEX_LEXSTOP.set(true); // c:2245
         }
     }
-    let _guard = SkipcommGuard {
-        outer_was_recording,
-    };
+    // c:2247 — "Outpar lexical token gets added in caller if present".
 
-    let mut pct = 1;
-    let mut start = true;
+    // c:2253-2260 — keep the full raw input as the token string, and
+    // propagate lexstop: "if we couldn't parse the command substitution we
+    // can't continue."
+    let final_tokstr = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+    let (mut final_ptr, final_siz, mut final_len) =
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
+    let new_lexstop = LEX_LEXSTOP.get();
 
-    // c:Src/lex.c skipcomm (ZSH_OLD path) — the C source's pct
-    // counter mis-tracks `case PAT)` as a cmdsub close because
-    // the case pattern's `)` decrements pct prematurely. C zsh's
-    // NEW skipcomm (default since 5.0.x) recursively re-parses the
-    // body so case/esac context is known. zshrs's port still rides
-    // the OLD pct counter. Bridge the gap with a `case`-keyword
-    // depth tracker: when between `case <word> in` and `esac`,
-    // each `)` is a pattern close and must NOT decrement pct.
-    // Word boundaries come from a small accumulator that flushes
-    // on whitespace / structural separators. Bug #291.
-    let mut word_buf = String::with_capacity(8);
-    let mut case_depth: i32 = 0;
-    // 0 = no recent `case`; 1 = saw `case`, expecting subject word;
-    // 2 = saw subject word, expecting `in`.
-    let mut case_pending: i32 = 0;
+    crate::ported::context::zcontext_restore_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE); // c:2262
 
-    // Same class of gap as Bug #291, different construct: the OLD `pct`
-    // counter also mis-tracks a `(` / `)` that appears INSIDE a `${…}`
-    // parameter expansion, where it is glob/pattern text and not shell
-    // grouping at all. C's NEW skipcomm (default since 5.0.x, the
-    // `#else` half of c:2082-2225) re-lexes the body, so `gettokstr`
-    // consumes `${…}` to its matching `}` as one string token and never
-    // sees those parens as structure. Riding the OLD counter, zshrs
-    // decremented `pct` on the `)` of e.g.
-    // `$(sed … ${IPREFIX%%[\\(]#}(.N))`
-    // (Completion/X/Command/_setxkbmap sh:80) and then ran off the end of
-    // the file — `_setxkbmap` failed to parse entirely and `setxkbmap -`
-    // completed nothing. Track `${` … `}` nesting and leave `pct` alone
-    // for anything inside it.
-    let mut brace_depth: i32 = 0;
-    let mut prev_dollar = false;
-
-    // Same class of gap as Bug #291 and the `${…}` tracker above, third
-    // construct: a `)` inside a HERE-DOCUMENT body is literal text, not shell
-    // grouping. C's NEW skipcomm (the `#else` half of c:2082-2246) re-parses
-    // the body with `parse_event(OUTPAR)`, so the document is queued on `hdocs`
-    // by `zshlex` (c:277-304) and drained verbatim by `gethere`
-    // (Src/exec.c:4573) — its body never reaches the tokenizer at all. Riding
-    // the OLD `pct` counter, zshrs closed the cmdsub on the first `)` inside
-    // the body of the here-document `_store_cache`
-    // (Completion/Base/Utility/_store_cache:50-54) writes for EVERY cached
-    // array:
-    //     VAR=( ${(Q)"${(z)$(<<\EO:VAR
-    //     'jz:… \<\<\)ZPWR\(\>\> …'
-    //     EO:VAR
-    //     )}"} )
-    // and then re-lexed the tail as ordinary code, so `_retrieve_cache` handed
-    // back an array with `EO:VAR`, `;` and `)` appended and with `$VAR`
-    // expanded inside what is a quoted-terminator (unexpanded) body.
-    //
-    // Track the queue here instead: `<<WORD` / `<<-WORD` records the
-    // terminator, and the next newline consumes the body verbatim — every
-    // character goes to `add` and to the raw recording, but none of them
-    // reaches the `pct` / case / `${…}` state machine.
-    //
-    // Residual gap, deliberately not covered: a MULTI-LINE `$(( a << b ))`
-    // inside the substitution would record `b` as a terminator. Single-line
-    // arithmetic is safe (`pct` reaches 0 and skipcomm returns before any
-    // newline is seen), and distinguishing the two needs an arithmetic-depth
-    // heuristic with its own false positives.
-    let mut heredocs: Vec<(String, bool)> = Vec::new();
-
-    loop {
-        let c = hgetc();
-        let c = match c {
-            Some(c) => c,
-            None => {
-                LEX_LEXSTOP.set(true);
-                return Err(());
-            }
-        };
-
-        // Only ASCII can be blank — see the note in `gettokstr`: `c as u8` on a
-        // multibyte char truncates the codepoint into the blank range.
-        let iswhite = c.is_ascii() && crate::ztype_h::inblank(c as u8);
-
-        // Word boundary keyword tracking.
-        let is_word_terminator =
-            iswhite || c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')';
-        if is_word_terminator && !word_buf.is_empty() {
-            match word_buf.as_str() {
-                "case" => case_pending = 1,
-                "in" if case_pending == 2 => {
-                    case_depth += 1;
-                    case_pending = 0;
-                }
-                "esac" => {
-                    if case_depth > 0 {
-                        case_depth -= 1;
-                    }
-                    case_pending = 0;
-                }
-                _ => match case_pending {
-                    1 => case_pending = 2,
-                    2 => case_pending = 0,
-                    _ => {}
-                },
-            }
-            word_buf.clear();
-        } else if !is_word_terminator {
-            word_buf.push(c);
-        }
-
-        // `${` opens a parameter expansion; inside one, every `{`/`}`
-        // nests and every paren is pattern text rather than grouping.
-        // `prev_dollar` is recomputed here (not at the bottom of the
-        // loop) so the arms below that swallow whole quoted runs cannot
-        // leave a stale `$` armed.
-        if c == '{' && (prev_dollar || brace_depth > 0) {
-            brace_depth += 1;
-        } else if c == '}' && brace_depth > 0 {
-            brace_depth -= 1;
-        }
-        prev_dollar = c == '$';
-
-        match c {
-            '(' => {
-                // The Bug #291 `case` guard must be SYMMETRIC. zsh's case
-                // arms may be written with a leading paren — `(Buildfile:*)`
-                // (Completion/.../_ant sh:114) — and counting that `(` while
-                // refusing to count its `)` made `pct` climb by one per arm,
-                // so `skipcomm` never found its close and ran to EOF. That is
-                // what turned `_ant` into `unmatched "` and killed
-                // `ant <TAB>`. Ignoring both members of the pair keeps the
-                // counter balanced for everything inside the case, including
-                // a nested `$( … )` in an arm body.
-                if brace_depth == 0 && case_depth == 0 {
-                    pct += 1;
-                }
-                add(c);
-            }
-            ')' => {
-                // c:Bug #291 — inside a case block, `)` closes a
-                // pattern (not the cmdsub). Likewise inside `${…}`,
-                // where it is glob text (`${x%%[\\(]#}`).
-                if case_depth > 0 || brace_depth > 0 {
-                    add(c);
-                } else {
-                    pct -= 1;
-                    if pct == 0 {
-                        return Ok(());
-                    }
-                    add(c);
-                }
-            }
-            '<' if case_depth == 0 && brace_depth == 0 => {
-                add(c);
-                // `<<WORD` / `<<-WORD` queue a here-document; `<<<` is a
-                // here-string with no body, and a lone `<` is an ordinary
-                // redirection. Anything over-read goes back through hungetc,
-                // exactly as C's lexer does when a lookahead misses.
-                match hgetc() {
-                    Some('<') => {
-                        add('<');
-                        let mut dash = false;
-                        let mut ch = hgetc();
-                        if ch == Some('-') {
-                            add('-');
-                            dash = true;
-                            ch = hgetc();
-                        }
-                        if ch == Some('<') {
-                            add('<'); // `<<<` — here-string, nothing to queue
-                        } else {
-                            // The terminator word, with its quoting removed:
-                            // `<<\EO:V`, `<<'EO:V'` and `<<"EO:V"` all end the
-                            // body at a line reading `EO:V` (Src/exec.c:4573
-                            // `gethere` compares against the unquoted word).
-                            while ch == Some(' ') || ch == Some('\t') {
-                                add(ch.unwrap());
-                                ch = hgetc();
-                            }
-                            let mut term = String::new();
-                            while let Some(k) = ch {
-                                match k {
-                                    ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>' => {
-                                        break
-                                    }
-                                    '\\' => {
-                                        add(k);
-                                        match hgetc() {
-                                            Some(q) => {
-                                                add(q);
-                                                term.push(q);
-                                            }
-                                            None => break,
-                                        }
-                                    }
-                                    '\'' | '"' => {
-                                        add(k);
-                                        loop {
-                                            match hgetc() {
-                                                Some(q) if q == k => {
-                                                    add(q);
-                                                    break;
-                                                }
-                                                Some(q) => {
-                                                    add(q);
-                                                    term.push(q);
-                                                }
-                                                None => break,
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        add(k);
-                                        term.push(k);
-                                    }
-                                }
-                                ch = hgetc();
-                            }
-                            if let Some(k) = ch {
-                                hungetc(k);
-                            }
-                            if !term.is_empty() {
-                                heredocs.push((term, dash));
-                            }
-                        }
-                    }
-                    Some(other) => hungetc(other),
-                    None => {
-                        LEX_LEXSTOP.set(true);
-                        return Err(());
-                    }
-                }
-            }
-            '\n' if !heredocs.is_empty() => {
-                add(c);
-                // c:277-304 — the real lexer drains `hdocs` at the first
-                // newline after the command. Read each body verbatim: the
-                // characters are added to the token (and to the raw recording
-                // via hgetc) but never seen by the `pct` counter, so a `)` in
-                // the body cannot close the substitution.
-                for (term, dash) in std::mem::take(&mut heredocs) {
-                    loop {
-                        let mut line = String::new();
-                        loop {
-                            match hgetc() {
-                                Some('\n') => {
-                                    add('\n');
-                                    break;
-                                }
-                                Some(ch) => {
-                                    add(ch);
-                                    line.push(ch);
-                                }
-                                None => {
-                                    // `here document too long` in C; the body
-                                    // ran to EOF without its terminator.
-                                    LEX_LEXSTOP.set(true);
-                                    return Err(());
-                                }
-                            }
-                        }
-                        // `<<-` strips leading TABS from the terminator line
-                        // (Src/exec.c gethere, REDIR_HEREDOCDASH).
-                        let cmp = if dash {
-                            line.trim_start_matches('\t')
-                        } else {
-                            line.as_str()
-                        };
-
-                        if cmp == term {
-                            break;
-                        }
-                    }
-                }
-            }
-            '\\' => {
-                add(c);
-                if let Some(c) = hgetc() {
-                    add(c);
-                }
-            }
-            '\'' => {
-                add(c);
-                loop {
-                    let ch = hgetc();
-                    match ch {
-                        Some('\'') => {
-                            add('\'');
-                            break;
-                        }
-                        Some(ch) => add(ch),
-                        None => {
-                            LEX_LEXSTOP.set(true);
-                            return Err(());
-                        }
-                    }
-                }
-            }
-            '"' => {
-                add(c);
-                loop {
-                    let ch = hgetc();
-                    match ch {
-                        Some('"') => {
-                            add('"');
-                            break;
-                        }
-                        Some('\\') => {
-                            add('\\');
-                            if let Some(ch) = hgetc() {
-                                add(ch);
-                            }
-                        }
-                        Some(ch) => add(ch),
-                        None => {
-                            LEX_LEXSTOP.set(true);
-                            return Err(());
-                        }
-                    }
-                }
-            }
-            '`' => {
-                add(c);
-                loop {
-                    let ch = hgetc();
-                    match ch {
-                        Some('`') => {
-                            add('`');
-                            break;
-                        }
-                        Some('\\') => {
-                            add('\\');
-                            if let Some(ch) = hgetc() {
-                                add(ch);
-                            }
-                        }
-                        Some(ch) => add(ch),
-                        None => {
-                            LEX_LEXSTOP.set(true);
-                            return Err(());
-                        }
-                    }
-                }
-            }
-            '#' if start => {
-                add(c);
-                // Skip comment to end of line
-                loop {
-                    let ch = hgetc();
-                    match ch {
-                        Some('\n') => {
-                            add('\n');
-                            break;
-                        }
-                        Some(ch) => add(ch),
-                        None => break,
-                    }
-                }
-            }
-            _ => {
-                add(c);
+    if LEX_LEX_ADD_RAW.get() != 0 {
+        // c:2264-2269 — "Keep going, so retain the raw variables."
+        LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = final_tokstr);
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+            b.ptr = final_ptr;
+            b.siz = final_siz;
+            b.len = final_len;
+        });
+    } else {
+        if !new_lexstop {
+            // c:2271-2275 — "Ignore the ')' added on input".
+            if let Some(s) = final_ptr.as_mut() {
+                s.pop();
+                final_len -= 1;
             }
         }
+        // c:2277-2283 — "Convince the rest of lex.c we were examining a
+        // string all along."
+        set_tokstr(final_ptr.clone());
+        LEX_LEXBUF.with_borrow_mut(|b| {
+            b.ptr = final_ptr;
+            b.siz = final_siz;
+            b.len = final_len;
+        });
+        LEX_LEXSTOP.set(new_lexstop);
+        hist_in_word(0); // c:2284
+    }
 
-        start = iswhite;
+    // c:2287-2288
+    if !LEX_LEXSTOP.get() {
+        SETPAREND!();
+    }
+    cmdpop(); // c:2289
+    LEX_INFOR.set(save_infor); // c:2290
+
+    // c:2292 — `return lexstop;`
+    if LEX_LEXSTOP.get() {
+        Err(())
+    } else {
+        Ok(())
     }
 }
 

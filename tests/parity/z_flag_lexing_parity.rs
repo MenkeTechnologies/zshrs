@@ -128,6 +128,14 @@ fn an_open_brace_parameter_keeps_its_body_in_one_word() {
     ]);
 }
 
+/// c:Src/lex.c:2236-2243 — a `$( … )` body that does not parse ends the
+/// lexer: from a string, skipcomm reads the rest raw, so bufferwords
+/// (c:Src/hist.c:3588-3601) keeps everything from `$(` on as one word.
+#[test]
+fn an_unparsable_command_substitution_keeps_the_rest_as_one_word() {
+    assert_same_words(&["echo $(|||) bar", "echo $(a;;b) x y", "x $(echo a) y", "x $(echo a"]);
+}
+
 /// `|&` is one token, BARAMP (c:Src/lex.c:777).
 #[test]
 fn bar_amp_is_one_token() {

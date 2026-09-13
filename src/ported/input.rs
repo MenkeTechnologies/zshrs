@@ -988,17 +988,21 @@ pub fn inpoptop() {
     if !LEX_LEXSTOP.with(|c| c.get()) {
         // c:739 — inbufflags &= ~(INP_ALCONT|INP_HISTCONT);
         inbufflags.with(|f| f.set(f.get() & !(INP_ALCONT | INP_HISTCONT)));
-        // c:740-753 — drain unread bytes of the popped frame; for alias
-        // frames (without RAW_KEEP) push back the corresponding raw-lex
-        // marker via zshlex_raw_back so the lexer-side cursor unwinds.
+        // c:740-753 — `while (inbufptr > inbuf) { inbufptr--; …
+        //   if ((inbufflags & (INP_ALIAS|INP_HIST|INP_RAW_KEEP)) == INP_ALIAS)
+        //       zshlex_raw_back(); }` — walk back over every character ALREADY
+        // READ from the frame, and for an alias frame take each one back out
+        // of the raw record, so a command substitution's word keeps the alias
+        // NAME its source spelled, not the expansion (c:Src/lex.c:2072-2077).
+        // `inbufpos` is that count: the lexer's own pushback lives in
+        // `LEX_UNGET_BUF`, which `hgetc` drains before `ingetc` can exhaust a
+        // frame. The port used to count the UNREAD rest (zero for an exhausted
+        // frame), so `x=$(ll 5)` with `alias ll='print aliased'` recorded
+        // `llprint aliased 5` once skipcomm parsed the body.
         let was_alias =
             (inbufflags.with(|f| f.get()) & (INP_ALIAS | INP_HIST | INP_RAW_KEEP)) == INP_ALIAS;
-        let unread = inbuf.with(|b| {
-            let blen = b.borrow().len();
-            blen.saturating_sub(inbufpos.with(|p| p.get()))
-        });
         if was_alias {
-            for _ in 0..unread {
+            for _ in 0..inbufpos.with(|p| p.get()) {
                 zshlex_raw_back(); // c:752
             }
         }
