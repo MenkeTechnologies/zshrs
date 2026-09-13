@@ -3079,12 +3079,33 @@ pub fn scanpmhistory(
     // whole history text per scan, thrown away by every keys-only caller.
     let want_val = (flags as u32 & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) != 0
         || (flags as u32 & SCANPM_WANTKEYS) == 0;
+    // c:1195-1196 — `int i = addhistnum(curhist, -1, HIST_FOREIGN);
+    //               Histent he = gethistent(i, GETHIST_UPWARD);`
+    // The walk starts one event BELOW `curhist`, so the event being run is
+    // not listed: under `-c`, `print -s x; print -s y; print ${(k)history}`
+    // reads `1`, and a lone `print -s` leaves `$history` empty. Both calls
+    // take the ring lock themselves, so resolve the start before the
+    // snapshot below takes it.
+    let start = crate::ported::hist::gethistent(
+        crate::ported::hist::addhistnum(
+            crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst),
+            -1,
+            crate::ported::zsh_h::HIST_FOREIGN as i32,
+        ),
+        crate::ported::zsh_h::GETHIST_UPWARD,
+    );
+    let Some(start) = start else {
+        return; // c:1199 `while (he)` — no event at or below the start
+    };
     // Snapshot the walk so func() can re-enter without deadlocking on the
     // hist_ring mutex.
     let entries: Vec<(i64, Option<String>)> = {
         let ring = hist_ring.lock().unwrap(); // c:1196 walk via up_histent
+        // hist_ring is newest-first (index 0 = highest histnum), and
+        // `up_histent` steps to the next index (hist.rs), so index order from
+        // the start event IS C's newest→oldest `up_histent` walk (c:1208).
         ring.iter()
-            .rev() // c:1199 up_histent walks newest→oldest
+            .skip_while(|h| h.histnum > start)
             .map(|h| {
                 (
                     h.histnum,

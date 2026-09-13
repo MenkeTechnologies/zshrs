@@ -163,6 +163,21 @@ mod scan_backing {
         assert_parity("alias -g GG=1; print ${(k)galiases}; print ${(ok)aliases}");
     }
 
+    /// `scanpmhistory` starts one event below `curhist`
+    /// (`addhistnum(curhist, -1, HIST_FOREIGN)`, Src/Modules/parameter.c:1195)
+    /// and walks newest→oldest, so the event just added by `print -s` is not
+    /// listed. zsh `[]` / `0`; zshrs listed `a` / `b` and counted 1.
+    #[test]
+    fn history_scan_skips_the_current_event() {
+        assert_parity(r#"print -s $'a\nb'; print -rl -- "[${history[@]}]" ${#history}"#);
+    }
+
+    /// Key order is newest first: zsh `2 1`, zshrs `1 2 3`.
+    #[test]
+    fn history_keys_are_newest_first() {
+        assert_parity("print -s x; print -s y; print -s z; print ${(k)history}; print ${(v)history}");
+    }
+
     /// `reswords` is an ARRAY-shaped magic row, not an assoc.
     #[test]
     fn reswords_subscript_search() {
