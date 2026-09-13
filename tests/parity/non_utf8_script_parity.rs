@@ -382,6 +382,76 @@ fn zcompile_dump_round_trips_non_ascii_sources() {
     }
 }
 
+/// Run both shells on the same script FILE; (stdout, stderr, exit) each.
+/// The file is passed by the same absolute path to both, so the
+/// `<script>:<line>:` prefix of an error matches byte for byte.
+fn run_file_full(dir: &Path, name: &str, body: &str) -> [(String, String, i32); 2] {
+    let path = dir.join(name);
+    std::fs::write(&path, body).expect("write script");
+    let grab = |o: std::process::Output| {
+        (
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+            o.status.code().unwrap_or(-1),
+        )
+    };
+    let z = Command::new(zsh_path())
+        .arg("-f")
+        .arg(&path)
+        .current_dir(dir)
+        .output()
+        .expect("zsh");
+    let r = Command::new(zshrs_bin())
+        .args(["--zsh", "-f"])
+        .arg(&path)
+        .current_dir(dir)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    [grab(z), grab(r)]
+}
+
+/// A script FILE is read one complete command at a time: zsh_main's
+/// `loop(1,0)` (c:Src/init.c:1963) does `parse_event` then `execode` per
+/// event (c:155-231), so every command before a syntax error has already
+/// run, and an alias a line defines is in force when the next line is
+/// lexed. zshrs compiled the whole file first: a parse error on line 3
+/// printed only the error, and `alias foo=…` / `foo` gave `command not
+/// found`. The exit status after a parse error is 1 even when the last
+/// command that ran succeeded (c:1969-1972), and the EXIT trap still fires
+/// (zexit clears errflag, c:Src/builtin.c:6006).
+#[test]
+fn script_file_runs_each_command_before_parsing_the_next() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    let cases: [(&str, &str); 8] = [
+        ("late_parse_error", "print 1\nprint 2\nprint )\nprint 4\n"),
+        (
+            "heredoc_before_error",
+            "print 1\ncat <<X\na\nprint )\nX\nprint 3\nprint )\nprint 4\n",
+        ),
+        ("function_then_error", "f() { print in-f; }\nprint 1\nprint )\nf\n"),
+        ("alias_next_line", "alias foo='print aliased'\nfoo\n"),
+        ("alias_then_error", "alias foo='print aliased'\nfoo\nprint )\n"),
+        ("errexit_before_error", "setopt errexit\nprint 1\nfalse\nprint 2\nprint )\n"),
+        ("exit_trap_on_parse_error", "trap 'print T' EXIT\nprint 1\nprint )\n"),
+        (
+            "continueonerror_parse_error",
+            "setopt continueonerror\nprint 1\nprint )\nprint 2\n",
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (name, body) in cases {
+        let [z, r] = run_file_full(d.path(), &format!("{name}.zsh"), body);
+        if z != r {
+            bad.push(format!("{name}:\n  zsh   = {z:?}\n  zshrs = {r:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "script-file divergences:\n{}", bad.join("\n"));
+}
+
 /// Push a dump's mtime a couple of seconds ahead of the source so the
 /// `stc.st_mtime >= stn.st_mtime` gate (`Src/parse.c:3762-3784`) picks
 /// it — the two files are written in the same second otherwise. zsh

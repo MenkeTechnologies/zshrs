@@ -3449,34 +3449,45 @@ impl ShellExecutor {
             }
         }
 
-        // Cache miss — read, parse, compile via execute_script_zsh_pipeline,
-        // then snapshot the resulting chunk into the cache for next
-        // time. Direct port of Src/init.c source() which calls
-        // `lex_init_buf` / `loop()` without engaging the history layer.
-        // (zsh fires `!` history sub only on interactive input, so
-        // sourced files run verbatim.)
-        // c:Src/init.c:1566 source() / Src/input.c — a script is read as
-        // RAW BYTES. `read_to_string` rejected the WHOLE file on the first
-        // non-UTF-8 byte ("stream did not contain valid UTF-8"), so one
-        // legacy latin-1 byte anywhere made the script unrunnable and even
-        // `echo` on line 1 never fired. C metafies instead (Src/utils.c:4856).
+        // Cache miss.
+        // c:Src/init.c:1394-1395 — `SHIN = movefd(open(funmeta, …))`, then
+        // zsh_main's `loop(1,0)` (c:1963) reads the script ONE EVENT AT A
+        // TIME: `lexinit(); parse_event(ENDINPUT); … execode(prog, …)`
+        // (c:155-220). Every complete command runs before the next is
+        // lexed, so an `alias` a line installs is in force for the next
+        // line, and a syntax error on line N leaves lines 1..N-1 already
+        // executed. A whole-file compile lexed every line with the state
+        // the file started with and ran nothing when any line failed to
+        // parse. The event loop is the one `source` uses (c:1626-1627
+        // `loop(0, 0)`): with `interact` unset, c:234's
+        // `(!interact || sourcelevel) && errflag` break is the same test.
+        // c:Src/init.c:1566 / Src/input.c — the file is read as RAW BYTES and
+        // metafied (Src/utils.c:4856), never rejected for non-UTF-8.
         let content = crate::script_bytes::read_script_file(file_path)
             .map_err(|e| format!("{}: {}", file_path, e))?;
-        let status = self.execute_script_zsh_pipeline(&content)?;
+        let mut events: Vec<crate::parse::ZshList> = Vec::new();
+        let mut status = self.run_events_per_command(&content, Some(&mut events))?;
+        // c:Src/init.c:1969-1974 — `if (tok == LEXERR || errexit) { if
+        // (!lastval) lastval = 1; stopmsg = 1; zexit(lastval, …); }`: a
+        // parse error, or an error abort in a non-interactive shell, exits
+        // non-zero even when the last command that ran succeeded.
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            if status == 0 {
+                status = 1; // c:1971-1972
+                self.set_last_status(status);
+            }
+            // c:Src/builtin.c:6006 zexit — `errflag = 0;` before the EXIT trap
+            // runs, so the trap body is not itself aborted by the error.
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        }
+        let status = self.fire_script_exit_hooks(status)?;
 
-        // Best-effort cache save — failures don't block execution.
-        // Re-parse/-compile here instead of trying to thread the chunk
-        // back out of execute_script_zsh_pipeline; the cost is one extra
-        // compile per CACHE MISS, paid back on every subsequent run.
-        let saved_errflag = errflag.load(Ordering::Relaxed);
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        // Context-isolated parse (c:Src/exec.c:283 parse_string) — this
-        // post-exec re-parse for the bytecode cache also runs mid-stream
-        // under the single-event reader; isolate it from the outer SHIN.
-        let program = parse_isolated(&content);
-        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-        errflag.store(saved_errflag, Ordering::Relaxed);
-        if !parse_failed {
+        // Best-effort cache save — failures don't block execution. The
+        // cached program is the events exactly as the loop lexed them, so
+        // a hit replays what this run parsed; `events` is empty unless the
+        // loop drained the whole file without an error.
+        if !events.is_empty() {
+            let program = crate::parse::ZshProgram { lists: events };
             let compiler = crate::compile_zsh::ZshCompiler::new();
             let chunk = compiler.compile(&program);
             if let Ok(blob) = bincode::serialize(&chunk) {
@@ -3587,7 +3598,13 @@ impl ShellExecutor {
         label: &str,
     ) -> Result<i32, String> {
         let status = self.run_chunk(chunk, label)?;
+        self.fire_script_exit_hooks(status)
+    }
 
+    /// The end-of-script hooks alone (`EXIT` trap, `TRAPEXIT`, `zshexit` +
+    /// `zshexit_functions`), for a script that already ran; `status` is the
+    /// script's `$?` and is what the call returns.
+    fn fire_script_exit_hooks(&mut self, status: i32) -> Result<i32, String> {
         // Fire EXIT trap if set. Two storage paths:
         //   (a) `trap 'cmd' EXIT` writes the body text into
         //       `traps_table` via bin_trap (Src/builtin.c) — fire
@@ -3824,6 +3841,20 @@ impl ShellExecutor {
     /// Returns the file's `$?`. `Err` only for a VM error, as
     /// [`Self::run_chunk`] reports it.
     pub fn execute_script_per_command(&mut self, script: &str) -> Result<i32, String> {
+        self.run_events_per_command(script, None)
+    }
+
+    /// The `loop()` body shared by a sourced file and a script file.
+    ///
+    /// `events`, when given, receives every executed event's lists, and is
+    /// CLEARED unless the loop drained the input to a clean `ENDINPUT` — so a
+    /// caller holding a non-empty collection after the call has the exact
+    /// program the lexer produced, one event at a time, for the whole file.
+    fn run_events_per_command(
+        &mut self,
+        script: &str,
+        mut events: Option<&mut Vec<crate::parse::ZshList>>,
+    ) -> Result<i32, String> {
         use crate::ported::lex::{
             tok, ENDINPUT, LEXERR, LEX_FILE_WINDOW_STRIN, LEX_INPUT, LEX_LINENO, LEX_POS,
             LEX_UNGET_BUF,
@@ -3867,6 +3898,7 @@ impl ShellExecutor {
         // c:116 — `int err, non_empty = 0;`
         let mut non_empty = false;
         let mut vm_error: Option<String> = None;
+        let mut drained = false;
 
         loop {
             // c:155 — `lexinit();` Resets `tok` and BOTH `lexstop` copies;
@@ -3883,6 +3915,7 @@ impl ShellExecutor {
                 let errflag_v = errflag.load(Ordering::Relaxed);
                 if (tok_v == ENDINPUT && errflag_v == 0) || tok_v == LEXERR {
                     // c:159-162
+                    drained = tok_v == ENDINPUT;
                     if tok_v == LEXERR
                         && crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) == 0
                     {
@@ -3913,6 +3946,9 @@ impl ShellExecutor {
             let saved_lex_lineno = LEX_LINENO.get();
             let run = self.run_chunk(chunk, "source");
             LEX_LINENO.set(saved_lex_lineno);
+            if let Some(ev) = events.as_deref_mut() {
+                ev.extend(prog.lists);
+            }
             if let Err(e) = run {
                 vm_error = Some(e);
                 break;
@@ -3942,6 +3978,11 @@ impl ShellExecutor {
         // reads the flag itself (its c:1623-1624 + c:1663 block), so the bit
         // is put back after the restore instead.
         let err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0; // c:245
+        if let Some(ev) = events {
+            if !drained || err || vm_error.is_some() {
+                ev.clear();
+            }
+        }
 
         // c:246-249 — leave the loop's context exactly as it was found.
         crate::ported::hist::strinend();

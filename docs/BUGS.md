@@ -1110,10 +1110,27 @@ stand-in exists to work around. That also subsumes [#1105](#1105) and [#1107](#1
 
 ---
 
-## #1107 — a script FILE is compiled whole, so lexer-time state set by one line never reaches the next — open
+## #1107 — a script FILE is compiled whole, so lexer-time state set by one line never reaches the next — FIXED (cache-hit residual open)
 
-**Status:** `port-bug`, found 2026-08-28. This is [#1087](#1087) at an entry point that was
+**Status:** `fixed` 2026-09-12 for execution; the bytecode-cache HIT path keeps a narrower
+residual (below). Found 2026-08-28. This is [#1087](#1087) at an entry point that was
 never fixed: `source`/`.` got the per-event loop, a top-level script file did not.
+
+**Fix.** `execute_script_file` runs the file through the same per-event loop `source` uses
+(`run_events_per_command`, c:Src/init.c:155-231 via zsh_main's `loop(1,0)`, c:1963), so each
+command runs before the next is lexed: aliases/RCQUOTES take effect on the next line, and a
+syntax error on line N leaves lines 1..N-1 executed. Exit status after a parse error is 1 when
+the last command succeeded (c:1969-1972), and the EXIT trap fires with errflag cleared
+(c:Src/builtin.c:6006). Pinned by
+`non_utf8_script_parity::script_file_runs_each_command_before_parsing_the_next`.
+
+**Cache (option chosen: neither (a) nor (b)).** The cache now stores the events EXACTLY as the
+loop lexed them, and only when the loop drained the whole file without an error — no re-parse
+of the file after it ran. A hit is therefore identical to the run that saved it. Residual,
+still open: a hit replays that lexing even if lexer-time state coming from OUTSIDE the file has
+changed since (a `source`d alias/option file edited, a different `.zshenv`), because the cache
+key is only (path, mtime, binary). Parity mode (`--zsh` etc.) disables the cache, so this is
+invisible to the parity suite.
 
 **Reproducer.** `t.zsh`:
 ```
