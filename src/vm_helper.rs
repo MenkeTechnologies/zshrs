@@ -5148,7 +5148,7 @@ impl ShellExecutor {
         // lookup entirely — the body_runner closure below will run
         // the Rust fn pointer directly. Otherwise require a compiled
         // chunk for the autoloaded body.
-        let chunk_opt = if direct_rust_fn.is_some() || has_plugin_override {
+        let mut chunk_opt = if direct_rust_fn.is_some() || has_plugin_override {
             None
         } else {
             Some(self.functions_compiled.get(name).cloned()?)
@@ -5395,19 +5395,31 @@ impl ShellExecutor {
             if let Some(f) = direct_rust_fn {
                 return f(&body_args);
             }
+            // The function body is already this closure's own copy (taken at
+            // dispatch, above), and fusevm's VM owns the chunk it runs. Move
+            // it into the VM and take it back afterwards instead of copying
+            // it again: compinit alone runs compdef ~15,000 times, and the
+            // second deep copy of every body was the largest single cost in
+            // its profile. `VM::run` never writes `vm.chunk`, so what comes
+            // back is the same body. Taking it back also keeps a repeated
+            // invocation working — C's runshfunc runs the body again when a
+            // wrapper handler returns `cont` after running it
+            // (Src/exec.c runshfunc: `while (wrap) { cont = handler(...);
+            // if (!cont) return; ... } execode(prog, ...)`).
             let chunk = chunk_opt
-                .as_ref()
+                .take()
                 .expect("chunk_opt must be Some when direct_rust_fn is None");
             crate::fusevm_disasm::maybe_print_stdout(
                 &format!(
                     "function:{}",
                     body_args.first().map(|s| s.as_str()).unwrap_or("")
                 ),
-                chunk,
+                &chunk,
             );
-            let mut vm = crate::vm_pool::acquire(chunk.clone());
+            let mut vm = crate::vm_pool::acquire(chunk);
             vm.last_status = seed_status;
             let _ = vm.run();
+            chunk_opt = Some(std::mem::take(&mut vm.chunk));
             vm.last_status
         };
 
