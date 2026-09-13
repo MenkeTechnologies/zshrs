@@ -3491,7 +3491,20 @@ thread_local! {
     /// not "invalid subscript"). Taken (read + cleared) at the first check.
     pub static SUBSCRIPT_PREEXPANDED: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    /// !!! WARNING: RUST-ONLY CARRIER — NO C COUNTERPART !!!
+    /// `(plain, barred)` pairs for the default / alternate word of the
+    /// expansion just done: `plain` is the substituted value as text,
+    /// `barred` the same text with every `|` that came from the unquoted
+    /// SOURCE default spelled as the `Bar` token. In C the lexer makes that
+    /// `|` a `Bar` inside `${…}` (c:Src/lex.c:1000-1008), multsub keeps the
+    /// token in the value (c:Src/subst.c:3207-3228) and globlist sees the
+    /// alternation in the assembled word. zshrs untokenizes the word before
+    /// BUILTIN_DEFAULT_WORD_GLOB, which re-applies these pairs. Cleared by
+    /// BUILTIN_DEFAULT_WORD_GLOB_RESET / consumed by BUILTIN_DEFAULT_WORD_GLOB.
+    pub static DEFAULT_WORD_GLOB_BARS: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
+
 
 /// Record the user's GLOB_SUBST value before the `${~}` carrier flip
 /// (first flip in a pipeline wins — that's the user's real setting).
@@ -15470,7 +15483,10 @@ pub fn paramsubst(
                         // belongs here rather than in the shared closure.
                         // Nested `|` (inside `(...)`) already becomes Bar and
                         // is caught by haswilds. Bug #1053.
-                        let __toplevel_bar = __dg.contains("\\|");
+                        // c:Src/lex.c:1000-1008 — a source `|` in the word is a
+                        // Bar token, alternation for globlist.
+                        let __toplevel_bar =
+                            crate::pattern_data_escape::note_default_word_bars(default, &value);
                         if crate::ported::pattern::haswilds(&__dg) || __toplevel_bar {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
@@ -15555,7 +15571,9 @@ pub fn paramsubst(
                                                                  // Top-level `|` is alternation for FILENAME
                                                                  // GENERATION though literal for the shared pattern
                                                                  // callers — see the `:-` site above. Bug #1053.
-                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
+                        let __toplevel_bar =
+                            crate::pattern_data_escape::note_default_word_bars(default, &value);
+                        if crate::ported::pattern::haswilds(&__dg) || __toplevel_bar {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -15856,7 +15874,9 @@ pub fn paramsubst(
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
                                                              // callers — see the `:-` site above. Bug #1053.
-                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
+                        let __toplevel_bar =
+                            crate::pattern_data_escape::note_default_word_bars(alt, &value);
+                        if crate::ported::pattern::haswilds(&__dg) || __toplevel_bar {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }
@@ -15908,7 +15928,9 @@ pub fn paramsubst(
                                                              // Top-level `|` is alternation for FILENAME
                                                              // GENERATION though literal for the shared pattern
                                                              // callers — see the `:-` site above. Bug #1053.
-                        if crate::ported::pattern::haswilds(&__dg) || __dg.contains("\\|") {
+                        let __toplevel_bar =
+                            crate::pattern_data_escape::note_default_word_bars(alt, &value);
+                        if crate::ported::pattern::haswilds(&__dg) || __toplevel_bar {
                             DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
                         }
                     }

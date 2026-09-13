@@ -306,3 +306,78 @@ pub fn dropin_keeps_ksh_groups() -> bool {
 pub fn dropin_source_pattern_parens_literal() -> bool {
     crate::dash_mode::posix_faithful() && crate::ported::zsh_h::isset(crate::ported::zsh_h::SHGLOB)
 }
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Fills `ported::subst::DEFAULT_WORD_GLOB_BARS` for the default / alternate
+/// word of `${x:-word}` / `${x-word}` / `${x:+word}` / `${x+word}`. In C the
+/// lexer makes a `|` inside `${…}` the `Bar` token (c:Src/lex.c:1000-1008),
+/// multsub keeps the token in the substituted value (c:Src/subst.c:3207-3228),
+/// and globlist then reads a top-level alternation in the assembled word:
+/// `${x:-b|a}` matches the file `b`, `X${x:-b|a}` is the pattern `Xb` | `a`.
+/// zshrs untokenizes the word before BUILTIN_DEFAULT_WORD_GLOB, which puts
+/// the recorded `Bar`s back.
+///
+/// `word` is the SOURCE text of the default / alternate word as paramsubst
+/// holds it: an unquoted `|` is a raw `|`, while a quoted (`"b|a"`,
+/// `'b|a'`) or escaped (`b\|a`) one arrives as `Bnull |` and stays literal.
+/// A raw `|` inside `(…)` or `[…]` is left to the glob engine's own
+/// grouping. `value` is what the word substituted to. Only a word with no
+/// substitution syntax is recorded: its source text IS the value, so the
+/// `|` positions are known without running multsub again (a `$(…)` in the
+/// word must not run twice).
+///
+/// Returns whether the word holds a top-level source `|`, so the caller can
+/// arm the default-word glob for it.
+pub fn note_default_word_bars(word: &str, value: &str) -> bool {
+    use crate::ported::zsh_h::{
+        Bar, Bnull, Bnullkeep, Dnull, Inbrack, Inpar, Nularg, Outbrack, Outpar, Qstring, Qtick,
+        Snull, Tick,
+    };
+    let cs: Vec<char> = word.chars().collect();
+    let mut barred = String::with_capacity(word.len());
+    let mut paren = 0i32;
+    let mut bracket = false;
+    let mut found = false;
+    let mut substitutes = false;
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        if (c == Bnull || c == Bnullkeep) && i + 1 < cs.len() {
+            barred.push(cs[i + 1]); // quoted / escaped: literal
+            i += 2;
+            continue;
+        }
+        if c == Snull || c == Dnull || c == Nularg {
+            i += 1;
+            continue;
+        }
+        if matches!(c, '$' | '`' | '\u{85}') || c == Qstring || c == Tick || c == Qtick {
+            substitutes = true;
+        }
+        match c {
+            '(' | Inpar => paren += 1,
+            ')' | Outpar => paren = (paren - 1).max(0),
+            '[' | Inbrack => bracket = true,
+            ']' | Outbrack => bracket = false,
+            _ => {}
+        }
+        if (c == '|' || c == Bar) && paren == 0 && !bracket {
+            found = true;
+            barred.push(Bar);
+            i += 1;
+            continue;
+        }
+        if ('\u{84}'..='\u{9c}').contains(&c) {
+            barred.push_str(&crate::ported::lex::untokenize(&c.to_string()));
+        } else {
+            barred.push(c);
+        }
+        i += 1;
+    }
+    if found && !substitutes && crate::ported::lex::untokenize(&barred) == value {
+        crate::ported::subst::DEFAULT_WORD_GLOB_BARS
+            .with(|b| b.borrow_mut().push((value.to_string(), barred)));
+    }
+    found
+}

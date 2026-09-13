@@ -256,3 +256,30 @@ mod after_expansion {
         assert_parity_in(d.path(), "x=a; print -l \"$x<1-2>\"");
     }
 }
+
+/// c:Src/lex.c:1000-1008 — an unquoted `|` inside `${…}` is the Bar token,
+/// and c:Src/subst.c:3207-3228 keeps it in the default word, so globlist sees
+/// a top-level alternation in the assembled word. A quoted or escaped `|`, or
+/// one that came from a parameter's value, stays literal.
+mod default_word_alternation {
+    use super::*;
+
+    #[test]
+    fn unquoted_bar_in_default_word_alternates() {
+        let d = tdir();
+        make_files(d.path(), &["b"]);
+        assert_parity_in(d.path(), "print ${x:-b|a}; print ${x-b|a}");
+        assert_parity_in(d.path(), "y=1; print ${y:+z|b} ${y+z|b}");
+        assert_parity_in(d.path(), "print ${x:-b|a}X");
+        assert_parity_in(d.path(), "{ print X${x:-b|a}; print rc=$? } 2>&1");
+        assert_parity_in(d.path(), "{ print ${x:-z|y}; print after } 2>&1");
+    }
+
+    #[test]
+    fn quoted_escaped_or_substituted_bar_stays_literal() {
+        let d = tdir();
+        make_files(d.path(), &["b"]);
+        assert_parity_in(d.path(), "print ${x:-\"b|a\"} ${x:-b\\|a} \"${x:-b|a}\"");
+        assert_parity_in(d.path(), "v='b|a'; print ${x:-$v}; x=${y:-b|a}; print $x");
+    }
+}

@@ -6185,6 +6185,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // expansion runs, so a flag set by a prior word never leaks in.
     vm.register_builtin(BUILTIN_DEFAULT_WORD_GLOB_RESET, |_vm, _argc| {
         crate::ported::subst::DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(false));
+        crate::ported::subst::DEFAULT_WORD_GLOB_BARS.with(|b| b.borrow_mut().clear());
         Value::Status(0)
     });
     // After the word is assembled, run filename generation ONLY if the
@@ -6198,12 +6199,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             c.set(false); // read + clear
             v
         });
+        let bars = crate::ported::subst::DEFAULT_WORD_GLOB_BARS.with(|b| std::mem::take(&mut *b.borrow_mut()));
         if !pending {
             return raw;
         }
         let noglob =
             opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
-        glob_expand_word_value(raw, noglob)
+        if bars.is_empty() || noglob {
+            return glob_expand_word_value(raw, noglob);
+        }
+        // c:Src/lex.c:1000-1008 + c:Src/subst.c:3207-3228 — the default word's
+        // source `|` is a Bar token in the assembled word, so globlist reads a
+        // top-level alternation (`${x:-b|a}` matches the file `b`;
+        // `X${x:-b|a}` is the pattern `Xb` | `a`). Re-spell those `|`s from
+        // the carrier before globbing, and put them back to `|` in a word the
+        // glob hands back literally.
+        let rebar = |s: String| -> String {
+            let mut s = s;
+            for (plain, barred) in &bars {
+                if let Some(at) = s.find(plain.as_str()) {
+                    s.replace_range(at..at + plain.len(), barred);
+                }
+            }
+            s
+        };
+        let barred = match raw {
+            Value::Array(items) => {
+                Value::array(items.iter().map(|v| Value::str(rebar(v.to_str()))).collect())
+            }
+            other => Value::str(rebar(other.to_str())),
+        };
+        match glob_expand_word_value(barred, false) {
+            Value::Array(items) => Value::array(
+                items
+                    .iter()
+                    .map(|v| Value::str(crate::ported::lex::untokenize(&v.to_str())))
+                    .collect(),
+            ),
+            other => Value::str(crate::ported::lex::untokenize(&other.to_str())),
+        }
     });
 
     // `break`/`continue` from a sub-VM body. The compile path emits
