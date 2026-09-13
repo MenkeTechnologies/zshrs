@@ -366,3 +366,20 @@ mod split_flag_over_nested_substitution {
         assert_parity(r#"print -l {a,b}"#);
     }
 }
+
+/// An array range subscript sets `isarr` from `scanflags` whether or not
+/// it selects anything (c:Src/subst.c:2915-2916), so an EMPTY slice inside
+/// double quotes still joins (c:2798) to one empty word; `(@)` and the
+/// unquoted form stay zero words.
+mod quoted_empty_slice_word_count {
+    use super::*;
+
+    #[test]
+    fn empty_ranges_keep_one_quoted_word() {
+        assert_parity(
+            r#"args() { print -n "$# "; }; a=(foo bar); x=3
+args "${a[3,-1]}"; args "${a[2,1]}"; args "${a[3,3]}"; args "${a[5,-1]}"; args "${a[x,-1]}"
+args ${a[3,-1]}; args "${(@)a[x,-1]}"; args "${(j:,:)a[x,-1]}"; echo"#,
+        );
+    }
+}

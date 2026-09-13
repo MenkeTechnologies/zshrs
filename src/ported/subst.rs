@@ -10645,7 +10645,12 @@ pub fn paramsubst(
                     // aborted the whole prompt build (garbled prompt /
                     // startup hang). Matches the slice-of-slice arm
                     // (subst.rs:7657) which already seeds split_parts.
-                    isarr = if slice.is_empty() { -1 } else { 1 };
+                    // c:Src/subst.c:2915-2916 — `isarr = (v->scanflags &
+                    // SCANPM_ISVAR_AT) ? -1 : v->scanflags ? 1 : 0`. A range sets
+                    // scanflags whether or not it selects anything, so an EMPTY
+                    // slice is still isarr 1 and `"${a[3,-1]}"` joins (c:2798) to
+                    // one empty word, like zsh.
+                    isarr = 1;
                     split_parts = Some(slice.clone()); // c:2596 (aval)
                                                        // c:Src/subst.c:3032 — `val = sepjoin(aval,
                                                        // sep, 1)`. Quoted array range `"${a[1,2]}"`
