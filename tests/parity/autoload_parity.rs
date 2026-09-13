@@ -573,3 +573,28 @@ fn autoload_zwc_digest_and_ksh_body_ignore_rcquotes() {
     );
     assert_eq!(z.exit, r.exit);
 }
+
+/// c:Src/exec.c:6383-6388 — stripkshdef matches the file's single funcdef
+/// against the function name while tolerating a Dash token on either side.
+/// C walks bytes and Dash is one byte there; the port walked the UTF-8 bytes
+/// of a String holding Dash as a two-byte char, so any hyphenated name failed
+/// the match, the wrapper was not stripped, and the FIRST call of a
+/// `foo-bar() { … }` autoload file only defined the function.
+#[test]
+fn hyphenated_ksh_style_autoload_runs_on_first_call() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("foo-bar"), "foo-bar() { print dash-body; }\n").unwrap();
+    std::fs::write(d.path().join("fun-kw"), "function fun-kw { print kw-body; }\n").unwrap();
+    for script in [
+        "fpath=(.); autoload -Uz foo-bar; foo-bar; foo-bar; functions foo-bar",
+        "fpath=(.); autoload -Uz fun-kw; fun-kw",
+    ] {
+        let z = run_zsh_in(d.path(), script);
+        let r = run_zshrs_in(d.path(), script);
+        assert_eq!(r.stdout, z.stdout, "divergence on: {script}");
+        assert_eq!(r.exit, z.exit, "exit divergence on: {script}");
+    }
+}

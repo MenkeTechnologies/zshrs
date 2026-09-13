@@ -12827,15 +12827,20 @@ pub fn stripkshdef(
     let name_slot = pc_after_code + 1; // == 4
     let name_in_def = ecrawstr(&prog, name_slot, None);
 
-    // c:6320-6328 — name match, tolerating Dash-tokenised hyphens
-    // on either side.
-    let n1 = name.as_bytes();
-    let n2 = name_in_def.as_bytes();
+    // c:6383-6388 — name match, tolerating Dash-tokenised hyphens
+    // on either side. C walks bytes, and there the Dash token is ONE
+    // byte; the port's String holds it as the char U+009B (two UTF-8
+    // bytes), so the walk must be per char. Walking `as_bytes()` put the
+    // two sides out of step at the first hyphen, so a ksh-style
+    // `foo-bar() { … }` autoload file was never recognised as its own
+    // definition and the first call only defined the function.
+    let n1: Vec<char> = name.chars().collect();
+    let n2: Vec<char> = name_in_def.chars().collect();
     let mut i = 0usize;
     let mut j = 0usize;
     while i < n1.len() && j < n2.len() {
-        let c1 = n1[i] as char;
-        let c2 = n2[j] as char;
+        let c1 = n1[i];
+        let c2 = n2[j];
         if c1 != c2 && c1 != Dash && c1 != '-' && c2 != Dash && c2 != '-' {
             break;
         }
