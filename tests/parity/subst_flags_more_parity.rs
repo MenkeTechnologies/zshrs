@@ -756,3 +756,27 @@ mod bad_pattern_diagnostic_is_untokenized {
         same(r#"x='a(b'; print -r -- "${x//\(/X}""#);
     }
 }
+
+/// c:Src/lex.c:1659-1660 — `if (lexstop) err = intick || endchar || err;`:
+/// parsestrnoerr lexes with endchar '\0' (c:1725), so reaching the end of an
+/// unclosed `${` is not a lexer error there, and paramsubst then fails the
+/// command ("bad substitution"). zshrs's dquote_parse failed at any end of
+/// input, the `(e)` re-lex fell back to the literal text, and the script went
+/// on: `a='${'; print -r -- ${(e)a}` printed `${`.
+mod e_flag_unclosed_brace_fails_the_command {
+    use super::*;
+
+    #[test]
+    fn an_unclosed_brace_ends_the_script_with_status_one() {
+        assert_parity("a='${'; print -r -- ${(e)a} 2>/dev/null; print after");
+        assert_parity("a='${'; print -r -- \"${(e)a}\" 2>/dev/null; print after");
+        assert_parity("a='${x'; v=${(e)a} 2>/dev/null; print after");
+        assert_parity("a='${'; if : ${(e)a}; then echo x; fi 2>/dev/null; print after");
+    }
+
+    #[test]
+    fn closed_and_literal_forms_are_unchanged() {
+        assert_parity("a='x${y}z'; y=Q; print -r -- ${(e)a}");
+        assert_parity("print -r -- \"\\${\"; print after");
+    }
+}

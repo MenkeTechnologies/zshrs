@@ -3137,6 +3137,15 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                 None => {
                     LEX_LEXSTOP.set(true);
                     cleanup(intick, bct);
+                    // c:1659-1660 — `if (lexstop) err = intick || endchar || err;`:
+                    // running out of input is an error only inside a backquote
+                    // or when a terminator was expected. parsestrnoerr passes
+                    // endchar '\0' (c:1725), so an unclosed `${` there parses and
+                    // "bad substitution" is reported later by paramsubst, as the
+                    // c:1648-1655 comment intends (`a='${'; print ${(e)a}`).
+                    if intick == 0 && endchar == '\0' {
+                        return Ok(());
+                    }
                     return Err(None); // c:1659 — lexstop
                 }
             };
