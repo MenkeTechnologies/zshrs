@@ -542,4 +542,16 @@ mod sh_word_split_modifier_results {
         );
         assert_parity(r#"setopt shwordsplit; s="a o b"; print -l "${s/o/x}"; [[ ${s/o/x} == "a o b" ]] || print ok"#);
     }
+
+    /// c:Src/utils.c:3730-3760 spacesplit + c:Src/subst.c:184-187 — the empty
+    /// fields a leading/trailing IFS-whitespace run leaves take the word's
+    /// affixes before prefork deletes the empty nodes; IFS-non-whitespace
+    /// empties (`nulstring`) always survive.
+    #[test]
+    fn whitespace_edge_fields_take_the_affixes() {
+        assert_parity(r#"setopt shwordsplit; s=" foo bar "; print -rl -- x${s}y x$s ${s}y $s; a=(x${s}y); print $#a"#);
+        assert_parity(r#"setopt shwordsplit; s=" foo bar "; e=; print -rl -- $e$s "x"$s; for w in x$s; do print -r "[$w]"; done"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; s=":a::b:"; print -rl -- x${s}y x$s $s"#);
+        assert_parity(r#"setopt shwordsplit; s="   "; print -rl -- x${s}y; print -rl -- x$s | wc -l"#);
+    }
 }

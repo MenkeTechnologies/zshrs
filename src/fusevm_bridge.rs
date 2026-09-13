@@ -8138,42 +8138,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `$s` in `print $s` stayed a single arg even with the option
         // set, breaking POSIX-style scalar word-splitting.
         if !in_dq && isset(crate::ported::zsh_h::SHWORDSPLIT) {
-            // c:1705 — `spbreak = (pf_flags & PREFORK_SHWORDSPLIT) && !qt`,
-            // then c:3902 `force_split = !ssub && (spbreak || spsep)` and
-            // c:3921 `aval = sepsplit(val, spsep, 0, 1)`. SH_WORD_SPLIT runs
-            // the SAME splitter as `${=name}`, so route it through the same
-            // port. The previous `split(|c| ifs.contains(c)).filter(non-empty)`
-            // dropped every empty field, but spacesplit (Src/utils.c:3711)
-            // only elides the ones a run of IFS-WHITESPACE produces — an
-            // IFS-NON-whitespace separator preserves them as `nulstring`.
-            // `IFS=x; v=xaxbx; setopt shwordsplit; print -rl -- $v` is four
-            // words in zsh (``, a, b, ``), not two.
-            let raw = crate::ported::utils::sepsplit(&val, None, false); // c:3921
-            let nulstring = crate::ported::zsh_h::Nularg.to_string(); // c:36
-            let parts: Vec<Value> = raw
-                .into_iter()
-                .filter_map(|w| {
-                    if w == nulstring {
-                        Some(Value::str(String::new()))
-                    } else if w.is_empty() {
-                        // c:184-187 — prefork deletes the truly-empty node.
-                        None
-                    } else {
-                        Some(Value::str(w))
-                    }
-                })
-                .collect();
-            if parts.is_empty() {
-                // c:3922 — `val = dupstring("")`: an empty SCALAR, not an
-                // empty array (see EMPTY_EXPANSION_IS_SCALAR).
-                note_empty_is_scalar(true);
-                return Value::array(Vec::new());
-            } else if parts.len() == 1 {
-                // c:3924 — `else if (!aval[1]) val = aval[0];`
-                return parts.into_iter().next().unwrap();
-            } else {
-                return Value::array(parts); // c:3927
-            }
+            // c:Src/subst.c:318-324 → c:1707 `spbreak`, c:3921 `sepsplit`, then
+            // c:4366-4437 attach the word's affixes BEFORE c:184-187 deletes the
+            // empty nodes. `spacesplit` (c:Src/utils.c:3730-3760, allownull 0)
+            // gives a leading/trailing run of IFS-whitespace a real `""` node,
+            // which survives only once text is glued onto it:
+            //     setopt shwordsplit; s=' foo bar '; print -rl -- x${s}y
+            //     zsh: x / foo / bar / y      (the edges became `x` and `y`)
+            // while an IFS-non-whitespace empty field is `nulstring` and always
+            // survives. This read cannot see the affixes, and dropping every
+            // truly-empty field here made that `xfoo` / `bary`. paramsubst
+            // already carries both rules (PARAMSUBST_AFFIXES_DEFERRED leaves the
+            // removal to the word's end-of-word drop), and it is the same
+            // expansion C runs, so hand it the `${name}` spelling.
+            return paramsubst_to_value(&format!("${{{}}}", name));
         }
         Value::str(val)
     }
