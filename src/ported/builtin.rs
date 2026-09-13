@@ -6733,6 +6733,27 @@ pub fn bin_typeset(
                         elems.push(re);
                     }
                 }
+                // c:2448 + c:2486-2494 — a subscripted name with an array value is
+                // a slice assignment on the existing parameter:
+                //     } else if (PM_TYPE(on) == PM_ARRAY && ASG_ARRAYP(asg)) {
+                //         int flags = (asg->flags & ASG_KEY_VALUE) ? ASSPM_KEY_VALUE : 0;
+                //         if (!(pm = assignaparam(pname, asg->value.array ?
+                //                 zlinklist2array(asg->value.array, 1) : mkarray(NULL), flags)))
+                //             return NULL;
+                //         dont_set = 1;
+                // The array-init path below stored the element list under the
+                // literal name `array[2,4]` and left `array` untouched.
+                if n.contains('[') {
+                    let flags = if elems.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
+                        crate::ported::zsh_h::ASSPM_KEY_VALUE
+                    } else {
+                        0
+                    };
+                    if crate::ported::params::assignaparam(n, elems, flags).is_none() {
+                        returnval = 1; // c:2491 return NULL
+                    }
+                    continue;
+                }
                 // c:Src/builtin.c:2355-2378 — tc (type-conversion)
                 // branch: the requested type differs from the
                 // existing param's type. zsh keeps readonly/exported

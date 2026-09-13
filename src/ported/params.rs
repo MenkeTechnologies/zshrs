@@ -5796,8 +5796,15 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     let arr = pm.u_arr.get_or_insert_with(Vec::new);
     let len = arr.len() as i64;
     // c:2944-2949 — negative start: add pre_assignment_length; clamp to 0.
+    // !!! WARNING: RUST-ONLY INDEX CONVENTION — C's getindex has already made a
+    // positive start 0-based (`start -= startprevlen`, c:2144-2145), but this
+    // port keeps it 1-based (`start_idx = start - 1` below; the ported getindex
+    // omits that decrement and the fusevm splice passes 1-based starts). So a
+    // negative start, which C turns into a 0-based index here, becomes the
+    // matching 1-based one: `+ 1`, clamped at 1 instead of 0. Using C's 0-based
+    // result made `typeset a[-1]=(z)` overwrite the last TWO elements.
     let start = if v.start < 0 {
-        (len + v.start as i64).max(0)
+        (len + v.start as i64 + 1).max(1)
     } else {
         v.start as i64
     };
@@ -9134,9 +9141,30 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         if !exists {
             createparam(base, PM_ARRAY as i32)?;
         }
-        // Subscript-write itself (a[k]=v) is handled at the caller's
-        // SubscriptArith dispatch; reaching here means the slice
-        // pre-check has passed and the param exists.
+        // c:3364-3370 — `if (!v) if (!(v = fetchvalue(&vbuf, &t, 1,
+        // SCANPM_ASSIGNING))) { … return NULL; }` then c:3434
+        // `setarrvalue(v, val)`: the subscript resolves to a start/end
+        // range (getindex) and the slice is spliced. The old early return
+        // wrote nothing, so `typeset a[2,4]=(x y)` — whose only route here is
+        // typeset_single c:2486-2491 — left the array untouched.
+        // !!! WARNING: RUST-ONLY WRITE-BACK — fetchvalue hands out a clone of
+        // the paramtab node (C mutates `v->pm` in place), so the spliced node
+        // is stored back under the base name.
+        let mut vbuf = value {
+            pm: None,
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 0,
+            end: -1,
+        };
+        let mut cursor: &str = name;
+        let v = fetchvalue(Some(&mut vbuf), &mut cursor, 1, SCANPM_ASSIGNING as i32)?; // c:3365
+        setarrvalue(v, val); // c:3434
+        let spliced = v.pm.take();
+        if let Some(pm) = spliced {
+            paramtab().write().unwrap().insert(base.to_string(), pm);
+        }
         return paramtab().read().unwrap().get(base).cloned();
     }
 

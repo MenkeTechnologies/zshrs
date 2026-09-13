@@ -1196,3 +1196,30 @@ mod typesettounset_declaration_is_unset {
         assert_parity(r#"setopt typesettounset; f(){ local -a h; print $+h; local -A g; print $+g; local s; print $+s }; f"#);
     }
 }
+
+/// `typeset NAME[SUB]=(…)` is a slice assignment on the existing array
+/// (c:Src/builtin.c:2448, c:2486-2494 → assignaparam → setarrvalue,
+/// c:Src/params.c:3364-3370 / 3434). B02typeset.ztst "can update array slices
+/// in typeset".
+mod typeset_slice_assignment {
+    use super::*;
+
+    #[test]
+    fn slice_replace_and_delete_in_function() {
+        assert_parity(
+            "array=(nothing to see here); fn() { typeset array=(one two three four five); typeset array[2,4]=(umm er); print ${#array} $array; typeset array[2,3]=(); print ${#array} $array; }; fn; print ${#array} $array",
+        );
+    }
+
+    #[test]
+    fn single_index_takes_several_words() {
+        assert_parity("g=(a b c); typeset g[2]=(x y); print $g");
+    }
+
+    /// Negative bounds count from the end (c:2944-2953).
+    #[test]
+    fn negative_slice_bounds() {
+        assert_parity("g=(a x y c); typeset g[-1]=(z); print $g; typeset g[-2,-1]=(p q r); print $g; typeset g[-10]=(f); print $g");
+    }
+
+}
