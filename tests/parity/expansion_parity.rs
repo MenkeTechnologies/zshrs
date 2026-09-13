@@ -215,6 +215,14 @@ mod alternate_word_split_flags {
         assert_parity(r#"print -rl -- ${=x:-'p q' r} ${=x:-"a \" b" c} ${=x:-"$(echo s t)" u}"#);
         assert_parity(r#"unset z; print -rl -- ${z:=~/w "a b"}"#);
     }
+
+    /// c:Src/subst.c:3230 — `spbreak = 0` after the word's multsub, so
+    /// SH_WORD_SPLIT does not split the joined value a second time.
+    #[test]
+    fn shwordsplit_does_not_resplit_the_word() {
+        assert_parity(r#"setopt shwordsplit; str=s; print -rl -- ${str+"one two" "3 2 1" foo "$str"}"#);
+        assert_parity(r#"setopt shwordsplit; v="1 2"; x=1; print -rl -- ${y:-"p q" r} ${y:-$v} ${y:-"$v"} ${x+a b} "${x+c d}""#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

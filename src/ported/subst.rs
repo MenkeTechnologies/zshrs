@@ -6175,6 +6175,10 @@ pub fn paramsubst(
         // Unparenthesised flags — single `for (;;)` (subst.c:2550-2632).
         // Order matters for `${#~x}` vs `${~#x}`, `${=^x}`, etc.
         let mut force_split = false;
+        // c:Src/subst.c:3230 — `spbreak = 0;` after a default/alternate word's
+        // multsub. C's spbreak is one local; the port recomputes it from
+        // pf_flags at the join/split block, so the reset has to be carried.
+        let mut spbreak_cleared = false;
 
         // c:Src/subst.c:3229-3232 — after the default/assign word's
         // `multsub`, C runs `spbreak = 0; if (globsubst != 2) globsubst = 0;`.
@@ -15695,6 +15699,7 @@ pub fn paramsubst(
                     // further may re-split — that is what keeps `${1+"$@"}`'s
                     // array splits intact).
                     force_split = false; // c:3230
+                    spbreak_cleared = true; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3207 — the word keeps its lexer tokens (see `rest_raw`).
@@ -15743,6 +15748,7 @@ pub fn paramsubst(
                         }
                     }
                     force_split = false; // c:3230
+                    spbreak_cleared = true; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3245 (unconditional assign)
@@ -16046,6 +16052,7 @@ pub fn paramsubst(
                     };
                     let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
                     force_split = false; // c:3230
+                    spbreak_cleared = true; // c:3230
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -16119,6 +16126,7 @@ pub fn paramsubst(
                     };
                     let (ms_joined, ms_parts, ms_isarr, _ms) = multsub(alt, split_flags);
                     force_split = false; // c:3230
+                    spbreak_cleared = true; // c:3230
                     value = ms_joined;
                     if ms_isarr && !ms_parts.is_empty() {
                         split_parts = Some(ms_parts);
@@ -23108,7 +23116,8 @@ pub fn paramsubst(
         // seven (D04parameter.ztst "Rule 9: Shell Word Splitting"). The bare
         // `$name` path has its own c:1705 block further down; only the braced
         // one was uncovered.
-        let spbreak = force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt); // c:1707
+        let spbreak = !spbreak_cleared
+            && (force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt)); // c:1707, c:3230
                                                                                                // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
                                                                                                // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
                                                                                                //     if (isarr || quoted_array_with_offset) {
