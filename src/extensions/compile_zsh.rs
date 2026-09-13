@@ -1302,7 +1302,7 @@ impl ZshCompiler {
             //
             // Emit the per-stage sub-chunks and texts; BUILTIN_RUN_BG forks one
             // child per stage in this shell and addprocs each one.
-            let stages = self.compile_pipe_stages(pipe);
+            let stages = self.compile_pipe_stages(pipe, true);
             let n = stages.len();
             for (idx, text) in &stages {
                 let c = self.builder.add_constant(Value::str(text));
@@ -1581,7 +1581,7 @@ impl ZshCompiler {
             self.compile_command(&pipe.cmd);
             return;
         }
-        let stages = self.compile_pipe_stages(pipe);
+        let stages = self.compile_pipe_stages(pipe, false);
         let n = stages.len();
         for (idx, _text) in &stages {
             self.builder.emit(Op::LoadInt(*idx as i64), 0);
