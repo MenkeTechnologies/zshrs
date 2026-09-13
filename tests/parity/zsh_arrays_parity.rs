@@ -1265,3 +1265,35 @@ mod slice_then_operator {
         assert_parity(r#"a=(aa bb cc dd); print -l "${a[2]#?}""#);
     }
 }
+
+/// c:Src/exec.c:4167-4285 — a typeset-family command's postassigns (every word
+/// from its first `NAME=…` on, c:Src/parse.c:1986-1989 / c:2008-2050) are
+/// globbed inside the builtin branch, and c:4287 `if (!errflag) { … lastval =
+/// ret; }` skips the builtin without storing a status. A NOMATCH there ends the
+/// script with the PREVIOUS command's status; zshrs forced 1.
+mod typeset_postassign_nomatch_status {
+    use super::*;
+
+    #[test]
+    fn a_postassign_nomatch_keeps_the_previous_status() {
+        assert_parity("print hi; local -a arr=(zshrs_nomatch_q*); print never");
+        assert_parity("f(){ local -a arr=(zshrs_nomatch_q*); }; f; print never");
+        assert_parity("print hi; typeset a=(x) b=(zshrs_nomatch_q*)");
+        assert_parity("print hi; local a=1 zshrs_nomatch_q*");
+        assert_parity("print hi; export a=1 zshrs_nomatch_q*");
+        assert_parity("print hi; local a=(x) b zshrs_nomatch_q*");
+        assert_parity("false; local -a arr=(zshrs_nomatch_q*)");
+        assert_parity("f(){ local -a arr=(zshrs_nomatch_q*); }; false; f; print never");
+    }
+
+    /// A command word globbed before the first postassign fails with 1.
+    #[test]
+    fn a_word_before_the_postassigns_still_exits_one() {
+        assert_parity("print hi; local zshrs_nomatch_q* a=(x)");
+        assert_parity("print hi; local zshrs_nomatch_q* a=(zshrs_nomatch_q*)");
+        assert_parity("print hi; local -a zshrs_nomatch_q*");
+        assert_parity("print hi; local a zshrs_nomatch_q*");
+        assert_parity("arr=(zshrs_nomatch_q*); print never");
+        assert_parity("local -a a=(x y); print ${#a} rc=$?");
+    }
+}

@@ -87,6 +87,15 @@ thread_local! {
     /// XTRACE_NEWLINE after emitting the trailing `\n`.
     static XTRACE_DONE_PS4: Cell<bool> = const { Cell::new(false) };
 
+    /// A NOMATCH raised by a typeset-family command's words BEFORE its first
+    /// postassign, set aside by BUILTIN_TYPESET_POSTASSIGNS_BEGIN and put
+    /// back by BUILTIN_TYPESET_POSTASSIGNS_END.
+    static TYPESET_WORD_GLOB_FAILED: Cell<bool> = const { Cell::new(false) };
+
+    /// Set by BUILTIN_TYPESET_POSTASSIGNS_END when a NOMATCH fired in one of
+    /// the postassigns. Consumed by `dispatch_builtin`.
+    static TYPESET_POSTASSIGN_GLOB_FAILED: Cell<bool> = const { Cell::new(false) };
+
     /// Port of C's `FILE *xtrerr` xtrace stream (Src/exec.c:81). C builds
     /// each trace line in this stdio buffer — `printprompt4` does
     /// `fprintf(xtrerr, …)`, then args via `fputs`/`fputc` — and
@@ -1243,6 +1252,19 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         exec.current_command_glob_failed.set(false); // c:1879 cleanup
         f
     });
+    let postassign_glob_failed = TYPESET_POSTASSIGN_GLOB_FAILED.with(|c| c.replace(false));
+    if postassign_glob_failed && !glob_failed {
+        // c:Src/exec.c:4167-4285 — a typeset-family command's postassigns
+        // (every word from its first `NAME=…` on, c:Src/parse.c:1986-1989 and
+        // c:2008-2050) are globbed inside the builtin branch, after the
+        // command words: `globlist(…); if (errflag) { …; break; }`. Then
+        // c:4287 `if (!errflag) { … lastval = ret; }` skips the builtin
+        // WITHOUT storing a status, so `lastval` keeps the previous command's
+        // value (`print hi; local -a a=(zzq*)` exits 0, after `false` 1)
+        // while ERRFLAG_ERROR still ends the script. A command word globbed
+        // before them fails at c:3755-3763 instead, with `lastval = 1`.
+        return crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+    }
     if glob_failed {
         // c:Src/glob.c:1876-1880 + Src/exec.c — NOMATCH zerr sets
         // ERRFLAG_ERROR (via utils.c:184). For a BUILTIN command the
@@ -3050,6 +3072,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // See the const's doc comment for the contract. Stack (bottom→top):
     // base, e1, …, eN — argc = N + 1.
+    // See the consts' doc comments.
+    vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_BEGIN, |_vm, _argc| {
+        let word_failed = with_executor(|exec| exec.current_command_glob_failed.replace(false));
+        TYPESET_WORD_GLOB_FAILED.with(|c| c.set(word_failed));
+        Value::Int(0)
+    });
+    vm.register_builtin(BUILTIN_TYPESET_POSTASSIGNS_END, |_vm, _argc| {
+        let word_failed = TYPESET_WORD_GLOB_FAILED.with(|c| c.replace(false));
+        let postassign_failed =
+            with_executor(|exec| exec.current_command_glob_failed.replace(word_failed));
+        TYPESET_POSTASSIGN_GLOB_FAILED.with(|c| c.set(postassign_failed));
+        Value::Int(0)
+    });
+
     vm.register_builtin(BUILTIN_TYPESET_PAREN_PACK, |vm, argc| {
         let mut vals: Vec<Value> = Vec::with_capacity(argc as usize);
         for _ in 0..argc {
@@ -15769,6 +15805,19 @@ pub const BUILTIN_DEFAULT_WORD_GLOB: u16 = 636;
 /// (read-only reference / invalid self reference) so the loop
 /// driver aborts, mirroring C execfor's errflag check.
 pub const BUILTIN_SET_LOOP_VAR: u16 = 629;
+
+/// Emitted once per typeset-family command, just before its first
+/// `NAME=…` argument: from there on every word is one of C's postassigns
+/// (c:Src/parse.c:1986-1989, c:2008-2050), globbed inside execcmd_exec's
+/// builtin branch (c:Src/exec.c:4167-4285) where a NOMATCH leaves `lastval`
+/// alone. Sets aside a NOMATCH the earlier command words raised
+/// (c:3755-3763, `lastval = 1`).
+pub const BUILTIN_TYPESET_POSTASSIGNS_BEGIN: u16 = 684;
+/// Emitted after the last word of a command that emitted
+/// BUILTIN_TYPESET_POSTASSIGNS_BEGIN: moves a postassign NOMATCH off the
+/// per-command cell (so argument collection does not store status 1) and
+/// puts back the command-word NOMATCH BEGIN set aside.
+pub const BUILTIN_TYPESET_POSTASSIGNS_END: u16 = 685;
 
 /// EXTEND step of typeset paren-init packing. Pops `argc` values:
 /// [base, e1, …, eN] — base is either the opener (`name=(` /

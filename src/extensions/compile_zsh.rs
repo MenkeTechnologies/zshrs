@@ -3190,7 +3190,23 @@ impl ZshCompiler {
         // Every word pushes exactly ONE stack value (the typeset
         // paren-init arm packs its elements back into one via
         // BUILTIN_TYPESET_PAREN_PACK).
+        let mut postassigns_started = false;
         for word in &simple.words[precmd_skip + 1..] {
+            // c:Src/parse.c:1986-1989 / c:2008-2050 — from a typeset-family
+            // command's first `NAME=…` argument on, every word is a postassign,
+            // globbed in execcmd_exec's builtin branch (c:Src/exec.c:4167-4285)
+            // where a NOMATCH keeps `lastval`. Mark where that starts.
+            if head_is_typeset_family
+                && !postassigns_started
+                && (is_typeset_scalar_assign(word) || split_typeset_paren_init(word).is_some())
+            {
+                postassigns_started = true;
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_POSTASSIGNS_BEGIN, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
             // Typeset-family paren-init: compile `name=( e1 e2 … )`
             // ELEMENT BY ELEMENT (the parser's \u{1f} ENVARRAY rejoin
             // already word-split them), then PACK back into one
@@ -3372,6 +3388,16 @@ impl ZshCompiler {
                     0,
                 );
             }
+        }
+
+        // Every word from the first postassign on has been expanded: close
+        // the span BUILTIN_TYPESET_POSTASSIGNS_BEGIN opened.
+        if postassigns_started {
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_POSTASSIGNS_END, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
         }
 
         // Un-truncated arg count. `argc` (u8, wrapping) feeds the xtrace /
