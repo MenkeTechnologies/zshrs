@@ -505,3 +505,31 @@ mod quoted_splat_keeps_nulstring_c4387 {
         assert_parity(r#"a=(x y ''); f(){ print -r -- $# }; f ${a}POST"#);
     }
 }
+
+/// c:Src/subst.c:318-324 — SH_WORD_SPLIT reaches paramsubst as the
+/// PREFORK_SHWORDSPLIT bit stringsubst adds at its call site, so every
+/// compiled `${…}` modifier shape has to split its RESULT exactly like a
+/// plain `$s`, while a scalar-assignment value (PREFORK_SINGLE, c:1761)
+/// keeps its separators.
+mod sh_word_split_modifier_results {
+    use super::*;
+
+    #[test]
+    fn modifier_results_split_on_ifs() {
+        assert_parity(r#"setopt shwordsplit; s="a o b"; print -l ${s/o/x}"#);
+        assert_parity(r#"setopt shwordsplit; s="a o b"; print -l ${s:-x} ${s:+$s}"#);
+        assert_parity(r#"setopt shwordsplit; s="a o b"; print -l ${s#a} ${s:1} ${(U)s}"#);
+        assert_parity(r#"setopt shwordsplit; s="another poxy boring string"; print -l ${${s}/o/ }"#);
+        assert_parity(r#"setopt shwordsplit; t() { print $#: "$@" }; t ${:- foo bar }"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; s="a:o:b"; print -l pre${s/o/x}post"#);
+        assert_parity(r#"setopt shwordsplit; a=("x y" z); print -l ${a/x/q}"#);
+    }
+
+    #[test]
+    fn scalar_assignment_values_stay_whole() {
+        assert_parity(
+            r#"setopt shwordsplit; s="a  b"; x=${s/a/c}; local y=${s/a/c}; typeset z=${s:-q}; export w=${s#a}; print -r "[$x][$y][$z][$w]"; a=(${s/a/c}); print $#a"#,
+        );
+        assert_parity(r#"setopt shwordsplit; s="a o b"; print -l "${s/o/x}"; [[ ${s/o/x} == "a o b" ]] || print ok"#);
+    }
+}

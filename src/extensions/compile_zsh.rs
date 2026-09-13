@@ -1508,14 +1508,22 @@ impl ZshCompiler {
 
     fn emit_param_modifier(&mut self, m: &ParamModifier) {
         let name_const = self.builder.add_constant(Value::str(m.name.as_str()));
+        // c:Src/subst.c:1761 `ssub = (pf_flags & PREFORK_SINGLE)` — every
+        // modifier builtin below rebuilds the `${…}` body and hands it to
+        // paramsubst, so it needs the word's PREFORK_SINGLE bit the same way
+        // BUILTIN_PARAM_FLAG does: `local v=${s/a/c}` (c:Src/exec.c:4239-4241)
+        // must not SH_WORD_SPLIT the value and rejoin it on IFS[0]. Pushed
+        // last, read by the handler only when argc carries it.
+        let ssub = i64::from(self.ssub_c1761());
         match &m.kind {
             ParamModifierKind::DefaultFamily { op, rhs } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadInt(*op as i64), 0);
                 let rhs_const = self.builder.add_constant(Value::str(rhs));
                 self.builder.emit(Op::LoadConst(rhs_const), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_DEFAULT_FAMILY, 3),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_DEFAULT_FAMILY, 4),
                     0,
                 );
             }
@@ -1527,8 +1535,9 @@ impl ZshCompiler {
                 // length (`${s:0:-2}` truncates from end).
                 self.builder
                     .emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING, 3),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING, 4),
                     0,
                 );
             }
@@ -1549,8 +1558,9 @@ impl ZshCompiler {
                     .builder
                     .add_constant(Value::Bool(length_expr.is_some()));
                 self.builder.emit(Op::LoadConst(has_len_const), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING_EXPR, 4),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_SUBSTRING_EXPR, 5),
                     0,
                 );
             }
@@ -1577,8 +1587,9 @@ impl ZshCompiler {
                     self.dq_context_depth as i64
                 };
                 self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_STRIP, 4), 0);
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_STRIP, 5), 0);
             }
             ParamModifierKind::Replace {
                 op,
@@ -1603,8 +1614,9 @@ impl ZshCompiler {
                     self.dq_context_depth as i64
                 };
                 self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_REPLACE, 5),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_REPLACE, 6),
                     0,
                 );
             }
@@ -1619,8 +1631,9 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
+                self.builder.emit(Op::LoadInt(ssub), 0);
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FILTER, 2),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FILTER, 3),
                     0,
                 );
             }

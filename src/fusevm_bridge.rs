@@ -9702,11 +9702,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // BUILTIN_PARAM_FILTER — `${var:#pat}` / `${var:|name}` etc.
     // PURE PASSTHRU: rebuild `${name:#pat}` and route to paramsubst.
-    vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 2 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
         let body = format!("${{{}:#{}}}", name, pattern);
-        paramsubst_to_value(&body)
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // `a[i]=(elements)` / `a[i,j]=(elements)` / `a[i]=()`
@@ -12846,7 +12853,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `Src/subst.c::paramsubst`). All "missing vs empty" gating,
     // nounset suppression, default-evaluation, and elide-empty-words
     // semantics live inside paramsubst.
-    vm.register_builtin(BUILTIN_PARAM_DEFAULT_FAMILY, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_DEFAULT_FAMILY, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 3 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let rhs = vm.pop().to_str();
         let op = vm.pop().to_int() as u8;
         let name = vm.pop().to_str();
@@ -12895,7 +12909,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             format!("${{{}{}{}}}", name, op_str, rhs)
         };
-        paramsubst_to_value(&body)
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // `${var:offset[:length]}` — substring. Pops [name, offset, length].
@@ -12913,7 +12927,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `:-` dispatch fires on the synthesized `${name:-N}` body and
     // returns N as the unset-default instead of slicing the last N
     // chars. Length-form `${name:-N:M}` has the same trap.
-    vm.register_builtin(BUILTIN_PARAM_SUBSTRING, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_SUBSTRING, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 3 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let length = vm.pop().to_int();
         let offset = vm.pop().to_int();
         let name = vm.pop().to_str();
@@ -12934,7 +12955,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}{}:{}}}", name, off_sep, offset, length)
         };
-        paramsubst_to_value(&body)
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // BUILTIN_PARAM_SUBSTRING_EXPR — `${var:offset_expr[:length_expr]}` form.
@@ -12950,7 +12971,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `-` so paramsubst's check_colon_subscript (subst.c:1571)
     // accepts the operand as a math expression instead of the
     // `:-` operator catching it.
-    vm.register_builtin(BUILTIN_PARAM_SUBSTRING_EXPR, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_SUBSTRING_EXPR, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 4 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let has_len = vm.pop().to_int() != 0;
         let len_expr = vm.pop().to_str();
         let off_expr = vm.pop().to_str();
@@ -12961,7 +12989,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}{}}}", name, off_sep, off_expr)
         };
-        paramsubst_to_value(&body)
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
@@ -12973,7 +13001,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // and route through `subst::paramsubst`. (M)/(S) flags arrive
     // through SUB_FLAGS (already inside paramsubst's scope), so we
     // just clear the bridge-side cached read.
-    vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 4 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let _dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let pattern = vm.pop().to_str();
@@ -12986,7 +13021,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             _ => "#",
         };
         let body = format!("${{{}{}{}}}", name, op_str, pattern);
-        paramsubst_to_value(&body)
+        paramsubst_to_value_pf(&body, pf_flags)
     });
 
     // `$((expr))` — pops [expr_string], evaluates via MathEval which
@@ -13763,7 +13798,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
     // BUILTIN_PARAM_REPLACE — `${var/pat/repl}` / `${var//pat/repl}` /
     // `${var/#pat/repl}` / `${var/%pat/repl}`. PURE PASSTHRU.
-    vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
+    vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, argc| {
+        // c:Src/subst.c:1761 — the word's PREFORK_SINGLE bit, pushed last by
+        // compile_zsh::emit_param_modifier (see the note there).
+        let pf_flags = if argc as usize > 5 && vm.pop().to_int() != 0 {
+            crate::ported::zsh_h::PREFORK_SINGLE
+        } else {
+            0
+        };
         let dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let repl = vm.pop().to_str();
@@ -13820,7 +13862,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if dq_flag {
             with_executor(|exec| exec.in_dq_context += 1);
         }
-        let ret = paramsubst_to_value(&body);
+        let ret = paramsubst_to_value_pf(&body, pf_flags);
         if dq_flag {
             with_executor(|exec| exec.in_dq_context -= 1);
         }
@@ -14397,6 +14439,32 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // mode 1 / mode 5 before the bridge fires, so reading it here
     // propagates the DQ flag without changing every bridge call site.
     let qt = with_executor(|exec| exec.in_dq_context > 0);
+    // c:Src/subst.c:318-324 — this is the bridge's stand-in for stringsubst's
+    // paramsubst call, and that call site is where SH_WORD_SPLIT enters:
+    //     if ((isset(SHWORDSPLIT) && !(pf_flags & PREFORK_NOSHWORDSPLIT)) ||
+    //         (pf_flags & PREFORK_SPLIT))
+    //         pf_flags |= PREFORK_SHWORDSPLIT;
+    //     node = paramsubst(list, node, &str, qt,
+    //         pf_flags & (PREFORK_SINGLE|PREFORK_SHWORDSPLIT|PREFORK_SUBEXP), …);
+    // paramsubst's `spbreak` (c:1707) reads only that flag, never the option.
+    // Passing the callers' bare flags left every compiled `${…}` fast path
+    // unsplit: `setopt shwordsplit; s='a o b'; print -l ${s/o/x}` printed one
+    // word where zsh prints `a` `x` `b` (same for `${s:-x}`, `${s#a}`,
+    // `${s:1}`, `${(U)s}`, `${${s}/o/ }`). A scalar-assignment value still
+    // passes PREFORK_SINGLE, which keeps `spbreak` off there.
+    let pf_flags = {
+        use crate::ported::zsh_h::{
+            PREFORK_NOSHWORDSPLIT, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT,
+            PREFORK_SUBEXP, SHWORDSPLIT,
+        };
+        let mut f = pf_flags;
+        if (crate::ported::zsh_h::isset(SHWORDSPLIT) && f & PREFORK_NOSHWORDSPLIT == 0)
+            || f & PREFORK_SPLIT != 0
+        {
+            f |= PREFORK_SHWORDSPLIT; // c:321
+        }
+        f & (PREFORK_SINGLE | PREFORK_SHWORDSPLIT | PREFORK_SUBEXP) // c:324-325
+    };
     let mut ret_flags: i32 = 0;
     // c:Src/subst.c:183-186 — `body` is the `${…}` BODY, not the word: the
     // caller's literals are attached by its own concat opcodes afterwards.
