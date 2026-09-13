@@ -171,4 +171,62 @@ mod real_lexer_token_shapes {
             .expect("zshrs");
         assert_eq!(String::from_utf8_lossy(&z.stdout), String::from_utf8_lossy(&r.stdout));
     }
+
+    /// c:Src/lex.c:1339 `c = dquote_parse('"', sub)` + c:1444 `hungetc(c)` —
+    /// under CSH_JUNKIE_QUOTES a newline ends a `"…` word and is the character
+    /// pushed back (Test/D04parameter.ztst "(z) flag with CSH_JUNKIE_QUOTES").
+    /// zshrs pushed back the opening `"`, so every later word gained a stray
+    /// leading `"`: `"# \` backtick`, `"word`.
+    #[test]
+    fn csh_junkie_quotes_newline_ends_a_double_quoted_word() {
+        if !zsh_available() {
+            return;
+        }
+        let script = "local b=$'# \\' single\\n# \\\" double\\n# ` backtick\\nword'; (setopt CSH_JUNKIE_QUOTES; printf ': %s\\n' \"${(@Z+n+)b}\")";
+        let z = Command::new(zsh_path()).args(["-fc", script]).output().expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(String::from_utf8_lossy(&z.stdout), String::from_utf8_lossy(&r.stdout));
+        assert!(String::from_utf8_lossy(&z.stdout).contains(": word\n"));
+    }
+
+    /// c:Src/lex.c:1365-1366, 1380-1386 — under CSH_JUNKIE_QUOTES a newline
+    /// inside `` `…` `` or `"…"` is "unmatched", reported on the line that
+    /// opened it (the newline is pushed back, c:1444). zshrs ran the backquote
+    /// on to EOF as if closed, and reported the `"` one line late.
+    #[test]
+    fn csh_junkie_quotes_newline_in_a_script_is_unmatched() {
+        if !zsh_available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("zshrs-cjq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        for (name, body) in [
+            ("bq.zsh", "setopt cshjunkiequotes\nprint `echo a\necho b`\necho rc=$?\n"),
+            ("dq.zsh", "setopt cshjunkiequotes\nprint \"a\nb\"\necho rc=$?\n"),
+        ] {
+            std::fs::write(dir.join(name), body).expect("write");
+            let run = |bin: &Path, pre: &[&str]| {
+                let o = Command::new(bin)
+                    .args(pre)
+                    .args(["-f", name])
+                    .current_dir(&dir)
+                    .env_remove("ZSHRS_CACHE")
+                    .output()
+                    .expect("run");
+                (
+                    String::from_utf8_lossy(&o.stdout).into_owned(),
+                    String::from_utf8_lossy(&o.stderr).into_owned(),
+                    o.status.code(),
+                )
+            };
+            let z = run(Path::new(zsh_path()), &[]);
+            let r = run(&zshrs_bin(), &["--zsh"]);
+            assert_eq!(z, r, "{name}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

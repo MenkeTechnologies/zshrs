@@ -2795,7 +2795,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 cmdpush(CS_DQUOTE as u8);
                 let r = dquote_parse('"', sub);
                 cmdpop();
-                if r.is_err() {
+                if let Err(stop) = r {
+                    // c:1339 `c = dquote_parse('"', sub);` — the error value
+                    // IS `c`, so the `brk:` epilogue's `hungetc(c)` (c:1444)
+                    // pushes back the character that stopped the scan
+                    // (c:1672 `err = c`), e.g. the newline that ends a
+                    // CSH_JUNKIE_QUOTES string. Keeping the opening `"` here
+                    // re-read it as a fresh quote, so every later word of
+                    // `${(Z+n+)b}` came back with a stray leading `"`.
+                    if let Some(stop) = stop {
+                        c = stop;
+                    }
                     unmatched = '"';
                     if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
                         peek = LEXERR;
@@ -2848,11 +2858,30 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                     add('\\');
                                     add(c);
                                 }
-                                None => break,
+                                None => {
+                                    // c:1357 `c = hgetc()` hit end of input;
+                                    // c:1380 `c != '`'` → unmatched.
+                                    LEX_LEXSTOP.set(true);
+                                    unmatched = '`';
+                                    if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
+                                        peek = LEXERR; // c:1384
+                                    }
+                                    break;
+                                }
                             }
                         }
                         Some('\n') if !sub && isset(CSHJUNKIEQUOTES) => {
-                            // CSHJUNKIEQUOTES: bare \n terminates.
+                            // c:1365-1366 — CSHJUNKIEQUOTES: a bare `\n` ends
+                            // the scan with `c == '\n'`, which c:1380 sees as
+                            // an unterminated backquote (c:1381-1385) and the
+                            // `brk:` epilogue pushes back (c:1444). Breaking
+                            // out without that added the closing Tick and
+                            // kept lexing, gluing the next line onto the word.
+                            c = '\n';
+                            unmatched = '`'; // c:1381
+                            if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
+                                peek = LEXERR; // c:1384
+                            }
                             break;
                         }
                         Some(ch) => {
