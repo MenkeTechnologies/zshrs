@@ -2480,36 +2480,21 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         && chars[1] != Inpar
         && crate::ported::zsh_h::isset(crate::ported::zsh_h::EQUALSOPT)
     {
-        let cmd_part: String = chars[1..].iter().collect();
-        // Split at `:` if assign, else take the whole thing.
-        let cmd = if assign {
-            cmd_part.split(':').next().unwrap_or(&cmd_part).to_string()
-        } else {
-            cmd_part.clone()
-        };
-        // C: `pathprog(cmd, &fullname)` walks `path[]`. paramtab read.
-        let path = getsparam("PATH").unwrap_or_default();
-        for dir in path.split(':') {
-            let full = format!("{}/{}", dir, cmd);
-            if std::path::Path::new(&full).exists() {
-                if assign && cmd_part.len() > cmd.len() {
-                    let suffix = &cmd_part[cmd.len()..];
-                    return Some(format!("{}{}", full, suffix));
-                }
-                return Some(full);
-            }
-        }
-        // c:Src/subst.c:725 — `=cmd` lookup failed. zsh emits the
-        // "not found" diagnostic + sets errflag so the enclosing
-        // command exits non-zero. The previous Rust port silently
-        // returned None and filesub kept the literal `=cmd`,
-        // diverging from zsh's hard-fail behaviour.
-        // Untokenize Equals (`\u{8d}`) → `=` etc. before emit so
-        // `[ a == a ]` reports "= not found" (the second `=` came in
-        // as Equals from the lexer) instead of "\u{8d} not found".
-        let cmd_display = untokenize(&cmd);
-        zerr(&format!("{} not found", cmd_display)); // c:726
-        errflag_set_error();
+        // c:800-804 —
+        //     char *expn = equalsubstr(str+1, assign, isset(NOMATCH));
+        //     if (expn) { *namptr = expn; return 1; }
+        // equalsubstr ends the command name at Inpar (or `:` when
+        // assigning), resolves it with findcmd and keeps the tail, so
+        // `=sh(:P)` becomes `/bin/sh(:P)` for the glob qualifier to act
+        // on. The PATH walk this replaced took the whole word as the
+        // command name ("sh(:P) not found"), skipped findcmd's hash
+        // table, and reported the miss even with NO_NOMATCH set.
+        let rest: String = chars[1..].iter().collect();
+        return equalsubstr(
+            &rest,
+            assign,
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH),
+        );
     }
     None
 }

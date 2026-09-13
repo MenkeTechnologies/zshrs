@@ -1081,3 +1081,31 @@ mod magic_equals_cmd {
         assert_parity("setopt magicequalsubst; v=\"a==ls\"; print -r -- $v");
     }
 }
+
+/// `=cmd` goes through equalsubstr (c:Src/subst.c:715-733, called at c:800):
+/// the name ends at `(` so a glob qualifier survives, the lookup is findcmd
+/// (hashed commands included), and NO_NOMATCH keeps the word silently.
+/// B13whence.ztst "whence -s doesn't print arrows for symlink-free paths".
+mod equals_command_lookup {
+    use super::*;
+
+    #[test]
+    fn trailing_glob_qualifier_is_kept() {
+        assert_parity("print -r -- =sh(:P)");
+    }
+
+    #[test]
+    fn hashed_command_resolves() {
+        assert_parity("hash zzcmd=/bin/echo; print -r -- =zzcmd");
+    }
+
+    #[test]
+    fn nonomatch_leaves_the_word() {
+        assert_parity("setopt nonomatch; print -r -- =nope_cmd_zz; echo after");
+    }
+
+    #[test]
+    fn assignment_suffix_after_colon() {
+        assert_parity("x==ls:foo; print -r -- $x");
+    }
+}
