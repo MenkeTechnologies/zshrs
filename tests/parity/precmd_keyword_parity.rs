@@ -244,7 +244,6 @@ mod dash_precommand_runs_the_next_word {
     /// a function called under `-` runs unchanged, and the flag must not
     /// reach the externals its body runs.
     #[test]
-    #[ignore = "runtime: call_function runs dispatch_function_call for an external, whose take_exec_dash() clears BUILTIN_EXEC_DASH before the spawn"]
     fn an_external_gets_a_dash_argv0() {
         assert_parity(":; - /bin/sh -c 'echo $0'; print rc=$?");
         assert_parity(":; - sh -c 'echo $0'; print rc=$?");
