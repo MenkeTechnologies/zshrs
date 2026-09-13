@@ -17286,6 +17286,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 0 => {
                     forked_child_subsh_levels(); // c:Src/exec.c:1221
+                    // c:Src/exec.c:5037 entersubsh → c:1200 `zsh_subshell++`.
+                    // The child _exits, so the guard is never dropped.
+                    std::mem::forget(CmdSubstSubshellBump::enter());
                     // c:4985 — child: stdout → the temp file, run the body, exit.
                     // Clear the inherited pending-file list so this child never
                     // unlinks the PARENT's =() temp files when its own commands
@@ -17354,6 +17357,8 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                // c:Src/exec.c:5095 entersubsh → c:1200 `zsh_subshell++`.
+                std::mem::forget(CmdSubstSubshellBump::enter());
                 // Child: close read end, dup write end to stdout,
                 // run the sub-chunk, exit. The exit closes the
                 // write end automatically, so the parent's reader
@@ -17488,6 +17493,8 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
+                // c:Src/exec.c:5150 entersubsh → c:1200 `zsh_subshell++`.
+                std::mem::forget(CmdSubstSubshellBump::enter());
                 // Child: close the write end (c: closem after redup),
                 // dup the read end onto stdin (c: redup(pipes[0], 0)),
                 // run the sub-chunk, exit. Other std fds stay

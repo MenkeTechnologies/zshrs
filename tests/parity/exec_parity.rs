@@ -507,3 +507,16 @@ mod pipeline_input_seeds_the_input_multio {
         assert_parity(r#"cd "${TMPDIR:-/tmp}"; print o1 >zr_q1; print o2 >zr_q2; setopt nomultios; cat zr_q1 | cat <zr_q2; unsetopt nomultios; cat zr_q1 | { cat <zr_q2 }; cat <<<x; print y | cat <<<z; command rm -f zr_q1 zr_q2"#);
     }
 }
+
+/// c:Src/exec.c:5037/5095/5150 — `getoutputfile` (`=( )`) and `getproc`
+/// (`<( )` / `>( )`) fork and call entersubsh, whose c:1200 `zsh_subshell++`
+/// is what `$ZSH_SUBSHELL` reads inside the substitution.
+mod zsh_subshell_in_process_substitutions {
+    use super::*;
+
+    #[test]
+    fn counts_the_forked_child() {
+        assert_parity(r#"print $ZSH_SUBSHELL; cat =(print $ZSH_SUBSHELL); cat <(print $ZSH_SUBSHELL); print $(print $ZSH_SUBSHELL)"#);
+        assert_parity(r#"print >(print $ZSH_SUBSHELL) >/dev/null; sleep 0.2"#);
+    }
+}
