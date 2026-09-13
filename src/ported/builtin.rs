@@ -14233,7 +14233,28 @@ pub fn bin_emulate(
         // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
         emulation.store(bits, Relaxed);
 
-        // Build the cmdopts view that c:6286-6292 manipulates.
+        // c:6270-6276 — `if (opt_l) { cmdopts = zhalloc(OPT_SIZE);
+        // memcpy(cmdopts, opts, OPT_SIZE); } else cmdopts = opts;`. Only -l
+        // works on a COPY; every other form applies the emulation to the live
+        // `opts[]` and never reads a copy back. The copy below (two walks of
+        // every option, one before and one after emulate) is therefore built
+        // only for -l. Building it unconditionally made each `emulate -L zsh`
+        // — the first line of compdef, run once per `#compdef` file by
+        // compinit — pay two full option-table walks for nothing.
+        if !opt_l {
+            crate::ported::options::emulate(shname.as_str(), opt_r); // c:6277
+            if opt_l_arg {
+                // c:6278-6280 — `cmdopts[LOCALOPTIONS] = cmdopts[LOCALTRAPS] =
+                // cmdopts[LOCALPATTERNS] = 1;` on the live array.
+                for nm in ["localoptions", "localtraps", "localpatterns"] {
+                    crate::ported::options::opt_state_set(nm, true);
+                }
+            }
+            crate::ported::pattern::clearpatterndisables(); // c:6285
+            return 0; // c:6286
+        }
+
+        // Build the cmdopts view that c:6286-6292 manipulates (-l only).
         let mut cmdopts: HashMap<String, bool> = HashMap::new();
         for n in ZSH_OPTIONS_SET.iter() {
             cmdopts.insert(
