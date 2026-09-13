@@ -339,3 +339,23 @@ mod varid_close_error_text {
         assert_parity(r#"myfd=99; { exec {myfd}>&- } 2>&1; print rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:3098-3103 — `else if (isset(POSIXBUILTINS) && (cflags &
+/// BINF_EXEC)) break;`: "POSIX doesn't allow "exec" to operate on builtins
+/// or shell functions", so under POSIX_BUILTINS the name is looked up as an
+/// external command only (Test/E01options.ztst "POSIX_BUILTINS and exec").
+mod exec_under_posix_builtins {
+    use super::*;
+
+    #[test]
+    fn exec_skips_a_shell_function() {
+        assert_parity(
+            r#"(cat() { print fn $1 }; (exec cat /dev/null; print no); print with; (setopt posixbuiltins; exec cat /dev/null; print no); print end)"#,
+        );
+    }
+
+    #[test]
+    fn exec_skips_a_builtin() {
+        assert_parity(r#"(setopt posixbuiltins; exec print hi 2>&1; print no); print rc=$?"#);
+    }
+}

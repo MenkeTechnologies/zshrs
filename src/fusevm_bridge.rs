@@ -2710,7 +2710,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // For both subshell and top-level contexts: dispatch through
         // the function/builtin lookup first; only fall through to
         // execvp/spawn if the name isn't shell-resolvable.
-        let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(&cmd));
+        // c:Src/exec.c:3098-3103 — `else if (isset(POSIXBUILTINS) &&
+        // (cflags & BINF_EXEC)) break;` "POSIX doesn't allow "exec" to
+        // operate on builtins or shell functions": the walk stops before
+        // the shfunctab and builtintab lookups, so the name is searched
+        // as an external command.
+        let posix_exec = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS);
+        let has_user_fn =
+            !posix_exec && with_executor(|exec| exec.functions_compiled.contains_key(&cmd));
         if has_user_fn {
             let status =
                 with_executor(|exec| exec.dispatch_function_call(&cmd, &rest).unwrap_or(127));
@@ -2730,7 +2737,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // c:Src/exec.c — builtin path: `exec builtin` runs the
         // builtin in-process and exits.
-        let bn_in_tab = crate::ported::builtin::createbuiltintable().contains_key(&cmd);
+        let bn_in_tab =
+            !posix_exec && crate::ported::builtin::createbuiltintable().contains_key(&cmd); // c:3098-3103
         if bn_in_tab {
             let status = dispatch_builtin_raw(&cmd, rest.clone());
             let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
