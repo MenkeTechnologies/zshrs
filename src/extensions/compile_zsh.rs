@@ -10245,38 +10245,6 @@ impl ZshCompiler {
         self.next_slot += 1;
 
         for word in words {
-            // Unquoted bare `$NAME` in a for-list — when NAME is an
-            // array, zsh splices each element as one iteration. Detect
-            // this shape (no DQ markers, no other shell metas) and emit
-            // BUILTIN_ARRAY_ALL which always returns Value::Array (for
-            // arrays) or a single-element Array (for scalars). Without
-            // this, BUILTIN_GET_VAR returns the IFS-joined string for
-            // arrays and `for f in $arr` iterates ONCE.
-            let untoked = crate::lex::untokenize(word);
-            let is_bare_var_dollar = untoked.starts_with('$')
-                && !word.contains('\u{9d}')   // no SQ
-                && !word.contains('\u{9e}')   // no DQ
-                && untoked[1..]
-                    .chars()
-                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
-                && !untoked[1..].is_empty()
-                && !untoked.contains('[');
-            if is_bare_var_dollar {
-                let name = &untoked[1..];
-                let name_const = self.builder.add_constant(Value::str(name));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 0), 0);
-                // c:Src/subst.c:184-187 — this shape is UNQUOTED by
-                // construction (the DQ-marker checks above), so
-                // prefork's empty-word removal applies: `a=(y '' x);
-                // for i in $a` iterates twice in zsh.
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
-                    0,
-                );
-                continue;
-            }
             // c:Src/exec.c — `for x in $(cmd)` undergoes ONE wordsplit
             // pass. compile_word_str's cmdsub arm at line 3551 already
             // emits WORD_SPLIT when not in DQ/assign context, so let

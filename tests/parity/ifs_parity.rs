@@ -555,3 +555,25 @@ mod sh_word_split_modifier_results {
         assert_parity(r#"setopt shwordsplit; s="   "; print -rl -- x${s}y; print -rl -- x$s | wc -l"#);
     }
 }
+
+/// c:Src/loop.c:98 `execsubst(args)` → c:Src/exec.c:2744-2746 prefork, the
+/// same word expansion every other argument gets: a bare `$foo` in a `for`
+/// list keeps an IFS-non-whitespace empty field (`nulstring`), honours
+/// KSH_ARRAYS and GLOB_SUBST, and drops only truly empty words.
+mod for_list_bare_parameter {
+    use super::*;
+
+    #[test]
+    fn nulstring_field_is_an_iteration() {
+        assert_parity(r#"setopt shwordsplit; IFS=:; foo=1::2; for w in $foo; do print -r "[$w]"; done"#);
+        assert_parity(r#"setopt shwordsplit; foo=" a  b "; for w in $foo; do print -r "[$w]"; done"#);
+        assert_parity(r#"a=(y '' x); for i in $a; do print -r "[$i]"; done; e=; for w in $e; do print -r "[$w]"; done; print done"#);
+    }
+
+    #[test]
+    fn options_apply_like_any_other_word() {
+        assert_parity(r#"setopt ksharrays; a=(p q); for w in $a; do print -r "[$w]"; done"#);
+        assert_parity(r#"cd "$(mktemp -d)" && touch zq1 zq2 && setopt globsubst && p='zq*' && for w in $p; do print -r "[$w]"; done"#);
+        assert_parity(r#"set -- "a b" c; for w in $argv; do print -r "[$w]"; done; typeset -A h; h=(k v); for w in $h; do print -r "[$w]"; done"#);
+    }
+}
