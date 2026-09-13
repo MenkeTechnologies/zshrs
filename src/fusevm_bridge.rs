@@ -7502,8 +7502,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // always returned an ARRAY. Keep that exact shape so nothing
         // downstream (concat, plan9, argv splice) sees a one-element splat turn
         // into a scalar.
-        let untouched =
-            |e: Vec<String>| Value::array(prefork_c184_drop_empty(e).into_iter().map(Value::str).collect());
+        // c:Src/subst.c:4366-4437 then c:183-186 — the removal tests the
+        // FINISHED node, after the word's text is glued onto the first and
+        // last elements. When this read is a segment of such a word
+        // (BUILTIN_WORD_DEFER_EMPTIES opened it) the word's own end-of-word
+        // drop runs that test; removing the empty elements here, before the
+        // concat, dropped the ones the affixes land on:
+        // `a=(x y ""); print -rl -- p${a[@]}q` is `px` `y` `q` in zsh.
+        let defer_to_word = crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) > 0;
+        let untouched = |e: Vec<String>| {
+            let e = if defer_to_word { e } else { prefork_c184_drop_empty(e) };
+            Value::array(e.into_iter().map(Value::str).collect())
+        };
         if spbreak == 0 {
             return untouched(elems);
         }

@@ -681,3 +681,16 @@ mod quoted_empty_literal_anchors_edge_field {
         assert_parity(r#"setopt shwordsplit rcexpandparam; s=" a"; print -rl -- ""$s | wc -l"#);
     }
 }
+
+/// c:Src/subst.c:4366-4437 then c:183-186 — an array splice's empty edge
+/// elements take the word's prefix/suffix before prefork removes empty nodes.
+mod array_splice_edge_empties_take_affixes {
+    use super::*;
+
+    #[test]
+    fn affixed_splice_keeps_edge_elements() {
+        assert_parity(r#"a=(x y ""); print -rl -- p${a[@]}q | wc -l; a=("" x); print -rl -- p${a[@]}q | wc -l"#);
+        assert_parity(r#"a=("" x ""); print -rl -- p${a[@]}q ""${a[@]} ""${a[@]}"" | wc -l"#);
+        assert_parity(r#"a=(x "" y); print -rl -- p${a[@]}q ${a[@]} "${a[@]}" | wc -l"#);
+    }
+}
