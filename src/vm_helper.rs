@@ -5459,9 +5459,21 @@ impl ShellExecutor {
         // command still runs `fixfds(save)`. See
         // `unwind_redirect_scopes_to`.
         let redir_depth = self.redirect_scope_stack.len();
+        // c:Src/exec.c:5632-5638 — `if ((osfc = sfcontext) == SFC_NONE)
+        // sfcontext = SFC_DIRECT; … doshfunc(shf, args, 0); sfcontext = osfc;`.
+        // Read by the job-text gates (c:2060, c:3537): a command run inside a
+        // function is not given the source text `time` reports as %J.
+        let osfc = crate::ported::exec::sfcontext.load(std::sync::atomic::Ordering::Relaxed);
+        if osfc == crate::ported::zsh_h::SFC_NONE {
+            crate::ported::exec::sfcontext.store(
+                crate::ported::zsh_h::SFC_DIRECT,
+                std::sync::atomic::Ordering::Relaxed,
+            ); // c:5633
+        }
         let _ctx = ExecutorContext::enter(self);
         let status = crate::ported::exec::doshfunc(&mut synth_shf, doshargs, false, body_runner);
         drop(_ctx);
+        crate::ported::exec::sfcontext.store(osfc, std::sync::atomic::Ordering::Relaxed); // c:5638
         self.unwind_redirect_scopes_to(redir_depth);
         crate::ported::prompt::CMDSTACK.with(|s| *s.borrow_mut() = saved_cmdstack);
 

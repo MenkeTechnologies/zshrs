@@ -292,3 +292,18 @@ mod time_errexit {
         assert_parity(r#"time false 2>/dev/null; echo rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:3536-3538 — `time` takes the job text only when `!sfcontext`,
+/// and execshfunc sets `sfcontext = SFC_DIRECT` for the call (c:5632-5633). A
+/// timed command inside a function (directly or through `eval`) therefore
+/// reports an empty %J.
+mod timed_command_text_inside_a_function {
+    use super::*;
+
+    #[test]
+    fn job_text_is_empty_in_a_function() {
+        assert_parity(r#"TIMEFMT='[%J]'; f(){ time /usr/bin/true }; f 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; f(){ eval 'time /usr/bin/true' }; f 2>&1"#);
+        assert_parity(r#"TIMEFMT='[%J]'; { time /usr/bin/true; } 2>&1"#);
+    }
+}

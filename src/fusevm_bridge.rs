@@ -8379,6 +8379,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             String::new()
         };
+        // c:Src/exec.c:3536-3538 — `if (!text && (!sfcontext && (jobbing ||
+        // (how & Z_TIMED)))) text = getjobtext(…)`: inside a shell function
+        // (sfcontext = SFC_DIRECT, c:5632-5633) no job text is taken, so the
+        // report's %J is empty: `f(){ time /bin/sleep 0 }; f` prints
+        // `  0.00s user …` with no command.
+        let desc = if crate::ported::exec::sfcontext.load(std::sync::atomic::Ordering::Relaxed)
+            != crate::ported::zsh_h::SFC_NONE
+        {
+            String::new()
+        } else {
+            desc
+        };
         // c:Src/exec.c:3690 — the compiler's `is_cursh` verdict for the
         // timed body (see compile_zsh.rs `time_cursh_hint`): 1 = current
         // shell, 0 = forked job, 2 = decide from the command name below.
