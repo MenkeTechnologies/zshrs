@@ -1136,6 +1136,26 @@ mod eval_flag_failed_relex_is_null {
     }
 }
 
+/// c:Src/subst.c:2571-2572 — an unbraced `$#` is the length operator only
+/// `(inbrace || !isset(POSIXIDENTIFIERS))`. With the option set, `$#a` is `$#`
+/// followed by the literal `a`, and the subscript and `*`/`@` spellings follow
+/// (`$#a[@]` is `0a[@]`, a glob). The option is read at run time.
+mod unbraced_length_under_posixidentifiers {
+    use super::*;
+
+    #[test]
+    fn hash_is_the_count_then_literal_text() {
+        assert_parity(r#"setopt posixidentifiers; set -- a b; a=abc; echo $#a "$#a" x$#a ${#a} $#1 $#_; v=$#a; echo $v"#);
+        assert_parity(r#"setopt posixidentifiers; set -- a b; echo $#@ "$#*""#);
+        assert_parity(r#"setopt posixidentifiers; a=(1 22 3); echo $#a[2]; echo rc=$?"#);
+    }
+
+    #[test]
+    fn without_the_option_it_is_the_length() {
+        assert_parity(r#"set -- a b; a=(1 22 3); echo $#a "$#a" $#a[@] $#a[2] $#1 $#@ "$#*""#);
+    }
+}
+
 /// The compiler side of the `(e)` NULL (c:Src/subst.c:1878, 326-327, 142-147).
 /// Inside a word the value is the node text up to the `$`, earlier
 /// substitutions and the lexer's quote tokens included; and every LATER word

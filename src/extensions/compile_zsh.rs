@@ -435,6 +435,79 @@ impl ZshCompiler {
     /// each word-list site does not add a SECOND `zglob` pass over
     /// results C already treats as final (c:Src/glob.c `globlist` steps
     /// past the nodes `zglob` produced). See `word_emitted_glob`.
+    /// BUILTIN_EXPAND_TEXT base mode for `s`: 1 inside a double-quoted
+    /// parent, else the word's own quoting (see the mode comments in
+    /// `compile_word_str`'s text-expansion arm).
+    fn text_base_mode(&self, s: &str) -> u8 {
+        // c:Src/subst.c:1625 — `qt` is "inside double quotes". The cond
+        // operand's glob-suppression bump is `ssub` (c:1761), not `qt`.
+        if (self.dq_context_depth - self.cond_glob_suppress_depth) > 0 {
+            1
+        } else {
+            expand_text_mode(s, s)
+        }
+    }
+
+    /// Refine a base mode with the compile context: 5 / 8 / 6 assignment
+    /// forms, 9 singsub, 7 redirect target (the mode comments in
+    /// `compile_word_str`'s text-expansion arm give the C citations).
+    fn text_mode_for_context(&self, base_mode: u8) -> u8 {
+        let scalar_assign_ctx = self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+        let ssub_assign_value = scalar_assign_ctx && self.assign_context_depth > 0;
+        if base_mode == 1 && scalar_assign_ctx {
+            5
+        } else if base_mode == 0 && ssub_assign_value {
+            8
+        } else if base_mode == 0 && scalar_assign_ctx {
+            6
+        } else if base_mode == 0 && self.singsub_depth > 0 {
+            9
+        } else if base_mode == 0 && self.redir_word_depth > 0 {
+            7
+        } else {
+            base_mode
+        }
+    }
+
+    /// Unbraced `$#NAME` (and `$#@` / `$#*`). c:Src/subst.c:2571-2572 takes
+    /// `#` as the length operator only `(inbrace || !isset(POSIXIDENTIFIERS))`;
+    /// with the option set the word is `$#` followed by literal text
+    /// (`setopt posixidentifiers; set -- a b; echo $#a` → `2a`). The option
+    /// is a runtime one, so branch on it: the text-expansion path, whose
+    /// paramsubst applies the gate, or the PARAM_LENGTH read of `name`.
+    fn emit_unbraced_length(&mut self, name: &str, word: &str) {
+        let name = name.to_string();
+        self.emit_unbraced_length_with(word, move |s: &mut Self| {
+            let idx = s.builder.add_constant(Value::str(name.as_str()));
+            s.builder.emit(Op::LoadConst(idx), 0);
+            s.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1), 0);
+        });
+    }
+
+    /// The POSIXIDENTIFIERS branch of `emit_unbraced_length` with the
+    /// length read supplied by the caller (`$#NAME[idx]` reads through the
+    /// braced form).
+    fn emit_unbraced_length_with(&mut self, word: &str, emit_length: impl FnOnce(&mut Self)) {
+        let opt = self.builder.add_constant(Value::str("posixidentifiers"));
+        self.builder.emit(Op::LoadConst(opt), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_SET, 1), 0);
+        let to_length = self.builder.emit(Op::JumpIfFalse(0), 0);
+        let text = self.builder.add_constant(Value::str(word));
+        self.builder.emit(Op::LoadConst(text), 0);
+        let mode = self.text_mode_for_context(self.text_base_mode(word));
+        self.builder.emit(Op::LoadInt(mode as i64), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+        let to_end = self.builder.emit(Op::Jump(0), 0);
+        let length = self.builder.current_pos();
+        self.builder.patch_jump(to_length, length);
+        emit_length(self);
+        let end = self.builder.current_pos();
+        self.builder.patch_jump(to_end, end);
+    }
+
     fn emit_word_glob_expand(&mut self) {
         // c:Src/exec.c:3755-3757 — a command's argv is globbed as one list
         // after prefork has expanded every word; `compile_simple` collects
@@ -6887,12 +6960,7 @@ impl ZshCompiler {
                 // recursive `${#@}` paramsubst path fires.
                 if name == "#@" || name == "#*" {
                     let inner = &name[1..]; // "@" or "*"
-                    let idx = self.builder.add_constant(Value::str(inner));
-                    self.builder.emit(Op::LoadConst(idx), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1),
-                        0,
-                    );
+                    self.emit_unbraced_length(inner, s);
                     return;
                 }
                 let idx = self.builder.add_constant(Value::str(name));
@@ -7012,11 +7080,13 @@ impl ZshCompiler {
                         // the full subscript-flag machinery so we
                         // don't have to re-implement it inline.
                         let braced = format!("${{#{}}}", rest);
-                        let idx = self.builder.add_constant(Value::str(braced));
-                        self.builder.emit(Op::LoadConst(idx), 0);
-                        self.builder.emit(Op::LoadInt(4), 0);
-                        self.builder
-                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                        self.emit_unbraced_length_with(s, move |c: &mut Self| {
+                            let idx = c.builder.add_constant(Value::str(braced.as_str()));
+                            c.builder.emit(Op::LoadConst(idx), 0);
+                            c.builder.emit(Op::LoadInt(4), 0);
+                            c.builder
+                                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                        });
                         return;
                     }
                 }
@@ -7041,12 +7111,7 @@ impl ZshCompiler {
             // and the fallback emitted `0`.
             let is_special_positional = bare_name == "@" || bare_name == "*" || bare_name == "argv";
             if is_ident || is_positional || is_special_positional {
-                let idx = self.builder.add_constant(Value::str(bare_name));
-                self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_LENGTH, 1),
-                    0,
-                );
+                self.emit_unbraced_length(bare_name, s);
                 return;
             }
         }
@@ -9611,11 +9676,7 @@ impl ZshCompiler {
         // c:Src/subst.c:1625 — `qt` is "inside double quotes". The cond
         // operand's glob-suppression bump is `ssub` (c:1761), not `qt`, so it
         // must not force DoubleQuoted mode; mode 9 below carries its real flag.
-        let base_mode = if (self.dq_context_depth - self.cond_glob_suppress_depth) > 0 {
-            1
-        } else {
-            expand_text_mode(s, &preserved)
-        };
+        let base_mode = self.text_base_mode(s);
         // Mode 5: "DQ in scalar-assignment context" — same as mode 1
         // (DoubleQuoted) but additionally signals PREFORK_SINGLE-
         // equivalent semantics to subst_port. Direct port of zsh
@@ -9663,21 +9724,7 @@ impl ZshCompiler {
         // c:530 / c:544 / c:556). Unlike mode 8 it carries NO PREFORK_ASSIGN —
         // `filesub`'s colon-walk is an assignment-only rule (c:Src/subst.c:689),
         // so `case /usr/bin:~/bin in` keeps the literal `~/bin` as zsh does.
-        let scalar_assign_ctx = self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
-        let ssub_assign_value = scalar_assign_ctx && self.assign_context_depth > 0;
-        let mode = if base_mode == 1 && scalar_assign_ctx {
-            5
-        } else if base_mode == 0 && ssub_assign_value {
-            8
-        } else if base_mode == 0 && scalar_assign_ctx {
-            6
-        } else if base_mode == 0 && self.singsub_depth > 0 {
-            9
-        } else if base_mode == 0 && self.redir_word_depth > 0 {
-            7
-        } else {
-            base_mode
-        };
+        let mode = self.text_mode_for_context(base_mode);
         // Mode 10: "unquoted command argument, glob deferred" — mode 0 but the
         // glob-eligible words come back still tokenized instead of globbed.
         // c:Src/exec.c:3357-3359 preforks the whole argv before c:3755-3757
