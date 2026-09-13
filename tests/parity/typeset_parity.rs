@@ -1309,3 +1309,23 @@ mod typeset_name_not_spelled_as_the_reserved_word {
         assert_parity("typeset -a a=(1 2) b; a+=(3); print $a; local x=1 y=(p q); print $x $y");
     }
 }
+
+/// c:Src/exec.c:3088-3096 — `if (type == WC_TYPESET && (hn =
+/// builtintab->getnode2(builtintab, cmdarg)))`: the enabled reserved word runs
+/// the typeset builtin even when the builtin itself is disabled. zshrs
+/// reported "command not found: typeset".
+mod reserved_word_runs_a_disabled_builtin {
+    use super::*;
+
+    #[test]
+    fn the_reserved_word_still_dispatches() {
+        assert_parity("enable -r typeset; disable typeset; eval 'fn(){ typeset foo=`echo one word=two`; print $foo; print $word; }'; fn");
+        assert_parity("disable typeset; typeset x=1 2>&1; print rc=$? $x");
+        assert_parity("disable local; f(){ local y=$(echo g h); print \"[$y]\"; }; f");
+    }
+
+    #[test]
+    fn a_non_reserved_spelling_stays_disabled() {
+        assert_parity("disable typeset; \\typeset x=1 2>/dev/null; print rc=$?");
+    }
+}

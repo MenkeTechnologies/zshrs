@@ -3648,6 +3648,15 @@ impl ZshCompiler {
             argc
         };
         if let Some(builtin_id) = builtin_id {
+            if head_is_typeset_family && simple.typeset_reswd {
+                // c:Src/exec.c:3088-3096 — `if (type == WC_TYPESET && (hn =
+                // builtintab->getnode2(builtintab, cmdarg)))`: the reserved
+                // word runs the builtin even after `disable typeset`, "as we
+                // share the implementation". Mark this dispatch as WC_TYPESET.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_RESWD, 0), 0);
+                self.builder.emit(Op::Pop, 0);
+            }
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
