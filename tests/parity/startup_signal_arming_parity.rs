@@ -283,3 +283,25 @@ fn inherited_sigquit_ignore_is_recorded_only_when_not_interactive() {
     assert_parity_args("inherited QUIT ignore, -i -c", &["-f", "-i", "-c", "trap"], true);
     assert_parity_args("inherited QUIT ignore, -c", &["-f", "-c", "trap"], true);
 }
+
+/// c:Src/exec.c:4289-4293 — `if (!(errflag & ERRFLAG_INT)) lastval = ret;`:
+/// the interrupted builtin's own status never replaces the `128 + SIGINT`
+/// the handler wrote (c:Src/signals.c:463) or a forced INT-trap return.
+#[test]
+fn interrupt_status_survives_the_interrupted_builtin() {
+    assert_parity_args(
+        "untrapped INT, -i -c",
+        &["-f", "-i", "-c", "kill -INT $$; print survived"],
+        false,
+    );
+    assert_parity_args(
+        "INT trap returning 1, -i -c",
+        &["-f", "-i", "-c", "TRAPINT(){ return 1 }; kill -INT $$; print survived"],
+        false,
+    );
+    assert_parity_args(
+        "INT trap returning 1 inside a function, -c",
+        &["-f", "-c", "TRAPINT(){ print T; return 1 }; f() { print A; kill -INT $$; print C }; f; print B"],
+        false,
+    );
+}

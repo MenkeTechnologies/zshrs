@@ -490,7 +490,18 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                 // noerrexit window: immediate exit.
                 let privileged = isset(PRIVILEGED);
                 let interactive = isset(INTERACTIVE);
-                if privileged && interactive {
+                // c:455 — `(noerrexit & NOERREXIT_SIGNAL)`. The third
+                // conjunct was dropped here, which made EVERY interrupt of a
+                // privileged interactive shell an immediate `zexit` instead
+                // of the errflag that ends the current list. C arms
+                // NOERREXIT_SIGNAL only around its own signal windows
+                // (c:Src/init.c:1447), so outside one the handler must fall
+                // through to c:457.
+                let in_signal_window = (crate::ported::exec::noerrexit
+                    .load(Ordering::Relaxed)
+                    & crate::ported::zsh_h::NOERREXIT_SIGNAL)
+                    != 0;
+                if privileged && interactive && in_signal_window {
                     zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`

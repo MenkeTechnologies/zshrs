@@ -2660,16 +2660,15 @@ pub fn zshrs_main() {
         );
         // c:Src/init.c:1427-1470 (`init_signals`) — C reaches it through
         // `zsh_main` on EVERY invocation; this dispatch path never calls
-        // that function, so run the same sequence here (all of it bar
-        // `intr()` — see extensions/startup_signals.rs). It must come
+        // that function, so run the same sequence here. It must come
         // AFTER `apply_cli_flags`, which is what settles INTERACTIVE and
         // MONITOR, because C's gates read them.
         zsh::startup_signals::init_dispatch_signals();
-        // c:Src/init.c:1455 — `install_handler(SIGCHLD);`, which
-        // `init_dispatch_signals` leaves to this caller. It lives here
-        // rather than there because it is not a disposition policy that
-        // could differ per emulation: it is the shell's ONLY reaper, and
-        // without it every background child of
+        // c:Src/init.c:1455 — `install_handler(SIGCHLD);`, the one line
+        // of `init_signals` that `init_dispatch_signals` still leaves
+        // out. It lives here rather than there because it is not a
+        // disposition policy that could differ per emulation: it is the
+        // shell's ONLY reaper, and without it every background child of
         // a `-c` run stays a zombie for the life of the shell, so the
         // process table grows with each one. `sleep 0.2 & ; sleep 1; ps
         // -o stat= -p $!` printed `Z` where zsh prints nothing.
@@ -2955,7 +2954,7 @@ pub fn zshrs_main() {
             deferred_zsh_style_emu,
         );
         // c:Src/init.c:1427-1470 (`init_signals`) — same bypass as the
-        // `-c` dispatch above: run the sequence here (bar `intr()`), after
+        // `-c` dispatch above: run the whole sequence here, after
         // `apply_cli_flags` has settled the INTERACTIVE and MONITOR
         // gates C's branches read.
         zsh::startup_signals::init_dispatch_signals();

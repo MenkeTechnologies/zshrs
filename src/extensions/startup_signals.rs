@@ -14,12 +14,14 @@
 //! dispatches `-c` and a script FILE inside `bins/zshrs.rs` without going
 //! through `ported::init::zsh_main`, so `init_signals` never ran for them.
 //!
-//! `init_dispatch_signals` below replays `init_signals` line by line.
-//! C's SIGCHLD handler (`c:1455`) is installed by the dispatch paths
-//! themselves, directly after this call (`bins/zshrs.rs`): arming it
-//! makes the reaper race the pipeline's own `waitpid`, which the
-//! reaped-status ring (`extensions/reaped_status.rs`) and the fork-time
-//! `child_block` span (`fusevm_bridge::ChildBlockSpan`) answer.
+//! Calling the WHOLE of `init_signals` from those paths is not a safe
+//! substitute: it also installs C's SIGCHLD handler, whose reaper then
+//! races the pipeline's own `waitpid` and destroys `$pipestatus`
+//! (measured with that call wired in: `parity-fuzz --mode pipeline` went
+//! from 0 to 139 divergences, `jobs` 0 -> 16, `errexit` 0 -> 13). So
+//! `init_dispatch_signals` below replays `init_signals` line by line with
+//! that ONE line left out, until those dispatch paths are converged onto
+//! `zsh_main`.
 
 /// Whether the inherited-signal bookkeeping below applies at all.
 ///
@@ -87,9 +89,8 @@ pub fn record_inherited_sigquit_ignore() {}
 /// does not reach `ported::init::zsh_main`.
 ///
 /// Every line of C's `init_signals` is replayed here in C's order bar
-/// two: `intr()` (`c:1442`), with a measurement at its site below, and
-/// `install_handler(SIGCHLD)` (`c:1455`), which the caller installs right
-/// after this returns. The `sigtrapped`/`siglists`
+/// one, with the measurement at its site below: `install_handler(SIGCHLD)`
+/// (`c:1455`). The `sigtrapped`/`siglists`
 /// allocations (`c:1431-1432`) and the `sigchld_mask` cache (`c:1440`)
 /// have no zshrs counterpart, same as in the ported `init_signals`
 /// itself.
@@ -140,31 +141,24 @@ pub fn init_dispatch_signals() {
 
     // c:1440 — `sigchld_mask = signal_mask(SIGCHLD);` not modeled.
 
-    // !!! DELIBERATE OMISSION — NO C COUNTERPART FOR THE ABSENCE !!!
     // c:1442 — `intr();`, i.e. `if (interact) install_handler(SIGINT);`.
     //
     // C's handler does not terminate the shell on an untrapped SIGINT: it
     // sets `errflag |= ERRFLAG_INT` and `lastval = 128 + SIGINT`
     // (c:Src/signals.c:457/463), and the ABORT comes from execlist's list
     // gate `while (… && !errflag)` (c:Src/exec.c:1443) ending the list.
-    // zshrs emits no such per-statement gate for a top-level `-c` chunk —
-    // `BUILTIN_NOEXEC_CHECK` is not reached there at all (measured by
-    // instrumenting the builtin: `kill -INT $$; print survived` never
-    // calls it) — so with the handler installed the interrupt is recorded
-    // and then ignored:
-    //   zsh    -f -i -c 'kill -INT $$; print survived'  -> exit 130, silent
-    //   zshrs, handler installed                        -> prints survived, exit 0
-    //   zshrs, no handler (default disposition)         -> exit 130, silent
-    // and the same three ways round for an external interrupt into
-    // `-f -i -c 'while true; do sleep 0.05; done; print AFTERLOOP'`,
-    // where the loop gate DOES read the whole errflag word
-    // (fusevm_bridge BUILTIN_LOOP_ERRFLAG_BREAK) so the installed handler
-    // breaks the loop and then runs `AFTERLOOP` that zsh never reaches.
-    // Leaving SIGINT at its default disposition reproduces C's observable
-    // — status and output — on every case measured, so install it only
-    // once the top-level list gate exists. Note `bin_trap` installs the
-    // handler itself when a real INT trap is set, so trapped interrupts
-    // are unaffected by this.
+    //
+    // This line was left out while that gate was missing, because a handler
+    // without it is strictly worse than the default disposition: the
+    // interrupt was recorded and then ignored, so
+    // `-i -c 'kill -INT $$; print survived'` printed `survived` and exited 0
+    // where zsh is silent and exits 130. The gate now exists —
+    // `BUILTIN_FATAL_ABORT_CHECK`, which `compile_program` emits between
+    // every pair of top-level list elements, tests the WHOLE errflag word
+    // and no longer exempts an interactive shell — so the handler is
+    // installed as C installs it. Note `bin_trap` installs it itself when a
+    // real INT trap is set, so trapped interrupts never depended on this.
+    crate::ported::signals::intr();
 
     // c:1444-1445 — inherited SIG_IGN on SIGQUIT becomes ZSIG_IGNORED.
     record_inherited_sigquit_ignore();
@@ -182,9 +176,10 @@ pub fn init_dispatch_signals() {
         install_handler(libc::SIGHUP); // c:1454
     }
 
-    // c:1455 — `install_handler(SIGCHLD);`. Installed by the caller in
-    // `bins/zshrs.rs` immediately after this function returns; see the
-    // module docs.
+    // !!! DELIBERATE OMISSION — NO C COUNTERPART FOR THE ABSENCE !!!
+    // c:1455 — `install_handler(SIGCHLD);`. zshrs's pipelines reap their
+    // own children with `waitpid`; C's SIGCHLD reaper races them and
+    // destroys `$pipestatus`. Module docs carry the measurement.
 
     // c:1456-1459 — `#ifdef SIGWINCH install_handler(SIGWINCH);
     // winch_block(); #endif`. The standing block is the delivery policy:

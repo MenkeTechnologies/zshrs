@@ -1393,7 +1393,23 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     crate::ported::params::set_zunderscore(std::slice::from_ref(&underscore)); // c:3546
     let q = crate::ported::signals_h::queue_signal_level(); // c:3997
     crate::ported::signals_h::dont_queue_signals(); // c:4231
-    let status = dispatch_builtin_raw(name, args);
+    let ret = dispatch_builtin_raw(name, args);
+    // c:Src/exec.c:4289-4293 — "In case of interruption assume builtin
+    // status is less useful than what interrupt set":
+    //     if (!(errflag & ERRFLAG_INT)) lastval = ret;
+    // The SIGINT handler wrote `lastval = 128 + SIGINT` (c:Src/signals.c:463)
+    // and a forced INT-trap return wrote its own value (c:Src/signals.c:1202),
+    // both into LASTVAL. Hand that back, so the VM's trailing SetStatus
+    // publishes it instead of the interrupted builtin's 0:
+    //   zsh -f -i -c 'kill -INT $$'   → exit 130 (zshrs exited 0)
+    let status = if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::zsh_h::ERRFLAG_INT)
+        != 0
+    {
+        crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        ret
+    };
     crate::ported::signals_h::restore_queue_signals(q); // c:4243
                                                         // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
     crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
@@ -11787,8 +11803,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         //   TRAPINT() { print T; return 1 }
         //   f() { print A; kill -INT $$; print C }; f; print B
         //   zsh: A T      zshrs: A T B
+        //
+        // The gate is also NOT conditional on the shell being
+        // non-interactive. C's list loop is the same loop in both cases; an
+        // interactive shell survives the abort because `loop(toplevel=1)`
+        // resets the flag before it reads the next command line
+        // (c:Src/init.c:139/150 `errflag = 0;`, ported at
+        // ported/init.rs:2384/2394) — not because the list kept running. The
+        // `isset(INTERACTIVE)` exemption that used to sit here was the reason
+        // an interrupt was recorded and then ignored:
+        //   kill -INT $$; print survived
+        //   zsh: (nothing, exit 130)      zshrs: survived, exit 0
+        // and it is why installing C's SIGINT handler (`intr()`,
+        // c:Src/init.c:1442) was unsafe before this — the handler sets
+        // ERRFLAG_INT and expects THIS gate to end the list.
         let errflag_set = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
-        if !errflag_set || isset(crate::ported::zsh_h::INTERACTIVE) {
+        if !errflag_set {
             return Value::Int(0);
         }
         // CONTINUE_ON_ERROR: clear and keep going, as the full check does.
@@ -11801,7 +11831,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // a cond syntax error left lastval=2 (c:Src/exec.c:5216-5221), and
         // that 2 is what zsh exits with. Reading the executor's live
         // lastval (not forcing 1) is the same rule the full check uses.
-        vm.last_status = with_executor(|exec| exec.last_status());
+        //
+        // An INTERRUPT is the one case where the executor's cell is not the
+        // live lastval. C has a single `lastval` global, and the SIGINT
+        // handler writes it directly (`lastval = 128 + SIGINT`,
+        // c:Src/signals.c:463) — as does a forced-return INT trap
+        // (`lastval = new_trap_return`, c:Src/signals.c:1202). zshrs splits
+        // that global in two (see BUILTIN_SUBLIST_FINISH): the handler and
+        // `dotrapargs` write `builtin::LASTVAL`, while the executor's cell
+        // holds whatever the interrupted command itself returned — 0 for the
+        // `kill` that raised the signal. Reading the executor here therefore
+        // threw the interrupt status away:
+        //   <shell> -f -i -c 'kill -INT $$; print survived'
+        //   zsh exit 130      zshrs exit 0
+        // and the same for an INT trap that returns non-zero (zsh exit 1).
+        // Take the handler's write for an interrupt, the executor's for
+        // everything else.
+        vm.last_status = if (crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_INT)
+            != 0
+        {
+            crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)
+        } else {
+            with_executor(|exec| exec.last_status())
+        };
         Value::Int(1)
     });
     vm.register_builtin(BUILTIN_PRINT_EXIT_VALUE, |vm, argc| {
@@ -17890,7 +17943,18 @@ impl fusevm::ShellHost for ZshrsHost {
                 // is skipped once the builtin set ERRFLAG_ERROR — so
                 // `() { private SECONDS }` (makeprivate's zerrnam + return 1)
                 // reported 0 where zsh reports 1 (V10private.ztst:22).
-                let __st = dispatch_builtin_raw(name, args);
+                let __ret = dispatch_builtin_raw(name, args);
+                // c:4289-4293 — `if (!(errflag & ERRFLAG_INT)) lastval = ret;`
+                // (see `dispatch_builtin`).
+                let __st = if (crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    & crate::ported::zsh_h::ERRFLAG_INT)
+                    != 0
+                {
+                    crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+                } else {
+                    __ret
+                };
                 crate::ported::builtin::LASTVAL.store(__st, std::sync::atomic::Ordering::Relaxed); // c:4287
                 with_executor(|exec| exec.set_last_status(__st)); // c:4287
                 return Some(__st);
