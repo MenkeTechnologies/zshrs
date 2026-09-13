@@ -12847,30 +12847,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // drives the non-glob arms below.
                         let s_tok = s.clone();
                         let s = crate::lex::untokenize(&s);
-                        // Skip glob expansion for assignment-shaped
-                        // words (`NAME=value`). zsh doesn't expand the
-                        // RHS of an assignment as a path glob unless
-                        // `setopt globassign` is set, and feeding such
-                        // words through expand_glob makes NOMATCH
-                        // (default ON) fire spuriously on
-                        // `integer i=2*3+1`, `path=*.rs`, etc.
-                        let is_assignment_shape = {
-                            let bytes = s.as_bytes();
-                            let mut i = 0;
-                            if !bytes.is_empty()
-                                && (bytes[0] == b'_' || bytes[0].is_ascii_alphabetic())
-                            {
-                                i += 1;
-                                while i < bytes.len()
-                                    && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric())
-                                {
-                                    i += 1;
-                                }
-                                i < bytes.len() && bytes[i] == b'='
-                            } else {
-                                false
-                            }
-                        };
+                        // c:Src/exec.c:2603-2613 — only an assignment VALUE
+                        // skips globlist without GLOB_ASSIGN, and that value
+                        // arrives here in mode 8, which `noglob` above already
+                        // covers. The word's text says nothing about its role:
+                        // a text-shape test (`[A-Za-z_][A-Za-z0-9_]*=`) that
+                        // used to skip the glob here also kept `print a=zzq*`,
+                        // `set -- a=zzq*`, `for w in a=zzq*`, `> a=zzq*` and
+                        // the array element `x=(a=zzq*)` from globbing, where
+                        // zsh reports "no matches found".
                         // Glob-trigger decision: pre-untokenize
                         // haswilds_tokens_only result (computed above
                         // before the untokenize that collapses META
@@ -12886,17 +12871,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // for the PREFORK_TYPESET arm is `(*namptr)[1] &&
                         // strchr(*namptr + 1, Equals)`: an `=` anywhere but
                         // position 0. There is NO identifier test. Gating the
-                        // arm below on `is_assignment_shape` — which demands a
+                        // arm below on an assignment-shape test — which demanded a
                         // leading `[A-Za-z_][A-Za-z0-9_]*` — therefore lost every
                         // word whose `=` is not preceded by a bare identifier:
                         //   setopt magicequalsubst; print -r -- x:y=~/z
                         //   zsh: x:y=/home/u/z      zshrs: x:y=~/z
                         // Same for `ME:a=~/x`, `1abc=~/x` and `-o=~/x`, the last
                         // of which is the common `--prefix=~/dir` shape.
-                        // `is_assignment_shape` stays on the GLOB arm, where the
-                        // identifier test is the right one (that arm is about
-                        // not path-globbing an assignment RHS without
-                        // GLOB_ASSIGN).
                         // c:Src/subst.c:678 — filesub's own gate is
                         // `strchr(*namptr + 1, Equals)`: the Equals TOKEN,
                         // which the lexer emits ONLY for an unquoted `=`.
@@ -12906,7 +12887,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             .chars()
                             .skip(1)
                             .any(|c| c == crate::ported::zsh_h::Equals);
-                        if is_glob_pre && !is_assignment_shape {
+                        if is_glob_pre {
                             exec.expand_glob(&s_tok)
                         } else if has_nonleading_equals
                             && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)

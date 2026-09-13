@@ -284,3 +284,66 @@ mod option_off {
         assert_no_magic("X=~/bin:~/sbin; print -r -- $X");
     }
 }
+
+/// Without MAGIC_EQUAL_SUBST a `name=value`-shaped WORD is an ordinary word:
+/// zsh globs it like any other argument (c:Src/exec.c execcmd_exec →
+/// globlist) and only an assignment value — or a typeset-family `NAME=VALUE`
+/// argument — keeps its text unglobbed (c:Src/exec.c:2603-2613). zshrs
+/// skipped the glob for every word matching `[A-Za-z_][A-Za-z0-9_]*=`, so
+/// `print a=zzq*` printed the word where zsh reports "no matches found".
+mod name_equals_words_glob_like_any_argument {
+    use super::*;
+
+    fn assert_plain_parity(body: &str) {
+        if !zsh_available() {
+            eprintln!("skip: zsh not found");
+            return;
+        }
+        let z = Command::new(zsh_path()).args(["-f", "-c", body]).output().expect("invoke zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", body])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        assert_eq!(
+            (
+                String::from_utf8_lossy(&z.stdout).into_owned(),
+                String::from_utf8_lossy(&z.stderr).into_owned(),
+                z.status.code()
+            ),
+            (
+                String::from_utf8_lossy(&r.stdout).into_owned(),
+                String::from_utf8_lossy(&r.stderr).into_owned(),
+                r.status.code()
+            ),
+            "stdout/stderr/status divergence on:\n{body}"
+        );
+    }
+
+    #[test]
+    fn an_argument_shaped_like_an_assignment_is_globbed() {
+        assert_plain_parity("print a=zzq*; print rc=$?");
+        assert_plain_parity("print x _a=zzq*; print rc=$?");
+        assert_plain_parity("print a=zzq[1]; print rc=$?");
+        assert_plain_parity("set -- a=zzq*; print -r -- \"[$*]\" rc=$?");
+        assert_plain_parity("x=(a=zzq*); print -r -- \"[$x]\" rc=$?");
+        assert_plain_parity("builtin typeset t=zzq*; print -r -- \"[$t]\" rc=$?");
+        // `for w in a=zzq*` and `local -a arr=(a=zzq*)` now glob too, but the
+        // exit status after their no-match differs from zsh for any pattern
+        // (`for w in zzq*` alike), so they are not pinned here.
+        // Controls: these shapes already globbed.
+        assert_plain_parity("print 1a=zzq* ; print rc=$?");
+        assert_plain_parity("print a+=zzq* ; print rc=$?");
+    }
+
+    #[test]
+    fn an_assignment_value_is_still_not_globbed() {
+        assert_plain_parity("x=zzq*; print -r -- \"[$x]\" rc=$?");
+        assert_plain_parity("f(){ local a=zzq*; print -r -- \"[$a]\" rc=$?; }; f");
+        assert_plain_parity("export a=zzq*; print -r -- \"[$a]\" rc=$?");
+        assert_plain_parity("readonly r=zzq*; print -r -- \"[$r]\" rc=$?");
+        assert_plain_parity("typeset ptr[1]=var; print rc=$? ${ptr[1]}");
+        assert_plain_parity("integer i=2*3+1; print $i");
+        assert_plain_parity("f(){ local -i n=3*4; print $n; }; f");
+    }
+}
