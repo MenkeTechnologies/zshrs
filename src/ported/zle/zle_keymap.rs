@@ -3123,10 +3123,14 @@ pub fn getkeycmd() -> Option<super::zle_thingy::Thingy> {
                 }
             }
         };
-        // c:1788 — `func == Th(z_executenamedcmd)` check. zsh uses
-        // pointer equality on the global Thingy table; Rust uses
-        // name equality against the canonical widget name.
-        if func.nam == "execute-named-command" {
+        // c:1788 — `if (func == Th(z_executenamedcmd) && !statusline)`. zsh
+        // uses pointer equality on the global Thingy table; Rust uses name
+        // equality against the canonical widget name, `execute-named-cmd`
+        // (iwidgets.list). The `!statusline` half keeps a `M-x` typed inside
+        // the prompt from opening a second prompt.
+        let func = if func.nam == "execute-named-cmd"
+            && crate::ported::zle::zle_main::STATUSLINE.lock().unwrap().is_none()
+        {
             // c:1788
             // c:1789-1790 — drive `executenamedcommand("execute: ")`
             // until it returns a non-named-command result.
@@ -3134,7 +3138,7 @@ pub fn getkeycmd() -> Option<super::zle_thingy::Thingy> {
             loop {
                 let name = crate::ported::zle::zle_misc::executenamedcommand("execute: "); // c:1791
                 match name {
-                    Some(n) if n == "execute-named-command" => continue, // c:1790 loop
+                    Some(n) if n == "execute-named-cmd" => continue, // c:1790 loop
                     Some(n) => {
                         // c:1792 — `func != z_executenamedcmd`
                         let lookup = super::zle_thingy::thingytab()
@@ -3167,8 +3171,15 @@ pub fn getkeycmd() -> Option<super::zle_thingy::Thingy> {
                     // c:1796
                 }
             }
-            return resolved;
-        }
+            // c:1797-1798 — C does not return here: a name that resolved to
+            // `execute-last-named-cmd` still falls into the c:1798 test below.
+            match resolved {
+                Some(f) => f,
+                None => return None,
+            }
+        } else {
+            func
+        };
         // c:1798 — `func == Th(z_executelastnamedcmd)` → return
         // the cached `lastnamed` Thingy.
         if func.nam == "execute-last-named-cmd" {

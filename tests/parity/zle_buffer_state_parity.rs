@@ -320,3 +320,59 @@ mod multibyte {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// execute-named-cmd — c:Src/Zle/zle_misc.c:1276-1512 executenamedcommand
+// ═══════════════════════════════════════════════════════════════════════
+
+/// The `execute: ` prompt reads a widget name in the status line and runs
+/// it. Each case types a line, opens the prompt with the explicitly bound
+/// `^[x`, and dumps the editor state afterwards: a widget that never ran
+/// leaves the cursor at the end of the line, so the dump discriminates.
+mod execute_named_cmd {
+    use super::*;
+
+    fn named(keys: &[&str]) -> String {
+        let mut all = vec!["print abc"];
+        all.extend_from_slice(keys);
+        driver("-e; bindkey \"^[x\" execute-named-cmd", &all)
+    }
+
+    /// Typing a full widget name and Enter runs it (c:1409-1425, the
+    /// rthingy/DISABLED accept check at c:1413-1414).
+    #[test]
+    fn typed_name_and_enter_runs_the_widget() {
+        assert_same_dump(
+            &named(&["\\ex", "beginning-of-line", "\\r"]),
+            "execute: beginning-of-line moved the cursor to column 0",
+        );
+    }
+
+    /// TAB inside the prompt completes a unique prefix (c:1432-1466).
+    #[test]
+    fn tab_completes_a_unique_widget_name() {
+        assert_same_dump(
+            &named(&["\\ex", "beginning-of-li", "\\t", "\\r"]),
+            "TAB completed beginning-of-li to beginning-of-line, Enter ran it",
+        );
+    }
+
+    /// Enter on an unknown name feeps and stays in the prompt; ^G then
+    /// aborts it (c:1303 send-break) and the line is untouched.
+    #[test]
+    fn unknown_name_stays_in_the_prompt_until_send_break() {
+        assert_same_dump(
+            &named(&["\\ex", "zzq-no-such-widget", "\\r", "\\C-g"]),
+            "an unknown name ran nothing; ^G left the line and cursor as typed",
+        );
+    }
+
+    /// Backspace edits the typed name (c:1367-1373).
+    #[test]
+    fn backspace_edits_the_typed_name() {
+        assert_same_dump(
+            &named(&["\\ex", "beginning-of-linex", "\\C-h", "\\r"]),
+            "Backspace removed the stray character before Enter",
+        );
+    }
+}

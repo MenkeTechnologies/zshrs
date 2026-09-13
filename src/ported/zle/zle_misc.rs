@@ -1770,26 +1770,318 @@ pub fn scancompcmd(name: &str) -> i32 {
 /// as a macro just before the local-keymap fixture.
 pub const NAMLEN: usize = 60; // c:1249
 
-/// Port of `executenamedcommand()` from `Src/Zle/zle_misc.c:1261`.
-/// C decl: `executenamedcommand(char *prmt)`
-/// Prompts the user for a widget
-/// name (with name-completion via thingytab), then resolves the
-/// answer to a Thingy.
+/// Port of `executenamedcommand()` from `Src/Zle/zle_misc.c:1276`.
+/// C decl: `Thingy executenamedcommand(char *prmt)`
 ///
-/// **Substrate trade-off:** the interactive prompt path requires a
-/// live ZLE input loop (`getfullchar`/`displaywholeline` machinery)
-/// that compcore-call-context ported can't easily reach. Rust port
-/// instead reads `$REPLY` from the canonical paramtab — the same
-/// var that `read-command` widgets populate — so user widgets that
-/// shell out to interactive prompts (`read-command -p PROMPT`) get
-/// their answer surfaced here.
-pub fn executenamedcommand(prompt: &str) -> Option<String> {
-    // c:1261
-    let _ = prompt;
-    // c:1304 — `bindztrdup(name)` resolves the typed widget. Rust
-    // path reads $REPLY (set by widgets like `read-command`).
-    crate::ported::params::getsparam("REPLY") // c:1304
-        .filter(|s| !s.is_empty())
+/// Reads a widget name in the status line after `prmt` (`execute: ` from
+/// getkeycmd, `Where is: ` from whereis), under the `command` local keymap
+/// on top of `main`. Editing keys act on the name; TAB, space and the
+/// completion widgets complete it against the non-DISABLED thingies
+/// (scancompcmd); Enter / vi-cmd-mode accept a name that names a live
+/// widget (the c:1413 `rthingy` + DISABLED test) and feep otherwise;
+/// send-break or EOF returns NULL.
+///
+/// Returns the accepted widget's NAME: every Rust caller resolves the
+/// thingy by name, and the reference C hands back is released here (see
+/// the WARNING at the accept arm).
+pub fn executenamedcommand(prmt: &str) -> Option<String> {
+    // c:1276
+    use crate::ported::zle::zle_keymap::{
+        curkeymapname, getkeycmd, openkeymap, selectkeymap, selectlocalmap,
+    };
+    use crate::ported::zle::zle_refresh::{
+        clearscreen, redisplay, zrefresh, CLEARLIST, LASTLISTLEN, LISTSHOWN, SHOWINGLIST,
+    };
+    use crate::ported::zle::zle_thingy::{rthingy, thingytab, unrefthingy};
+    use crate::ported::zle::zle_tricky::{listlist, VALIDLIST};
+    use crate::ported::zsh_h::{AUTOLIST, DISABLED, LISTAMBIGUOUS, LISTBEEP};
+
+    let mut feep = false; // c:1279
+    let mut listed = false; // c:1279
+    let mut curlist = false; // c:1279
+    let ols = LISTSHOWN.load(SeqCst) != 0 && VALIDLIST.load(SeqCst) != 0; // c:1280
+    let olll = LASTLISTLEN.load(SeqCst); // c:1280
+    let okeymap = curkeymapname().clone(); // c:1282 ztrdup(curkeymapname)
+
+    CLEARLIST.store(1, SeqCst); // c:1284
+    // c:1286-1295 — `cmdbuf` holds the prompt followed by the typed name;
+    // `ptr = cmdbuf += l` then addresses the name alone. The Rust port keeps
+    // the two halves as separate strings and joins them for the status line.
+    let prompt = prmt.to_string();
+    let mut name = String::new(); // c:1298 len = 0
+    selectlocalmap(openkeymap("command")); // c:1296 selectlocalmap(command_keymap)
+    selectkeymap("main", 1); // c:1297
+
+    // c:1311-1316 / c:1415-1421 — the shared exit tail that puts the list
+    // state back the way the caller left it.
+    let restore = |listed: bool| {
+        *STATUSLINE.lock().unwrap() = None; // c:1311 statusline = NULL
+        selectkeymap(&okeymap, 1); // c:1312
+        LISTSHOWN.store(ols as i32, SeqCst); // c:1314 listshown = ols
+        if ols {
+            SHOWINGLIST.store(-2, SeqCst); // c:1315
+            LASTLISTLEN.store(olll, SeqCst); // c:1316
+        } else if listed {
+            CLEARLIST.store(1, SeqCst); // c:1317 clearlist = listshown = 1
+            LISTSHOWN.store(1, SeqCst);
+        }
+    };
+    // c:1325-1331 — re-list the candidates with `zmult` pinned to 1.
+    let relist = |ll: &[String]| {
+        let zmultsav = ZMOD.lock().unwrap().mult; // c:1327
+        ZMOD.lock().unwrap().mult = 1; // c:1329
+        listlist(ll, 0); // c:1330
+        SHOWINGLIST.store(0, SeqCst); // c:1331
+        ZMOD.lock().unwrap().mult = zmultsav; // c:1332
+    };
+
+    let retval: Option<String> = 'prompt: loop {
+        // c:1300-1302 — `*ptr = '_'; ptr[1] = '\0'; zrefresh();`
+        *STATUSLINE.lock().unwrap() = Some(format!("{prompt}{name}_"));
+        zrefresh();
+        // c:1303 — `if (!(cmd = getkeycmd()) || cmd == Th(z_sendbreak))`
+        let mut cmd = match getkeycmd() {
+            Some(t) if t.nam != "send-break" => t.nam,
+            _ => {
+                restore(listed);
+                break 'prompt None; // c:1320-1321
+            }
+        };
+        match cmd.as_str() {
+            "clear-screen" => {
+                // c:1323
+                clearscreen(); // c:1324
+                if curlist {
+                    relist(&namedcmdll.lock().unwrap().clone()); // c:1325-1332
+                }
+            }
+            "redisplay" => {
+                // c:1334
+                redisplay(); // c:1335
+                if curlist {
+                    relist(&namedcmdll.lock().unwrap().clone()); // c:1336-1343
+                }
+            }
+            "vi-quoted-insert" => {
+                // c:1345 — show `^` in place of the cursor while waiting.
+                *STATUSLINE.lock().unwrap() = Some(format!("{prompt}{name}^")); // c:1346
+                zrefresh(); // c:1347
+                match getfullchar(false) {
+                    // c:1348-1350 — EOF, NUL, or a full buffer feeps.
+                    None | Some('\0') => feep = true,
+                    Some(_) if name.len() >= NAMLEN => feep = true,
+                    Some(c) => {
+                        zlecharasstring(c, &mut name); // c:1352-1354
+                        curlist = false; // c:1355
+                    }
+                }
+            }
+            "quoted-insert" => {
+                // c:1357
+                match getfullchar(false) {
+                    // c:1358-1360 — note `len == NAMLEN` here, `>=` above.
+                    None | Some('\0') => feep = true,
+                    Some(_) if name.len() == NAMLEN => feep = true,
+                    Some(c) => {
+                        zlecharasstring(c, &mut name); // c:1362-1364
+                        curlist = false; // c:1365
+                    }
+                }
+            }
+            "backward-delete-char" | "vi-backward-delete-char" => {
+                // c:1367-1368
+                // c:1369-1373 — `backwardmetafiedchar` steps back one
+                // character; the name is a plain String here, not metafied.
+                if name.pop().is_some() {
+                    curlist = false; // c:1372
+                }
+            }
+            "kill-region" | "backward-kill-word" | "vi-backward-kill-word" => {
+                // c:1374-1375
+                if !name.is_empty() {
+                    curlist = false; // c:1377
+                }
+                // c:1378-1384 — delete back through (and including) the
+                // previous `-`, i.e. one hyphen-separated word.
+                while let Some(cc) = name.pop() {
+                    if cc == '-' {
+                        break; // c:1382-1383
+                    }
+                }
+            }
+            "kill-whole-line" | "vi-kill-line" | "backward-kill-line" => {
+                // c:1385-1386
+                name.clear(); // c:1387-1388
+                if listed {
+                    CLEARLIST.store(1, SeqCst); // c:1390 clearlist = listshown = 1
+                    LISTSHOWN.store(1, SeqCst);
+                }
+                curlist = false; // c:1391
+            }
+            "bracketed-paste" => {
+                // c:1392
+                let insert = bracketedstring(); // c:1393
+                if name.len() + insert.len() > NAMLEN {
+                    feep = true; // c:1395-1396
+                } else {
+                    name.push_str(&insert); // c:1398-1400
+                    if listed {
+                        CLEARLIST.store(1, SeqCst); // c:1402
+                        LISTSHOWN.store(1, SeqCst);
+                        listed = false; // c:1403
+                    } else {
+                        curlist = false; // c:1405
+                    }
+                }
+            }
+            _ => {
+                // c:1409 — `if(cmd == Th(z_acceptline) || cmd == Th(z_vicmdmode))`
+                // then the `unambiguous:` label (c:1411), also reached from the
+                // single-candidate completion arm below.
+                let mut try_accept = cmd == "accept-line" || cmd == "vi-cmd-mode";
+                // c:1485-1486 — the single-match arm jumps back here.
+                loop {
+                    if try_accept {
+                        // c:1413 — `r = rthingy(cmdbuf)`: creates the thingy
+                        // for an unknown name, which is then DISABLED.
+                        rthingy(&name);
+                        let enabled = thingytab()
+                            .lock()
+                            .unwrap()
+                            .get(&name)
+                            .is_some_and(|t| (t.flags & DISABLED) == 0); // c:1414
+                        // !!! WARNING: RUST-ONLY OWNERSHIP !!!
+                        // C returns `r` still holding the c:1413 reference and
+                        // the caller keeps it. zshrs's thingytab rc counts
+                        // keymap slots (see bin_bindkey_bind), and callers take
+                        // the widget by NAME, so the reference is released on
+                        // both arms and the name is returned instead.
+                        unrefthingy(&name); // c:1415 / c:1426
+                        if enabled {
+                            restore(listed); // c:1416-1422
+                            break 'prompt Some(name.clone()); // c:1424-1425
+                        }
+                    }
+                    break;
+                }
+                if cmd == "self-insert-unmeta" {
+                    // c:1428
+                    fixunmeta(); // c:1429
+                    cmd = "self-insert".to_string(); // c:1430
+                }
+                let lastchar = LASTCHAR.load(SeqCst);
+                if matches!(
+                    cmd.as_str(),
+                    "list-choices"
+                        | "delete-char-or-list"
+                        | "expand-or-complete"
+                        | "complete-word"
+                        | "expand-or-complete-prefix"
+                        | "vi-cmd-mode"
+                        | "accept-line"
+                ) || lastchar == b' ' as i32
+                    || lastchar == b'\t' as i32
+                {
+                    // c:1432-1435
+                    namedcmdambig.store(100, SeqCst); // c:1436
+                    namedcmdll.lock().unwrap().clear(); // c:1438 newlinklist()
+                    *namedcmdstr.lock().unwrap() = name.clone(); // c:1440-1441
+                    // c:1442 — `scanhashtable(thingytab, 1, 0, DISABLED,
+                    // scancompcmd, 0)`: sorted, skipping DISABLED thingies.
+                    let mut names: Vec<String> = thingytab()
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .filter(|t| (t.flags & DISABLED) == 0)
+                        .map(|t| t.nam.clone())
+                        .collect();
+                    names.sort();
+                    for nam in &names {
+                        scancompcmd(nam); // c:1442
+                    }
+                    namedcmdstr.lock().unwrap().clear(); // c:1443 namedcmdstr = NULL
+                    let ll: Vec<String> = namedcmdll.lock().unwrap().clone();
+                    let ambig = namedcmdambig.load(SeqCst);
+                    if ll.is_empty() {
+                        // c:1445
+                        feep = true; // c:1446
+                        if listed {
+                            CLEARLIST.store(1, SeqCst); // c:1448
+                            LISTSHOWN.store(1, SeqCst);
+                        }
+                        curlist = false; // c:1449
+                    } else if cmd == "list-choices" || cmd == "delete-char-or-list" {
+                        // c:1450-1451
+                        relist(&ll); // c:1452-1460
+                        listed = true; // c:1458 listed = curlist = 1
+                        curlist = true;
+                    } else if ll.len() == 1 {
+                        // c:1461 `!nextnode(firstnode(namedcmdll))`
+                        name = ll[0].clone(); // c:1462-1464
+                        if cmd == "accept-line" || cmd == "vi-cmd-mode" {
+                            // c:1465-1466 `goto unambiguous`
+                            rthingy(&name);
+                            let enabled = thingytab()
+                                .lock()
+                                .unwrap()
+                                .get(&name)
+                                .is_some_and(|t| (t.flags & DISABLED) == 0);
+                            unrefthingy(&name);
+                            if enabled {
+                                restore(listed);
+                                break 'prompt Some(name.clone());
+                            }
+                        }
+                    } else {
+                        // c:1467 — ambiguous: extend to the common prefix.
+                        let old_len = name.len();
+                        name = ll[0][..ambig.min(ll[0].len())].to_string(); // c:1468-1471
+                        if isset(AUTOLIST) && !(isset(LISTAMBIGUOUS) && ambig > old_len)
+                        {
+                            // c:1472-1473
+                            if isset(LISTBEEP) {
+                                feep = true; // c:1475-1476
+                            }
+                            relist(&ll); // c:1477-1481
+                            listed = true; // c:1480
+                            curlist = true;
+                        }
+                    }
+                } else if name.len() == NAMLEN || cmd != "self-insert" {
+                    // c:1486
+                    feep = true; // c:1487
+                } else {
+                    // c:1490-1494 — MULTIBYTE_SUPPORT: complete the character.
+                    if LASTCHAR_WIDE_VALID.load(SeqCst) == 0 {
+                        getrestchar(lastchar); // c:1491
+                    }
+                    let wide = LASTCHAR_WIDE.load(SeqCst);
+                    match (wide >= 0).then(|| char::from_u32(wide as u32)).flatten() {
+                        None => feep = true, // c:1492-1493 WEOF
+                        Some(c) if ZC_icntrl(c) => feep = true, // c:1496-1497
+                        Some(c) => {
+                            zlecharasstring(c, &mut name); // c:1499-1501
+                            if listed {
+                                CLEARLIST.store(1, SeqCst); // c:1503
+                                LISTSHOWN.store(1, SeqCst);
+                                listed = false; // c:1504
+                            } else {
+                                curlist = false; // c:1506
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if feep {
+            handlefeep(); // c:1513
+        }
+        feep = false; // c:1514
+    };
+
+    // c:1517-1518 — `done: selectlocalmap(NULL); return retval;`
+    selectlocalmap(None);
+    retval
 }
 
 /// Port of `struct suffixset` from `Src/Zle/zle_misc.c:1530`. One node

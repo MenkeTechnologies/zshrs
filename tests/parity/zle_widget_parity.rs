@@ -143,3 +143,24 @@ zpty -w -n w $'\r'"#,
         "zle-line-init pre-filled the new line",
     );
 }
+
+/// `where-is` (c:Src/Zle/zle_main.c:1956-1972) reads a widget name through
+/// the same `Where is: ` prompt and reports its bindings with showmsg.
+#[test]
+#[ignore = "zshrs gap: the where-is widget has no dispatch arm and whereis in zle_main.rs is not the C widget"]
+fn where_is_reports_the_bindings_of_a_named_widget() {
+    assert_same_verdict(
+        &driver(
+            r#"bindkey -e; bindkey "^Xw" where-is"#,
+            r#"zpty -w -n w $'\C-xw'
+sleep 2
+zpty -w -n w 'beginning-of-line'
+sleep 2
+zpty -w -n w $'\r'
+sleep 2"#,
+            "beginning-of-line is on",
+        ),
+        "K",
+        "where-is printed the bindings of beginning-of-line",
+    );
+}
