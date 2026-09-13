@@ -6389,12 +6389,6 @@ pub fn inittyptab() {
     // skips a doubled blank (`s[1]==c`) so the IWSEP bit doesn't
     // mark "blank repeated → no-skip" IFS chars. Mirrors C exactly.
     {
-        // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
-        // C reads the global `ifs` variable (the same one `ifssetfn`
-        // writes). The Rust port walks paramtab first (so the GSU
-        // dispatch path matches C); on miss, fall through to ifs_lock
-        // directly so a fresh `ifssetfn` update before any paramtab
-        // entry exists is still visible to inittyptab.
         // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; *s; s++)`.
         // The default-IFS fallback is keyed on the `ifs` POINTER being
         // NULL (i.e. IFS unset), NOT on it pointing at an empty string.
@@ -6404,29 +6398,21 @@ pub fn inittyptab() {
         // (`IFS=''; v='a b  c'; print -rl -- ${=v}` is one word). The
         // port used to coerce "" → DEFAULT_IFS at both the paramtab read
         // and the fallback, so an empty IFS still split on whitespace.
-        let pt_ifs: Option<String> = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)));
-        let src: String = match pt_ifs {
-            // IFS is SET (possibly to ""): walk its chars verbatim.
-            Some(v) => v,
-            // No paramtab entry yet. Fall through to the ifs_lock global so
-            // a fresh ifssetfn update landing before the paramtab entry
-            // exists is still visible; an empty global there means "not
-            // initialised", which is C's NULL → CURRENT_DEFAULT_IFS.
-            None => {
-                let g = crate::ported::params::ifs_lock()
-                    .lock()
-                    .map(|g| g.clone())
-                    .unwrap_or_default();
-                if g.is_empty() {
-                    DEFAULT_IFS.to_string() // c:4216 (ifs == NULL)
-                } else {
-                    g
-                }
-            }
-        };
+        // c:4207 / c:4216 read the global `ifs`, which `ifssetfn` keeps (the
+        // paramtab node's getfn, `ifsgetfn`, returns the same global). `None`
+        // is C's `ifs == NULL` after an unset (c:Src/params.c:4748): the node
+        // is not yet PM_UNSET when `stdunsetfn` rebuilds the table, so it must
+        // not be consulted.
+        let pt_ifs: Option<String> = crate::ported::params::ifs_lock()
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        // A SET IFS (possibly "") is walked verbatim; c:4216
+        // `ifs ? ifs : CURRENT_DEFAULT_IFS`. The default is taken in its
+        // parameter-value (unmetafied) spelling, the one `ifs_lock` starts with
+        // and c:4210's reset below stores; `DEFAULT_IFS` is C's metafied
+        // spelling (c:Src/zsh.h:149), which the MULTIBYTE check rejects.
+        let src: String = pt_ifs.unwrap_or_else(|| " \t\n\0".to_string());
         // c:4205-4213 — under MULTIBYTE, `set_widearray(ifs)`; an IFS that
         // does not convert (`!ifs_wide.chars`) warns and is reset to the
         // default, which is what the ISEP walk below then reads.
@@ -6436,7 +6422,7 @@ pub fn inittyptab() {
             // c:4210 `ztrdup(CURRENT_DEFAULT_IFS)` — as the parameter value,
             // i.e. unmetafied (`DEFAULT_IFS` is the metafied spelling, c:149).
             let dflt = " \t\n\0".to_string();
-            *crate::ported::params::ifs_lock().lock().expect("ifs poisoned") = dflt.clone();
+            *crate::ported::params::ifs_lock().lock().expect("ifs poisoned") = Some(dflt.clone());
             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
                 if let Some(pm) = tab.get_mut("IFS") {
                     pm.u_str = Some(dflt.clone());

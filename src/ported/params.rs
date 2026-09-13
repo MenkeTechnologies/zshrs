@@ -11201,6 +11201,18 @@ pub fn stdunsetfn(pm: &mut param, exp: i32) {
     match PM_TYPE(pm.node.flags as u32) {
         PM_SCALAR | PM_NAMEREF => {
             pm.u_str = None;
+            // c:3913-3914 — `if (pm->gsu.s->setfn) pm->gsu.s->setfn(pm, NULL);`.
+            // !!! RUST-ONLY DISPATCH !!! The port's `gsu_scalar::setfn` takes a
+            // `String` and cannot receive NULL, so the NULL call is spelled out
+            // for the one special whose setfn gives NULL a meaning: IFS's
+            // `ifssetfn` (c:4745-4750) stores `ifs = NULL`, and `inittyptab`
+            // then splits on the default separators (c:Src/utils.c:4207/4216).
+            // Without it `IFS=:; unset IFS; s="p q"; print -rl -- ${=s}` kept
+            // splitting on `:` and printed `p q` (zsh: `p` `q`).
+            if pm.node.nam == "IFS" && pm.node.flags as u32 & PM_SPECIAL != 0 {
+                *ifs_lock().lock().expect("ifs poisoned") = None; // c:4748
+                inittyptab(); // c:4749
+            }
         }
         PM_ARRAY => {
             pm.u_arr = None;
@@ -12191,13 +12203,14 @@ pub fn ttyidlegetfn() -> i64 {
 
 /// Port of `ifsgetfn()` from `Src/params.c:4784`. C body: `return ifs;`
 pub fn ifsgetfn(_pm: &param) -> String {
-    ifs_lock().lock().expect("ifs poisoned").clone()
+    // c:4787 `return ifs;` — NULL (unset) reads as the empty string.
+    ifs_lock().lock().expect("ifs poisoned").clone().unwrap_or_default()
 }
 
 /// Port of `ifssetfn()` from `Src/params.c:4793`. C body:
 /// `zsfree(ifs); ifs = x; inittyptab();`
 pub fn ifssetfn(_pm: &mut param, x: String) {
-    *ifs_lock().lock().expect("ifs poisoned") = x;
+    *ifs_lock().lock().expect("ifs poisoned") = Some(x);
     // c:4795 — `inittyptab()` rebuilds the typtab[] ISEP/IWSEP bits
     // from the new IFS. Without this, every word-split path stays
     // pinned to the old separator set and silently mis-splits.
@@ -15796,9 +15809,10 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
 /// !!! WARNING: RUST-ONLY HELPER !!!
 /// No C counterpart: `OnceLock` accessor for the C global `char *ifs`
 /// (`Src/params.c:73`).
-pub(crate) fn ifs_lock() -> &'static Mutex<String> {
-    static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
-    IFS_VAR.get_or_init(|| Mutex::new(" \t\n\0".to_string()))
+pub(crate) fn ifs_lock() -> &'static Mutex<Option<String>> {
+    // `None` is C's `ifs == NULL` (an unset IFS, c:Src/params.c:4748).
+    static IFS_VAR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    IFS_VAR.get_or_init(|| Mutex::new(Some(" \t\n\0".to_string())))
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!

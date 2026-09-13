@@ -143,6 +143,16 @@ mod custom_ifs {
     fn ifs_empty_disables_split() {
         assert_parity(r#"IFS=; X="a b c"; f() { echo $#; }; f $=X"#);
     }
+
+    /// c:Src/params.c:3913-3914 + c:4745-4750 — unsetting IFS sets `ifs = NULL`,
+    /// and `inittyptab` splits on the default separators again.
+    #[test]
+    fn unset_ifs_restores_default_splitting() {
+        assert_parity(r#"IFS=; unset IFS; s="p q"; print -rl -- ${=s}; set -- "p q"; print -rl -- $=1; setopt shwordsplit; print -rl -- $s"#);
+        assert_parity(r#"IFS=:; unset IFS; s="p q"; print -rl -- ${=s}; set -- "p q"; print -rl -- $=1; setopt shwordsplit; print -rl -- $s"#);
+        assert_parity(r#"IFS=:; unset IFS; read x y <<< "p q"; print -r "[$x][$y]"; IFS=,; s="p,q r"; print -rl -- ${=s}"#);
+        assert_parity(r#"unset IFS; s="p:q r"; print -rl -- ${=s}; IFS=:; f() { local IFS; unset IFS; print -rl -- ${=s}; }; f; print -rl -- ${=s}"#);
+    }
 }
 
 mod for_loop_iteration {
