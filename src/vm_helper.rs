@@ -5769,6 +5769,12 @@ impl ShellExecutor {
         // c:870 `ee = zexecve(nn, argv, newenvp)` — when the table answered,
         // `nn` (not the bare word) is what C execs.
         let mut retried_bare = false;
+        // c:Src/exec.c:801-806 + c:878-895 — with PATH_DIRS set, a relative
+        // arg0 holding a slash (not `/…`, `./…` or `../…`) that did not exec
+        // as spelled goes on to the `$path` walk, trying `DIR/arg0` for each
+        // entry. The spawn below tries it as spelled first; this remembers
+        // that the walk has been taken so a miss is reported once.
+        let mut retried_pathdirs = false;
         // c:822 vs c:870 — the defpath hit wins outright; `hashed_prog` (and
         // with it the ENOENT bare-name retry at c:877) belongs to the `else`
         // arm alone.
@@ -5861,6 +5867,30 @@ impl ShellExecutor {
                                 spawn_prog = prog;
                                 continue;
                             }
+                            // c:Src/exec.c:801-806 + c:878-895 — PATH_DIRS: a
+                            // relative slash-bearing arg0 that failed as spelled
+                            // is retried as `DIR/arg0` for each `$path` entry.
+                            if !retried_pathdirs
+                                && eno == libc::ENOENT
+                                && spawn_prog == cmd
+                                && cmd.contains('/')
+                                && !cmd.starts_with('/')
+                                && !cmd.starts_with("./")
+                                && !cmd.starts_with("../")
+                                && crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHDIRS)
+                            {
+                                retried_pathdirs = true;
+                                let found = crate::ported::params::getaparam("path")
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .filter(|pp| !pp.is_empty() && pp.as_str() != ".") // c:879
+                                    .map(|pp| format!("{}/{}", pp, cmd)) // c:884-889
+                                    .find(|cand| crate::ported::exec::iscom(cand));
+                                if let Some(cand) = found {
+                                    spawn_prog = cand; // c:890 zexecve(buf, …)
+                                    continue;
+                                }
+                            }
                             // c:Src/exec.c:877-895 `execute_skip_exec:` — a
                             // cmdnamtab candidate that will not exec is not
                             // the end of the search: C falls through to a
@@ -5899,7 +5929,7 @@ impl ShellExecutor {
                             //   ./nonexistent_script
                             //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
                             //   zshrs: zsh:1: command not found: ./nonexistent_script
-                            if cmd.contains('/') {
+                            if cmd.contains('/') && !retried_pathdirs {
                                 eprintln!(
                                     "{}: no such file or directory: {}",
                                     zerr_prefix(&sn),
@@ -5961,6 +5991,29 @@ impl ShellExecutor {
                                 spawn_prog = prog;
                                 continue;
                             }
+                            // c:Src/exec.c:801-806 + c:878-895 — PATH_DIRS walk;
+                            // see the background arm above.
+                            if !retried_pathdirs
+                                && eno == libc::ENOENT
+                                && spawn_prog == cmd
+                                && cmd.contains('/')
+                                && !cmd.starts_with('/')
+                                && !cmd.starts_with("./")
+                                && !cmd.starts_with("../")
+                                && crate::ported::zsh_h::isset(crate::ported::zsh_h::PATHDIRS)
+                            {
+                                retried_pathdirs = true;
+                                let found = crate::ported::params::getaparam("path")
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .filter(|pp| !pp.is_empty() && pp.as_str() != ".") // c:879
+                                    .map(|pp| format!("{}/{}", pp, cmd)) // c:884-889
+                                    .find(|cand| crate::ported::exec::iscom(cand));
+                                if let Some(cand) = found {
+                                    spawn_prog = cand; // c:890 zexecve(buf, …)
+                                    continue;
+                                }
+                            }
                             // c:Src/exec.c:877-895 `execute_skip_exec:` — see
                             // the identical fall-through in the background
                             // arm above. The cmdnamtab candidate failing to
@@ -5991,7 +6044,7 @@ impl ShellExecutor {
                             // The hook only fires for bare names (PATH search
                             // failed); absolute paths skip it and emit the
                             // OS-error path below — matches zsh behavior.
-                            if !cmd.contains('/') {
+                            if !cmd.contains('/') || retried_pathdirs {
                                 let mut hook_args = Vec::with_capacity(args.len() + 1);
                                 hook_args.push(cmd.to_string());
                                 hook_args.extend_from_slice(args);
@@ -6021,7 +6074,7 @@ impl ShellExecutor {
                             //   ./nonexistent_script
                             //   zsh  : zsh:1: no such file or directory: ./nonexistent_script
                             //   zshrs: zsh:1: command not found: ./nonexistent_script
-                            if cmd.contains('/') {
+                            if cmd.contains('/') && !retried_pathdirs {
                                 eprintln!(
                                     "{}: no such file or directory: {}",
                                     zerr_prefix(&sn),

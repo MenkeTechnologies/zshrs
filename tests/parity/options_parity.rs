@@ -284,3 +284,24 @@ mod warn_create_global_numeric {
         );
     }
 }
+
+/// c:Src/exec.c:801-806 + c:878-900 — with PATH_DIRS a relative command name
+/// holding a slash (not `/…`, `./…`, `../…`) that does not exec as spelled
+/// is tried as `DIR/NAME` for each `$path` entry; when nothing execs, the
+/// walk left `eno` at 0 (ENOENT fails isgooderr, c:664-665) and zsh reports
+/// `command not found`. zshrs never walked `$path` for such names.
+mod path_dirs_slash_command {
+    use super::*;
+
+    #[test]
+    fn slash_command_is_found_through_path() {
+        assert_parity(
+            r#"d=$(mktemp -d); mkdir -p $d/top/sub; print '#!/bin/sh\necho lower' > $d/top/sub/findme; chmod +x $d/top/sub/findme; cd $d; setopt pathdirs; path=($d/top /bin /usr/bin); sub/findme; echo rc=$?; sub/findme & wait; ./sub/findme 2>&1; unsetopt pathdirs; sub/findme 2>/dev/null; echo rc=$?; cd /; command rm -rf $d"#,
+        );
+    }
+
+    #[test]
+    fn a_walk_that_finds_nothing_is_command_not_found() {
+        assert_parity("setopt pathdirs; path=(/bin); nodir/nocmd 2>&1; echo rc=$?");
+    }
+}
