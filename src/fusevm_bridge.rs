@@ -7840,10 +7840,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let sep0: String = ifs.chars().next().map(String::from).unwrap_or_default();
                     let joined = pp.join(&sep0);
                     // c:3919 `sepsplit(val, spsep, 0, 1)` with spsep NULL →
-                    // split on $IFS; multsub's PREFORK_SPLIT walker is the
-                    // port of that (subst.rs:1603).
-                    let (_j, parts, _isarr, _f) =
-                        crate::ported::subst::multsub(&joined, crate::ported::zsh_h::PREFORK_SPLIT);
+                    // spacesplit (c:Src/utils.c:3711), then c:184-187. The
+                    // IFS-whitespace edge fields are truly empty and c:186
+                    // deletes them only from the FINISHED word, after the
+                    // word's text is glued on (c:4366-4437): `setopt
+                    // shwordsplit; set -- "" x ""; print -rl -- p$@q` is `p`
+                    // `x` `q`. So inside a word that defers that removal
+                    // (BUILTIN_WORD_DEFER_EMPTIES) the fields go out raw, the
+                    // c:36 `nulstring` markers included, exactly as
+                    // BUILTIN_FORCE_SPLIT hands them over; a whole word gets
+                    // the removal from the compile site's BUILTIN_ARRAY_DROP_EMPTY,
+                    // which also strips the markers (c:170). multsub's
+                    // PREFORK_SPLIT walker, used before, dropped the edge fields
+                    // outright and folded `nulstring` to "" (`IFS=:; set -- a::b;
+                    // print -rl -- $@` lost its middle field).
+                    let parts = crate::ported::utils::sepsplit(&joined, None, false); // c:3919, Nularg kept
                     return Value::array(parts.into_iter().map(Value::str).collect());
                 }
             }

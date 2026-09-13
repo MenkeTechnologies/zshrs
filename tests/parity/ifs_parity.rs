@@ -736,4 +736,13 @@ mod array_splice_edge_empties_take_affixes {
         assert_parity(r#"set -- "" x ""; a=(p$@q); print $#a; for i in p$@q; do print -r "<$i>"; done; print -rl -- $@ | wc -l"#);
         assert_parity(r#"setopt rcexpandparam; set -- "" x ""; print -rl -- p$@q; v=p$@q; print -r "[$v]""#);
     }
+
+    /// SH_WORD_SPLIT's join-and-resplit of `$@` (c:3905 then c:3919) keeps the
+    /// IFS-whitespace edge fields for the affixes and the `nulstring` fields.
+    #[test]
+    fn shwordsplit_positional_splat_keeps_fields() {
+        assert_parity(r#"setopt shwordsplit; set -- "" x ""; print -rl -- p$@q p$*q $@; set -- "a b" ""; print -rl -- p$@q"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; set -- a::b "" :c:; print -rl -- $@ x$@y $argv; a=($@); print $#a; f() { print $#; }; f $@"#);
+        assert_parity(r#"setopt shwordsplit; IFS=:; set -- a::b "" :c:; v=$@; print -r "[$v]"; print -rl -- $* | wc -l"#);
+    }
 }
