@@ -20175,6 +20175,32 @@ pub fn paramsubst(
                             return (String::new(), 0, Vec::new());
                         }
                     }
+                    // c:Src/subst.c:1580-1586 — check_colon_subscript first runs
+                    // parse_subscript (silent) with `:` and then `\0` as the end
+                    // character; when neither parses, it returns NULL, the text
+                    // stays untokenized, and the colon walk falls through to
+                    // modify(), whose caller reports the char after the `:`
+                    // (c:3797-3799): `${foo:0:${\"}}` is "unrecognized modifier `$'".
+                    let unparsable = |t: &str| {
+                        !t.is_empty() // c:1576-1578 — `::` is offset 0
+                            && crate::ported::lex::parse_subscript(t, ':').is_none() // c:1580
+                            && crate::ported::lex::parse_subscript(t, '\0').is_none() // c:1583
+                    };
+                    let failed = if unparsable(parts[0]) {
+                        Some(parts[0])
+                    } else if has_length_sep && unparsable(parts[1]) {
+                        Some(parts[1])
+                    } else {
+                        None
+                    };
+                    if let Some(t) = failed {
+                        match crate::ported::lex::untokenize(t).chars().next() {
+                            Some(c) => zerr(&format!("unrecognized modifier `{}'", c)), // c:3799
+                            None => zerr("unrecognized modifier"), // c:3801
+                        }
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new()); // c:3802
+                    }
                     // c:3618-3623 — the offset is evaluated and a math failure
                     // ABORTS the substitution:
                     //     zlong offset = mathevali(check_offset);

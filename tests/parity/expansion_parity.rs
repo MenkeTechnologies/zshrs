@@ -249,6 +249,16 @@ mod length_and_substring {
     fn substring_negative_length() {
         assert_parity("X=helloworld; echo ${X:0:-1}");
     }
+
+    /// c:Src/subst.c:1580-1586 — an offset or length that parse_subscript
+    /// cannot read makes check_colon_subscript return NULL, so the colon
+    /// walk falls through to the modifier error (c:3797-3799).
+    #[test]
+    fn unparsable_offset_or_length_is_an_unrecognized_modifier() {
+        assert_parity(r#"foo=abc; print ${foo:0:${\"}}; echo rc=$?"#);
+        assert_parity(r#"foo=abc; print "${foo:${\"}}"; echo rc=$?"#);
+        assert_parity(r#"foo=abcdef; n=2; print ${foo::2} ${foo:$n:1} ${foo:(1):2} ${foo: -2}"#);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
