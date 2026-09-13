@@ -1810,7 +1810,13 @@ fn save_inline_prefix_param(exec: &mut ShellExecutor, name: &str) {
             match crate::ported::zsh_h::PM_TYPE(tpm.node.flags as u32) {
                 crate::ported::zsh_h::PM_INTEGER => {
                     // c:1279 — `tpm->u.val = pm->gsu.i->getfn(pm);`
-                    tpm.u_val = crate::ported::params::getiparam(&name);
+                    // A special's getfn (`uidgetfn`, `gidgetfn`, …) does not
+                    // read `u.val`, which `getiparam` returns for any
+                    // PM_INTEGER node: `UID=$UID cmd` saved 0 and the restore
+                    // ran `setuid(0)`. zshrs reaches those getfns by name.
+                    tpm.u_val = crate::ported::params::lookup_special_var(&name)
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or_else(|| crate::ported::params::getiparam(&name));
                 }
                 crate::ported::zsh_h::PM_EFLOAT
                 | crate::ported::zsh_h::PM_FFLOAT => {

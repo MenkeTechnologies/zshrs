@@ -469,3 +469,20 @@ mod write_error_on_a_closed_stdout {
         assert_parity(r#"{ { print -n "" } >&-; print ok } 2>&1"#);
     }
 }
+
+/// c:Src/exec.c:4491-4493 save_params → c:Src/params.c:1279 copyparam —
+/// `tpm->u.val = pm->gsu.i->getfn(pm)`. A special integer's value lives
+/// behind its getfn (`uidgetfn` is `getuid()`), not in `u.val`; the prefix
+/// assignment's restore (c:4551 `tpm->gsu.i->setfn(tpm, pm->u.val)`) must put
+/// that value back, or `UID=$UID cmd` ends with `setuid(0)`.
+mod prefix_assignment_to_a_special_integer {
+    use super::*;
+
+    #[test]
+    fn restores_the_getfn_value() {
+        assert_parity(r#"{ UID=$UID print hi; print $UID rc=$? } 2>&1"#);
+        assert_parity(r#"{ f() { print in; }; UID=$UID f; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ EUID=$EUID GID=$GID EGID=$EGID /usr/bin/true; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ UID=x /usr/bin/true; print rc=$? } 2>&1"#);
+    }
+}
