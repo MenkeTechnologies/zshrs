@@ -452,6 +452,44 @@ fn script_file_runs_each_command_before_parsing_the_next() {
     assert!(bad.is_empty(), "script-file divergences:\n{}", bad.join("\n"));
 }
 
+/// A script FILE is zsh_main's `loop(1, 0)` (c:Src/init.c:1963), so every
+/// top-level event runs the preexec branch (c:180-215): `$1` is empty (a
+/// script has no history ring), `$2`/`$3` are the event's job and permanent
+/// text. `source` / `.` run `loop(0, 0)` (c:1626-1627) and never call it.
+/// zshrs's script-file loop never reached that branch, so no hook fired.
+#[test]
+fn script_file_fires_preexec_for_each_event() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    std::fs::write(
+        d.path().join("inner.zsh"),
+        "preexec(){ print -r -- \"P [$1] [$2]\" }\nprint in\n",
+    )
+    .expect("write inner");
+    let cases: [(&str, &str); 4] = [
+        (
+            "preexec_fn",
+            "preexec(){ print -r -- \"P [$1] [$2] [$3]\" }\nprint a\nif true; then\n  print b\nfi\n",
+        ),
+        (
+            "preexec_functions",
+            "preexec_functions=(h)\nh(){ print -r -- \"H [$2]\" }\nprint c # note\n",
+        ),
+        ("source_does_not_fire", "source ./inner.zsh\nprint after\n"),
+        ("dot_does_not_fire", ". ./inner.zsh\nprint after\n"),
+    ];
+    let mut bad = Vec::new();
+    for (name, body) in cases {
+        let [z, r] = run_file_full(d.path(), &format!("{name}.zsh"), body);
+        if z != r {
+            bad.push(format!("{name}:\n  zsh   = {z:?}\n  zshrs = {r:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "script-file preexec divergences:\n{}", bad.join("\n"));
+}
+
 /// A shell reading its script from STDIN keeps going after a syntax error.
 /// C parse_event returns NULL when par_event fails (c:Src/parse.c:622-625,
 /// c:670-689), and loop() continues on LEXERR when SHINSTDIN at top level

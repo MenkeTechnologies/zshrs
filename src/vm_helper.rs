@@ -95,6 +95,85 @@ thread_local! {
 /// stripped. Search groups ((r)/(i)/(k)/…) return `None` — they need
 /// the full getarg walk. Companion gate for [`assoc_key_hit`]'s O(1)
 /// fast paths.
+/// !!! WARNING: RUST-ONLY HELPER — body of c:Src/init.c:180-215, lifted out
+/// of loop() so the script-file event loop (`run_events_per_command`) runs
+/// the same code; src/ported/ may not gain functions. !!!
+///
+/// The `toplevel` preexec branch of loop(): when a `preexec` function or
+/// `preexec_functions` exists, call the hook with `$1` (the history line, or
+/// "" when the history ring does not hold the current line — always the
+/// case for a script), `$2` (getjobtext) and `$3` (getpermtext), then clear
+/// ERRFLAG_ERROR (c:214). `event_src` is the event's source text captured
+/// around parse_event; zshrs's parse_event returns the fusevm AST, which the
+/// text renderers cannot walk, so the source is compiled to the wordcode
+/// Eprog C would already hold. That compile is silent and leaves errflag as
+/// it found it; an event it cannot take gets empty `$2`/`$3`.
+pub fn run_preexec_hook(event_src: Option<&str>) {
+    use crate::ported::zsh_h::{interact, isset, INTERACTIVECOMMENTS, SHINSTDIN};
+    // Native p10k engine command timer (src/extensions/p10k): stamp the
+    // command start for command_execution_time, with or without a user hook.
+    crate::p10k::note_exec_start();
+    let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
+    let preexec_hook = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| {
+            t.get(&format!("preexec{}", crate::ported::zsh_h::HOOK_SUFFIX))
+                .map(|_| ())
+        }); // c:182 realparamtab->getnode2(realparamtab, "preexec" HOOK_SUFFIX)
+    if preexec_fn.is_none() && preexec_hook.is_none() {
+        return;
+    }
+    let mut args: Vec<String> = Vec::new(); // c:191 newlinklist()
+    args.push("preexec".to_string()); // c:192
+    {
+        // c:195 — `if (hist_ring && curline.histnum == curhist)`
+        let hr = crate::ported::hist::hist_ring.lock().unwrap();
+        let cl = crate::ported::hist::curline.lock().unwrap();
+        let same = !hr.is_empty()
+            && cl.as_ref().map(|c| c.histnum).unwrap_or(0)
+                == crate::ported::hist::curhist.load(Ordering::SeqCst);
+        if same {
+            args.push(hr.first().map(|h| h.node.nam.clone()).unwrap_or_default()); // c:196
+        } else {
+            args.push(String::new()); // c:198
+        }
+    }
+    let event_prog: Option<crate::ported::zsh_h::eprog> = event_src.and_then(|src| {
+        let noerrs = crate::ported::utils::noerrs_lock();
+        let saved_noerrs = std::mem::replace(&mut *noerrs.lock().unwrap(), 1);
+        let saved_errflag = errflag.load(Ordering::SeqCst);
+        // The event was lexed with `strin == 0`, where a `#` starts a comment
+        // only under INTERACTIVECOMMENTS in an interactive stdin shell
+        // (c:Src/lex.c:678-681). parse_string lexes under `strin`, which would
+        // turn comments on; `nocomments` restores that decision, the way
+        // getoutput does around its own parse_string (c:Src/exec.c:4720-4723).
+        let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
+        crate::ported::lex::LEX_NOCOMMENTS.with(|c| {
+            c.set(interact() && isset(SHINSTDIN) && !isset(INTERACTIVECOMMENTS))
+        });
+        let p = crate::ported::exec::parse_string(src, 0);
+        crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
+        errflag.store(saved_errflag, Ordering::SeqCst);
+        *noerrs.lock().unwrap() = saved_noerrs;
+        p
+    });
+    // c:210 — addlinknode(args, dupstring(getjobtext(prog, NULL)))
+    // c:211 — addlinknode(args, cmdstr = getpermtext(prog, NULL, 0))
+    let (job_text, cmdstr) = match event_prog {
+        Some(p) => (
+            crate::ported::text::getjobtext(Box::new(p.clone()), None), // c:210
+            crate::ported::text::getpermtext(Box::new(p), None, 0),     // c:211
+        ),
+        None => (String::new(), String::new()),
+    };
+    args.push(crate::ported::mem::dupstring(&job_text));
+    args.push(cmdstr.clone());
+    crate::ported::utils::callhookfunc("preexec", Some(&args), 1, std::ptr::null_mut()); // c:202
+    crate::ported::mem::zsfree(cmdstr); // c:205
+    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::SeqCst); // c:214
+}
+
 pub fn exact_assoc_sub_key(sub: &str) -> Option<&str> {
     match sub.strip_prefix('(') {
         None => Some(sub),
@@ -3466,7 +3545,9 @@ impl ShellExecutor {
         let content = crate::script_bytes::read_script_file(file_path)
             .map_err(|e| format!("{}: {}", file_path, e))?;
         let mut events: Vec<crate::parse::ZshList> = Vec::new();
-        let mut status = self.run_events_per_command(&content, Some(&mut events))?;
+        // c:Src/init.c:1963 — zsh_main runs the script through `loop(1, 0)`:
+        // toplevel.
+        let mut status = self.run_events_per_command(&content, Some(&mut events), true)?;
         // c:Src/init.c:1969-1974 — `if (tok == LEXERR || errexit) { if
         // (!lastval) lastval = 1; stopmsg = 1; zexit(lastval, …); }`: a
         // parse error, or an error abort in a non-interactive shell, exits
@@ -3841,7 +3922,8 @@ impl ShellExecutor {
     /// Returns the file's `$?`. `Err` only for a VM error, as
     /// [`Self::run_chunk`] reports it.
     pub fn execute_script_per_command(&mut self, script: &str) -> Result<i32, String> {
-        self.run_events_per_command(script, None)
+        // c:Src/init.c:1626-1627 — source() runs `loop(0, 0)`: not toplevel.
+        self.run_events_per_command(script, None, false)
     }
 
     /// The `loop()` body shared by a sourced file and a script file.
@@ -3850,10 +3932,16 @@ impl ShellExecutor {
     /// CLEARED unless the loop drained the input to a clean `ENDINPUT` — so a
     /// caller holding a non-empty collection after the call has the exact
     /// program the lexer produced, one event at a time, for the whole file.
+    ///
+    /// `toplevel` is loop()'s parameter of the same name: true only for the
+    /// script file zsh_main runs (c:Src/init.c:1963 `loop(1, 0)`), false for
+    /// `source` / `.` (c:1626-1627 `loop(0, 0)`). It gates the preexec hook
+    /// (c:180).
     fn run_events_per_command(
         &mut self,
         script: &str,
         mut events: Option<&mut Vec<crate::parse::ZshList>>,
+        toplevel: bool,
     ) -> Result<i32, String> {
         use crate::ported::lex::{
             tok, ENDINPUT, LEXERR, LEX_FILE_WINDOW_STRIN, LEX_INPUT, LEX_LINENO, LEX_POS,
@@ -3905,7 +3993,10 @@ impl ShellExecutor {
             // it does NOT move the window, so the next event resumes where
             // the last one stopped.
             crate::ported::lex::lexinit(); // c:155
+            // Event source for preexec's `$2`/`$3` — see run_preexec_hook.
+            let event_mark = toplevel.then(crate::funcdef_capture::body_mark_begin);
             let prog = crate::ported::parse::parse_event(ENDINPUT); // c:156
+            let event_src = event_mark.and_then(crate::funcdef_capture::body_text);
             let Some(prog) = prog else {
                 // c:159-174 — no event this pass. Break on clean EOF or on a
                 // parse error (`!toplevel` makes C's LEXERR arm
@@ -3931,6 +4022,12 @@ impl ShellExecutor {
                 continue; // c:174
             };
             non_empty = true; // c:179
+            if toplevel {
+                // callhookfunc dispatches through the live executor, which
+                // is only installed while a chunk runs (see run_chunk).
+                let _ctx = ExecutorContext::enter(self);
+                run_preexec_hook(event_src.as_deref()); // c:180-215
+            }
 
             // c:220 — `execode(prog, 0, 0, "file")`. The eval-context entry
             // C's `execode` pushes for this arm is already on the stack:
