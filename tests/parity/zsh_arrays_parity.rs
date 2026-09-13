@@ -1297,3 +1297,25 @@ mod typeset_postassign_nomatch_status {
         assert_parity("local -a a=(x y); print ${#a} rc=$?");
     }
 }
+
+/// c:Src/parse.c:1904-1905 / c:2048-2049 — `if (tok != OUTPAR)
+/// YYERROR(oecused);`. zshrs stopped the element loop at any other token and
+/// accepted the assignment: `x=(q()` assigned `q` and ran the rest.
+mod array_assignment_needs_its_closing_paren {
+    use super::*;
+
+    #[test]
+    fn a_token_other_than_the_closing_paren_is_a_parse_error() {
+        assert_parity(r#"x=(q(); print "[$x]""#);
+        assert_parity(r#"x=(a q(); print "[$x]""#);
+        assert_parity(r#"typeset x=(q(); print "[$x]""#);
+        assert_parity(r#"x=(q() b); print "[$x]""#);
+    }
+
+    #[test]
+    fn well_formed_arrays_still_parse() {
+        assert_parity(r#"x=(a b); typeset y=(c d) z=(e); print $x $y $z"#);
+        assert_parity("x=(a\nb\n); print $x");
+        assert_parity("x=(); print ${#x}");
+    }
+}

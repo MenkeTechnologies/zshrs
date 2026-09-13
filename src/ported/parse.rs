@@ -9574,6 +9574,13 @@ fn parse_assign() -> Option<ZshAssign> {
         // We only consume Outpar; let the caller handle the rest.
         // Without this guard `g=(o1); f() { :; }` parsed as one
         // Simple with assigns=[g] and words=["f()"] (one token).
+        // c:Src/parse.c:1904-1905 / c:2048-2049 — `if (tok != OUTPAR)
+        // YYERROR(oecused);`. The element loop stops at any other token, so
+        // without this `x=(q()` (INOUTPAR) assigned `q` and ran on.
+        if tok() != OUTPAR_TOK {
+            yyerror(0);
+            return None;
+        }
         if tok() == OUTPAR_TOK {
             // Note: do NOT zshlex() here. par_simple's `lexer
             // .zshlex()` after `parse_assign` returns advances past
