@@ -11162,7 +11162,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !multios_on {
             with_executor(|exec| {
                 for (op_byte, source) in &entries {
-                    exec.host_apply_redirect(fd as u8, *op_byte, source);
+                    multios_apply_member(exec, fd, *op_byte, source);
                     if exec.redirect_failed {
                         break;
                     }
@@ -11175,7 +11175,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Single member after splicing — plain replace.
             let (op_byte, source) = &entries[0];
             with_executor(|exec| {
-                exec.host_apply_redirect(fd as u8, *op_byte, source);
+                multios_apply_member(exec, fd, *op_byte, source);
             });
             return Value::Status(0);
         }
@@ -11216,6 +11216,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
                 },
+                // c:Src/exec.c:3821-3835 — `fil = getherestr(fn);`
+                MULTIOS_OP_HERESTR_BODY | MULTIOS_OP_HEREDOC_BODY => {
+                    multios_body_fd(source, *op_byte == MULTIOS_OP_HERESTR_BODY)
+                }
                 _ => fs::File::open(source).map(|f| f.into_raw_fd()),
             };
             match open_result {
@@ -16384,6 +16388,82 @@ pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 /// MULTIOS unset: sequential replace via host_apply_redirect — last
 /// source wins (c:2418).
 pub const BUILTIN_MULTIOS_READ: u16 = 618;
+
+/// BUILTIN_MULTIOS_READ member op for a here-string body: the runtime writes
+/// the body plus a trailing newline to a temp file (c:Src/exec.c:4671-4672,
+/// `if (!(fn->flags & REDIRF_FROM_HEREDOC)) t[len++] = '\n';`). fusevm's
+/// `redirect_op` values stop at 8.
+pub const MULTIOS_OP_HERESTR_BODY: u8 = 9;
+/// BUILTIN_MULTIOS_READ member op for a here-document body: written verbatim
+/// (REDIRF_FROM_HEREDOC, c:Src/parse.c:2970-2971).
+pub const MULTIOS_OP_HEREDOC_BODY: u8 = 10;
+
+/// c:Src/exec.c:4673-4679 getherestr — `gettempfile`, `write_loop`, `close`,
+/// reopen read-only, `unlink`: a read descriptor on the body, as
+/// BUILTIN_EXEC_HERESTR_FD builds for a single here-string.
+fn multios_body_fd(body: &str, append_newline: bool) -> std::io::Result<i32> {
+    let text = if append_newline { format!("{}\n", body) } else { body.to_string() };
+    let mut tmpl: Vec<u8> = b"/tmp/zshrs_hs_XXXXXX\0".to_vec();
+    let write_fd = unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
+    if write_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let bytes = text.as_bytes();
+    let mut off = 0;
+    while off < bytes.len() {
+        let n = unsafe {
+            libc::write(write_fd, bytes[off..].as_ptr() as *const libc::c_void, bytes.len() - off)
+        };
+        if n <= 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(write_fd);
+                libc::unlink(tmpl.as_ptr() as *const libc::c_char);
+            }
+            return Err(err);
+        }
+        off += n as usize;
+    }
+    unsafe { libc::close(write_fd) }; // c:4676
+    let read_fd = unsafe { libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+    let err = std::io::Error::last_os_error();
+    unsafe { libc::unlink(tmpl.as_ptr() as *const libc::c_char) }; // c:4678
+    if read_fd < 0 {
+        Err(err)
+    } else {
+        Ok(read_fd)
+    }
+}
+
+/// One member of an input multio applied as a plain replacement (the
+/// NO_MULTIOS and single-member paths): a here-document / here-string body
+/// goes through `multios_body_fd` and addfd's save + dup2 (c:2421-2443);
+/// every other op keeps `host_apply_redirect`.
+fn multios_apply_member(exec: &mut ShellExecutor, fd: i32, op_byte: u8, source: &str) {
+    if op_byte != MULTIOS_OP_HERESTR_BODY && op_byte != MULTIOS_OP_HEREDOC_BODY {
+        exec.host_apply_redirect(fd as u8, op_byte, source);
+        return;
+    }
+    exec.save_fd_for_scope(fd);
+    match multios_body_fd(source, op_byte == MULTIOS_OP_HERESTR_BODY) {
+        Ok(read_fd) => {
+            if read_fd != fd {
+                unsafe {
+                    libc::dup2(read_fd, fd);
+                    libc::close(read_fd);
+                }
+            }
+        }
+        Err(e) => {
+            // c:Src/exec.c:3828 — `zwarn("can't create temp file for here document: %e", errno);`
+            crate::ported::utils::zwarn(&format!(
+                "can't create temp file for here document: {}",
+                crate::ported::utils::zsh_errno_msg(e.raw_os_error().unwrap_or(0))
+            ));
+            exec.redirect_failed = true;
+        }
+    }
+}
 
 /// Toggle `ShellExecutor::exec_redirs_permanent`. Emitted by
 /// compile_zsh's bare-`exec`-with-redirects arm tightly around each

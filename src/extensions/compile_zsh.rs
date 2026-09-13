@@ -3783,7 +3783,10 @@ impl ZshCompiler {
         let fd_of = |r: &crate::parse::ZshRedir| -> u8 {
             if r.fd >= 0 {
                 r.fd as u8
-            } else if r.rtype == REDIR_READ {
+            } else if matches!(
+                r.rtype,
+                REDIR_READ | REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR
+            ) {
                 0
             } else {
                 1
@@ -3809,7 +3812,15 @@ impl ZshCompiler {
         };
         let is_read_member = |r: &crate::parse::ZshRedir| -> bool {
             r.varid.is_none()
-                && (is_read_side(r.rtype) || (r.rtype == REDIR_MERGEIN && name_is_numeric_fd(r)))
+                && (is_read_side(r.rtype)
+                    || (r.rtype == REDIR_MERGEIN && name_is_numeric_fd(r))
+                    // c:Src/exec.c:3821-3835 — REDIR_HERESTR (a here-document
+                    // is turned into one at parse time) does `fil =
+                    // getherestr(fn); addfd(forked, save, mfds, fn->fd1, fil,
+                    // 0, fn->varid);`, the same addfd REDIR_READ uses, so it
+                    // is a member of the fd's input multio: `cat <<x <<y`
+                    // reads both bodies, `cat <o1 <<<x` both sources.
+                    || matches!(r.rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR))
         };
         // c:Src/glob.c:2150-2207 xpandredir — under MULTIOS the
         // target word is globbed; multiple matches duplicate the
@@ -3862,7 +3873,7 @@ impl ZshCompiler {
         // through full word expansion before open).
         let mut pending_multios: std::collections::HashMap<u8, Vec<(String, u8)>> =
             std::collections::HashMap::new();
-        let mut pending_multios_read: std::collections::HashMap<u8, Vec<(String, u8)>> =
+        let mut pending_multios_read: std::collections::HashMap<u8, Vec<(crate::parse::ZshRedir, u8)>> =
             std::collections::HashMap::new();
         // We don't have direct access to op_byte without re-deriving
         // it, so do a small helper.
@@ -3893,12 +3904,16 @@ impl ZshCompiler {
                 && (read_total >= 2
                     || (read_total == 1 && is_read_side(redir.rtype) && has_glob_tokens(redir)));
             if is_multios_read_candidate {
-                let op_byte = match derive_op(redir) {
-                    Some(o) => o,
-                    None => {
-                        self.compile_redir(redir, false);
-                        continue;
-                    }
+                let op_byte = match redir.rtype {
+                    REDIR_HEREDOC | REDIR_HEREDOCDASH => crate::vm_helper::MULTIOS_OP_HEREDOC_BODY,
+                    REDIR_HERESTR => crate::vm_helper::MULTIOS_OP_HERESTR_BODY,
+                    _ => match derive_op(redir) {
+                        Some(o) => o,
+                        None => {
+                            self.compile_redir(redir, false);
+                            continue;
+                        }
+                    },
                 };
                 // Stash the RAW token-bearing redir.name so emit-time
                 // `compile_word_str` runs full word expansion (var +
@@ -3908,7 +3923,7 @@ impl ZshCompiler {
                 pending_multios_read
                     .entry(fd)
                     .or_default()
-                    .push((redir.name.clone(), op_byte));
+                    .push((redir.clone(), op_byte));
                 let bag_now = pending_multios_read.get(&fd).map(|v| v.len()).unwrap_or(0);
                 let total = read_total;
                 if bag_now == total {
@@ -3917,10 +3932,40 @@ impl ZshCompiler {
                         // Push (source, op_byte) pairs in compile order.
                         // The op distinguishes file opens (READ) from
                         // numeric dups (DUP_READ, `<&N`).
-                        for (source, op_byte) in &pairs {
-                            self.redir_word_depth += 1;
-                            self.compile_word_str(source.as_str());
-                            self.redir_word_depth -= 1;
+                        for (member, op_byte) in &pairs {
+                            if *op_byte == crate::vm_helper::MULTIOS_OP_HERESTR_BODY {
+                                // c:Src/exec.c:4711-4718 getherestr — `singsub(&t);
+                                // untokenize(t);`, as compile_redir's REDIR_HERESTR arm.
+                                self.compile_singsub_word_noglob(&member.name);
+                            } else if *op_byte == crate::vm_helper::MULTIOS_OP_HEREDOC_BODY {
+                                // The body exactly as compile_redir stages it: a
+                                // quoted terminator keeps the text verbatim, an
+                                // unquoted one expands it (EXPAND_TEXT mode 4).
+                                match &member.heredoc {
+                                    Some(hd) if hd.quoted => {
+                                        let text = crate::lex::untokenize(&hd.content);
+                                        let idx = self.builder.add_constant(Value::str(text.as_str()));
+                                        self.builder.emit(Op::LoadConst(idx), 0);
+                                    }
+                                    Some(hd) => {
+                                        let idx = self.builder.add_constant(Value::str(hd.content.as_str()));
+                                        self.builder.emit(Op::LoadConst(idx), 0);
+                                        self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
+                                        self.builder.emit(
+                                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
+                                            0,
+                                        );
+                                    }
+                                    None => {
+                                        let idx = self.builder.add_constant(Value::str(""));
+                                        self.builder.emit(Op::LoadConst(idx), 0);
+                                    }
+                                }
+                            } else {
+                                self.redir_word_depth += 1;
+                                self.compile_word_str(member.name.as_str());
+                                self.redir_word_depth -= 1;
+                            }
                             self.builder.emit(Op::LoadInt(*op_byte as i64), 0);
                         }
                         self.builder.emit(Op::LoadInt(fd as i64), 0);

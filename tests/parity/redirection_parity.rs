@@ -865,3 +865,34 @@ mod mergein_non_number_extension_builtin {
         assert_parity_in(d.path(), "{ typeset x <&''; print never; } 2>&1");
     }
 }
+
+/// c:Src/exec.c:3821-3835 — a here-string (a here-document becomes one at
+/// parse time) is `fil = getherestr(fn); addfd(forked, save, mfds, fn->fd1,
+/// fil, 0, fn->varid);`, the same addfd REDIR_READ uses, so it joins the fd's
+/// input multio. zshrs compiled each body as a plain replacement and only the
+/// last one reached the command.
+mod heredoc_members_of_an_input_multio {
+    use super::*;
+
+    #[test]
+    fn every_body_reaches_the_command() {
+        let d = tdir();
+        std::fs::write(d.path().join("o1"), "out1\n").unwrap();
+        assert_parity_in(d.path(), "cat <<x <<y\nfoo\nx\nbar\ny");
+        assert_parity_in(d.path(), "cat <o1 <<<x");
+        assert_parity_in(d.path(), "cat <<<x <<y\nbar\ny");
+        assert_parity_in(d.path(), "cat <<<a <<<b");
+        assert_parity_in(d.path(), "v=V; cat <<x <<'y'\n$v one\nx\n$v two\ny");
+        assert_parity_in(d.path(), "cat <<-x <<y\n\tfoo\n\tx\nbar\ny");
+        assert_parity_in(d.path(), "cat <<x <<y | tr a-z A-Z\nfoo\nx\nbar\ny");
+    }
+
+    #[test]
+    fn single_bodies_and_no_multios_are_unchanged() {
+        let d = tdir();
+        assert_parity_in(d.path(), "unsetopt multios; cat <<x <<y\nfoo\nx\nbar\ny");
+        assert_parity_in(d.path(), "cat <<x\nsingle\nx");
+        assert_parity_in(d.path(), "cat <<<single");
+        assert_parity_in(d.path(), "{ cat; cat <&3 } <<x 3<<<three\nfoo\nx");
+    }
+}
