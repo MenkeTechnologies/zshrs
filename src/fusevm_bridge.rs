@@ -800,6 +800,8 @@ fn shname() -> String {
 /// badcshglob — by then every glob op of the current word pipeline
 /// has read the carrier.
 pub(crate) fn consume_tilde_globsubst_carrier() {
+    // The default-word report belongs to the word pipeline just finished too.
+    crate::ported::subst::DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.set(false));
     crate::ported::subst::TILDE_GLOBSUBST_CARRIER.with(|c| {
         if let Some(saved) = c.take() {
             crate::ported::options::opt_state_set("globsubst", saved);
@@ -6677,6 +6679,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // expansion runs, so a flag set by a prior word never leaks in.
     vm.register_builtin(BUILTIN_DEFAULT_WORD_GLOB_RESET, |_vm, _argc| {
         crate::ported::subst::DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(false));
+        crate::ported::subst::DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.set(false));
         crate::ported::subst::DEFAULT_WORD_GLOB_BARS.with(|b| b.borrow_mut().clear());
         Value::Status(0)
     });
@@ -6793,8 +6796,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // when OFF, pass through unchanged. Bug #119 in docs/BUGS.md.
     vm.register_builtin(BUILTIN_GLOB_SUBST_EXPAND, |vm, _argc| {
         let raw = vm.pop();
+        // c:Src/subst.c:3231-3233 — after a default / alternate word C runs
+        // `if (globsubst != 2) globsubst = 0;`, so the finished expansion is
+        // not shtokenized and only glob tokens an UNQUOTED inner substitution
+        // produced survive into it. The paramsubst arm reports both halves
+        // (subst::DEFAULT_WORD_GLOBSUBST_OFF and DEFAULT_WORD_GLOB_PENDING);
+        // take them for this word: `setopt globsubst; foo='boring*'`
+        // `${foo+"$foo"}` stays `boring*`, `${foo+$foo}` still globs.
+        let default_off = crate::ported::subst::DEFAULT_WORD_GLOBSUBST_OFF.with(|c| c.replace(false));
+        let default_pending = default_off
+            && crate::ported::subst::DEFAULT_WORD_GLOB_PENDING.with(|c| c.replace(false));
         let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
-        if !glob_subst {
+        if !glob_subst || (default_off && !default_pending) {
             return raw;
         }
         // Collect input strings (Str → vec![s]; Array → multiple).

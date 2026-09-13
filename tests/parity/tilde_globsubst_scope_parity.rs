@@ -312,3 +312,30 @@ mod substitution_segment_globs_with_the_assembled_word {
         assert_parity(&format!("{DIR}setopt nonomatch; print ${{~:-bor*}}x"));
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. GLOB_SUBST after a default / alternate word (c:Src/subst.c:3231-3233).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `if (globsubst != 2) globsubst = 0;` after the word's multsub: the finished
+/// expansion is not shtokenized, so only glob tokens an UNQUOTED inner
+/// substitution produced survive.
+mod globsubst_off_after_a_default_word {
+    use super::assert_parity;
+
+    const DIR: &str = "cd \"$(mktemp -d)\" && touch boringfile && setopt globsubst && foo='boring*' && ";
+
+    #[test]
+    fn quoted_value_in_the_word_stays_literal() {
+        assert_parity(&format!("{DIR}print -r -- ${{foo+\"$foo\"}} ${{foo+\"x$foo\"}}"));
+        assert_parity(&format!("{DIR}print -r -- ${{unset-\"$foo\"}} ${{unset:-\"$foo\"}} ${{foo:+\"$foo\"}}"));
+        assert_parity(&format!("{DIR}print -r -- x${{foo+\"$foo\"}} ${{foo+\"$foo\"}}x"));
+    }
+
+    #[test]
+    fn globbing_that_zsh_keeps() {
+        assert_parity(&format!("{DIR}print -r -- ${{foo+$foo}} ${{foo:-\"$foo\"}} ${{~foo+\"$foo\"}} $foo"));
+        assert_parity(&format!("{DIR}print -r -- ${{foo+\"$foo\"}}; print -r -- $foo"));
+    }
+}
+
