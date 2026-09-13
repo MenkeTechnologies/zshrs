@@ -6663,6 +6663,15 @@ impl ShellExecutor {
                 // zsh's 450). Snapshot/restore it by hand, exactly as the
                 // param/opts/trap/job snaps above do.
                 let comp_arena_snap = crate::comp_match_handles::comp_arena_save();
+                // !!! WARNING: RUST-ONLY LOCK DISCIPLINE !!! zhandler's SIGCHLD
+                // branch locks JOBTAB (c:Src/signals.c:429-431 → update_bg_job)
+                // on whichever thread the signal interrupts. C's jobtab is a
+                // plain array; here a SIGCHLD landing while this thread holds
+                // the JOBTAB mutex (the snapshot, clearjobtab, and the restore
+                // below, which also drops the child's table under the lock)
+                // blocks the handler forever: `echo $(echo a &) w` hung.
+                // Queue signals across both windows (c:Src/signals.c:410-424).
+                crate::ported::signals_h::queue_signals();
                 let jobtab_snap = crate::ported::jobs::JOBTAB
                     .get()
                     .and_then(|t| t.lock().ok().map(|g| g.clone()));
@@ -6686,6 +6695,7 @@ impl ShellExecutor {
                     let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
                     crate::ported::jobs::clearjobtab(&mut self.jobs, monitor);
                 }
+                crate::ported::signals_h::unqueue_signals();
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
@@ -6893,7 +6903,9 @@ impl ShellExecutor {
                     crate::comp_match_handles::comp_arena_restore(comp_arena_snap);
                     // Undo the clearjobtab above — in C the cleared table
                     // belongs to the forked child and dies with it, so the
-                    // parent's table must come back untouched.
+                    // parent's table must come back untouched. Signals stay
+                    // queued while the job mutexes are held (see the snapshot).
+                    crate::ported::signals_h::queue_signals();
                     if let (Some(js), Some(t)) = (jobtab_snap, crate::ported::jobs::JOBTAB.get()) {
                         if let Ok(mut g) = t.lock() {
                             *g = js;
@@ -6921,6 +6933,7 @@ impl ShellExecutor {
                             *g = pj;
                         }
                     }
+                    crate::ported::signals_h::unqueue_signals();
                     // Now that the parent's traps are back, run the ones
                     // whose signal arrived during the body.
                     if sigtrapped_snap.is_some() {

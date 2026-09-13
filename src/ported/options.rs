@@ -2279,13 +2279,30 @@ pub fn opt_state_set(name: &str, value: bool) {
             return;
         }
     }
+    // See OPTS_WRITE_QUEUES_SIGNALS below.
+    crate::ported::signals_h::queue_signals();
     if let Ok(mut g) = m.write() {
         g.set(name, value);
     }
     // Only the changed option's slot needs to drop; every other option's
     // cached value is still valid.
     crate::opts_cache::invalidate_one(optlookup(name));
+    crate::ported::signals_h::unqueue_signals();
 }
+
+// OPTS_WRITE_QUEUES_SIGNALS
+//
+// !!! WARNING: RUST-ONLY LOCK DISCIPLINE !!! C's `opts[]` is a plain array
+// that `zhandler` reads with no lock. The port keeps it behind an RwLock, and
+// zhandler runs its SIGCHLD branch (c:Src/signals.c:429-431 wait_for_processes
+// → update_bg_job → isset) on whichever thread the signal interrupted. If
+// that thread is inside one of the writers below, the handler's read blocks
+// on the write guard its own thread holds and never returns: `echo $(echo a
+// &) w` hung in the cmd-subst's opt_state_restore about half the time.
+// Holding signals queued across the write makes zhandler take its
+// c:Src/signals.c:410-424 `if (queueing_enabled)` branch instead, and
+// unqueue_signals (c:Src/signals.h:92-95) runs the handler once the guard is
+// gone and the cache is consistent again.
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Remove an entry
 /// from the process-wide option store (`!= isset(opt)`).
@@ -2296,10 +2313,12 @@ pub fn opt_state_unset(name: &str) {
             return;
         }
     }
+    crate::ported::signals_h::queue_signals(); // see OPTS_WRITE_QUEUES_SIGNALS
     if let Ok(mut g) = m.write() {
         g.remove(name);
     }
     crate::opts_cache::invalidate_one(optlookup(name));
+    crate::ported::signals_h::unqueue_signals();
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Snapshot the
@@ -2314,6 +2333,7 @@ pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
 /// undo any `set -e` / `setopt …` modifications the subshell made.
 pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(opt_state_store::default()));
+    crate::ported::signals_h::queue_signals(); // see OPTS_WRITE_QUEUES_SIGNALS
     if let Ok(mut g) = m.write() {
         // Invalidate only the slots that actually differ between the
         // outgoing map and the restored snapshot. `doshfunc` restores the
@@ -2342,6 +2362,7 @@ pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
             crate::opts_cache::invalidate_one(optlookup(&k));
         }
     }
+    crate::ported::signals_h::unqueue_signals();
 }
 
 /// c:Src/options.c — `setopt name` / `unsetopt name` resolves `name`

@@ -948,3 +948,16 @@ wait %1
 print "second=$?""#,
     );
 }
+
+/// A background job started inside `$( … )` exits while the substitution is
+/// unwinding. Its SIGCHLD handler (c:Src/signals.c:429-431 wait_for_processes
+/// → update_bg_job) reads options; the in-process substitution was restoring
+/// the option table under a write lock on the same thread, so the handler
+/// blocked forever and the substitution never returned (about one run in
+/// two). The job-table restore after the body had the same race on the
+/// JOBTAB mutex. c:Src/signals.c:410-424 queues the signal while they are
+/// held. 200 iterations make a hang near-certain on the unfixed shell.
+#[test]
+fn sigchld_during_cmdsubst_option_restore_does_not_hang() {
+    assert_parity("repeat 200 echo $(echo a &) w");
+}
