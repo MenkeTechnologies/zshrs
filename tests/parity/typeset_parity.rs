@@ -1222,4 +1222,10 @@ mod typeset_slice_assignment {
         assert_parity("g=(a x y c); typeset g[-1]=(z); print $g; typeset g[-2,-1]=(p q r); print $g; typeset g[-10]=(f); print $g");
     }
 
+    /// No parameter named `g[2]` is created along the way (c:2448-2499 never
+    /// reaches createparam).
+    #[test]
+    fn subscript_creates_no_stray_parameter() {
+        assert_parity("zmodload zsh/parameter; g=(a b c); typeset g[2]=x; typeset g[3]=(y z); print $g ${(k)parameters[(I)g\\[*]}");
+    }
 }

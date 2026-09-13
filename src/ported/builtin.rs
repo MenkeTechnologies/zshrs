@@ -6174,8 +6174,15 @@ pub fn bin_typeset(
         // follows hits the still-global readonly `-` and aborts the
         // shell (E03posix.ztst:1, `fn:2: read-only variable: -`).
         let m_apply_names = TYPESET_M_APPLY.with(|c| c.get());
+        // c:2448-2499 — a subscripted name (`g[2]=x`, `g[2,4]=(…)`) is settled
+        // in typeset_single's `strchr(pname, '[')` arm by assignsparam /
+        // assignaparam on the base parameter and never reaches createparam.
+        // PM_LOCAL is set for a plain top-level `typeset` too (c:2799-2810), so
+        // without this test the shadow block created a stray parameter
+        // literally named `g[2]`.
         if (on as u32 & PM_LOCAL) != 0                                       // c:2469
             && !arg_name.is_empty()
+            && !arg_name.contains('[')
             && (m_apply_names
                 || (!arg_name.starts_with('-') && !arg_name.starts_with('+')))
             && needs_new_shadow
