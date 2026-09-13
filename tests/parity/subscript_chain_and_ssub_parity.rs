@@ -408,3 +408,130 @@ mod ssub_joins_before_quoting {
         ));
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. Three or more chained subscripts.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// c:Src/subst.c:2868 `while (v || ((inbrace || …) && isbrack(*s)))` has no
+// bound: every pass wraps the previous result in a temporary parameter
+// (c:2890-2900), runs `getindex` on it, and ends with `v = NULL` (c:2982).
+// The port read at most two subscripts and left the third `[…]` in the
+// operator text, so `${a[1][2][1]}` was "bad substitution".
+//
+// Whether a pass leaves an ARRAY or a SCALAR for the next one is decided by
+// c:Src/params.c:2174-2178: a non-range subscript clears `v->scanflags` unless
+// SCANPM_MATCHMANY is set together with MATCHKEY/MATCHVAL/KEYMATCH. So an
+// uppercase `(K)`/`(R)` hash scan stays a one-element array through any number
+// of `[N]`, while a plain array, a range, lowercase `(r)`/`(k)`, and the inverse
+// `(i)`/`(I)` arm (c:2114-2118 zeroes the flags) walk into characters.
+mod three_or_more_chained_subscripts {
+    use super::*;
+
+    const H: &str = r#"typeset -A A; A[zzq*]=_A; A[*aaa]=_B; A[z*a]=_C; "#;
+
+    fn p(pre: &str, expr: &str) {
+        assert_parity(&format!(r#"{pre}print -r -- "<{expr}>""#));
+    }
+
+    /// The reported repros: element, then character, then character of that.
+    #[test]
+    fn plain_array_reaches_characters() {
+        let a = "a=(ab cd); ";
+        p(a, "${a[1][2][1]}");
+        p(a, "${a[1][2][2]}");
+        p(a, "${a[1][2][1][1][1]}");
+        p(a, "${a[1][2][@]}");
+        p("a=(abc cd); ", "${a[1][2,3][1]}");
+        p("a=(abc cd); ", "${a[1][2,3][2]}");
+        p("a=(abc cd); ", "${a[1][2,3][-1]}");
+        p("a=(ab cd); k=1; ", "${a[k][k+1][k]}");
+    }
+
+    /// A range keeps the array shape (c:2174 `!com` is false); the first
+    /// single index after it lands on an element, the next on a character.
+    #[test]
+    fn range_chain_stays_an_array_until_a_single_index() {
+        let a = "a=(one two three four); ";
+        p(a, "${a[1,3][2,3][1]}");
+        p(a, "${a[1,3][2,3][2]}");
+        p(a, "${a[1,3][2,3][1,2]}");
+        p(a, "${a[1,3][2,3][2][1]}");
+        p(a, "${a[1,3][2][2]}");
+        p(a, "${a[2,4][@][2]}");
+        p(a, "${a[1,4][(r)t*][2]}");
+        p(a, "${a[1,4][(i)t*][1]}");
+        p(a, "${a[1][2,3][1][1]}");
+        assert_parity("a=(one two three four); print -rl -- ${a[1,4][2,4][2,3]}");
+    }
+
+    /// A scalar's character subscripts chain the same way.
+    #[test]
+    fn scalar_and_hash_element_chains() {
+        p("s=hello; ", "${s[2,4][2][1]}");
+        p("s=hello; ", "${s[2,4][2,3][2]}");
+        p("typeset -A h=(k1 abc); ", "${h[k1][2][1]}");
+        p("typeset -A h=(k1 abc); ", "${h[k1][2,3][2]}");
+    }
+
+    /// Uppercase scans set SCANPM_MATCHMANY: every later `[N]` still picks an
+    /// element of a one-element array, so `[2][1][1]` is `_C` and `[1][2]` is
+    /// empty rather than the second character.
+    #[test]
+    fn matchmany_scan_keeps_the_element_shape() {
+        p(H, "${A[(K)zzqaaa][1][2]}");
+        p(H, "${A[(K)zzqaaa][2][1]}");
+        p(H, "${A[(K)zzqaaa][2][1][1]}");
+        p(H, "${A[(K)zzqaaa][2][1][1][2]}");
+        p(H, "${A[(K)zzqaaa][2][2]}");
+        p(H, "${A[(K)zzqaaa][1][-1]}");
+        p(H, "${A[(K)zzqaaa][1,2][2]}");
+        p(H, "${A[(K)zzqaaa][1,2][2][1]}");
+        p(H, "${A[(K)zzqaaa][2,3][2,3][1]}");
+        p(H, "${A[(K)zzqaaa][2][1,1][1]}");
+        p(H, "${A[(K)zzqaaa][(r)_C][1]}");
+        p(H, "${A[(K)zzqaaa][(r)_C][2]}");
+        p(H, "${A[(K)zzqaaa][@][2][2]}");
+        p(H, "${A[(R)_*][1][1]}");
+        p(H, "${A[(R)_*][1][1][1]}");
+        p(H, "${A[(R)_*][2][2]}");
+    }
+
+    /// Lowercase `(r)`/`(k)` never set MATCHMANY (c:1529 clears it for `k`),
+    /// and `(i)`/`(I)` take the inverse arm: the next `[N]` reads characters.
+    #[test]
+    fn lowercase_and_inverse_scans_reach_characters() {
+        p(H, "${A[(r)_*][1][1]}");
+        p(H, "${A[(k)zzqaaa][1][1]}");
+        p(H, "${A[(I)z*][1][1]}");
+        p(H, "${A[(I)z*][1][2]}");
+        p(H, "${A[(I)z*][2][1]}");
+        p(H, "${A[(i)z*][1][1]}");
+        p(H, "${A[(i)z*][2][1]}");
+    }
+
+    /// KSH_ARRAYS 0-bases every pass (c:Src/params.c:1619), not just the first.
+    #[test]
+    fn ksharrays_zero_bases_every_pass() {
+        p("setopt ksharrays; a=(ab cd); ", "${a[0][1][0]}");
+        p("setopt ksharrays; a=(abc cd); ", "${a[0][0,1][1]}");
+    }
+
+    /// The chain composes with operators, modifiers, length and assignment.
+    #[test]
+    fn chain_composes_with_operators_and_assignment() {
+        p("a=(one two); ", "${a[1][2][1]:-DEF}");
+        p("a=(one two); ", "${a[1][9][1]:-DEF}");
+        p("a=(one two); ", "${a[1][2][1]:u}");
+        p("a=(one two); ", "${#a[1][2,3][1]}");
+        assert_parity(r#"a=(ab cd); v=${a[2][1][1]}; print -r -- "<$v>""#);
+    }
+
+    /// An empty or over-long later subscript is an error, not an ignored pass.
+    #[test]
+    fn malformed_later_subscript_is_an_error() {
+        p("a=(ab cd); ", "${a[1][2][]}");
+        p("a=(ab cd); ", "${a[1][][1]}");
+        p("a=(ab cd); ", "${a[1][2][1,2,3]}");
+    }
+}
