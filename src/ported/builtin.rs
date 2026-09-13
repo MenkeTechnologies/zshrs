@@ -10835,6 +10835,12 @@ pub fn bin_hash(
                             printnameddirnode(nd, 0);
                         }
                     }
+                } else if let Some(cn) =
+                    cmdnamtab_lock().read().ok().and_then(|t| t.get(n).cloned())
+                {
+                    // c:4301-4302 — `if (OPT_ISSET(ops, 'v')) ht->printnode(hn, 0);`
+                    // cmdnamtab's printnode is printcmdnamnode (hashtable.c:739).
+                    crate::ported::hashtable::printcmdnamnode(&cn, 0);
                 }
             }
         } else {
@@ -10875,6 +10881,16 @@ pub fn bin_hash(
                         // c:4332
                         zwarnnam(name, &format!("no such command: {}", n)); // c:4333
                         returnval = 1; // c:4334
+                    }
+                }
+                // c:4317-4321 — `if(OPT_ISSET(ops,'v') && (hn = ht->getnode2(ht,
+                // asg->name))) ht->printnode(hn, 0); } else if(OPT_ISSET(ops,'v'))
+                // ht->printnode(hn, 0);` — both the freshly-hashed (hashcmd added
+                // the node, exec.rs hashcmd c:1036) and the already-present arm print.
+                if OPT_ISSET(ops, b'v') {
+                    if let Some(cn) = cmdnamtab_lock().read().ok().and_then(|t| t.get(n).cloned())
+                    {
+                        crate::ported::hashtable::printcmdnamnode(&cn, 0);
                     }
                 }
             }

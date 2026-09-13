@@ -309,3 +309,16 @@ fn a_substitution_sees_the_parents_entries() {
     pin("cmdsubst sees parent", "zqhq; zqx=$(hck zqhq); print -r -- $zqx", "HIT");
     pin("subshell sees parent", "zqhq; ( hck zqhq )", "HIT");
 }
+
+// ── hash -v ─────────────────────────────────────────────────────────────
+
+/// c:Src/builtin.c:4301-4302 and 4317-4321: `-v` prints each command-table
+/// node through `printcmdnamnode`, both for a `name=path` insert and for a
+/// bare name, whether `hashcmd` just added it or it was already there. The
+/// port printed only for `hash -dv`, so the command table said nothing.
+#[test]
+fn hash_v_prints_command_table_nodes() {
+    pin("hash -v name=path", "hash -v zqa=/x zqb=/y", "zqa=/x\nzqb=/y");
+    pin("hash -v fresh name", "hash -v zqhq", "zqhq={BIN}/zqhq");
+    pin("hash -v existing name", "hash zqhq; hash -v zqhq", "zqhq={BIN}/zqhq");
+}
