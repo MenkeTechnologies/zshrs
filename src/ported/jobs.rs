@@ -3335,14 +3335,47 @@ pub fn bin_fg(
                 // status 1 by the `else` arm below: `true & ; wait $!`
                 // gave 1 where zsh gives 0, the moment the reaper was
                 // armed. Retry, which is what C's loop amounts to here.
+                // c:1638-1641 — waitforpid's prologue: `q = queue_signal_level();
+                // dont_queue_signals();`. bin_fg queued signals at c:2467, and
+                // the wait has to be a delivery point: a trapped signal runs
+                // its trap during the wait, not after it.
+                let q = crate::ported::signals_h::queue_signal_level();
+                crate::ported::signals_h::dont_queue_signals();
                 let mut r;
+                let mut interrupted = None;
                 loop {
+                    crate::ported::signals::last_signal.store(-1, Ordering::Relaxed); // c:1657
                     r = unsafe { libc::waitpid(pid, &mut status, 0) };
                     if r != -1
                         || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
                     {
                         break;
                     }
+                    // c:1659-1660 — `if (last_signal != SIGCHLD && wait_cmd &&
+                    // last_signal >= 0 && (sigtrapped[last_signal] & ZSIG_TRAPPED))`.
+                    // The trap has already run: the handler dispatched it while
+                    // queueing was off.
+                    let ls = crate::ported::signals::last_signal.load(Ordering::Relaxed);
+                    if ls != libc::SIGCHLD
+                        && ls >= 0
+                        && (crate::ported::signals::sigtrapped
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.get(ls as usize).copied())
+                            .unwrap_or(0)
+                            & crate::ported::zsh_h::ZSIG_TRAPPED)
+                            != 0
+                    {
+                        interrupted = Some(128 + ls); // c:1663 `return 128 + last_signal`
+                        break;
+                    }
+                }
+                crate::ported::signals_h::restore_queue_signals(q); // c:1662 / c:1669
+                if let Some(st) = interrupted {
+                    // c:1661-1663 — "wait command interrupted, but no error:
+                    // return" `128 + last_signal`; c:2573 skips getbgstatus.
+                    returnval = st;
+                    continue; // c:2585
                 }
                 if r == -1 {
                     let err = std::io::Error::last_os_error();
@@ -3437,6 +3470,10 @@ pub fn bin_fg(
             // route each status through update_bg_job — the same
             // chain C's SIGCHLD handler drives while zwaitjob
             // suspends (Src/signals.c:249 → jobs.c:460).
+            // c:1684-1689 — zwaitjob's `dont_queue_signals()`, as above.
+            let q = crate::ported::signals_h::queue_signal_level();
+            crate::ported::signals_h::dont_queue_signals();
+            let mut interrupted = None;
             loop {
                 let next_pid = {
                     let tab = table.lock().expect("jobtab poisoned");
@@ -3462,12 +3499,34 @@ pub fn bin_fg(
                 // wait with the job still running.
                 let mut r;
                 loop {
+                    crate::ported::signals::last_signal.store(-1, Ordering::Relaxed); // c:1657
                     r = unsafe { libc::waitpid(pid, &mut status, 0) };
                     if r != -1
                         || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
                     {
                         break;
                     }
+                    // c:1711-1712 — `if (last_signal != SIGCHLD && wait_cmd &&
+                    // last_signal >= 0 && (sigtrapped[last_signal] & ZSIG_TRAPPED))`.
+                    // The trap has already run: the handler dispatched it while
+                    // queueing was off.
+                    let ls = crate::ported::signals::last_signal.load(Ordering::Relaxed);
+                    if ls != libc::SIGCHLD
+                        && ls >= 0
+                        && (crate::ported::signals::sigtrapped
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.get(ls as usize).copied())
+                            .unwrap_or(0)
+                            & crate::ported::zsh_h::ZSIG_TRAPPED)
+                            != 0
+                    {
+                        interrupted = Some(128 + ls); // c:1716 `return 128 + last_signal`
+                        break;
+                    }
+                }
+                if interrupted.is_some() {
+                    break; // c:1714-1716 "builtin wait interrupted by trapped signal"
                 }
                 let mut tab = table.lock().expect("jobtab poisoned");
                 if r == pid {
@@ -3492,6 +3551,14 @@ pub fn bin_fg(
                         update_job(j);
                     }
                 }
+            }
+            crate::ported::signals_h::restore_queue_signals(q); // c:1715 / c:1744
+            if let Some(st) = interrupted {
+                // c:2699 — `retval = zwaitjob(job, 1)` is 128 + last_signal and
+                // non-zero, so lastval2 is not consulted; the job stays in the
+                // table, still running.
+                returnval = st;
+                break;
             }
             // c:2656-2657 — `if (!retval) retval = lastval2;`
             returnval = LASTVAL2.load(Ordering::SeqCst);

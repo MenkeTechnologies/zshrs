@@ -916,3 +916,35 @@ fn async_negated_child_status_not_inverted() {
 fn async_coproc_job_text_drops_keyword() {
     assert_parity(r#"coproc sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
 }
+
+/// c:Src/jobs.c:1659-1664 (waitforpid) and c:1711-1717 (zwaitjob) — the
+/// `wait` builtin sleeps with signal queueing off (`dont_queue_signals`,
+/// c:1641 / c:1689), so a trapped signal runs its trap during the wait, and
+/// the wait then returns `128 + last_signal`. A second `wait` for the same
+/// child gets its real exit status (Test/C03traps.ztst "waiting for trapped
+/// signal"). The wait held bin_fg's signal queue, so the trap ran only once
+/// the child had exited, and the first wait returned the child's status.
+#[test]
+fn wait_interrupted_by_a_trapped_signal() {
+    assert_parity(
+        r#"child() { sleep 0.3; print sending; kill -15 $parentpid; sleep 0.6; print exiting; exit 33 }
+parentpid=$$
+child &
+cpid=$!
+trap 'print trapped' 15
+wait $cpid
+print "first=$?"
+wait $cpid
+print "second=$?""#,
+    );
+    assert_parity(
+        r#"child() { sleep 0.3; kill -15 $parentpid; sleep 0.6; exit 7 }
+parentpid=$$
+child &
+trap 'print trapped' 15
+wait %1
+print "first=$?"
+wait %1
+print "second=$?""#,
+    );
+}
