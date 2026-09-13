@@ -14,14 +14,12 @@
 //! dispatches `-c` and a script FILE inside `bins/zshrs.rs` without going
 //! through `ported::init::zsh_main`, so `init_signals` never ran for them.
 //!
-//! Calling the WHOLE of `init_signals` from those paths is not a safe
-//! substitute: it also installs C's SIGCHLD handler, whose reaper then
-//! races the pipeline's own `waitpid` and destroys `$pipestatus`
-//! (measured with that call wired in: `parity-fuzz --mode pipeline` went
-//! from 0 to 139 divergences, `jobs` 0 -> 16, `errexit` 0 -> 13). So
-//! `init_dispatch_signals` below replays `init_signals` line by line with
-//! that ONE line left out, until those dispatch paths are converged onto
-//! `zsh_main`.
+//! `init_dispatch_signals` below replays `init_signals` line by line.
+//! C's SIGCHLD handler (`c:1455`) is installed by the dispatch paths
+//! themselves, directly after this call (`bins/zshrs.rs`): arming it
+//! makes the reaper race the pipeline's own `waitpid`, which the
+//! reaped-status ring (`extensions/reaped_status.rs`) and the fork-time
+//! `child_block` span (`fusevm_bridge::ChildBlockSpan`) answer.
 
 /// Whether the inherited-signal bookkeeping below applies at all.
 ///
@@ -89,8 +87,9 @@ pub fn record_inherited_sigquit_ignore() {}
 /// does not reach `ported::init::zsh_main`.
 ///
 /// Every line of C's `init_signals` is replayed here in C's order bar
-/// two, each with a measurement at its site below: `intr()` (`c:1442`)
-/// and `install_handler(SIGCHLD)` (`c:1455`). The `sigtrapped`/`siglists`
+/// two: `intr()` (`c:1442`), with a measurement at its site below, and
+/// `install_handler(SIGCHLD)` (`c:1455`), which the caller installs right
+/// after this returns. The `sigtrapped`/`siglists`
 /// allocations (`c:1431-1432`) and the `sigchld_mask` cache (`c:1440`)
 /// have no zshrs counterpart, same as in the ported `init_signals`
 /// itself.
@@ -183,10 +182,9 @@ pub fn init_dispatch_signals() {
         install_handler(libc::SIGHUP); // c:1454
     }
 
-    // !!! DELIBERATE OMISSION — NO C COUNTERPART FOR THE ABSENCE !!!
-    // c:1455 — `install_handler(SIGCHLD);`. zshrs's pipelines reap their
-    // own children with `waitpid`; C's SIGCHLD reaper races them and
-    // destroys `$pipestatus`. Module docs carry the measurement.
+    // c:1455 — `install_handler(SIGCHLD);`. Installed by the caller in
+    // `bins/zshrs.rs` immediately after this function returns; see the
+    // module docs.
 
     // c:1456-1459 — `#ifdef SIGWINCH install_handler(SIGWINCH);
     // winch_block(); #endif`. The standing block is the delivery policy:

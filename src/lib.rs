@@ -173,6 +173,12 @@ pub mod pat_cache;
 /// execution (zshrs-original; ported from stryke's `provenance.rs`).
 #[path = "extensions/provenance.rs"]
 pub mod provenance;
+/// `reaped_status` submodule — the raw wait statuses the SIGCHLD reaper
+/// collected, so a targeted `waitpid` that loses the race to it can
+/// still read the status it needed (C never needs this: it has exactly
+/// one collector).
+#[path = "extensions/reaped_status.rs"]
+pub mod reaped_status;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;

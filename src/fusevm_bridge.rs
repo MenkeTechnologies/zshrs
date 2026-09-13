@@ -3178,6 +3178,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(stage_vm.last_status);
         }
 
+        // c:Src/exec.c:1748 — `child_block();` before any stage is forked,
+        // held through the in-shell last stage and the stage waits below,
+        // released at c:2017. See ChildBlockSpan.
+        #[cfg(unix)]
+        let _child_block = ChildBlockSpan::enter();
+
         // Build N-1 pipes
         let mut pipes: Vec<(i32, i32)> = Vec::with_capacity(n - 1);
         for _ in 0..n - 1 {
@@ -3555,6 +3561,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Some(c) => c,
             None => return Value::Status(1),
         };
+
+        // c:Src/exec.c:1748 — `child_block();`, released by the async arm's
+        // `child_unblock();` (c:1815) once the job is registered. A child
+        // that exits at once must not be reaped before `addproc` knows its
+        // pid. See ChildBlockSpan.
+        #[cfg(unix)]
+        let _child_block = ChildBlockSpan::enter();
 
         if nstages > 1 {
             // c:Src/exec.c:1795 — the Z_ASYNC arm runs execpline2 in THIS
@@ -6824,6 +6837,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for fd in p2c.iter_mut().chain(c2p.iter_mut()) {
             *fd = crate::ported::utils::movefd(*fd);
         }
+
+        // c:Src/exec.c:1748/1815 — a coproc is spawned by execpline's
+        // Z_ASYNC arm, inside the same `child_block()` span as `cmd &`.
+        #[cfg(unix)]
+        let _child_block = ChildBlockSpan::enter();
 
         match unsafe { libc::fork() } {
             -1 => {
@@ -14626,8 +14644,18 @@ pub(crate) fn subshell_restore_signal_dispositions(parent: &[i32], child: &[i32]
 /// entry left to promote (c:Src/jobs.c:434-435 `if (jpipestats[i])
 /// pipefail = jpipestats[i];`, applied at c:451-454).
 ///
+/// The handler can also win outright: if the child exits while the last
+/// pipeline stage is still running IN THIS PROCESS, SIGCHLD is delivered
+/// and `wait_for_processes` reaps it long before this loop is reached,
+/// so `waitpid` here fails with `ECHILD` and the stage's status is gone.
+/// That window is as wide as the last stage's whole run — `(exit 5) |
+/// (sleep 0.5; exit 3)` published `$pipestatus` as `0 3` where zsh says
+/// `5 3`. The reaper publishes every status it takes
+/// (`extensions/reaped_status.rs`), which is what C gets for free by
+/// having only one collector, so claim it back here.
+///
 /// Returns the raw wait status, or `None` if the child could not be
-/// reaped at all (e.g. `ECHILD` because the handler won the race).
+/// reaped and the reaper has no record of it either.
 fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
     loop {
         let mut status: i32 = 0;
@@ -14637,7 +14665,63 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
         }
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         if err != libc::EINTR {
-            return None;
+            // The SIGCHLD reaper collected this child first; take the
+            // status it recorded instead of reporting a clean exit.
+            return crate::reaped_status::take(pid);
+        }
+    }
+}
+
+/// Holds SIGCHLD blocked across the span in which the VM forks children.
+///
+/// C: `execpline` opens that span with `child_block()` (c:Src/exec.c:1748),
+/// before any stage is forked, and closes it with `child_unblock()` only
+/// after the job is registered (c:1815, the async arm) or after the wait
+/// (c:2017). Its comment says why: "We need to block SIGCHLD in case the
+/// process we are spawning terminates before the job table is set up to
+/// handle it" (c:2339-2343). `getoutputfile` does the same around its own
+/// fork (c:4999/c:5030).
+///
+/// zshrs has a second, harder reason. The reaper allocates
+/// (`wait_for_processes` builds a `Vec`), and libmalloc holds its fork
+/// lock inside `fork()`. A SIGCHLD from an earlier stage delivered there
+/// re-enters malloc on that lock and the process dies with SIGKILL
+/// ("BUG IN CLIENT OF LIBPLATFORM: Trying to recursively lock an
+/// os_unfair_lock", faulting stack `fork → _sigtramp → zhandler →
+/// wait_for_processes → Vec::push → _xzm_fork_lock_wait`). With the
+/// reaper armed and no block, `repeat 300 { true | false | true }; print
+/// ok` was killed before printing on every run.
+///
+/// !!! WARNING: RUST-ONLY SHAPE — C CALLS child_block/child_unblock !!!
+/// This guard restores the PRIOR state on drop instead of unconditionally
+/// unblocking. C's execpline recursion never forks a pipeline from inside
+/// another pipeline's still-blocked span in the same process, but the VM
+/// does: the last stage of a pipeline runs in the parent, and a nested
+/// pipeline or process substitution there would otherwise lift the outer
+/// block before the outer wait. So SIGCHLD is unblocked on drop only if it
+/// was unblocked on entry. A forked child never drops the guard (it leaves
+/// through `exit`/`_exit`), so it inherits the blocked mask, as C's child
+/// of `zfork` does until `execute` unblocks before `execve` (c:793).
+#[cfg(unix)]
+pub(crate) struct ChildBlockSpan {
+    was_blocked: bool,
+}
+
+#[cfg(unix)]
+impl ChildBlockSpan {
+    pub(crate) fn enter() -> Self {
+        let mask = crate::ported::signals::signal_mask(libc::SIGCHLD);
+        let old = crate::ported::signals::signal_block(&mask); // c:Src/signals.h:52
+        let was_blocked = unsafe { libc::sigismember(&old, libc::SIGCHLD) } == 1;
+        ChildBlockSpan { was_blocked }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ChildBlockSpan {
+    fn drop(&mut self) {
+        if !self.was_blocked {
+            crate::ported::signals_h::child_unblock(); // c:Src/signals.h:53
         }
     }
 }
@@ -16433,6 +16517,12 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
+        // c:Src/exec.c:4999 (`getoutputfile`: `child_block();`) and, for
+        // `<(cmd)`, the enclosing execpline's c:1748 block that C's
+        // `getproc` forks inside. The VM opens no execpline span around a
+        // simple command, so take it here. See ChildBlockSpan.
+        #[cfg(unix)]
+        let _child_block = ChildBlockSpan::enter();
         // c:Src/exec.c:4906 getoutputfile — `=(cmd)` (marked "equalsubst" by the
         // compiler) is the TEMP-FILE flavor: create a real regular file, fork a
         // writer whose stdout is the file, WAIT for it (so the file is complete
@@ -16621,6 +16711,11 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {
+        // c:Src/exec.c:1748 — `getproc` forks inside the enclosing
+        // execpline's `child_block()` span; the VM has none around a simple
+        // command, so take it here. See ChildBlockSpan.
+        #[cfg(unix)]
+        let _child_block = ChildBlockSpan::enter();
         // c:Src/exec.c:5025 getproc, PATH_DEV_FD branch — `>(cmd)`
         // (out == 0): `mpipe(pipes)`, fork; the CHILD `redup(pipes[0],
         // 0)` (pipe read end onto stdin) and `closem` drops the write

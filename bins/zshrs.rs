@@ -2661,10 +2661,24 @@ pub fn zshrs_main() {
         // c:Src/init.c:1427-1470 (`init_signals`) — C reaches it through
         // `zsh_main` on EVERY invocation; this dispatch path never calls
         // that function, so run the same sequence here (all of it bar
-        // `install_handler(SIGCHLD)` — see extensions/startup_signals.rs).
-        // It must come AFTER `apply_cli_flags`, which is what settles
-        // INTERACTIVE and MONITOR, because C's gates read them.
+        // `intr()` — see extensions/startup_signals.rs). It must come
+        // AFTER `apply_cli_flags`, which is what settles INTERACTIVE and
+        // MONITOR, because C's gates read them.
         zsh::startup_signals::init_dispatch_signals();
+        // c:Src/init.c:1455 — `install_handler(SIGCHLD);`, which
+        // `init_dispatch_signals` leaves to this caller. It lives here
+        // rather than there because it is not a disposition policy that
+        // could differ per emulation: it is the shell's ONLY reaper, and
+        // without it every background child of
+        // a `-c` run stays a zombie for the life of the shell, so the
+        // process table grows with each one. `sleep 0.2 & ; sleep 1; ps
+        // -o stat= -p $!` printed `Z` where zsh prints nothing.
+        //
+        // Arming it makes the reaper race the pipeline's own targeted
+        // `waitpid` for the forked stages; the reaped-status ring in
+        // `extensions/reaped_status.rs` is what keeps `$pipestatus` intact through
+        // that race (see `waitpid_eintr` in fusevm_bridge.rs).
+        zsh::ported::signals::install_handler(libc::SIGCHLD);
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
         //                                 ztrdup_metafy(cmd));`
@@ -2941,10 +2955,15 @@ pub fn zshrs_main() {
             deferred_zsh_style_emu,
         );
         // c:Src/init.c:1427-1470 (`init_signals`) — same bypass as the
-        // `-c` dispatch above: run the whole sequence here (bar
-        // `install_handler(SIGCHLD)`), after `apply_cli_flags` has
-        // settled the INTERACTIVE and MONITOR gates C's branches read.
+        // `-c` dispatch above: run the sequence here (bar `intr()`), after
+        // `apply_cli_flags` has settled the INTERACTIVE and MONITOR
+        // gates C's branches read.
         zsh::startup_signals::init_dispatch_signals();
+        // c:Src/init.c:1455 — `install_handler(SIGCHLD);`. Same reason
+        // as the `-c` site above: this is the shell's only reaper, and a
+        // script file that backgrounds anything left every one of those
+        // children a zombie.
+        zsh::ported::signals::install_handler(libc::SIGCHLD);
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
         //   argv[0] = shell binary       (from init.c:271)

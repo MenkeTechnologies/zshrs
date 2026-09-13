@@ -3202,13 +3202,32 @@ pub fn bin_fg(
             return 0;
         }
         if func == BIN_WAIT {
-            // c:Src/jobs.c bin_fg BIN_WAIT branch — `wait` with no
-            // args blocks until ALL active background jobs complete.
-            // Loop waitpid(-1) draining children; ECHILD ends the loop.
+            // c:Src/jobs.c:2538-2542 — `wait` with no args waits for
+            // ALL active background jobs: `for (job = 0; job <= maxjob;
+            // job++) if (job != thisjob && jobtab[job].stat &&
+            // !(jobtab[job].stat & STAT_NOPRINT)) retval = zwaitjob(job,
+            // 1);`. Loop waitpid(-1) draining children; ECHILD ends the
+            // loop.
             #[cfg(unix)]
             loop {
                 let mut status: libc::c_int = 0;
                 let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
+                // c:1710 — C's per-job `zwaitjob` sleeps in
+                // `signal_suspend(SIGCHLD, wait_cmd)` and simply goes
+                // round its `while (… && !(jn->stat & STAT_DONE))` loop
+                // again when a signal arrives. Here the blocking
+                // `waitpid(-1)` IS the sleep, and the shell's own
+                // SIGCHLD ends it with -1/EINTR — `install_handler` sets
+                // `sa_flags = 0`, no SA_RESTART, in C
+                // (c:Src/signals.c:104) and in the port. Treating that
+                // as "no children left" returned from `wait` with jobs
+                // still running: `sleep 0.05 & ; sleep 0.1 & ; wait;
+                // jobs` still listed `[2] + running sleep 0.1`.
+                if pid < 0
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+                {
+                    continue;
+                }
                 if pid > 0 {
                     if let Ok(mut tab) = table.lock() {
                         update_bg_job(&mut tab, pid, status);
@@ -3272,13 +3291,50 @@ pub fn bin_fg(
             // "pid %d is not a child of this shell" with exit 127.
             if let Ok(pid) = arg.parse::<i32>() {
                 let mut status: libc::c_int = 0;
-                let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                // c:2571 — `retval = waitforpid(pid, 1);`. C's
+                // `waitforpid` is a LOOP: `while (!errflag && (kill(pid,
+                // 0) >= 0 || errno != ESRCH)) … signal_suspend(SIGCHLD,
+                // wait_cmd);` (c:1652-1666), so a signal arriving during
+                // the wait resumes the loop rather than ending the wait.
+                // `install_handler` sets `sa_flags = 0` — no SA_RESTART,
+                // in C (c:Src/signals.c:104) and in the port — so this
+                // single `waitpid` is interrupted by the shell's own
+                // SIGCHLD and returns -1/EINTR. That was reported as
+                // status 1 by the `else` arm below: `true & ; wait $!`
+                // gave 1 where zsh gives 0, the moment the reaper was
+                // armed. Retry, which is what C's loop amounts to here.
+                let mut r;
+                loop {
+                    r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if r != -1
+                        || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                    {
+                        break;
+                    }
+                }
                 if r == -1 {
                     let err = std::io::Error::last_os_error();
                     if err.raw_os_error() == Some(libc::ECHILD) {
                         // c:2566-2570 — getbgstatus fallback before
                         // the diagnostic.
-                        if let Some(bg) = getbgstatus(pid) {
+                        //
+                        // `getbgstatus` only knows the pid if
+                        // `update_bg_job` found it in the job table
+                        // (c:684-699 gates `addbgstatus` on `findproc`
+                        // succeeding), and a child that exits before its
+                        // job entry is filled in is not there yet. The
+                        // reaper's own record has no such gate, so fall
+                        // back to it — it holds the RAW wait status, so
+                        // cook it the same way c:695-697 cooks it.
+                        if let Some(bg) = getbgstatus(pid).or_else(|| {
+                            crate::reaped_status::take(pid).map(|st| {
+                                if libc::WIFSIGNALED(st) {
+                                    0o200 | libc::WTERMSIG(st)
+                                } else {
+                                    libc::WEXITSTATUS(st)
+                                }
+                            })
+                        }) {
                             returnval = bg;
                         } else {
                             zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
@@ -3367,12 +3423,33 @@ pub fn bin_fg(
                     None => break,
                 };
                 let mut status: libc::c_int = 0;
-                let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                // c:1710 — the same EINTR retry as the bare-`wait` loop
+                // above: C's `zwaitjob` goes round its
+                // `signal_suspend(SIGCHLD, …)` loop again when a signal
+                // lands, so the shell's own reaper must not end this
+                // wait with the job still running.
+                let mut r;
+                loop {
+                    r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if r != -1
+                        || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                    {
+                        break;
+                    }
+                }
                 let mut tab = table.lock().expect("jobtab poisoned");
                 if r == pid {
                     update_bg_job(&mut tab, pid, status);
+                } else if let Some(reaped) = crate::reaped_status::take(pid) {
+                    // ECHILD because the SIGCHLD reaper collected this
+                    // child first. It records the raw wait status
+                    // (`extensions/reaped_status.rs`), so the job entry
+                    // still gets the status C would have put there
+                    // through `update_process` (c:Src/jobs.c:366-388)
+                    // instead of the flat 0 below.
+                    update_bg_job(&mut tab, pid, reaped);
                 } else {
-                    // ECHILD — already reaped elsewhere; mark via
+                    // Gone, and nothing on record for it; mark via
                     // update_job so the loop terminates.
                     if let Some(j) = tab.get_mut(p as usize) {
                         for pr in j.procs.iter_mut().chain(j.auxprocs.iter_mut()) {

@@ -334,6 +334,14 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
         if pid <= 0 {
             break;
         }
+        // NO C COUNTERPART — see `extensions/reaped_status.rs`. C stores
+        // the status it just took into the process record (c:294-355,
+        // the `findproc` arms) and nothing else in the shell is waiting
+        // to collect it; zshrs's pipeline has its own targeted
+        // `waitpid`, so publish the raw status BEFORE the loop can
+        // return and before `update_bg_job` runs, i.e. before the losing
+        // collector can observe the `ECHILD` this reap caused.
+        crate::reaped_status::record(pid, status);
         results.push((pid, status));
     }
     results
