@@ -8367,26 +8367,7 @@ impl ZshCompiler {
                     // glob. Deliberately NOT gated on isset(EXTENDEDGLOB):
                     // that is a runtime option and reading it here is the
                     // #1049 mistake. Bug #1053.
-                    && s.chars().any(|c| {
-                        matches!(
-                            c,
-                            '*' | '?'
-                                | '['
-                                | '('
-                                | '|'
-                                | '<'
-                                | '#'
-                                | '^'
-                                | '\u{87}' // Star
-                                | '\u{97}' // Quest
-                                | '\u{91}' // Inbrack
-                                | '\u{88}' // Inpar
-                                | '\u{8e}' // Bar
-                                | '\u{94}' // Inang
-                                | '\u{84}' // Pound
-                                | '\u{86}' // Hat
-                        )
-                    });
+                    && default_word_may_glob(s);
                 if dwg_mod {
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB_RESET, 0),
@@ -8534,9 +8515,11 @@ impl ZshCompiler {
         // fire on a literal like `a-b*`) — harmless, the flag stays clear
         // so APPLY passes through. Only the outermost word (word_seg_depth
         // == 0) brackets; recursive segment expansions don't.
-        let has_glob_meta = s
-            .chars()
-            .any(|c| matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}'));
+        // Same haswilds superset as the DefaultFamily bracket above: listing
+        // only `*` / `?` / `[` here left `${x:-b|a}` unbracketed, so the
+        // runtime PENDING flag was never consumed and the default came out
+        // as the literal `b|a` where zsh globs it to `b`.
+        let has_glob_meta = default_word_may_glob(s);
         let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{9b}');
         let default_word_glob_bracket = self.word_seg_depth == 0
             && self.dq_context_depth == 0
@@ -12695,6 +12678,40 @@ const TNL: &str = "; ";
 /// `taddnl(1)` under `tnewlins == 0` — `c:Src/text.c:244-245`
 /// (`taddstr(" ")`).
 const TNL_NOSEMI: &str = " ";
+
+/// !!! WARNING: Rust-only compile-time pre-filter, no C counterpart !!!
+///
+/// Whether a word MIGHT carry a character that `haswilds`
+/// (c:Src/pattern.c:4315-4390) treats as a wildcard: Inpar / Bar / Star /
+/// Inbrack / Inang / Quest, plus Pound / Hat under EXTENDEDGLOB, each in raw
+/// and token form. It only decides whether the compiler emits the
+/// DEFAULT_WORD_GLOB RESET/APPLY bracket; the real `haswilds` still runs on
+/// the result at runtime. It must therefore be a SUPERSET of haswilds and
+/// deliberately ignores options (EXTENDEDGLOB, SHGLOB, KSHGLOB) — those are
+/// runtime state. Over-accepting is harmless: APPLY passes the word through
+/// when PENDING stays clear. Under-accepting silently loses the glob.
+fn default_word_may_glob(s: &str) -> bool {
+    s.chars().any(|c| {
+        matches!(
+            c,
+            '*' | '?'
+                | '['
+                | '('
+                | '|'
+                | '<'
+                | '#'
+                | '^'
+                | '\u{87}' // Star
+                | '\u{97}' // Quest
+                | '\u{91}' // Inbrack
+                | '\u{88}' // Inpar
+                | '\u{8e}' // Bar
+                | '\u{94}' // Inang
+                | '\u{84}' // Pound
+                | '\u{86}' // Hat
+        )
+    })
+}
 
 fn render_list_for_debug(list: &crate::parse::ZshList, job: bool) -> String {
     render_sublist_for_debug(&list.sublist, job)

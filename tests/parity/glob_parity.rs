@@ -317,6 +317,20 @@ mod default_word_globbing {
         assert_parity_in(d.path(), "print -l ${x:-a*}");
     }
 
+    /// A default inside a CONCATENATED word must bracket on every
+    /// `haswilds` character (c:Src/pattern.c:4315-4390), not only `*`/`?`/`[`:
+    /// `(`/`|` alternation, `<…>`, and EXTENDEDGLOB `^` / `#` came out literal.
+    #[test]
+    fn concatenated_default_globs_on_every_haswilds_char() {
+        let d = files();
+        assert_parity_in(d.path(), "p=; print -l ${p}${x:-(a|b)file}");
+        assert_parity_in(d.path(), "print -l a${x:-(f|x)ile}");
+        assert_parity_in(d.path(), "print -l pre${x:-(a|b)file}; echo done");
+        assert_parity_in(d.path(), "setopt extendedglob; p=; print -l ${p}${x:-^afile}");
+        assert_parity_in(d.path(), "setopt extendedglob; print -l b${x:-#file}");
+        assert_parity_in(d.path(), "a=set; p=; print -l ${p}${a:+(a|b)file}");
+    }
+
     /// The alternate word (`:+`/`+`) globs when the var is set.
     #[test]
     fn alternate_word_globs() {

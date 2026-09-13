@@ -2393,6 +2393,17 @@ While fixing this I initially wrote the wrong token codepoints for Bar and Inang
 (`\u{8c}`/`\u{93}`); checking `zsh_h.rs` showed they are `\u{8e}` and `\u{94}`.
 Worth re-checking rather than deriving from the ZTOKENS offset by hand.
 
+**A, follow-up (2026-09-12).** The widening above landed at the DefaultFamily
+bracket only. The second bracket site, for a default inside a CONCATENATED word
+(`pre${x:-…}`, `${p}${x:-…}`), still accepted just `*` / `?` / `[`, so
+`p=; print ${p}${x:-(a|b)file}` stayed literal where zsh prints `afile bfile`,
+and the same for `<…>`, `^` and `#`. Both sites now call one helper,
+`default_word_may_glob` (compile_zsh.rs). **Reopened:** a bare top-level `|`
+with no other wildcard (`${x:-b|a}`, `${y:+b|q}`, `a${x:-1|2}`) is literal
+again in zshrs. The pending flag is still set (`\|` gate in subst.rs), and
+`${x:-b|a*}` does glob, so the literal survives the APPLY step
+(`glob_expand_word_value` → `expand_glob`), not the compile-side bracket.
+
 **B. Numeric ranges `<a-b>` stayed active under sh/ksh emulation — fixed.**
 ```
 $ zsh   -fc 'emulate sh -c "[[ 5 == <-> ]]; print rc=\$?"'   → rc=1
