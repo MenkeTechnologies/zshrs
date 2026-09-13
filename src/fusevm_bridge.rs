@@ -18185,6 +18185,28 @@ impl ShellExecutor {
             }
         }
     }
+    /// REDIR_ERRWRITE / REDIR_ERRAPP (`>&word`, `>>&word`, `&>`, `&>>`):
+    /// one file onto BOTH fd 1 and fd 2. c:Src/exec.c:3985-3999 — the open
+    /// failing is `zwarn("%e: %s", errno, fn->name); execerr();`, i.e. the
+    /// diagnostic, status 1 and the command abandoned; an empty name fails
+    /// with ENOENT (`>&''` → `no such file or directory: `).
+    fn redir_errwrite(&mut self, result: std::io::Result<fs::File>, target: &str) {
+        match result {
+            Ok(file) => {
+                let new_fd = file.into_raw_fd();
+                unsafe {
+                    libc::dup2(new_fd, 1);
+                    libc::dup2(new_fd, 2);
+                    libc::close(new_fd);
+                }
+            }
+            Err(e) => {
+                crate::ported::utils::zwarn(&format!("{}: {}", redir_errno_msg(&e), target));
+                self.set_last_status(1);
+                self.redirect_failed = true;
+            }
+        }
+    }
     /// `host_apply_redirect` — see implementation.
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
@@ -18598,14 +18620,7 @@ impl ShellExecutor {
                     // routes BOTH fd 1 and fd 2 there. Reached only
                     // for dynamic words (`>&$var`); static filenames
                     // were converted at compile time.
-                    if let Ok(file) = fs::File::create(target) {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, 1);
-                            libc::dup2(new_fd, 2);
-                            libc::close(new_fd);
-                        }
-                    }
+                    self.redir_errwrite(fs::File::create(target), target);
                 } else {
                     // c:Src/glob.c:2185 — MERGEIN non-number:
                     // `zerr("file number expected")`.
@@ -18615,28 +18630,13 @@ impl ShellExecutor {
                 }
             }
             r::WRITE_BOTH => {
-                if let Ok(file) = fs::File::create(target) {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, 1);
-                        libc::dup2(new_fd, 2);
-                        libc::close(new_fd);
-                    }
-                }
+                self.redir_errwrite(fs::File::create(target), target);
             }
             r::APPEND_BOTH => {
-                if let Ok(file) = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(target)
-                {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, 1);
-                        libc::dup2(new_fd, 2);
-                        libc::close(new_fd);
-                    }
-                }
+                self.redir_errwrite(
+                    fs::OpenOptions::new().create(true).append(true).open(target),
+                    target,
+                );
             }
             _ => {}
         }

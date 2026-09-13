@@ -795,3 +795,20 @@ mod nullcmd_redirect_only {
         );
     }
 }
+
+/// An empty `>&` / `>>&` / `&>` target. c:Src/glob.c:2191-2195 makes the
+/// MERGEOUT word a REDIR_ERRWRITE, and its open fails with ENOENT —
+/// c:Src/exec.c:3985-3999 `zwarn("%e: %s")` + execerr, status 1. zshrs
+/// ignored the failed open and the command wrote to stdout.
+mod empty_errwrite_target {
+    use super::*;
+
+    #[test]
+    fn empty_word_fails_the_command() {
+        let d = tdir();
+        assert_parity_in(d.path(), "{ print hi >&''; print rc=$? } 2>&1");
+        assert_parity_in(d.path(), "{ print hi >>&''; print rc=$? } 2>&1");
+        assert_parity_in(d.path(), "{ e=; print hi >&$e; print rc=$? } 2>&1");
+        assert_parity_in(d.path(), "{ print hi &>''; print rc=$? } 2>&1");
+    }
+}
