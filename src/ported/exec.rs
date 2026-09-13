@@ -5094,6 +5094,39 @@ impl Drop for SubshStateGuard {
 /// copying it; the environment is one byte copy (`environ_image`); the
 /// directory stack and the two rlimit arrays are short vectors; the cwd
 /// is one `stat` and the umask two `umask(2)` calls.
+/// !!! WARNING: RUST-ONLY TYPE — C forks and needs none of this !!!
+/// The entry-directory descriptor `SubshForkCopy` holds for the in-process
+/// subshell. A forked child can never move its parent; zshrs's body shares
+/// the process cwd, so the parent must be put back into the same directory
+/// object, not the same path. The fd is moved to 10 and up and recorded
+/// `FDT_INTERNAL`, like every other descriptor the shell keeps for itself
+/// (`movefd`, `Src/utils.c:1990-2011`), and is close-on-exec so an external
+/// command run by the body never inherits it. Dropping closes it.
+struct SubshCwdFd(i32);
+
+impl SubshCwdFd {
+    fn open() -> Self {
+        let fd = unsafe { libc::open(b".\0".as_ptr() as *const libc::c_char, libc::O_RDONLY | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return SubshCwdFd(-1);
+        }
+        let moved = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+        unsafe { libc::close(fd) };
+        if moved >= 0 {
+            crate::ported::utils::fdtable_set(moved, crate::ported::zsh_h::FDT_INTERNAL);
+        }
+        SubshCwdFd(moved)
+    }
+}
+
+impl Drop for SubshCwdFd {
+    fn drop(&mut self) {
+        if self.0 >= 0 {
+            crate::ported::utils::zclose(self.0);
+        }
+    }
+}
+
 pub struct SubshForkCopy {
     /// `aliastab` (`Src/hashtable.c:1177`) — `alias`, `unalias`,
     /// `disable -a`, `aliases[x]=…`.
@@ -5121,7 +5154,12 @@ pub struct SubshForkCopy {
     /// `cd`, `pushd` and `popd` in the body move it for the whole
     /// process; `restore` compares and moves back only if they did.
     cwd: Option<(u64, u64)>,
-    /// `$PWD` on entry — where `restore` goes back to.
+    /// An fd open on the entry directory itself. `restore` goes back
+    /// through it, so a body that renames the directory out from under
+    /// the parent (`( cd .. && mv foo bar )` run from `foo`) still returns
+    /// the parent to the very directory it was in, as a fork does.
+    cwd_fd: SubshCwdFd,
+    /// `$PWD` on entry — the fallback when `cwd_fd` could not be opened.
     pwd: Option<String>,
     /// `dirstack` (`Src/builtin.c:744`) — `pushd` / `popd`.
     dirstack: Vec<String>,
@@ -5188,6 +5226,7 @@ impl SubshForkCopy {
             pathchecked: pathchecked.load(Ordering::SeqCst),
             environ: crate::ported::params::environ_image::save(),
             cwd: std::fs::metadata(".").ok().map(|m| (m.dev(), m.ino())),
+            cwd_fd: SubshCwdFd::open(),
             pwd: getsparam("PWD"),
             dirstack: crate::ported::modules::parameter::DIRSTACK
                 .lock()
@@ -5312,8 +5351,14 @@ impl SubshForkCopy {
         self.environ.restore();
         let here = std::fs::metadata(".").ok().map(|m| (m.dev(), m.ino()));
         if here != self.cwd {
-            if let Some(pwd) = &self.pwd {
-                let _ = std::env::set_current_dir(pwd);
+            // By descriptor first: the entry path may no longer name the
+            // entry directory (the body renamed it), and chdir-by-path
+            // would then leave the parent somewhere else entirely.
+            let back = self.cwd_fd.0 >= 0 && unsafe { libc::fchdir(self.cwd_fd.0) } == 0;
+            if !back {
+                if let Some(pwd) = &self.pwd {
+                    let _ = std::env::set_current_dir(pwd);
+                }
             }
         }
         if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {

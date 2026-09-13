@@ -218,3 +218,30 @@ mod chase_links {
         );
     }
 }
+
+/// A subshell that renames the directory the parent is standing in must
+/// not move the parent: in zsh the body is a forked child. zshrs runs it in
+/// process and used to chdir back by the entry PATH, which no longer
+/// existed, leaving the parent in the directory above (B01cd.ztst
+/// "cd . with moved PWD").
+mod subshell_renames_cwd {
+    use super::*;
+
+    #[test]
+    fn parent_stays_in_renamed_directory() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "rm -rf foo bar; mkdir foo; cd foo; ( cd .. && mv foo bar ); basename $(/bin/pwd); cd .; basename $PWD",
+        );
+    }
+
+    #[test]
+    fn cmdsubst_renaming_cwd_keeps_parent() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "rm -rf foo bar; mkdir foo; cd foo; x=$(cd .. && mv foo bar); basename $(/bin/pwd)",
+        );
+    }
+}
