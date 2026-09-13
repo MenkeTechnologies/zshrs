@@ -2203,9 +2203,30 @@ pub(crate) fn store(x: f64) -> f64 {
 /// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
 /// WARNING: param names don't match C — Rust=() vs C=(s)
 pub(crate) fn getcvar(name: &str) -> mnumber {
+    // c:952-965 — the value of `#name` is the first CHARACTER of the
+    // parameter: under MULTIBYTE `mb_metacharlenconv(t, &wc)` decodes it
+    // (c:954-961), and when it does not decode (an invalid byte, WEOF) or
+    // MULTIBYTE is off, the first byte with its Meta escape undone
+    // (c:964 `(unsigned char)(*t == Meta ? t[1] ^ 32 : *t)`). The port's
+    // String holds an undecodable byte as Meta + byte^32, so reading its
+    // first `char` returned the Meta byte itself (131) for `\xc5`, and the
+    // decoded character even with MULTIBYTE unset.
+    let first_char_code = |t: &str| -> i64 {
+        let raw = crate::ported::utils::unmetafy_str(t);
+        if raw.is_empty() {
+            return 0; // c:964 — `*t` is the terminating NUL
+        }
+        if crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
+            // c:954
+            if let (_, Some(wc), _) = crate::ported::utils::mb_metacharlenconv(&raw) {
+                return wc as i64; // c:957-960
+            }
+        }
+        raw[0] as i64 // c:964
+    };
     if let Some(raw) = m_string_variables_get(name) {
         return mnumber {
-            l: raw.chars().next().map(|c| c as i64).unwrap_or(0),
+            l: first_char_code(&raw),
             d: 0.0,
             type_: MN_INTEGER,
         };
@@ -2217,7 +2238,7 @@ pub(crate) fn getcvar(name: &str) -> mnumber {
     // math frame.
     if let Some(raw) = getsparam(name) {
         return mnumber {
-            l: raw.chars().next().map(|c| c as i64).unwrap_or(0),
+            l: first_char_code(&raw),
             d: 0.0,
             type_: MN_INTEGER,
         };

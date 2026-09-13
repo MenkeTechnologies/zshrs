@@ -1009,3 +1009,28 @@ mod octal_zeroes_in_arithmetic_statements {
         );
     }
 }
+
+/// c:Src/math.c:943-968 `getcvar` — `#name` is the first character of the
+/// parameter: decoded under MULTIBYTE, and otherwise (or when the bytes do
+/// not decode) the first byte with its Meta escape undone. The port read the
+/// first `char` of its String, which is the Meta escape itself for an
+/// undecodable byte and the decoded character even with MULTIBYTE unset.
+mod character_code_of_a_parameter {
+    use super::*;
+
+    #[test]
+    fn undecodable_byte_gives_the_byte() {
+        assert_parity(r#"setopt cbases; print $'\xc5' | read; print $(( [#16] #REPLY ))"#);
+        assert_parity(r#"z=$(printf '\xe9'); print $(( #z ))"#);
+    }
+
+    #[test]
+    fn multibyte_off_gives_the_first_byte() {
+        assert_parity(r#"x=é; print $(( #x )); unsetopt multibyte; print $(( #x ))"#);
+    }
+
+    #[test]
+    fn decodable_characters_are_unchanged() {
+        assert_parity(r#"for x in 65 128 233 20320; do print ${(#)x}; done | while read line; do print $(( #line )); done"#);
+    }
+}
