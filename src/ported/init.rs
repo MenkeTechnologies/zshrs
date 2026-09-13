@@ -2472,96 +2472,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             non_empty = 1; // c:179
                            // c:180-215 — preexec hook + ZLE_CMD_PREEXEC.
             if toplevel != 0 {
-                // c:180
-                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
-                // Native p10k engine command timer (src/extensions/p10k):
-                // stamp start-of-command for the command_execution_time
-                // segment. The zsh theme does this in a preexec hook
-                // (`_p9k__timer_start=EPOCHREALTIME`); the native engine
-                // stamps here unconditionally (no-op when inactive) so
-                // it works without any user preexec function installed.
-                crate::p10k::note_exec_start();
-                let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
-                let preexec_hook = crate::ported::params::paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|t| t.get(&format!("preexec{}", HOOK_SUFFIX)).map(|_| ())); // c:182 paramtab->getnode("preexec_functions")
-                if preexec_fn.is_some() || preexec_hook.is_some() {
-                    let mut args: Vec<String> = Vec::new(); // c:191 newlinklist()
-                    args.push("preexec".to_string()); // c:192 addlinknode(args, "preexec")
-                                                      // c:195 — hist_ring && curline.histnum == curhist
-                    let hr = hist_ring.lock().unwrap();
-                    let cl = curline.lock().unwrap();
-                    let same = !hr.is_empty()
-                        && cl.as_ref().map(|c| c.histnum).unwrap_or(0)
-                            == curhist.load(Ordering::SeqCst);
-                    if same {
-                        // c:195
-                        args.push(hr.first().map(|h| h.node.nam.clone()).unwrap_or_default());
-                    // c:196
-                    } else {
-                        args.push(String::new()); // c:198
-                    }
-                    drop(hr);
-                    drop(cl);
-                    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
-                    // `prog` here is the fusevm AST, not a wordcode Eprog, so
-                    // compile the event source captured around parse_event
-                    // (see `event_mark` above) into the Eprog C would hold.
-                    // The compile is silent (`noerrs`) and leaves errflag as
-                    // it found it: it is a rendering aid, and a construct the
-                    // wordcode parser cannot take must not print an error or
-                    // stop the command. Such an event gets empty `$2`/`$3`.
-                    let event_prog: Option<eprog> = event_src.as_deref().and_then(|src| {
-                        let noerrs = crate::ported::utils::noerrs_lock();
-                        let saved_noerrs = std::mem::replace(&mut *noerrs.lock().unwrap(), 1);
-                        let saved_errflag = errflag.load(Ordering::SeqCst);
-                        // The event was lexed with `strin == 0`, where a `#`
-                        // starts a comment only under INTERACTIVECOMMENTS in
-                        // an interactive stdin shell (c:Src/lex.c:678-681).
-                        // parse_string lexes under `strin`, which would turn
-                        // comments on; `nocomments` restores that decision,
-                        // the way getoutput does around its own parse_string
-                        // (c:Src/exec.c:4720-4723).
-                        let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
-                        crate::ported::lex::LEX_NOCOMMENTS.with(|c| {
-                            c.set(
-                                interact()
-                                    && isset(SHINSTDIN)
-                                    && !isset(crate::ported::zsh_h::INTERACTIVECOMMENTS),
-                            )
-                        });
-                        let p = crate::ported::exec::parse_string(src, 0);
-                        crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
-                        errflag.store(saved_errflag, Ordering::SeqCst);
-                        *noerrs.lock().unwrap() = saved_noerrs;
-                        p
-                    });
-                    // c:210 — addlinknode(args, dupstring(getjobtext(prog, NULL)))
-                    // c:211 — addlinknode(args, cmdstr = getpermtext(prog, NULL, 0))
-                    let (job_text, cmdstr) = match event_prog {
-                        Some(p) => (
-                            crate::ported::text::getjobtext(Box::new(p.clone()), None), // c:210
-                            getpermtext(Box::new(p), None, 0),                          // c:211
-                        ),
-                        None => (String::new(), String::new()),
-                    };
-                    args.push(crate::ported::mem::dupstring(&job_text));
-                    args.push(cmdstr.clone());
-                    callhookfunc(
-                        // c:202
-                        "preexec",
-                        Some(&args),
-                        1,
-                        std::ptr::null_mut(),
-                    );
-                    crate::ported::mem::zsfree(cmdstr); // c:205
-                    errflag.fetch_and(
-                        // c:214 errflag &= ~ERRFLAG_ERROR
-                        !ERRFLAG_ERROR,
-                        Ordering::SeqCst,
-                    );
-                }
+                // c:180-215 — the preexec hook, shared with the script-file
+                // event loop (vm_helper::run_events_per_command).
+                crate::vm_helper::run_preexec_hook(event_src.as_deref());
             }
             if toplevel != 0                                                 // c:216
                 && zle_load_state.load(Ordering::SeqCst) == 1
