@@ -255,3 +255,30 @@ mod redirect_in_pipe {
         assert_parity("cat <<< hello | tr h H");
     }
 }
+
+/// c:Src/exec.c:1221 — `entersubsh` sets `forklevel = locallevel` in every
+/// forked child, so `exit` there (c:Src/builtin.c:5870-5894) ends the child
+/// with its status even when the fork happened inside a function or a
+/// `( … )`. The forked stage kept the parent's levels, deferred the exit,
+/// and reported 0.
+mod exit_in_a_forked_child_inside_a_function_or_subshell {
+    use super::*;
+
+    #[test]
+    fn pipeline_stage_status() {
+        assert_parity("f(){ false | exit 2 | true; print $? $pipestatus }; f");
+        assert_parity("(print a | exit 5 | cat; print $pipestatus)");
+        assert_parity("f(){ { exit 4; print no } | cat; print $pipestatus; }; f");
+    }
+
+    #[test]
+    fn pipefail_inside_a_subshell() {
+        assert_parity("(setopt pipefail\nfalse | exit 2 | true\nprint $?)");
+    }
+
+    #[test]
+    fn background_job_status() {
+        assert_parity("f(){ exit 3 & wait $!; print $?; }; f");
+        assert_parity("(exit 3 & wait $!; print $?)");
+    }
+}

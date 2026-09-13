@@ -3491,6 +3491,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Status(1);
                 }
                 0 => {
+                    forked_child_subsh_levels(); // c:Src/exec.c:1221
                     // Reset SIGPIPE to default so a broken-pipe write
                     // kills the child cleanly instead of triggering a
                     // Rust println! panic. The parent shell ignores
@@ -3648,6 +3649,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             match unsafe { libc::fork() } {
                 -1 => 1,
                 0 => {
+                    forked_child_subsh_levels(); // c:Src/exec.c:1221
                     // Subshell child: run the last stage, then _exit with its
                     // status. Reset SIGPIPE + drop the EXIT trap like the
                     // other pipeline children above.
@@ -3874,6 +3876,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         return Value::Status(1);
                     }
                     0 => {
+                        forked_child_subsh_levels(); // c:Src/exec.c:1221
                         unsafe { libc::setpgid(0, gleader) };
                         // Mirrors the RUN_PIPELINE stage child: default SIGPIPE
                         // so a broken pipe kills the stage quietly, and drop the
@@ -4003,6 +4006,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         match unsafe { libc::fork() } {
             -1 => Value::Status(1),
             0 => {
+                forked_child_subsh_levels(); // c:Src/exec.c:1221
                 // Child: detach and run.
                 unsafe { libc::setsid() };
                 crate::fusevm_disasm::maybe_print_stdout("background_job", &chunk);
@@ -7175,6 +7179,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Status(1)
             }
             0 => {
+                forked_child_subsh_levels(); // c:Src/exec.c:1221
                 // Child: stdin from p2c[0], stdout to c2p[1]. Close all
                 // unused fds. setsid so SIGINT to fg doesn't hit us.
                 unsafe {
@@ -14960,6 +14965,31 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
     }
 }
 
+/// The level bookkeeping `entersubsh` does in a freshly forked child.
+///
+/// c:Src/exec.c:1221 — `forklevel = locallevel;`. `bin_break`'s `exit` arm
+/// (c:Src/builtin.c:5870-5894) only defers the exit while `locallevel >
+/// forklevel`; in a forked child the function it was called from is the
+/// child's outermost level, so `exit N` ends the child with status N.
+///
+/// !!! WARNING: RUST-ONLY LINE — SUBSHELL_DEPTH HAS NO C COUNTERPART !!!
+/// `SUBSHELL_DEPTH` counts the in-process `( … )` bodies this process is
+/// inside, and `zexit` defers to EXIT_PENDING while it is non-zero because
+/// exiting would take the parent shell with it. After a fork that reason is
+/// gone: the child is its own process, as C's always is. Left at its
+/// inherited value, `exit 2` in a pipeline stage or background job forked
+/// from inside a function or `( … )` only unwound the child's VM, which then
+/// exited 0 — `(setopt pipefail; false | exit 2 | true; print $?)` printed
+/// 1 where zsh prints 2.
+fn forked_child_subsh_levels() {
+    use std::sync::atomic::Ordering;
+    crate::ported::exec::FORKLEVEL.store(
+        crate::ported::params::locallevel.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    ); // c:1221
+    crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
+}
+
 /// Holds SIGCHLD blocked across the span in which the VM forks children.
 ///
 /// C: `execpline` opens that span with `child_block()` (c:Src/exec.c:1748),
@@ -16856,6 +16886,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     return String::from("/dev/null");
                 }
                 0 => {
+                    forked_child_subsh_levels(); // c:Src/exec.c:1221
                     // c:4985 — child: stdout → the temp file, run the body, exit.
                     // Clear the inherited pending-file list so this child never
                     // unlinks the PARENT's =() temp files when its own commands
@@ -16923,6 +16954,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 return String::from("/dev/null");
             }
             0 => {
+                forked_child_subsh_levels(); // c:Src/exec.c:1221
                 // Child: close read end, dup write end to stdout,
                 // run the sub-chunk, exit. The exit closes the
                 // write end automatically, so the parent's reader
@@ -17056,6 +17088,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 String::from("/dev/null")
             }
             0 => {
+                forked_child_subsh_levels(); // c:Src/exec.c:1221
                 // Child: close the write end (c: closem after redup),
                 // dup the read end onto stdin (c: redup(pipes[0], 0)),
                 // run the sub-chunk, exit. Other std fds stay
