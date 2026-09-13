@@ -25719,21 +25719,45 @@ pub fn apply_bare_modifier_chain(
     let mut mod_buf = String::new();
     let mut probe = start;
     while probe < chars.len() && chars[probe] == ':' {
-        // `g` (global) and `f` (repeat until stable) both prefix `:s`
-        // (c:Src/hist.c — the substitute-modifier flags). Only `g` was accepted
-        // here, so an unbraced `$f:fs/a//` was left as literal text where the
-        // braced `${f:fs/a//}` and the unbraced `$f:gs/a//` both worked.
+        // c:4564-4719 — the prefix flags, in any order, before the modifier
+        // letter: `g`, `w` and `f` are one char each; `W` takes a get_strarg
+        // separator (c:4702) and `F` a get_intarg count (c:4718), both delimited
+        // arguments (c:1348-1391). modify() parses the same flags for the braced
+        // form; this scanner only has to find where the span ends. A delimited
+        // argument with no closing delimiter leaves nothing valid to follow, so
+        // the chain resets to the colon (c:4726-4728 `if (!c) { *ptr = lptr;
+        // return; }`) and the text stays literal.
         let mut s_pos = probe + 1;
-        let mut saw_prefix = false;
-        while matches!(chars.get(s_pos).copied(), Some('g') | Some('f')) {
-            saw_prefix = true;
-            s_pos += 1;
+        let mut flags_ok = true;
+        loop {
+            match chars.get(s_pos).copied() {
+                Some('g') | Some('w') | Some('f') => s_pos += 1, // c:4690-4715
+                Some('W') | Some('F') => {
+                    s_pos += 1; // c:4701 / c:4717
+                    let rest: String = chars[s_pos..].iter().collect();
+                    match get_strarg(&rest) {
+                        Some((_del, content, after)) => {
+                            let consumed = rest.chars().count() - after.chars().count();
+                            if consumed != content.chars().count() + 2 {
+                                flags_ok = false; // unclosed delimiter
+                                break;
+                            }
+                            s_pos += consumed; // c:4708 `*ptr = ptr1 + charlen`
+                        }
+                        None => {
+                            flags_ok = false;
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        if !flags_ok {
+            break;
         }
         let after = chars.get(s_pos).copied();
-        if saw_prefix || after == Some('s') {
-            if after != Some('s') {
-                break;
-            }
+        if after == Some('s') {
             let delim_pos = s_pos + 1;
             let delim = match chars.get(delim_pos).copied() {
                 Some(d) => d,
@@ -25791,9 +25815,13 @@ pub fn apply_bare_modifier_chain(
         if !is_simple_mod {
             break;
         }
+        // The whole `:flags…letter` span goes to modify(), which applies the
+        // flags (c:4733-4880).
         mod_buf.push(':');
-        mod_buf.push(after.unwrap());
-        probe += 2;
+        for c in &chars[probe + 1..=s_pos] {
+            mod_buf.push(*c);
+        }
+        probe = s_pos + 1;
         // c:Src/subst.c:4571 — `if (inbrace && idigit((*ptr)[1]))`: the
         // `:hN`/`:tN` digit-count is ONLY honored inside braces. In the
         // bare `$var:h2` form inbrace==0, so the digit is NOT consumed —
