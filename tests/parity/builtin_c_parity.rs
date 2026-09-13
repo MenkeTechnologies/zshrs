@@ -1706,3 +1706,30 @@ mod arith_builtin {
         assert_parity("(( 5 == 5 )) && echo eq");
     }
 }
+
+/// c:Src/parse.c:3889-3892 / c:3929-3932 — check_dump_file refuses a function
+/// whose header claims more patterns than its body has words:
+/// `zwarn("%s: invalid description: %s", file, name); return NULL;`, and the
+/// source file is loaded instead. zshrs ran the corrupt digest's function.
+/// ztst A09zwc "Malformed .zwc with implausible npats".
+mod zwc_with_implausible_npats {
+    use super::*;
+
+    const SCRIPT: &str = r#"cd "$(mktemp -d)" || exit 9
+mkdir zwc.tmp
+print 'print victim ran' >zwc.tmp/victim
+zcompile zwc.tmp/victim
+cp zwc.tmp/victim.zwc zwc.tmp/orig.zwc
+chmod u+w zwc.tmp/*.zwc
+zwc_order=little
+() { local LC_ALL=C; [[ ${${"$( < zwc.tmp/orig.zwc )"}[1]} == $'\x07' ]] || zwc_order=big }
+( if [[ $zwc_order == little ]]; then printf '\x00\x00\x00\x40'; else printf '\x40\x00\x00\x00'; fi |
+  dd of=zwc.tmp/victim.zwc bs=1 seek=56 count=4 conv=notrunc 2>/dev/null
+  source zwc.tmp/victim 2>&1 | sed 's/^[^:]*:[0-9]*: //' )
+print rc=$?"#;
+
+    #[test]
+    fn the_function_is_refused_and_the_source_runs() {
+        assert_parity(SCRIPT);
+    }
+}

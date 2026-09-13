@@ -5537,6 +5537,15 @@ pub fn check_dump_file(
         return Some((eprog::default(), 0)); // c:3879 dummy
     }
 
+    // c:3889-3892 / c:3929-3932 — `if (h->npats > h->len / sizeof(wordcode)) {
+    // zwarn("%s: invalid description: %s", file, name); return NULL; }`: a
+    // header claiming more patterns than its body has words is corrupt, and
+    // the function is refused rather than run.
+    if h.npats > h.len / 4 {
+        crate::ported::utils::zwarn(&format!("{}: invalid description: {}", file, name));
+        return None;
+    }
+
     // c:3954-3956 — `*ksh = ((fdhflags(h) & FDHF_KSHLOAD) ? 2 :
     //                        ((fdhflags(h) & FDHF_ZSHLOAD) ? 0 : 1));`
     let ksh = if (fdhflags(&h) & FDHF_KSHLOAD) != 0 {
