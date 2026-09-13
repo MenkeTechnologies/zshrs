@@ -104,6 +104,12 @@ pub struct ZshCompiler {
     /// pipeline LHS). Decremented when leaving. The post-command
     /// errexit check only fires when this is 0.
     pub errexit_suppress_depth: i32,
+    /// Set for the one `( … )` compiled as the body of a background job:
+    /// its own after-command ERREXIT_CHECK is skipped (c:Src/exec.c:2916-2918
+    /// + c:4417 — the forked child runs the subshell body as its list and
+    /// leaves through `_realexit()`, so no sublist_done check runs for the
+    /// `( … )` word). Checks inside the body are unaffected.
+    pub async_subsh_skip_outer_errexit: bool,
     /// Depth tracker for "currently compiling inside double quotes".
     /// Bumped when a parent word is DQ-wrapped (`\u{9e}…\u{9e}`) and
     /// we recurse into its Expansion segments. Used so the
@@ -358,6 +364,7 @@ impl ZshCompiler {
             return_patches: Vec::new(),
             redir_prog_text: None,
             errexit_suppress_depth: 0,
+            async_subsh_skip_outer_errexit: false,
             dq_context_depth: 0,
             assign_context_depth: 0,
             in_cond_operand: false,
@@ -1329,6 +1336,10 @@ impl ZshCompiler {
         if async_simple {
             sub.errexit_suppress_depth += 1;
         }
+        // A `( … ) &` job's child is the subshell itself: the same c:4417
+        // exit path skips the check after the `( … )` word, while the body's
+        // own commands keep theirs (async_subsh_skip_outer_errexit).
+        sub.async_subsh_skip_outer_errexit = matches!(pipe.cmd, ZshCommand::Subsh(_));
         sub.compile_pipe(pipe);
         if async_simple {
             sub.errexit_suppress_depth -= 1;
@@ -1754,6 +1765,8 @@ impl ZshCompiler {
         match cmd {
             ZshCommand::Simple(simple) => self.compile_simple(simple),
             ZshCommand::Subsh(prog) => {
+                // Taken at entry so a nested `( … )` in the body keeps its check.
+                let skip_outer_errexit = std::mem::take(&mut self.async_subsh_skip_outer_errexit);
                 // (list) — subshell with state isolation. Save current
                 // return_patches before compiling the body so any `exit`
                 // / `return` inside lands at SubshellEnd (popping the
@@ -1815,7 +1828,9 @@ impl ZshCompiler {
                 // `echo done` ran. Emit ERREXIT_CHECK same as a
                 // simple command does (handles set -e, retflag,
                 // exit_pending, non-interactive errflag).
-                self.emit_errexit_check();
+                if !skip_outer_errexit {
+                    self.emit_errexit_check();
+                }
             }
             ZshCommand::Cursh(prog) => {
                 // {list} — brace group; no isolation.
