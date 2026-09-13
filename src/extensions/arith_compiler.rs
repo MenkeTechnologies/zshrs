@@ -1274,6 +1274,18 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
     if lower.contains("0x") || lower.contains("0b") {
         return Some("base-tagged literal");
     }
+    // A leading-zero literal (`012`). c:Src/math.c:489-505 decides octal from
+    // `isset(OCTALZEROES)` when the literal is LEXED, and an octal literal sets
+    // `lastbase = 8` for the assignment that follows. The compiled path is
+    // built before the statements that run `setopt octalzeroes`, so it cannot
+    // know the option; the runtime evaluator reads it live.
+    if b.windows(2).enumerate().any(|(i, w)| {
+        w[0] == b'0'
+            && w[1].is_ascii_digit()
+            && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_' || b[i - 1] == b'.'))
+    }) {
+        return Some("leading-zero literal");
+    }
     // Exponent form (`1e3`) — `read_number` stops at the `e`, so the
     // exponent would be parsed as a separate identifier.
     if b.windows(2)

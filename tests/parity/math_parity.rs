@@ -985,3 +985,27 @@ mod user_math_function_arguments {
         );
     }
 }
+
+/// c:Src/math.c:489-505 — with OCTAL_ZEROES a leading-zero literal is octal
+/// and sets `lastbase = 8`, so an untyped parameter assigned from it displays
+/// as `8#NN`. The option is read when the literal is lexed; the compiled
+/// `(( ))` path was built before `setopt octalzeroes` ran and kept decimal.
+mod octal_zeroes_in_arithmetic_statements {
+    use super::*;
+
+    #[test]
+    fn statement_honours_an_option_set_earlier_in_the_script() {
+        assert_parity(
+            "typeset -i 10 oznum; setopt octalzeroes; (( oznum = 012 + 013 )); print $oznum; \
+             unsetopt octalzeroes; (( oznum = 012 + 013 )); print $oznum",
+        );
+    }
+
+    #[test]
+    fn octal_literal_sets_base_eight_for_the_assignment() {
+        assert_parity(
+            "setopt octalzeroes; (( x = 012 )); print $x; (( y = 0 )); print $y; \
+             (( z = 10 + 010 )); print $z; unsetopt octalzeroes; (( w = 012 )); print $w",
+        );
+    }
+}
