@@ -7387,10 +7387,13 @@ pub fn paramsubst(
                 // The bracket scan above only balances `[`/`]`, so without
                 // this the text reached the math evaluator ("operand
                 // expected at `)'").
+                // No closing bracket at all (`${a[1}`, `${+h[a[b]}`) is the
+                // same failure: dquote_parse runs off the end of the text
+                // without meeting `]`.
                 let preexpanded = SUBSCRIPT_PREEXPANDED.with(|c| c.replace(false));
                 if !preexpanded
-                    && closed_literal.is_some()
-                    && crate::ported::lex::parse_subscript(&format!("{}]", raw_sub), ']').is_none()
+                    && (closed_literal.is_none()
+                        || crate::ported::lex::parse_subscript(&format!("{}]", raw_sub), ']').is_none())
                 {
                     zerr("invalid subscript"); // c:2042
                     errflag_set_error();
@@ -24777,6 +24780,13 @@ pub fn paramsubst(
                 let expanded = singsub(&to_expand); // c:1571
                 subscript_str = Some(crate::lex::untokenize(&expanded)); // c:1584
                 pos = q + 1; // c:1625
+            } else {
+                // c:Src/params.c:2029-2045 — the unbraced reference ran out of
+                // text before its `]` (`$a[1`, `$+h[a[b]`): parse_subscript's
+                // dquote_parse fails, and getindex reports it.
+                zerr("invalid subscript"); // c:2042
+                errflag_set_error();
+                return (String::new(), q, vec![]);
             } // c:1625
               // c:Src/params.c:1583-1620 — getarg's terminal branch on the
               // RESOLVED subscript text: `if (ishash) { ht->getnode(ht, s) }

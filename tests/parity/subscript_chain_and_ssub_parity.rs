@@ -567,3 +567,22 @@ mod expanded_paren_subscript_is_a_math_error {
     }
 }
 
+/// A subscript with no closing bracket fails parse_subscript the same way
+/// (c:Src/params.c:2042), before `${+…}` asks whether anything is set
+/// (c:Src/subst.c:2771 then c:3611).
+mod unclosed_subscript_is_invalid {
+    use super::*;
+
+    #[test]
+    fn braced_and_unbraced_forms_error() {
+        assert_parity(r#"{ a=(1 2); print ${a[1}; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ a=(1 2); print $a[1; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ print ${+functions[a[b]}; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ typeset -A h; print $+h[a[b]; print rc=$? } 2>&1"#);
+    }
+
+    #[test]
+    fn closed_subscripts_still_answer() {
+        assert_parity(r#"a=(1 2); print ${+a[1]} $+a[1] ${+a[5]}"#);
+    }
+}
