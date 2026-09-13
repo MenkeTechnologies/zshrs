@@ -302,6 +302,42 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 }
             }
 
+            // c:Src/params.c:2048-2053 getindex — a `[@]` / `[*]` subscript
+            // selects the whole array (`v->start = 0; v->end = -1`, scanflags
+            // set), and getnumvalue (c:2626-2631) `sepjoin`s it and
+            // `matheval`s the result. `arr=(x y); (( arr[@] ))` therefore
+            // evaluates `x y` and fails with "operator expected at `y'"; the
+            // index path below would read `@` as the number 0.
+            if idx_str == "@" || idx_str == "*" {
+                let elems: Option<Vec<String>> = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arr_name).and_then(|pm| pm.u_arr.clone()))
+                    .or_else(|| {
+                        crate::ported::params::paramtab_hashed_storage()
+                            .lock()
+                            .ok()
+                            .and_then(|m| m.get(arr_name).map(|h| h.values().cloned().collect()))
+                    });
+                if let Some(elems) = elems {
+                    let joined = crate::ported::utils::sepjoin(&elems, None); // c:2629
+                    let saved = save_state();
+                    let r = matheval(&joined); // c:2630
+                    restore_state(saved);
+                    return match r {
+                        Ok(n) => n,
+                        Err(e) => {
+                            m_error_set(e);
+                            mnumber {
+                                l: 0,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            }
+                        }
+                    };
+                }
+            }
+
             // Recursively eval the index (so a[i+1], h[$k], etc work).
             // CRITICAL: save/restore evaluator state around the recursive
             // matheval — without this, the inner call's `push(idx_value)`

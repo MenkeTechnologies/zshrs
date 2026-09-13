@@ -904,3 +904,22 @@ mod subscript_math_is_mathevalarg {
         same(r#"let @"#);
     }
 }
+
+/// c:Src/params.c:2048-2053 getindex — `[@]` / `[*]` is the whole array, and
+/// getnumvalue (c:2626-2631) sepjoins it and math-evaluates the result. zshrs
+/// read `@` as index 0, so `(( arr[@] ))` was a silent 0 / status 1 where zsh
+/// reports "operator expected at `y'" with status 2.
+mod whole_array_subscript_in_math {
+    use super::*;
+
+    #[test]
+    fn at_and_star_evaluate_the_joined_value() {
+        assert_parity("arr=(x y); k=@; (( arr[$k] )) 2>&1; print rc=$?");
+        assert_parity("arr=(x y); print $(( arr[@] )) 2>&1; print rc=$?");
+        assert_parity("arr=(3 4); (( arr[*] )) 2>&1; print rc=$?");
+        assert_parity("arr=(3); print $(( arr[@] + 1 ))");
+        assert_parity("typeset -A h=(k 5); print $(( h[@] ))");
+        // Control: an ordinary index is unchanged.
+        assert_parity("arr=(1 2); print $(( arr[2] + arr[(i)2] ))");
+    }
+}
