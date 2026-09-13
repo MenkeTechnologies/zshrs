@@ -22,7 +22,6 @@ use rusqlite::{params, Connection};
 use std::io::Read;
 use std::io::Write as _;
 use std::io::Write;
-use std::io::{Seek, SeekFrom};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,6 +33,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct HistoryEngine {
     /// `conn` field.
     conn: Connection,
+    /// Whether finished commands are appended to the flat text mirror at
+    /// `text_path()`. Only the on-disk engine writes it; an in-memory
+    /// engine must never touch the user's `$ZSHRS_HOME`.
+    mirror_text: bool,
 }
 
 /// One history record.
@@ -79,7 +82,7 @@ impl HistoryEngine {
         // descriptor, so the registration cannot ride along with the open
         // the way `movefd` does; sweep for it instead.
         crate::lowfd::register_internal_fds();
-        let engine = Self { conn };
+        let engine = Self { conn, mirror_text: true };
         engine.init_schema()?;
         crate::startup_trace::mark("hist: init_schema");
         // The exact row count is a `SELECT COUNT(*)` — a full table scan that
@@ -114,7 +117,7 @@ impl HistoryEngine {
     /// `in_memory` — see implementation.
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let engine = Self { conn };
+        let engine = Self { conn, mirror_text: false };
         engine.init_schema()?;
         Ok(engine)
     }
@@ -141,14 +144,14 @@ impl HistoryEngine {
     /// : <unix_ts>:<duration>;<command>
     /// ```
     ///
-    /// Newlines inside multi-line commands are escaped as the literal
-    /// two-character sequence `\\n` (matches `setopt EXTENDED_HISTORY`
-    /// — `zsh/Src/hist.c:gethistent`). Every `add` appends one line;
-    /// `update_last` rewrites the trailing line in place when the
-    /// duration becomes known. The sqlite index at `zshrs_history.db`
-    /// is the query-side mirror of this file — they're kept in lockstep
-    /// by the writer, and a divergence-repair pass on open re-reads
-    /// the text file if the sqlite is missing or older.
+    /// A newline inside a multi-line command is written as a backslash
+    /// followed by the newline, so one record can span several physical
+    /// lines (`zsh/Src/hist.c:savehistfile`). Each record is appended
+    /// once, by `update_last`, when the command has finished and its
+    /// duration is known; the file is never rewritten in place, so
+    /// concurrent shells cannot clobber each other's records. The sqlite
+    /// index at `zshrs_history.db` is the query side; a missing or empty
+    /// text file is rehydrated from it on open.
     pub fn text_path() -> PathBuf {
         Self::root().join("zshrs_history")
     }
@@ -241,18 +244,7 @@ impl HistoryEngine {
             params![command, now, cwd],
         )?;
 
-        let id = self.conn.last_insert_rowid();
-
-        // Mirror to the flat zsh-extended-history file. Best-effort —
-        // a write failure here doesn't fail the sqlite insert (e.g.
-        // disk full mid-write should still let the shell record state
-        // in the index). The duration is unknown at this point;
-        // `update_last` rewrites the trailing line once it knows.
-        if let Err(e) = append_text_line(now, 0, command) {
-            tracing::warn!(?e, "history: text mirror append failed");
-        }
-
-        Ok(id)
+        Ok(self.conn.last_insert_rowid())
     }
 
     /// Update the duration and exit code of the last command
@@ -262,17 +254,21 @@ impl HistoryEngine {
             params![duration_ms, exit_code, id],
         )?;
 
-        // Update the trailing line of the text mirror with the now-known
-        // duration. Look up the command by id so the rewrite stays
-        // consistent even if `add` deduped to an earlier entry.
+        if !self.mirror_text {
+            return Ok(());
+        }
+        // Append the finished command to the flat text mirror, once, now
+        // that its duration is known. Best-effort: a failed write must not
+        // fail the sqlite update. The command is looked up by id because
+        // `add` may have deduplicated onto an existing row.
         if let Ok((ts, command)) = self.conn.query_row(
             "SELECT timestamp, command FROM history WHERE id = ?1",
             params![id],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         ) {
             let duration_secs = (duration_ms / 1000).max(0);
-            if let Err(e) = rewrite_last_text_line(ts, duration_secs, &command) {
-                tracing::warn!(?e, "history: text mirror update failed");
+            if let Err(e) = append_text_line(ts, duration_secs, &command) {
+                tracing::warn!(?e, "history: text mirror append failed");
             }
         }
         Ok(())
@@ -586,9 +582,9 @@ impl HistoryEngine {
 // interactive line (same accept policy as the $HISTFILE write:
 // HIST_TMPSTORE / HIST_NOWRITE excluded); `preprompt()`
 // (src/ported/utils.rs) calls `history_sqlite_finish` right after
-// execode returns to stamp duration + exit status — mirroring what the
-// `-c` path does via ShellExecutor.history at bins/zshrs.rs
-// (engine.add → update_last). Thread-local because
+// execode returns to stamp duration + exit status and append the text
+// mirror record. Non-interactive runs (`-c`, scripts) never reach it,
+// as zsh records no history for them (c:Src/hist.c:1120). Thread-local because
 // rusqlite::Connection is !Sync; the interactive loop is
 // single-threaded on the main thread.
 // ---------------------------------------------------------------------
@@ -683,55 +679,77 @@ fn append_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Resu
     f.write_all(line.as_bytes())
 }
 
-/// Rewrite the trailing entry of the text file in place — used by
-/// `update_last` once the duration is known. Strategy: read the file
-/// to the last newline-delimited record, replace it with a freshly
-/// formatted line. For multi-MB history files we only buffer the
-/// trailing record's tail bytes (`max_tail` cap) — anything older
-/// stays untouched on disk.
-fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
-    let path = HistoryEngine::text_path();
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)?;
-    let len = f.metadata()?.len();
-    // 64 KiB is enough for any realistic single-command record (zsh
-    // commands top out at ~1-4 KiB). Beyond that, give up and append
-    // a corrected line rather than risk truncating the file.
-    let max_tail = 65_536u64.min(len);
-    let read_from = len - max_tail;
-    f.seek(SeekFrom::Start(read_from))?;
-    let mut tail = Vec::with_capacity(max_tail as usize);
-    f.read_to_end(&mut tail)?;
-    // Find the offset (within `tail`) where the last record begins.
-    // A record begins at the byte AFTER the second-to-last newline,
-    // or at offset 0 if there is none.
-    let mut last_record_start = 0usize;
-    let mut nl_count = 0;
-    for (i, b) in tail.iter().enumerate().rev() {
-        if *b == b'\n' {
-            nl_count += 1;
-            if nl_count == 2 {
-                last_record_start = i + 1;
-                break;
-            }
-        }
-    }
-    let new_record = format_text_line(ts, duration_secs, command);
-    let new_abs = read_from + last_record_start as u64;
-    f.seek(SeekFrom::Start(new_abs))?;
-    f.write_all(new_record.as_bytes())?;
-    let new_len = new_abs + new_record.len() as u64;
-    if new_len < len {
-        f.set_len(new_len)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs `f` with `ZSHRS_HOME` pointed at a fresh temp dir, restoring the
+    /// previous value afterwards. Caller holds `global_state_lock`.
+    fn with_private_home(f: impl FnOnce(&std::path::Path)) {
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("ZSHRS_HOME");
+        unsafe { std::env::set_var("ZSHRS_HOME", dir.path()) };
+        f(dir.path());
+        match prev {
+            Some(v) => unsafe { std::env::set_var("ZSHRS_HOME", v) },
+            None => unsafe { std::env::remove_var("ZSHRS_HOME") },
+        }
+    }
+
+    #[test]
+    fn text_mirror_appends_each_finished_command_once() {
+        let _g = crate::test_util::global_state_lock();
+        with_private_home(|home| {
+            let engine = HistoryEngine {
+                conn: Connection::open_in_memory().unwrap(),
+                mirror_text: true,
+            };
+            engine.init_schema().unwrap();
+            let multi = "for i in 1; do\n print $i\ndone";
+            // A multi-line record spans three physical lines. The old
+            // in-place rewrite of "the last line" re-wrote the whole record
+            // over only its final line, duplicating the rest.
+            let id = engine.add(multi, None).unwrap();
+            engine.update_last(id, 1500, 0).unwrap();
+            let id = engine.add("print two", None).unwrap();
+            engine.update_last(id, 0, 0).unwrap();
+            // A repeat deduplicates onto the first row. It must append its
+            // own record, not overwrite `print two`, which is last on disk.
+            let id = engine.add(multi, None).unwrap();
+            engine.update_last(id, 0, 0).unwrap();
+
+            let text = std::fs::read_to_string(home.join("zshrs_history")).unwrap();
+            let bodies: Vec<&str> = text
+                .lines()
+                .map(|l| if l.starts_with(": ") { l.split_once(';').unwrap().1 } else { l })
+                .collect();
+            assert_eq!(
+                bodies,
+                [
+                    "for i in 1; do\\",
+                    " print $i\\",
+                    "done",
+                    "print two",
+                    "for i in 1; do\\",
+                    " print $i\\",
+                    "done",
+                ],
+                "mirror was:\n{text}"
+            );
+            assert!(text.starts_with(": ") && text.lines().next().unwrap().contains(":1;"));
+        });
+    }
+
+    #[test]
+    fn in_memory_engine_never_writes_text_mirror() {
+        let _g = crate::test_util::global_state_lock();
+        with_private_home(|home| {
+            let engine = HistoryEngine::in_memory().unwrap();
+            let id = engine.add("print scratch", None).unwrap();
+            engine.update_last(id, 0, 0).unwrap();
+            assert!(!home.join("zshrs_history").exists());
+        });
+    }
 
     #[test]
     fn test_add_and_search() {
