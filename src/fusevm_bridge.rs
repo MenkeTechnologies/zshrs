@@ -11821,12 +11821,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !errflag_set {
             return Value::Int(0);
         }
-        // CONTINUE_ON_ERROR: clear and keep going, as the full check does.
-        if isset(crate::ported::zsh_h::CONTINUEONERROR) {
-            crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            return Value::Int(0);
-        }
+        // CONTINUE_ON_ERROR does not reach here: C's list loop
+        // (c:Src/exec.c:1443) breaks on errflag whatever the option says,
+        // and only zsh_main's outer do-while re-enters loop() for the NEXT
+        // top-level line (c:Src/init.c:1960-1968, ported in
+        // vm_helper.rs execode's toplevel arm).
         // Abort the chain with the failing command's own status intact —
         // a cond syntax error left lastval=2 (c:Src/exec.c:5216-5221), and
         // that 2 is what zsh exits with. Reading the executor's live
@@ -11996,20 +11995,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
-        // c:Src/init.c:1931 — `if (errflag && !interact &&
-        // !isset(CONTINUEONERROR)) { errexit = 1; break; }` — with
-        // CONTINUE_ON_ERROR set, the top-level do-while re-enters
-        // loop() and the NEXT list runs instead of the shell exiting.
-        // Clear the flag so the next statement starts clean (the
-        // failed statement's lastval is already in place).
-        if errflag_set
-            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
-            && crate::ported::zsh_h::isset(crate::ported::zsh_h::CONTINUEONERROR)
-        {
-            crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            return Value::Int(0);
-        }
+        // c:Src/init.c:1960-1968 — CONTINUE_ON_ERROR is decided by
+        // zsh_main's outer do-while, which re-enters loop() for the next
+        // top-level LINE; the current list (and every enclosing list,
+        // loop and function body) still breaks on errflag here. The
+        // re-entry is ported in vm_helper.rs execode's toplevel arm.
         if errflag_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
             // c:Src/exec.c execlist — every enclosing list loop runs
             // `while (... && !errflag)`, so a set errflag breaks the

@@ -234,3 +234,30 @@ mod default_options {
         assert_parity(r#"[[ -o monitor ]]; echo $?"#);
     }
 }
+
+/// CONTINUE_ON_ERROR only re-enters zsh_main's outer loop for the next
+/// top-level line (c:Src/init.c:1960-1968); the failing list, loop and
+/// function body still break on errflag (c:Src/exec.c:1443).
+mod continue_on_error {
+    use super::*;
+
+    #[test]
+    fn error_ends_the_current_list() {
+        assert_parity(r#"setopt continueonerror; readonly r=1; { print a; r=2; print b }; print c $?"#);
+    }
+
+    #[test]
+    fn error_breaks_a_for_loop() {
+        assert_parity(r#"setopt continueonerror; readonly r=1; for i in 1 2 3; do r=$i; print i$i; done; print done"#);
+    }
+
+    #[test]
+    fn error_ends_the_rest_of_the_line() {
+        assert_parity("setopt continueonerror; readonly r=1; r=4; print same-line\nprint next");
+    }
+
+    #[test]
+    fn error_ends_a_function_body() {
+        assert_parity(r#"setopt continueonerror; readonly r=1; f(){ r=5; print inf; }; f; print st=$?"#);
+    }
+}

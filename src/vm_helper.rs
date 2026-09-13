@@ -4057,6 +4057,23 @@ impl ShellExecutor {
             if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0
                 || crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
             {
+                // c:Src/init.c:1960-1968 — after loop(1,0) breaks on a
+                // runtime error, zsh_main re-enters it unless
+                // `errflag && !interact && !isset(CONTINUEONERROR)`; the
+                // re-entered loop's hbegin clears ERRFLAG_ERROR
+                // (c:Src/hist.c:1115) before the next event. Only the script
+                // file (toplevel) has that outer loop: `source` breaks
+                // (c:234 `sourcelevel`), and a parse error never gets here
+                // (the LEXERR arm above breaks first).
+                if toplevel
+                    && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
+                    && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+                    && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+                    && crate::ported::zsh_h::isset(crate::ported::zsh_h::CONTINUEONERROR)
+                {
+                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed); // c:Src/hist.c:1115
+                    continue;
+                }
                 break; // c:235
             }
             // C's `exit` inside a sourced file calls `zexit` → `realexit()`
