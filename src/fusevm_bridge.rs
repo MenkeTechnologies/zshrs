@@ -7320,6 +7320,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // prints `off` (posixargzero) for
             // `setopt ksharrays; print $options`.
             if opt_state_get("ksharrays").unwrap_or(false) {
+                // c:Src/params.c:2342-2350 — a PM_HASHED special takes the
+                // same `!v->scanflags && EMULATION(EMULATE_KSH)` arm as a
+                // plain association: `s = "[0]"; getindex(...)`, i.e. the
+                // value under key "0" through the special's getfn, empty
+                // when absent. PARTAB_ARRAY rows are PM_ARRAY and keep the
+                // first element.
+                if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+                    && partab_array_get(&name).is_none()
+                {
+                    return Value::str(partab_get(&name, "0").unwrap_or_default());
+                }
                 return Value::str(vals.into_iter().next().unwrap_or_default());
             }
             // Same array reference shape as the indexed-array arm below.
@@ -13563,6 +13574,11 @@ fn ksharrays_bare_words(name: &str) -> Vec<String> {
         return vec![vals.into_iter().next().unwrap_or_default()];
     }
     if let Some(keys) = crate::vm_helper::partab_scan_keys(name) {
+        // c:Src/params.c:2342-2350 — under KSH emulation a bare special
+        // hash is `${hash[0]}`, same arm as the plain assoc below.
+        if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+            return vec![crate::vm_helper::partab_get(name, "0").unwrap_or_default()];
+        }
         let v = keys
             .first()
             .and_then(|k| crate::vm_helper::partab_get(name, k))

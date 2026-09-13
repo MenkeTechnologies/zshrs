@@ -695,3 +695,22 @@ mod unbraced_modifier_is_literal_under_ksharrays {
         both_states("set -- /p/a.txt /q/b.txt", "$1:h");
     }
 }
+
+/// c:Src/params.c:2342-2350 — under ksh emulation a bare PM_HASHED SPECIAL
+/// (`options`, `commands`, `aliases`) takes the same getstrvalue arm as a
+/// plain association: the value under key "0", empty when absent. Outside
+/// ksh emulation KSHARRAYS keeps the first scanned value.
+#[test]
+fn ksh_emulation_bare_special_hash_reads_key_zero() {
+    if !zsh_available() {
+        return;
+    }
+    let s = r#"emulate ksh; echo "[$options][$commands][${#options}][${options:-D}][${options:+A}]"; alias 0=zero; echo "[$aliases][${aliases:+A}]""#;
+    let rs = zshrs_bin();
+    let rs = rs.to_str().expect("utf-8 path");
+    assert_eq!(
+        run(zsh_path(), &["-f", "-c"], s),
+        run(rs, &["--zsh", "-f", "-c"], s),
+        "divergence on:\n{s}"
+    );
+}

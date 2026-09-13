@@ -13061,10 +13061,35 @@ pub fn paramsubst(
                 // through the clamped fetch, which answers a bare hash with
                 // that one value.
                 && (arrays_contains(&var_name) || assoc_contains(&var_name));
+            // c:Src/params.c:2342-2350 — a bare PM_HASHED special under
+            // KSHARRAYS is scalarized by the same getstrvalue arm as a plain
+            // hash: key "0" under ksh emulation, the first scanned value
+            // otherwise. Its pairs are served by PARTAB (`magic_keys`), which
+            // the test above excludes.
+            let ksh_special_hash_len = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && !wantt
+                && subscript.is_none()
+                && !flagged_array_subscript
+                && !subexp_not_fetched_c2764
+                && crate::vm_helper::partab_array_get(&var_name).is_none()
+                && crate::vm_helper::partab_scan_keys(&var_name).is_some();
+            let (ksh_scalar_array, raw_value_for_len) = if ksh_special_hash_len {
+                let v = if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                    crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default()
+                } else {
+                    crate::vm_helper::partab_scan_keys(&var_name)
+                        .and_then(|k| k.first().cloned())
+                        .and_then(|k| crate::vm_helper::partab_get(&var_name, &k))
+                        .unwrap_or_default()
+                };
+                (true, v)
+            } else {
+                (ksh_scalar_array, raw_value_for_len)
+            };
             // The scalar length branch counts `raw_value_for_len`, which for a
             // bare array name is the space-joined array; under KSHARRAYS the
             // length source is element 1 alone, so override it.
-            let raw_value_for_len: String = if ksh_scalar_array {
+            let raw_value_for_len: String = if ksh_scalar_array && !ksh_special_hash_len {
                 arrays_get(&var_name)
                     .and_then(|a| a.into_iter().next())
                     .unwrap_or_default()
@@ -13397,9 +13422,16 @@ pub fn paramsubst(
         // KSHARRAYS scalarization wins even over `(@)` (`${(@k)as}` → the
         // first value too), so no splat exclusion. Scalarize here so it wins
         // over the whole-assoc key/value fold below.
+        // A PM_HASHED special (`options`, `commands`, …) takes the same
+        // getstrvalue arm as a plain assoc (c:Src/params.c:2342-2350); its
+        // pairs live in PARTAB, not the assoc store, so it is tested apart.
+        let ksh_bare_special_hash = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+            && subscript.is_none()
+            && crate::vm_helper::partab_array_get(&var_name).is_none()
+            && crate::vm_helper::partab_scan_keys(&var_name).is_some();
         let ksh_bare_assoc = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
             && subscript.is_none()
-            && assoc_contains(&var_name);
+            && (ksh_bare_special_hash || assoc_contains(&var_name));
         if ksh_bare_assoc {
             // c:Src/params.c:2351-2358 — a bare `$assoc` (no subscript) is
             // scalarized differently by MODE:
@@ -13412,7 +13444,18 @@ pub fn paramsubst(
             //     bucket value.
             // So `emulate -L ksh; typeset -A h=(a 1 b 2); print $h` is empty,
             // while `setopt ksharrays; …; print $h` is `1`.
-            value = if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+            value = if ksh_bare_special_hash {
+                // c:2342-2350 through the special's getfn; non-ksh
+                // KSHARRAYS falls to the first scanned value (c:2293-2296).
+                if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                    crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default()
+                } else {
+                    crate::vm_helper::partab_scan_keys(&var_name)
+                        .and_then(|k| k.first().cloned())
+                        .and_then(|k| crate::vm_helper::partab_get(&var_name, &k))
+                        .unwrap_or_default()
+                }
+            } else if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
                 assoc_get(&var_name)
                     .and_then(|m| m.get("0").cloned())
                     .unwrap_or_default()
@@ -15286,8 +15329,21 @@ pub fn paramsubst(
                 // a live `isarr = -1` from the name itself, so without this
                 // `set -- ''; ${@[1]:-N}` read the one-element array as
                 // non-null where zsh sees an empty element and takes `N`.
+                // c:Src/params.c:2342-2350 — under KSHARRAYS + ksh emulation a
+                // bare PM_HASHED special is the SCALAR `${hash[0]}`, so the
+                // c:3189 NULL test is the scalar one on that value
+                // (`emulate ksh; print ${options:-D}` → D).
+                let ksh_special_hash_val = (crate::ported::zsh_h::isset(
+                    crate::ported::zsh_h::KSHARRAYS,
+                ) && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+                    && subscript.is_none()
+                    && crate::vm_helper::partab_array_get(&var_name).is_none()
+                    && crate::vm_helper::partab_scan_keys(&var_name).is_some())
+                .then(|| crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default());
                 let vunset = !is_set
-                    || if isarr != 0 && !single_index_sub_c2175 {
+                    || if let Some(v) = ksh_special_hash_val.as_ref() {
+                        v.is_empty() // c:3189 `!*val`
+                    } else if isarr != 0 && !single_index_sub_c2175 {
                         array_is_empty // c:3189 `!*aval`
                     } else {
                         raw_value.is_empty() // c:3189 `!*val`
@@ -15723,7 +15779,19 @@ pub fn paramsubst(
                         .or_else(|| assoc_get(&var_name).map(|m| m.is_empty()))
                         .unwrap_or_else(|| raw_value.is_empty()),
                 };
-                let colon_null = if isarr != 0 && !single_index_sub_c2175 {
+                // c:Src/params.c:2342-2350 — see the `:-` arm: under ksh
+                // emulation a bare PM_HASHED special is the scalar
+                // `${hash[0]}` (`emulate ksh; print ${options:+A}` → empty).
+                let ksh_special_hash_val = (crate::ported::zsh_h::isset(
+                    crate::ported::zsh_h::KSHARRAYS,
+                ) && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH)
+                    && subscript.is_none()
+                    && crate::vm_helper::partab_array_get(&var_name).is_none()
+                    && crate::vm_helper::partab_scan_keys(&var_name).is_some())
+                .then(|| crate::vm_helper::partab_get(&var_name, "0").unwrap_or_default());
+                let colon_null = if let Some(v) = ksh_special_hash_val.as_ref() {
+                    v.is_empty() // c:3189 `!*val`
+                } else if isarr != 0 && !single_index_sub_c2175 {
                     array_is_empty // c:3189 `!*aval`
                 } else {
                     raw_value.is_empty() // c:3189 `!*val`
