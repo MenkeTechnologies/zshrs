@@ -501,3 +501,24 @@ mod float_arg_matheval {
         assert_parity(r#"printf "%d\n" \'B"#);
     }
 }
+
+/// c:Src/builtin.c:5431-5445 — a leading `'`/`"` makes the value the character
+/// code of the next character: `mb_metacharlenconv(metafy(curarg+1, …), &cc)`,
+/// and when that is not a valid character (WEOF), `cc = (unsigned char)
+/// curarg[1]`. The argument arrives metafied, so for a high byte its first
+/// char is the Meta byte; the raw byte is what zsh reports.
+mod leading_quote_high_byte {
+    use super::*;
+
+    #[test]
+    fn int_conversion_reports_the_raw_byte() {
+        assert_parity(r#"printf '%x\n' "'"$'\xf0'"#);
+        assert_parity(r#"printf '%x\n' $(printf '"\xf0')"#);
+        assert_parity(r#"printf '%d\n' "'é""#);
+    }
+
+    #[test]
+    fn float_conversion_reports_the_raw_byte() {
+        assert_parity(r#"printf '%.1f\n' "'"$'\xf0'"#);
+    }
+}

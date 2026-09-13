@@ -19908,7 +19908,19 @@ fn printf_format(
                             // `printf '%.1E' \'B` → 66 → 6.6E+01. The int arm
                             // (parse_int_arg) already did this; the float arm
                             // skipped it, yielding 0.
-                            rest.chars().next().map(|c| c as i64 as f64).unwrap_or(0.0)
+                            // c:5433-5442 — decode one character of the unmetafied
+                            // arg; on WEOF use the raw byte (as parse_int_arg).
+                            {
+                                let raw = crate::ported::utils::unmetafy_str(rest);
+                                if raw.is_empty() {
+                                    0.0
+                                } else {
+                                    match crate::ported::utils::mb_metacharlenconv(&raw).1 {
+                                        Some(c) => c as i64 as f64,
+                                        None => raw[0] as f64,
+                                    }
+                                }
+                            }
                         } else {
                             a.parse::<f64>().unwrap_or_else(|_| match matheval(&a) {
                                 Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
@@ -20182,7 +20194,18 @@ fn parse_int_arg(s: &str) -> i64 {
     // Otherwise `printf "%d" "' "` returns 0 instead of 32 because
     // the trailing space gets stripped before the leading-quote test.
     if let Some(rest) = s.strip_prefix('\'').or_else(|| s.strip_prefix('"')) {
-        return rest.chars().next().map(|c| c as i64).unwrap_or(0);
+        // c:5433-5442 — `mb_metacharlenconv(metafy(curarg+1, …), &cc)`; on
+        // WEOF, `cc = (unsigned char) curarg[1]`. The arg is metafied, so the
+        // first char of `rest` is the Meta byte for any high byte: `printf %x
+        // "'"$'\xf0'` printed 83 where zsh prints f0.
+        let raw = crate::ported::utils::unmetafy_str(rest);
+        if raw.is_empty() {
+            return 0; // c:5442 `(curlen > 1) ? … : 0`
+        }
+        return match crate::ported::utils::mb_metacharlenconv(&raw).1 {
+            Some(c) => c as i64,
+            None => raw[0] as i64, // c:5441-5442
+        };
     }
     // !!! POSIX-FAITHFUL GATE (no C counterpart) !!!
     // zsh's printf `%d` math-EVALUATES its operand, so `printf %d A` treats
