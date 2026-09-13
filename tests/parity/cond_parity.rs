@@ -1103,3 +1103,17 @@ mod cond_operand_count {
         assert_parity("[[ -5 -lt -3 ]]; print rc=$?");
     }
 }
+
+/// c:Src/parse.c:2580-2581 — `<` / `>` with no right operand is a bare
+/// `YYERROR(ecused)`: no message of its own, so par_event's yyerror reports
+/// "parse error near `]]'". zshrs invented "parse error: condition expected".
+mod lt_gt_missing_operand {
+    use super::*;
+
+    #[test]
+    fn missing_rhs_is_a_plain_parse_error() {
+        assert_parity("eval '[[ a < ]]' 2>&1; print rc=$?");
+        assert_parity("eval '[[ a > ]]' 2>&1; print rc=$?");
+        assert_parity("[[ a < b ]] && print lt");
+    }
+}

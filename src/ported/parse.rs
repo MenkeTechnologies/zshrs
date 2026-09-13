@@ -10483,8 +10483,10 @@ fn parse_cond_primary() -> Option<ZshCond> {
         set_incond(incond() - 1);
         skip_cond_separators();
         if tok() != STRING_LEX {
-            // Bug #482 — the missing-RHS diagnostic (see par_cond_double).
-            cond_error!("parse error: condition expected: {}", s1);
+            // c:2580-2581 `if (tok != STRING) YYERROR(ecused);` — no message
+            // of its own; par_event's yyerror reports "parse error near `]]'".
+            set_tok(LEXERR);
+            return None;
         }
         let s3 = tokstr().unwrap_or_default();
         zshlex(); // c:2584 `do condlex(); while (COND_SEP());`
