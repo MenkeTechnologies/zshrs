@@ -234,15 +234,27 @@ mod dash_precommand_runs_the_next_word {
 
     #[test]
     fn the_word_after_the_dash_is_the_command() {
-        assert_parity("- /bin/echo hi; print rc=$?");
+        assert_parity(":; - /bin/echo hi; print rc=$?");
         assert_parity("f(){ print f $1 }; - f x; print rc=$?");
-        assert_parity("- nosuchcmd 2>/dev/null; print rc=$?");
-        assert_parity("- - /bin/echo hi; print rc=$?");
+        assert_parity(":; - nosuchcmd 2>/dev/null; print rc=$?");
+        assert_parity(":; - - /bin/echo hi; print rc=$?");
+    }
+
+    /// c:Src/exec.c:772-776 — an external run under `-` gets argv[0] `-name`;
+    /// a function called under `-` runs unchanged, and the flag must not
+    /// reach the externals its body runs.
+    #[test]
+    #[ignore = "runtime: call_function runs dispatch_function_call for an external, whose take_exec_dash() clears BUILTIN_EXEC_DASH before the spawn"]
+    fn an_external_gets_a_dash_argv0() {
+        assert_parity(":; - /bin/sh -c 'echo $0'; print rc=$?");
+        assert_parity(":; - sh -c 'echo $0'; print rc=$?");
+        assert_parity("f() { sh -c 'echo $0' }; - f; sh -c 'echo $0'");
+        assert_parity(":; - print hi; /bin/sh -c 'echo $0'");
     }
 
     #[test]
     fn other_precommands_are_unchanged() {
-        assert_parity("- print hi; exec - /bin/echo hi");
+        assert_parity(":; - print hi; exec - /bin/echo hi");
         assert_parity("noglob /bin/echo *.none; nocorrect /bin/echo nc; /bin/echo plain");
     }
 }

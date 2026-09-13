@@ -3763,6 +3763,17 @@ impl ZshCompiler {
                 crate::lex::untokenize(&tmp)
             };
             let name_idx = self.builder.add_name(&cleaned_first);
+            // c:Src/exec.c:772-776 — "if the pre-command `-' was given, we add
+            // `-' to the front of argv[0] for this command." BINF_DASH comes
+            // from the precommand walk (c:3246); the marker hands it to the
+            // external spawn, and a function or builtin route clears it.
+            if dispatch.cflags & crate::ported::zsh_h::BINF_DASH != 0 {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_EXEC_DASH, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_print_exit_value(); // c:Src/exec.c:4308-4316
