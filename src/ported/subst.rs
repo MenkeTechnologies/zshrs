@@ -27930,8 +27930,22 @@ fn arrays_contains(name: &str) -> bool {
         // slot happens to be populated; c:4010-4013 `arrgetfn` serves a NULL
         // slot as the empty array.
         tab.get(name).map_or(false, |pm| {
-            pm.u_arr.is_some()
-                || crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_ARRAY as u32
+            // c:Src/subst.c:2805 — `(v->pm && (v->pm->node.flags & PM_UNSET))`
+            // sets vunset, and c:2813 `(flags & PM_DECLARED) || !(flags &
+            // PM_UNSET)` gates the `(t)` tag. `unset h` on a `local -a h` keeps
+            // the node (the local scope still owns it) but marks it PM_UNSET
+            // without PM_DECLARED, so both read it as unset: `$+h` is 0 and
+            // `${(t)h}` is empty. Answering on the TYPE alone reported it as a
+            // live array-local. This is the c:2813 test, the one the `(t)` arm's
+            // `node_is_unset` uses; a PM_DECLARED|PM_UNSET node
+            // (`setopt typesettounset; local -a h`) still counts here although
+            // c:2805 would call it unset.
+            let f = pm.node.flags as u32;
+            let unset_undeclared = (f & crate::ported::zsh_h::PM_DECLARED) == 0
+                && (f & crate::ported::zsh_h::PM_UNSET) != 0;
+            !unset_undeclared
+                && (pm.u_arr.is_some()
+                    || crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == PM_ARRAY as u32)
         })
     }) {
         return true;

@@ -344,3 +344,41 @@ echo "[$FOO_A][$FOO_B][$BAR]"
         );
     }
 }
+
+/// c:Src/subst.c:2805 sets vunset for a PM_UNSET node, and c:2813 emits a
+/// `(t)` tag only when `(flags & PM_DECLARED) || !(flags & PM_UNSET)`.
+/// `unset h` on a function's `local -a h` keeps the node, because the local
+/// scope still owns it, but marks it PM_UNSET without PM_DECLARED, so `$+h`
+/// is 0, `${(t)h}` is empty and `${h+word}` takes the unset branch. zshrs's array-existence probe
+/// answered on the node's TYPE alone and reported a live `array-local`
+/// (`1 array-local`), while an unset `local -A` already read as unset.
+mod unset_array_local_reads_unset {
+    use super::*;
+
+    /// The reported repro and the default-operator family.
+    #[test]
+    fn set_probes_see_the_unset_local() {
+        assert_parity(r#"f(){ local -a h=(a b); unset h; print -r -- $+h "[${(t)h}]" }; f"#);
+        assert_parity(
+            r#"f(){ local -a h=(a b); unset h; print -r -- "[${h+set}]" "[${h-unset}]" "[${h:-dflt}]" "[${h:+alt}]" }; f"#,
+        );
+        assert_parity(r#"f(){ local -a path_copy=(a); unset path_copy; print -r -- $+path_copy }; f; print -r -- $+path"#);
+    }
+
+    /// Reads of the unset local stay empty, and assigning revives it.
+    #[test]
+    fn reads_and_reassignment() {
+        assert_parity(r#"f(){ local -a h=(a b); unset h; print -r -- "[${#h}]" "[${h[1]}]" "[${(@)h}]" }; f"#);
+        assert_parity(r#"f(){ local -a h=(a b); unset h; h=(z); print -r -- $+h "[${(t)h}]" "[$h]" }; f"#);
+    }
+
+    /// Shapes that already agreed: an unset assoc local, an unset global
+    /// array, a declared local that was never given a value, and `-g`.
+    #[test]
+    fn controls_that_already_agreed() {
+        assert_parity(r#"f(){ local -A h=(a b); unset h; print -r -- $+h "[${(t)h}]" "[${h+set}]" }; f"#);
+        assert_parity(r#"h=(a b); unset h; print -r -- $+h "[${(t)h}]" "[${h+set}]""#);
+        assert_parity(r#"f(){ local -a h; print -r -- $+h "[${(t)h}]" "[${h+set}]" }; f"#);
+        assert_parity(r#"f(){ typeset -ga G=(a); unset G; print -r -- $+G "[${(t)G}]" }; f"#);
+    }
+}
