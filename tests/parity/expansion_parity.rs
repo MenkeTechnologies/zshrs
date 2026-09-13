@@ -1177,6 +1177,16 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"a='$('; b=B; v="$b${(e)a}z"; print -r -- "[$v]""#);
     }
 
+    /// c:Src/subst.c:4383-4394 — `(@e)` joins the first element to the text
+    /// before the `$` as it inserts it, so an element that fails to re-lex
+    /// after it leaves that joined word behind.
+    #[test]
+    fn a_splice_keeps_the_element_before_the_failure() {
+        assert_parity(r#"arr=(p '$(' q); print -rl -- "${(@e)arr}"; print rc=$?"#);
+        assert_parity(r#"arr=(p '$(' q); print -rl -- A${(@e)arr}B later; print rc=$?"#);
+        assert_parity(r#"arr=('$(' q); print -rl -- A"${(@e)arr}"B; print rc=$?"#);
+    }
+
     /// multsub adds no remnulargs of its own (c:Src/subst.c:625-657), so the
     /// quote tokens before the cut survive into the word.
     #[test]
