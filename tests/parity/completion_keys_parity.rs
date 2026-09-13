@@ -453,6 +453,105 @@ fn compadd_d_lists_the_parallel_display_strings() {
     );
 }
 
+/// `compinit` through an `$fpath` DIGEST: compinit runs `autoload -rUz`
+/// for `#autoload` files and `compdef -na` completers (Completion/compinit
+/// sh:333, sh:540), and `-r` makes check_autoload look each name up with
+/// getfpfunc (Src/builtin.c:3195-3226) → try_dump_file on `<dir>.zwc`
+/// (Src/parse.c:3746-3789) → dump_find_func's in-place name scan
+/// (c:3167-3176). That scan was rewritten for speed, so this pins what it
+/// must still produce: the same `$_comps` as zsh and the same autoload stub.
+///
+/// zshrs additionally registers the completers it bundles (the repo's
+/// `completions/` directory), so extras are allowed only when their value is
+/// one of those files.
+#[test]
+fn compinit_through_a_zwc_digest_registers_the_same_comps() {
+    use std::process::Command;
+    if !crate::zpty_probe::zsh_available() {
+        eprintln!("skip: zsh not found");
+        return;
+    }
+    let zsh = crate::zpty_probe::zsh_path();
+    // zsh's OWN default fpath (FPATH removed from its environment), and the
+    // first directory in it that holds `compinit`. A glob qualifier inside a
+    // parameter expansion does not glob, so this is a plain loop.
+    let stock = Command::new(zsh)
+        .args([
+            "-fc",
+            "for d in $fpath; do [[ -r $d/compinit ]] && { print -r -- $d; break }; done",
+        ])
+        .env_remove("FPATH")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if stock.is_empty() {
+        eprintln!("skip: no stock compinit on zsh's fpath");
+        return;
+    }
+    let tmp = tempfile::TempDir::new().expect("tmp");
+    let fp = tmp.path().join("fp");
+    std::fs::create_dir_all(&fp).expect("mkdir fp");
+    std::fs::write(fp.join("_zzfoo"), "#compdef zzfoo zzfoo2\n_message foo\n").expect("write");
+    std::fs::write(fp.join("_zzbar"), "#compdef zzbar\n_message bar\n").expect("write");
+    std::fs::write(fp.join("_zzauto"), "#autoload\nprint auto\n").expect("write");
+    // The digest sits next to the directory, as `<dir>.zwc`, and is written
+    // after the sources so try_dump_file's mtime test selects it.
+    let built = Command::new(zsh)
+        .args(["-fc", "zcompile fp.zwc fp/_zzfoo fp/_zzbar fp/_zzauto"])
+        .current_dir(tmp.path())
+        .status()
+        .expect("zcompile");
+    assert!(built.success(), "zsh could not build the fixture digest");
+    let fpath = format!("{}:{}", fp.display(), stock);
+    let script = "autoload -Uz compinit; compinit -u -D; \
+                  print -rl -- ${(kv)_comps}; print -r -- ===DEF; \
+                  print -r -- \"$functions[_zzauto]\"";
+    let run = |shell: &Path, zshrs: bool| -> (std::collections::BTreeSet<(String, String)>, String) {
+        let mut cmd = Command::new(shell);
+        if zshrs {
+            cmd.arg("--zsh");
+        }
+        let out = cmd
+            .args(["-f", "-c", script])
+            .current_dir(tmp.path())
+            .env("FPATH", &fpath)
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("run shell");
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let (comps, def) = text.split_once("===DEF\n").unwrap_or((&text, ""));
+        let lines: Vec<&str> = comps.lines().collect();
+        let pairs = lines
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| (c[0].to_string(), c[1].to_string()))
+            .collect();
+        (pairs, def.to_string())
+    };
+    let (z_pairs, z_def) = run(Path::new(zsh), false);
+    let (r_pairs, r_def) = run(&crate::zpty_probe::zshrs_bin(), true);
+
+    // Fixture guard: the digest's completers really were registered by zsh.
+    for (k, v) in [("zzfoo", "_zzfoo"), ("zzfoo2", "_zzfoo"), ("zzbar", "_zzbar")] {
+        assert!(
+            z_pairs.contains(&(k.to_string(), v.to_string())),
+            "reference zsh did not register {k} → {v}; the fixture is broken"
+        );
+    }
+    let missing: Vec<_> = z_pairs.difference(&r_pairs).collect();
+    assert!(missing.is_empty(), "zshrs is missing zsh's _comps pairs: {missing:?}");
+    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("completions");
+    let unexplained: Vec<_> = r_pairs
+        .difference(&z_pairs)
+        .filter(|(_, v)| !bundled.join(v).exists())
+        .collect();
+    assert!(
+        unexplained.is_empty(),
+        "zshrs registered _comps pairs zsh did not, and they are not bundled completers: {unexplained:?}"
+    );
+    assert_eq!(z_def, r_def, "the `autoload -rUz` stub for _zzauto differs");
+}
+
 /// Guard for the fixture itself: if these three files ever stop
 /// existing the completion cases above would all report "no" on both
 /// sides and pass as false agreement.

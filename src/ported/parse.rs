@@ -4377,14 +4377,30 @@ pub fn dump_find_func(h: &[u32], name: &str) -> Option<fdhead> {
     let mut cur = firstfdhead_offset();
     while cur < end {
         if let Some(fh) = read_fdhead(h, cur) {
-            let full = fdname(h, cur);
-            let tail = fdhtail(&fh) as usize;
-            let basename = if tail <= full.len() {
-                &full[tail..]
-            } else {
-                ""
+            // c:3172 — `if (!strcmp(name, fdname(n) + fdhtail(n)))`. `fdname`
+            // is a pointer INTO the header words (c:3152), so C compares in
+            // place. Copying every entry's name out first (the `fdname()`
+            // helper) allocated per entry per lookup; compinit's
+            // `autoload -rUz` walks every entry of every `$fpath` digest, so
+            // that copy was the dominant cost of `compinit` on a large fpath.
+            // The name bytes are read from the same little-endian words
+            // `fdname()` reads, and the scan stops at the NUL like strcmp.
+            let header_bytes = h.len() * 4;
+            let name_start = (cur + FDHEAD_WORDS) * 4 + fdhtail(&fh) as usize;
+            let byte_at = |pos: usize| -> u8 {
+                if pos < header_bytes {
+                    h[pos / 4].to_le_bytes()[pos % 4]
+                } else {
+                    0
+                }
             };
-            if basename == name {
+            let want = name.as_bytes();
+            let same = want
+                .iter()
+                .enumerate()
+                .all(|(i, &b)| byte_at(name_start + i) == b)
+                && byte_at(name_start + want.len()) == 0;
+            if same {
                 return Some(fh); // c:3173 `return n;`
             }
             cur = nextfdhead_offset(h, cur);
