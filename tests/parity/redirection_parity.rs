@@ -828,3 +828,16 @@ mod mergein_non_number_builtin {
     }
 }
 
+/// c:Src/exec.c:3719 forks an external command before the redirection loop
+/// at c:3785, so a `<&''` error is raised in the child: the shell sees
+/// status 1 and runs the next command.
+mod mergein_non_number_external {
+    use super::*;
+
+    #[test]
+    fn external_command_continues_with_status_one() {
+        let d = tdir();
+        assert_parity_in(d.path(), "/bin/cat <&''; print after $?");
+        assert_parity_in(d.path(), "{ /bin/cat <&''; print in $?; }; print out $?");
+    }
+}

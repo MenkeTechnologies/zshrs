@@ -17826,6 +17826,25 @@ impl fusevm::ShellHost for ZshrsHost {
             f
         });
         if redir_failed {
+            // c:Src/exec.c:3719 forks an external command (execcmd_fork)
+            // BEFORE the redirection loop at c:3785, so a redirection that
+            // `zerr`s (`<&""` → "file number expected", c:Src/glob.c:2192)
+            // raises errflag in the CHILD, which `_exit(1)`s; the parent only
+            // sees status 1 and runs the next command:
+            //   /bin/cat <&""; print after $?     zsh: after 1
+            // zshrs applies redirections in the shell before choosing what
+            // runs, so the errflag landed in the shell and ended the script.
+            // For a name that resolves to neither a function nor a builtin,
+            // take the error back out of the shell's errflag.
+            let is_external = !with_executor(|exec| exec.function_exists(name))
+                && !crate::ported::builtin::createbuiltintable().contains_key(name)
+                && !crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name);
+            if is_external {
+                crate::ported::utils::errflag.fetch_and(
+                    !crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
             with_executor(|exec| exec.set_last_status(1));
             return Some(1);
         }
