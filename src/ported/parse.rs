@@ -4378,32 +4378,24 @@ pub fn dump_find_func(h: &[u32], name: &str) -> Option<fdhead> {
     // c:3167
     let header_words = fdheaderlen(h) as usize;
     let end = header_words; // walking u32 offsets, end-exclusive
+    // c:3152 — `fdname(n)` is a `char *` INTO the header words, so C compares
+    // in place. The same view here: the words were read in host byte order
+    // (load_dump_header, c:3268), exactly the bytes C's pointer walks.
+    // SAFETY: a byte view of the u32 header words; u32 has no padding and
+    // every bit pattern is a valid u8.
+    let header_bytes = unsafe { std::slice::from_raw_parts(h.as_ptr() as *const u8, h.len() * 4) };
+    let want = name.as_bytes();
     let mut cur = firstfdhead_offset();
     while cur < end {
         if let Some(fh) = read_fdhead(h, cur) {
-            // c:3172 — `if (!strcmp(name, fdname(n) + fdhtail(n)))`. `fdname`
-            // is a pointer INTO the header words (c:3152), so C compares in
-            // place. Copying every entry's name out first (the `fdname()`
-            // helper) allocated per entry per lookup; compinit's
+            // c:3172 — `if (!strcmp(name, fdname(n) + fdhtail(n)))`: compinit's
             // `autoload -rUz` walks every entry of every `$fpath` digest, so
-            // that copy was the dominant cost of `compinit` on a large fpath.
-            // The name bytes are read from the same little-endian words
-            // `fdname()` reads, and the scan stops at the NUL like strcmp.
-            let header_bytes = h.len() * 4;
+            // this is one slice prefix test plus the NUL strcmp stops at, not a
+            // per-byte lookup through each u32 word. A name running to the end
+            // of the header counts as terminated, as the per-byte reader did.
             let name_start = (cur + FDHEAD_WORDS) * 4 + fdhtail(&fh) as usize;
-            let byte_at = |pos: usize| -> u8 {
-                if pos < header_bytes {
-                    h[pos / 4].to_le_bytes()[pos % 4]
-                } else {
-                    0
-                }
-            };
-            let want = name.as_bytes();
-            let same = want
-                .iter()
-                .enumerate()
-                .all(|(i, &b)| byte_at(name_start + i) == b)
-                && byte_at(name_start + want.len()) == 0;
+            let entry = header_bytes.get(name_start..).unwrap_or(&[]);
+            let same = entry.starts_with(want) && entry.get(want.len()).map_or(true, |&b| b == 0);
             if same {
                 return Some(fh); // c:3173 `return n;`
             }
