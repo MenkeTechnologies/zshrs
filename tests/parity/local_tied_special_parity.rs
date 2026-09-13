@@ -321,3 +321,35 @@ mod still_rejected {
         assert_parity_err(r#"typeset -a a=(1 2); typeset a=x; print -r -- reached"#);
     }
 }
+
+/// Re-tying an existing pair (`typeset -T SCALAR array [sep]` when the two
+/// are already tied) updates the pair in place, as typeset_single does for
+/// both halves (c:Src/builtin.c:2953-2970). B02typeset.ztst.
+mod retie_existing_pair {
+    use super::*;
+
+    /// A new join character re-splits the scalar through it (c:2305-2317).
+    #[test]
+    fn new_join_char_resplits_the_scalar() {
+        assert_parity("typeset -T VAR=a+b var; typeset -T VAR var +; print $#var $var");
+    }
+
+    /// `-U` dedupes the array peer, and `-u` still folds on read.
+    #[test]
+    fn unique_and_upper_on_retie() {
+        assert_parity("typeset -T VAR var=(a b a b); typeset -UuT VAR var +; print $VAR");
+    }
+
+    /// `-U` on a special tied pair dedupes its array (c:2254-2273).
+    #[test]
+    fn unique_on_special_pair() {
+        assert_parity("typeset MANPATH >/dev/null; manpath=(/ /); typeset -UT MANPATH manpath; print $manpath");
+    }
+
+    /// The same join character is still a plain attribute update.
+    #[test]
+    fn same_join_char_keeps_elements() {
+        assert_parity("typeset -T A=x:y a; A=p:q:p; typeset -UT A a; print $A; print $#a");
+    }
+}
+

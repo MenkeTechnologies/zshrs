@@ -4870,6 +4870,13 @@ pub fn bin_typeset(
         }
 
         if already_tied {
+            // c:2308 — `tdp->joinchar != joinchar` compares against the
+            // separator the pair was tied with; capture it before the
+            // attribute update below overwrites it.
+            let old_joinchar: Option<i32> = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(sname).and_then(|p| p.u_tied.as_deref().map(|td| td.joinchar)));
             // c:2957-2973 — C does NOT rebuild the pair here. It runs
             // typeset_single on each half "if only to update the attributes of
             // both, and of course to set the new value if one is provided",
@@ -4904,6 +4911,36 @@ pub fn bin_typeset(
                     let aoff = off as u32 & !PM_ARRAY; // c:2971
                     p.node.flags = ((p.node.flags as u32 | aon) & !aoff) as i32;
                 }
+            }
+            // c:2254-2273 (typeset_single on the scalar half) — `-U` dedupes the
+            // ARRAY peer in place:
+            //     if ((on & PM_UNIQUE) && !(pm->node.flags & PM_READONLY & ~off)) {
+            //         ... else if (PM_TYPE(pm->node.flags) == PM_SCALAR && pm->ename &&
+            //                      (apm = paramtab->getnode(paramtab, pm->ename))) {
+            //             x = (*apm->gsu.a->getfn)(apm);
+            //             uniqarray(x);
+            // Stamping the flag alone left `typeset -UT MANPATH manpath` at `/ /`.
+            if (on as u32 & PM_UNIQUE) != 0 && (pm_flags.unwrap_or(0) & PM_READONLY & !(off as u32)) == 0 {
+                if let Some(x) = crate::ported::exec::array(aname) {
+                    let x = crate::ported::params::uniqarray(x); // c:2270
+                    crate::ported::params::assignaparam(aname, x, 0);
+                }
+            }
+            // c:2305-2317 — re-tying with a different join character and no
+            // scalar value re-splits the scalar through the new separator:
+            //     if (tdp->joinchar != joinchar && !asg->value.scalar) {
+            //         tdp->joinchar = joinchar;
+            //         if (!(pm = assignsparam(pname, ztrdup(getsparam(pname)), 0)))
+            //             return NULL;
+            //     }
+            // getsparam there is tiedarrgetfn, which joins the array with the
+            // NEW character (c:Src/params.c:4303-4304), and tiedarrsetfn splits
+            // on it again. Special pairs never get here with a new character
+            // (c:2909-2913), and C skips them (`altpm && !(pm->node.flags &
+            // PM_SPECIAL)`); they carry no tieddata, so `old_joinchar` is None.
+            if old_joinchar.is_some_and(|o| o != joinchar) && sval_opt.is_none() {
+                let joined = crate::ported::exec::array(aname).unwrap_or_default().join(&joinsep);
+                crate::ported::params::assignsparam(sname, &joined, 0); // c:2314
             }
             // Values, if the command line carried any (c:2963 "and of course to
             // set the new value if one is provided for either of them").
