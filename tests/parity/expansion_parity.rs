@@ -1195,3 +1195,27 @@ mod unbraced_modifier_prefix_flags {
         assert_parity(r#"x=/a/b.c; echo $x:h2 $x:e $x:gs/a/z/ $x:fs/a//"#);
     }
 }
+
+/// `(e)` over an array: each element is re-parsed and inserted in order, and
+/// the expansion of the parsed text only happens on the later re-scan
+/// (c:Src/subst.c:4383-4394, 4469-4470). A NULL on element N keeps elements
+/// 1..N-1, parsed but unexpanded.
+mod eval_flag_null_in_array_element {
+    use super::*;
+
+    #[test]
+    fn elements_before_the_null_survive() {
+        assert_parity(r#"arr=(one '$(' two); print -rl -- ${(e)arr}"#);
+        assert_parity(r#"arr=(x '`' y z); print -rl -- ${(e)arr}"#);
+    }
+
+    #[test]
+    fn surviving_elements_are_not_expanded() {
+        assert_parity(r#"arr=('$b' '$(' two); b=B; print -rl -- ${(e)arr}"#);
+    }
+
+    #[test]
+    fn arrays_without_a_null_still_expand() {
+        assert_parity(r#"b=B; arr=('$b' x); print -rl -- ${(e)arr}"#);
+    }
+}

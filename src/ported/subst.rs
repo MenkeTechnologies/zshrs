@@ -22768,9 +22768,27 @@ pub fn paramsubst(
                 }
                 vec![esub(s)]
             };
+            // c:4383-4394 — each element is only RE-PARSED here
+            // (`subst_parse_str`) and inserted into the list; the expansion of
+            // the parsed text happens afterwards, when stringsubst re-scans the
+            // node (c:4469-4470). A NULL on element N (`return NULL`, c:4394)
+            // therefore leaves elements 1..N-1 in the list parsed but NOT
+            // expanded: arr=('$b' '$(' two) gives the literal `$b`, and
+            // arr=(one '$(' two) gives `one`. esub_multi sets PARAMSUBST_NULL
+            // last, so it is still live when read here.
+            let eval_elements = |elems: &[String]| -> Vec<String> {
+                let mut out: Vec<String> = Vec::new();
+                for (i, s) in elems.iter().enumerate() {
+                    let v = esub_multi(s);
+                    if PARAMSUBST_NULL.with(|c| c.get()) {
+                        return elems[..i].to_vec(); // c:4394 return NULL
+                    }
+                    out.extend(v);
+                }
+                out
+            };
             if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> =
-                    parts.iter().flat_map(|s| esub_multi(s)).collect();
+                let new_parts: Vec<String> = eval_elements(&parts);
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
             } else if isarr != 0 {
@@ -22786,8 +22804,7 @@ pub fn paramsubst(
                 // into unbounded recursion → stack overflow at interactive
                 // prompt time. zsh evals only the picked element and stops.
                 if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> =
-                        arr.iter().flat_map(|s| esub_multi(s)).collect();
+                    let new_arr: Vec<String> = eval_elements(&arr);
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
                 } else {

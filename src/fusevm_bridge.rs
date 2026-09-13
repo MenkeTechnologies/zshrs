@@ -14252,9 +14252,21 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.set(saved_defer));
     IN_BRIDGE_PARAMSUBST.with(|c| c.set(reentered));
     if null_return {
-        // c:Src/subst.c:1878/326-327 — the word ends at this `$`; nothing of
-        // this expansion is kept. See BUILTIN_PREFORK_CUT_CHECK.
-        return Value::str(String::new());
+        // c:Src/subst.c:1878/326-327 — the word ends at this `$`. For a scalar
+        // nothing of this expansion is kept. For an array, c:4383-4394 had
+        // already inserted the elements evaluated before the failing one, so
+        // those survive as words (`arr=(one '$(' two); ${(e)arr}` is `one`).
+        // See BUILTIN_PREFORK_CUT_CHECK.
+        let kept: Vec<String> = nodes
+            .into_iter()
+            .filter(|n| !n.is_empty())
+            .map(|n| crate::ported::lex::untokenize(&n).to_string())
+            .collect();
+        return if kept.is_empty() {
+            Value::str(String::new())
+        } else {
+            nodes_to_value(kept)
+        };
     }
     // c:Src/exec.c:3523-3525 — an expansion error aborts the command with
     // `if (errflag) { if (!lastval) lastval = 1; …`: a non-zero status from
