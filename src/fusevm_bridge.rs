@@ -4571,6 +4571,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let sub_idx = sub_idx_val.to_int() as usize;
         let name = name_val.to_str();
 
+        // c:Src/loop.c:250-255 — `execsubst(args); if (errflag) { state->pc =
+        // end; …; return 1; }`: a word list that failed to expand (a NOMATCH
+        // glob) ends the `select` with status 1, ahead of the empty-list 0.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            return Value::Status(1);
+        }
+
         // c:Src/loop.c:248-252 — `if (!args || empty(args)) {
         // state->pc = end; ... return 0; }`. An empty option list
         // skips the body entirely; without this gate the prompt loop

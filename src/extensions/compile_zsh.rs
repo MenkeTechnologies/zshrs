@@ -9863,6 +9863,15 @@ impl ZshCompiler {
         // ARRAY_FLATTEN pushes Array then Int(len) (its return). Top is len.
         self.builder.emit(Op::SetSlot(len_slot), 0);
         self.builder.emit(Op::SetSlot(arr_slot), 0);
+        // c:Src/loop.c:95-100 — `execsubst(args); if (errflag) { state->pc =
+        // end; …; return 1; }`: a word list that failed to expand (a
+        // NOMATCH glob) ends the `for` with status 1 before `loops++`, where
+        // the empty-list reset below would otherwise leave 0.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_ERRFLAG_BREAK, 0),
+            0,
+        );
+        let list_error_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
 
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
@@ -9995,6 +10004,8 @@ impl ZshCompiler {
         }
 
         self.close_loop_scope(loop_exit); // c:Src/loop.c:188 — `loops--;`
+        let after_loop = self.builder.current_pos();
+        self.builder.patch_jump(list_error_jump, after_loop);
     }
 
     fn compile_for_arith(

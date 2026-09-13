@@ -458,3 +458,31 @@ mod errflag_abort_status {
         assert_parity("for i in 1 2; do exit 9; done; print never");
     }
 }
+
+/// c:Src/loop.c:95-100 (execfor) and c:250-255 (execselect) — `execsubst(args);
+/// if (errflag) { state->pc = end; …; return 1; }`. A word list that fails to
+/// expand ends the loop with status 1 before the empty-list `lastval = 0`.
+/// zshrs reached that reset (the failed glob left an empty list) and exited 0.
+mod word_list_expansion_error {
+    use super::*;
+
+    #[test]
+    fn a_nomatch_in_the_word_list_exits_one() {
+        assert_parity("for w in zshrs_nomatch_q*; do :; done; print never");
+        assert_parity("print hi; for w in zshrs_nomatch_q*; do :; done");
+        assert_parity("for w in a zshrs_nomatch_q*; do print $w; done");
+        assert_parity("for w in zshrs_nomatch_q*; print $w");
+        assert_parity("foreach w (zshrs_nomatch_q*) print $w; end");
+        assert_parity("select w in zshrs_nomatch_q*; do :; done");
+        assert_parity("f(){ for w in zshrs_nomatch_q*; do :; done; }; f; print never");
+    }
+
+    /// An empty list still resets the status to 0.
+    #[test]
+    fn an_empty_list_still_exits_zero() {
+        assert_parity("false; for w in; do :; done; print rc=$?");
+        assert_parity("false; for w in $(true); do :; done; print rc=$?");
+        assert_parity("false; select w in; do :; done; print rc=$?");
+        assert_parity("for w in a b; do print $w; done; print rc=$?");
+    }
+}
