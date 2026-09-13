@@ -4334,6 +4334,61 @@ mod logical_compound_assign_compiled {
     fn xor_assign_does_not_store() {
         assert_parity("x=5; (( x ^^= 1 )); print $x; (( x ^^= 1, x += 1 )); print $x");
     }
+
+    /// The `for ((…))` header compiles its sections through its own gate,
+    /// which skipped `arith_uncompilable_reason`. zsh: `j=1`.
+    #[test]
+    fn for_header_xor_assign_does_not_store() {
+        assert_parity("for ((j=1; j^^=1; )); do print no; done; print j=$j");
+    }
+
+    /// zsh: `0 1` / `1 1` / `0`.
+    #[test]
+    fn for_header_and_or_assign_short_circuit() {
+        assert_parity("x=0 y=1; for ((; x&&=y++; )); do :; done; print $x $y");
+        assert_parity("x=3 y=1; for ((i=x||=y++; i<0; )); do :; done; print $x $y");
+        assert_parity("x=0.5; for ((x&&=2; 0; )); do :; done; print $x");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Every other form `arith_uncompilable_reason` sends to the runtime
+// evaluator, placed in a `for ((…))` header. Each was silently wrong there:
+// a subscript read 0, `1e1` stopped at the `e`, `2#11` lost its base, `##b`
+// and a math function call never iterated.
+// ─────────────────────────────────────────────────────────────────────
+mod for_header_uncompilable_arith {
+    use super::*;
+
+    /// zsh: `i=1 i=2`.
+    #[test]
+    fn subscript_in_condition() {
+        assert_parity("a=(1 2 3); for ((i=1; a[i]<3; i++)); do print i=$i; done");
+    }
+
+    /// zsh: `i=0 i=4 i=8`.
+    #[test]
+    fn float_exponent_in_condition() {
+        assert_parity("for ((i=0; i<1e1; i+=4)); do print i=$i; done");
+    }
+
+    /// zsh: `i=2#11 i=2#10` — the base carries into the assigned integer.
+    #[test]
+    fn base_literal_in_init() {
+        assert_parity("for ((i=2#11; i>1; i--)); do print i=$i; done");
+    }
+
+    /// zsh: `c=0 c=40 c=80`.
+    #[test]
+    fn char_constant_in_condition() {
+        assert_parity("for ((c=0; c<##b; c+=40)); do print c=$c; done");
+    }
+
+    /// zsh: `i=0 i=1`.
+    #[test]
+    fn math_function_in_condition() {
+        assert_parity("zmodload zsh/mathfunc; for ((i=0; i<abs(-2); i++)); do print i=$i; done");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────

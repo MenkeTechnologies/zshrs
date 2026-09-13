@@ -9904,7 +9904,18 @@ impl ZshCompiler {
         let untoked_init = crate::lex::untokenize(init);
         let untoked_cond = crate::lex::untokenize(cond);
         let untoked_step = crate::lex::untokenize(step);
-        let arith_compiler_cannot_lex = |s: &str| s.contains(',') || s.contains('$');
+        //   * everything `arith_uncompilable_reason` lists for the `(( ))`
+        //     statement path — subscripts, base literals, float exponents,
+        //     math function calls, c_precedences-sensitive mixes, and
+        //     `&&=` / `||=` / `^^=` (c:Src/math.c:297 type[]: `^^=` has no
+        //     OP_E2 bit so op() never stores it, c:1364-1369). Skipping that
+        //     check here made `for ((j=1; j^^=1; ))` store 0 where zsh
+        //     leaves j at 1.
+        let arith_compiler_cannot_lex = |s: &str| {
+            s.contains(',')
+                || s.contains('$')
+                || crate::arith_compiler::arith_uncompilable_reason(s).is_some()
+        };
         let needs_eval_global = arith_compiler_cannot_lex(&untoked_init)
             || arith_compiler_cannot_lex(&untoked_cond)
             || arith_compiler_cannot_lex(&untoked_step);
