@@ -2260,6 +2260,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(status) = try_user_fn_override("builtin", &args) {
             return Value::Status(status);
         }
+        // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
+        // after argument expansion: a bad glob qualifier or pattern in the
+        // words (`builtin print x(a)` "number expected") skips the builtin
+        // with status 1 and leaves errflag set, so the script ends. This
+        // handler is reached without dispatch_builtin's gates, and ran the
+        // builtin, which reported 0.
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed); // c:3761
+            return Value::Status(1); // c:3762 goto err
+        }
         let Some((name, rest)) = args.split_first() else {
             // `builtin` with no args → list builtins (zsh emits nothing,
             // exit 0). Match that behavior; the BIN_BUILTIN bin_* in C
@@ -2410,6 +2423,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // environment instead of the caller's `$PATH`; and a shell whose point
         // is not forking paid a fork per `command -p` for a value the C build
         // bakes in at configure time.
+        // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
+        // after argument expansion. The in-shell forms (`command -v`, and a
+        // builtin under POSIX_BUILTINS) keep errflag, so the script ends; the
+        // external form clears it below, as its forked child would.
+        let expansion_error = (crate::ported::utils::errflag
+            .load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
+        if expansion_error && (dispatch.has_command_vv || dispatch.is_builtin) {
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed); // c:3761
+            return Value::Status(1); // c:3762 goto err
+        }
         if dispatch.has_command_vv {
             // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
             let mut ops = options {
@@ -2477,13 +2502,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // skips the command in the child while the parent's errflag stays
         // clean: `command ls zzq*; print $?` prints the error, then 1. Here
         // the words were expanded in the shell, so drop the failed command
-        // and its ERRFLAG_ERROR the way the external dispatcher does.
+        // and its ERRFLAG_ERROR the way the external dispatcher does. Any
+        // other expansion error (`command print x(a)` "number expected")
+        // takes the same path.
         let glob_failed = with_executor(|exec| {
             let f = exec.current_command_glob_failed.get();
             exec.current_command_glob_failed.set(false);
             f
         });
-        if glob_failed {
+        if glob_failed || expansion_error {
             crate::ported::utils::errflag.fetch_and(
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,

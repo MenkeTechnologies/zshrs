@@ -281,3 +281,26 @@ mod nomatch_in_arguments {
         assert_parity("command print hi; print rc=$?");
     }
 }
+
+/// c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }` after
+/// argument expansion. `builtin NAME` and the in-shell `command` forms skipped
+/// that gate: a bad glob qualifier (`x(a)` "number expected") left status 0.
+/// The external `command NAME` form skips the command and continues with 1.
+mod expansion_error_in_a_precommand_modifier {
+    use super::*;
+
+    #[test]
+    fn builtin_and_in_shell_command_forms_exit_one() {
+        assert_parity("builtin print x(a) 2>/dev/null; print after");
+        assert_parity("builtin typeset -a arr=(zshrs_nomatch_q*) 2>/dev/null; print after");
+        assert_parity("command -v x(a) 2>/dev/null; print after $?");
+        assert_parity("setopt posixbuiltins; command print x(a) 2>/dev/null; print after $?");
+    }
+
+    #[test]
+    fn external_command_form_continues_with_one() {
+        assert_parity("command print x(a) 2>/dev/null; print after $?");
+        assert_parity("command ls x(a) 2>/dev/null; print after $?");
+        assert_parity("builtin print hi; command -v print; print rc=$?");
+    }
+}
