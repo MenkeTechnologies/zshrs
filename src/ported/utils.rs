@@ -5457,6 +5457,16 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
     let mut i: usize = 0;
     let mut count: usize = 0;
     while i < bytes.len() {
+        // Character-level Meta pair (see spacesplit's char_at).
+        if bytes[i] == 0xc2 && i + 3 < bytes.len() && bytes[i + 1] == Meta {
+            let Some(n) = s[i + 2..].chars().next() else { break };
+            if !iwsep((n as u32 as u8) ^ 32) {
+                break;
+            }
+            i += 2 + n.len_utf8();
+            count += 1;
+            continue;
+        }
         let b = if bytes[i] == Meta && i + 1 < bytes.len() {
             bytes[i + 1] ^ 32
         } else {
@@ -5498,7 +5508,19 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     let bytes = s.as_bytes();
     // Meta-aware decode of the logical char value + its byte length at a
     // byte position (mirrors skipwsep's `*x == Meta ? x[1] ^ 32 : *x`).
+    //
+    // zshrs metafies at the CHARACTER level: a raw byte B >= 0x80 is the
+    // char U+0083 followed by the char `B ^ 32` (compile_zsh.rs
+    // meta_encode_byte), i.e. the UTF-8 run `c2 83 <2 bytes>`. Decode that
+    // run as the ONE byte C sees, or each of its UTF-8 bytes was classified
+    // separately: `unsetopt multibyte; IFS=$'\xe9'` split `a\xe9b` into
+    // four fields instead of two.
     let char_at = |i: usize| -> (u8, usize) {
+        if bytes[i] == 0xc2 && i + 3 < bytes.len() && bytes[i + 1] == Meta {
+            if let Some(n) = s[i + 2..].chars().next() {
+                return ((n as u32 as u8) ^ 32, 2 + n.len_utf8());
+            }
+        }
         // c:Src/zsh.h Meta — `\u{83}` prefix; next byte XOR 0x20.
         if bytes[i] == Meta && i + 1 < bytes.len() {
             (bytes[i + 1] ^ 32, 2)
@@ -6418,7 +6440,14 @@ pub fn inittyptab() {
         let mut i = 0;
         while i < bytes.len() {
             // c:4217 — `int c = (unsigned char) (*s == Meta ? *++s ^ 32 : *s)`.
-            let c = if bytes[i] == Meta && i + 1 < bytes.len() {
+            // zshrs's character-level Meta pair (U+0083 + char `B ^ 32`, the
+            // UTF-8 run `c2 83 xx xx`) is ONE logical byte, as spacesplit
+            // decodes it.
+            let c = if bytes[i] == 0xc2 && i + 3 < bytes.len() && bytes[i + 1] == Meta {
+                let n = src[i + 2..].chars().next().map_or(0, |n| n as u32 as u8);
+                i += 1 + src[i + 2..].chars().next().map_or(1, |n| n.len_utf8());
+                n ^ 32
+            } else if bytes[i] == Meta && i + 1 < bytes.len() {
                 i += 1;
                 bytes[i] ^ 32
             } else {

@@ -617,3 +617,17 @@ mod expansion_error_keeps_nonzero_status {
         assert_parity(r#"(exit 5); print /nonexist*"#);
     }
 }
+
+/// c:Src/utils.c:4216-4230 inittyptab / c:3711 spacesplit — with MULTIBYTE
+/// unset every IFS byte, 8-bit ones included, is an ISEP byte, and a value's
+/// Meta-encoded 8-bit byte is one character for the splitter.
+mod eight_bit_ifs_without_multibyte {
+    use super::*;
+
+    #[test]
+    fn splits_on_each_ifs_byte() {
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; s=$'a\xe9b'; print -rl -- ${=s}"#);
+        assert_parity(r#"IFS=$'\xc3\xa9'; unsetopt multibyte; s=$'foo\xc3bar\xa9boo'; print -rl -- ${=s}; echo ${${=s}[2]}"#);
+        assert_parity(r#"unsetopt multibyte; IFS=: ; s=$'a\xe9:b\x90'; print -rl -- ${=s} | od -c"#);
+    }
+}
