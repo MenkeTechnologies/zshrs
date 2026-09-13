@@ -14642,20 +14642,76 @@ fn waitpid_eintr(pid: libc::pid_t) -> Option<i32> {
     }
 }
 
-pub(crate) struct ForegroundWaitGuard;
+pub(crate) struct ForegroundWaitGuard {
+    /// c:Src/jobs.c:1638 — `int first = 1, q = queue_signal_level();`
+    q: i32,
+}
 
 impl ForegroundWaitGuard {
     #[inline]
     pub(crate) fn enter() -> Self {
-        crate::ported::signals_h::queue_signals();
-        ForegroundWaitGuard
+        // c:Src/jobs.c:1638-1642 — `waitforpid`'s prologue verbatim:
+        //     int first = 1, q = queue_signal_level();
+        //     dont_queue_signals();
+        //     child_block();          /* unblocked in signal_suspend() */
+        // `zwaitjob` opens the same window at c:1684-1689.  Both then block
+        // in `signal_suspend(SIGCHLD, wait_cmd)` (c:1658 / c:1710), and that
+        // call's sigsuspend mask is EMPTY — c:Src/signals.c:216-232 does
+        // `sigemptyset(&set)` and adds at most a conditional SIGINT.  So a
+        // foreground wait is a delivery point for every other signal,
+        // SIGWINCH included: the shell's standing `winch_block()`
+        // (c:Src/init.c:1458, re-armed by preprompt at c:Src/utils.c:1541)
+        // is lifted for exactly as long as the shell waits.  It is the one
+        // window C reliably opens in the middle of a command, which is why
+        // a resize during a completion reaches `$COLUMNS` while the
+        // completion is still running.
+        //
+        // This guard used to be `queue_signals()` alone.  That kept the
+        // SIGCHLD reaper off the child by QUEUEING the delivery in
+        // userspace rather than blocking it, and left SIGWINCH blocked for
+        // the whole of a completion no matter how many children it forked
+        // — a queued SIGWINCH is not dispatched until the queue level
+        // reaches zero, which for a completion is after the widget has
+        // returned.  Measured with a completer that read `$COLUMNS`, ran
+        // `sleep 1` and read it again, across a 24x80 -> 24x60 resize: zsh
+        // reported 80 then 60, zshrs 80 then 80.
+        //
+        // The visible cost was the prompt row.  `asklist`'s `trashzle`
+        // (c:Src/Zle/compresult.c:1922 → c:Src/Zle/zle_main.c:2071-2095)
+        // redraws the command line only when the handler has already raised
+        // `resetneeded`/`winchanged` (c:Src/utils.c:1956-1958), so a
+        // row-shrink during `git <TAB>` had zsh repainting `READY% git`
+        // above the query and zshrs repainting nothing at all.
+        //
+        // `child_block` gives the same protection the queueing did and
+        // gives it the way C does: the reaper cannot take the child out
+        // from under `Child::wait` while SIGCHLD is blocked at the OS
+        // level, and SIGWINCH is free to arrive.
+        let q = crate::ported::signals_h::queue_signal_level(); // c:1638
+        crate::ported::signals_h::dont_queue_signals(); // c:1641
+        crate::ported::signals_h::child_block(); // c:1642
+                                                 // c:1643 — `queue_traps(wait_cmd);`.  Signals are dispatched during
+                                                 // the wait but user TRAPS are held until the child is reaped; the
+                                                 // old `queue_signals` deferred both together, so this keeps the
+                                                 // trap half of that behaviour where C keeps it.  `wait_cmd` is 0:
+                                                 // this is not the `wait` builtin.
+        crate::ported::signals::queue_traps(0); // c:1643
+        crate::ported::signals_h::winch_unblock(); // c:Src/signals.c:232
+        ForegroundWaitGuard { q }
     }
 }
 
 impl Drop for ForegroundWaitGuard {
     #[inline]
     fn drop(&mut self) {
-        crate::ported::signals_h::unqueue_signals();
+        // c:Src/jobs.c:1667-1669 — `unqueue_traps(); child_unblock();
+        // restore_queue_signals(q);`.  The `winch_block` ahead of them puts
+        // back the standing mask that c:Src/utils.c:1541 leaves in place
+        // between prompts.
+        crate::ported::signals_h::winch_block(); // c:Src/utils.c:1541
+        crate::ported::signals::unqueue_traps(); // c:1667
+        crate::ported::signals_h::child_unblock(); // c:1668
+        crate::ported::signals_h::restore_queue_signals(self.q); // c:1669
     }
 }
 
@@ -19310,4 +19366,75 @@ pub(crate) fn donetrap_reset_impl() -> fusevm::Value {
         // "bad pattern: HISTCHARS:!^#", killing `-<TAB>` completion.
     consume_tilde_globsubst_carrier();
     fusevm::Value::Status(0)
+}
+
+#[cfg(test)]
+mod foreground_wait_guard_tests {
+    use super::ForegroundWaitGuard;
+
+    /// c:Src/jobs.c:1638-1669 — the mask a foreground wait presents.
+    ///
+    /// C blocks for a child inside `signal_suspend(SIGCHLD, wait_cmd)`
+    /// (c:1658 / c:1710), and that call's sigsuspend mask is EMPTY —
+    /// c:Src/signals.c:216-232 does `sigemptyset(&set)` and adds at most a
+    /// conditional SIGINT. SIGCHLD is held off by `child_block()` (c:1642,
+    /// "unblocked in signal_suspend()") rather than by userspace queueing.
+    /// So while the shell waits: SIGCHLD blocked, SIGWINCH deliverable.
+    ///
+    /// This guard used to call `queue_signals()` and nothing else, which
+    /// left the standing `winch_block()` (c:Src/init.c:1458, re-armed by
+    /// preprompt at c:Src/utils.c:1541) in force for the whole of any
+    /// command — so a resize was invisible to a completion however many
+    /// children it forked, and `trashzle`'s repaint
+    /// (c:Src/Zle/compresult.c:1922 → c:Src/Zle/zle_main.c:2071-2095) never
+    /// saw the `resetneeded`/`winchanged` that c:Src/utils.c:1956-1958
+    /// raises.
+    #[test]
+    fn foreground_wait_unblocks_sigwinch_and_blocks_sigchld() {
+        let _g = crate::test_util::global_state_lock();
+        let blocked = |sig: libc::c_int| -> bool {
+            unsafe {
+                let mut cur: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut cur);
+                libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut cur);
+                libc::sigismember(&cur, sig) == 1
+            }
+        };
+        let saved_winch = blocked(libc::SIGWINCH);
+        let saved_chld = blocked(libc::SIGCHLD);
+
+        // The standing mask between prompts (c:Src/utils.c:1541).
+        crate::ported::signals_h::winch_block();
+        crate::ported::signals_h::child_unblock();
+        assert!(blocked(libc::SIGWINCH), "precondition: winch_block() holds");
+
+        let (winch_in, chld_in) = {
+            let _w = ForegroundWaitGuard::enter();
+            (blocked(libc::SIGWINCH), blocked(libc::SIGCHLD))
+        };
+        let winch_out = blocked(libc::SIGWINCH);
+
+        if !saved_winch {
+            crate::ported::signals_h::winch_unblock();
+        }
+        if saved_chld {
+            crate::ported::signals_h::child_block();
+        } else {
+            crate::ported::signals_h::child_unblock();
+        }
+
+        assert!(
+            !winch_in,
+            "a foreground wait is C's one mid-command delivery point for \
+             SIGWINCH (c:Src/signals.c:216-232 — signal_suspend's mask is empty)"
+        );
+        assert!(
+            chld_in,
+            "c:Src/jobs.c:1642 — `child_block(); /* unblocked in signal_suspend() */`"
+        );
+        assert!(
+            winch_out,
+            "c:Src/utils.c:1541 — the standing winch_block() comes back after the wait"
+        );
+    }
 }
