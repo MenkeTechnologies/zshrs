@@ -700,6 +700,13 @@ mod quoted_empty_literal_anchors_edge_field {
         assert_parity(r#"a=("" x ""); print -rl -- ""$a"" | wc -l; a=(x y); print -rl -- "${a[@]}" x"${a[@]}"y"#);
         assert_parity(r#"setopt shwordsplit rcexpandparam; s=" a"; print -rl -- ""$s | wc -l"#);
     }
+
+    /// The braced `${s}` beside a quoted literal keeps its own quoting.
+    #[test]
+    fn braced_expansion_beside_quoted_literal() {
+        assert_parity(r#"setopt shwordsplit; s=" a"; print -rl -- """${s}" ""${s} """${s}""x"; s="a "; print -rl -- "${s}""""#);
+        assert_parity(r#"s=" a"; print -rl -- """${=s}" x"${s}" "${s}"; a=(x "" y); print -rl -- ""${a}"" | wc -l"#);
+    }
 }
 
 /// c:Src/subst.c:4366-4437 then c:183-186 — an array splice's empty edge

@@ -7398,7 +7398,14 @@ impl ZshCompiler {
         // `flag_operand_quoted` also covers the flagless `${"abc"}`
         // shape — untokenize strips the quotes so braced_var_ref would
         // misread the literal as a NAME (c:Src/subst.c:2990-3004).
-        if !has_bnull && !flag_operand_quoted {
+        //
+        // A word with quote markers that is not one double-quoted span
+        // (`"""${s}"`, `""${s}`, `"${s}"""`) is declined as well: untokenize
+        // erased its quotes, so the match would read a quoted `${s}` as a
+        // bare one and split it (`setopt shwordsplit; s=" a"; """${s}"` is
+        // ` a` in zsh, c:Src/subst.c:36 — the Dnull pairs stay in the word).
+        // The segment path keeps each part's quoting.
+        if !has_bnull && !flag_operand_quoted && !(has_quote_markers && !word_is_single_dq_span(s)) {
             if let Some(name) = braced_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
