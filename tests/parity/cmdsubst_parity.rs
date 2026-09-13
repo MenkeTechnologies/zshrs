@@ -107,6 +107,14 @@ mod dollar_paren_subst {
         assert_parity(r#"print $(( a[ )); print rc=$?"#);
         assert_parity(r#"print $(( a[1 )); print rc=$?"#);
         assert_parity(r#"print $(( a] )); print rc=$?"#);
+        // A `$` inside the failed scan is a two-byte token in the lexer
+        // buffer; the rewind has to stop at the same BYTE length it started
+        // from (c:Src/lex.c:523 `lexbuf.len`), or it eats the `(` and the
+        // word's `$`: "parse error near `x=(((…'".
+        assert_parity(r#"x=$(( $a ) ); print rc=$? "[$x]""#);
+        assert_parity(r#"x=$(( $a[b )); print rc=$? "[$x]""#);
+        assert_parity(r#"x="$(( $a[b ))"; print rc=$? "[$x]""#);
+        assert_parity(r#"typeset x=$(( $a[b )); print rc=$?"#);
         // Controls: real arithmetic, and a substitution opening with a subshell.
         assert_parity(r#"print $(( 2 * 3 )) $((7/2))"#);
         assert_parity(r#"f(){ print "!$1!" }; print $((f a); f b)"#);

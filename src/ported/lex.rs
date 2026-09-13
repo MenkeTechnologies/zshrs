@@ -1028,10 +1028,16 @@ impl lexbufstate {
     /// Pop the last char. Mirrors C lex.c:524-526 hungetc-driven
     /// shrink: `lexbuf.len--; *--lexbuf.ptr = ...`.
     pub(crate) fn pop(&mut self) -> Option<char> {
-        let c = self.ptr.as_mut().and_then(|p| p.pop());
-        if c.is_some() {
-            self.len -= 1;
-        }
+        let p = self.ptr.as_mut()?;
+        let c = p.pop();
+        // `len` is the buffer's BYTE length, as `add` sets it: C's
+        // `lexbuf.len` (c:Src/lex.c:523 `while (lexbuf.len > oldlen)`) and
+        // every rewind here compare it with a byte offset taken earlier.
+        // Subtracting 1 per character left it a byte high after popping a
+        // two-byte token char (`Qstring` for a `$`), so cmd_or_math_sub's
+        // rewind popped the `(` it had to keep and the `$(` word lost its
+        // `$`: `x=$(( $a ) )` → "parse error near `x=(((…'".
+        self.len = p.len() as i32;
         c
     }
 
