@@ -596,3 +596,60 @@ mod string_ops {
         assert_parity(r#"x=foo.tar.gz; echo "${x%%.*}""#);
     }
 }
+
+// ─────────────────────── process substitution inside a word ───────────────────────
+//
+// c:Src/subst.c:245-251 — stringsubst runs getproc at ANY `<(` / `>(` in the
+// word (and getoutputfile for `=(` only at its start), splicing
+// prefix + /dev/fd/N + rest. The fd number differs between the shells, so
+// digit runs are normalised inside the script.
+
+mod process_substitution_in_word {
+    use super::*;
+
+    /// `P=<(…)` as a plain argument: zsh `P=/dev/fd/N`, zshrs printed `P=`.
+    /// Suffix and both-sides shapes too.
+    #[test]
+    fn affixed_process_substitution_expands() {
+        assert_parity(
+            r#"setopt extendedglob; a=(P=<(print hi) <(print hi)X X>(cat)Y); print -r -- ${a//[0-9]##/N}"#,
+        );
+    }
+
+    /// The reported shape: inside a function, with `$LINENO` in the body.
+    /// zshrs read the body as glob qualifiers ("unknown file attribute: i").
+    #[test]
+    fn affixed_process_substitution_in_function_with_lineno() {
+        assert_parity(
+            r#"setopt extendedglob; g(){ a=(P=<(print $LINENO)); print -r -- ${a//[0-9]##/N} }; g"#,
+        );
+    }
+
+    /// A parameter-expansion prefix.
+    #[test]
+    fn parameter_prefix_before_process_substitution() {
+        assert_parity(
+            r#"setopt extendedglob; x=1; a=($x<(print hi) ${:-P}<(print hi)); print -r -- ${a//[0-9]##/N}"#,
+        );
+    }
+
+    /// The spliced path is a live substitution, not just the right shape.
+    #[test]
+    fn affixed_process_substitution_is_readable() {
+        assert_parity(r#"f(){ print -r -- "$(<${1#*=})" }; f key=<(print content)"#);
+    }
+
+    /// Two substitutions in one word.
+    #[test]
+    fn two_process_substitutions_in_one_word() {
+        assert_parity(
+            r#"setopt extendedglob; a=(x=<(print a)y=<(print b)); print -r -- ${a//[0-9]##/N}"#,
+        );
+    }
+
+    /// Controls: quoted, escaped and single-quoted forms are not substitutions.
+    #[test]
+    fn quoted_and_escaped_forms_stay_literal() {
+        assert_parity(r#"print -r -- "a<(x)" a\<\(x\) 'P=<(x)'"#);
+    }
+}

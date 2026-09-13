@@ -5198,6 +5198,62 @@ impl ZshCompiler {
     /// ops where possible. Words that hit no fast path fall through
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
+        // c:Src/subst.c:245-251 — stringsubst replaces a process substitution
+        // ANYWHERE in the word, not only a whole-word one:
+        //     if ((c == Inang || c == OutangProc || (str == str3 && c == Equals))
+        //         && str[1] == Inpar) { subst = getproc(str, &rest); ... }
+        // and splices `prefix + /dev/fd/N + rest`. The whole-word arm below
+        // (`untoked.starts_with("<(")`) cannot express an affix, so
+        // `print P=<(print hi)` printed `P=` and `$x<(…)` read the body as glob
+        // qualifiers ("unknown file attribute"). Split the TOKENIZED word at the
+        // first `<(` / `>(` and concatenate the pieces; the substitution piece
+        // then reaches the whole-word arm on its own. Only the lexer's Inang /
+        // OutangProc + Inpar tokens start one, so `"a<(x)"`, `a\<\(x\)` and
+        // `'P=<(x)'` stay literal. `=(` is left alone: C accepts it only at the
+        // start of the word (`str == str3`), which the whole-word arm handles.
+        {
+            use crate::ported::zsh_h::{Inang, Inpar, OutangProc, Outpar};
+            let ch: Vec<char> = s.chars().collect();
+            let mut span: Option<(usize, usize)> = None;
+            let mut i = 0usize;
+            while i + 1 < ch.len() {
+                if (ch[i] == Inang || ch[i] == OutangProc) && ch[i + 1] == Inpar {
+                    let mut depth = 0i32;
+                    for (j, &c) in ch.iter().enumerate().skip(i + 1) {
+                        if c == Inpar {
+                            depth += 1;
+                        } else if c == Outpar {
+                            depth -= 1;
+                            if depth == 0 {
+                                span = Some((i, j));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            if let Some((start, end)) = span {
+                if start != 0 || end + 1 != ch.len() {
+                    let prefix: String = ch[..start].iter().collect();
+                    let psub: String = ch[start..=end].iter().collect();
+                    let suffix: String = ch[end + 1..].iter().collect();
+                    if !prefix.is_empty() {
+                        self.compile_word_str(&prefix);
+                    }
+                    self.compile_word_str(&psub); // c:250 getproc(str, &rest)
+                    if !prefix.is_empty() {
+                        self.builder.emit(Op::Concat, 0); // c:258-261 str3 + subst
+                    }
+                    if !suffix.is_empty() {
+                        self.compile_word_str(&suffix); // c:273 rescan from the rest
+                        self.builder.emit(Op::Concat, 0); // c:262-264 + rest
+                    }
+                    return;
+                }
+            }
+        }
         // c:Src/subst.c:1890-1891 + 2550-2557 — `$^name` is the UNBRACED
         // RC_EXPAND_PARAM form. C parses it with the very same flag loop as
         // `${^name}`: the paramsubst-start guard admits `Hat`/`'^'`, then
