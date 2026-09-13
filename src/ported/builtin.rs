@@ -15526,6 +15526,74 @@ pub fn bin_read(
         out
     };
 
+    // c:6855 / c:7039 — `isep(c)` / `iwsep(c)` classify each input
+    // character against the typtab `inittyptab` builds from $IFS
+    // (c:Src/utils.c:4216-4230). With MULTIBYTE unset a raw byte >= 0x80
+    // reaches this walk as zshrs's character-level Meta pair (U+0083 +
+    // `B ^ 32`, the form `$IFS` holds too), and it must be classified as the
+    // ONE byte C sees. Testing the pair's two chars against the IFS string
+    // split at the Meta char and kept the second half:
+    // `unsetopt multibyte; IFS=$'\xe9'; read -r x y <<< $'p\xe9q'` gave
+    // `p` / `Éq` where zsh gives `p` / `q`. Every other unit goes through
+    // `wcsitype(c, ISEP)` (c:Src/utils.c:4321), which reads the typtab for
+    // ASCII and `ifs_wide` for a multibyte char; only a single byte can be
+    // IWSEP (c:Src/utils.c:3686).
+    let read_multibyte = isset(crate::ported::zsh_h::MULTIBYTE);
+    // Byte length of the unit at the front of `s`: a Meta pair is one unit.
+    let unit_len = |s: &str| -> usize {
+        let mut it = s.chars();
+        match it.next() {
+            None => 0,
+            Some(c) if !read_multibyte && c == '\u{83}' => match it.next() {
+                Some(n) if (0x80..=0xff).contains(&(n as u32)) => c.len_utf8() + n.len_utf8(),
+                _ => c.len_utf8(),
+            },
+            Some(c) => c.len_utf8(),
+        }
+    };
+    // (is separator, is whitespace separator) for one unit.
+    let unit_sep = |u: &str| -> (bool, bool) {
+        let mut it = u.chars();
+        let c = it.next().unwrap_or('\0');
+        if !read_multibyte && c == '\u{83}' {
+            if let Some(n) = it.next() {
+                let b = (n as u32 as u8) ^ 32; // c:4217 `*s == Meta ? *++s ^ 32`
+                return (
+                    crate::ported::ztype_h::isep(b),  // c:6855
+                    crate::ported::ztype_h::iwsep(b), // c:6856
+                );
+            }
+        }
+        let s = crate::ported::utils::wcsitype(c, crate::ported::ztype_h::ISEP as u32); // c:7039
+        (s, s && (c as u32) < 128 && crate::ported::ztype_h::iwsep(c as u8)) // c:3686
+    };
+    // Byte length of the leading whitespace-IFS run of `s`.
+    let ws_prefix_len = |s: &str| -> usize {
+        let mut i = 0;
+        while i < s.len() {
+            let l = unit_len(&s[i..]);
+            if !unit_sep(&s[i..i + l]).1 {
+                break;
+            }
+            i += l;
+        }
+        i
+    };
+    // Byte offset where the trailing whitespace-IFS run of `s` starts.
+    let ws_suffix_start = |s: &str| -> usize {
+        let mut i = 0;
+        let mut end = 0;
+        while i < s.len() {
+            let l = unit_len(&s[i..]);
+            let ws = unit_sep(&s[i..i + l]).1;
+            i += l;
+            if !ws {
+                end = i;
+            }
+        }
+        end
+    };
+
     // Assign to scalar reply, multi-var split, or array.
     // c:6685-6735 — `read x y z` splits buf by IFS, fills the first
     // N-1 vars with one IFS-separated field each, and stores the
@@ -15539,12 +15607,10 @@ pub fn bin_read(
         // split_whitespace(), which ignored custom IFS like `:` and
         // produced a single-element array for `IFS=: read -A arr
         // <<< "a:b:c"`. Mirror the multi-var path's IFS handling.
-        let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
-        let is_ifs = |c: char| ifs.contains(c);
         // c:6863-6869 — the FIRST word's char loop skips leading
         // whitespace-IFS (bptr==buf && iwsep → continue), so leading
-        // whitespace produces no empty element. Mirror with trim_start.
-        let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        // whitespace produces no empty element.
+        let trimmed = &buf[ws_prefix_len(&buf)..];
         // NB: do NOT trim trailing whitespace-IFS. C reads word-by-word
         // and, after the last real word terminates on a whitespace
         // separator, attempts one more word: it consumes the remaining
@@ -15557,44 +15623,54 @@ pub fn bin_read(
         // fields), while consecutive non-whitespace separators each delimit
         // (`a :: b` → 3, empty preserved). A non-whitespace separator also
         // absorbs its own trailing whitespace.
-        let is_ws_ifs = |c: char| is_ifs(c) && c.is_whitespace();
-        let is_nonws_ifs = |c: char| is_ifs(c) && !c.is_whitespace();
         let mut parts: Vec<String> = Vec::new();
         let mut field = String::new();
-        let mut chars = trimmed.chars().peekable();
-        while let Some(c) = chars.next() {
-            // A Bnull-marked char is a backslash-escaped literal — never a
-            // separator. Consume the mark and push the following char raw.
-            if c == rmark {
-                if let Some(nc) = chars.next() {
-                    field.push(nc);
+        // (is separator, is whitespace separator, byte length) of the unit at `i`.
+        let peek = |i: usize| -> Option<(bool, bool, usize)> {
+            if i >= trimmed.len() {
+                return None;
+            }
+            let l = unit_len(&trimmed[i..]);
+            let (s, w) = unit_sep(&trimmed[i..i + l]);
+            Some((s, w, l))
+        };
+        let mut i = 0;
+        while let Some((sep, ws, l)) = peek(i) {
+            let unit = &trimmed[i..i + l];
+            i += l;
+            // A Bnull-marked unit is a backslash-escaped literal — never a
+            // separator. Consume the mark and push the following unit raw.
+            if unit.starts_with(rmark) {
+                if let Some((_, _, nl)) = peek(i) {
+                    field.push_str(&trimmed[i..i + nl]);
+                    i += nl;
                 }
                 continue;
             }
-            if is_ifs(c) {
+            if sep {
                 parts.push(std::mem::take(&mut field));
-                if c.is_whitespace() {
+                if ws {
                     // Coalesce the whitespace-IFS run.
-                    while chars.peek().copied().is_some_and(is_ws_ifs) {
-                        chars.next();
+                    while let Some((_, true, nl)) = peek(i) {
+                        i += nl;
                     }
                     // If that run is followed by a non-whitespace separator,
                     // it belongs to the SAME delimiter — consume it and its
                     // trailing whitespace so no empty field appears.
-                    if chars.peek().copied().is_some_and(is_nonws_ifs) {
-                        chars.next();
-                        while chars.peek().copied().is_some_and(is_ws_ifs) {
-                            chars.next();
+                    if let Some((true, false, nl)) = peek(i) {
+                        i += nl;
+                        while let Some((_, true, nl)) = peek(i) {
+                            i += nl;
                         }
                     }
                 } else {
                     // Non-whitespace separator: absorb its trailing whitespace.
-                    while chars.peek().copied().is_some_and(is_ws_ifs) {
-                        chars.next();
+                    while let Some((_, true, nl)) = peek(i) {
+                        i += nl;
                     }
                 }
             } else {
-                field.push(c);
+                field.push_str(unit);
             }
         }
         if !field.is_empty() || !parts.is_empty() {
@@ -15637,9 +15713,6 @@ pub fn bin_read(
         for n in &args[argi..] {
             vars.push(n.clone());
         }
-        let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
-        // C zsh splits by ANY char from IFS (whitespace or not).
-        let is_ifs = |c: char| ifs.contains(c);
         // Trim leading IFS-whitespace per zsh's read semantics
         // (`a   b c` → x=a, y="b c", not x="" y=…).
         // c:Src/builtin.c — `-E` echoes each field to stdout as it is read,
@@ -15661,33 +15734,30 @@ pub fn bin_read(
                 setsparam(var, &val); // c:7106
             }
         };
-        let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
-        let mut remaining = trimmed.to_string();
-        // Find the next UNMARKED IFS separator (a Bnull-marked char is a
-        // backslash-escaped literal and never delimits).
+        let mut remaining = buf[ws_prefix_len(&buf)..].to_string();
+        // Byte offset of the next UNMARKED IFS separator unit (a Bnull-marked
+        // unit is a backslash-escaped literal and never delimits).
         let next_sep = |s: &str| -> Option<usize> {
             let mut m = false;
-            for (bi, c) in s.char_indices() {
+            let mut bi = 0;
+            while bi < s.len() {
+                let l = unit_len(&s[bi..]);
+                let unit = &s[bi..bi + l];
                 if m {
                     m = false;
-                    continue;
-                }
-                if c == rmark {
+                } else if unit.starts_with(rmark) {
                     m = true;
-                    continue;
-                }
-                if is_ifs(c) {
+                } else if unit_sep(unit).0 {
                     return Some(bi);
                 }
+                bi += l;
             }
             None
         };
         for (i, var) in vars.iter().enumerate() {
             if i + 1 == vars.len() {
                 // Last var: store the remainder, trim trailing IFS.
-                let final_val = remaining
-                    .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace())
-                    .to_string();
+                let final_val = remaining[..ws_suffix_start(&remaining)].to_string();
                 emit(var, &final_val);
             } else {
                 // Find next IFS char.
@@ -15695,26 +15765,28 @@ pub fn bin_read(
                     Some(idx) => {
                         let field = remaining[..idx].to_string();
                         // c:Src/utils.c:3711 spacesplit — skip the whole
-                        // delimiter. The separator char plus the IFS-whitespace
+                        // delimiter. The separator unit plus the IFS-whitespace
                         // ABSORBED around it form one delimiter: a whitespace
                         // separator coalesces its run AND a following non-ws
                         // separator (with that one's trailing whitespace); a
                         // non-ws separator absorbs its own trailing whitespace.
                         // So `x : y : z` (IFS=" :") reads as x, y, z — not
                         // x, "", "y : z".
-                        let sep = remaining[idx..].chars().next().unwrap();
-                        let is_ws = |c: char| is_ifs(c) && c.is_whitespace();
-                        let after = &remaining[idx + sep.len_utf8()..];
-                        let rest: &str = if sep.is_whitespace() {
-                            let r = after.trim_start_matches(is_ws);
-                            match r.chars().next() {
-                                Some(nc) if is_ifs(nc) && !nc.is_whitespace() => {
-                                    r[nc.len_utf8()..].trim_start_matches(is_ws)
+                        let sep_len = unit_len(&remaining[idx..]);
+                        let sep_is_ws = unit_sep(&remaining[idx..idx + sep_len]).1;
+                        let after = &remaining[idx + sep_len..];
+                        let rest: &str = if sep_is_ws {
+                            let r = &after[ws_prefix_len(after)..];
+                            let nl = unit_len(r);
+                            match unit_sep(&r[..nl]) {
+                                (true, false) => {
+                                    let r2 = &r[nl..];
+                                    &r2[ws_prefix_len(r2)..]
                                 }
                                 _ => r,
                             }
                         } else {
-                            after.trim_start_matches(is_ws)
+                            &after[ws_prefix_len(after)..]
                         };
                         emit(var, &field);
                         remaining = rest.to_string();
@@ -15738,11 +15810,8 @@ pub fn bin_read(
         // gets discarded by the same skip. Without this, `read line`
         // on `   hello   ` set `line` to `   hello   ` (with spaces)
         // instead of `hello` — bug #247.
-        let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
-        let is_ifs = |c: char| ifs.contains(c);
-        let trimmed = buf
-            .trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace())
-            .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        let lead = &buf[ws_prefix_len(&buf)..];
+        let trimmed = &lead[..ws_suffix_start(lead)];
         // Strip backslash-escape marks: `read x` on `a\ b` → x="a b".
         let trimmed = unmark(trimmed);
         // c:Src/builtin.c:7102-7109 — `-e` / `-E` flags. Both echo

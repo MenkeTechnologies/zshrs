@@ -206,3 +206,26 @@ mod combine_with_redirects {
         assert_parity(r#"tr a-z A-Z <<< "hello""#);
     }
 }
+
+/// c:Src/builtin.c:6855 / c:7039 — `read` separates fields with `isep(c)` /
+/// `iwsep(c)` from the typtab built out of $IFS. With MULTIBYTE unset an 8-bit
+/// IFS byte is one separator byte. zshrs holds such a byte as a two-char Meta
+/// pair in both $IFS and the line, and `read` tested the chars one by one, so
+/// it split at the Meta char and kept the other half (`p` / `Éq`).
+mod read_eight_bit_ifs_without_multibyte {
+    use super::*;
+
+    #[test]
+    fn eight_bit_ifs_byte_separates_fields() {
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; read -r x y <<< $'p\xe9q'; print -r -- "[$x][$y]""#);
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xc3\xa9'; read -r x y z <<< $'foo\xc3bar\xa9boo'; print -r -- "[$x][$y][$z]""#);
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; read -rA a <<< $'p\xe9q\xe9\xe9r'; print -r -- ${#a} "[${(j:][:)a}]""#);
+        assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; read -r x <<< $'p\xe9q'; print -rn -- $x | od -An -tx1"#);
+    }
+
+    #[test]
+    fn ascii_and_multibyte_ifs_are_unchanged() {
+        assert_parity(r#"IFS=é; read -r x y <<< "pé q"; print -r -- "[$x][$y]"; IFS=: ; read -rA a <<< "a:b::c"; print -r -- ${#a} "${a[@]}""#);
+        assert_parity(r#"IFS=' :'; read -r x y z <<< "  a : b  c  "; print -r -- "[$x][$y][$z]"; read -r w <<< "  lone  "; print -r -- "[$w]""#);
+    }
+}
