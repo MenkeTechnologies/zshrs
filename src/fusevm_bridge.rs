@@ -12790,7 +12790,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // and NOTHING else — `globlist` is never called, so a
                     // `case` word (c:Src/loop.c:610-612) and a `[[ … ]]`
                     // operand (c:Src/cond.c:53) are never filename-generated.
-                    || mode == 9;
+                    || mode == 9
+                    // c:Src/exec.c:2603-2613 — a scalar `NAME=VALUE` is
+                    // preforked PREFORK_SINGLE|PREFORK_ASSIGN (mode 8) and
+                    // reaches globlist only under GLOB_ASSIGN; without it the
+                    // value is never globbed. Missing this term, a value the
+                    // compiler did not DQ-wrap globbed here: `x=q(` said "bad
+                    // pattern: q(", `x=q(a)` "number expected", `x=q(|b)` "no
+                    // matches found".
+                    || (mode == 8 && !crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBASSIGN));
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {

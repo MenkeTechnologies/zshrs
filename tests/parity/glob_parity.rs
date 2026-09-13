@@ -399,3 +399,34 @@ mod default_word_globbing {
         );
     }
 }
+
+/// c:Src/exec.c:2554-2567 — a scalar assignment value is expanded with
+/// PREFORK_SINGLE and never globbed unless GLOB_ASSIGN is set. zshrs globbed
+/// or pattern-parsed a value holding glob syntax its DQ-wrap did not list
+/// (`(`, `|`, `#`) or starting with a quote: `x=q(` → "bad pattern: q(",
+/// `x=q(a)` → "number expected", `x=q(|b)` → "no matches found".
+mod scalar_assignment_never_globs {
+    use super::*;
+
+    #[test]
+    fn a_scalar_value_with_glob_syntax_is_assigned_as_text() {
+        let d = mkdir_with_files(&["qa", "qb", "ab", "aXb"]);
+        for script in [
+            r#"x=q(; print -r -- "[$x]" rc=$?"#,
+            r#"x="q"(; print -r -- "[$x]" rc=$?"#,
+            r#"x='q'(; print -r -- "[$x]" rc=$?"#,
+            r#"x=q(a); print -r -- "[$x]" rc=$?"#,
+            r#"x=q(|b); print -r -- "[$x]" rc=$?"#,
+            r#"x=a(#i)b; print -r -- "[$x]" rc=$?"#,
+            r#"x="q"(a); print -r -- "[$x]" rc=$?"#,
+            // Controls: already literal, an ARRAY value globs, GLOB_ASSIGN globs.
+            r#"x=q*; print -r -- "[$x]" rc=$?"#,
+            r#"x=(q*); print -r -- "[$x]" rc=$?"#,
+            r#"setopt globassign; x=q*; print -r -- "[$x]" rc=$?"#,
+            r#"setopt globassign; x=q(; print -r -- "[$x]" rc=$?"#,
+            r#"f(){ local x=q(a); print -r -- "[$x]" rc=$?; }; f"#,
+        ] {
+            assert_parity_in(d.path(), script);
+        }
+    }
+}
