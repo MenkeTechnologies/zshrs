@@ -292,6 +292,35 @@ fn alias_dispatch_pty_driver() -> String {
     format!("export ZSHRS_HISTORY=0\n{OPEN_PUMPED}{typed}zpty -d w\n")
 }
 
+/// A job's process text is `getjobtext()` output (c:Src/exec.c:2999): cut
+/// to JOBTEXTSIZE at a word boundary, per process of a pipeline, redirections
+/// included. zshrs rendered compiled background jobs, coprocs and pipeline
+/// stages from the AST and never cut them, so `jobs` listed the whole command.
+fn long_job_text_driver() -> String {
+    let script = r#"
+unsetopt promptcr promptsp
+HISTFILE=/dev/null
+setopt nonotify nocheckjobs
+{ sleep 30; : aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff gggggggggg hhhhhhhhhh } 2>/dev/null &
+{ sleep 30; : one } | { sleep 30; : aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff gggggggggg } 2>/dev/null &
+sleep 30 >/dev/null 2>&1 aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee &
+jobs > $OUTFILE
+kill %1 %2 %3 2>/dev/null
+"#;
+    format!(
+        "print -r -- {} | PS1= RPS1= PROMPT= $UNDER_TEST -f -i -s >/dev/null 2>&1\n",
+        sq(script)
+    )
+}
+
+#[test]
+fn jobs_cuts_long_process_text_where_getjobtext_does() {
+    assert_same_dump(
+        &long_job_text_driver(),
+        "`jobs` for a long background command, pipeline and coproc",
+    );
+}
+
 #[test]
 fn an_interactive_alias_expands_once_from_stdin() {
     assert_same_dump(

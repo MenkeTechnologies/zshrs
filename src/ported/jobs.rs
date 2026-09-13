@@ -1694,11 +1694,43 @@ pub fn addproc(
     list_pipe_job_used: i32,
 ) {
     // c:1538
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // C's `p->text` is always `getjobtext()` output (c:Src/exec.c:2999,
+    // c:2005-2008): at most JOBTEXTSIZE bytes, cut at a word boundary
+    // (c:Src/text.c:130-156). zshrs's compiled background jobs, coprocs and
+    // pipeline stages reach here with text rendered from the AST, never cut,
+    // so `jobs` printed a long command in full. Text that cannot reach the
+    // limit (width counted in metafied bytes, as the C buffer holds it) is
+    // stored as is; longer text is compiled back into the program C would
+    // hold and cut by the ported getjobtext, with aliases off (the text is
+    // already expanded) and without diagnostics. A text that does not parse
+    // keeps its full form.
+    let width: usize = text
+        .bytes()
+        .map(|b| 1 + crate::ported::ztype_h::imeta(b) as usize)
+        .sum();
+    let text: String = if width < crate::ported::zsh_h::JOBTEXTSIZE - 1 {
+        text.to_string()
+    } else {
+        let noerrs = crate::ported::utils::noerrs_lock();
+        let saved_noerrs = std::mem::replace(&mut *noerrs.lock().unwrap(), 1);
+        let saved_errflag = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst);
+        let saved_noaliases = crate::ported::lex::noaliases();
+        crate::ported::lex::set_noaliases(true);
+        let prog = crate::ported::exec::parse_string(text, 0);
+        crate::ported::lex::set_noaliases(saved_noaliases);
+        crate::ported::utils::errflag.store(saved_errflag, std::sync::atomic::Ordering::SeqCst);
+        *noerrs.lock().unwrap() = saved_noerrs;
+        match prog {
+            Some(p) => crate::ported::text::getjobtext(Box::new(p), None),
+            None => text.to_string(),
+        }
+    };
     let proc = process::new(pid);
     let proc = process {
         pid,
         status: SP_RUNNING,
-        text: text.to_string(),
+        text,
         bgtime, // c:1248 — `bgtime` field from struct timespec arg.
         ..proc
     };
