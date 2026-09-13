@@ -1219,3 +1219,20 @@ mod eval_flag_null_in_array_element {
         assert_parity(r#"b=B; arr=('$b' x); print -rl -- ${(e)arr}"#);
     }
 }
+
+/// A whole double-quoted argument whose `(e)` re-lex fails is cut at the `$`
+/// (c:Src/subst.c:1878, 326-327): the lexer's opening quote is all that is
+/// left of the word, so it prints as a literal `"`. Later words are unaffected.
+mod eval_flag_null_in_quoted_word {
+    use super::*;
+
+    #[test]
+    fn quoted_word_keeps_its_opening_quote() {
+        assert_parity(r#"a='$('; print -rl -- x "${(e)a}" y; echo rc=$?"#);
+    }
+
+    #[test]
+    fn unquoted_assignment_gets_no_quote() {
+        assert_parity(r#"a='$('; v=${(e)a}; print -r -- "[$v]""#);
+    }
+}

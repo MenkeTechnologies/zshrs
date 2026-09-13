@@ -13113,6 +13113,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.in_scalar_assign -= 1;
                 }
                 exec.in_dq_context -= 1;
+                // c:Src/subst.c:326-327 → prefork c:142-147 — subst.rs's prefork
+                // stopped on an `(e)` NULL: the word is what preceded the `$`
+                // (c:1878). The lexer's opening Dnull stays in that node and
+                // untokenizes to a literal `"` when the word itself opened a
+                // double quote; this handler stripped those outer quotes above,
+                // so put it back. Mode 5 also carries UNQUOTED scalar-assignment
+                // words (`v=${(e)a}`), which have no quote to restore.
+                // PREFORK_CUT tells the words that follow to stay unexpanded.
+                if crate::ported::subst::PREFORK_STOPPED.with(|c| c.replace(false)) {
+                    PREFORK_CUT.with(|c| c.set(true));
+                    let opened_dq = mode == 1 || text.starts_with('"'); // mode 1 is always a "…" argv word
+                    return Value::str(format!("{}{}", if opened_dq { "\"" } else { "" }, result_value.to_str()));
+                }
                 result_value
             }
             2 => {
@@ -13243,6 +13256,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
                 let (_first, nodes, _ms_ws, _ret) =
                     crate::ported::subst::multsub(&prepped, pf_flags);
+                // c:Src/subst.c:326-327 → prefork c:142-147 — an `(e)` NULL ended
+                // prefork: the word is the text before the `$` (c:1878), and the
+                // brace / filesub / remnulargs passes after the substitution loop
+                // never ran. PREFORK_CUT keeps the later words unexpanded.
+                if crate::ported::subst::PREFORK_STOPPED.with(|c| c.replace(false)) {
+                    PREFORK_CUT.with(|c| c.set(true));
+                    let head = nodes.into_iter().next().unwrap_or_default();
+                    return Value::str(crate::ported::lex::untokenize(&head).to_string());
+                }
                 // Read immediately: brace expansion / filesub / glob below can
                 // re-enter paramsubst and overwrite the cell. `seg_is_array` is
                 // the array-ness of the OUTERMOST paramsubst in this segment —
