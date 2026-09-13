@@ -254,3 +254,30 @@ mod exec_path_resolution {
         assert_parity(r#"cd /tmp && command ./../bin/echo hi 2>/dev/null; echo exit=$?"#);
     }
 }
+
+/// c:Src/exec.c:3755-3763 — `globlist(args, 0); if (errflag) { lastval = 1;
+/// goto err; }`. Without POSIX_BUILTINS `command NAME` is an external, and C
+/// forks before that globlist: the NOMATCH skips the command and the script
+/// goes on with status 1. zshrs still ran the command (`command print` →
+/// "command not found: print", `command ls` listed the directory) and then
+/// ended the script.
+mod nomatch_in_arguments {
+    use super::*;
+
+    #[test]
+    fn the_command_is_skipped_and_the_script_continues() {
+        assert_parity("command print zshrs_nomatch_q*; print after $?");
+        assert_parity("command ls zshrs_nomatch_q*; print after $?");
+        assert_parity("command -p ls zshrs_nomatch_q*; print after $?");
+        assert_parity("f(){ command ls zshrs_nomatch_q*; print in $?; }; f; print after $?");
+    }
+
+    /// In-shell forms keep the errflag and end the script.
+    #[test]
+    fn builtin_forms_still_end_the_script() {
+        assert_parity("setopt posixbuiltins; command print zshrs_nomatch_q*; print after $?");
+        assert_parity("command -v zshrs_nomatch_q*; print after $?");
+        assert_parity("print zshrs_nomatch_q*; print after $?");
+        assert_parity("command print hi; print rc=$?");
+    }
+}

@@ -2471,6 +2471,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _forced = crate::ported::zle::complete::ForcedBuiltinGuard::enter();
             return Value::Status(dispatch_builtin_raw(&n, r));
         }
+        // c:Src/exec.c:3755-3763 — `globlist(args, 0); if (errflag) { lastval
+        // = 1; goto err; }`. Without POSIX_BUILTINS `command NAME` is always
+        // an external, and C forks before that globlist, so a NOMATCH error
+        // skips the command in the child while the parent's errflag stays
+        // clean: `command ls zzq*; print $?` prints the error, then 1. Here
+        // the words were expanded in the shell, so drop the failed command
+        // and its ERRFLAG_ERROR the way the external dispatcher does.
+        let glob_failed = with_executor(|exec| {
+            let f = exec.current_command_glob_failed.get();
+            exec.current_command_glob_failed.set(false);
+            f
+        });
+        if glob_failed {
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::Status(1);
+        }
         // c:Src/exec.c:3719 forks the external command before the redirection
         // loop at c:3785, so a redirection that failed (`command cat <&""` →
         // "file number expected") fails in the child: the command never runs
