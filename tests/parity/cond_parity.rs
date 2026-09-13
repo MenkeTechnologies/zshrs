@@ -1054,3 +1054,52 @@ done"#,
         );
     }
 }
+
+/// `par_cond_2`'s operand count (c:Src/parse.c:2576-2622) decides the term
+/// shape. `dble` is recomputed from the SECOND word (c:2599-2600); a third
+/// word makes it `par_cond_triple` (c:2659), whose `IS_DASH(a[0])` arm is a
+/// two-operand COND_MOD (c:2703-2707); a fourth word makes it
+/// `par_cond_multi` (c:2716), which rejects a non-dash first word with
+/// "condition expected: <first word>". The AST parser used to stop after
+/// three words, so every such line died with "parse error near" the fourth
+/// word, and a dash first word never reached the COND_MOD evaluator.
+///
+/// A parse error aborts the whole `-c` script before any redirection runs,
+/// so the diagnostics are pinned through `eval ... 2>&1`, which keeps both
+/// the message and the status on stdout.
+mod cond_operand_count {
+    use super::*;
+
+    /// The `globanchor` fuzz shape: `~` is an ordinary word without
+    /// EXTENDED_GLOB, so this is a four-word term.
+    #[test]
+    fn four_words_name_the_first_word() {
+        assert_parity("eval '[[ abc = ??? ~ x* ]]' 2>&1; print rc=$?");
+        assert_parity("eval '[[ a b c d ]]' 2>&1; print rc=$?");
+    }
+
+    /// Three words with a non-operator middle still name the middle word
+    /// (c:2709) — already agreed, pinned so the four-word path can't take it.
+    #[test]
+    fn three_words_name_the_middle_word() {
+        assert_parity("eval '[[ a b c ]]' 2>&1; print rc=$?");
+    }
+
+    /// A dash first word followed by two operands is COND_MOD, rejected at
+    /// evaluation with status 2, not at parse with status 1.
+    #[test]
+    fn dash_first_word_is_a_module_condition() {
+        assert_parity("eval '[[ -n a b ]]' 2>&1; print rc=$?");
+        assert_parity("eval '[[ -5 a ]]' 2>&1; print rc=$?");
+    }
+
+    /// The second word decides between a unary test and a triple: a string
+    /// operator after a dash word is a comparison, not an operand.
+    #[test]
+    fn operator_after_dash_word_is_a_comparison() {
+        assert_parity("[[ -prefix = -prefix ]]; print rc=$?");
+        assert_parity("[[ -n -eq 3 ]]; print rc=$?");
+        assert_parity("[[ -n < b ]]; print rc=$?");
+        assert_parity("[[ -5 -lt -3 ]]; print rc=$?");
+    }
+}

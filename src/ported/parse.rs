@@ -10436,170 +10436,20 @@ fn parse_cond_primary() -> Option<ZshCond> {
             return Some(ZshCond::Unary("-n".to_string(), s1)); // c:2558
         }
     };
-
     skip_cond_separators();
 
-    // Check for unary operator. zsh's lexer tokenizes leading `-` as
-    // `zsh_h::Dash` (`\u{9b}`, `Src/zsh.h:182`) inside gettokstr (lex.c:1390-1400
-    // LX2_DASH — `-` always becomes Dash, untokenized later). Match
-    // either form here, and use char-count not byte-count since Dash
-    // is 2 UTF-8 bytes (`\xc2\x9b`).
-    //
-    // c:Src/parse.c par_cond — when the leading token is `-` followed
-    // ENTIRELY by digits (`-5`, `-123`), it's a numeric literal
-    // operand, not a unary test flag. zsh's parser checks the C
-    // `isdigit` of the trailing chars to disambiguate; without the
-    // check, `[[ -5 -lt -3 ]]` reads `-5` as a one-arg test flag,
-    // then `-lt` as the operand, then `-3` as a leftover token —
-    // emitting "unknown condition: -5" and falling through to a
-    // command-not-found dispatch on `-3`. Bug #121 in docs/BUGS.md.
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let is_negative_number = s1_chars.len() >= 2
-        && IS_DASH(s1_chars[0])
-        && s1_chars[1..].iter().all(|c| c.is_ascii_digit());
-    if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) && !is_negative_number {
-        let s2 = match tok() {
-            STRING_LEX => {
-                let s = tokstr().unwrap_or_default();
-                zshlex();
-                s
-            }
-            _ => {
-                // c:2586-2593 — the operand-missing case for a
-                // two-char `-X`. `dble` (c:2549) is true here because
-                // `n_testargs == 0` short-circuits the strspn and the
-                // word is exactly two chars, so c:2591-2592 takes the
-                // `par_cond_multi(s1, newlinklist())` arm: a COND_MOD
-                // carrying the operator and ZERO operands. Evaluation —
-                // not parsing — is what rejects it: c:Src/cond.c:186-193
-                // warns "unknown condition: %s" and `return 2`.
-                //
-                // The previous port emitted the diagnostic here and
-                // returned None, which made `[[ -n ]]` a PARSE failure
-                // (status 1) where zsh exits 2. Handing the empty
-                // COND_MOD to the evaluator restores both the message
-                // and the status, and keeps the diagnostic in the one
-                // place C emits it.
-                return Some(ZshCond::ModCond(s1, Vec::new())); // c:2592
-            }
-        };
-        return Some(ZshCond::Unary(s1, s2));
-    }
-
-    // c:Src/parse.c:2626 par_cond_double / :2716 par_cond_multi — a leading
-    // MULTI-char `-X` operator (not a 2-char unary, not a negative number) is
-    // a module/completion condition (`COND_MOD`): the operator name plus all
-    // following operand words. The wordcode parser (par_cond_2/par_cond_double
-    // @ this file's 3271) already does this; the AST parser (this fn, which
-    // feeds the active fusevm compiler) did NOT, so `[[ -prefix PAT ]]`,
-    // `[[ -after PAT ]]` etc. hit "condition expected: -prefix" → `_dispatch`
-    // / `_arguments` failed to load and every completion routed through them
-    // died. Validity of `-X` is checked at EVAL time (unknown → error), never
-    // at parse — mirror that leniency here.
-    if s1_chars.len() > 2 && IS_DASH(s1_chars[0]) && !is_negative_number {
-        // c:2586-2591 — `dble` (c:2549) requires `!s1[2]`, so a
-        // MULTI-char `-word` never sets it. With no operand following,
-        // c:2590 therefore takes `par_cond_double(dupstring("-n"), s1)`
-        // — an ordinary non-empty-string test on the literal word, not
-        // a COND_MOD. `[[ -prefix ]]` is `[[ -n "-prefix" ]]` → true.
-        // Emitting a zero-operand ModCond here instead made it exit 1.
-        if tok() != STRING_LEX {
-            return Some(ZshCond::Unary("-n".to_string(), s1)); // c:2590
-        }
-        let mut margs: Vec<String> = Vec::new();
-        while tok() == STRING_LEX {
-            margs.push(tokstr().unwrap_or_default());
-            zshlex();
-            skip_cond_separators();
-        }
-        return Some(ZshCond::ModCond(s1, margs));
-    }
-
-    // Check for binary operator. Direct port of zsh/Src/parse.c:2601-2603:
-    //   incond++;  /* parentheses do globbing */
-    //   do condlex(); while (COND_SEP());
-    //   incond--;  /* parentheses do grouping */
-    // The bump makes the lexer treat `(` as a literal character inside
-    // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning Inpar
-    // and splitting the regex into multiple tokens.
-    let op = match tok() {
-        STRING_LEX => {
-            let s = tokstr().unwrap_or_default();
-            set_incond(incond() + 1);
-            zshlex();
-            set_incond(incond() - 1);
-            s
-        }
-        INANG_TOK => {
-            set_incond(incond() + 1);
-            zshlex();
-            set_incond(incond() - 1);
-            "<".to_string()
-        }
-        OUTANG_TOK => {
-            set_incond(incond() + 1);
-            zshlex();
-            set_incond(incond() - 1);
-            ">".to_string()
-        }
-        _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
-    };
-
-    skip_cond_separators();
-
-    // c:Src/parse.c:2601-2625 par_cond_2 — only the documented binary
-    // operators are accepted inside `[[ ... ]]`. zsh rejects ksh/bash
-    // forms `-a` (logical AND) and `-o` (logical OR) with a parse
-    // error ("condition expected") because they're not in the
-    // par_cond_2 binary-op set — zsh uses `&&` / `||` instead.
-    // Verified: `zsh -fc '[[ "" -a "x" ]]'` → exit 1, "parse error:
-    // condition expected: ...". Without this gate, zshrs silently
-    // built ZshCond::Binary("", "-a", "x") and ran an unknown-op
-    // path that always evaluated false.
-    // c:Src/parse.c:2601-2625 par_cond_2 — `-a` / `-o` n-ary chain
-    // operators are not valid binary operators inside `[[ ... ]]`
-    // (zsh uses `&&` / `||` instead). Match both the ASCII `-a`/
-    // `-o` form and the tokenized `Dash+a`/`Dash+o` form that the
-    // lexer emits inside cond bodies (Dash = \u{9b}, Src/zsh.h:182).
-    let op_chars: Vec<char> = op.chars().collect();
-    let is_dash_a_or_o =
-        op_chars.len() == 2 && IS_DASH(op_chars[0]) && (op_chars[1] == 'a' || op_chars[1] == 'o');
-    if is_dash_a_or_o {
-        // c:2629 `%s` = nicezputs = untokenize-through-`ztokens`; see
-        // par_cond_double.
-        crate::ported::utils::zerr(&format!(
-            "parse error: condition expected: {}",
-            crate::ported::utils::nicedupstring(&s1)
-        ));
-        crate::ported::utils::errflag.fetch_or(
-            crate::ported::zsh_h::ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        set_tok(LEXERR);
-        return None;
-    }
-
-    let s2 = match tok() {
-        STRING_LEX => {
-            let s = tokstr().unwrap_or_default();
-            zshlex();
-            s
-        }
-        _ => {
-            // c:Src/parse.c par_cond_2 — when a binary op is
-            // recognized but the RHS operand is missing, zsh emits
-            // `parse error: condition expected: <LHS>` at par_cond_2's
-            // missing-rhs branch. zshrs's previous fallback returned
-            // `Binary(s1, op, "")` which silently evaluated as if the
-            // RHS were empty string → rc=1. Bug #482.
-            //
-            // c:2629 `%s` = nicezputs, which untokenizes the operand through
-            // `ztokens` (c:Src/lex.c:38) — that maps Dash (\u{9b}) back to
-            // ASCII `-` AND restores the quote nulls / `$` this hand-rolled
-            // map dropped. See par_cond_double.
+    // !!! WARNING: RUST-ONLY ADAPTER — the AST form of C's `COND_ERROR(X,Y)`
+    // macro (c:Src/parse.c:89-96):
+    //   zwarn(X,Y); herrflush(); if (noerrs != 2) errflag |= ERRFLAG_ERROR;
+    //   YYERROR(ecused)
+    // Rust pre-formats the message, so the caller applies the `%s`
+    // (nicezputs → `nicedupstring`) step itself. `YYERROR` is `tok = LEXERR`
+    // plus the early `None` the cond parsers propagate.
+    macro_rules! cond_error {
+        ($fmt:literal, $arg:expr) => {{
             crate::ported::utils::zerr(&format!(
-                "parse error: condition expected: {}",
-                crate::ported::utils::nicedupstring(&s1)
+                $fmt,
+                crate::ported::utils::nicedupstring(&$arg)
             ));
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -10607,53 +10457,140 @@ fn parse_cond_primary() -> Option<ZshCond> {
             );
             set_tok(LEXERR);
             return None;
-        }
-    };
-
-    // c:Src/parse.c:2685-2691 par_cond_triple —
-    //   `(b[0] == Equals || b[0] == '=') && (b[1] == '~' || b[1] == Tilde)
-    //    && !b[2]` → COND_REGEX.
-    // The lexer emits the TOKEN forms inside cond bodies (`=` at word
-    // start → Equals `\u{8d}`, `~` → Tilde `\u{98}`), so an ASCII-only
-    // `op == "=~"` check missed every real `[[ x =~ pat ]]` and fell
-    // through to Binary.
-    let opc: Vec<char> = op.chars().collect();
-    let is_regex_op =
-        opc.len() == 2 && (opc[0] == '=' || opc[0] == Equals) && (opc[1] == '~' || opc[1] == Tilde);
-    // c:2659-2710 par_cond_triple — only the documented binary operators are
-    // valid. String ops: `=`/`==`/`!=`/`<`/`>` (and their tokenized forms
-    // Equals/Bang/Inang/Outang). Dash ops (`-eq`, `-nt`, `-pcre-match`, any
-    // `-X`) parse-accept and the evaluator reports "unknown condition" if
-    // unsupported. A `-mod A B C` (s1 is a dash op) is the COND_MOD form. Any
-    // other middle word is `COND_ERROR("condition expected: %s", op)` — a parse
-    // error that YYERRORs (errflag + LEXERR) so the line aborts. Without this
-    // gate `[[ a b c ]]` silently built Binary("a","b","c") and ran on.
-    let is_eq = |c: char| c == '=' || c == Equals;
-    let is_bang = |c: char| c == '!' || c == Bang;
-    let is_recognized_op = (opc.len() == 1
-        && (is_eq(opc[0]) || matches!(opc[0], '<' | '>') || opc[0] == Inang || opc[0] == Outang))
-        || (opc.len() == 2 && is_eq(opc[0]) && is_eq(opc[1]))
-        || (opc.len() == 2 && is_bang(opc[0]) && is_eq(opc[1]))
-        || (!opc.is_empty() && IS_DASH(opc[0]))
-        || (!s1_chars.is_empty() && IS_DASH(s1_chars[0]));
-    if is_regex_op {
-        Some(ZshCond::Regex(s1, s2))
-    } else if is_recognized_op {
-        Some(ZshCond::Binary(s1, op, s2))
-    } else {
-        // c:2709 `%s` = nicezputs, which untokenizes through `ztokens`
-        // (Dash -> `-`, Snull -> `'`, String -> `$`). See par_cond_double.
-        crate::ported::utils::zerr(&format!(
-            "condition expected: {}",
-            crate::ported::utils::nicedupstring(&op)
-        ));
-        crate::ported::utils::errflag.fetch_or(
-            crate::ported::zsh_h::ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        set_tok(LEXERR);
-        None
+        }};
     }
+
+    let s1_chars: Vec<char> = s1.chars().collect();
+    // c:2549 — `dble = (s1 && IS_DASH(*s1) && (!n_testargs || …) && !s1[2]);`
+    // With n_testargs == 0 (the `[[ ]]` entry point) that is "a bare
+    // two-char `-X`". A negative number (`-5`) is NOT exempt in C: it is
+    // just another two-char dash word, and `[[ -5 -lt -3 ]]` still parses
+    // as a triple below because the SECOND word decides (c:2599-2600).
+    let dble = s1_chars.len() == 2 && IS_DASH(s1_chars[0]);
+
+    // c:2576-2587 — `<` / `>` string comparison, checked before the
+    // operand count for every s1 (a dash word included: `[[ -n < b ]]`
+    // is `STRLT("-n", "b")`).
+    if tok() == INANG_TOK || tok() == OUTANG_TOK {
+        let op = if tok() == INANG_TOK { "<" } else { ">" };
+        set_incond(incond() + 1);
+        zshlex();
+        set_incond(incond() - 1);
+        skip_cond_separators();
+        if tok() != STRING_LEX {
+            // Bug #482 — the missing-RHS diagnostic (see par_cond_double).
+            cond_error!("parse error: condition expected: {}", s1);
+        }
+        let s3 = tokstr().unwrap_or_default();
+        zshlex(); // c:2584 `do condlex(); while (COND_SEP());`
+        skip_cond_separators();
+        return Some(ZshCond::Binary(s1, op.to_string(), s3)); // c:2585-2588
+    }
+
+    // c:2588-2597 — `if (tok != STRING)`: only one operand. `!dble` →
+    // `par_cond_double(dupstring("-n"), s1)`; a bare `-X` →
+    // `par_cond_multi(s1, newlinklist())`, a COND_MOD with no operands that
+    // the evaluator rejects with "unknown condition" (c:Src/cond.c:186-193).
+    // A multi-char `-prefix` is not dble, so `[[ -prefix ]]` is
+    // `[[ -n -prefix ]]` → true.
+    if tok() != STRING_LEX {
+        if !dble {
+            return Some(ZshCond::Unary("-n".to_string(), s1)); // c:2591
+        }
+        return Some(ZshCond::ModCond(s1, Vec::new())); // c:2593
+    }
+
+    // c:2598-2603
+    //   s2 = tokstr;
+    //   if (!n_testargs)
+    //       dble = (s2 && IS_DASH(*s2) && !s2[2]);
+    //   incond++;  -- parentheses do globbing
+    //   do condlex(); while (COND_SEP());
+    //   incond--;  -- parentheses do grouping
+    // `dble` is RECOMPUTED from the second word: `[[ A -X B ]]` reads as the
+    // two-word `par_cond_double(A, "-X")` (`[[ "" -a "x" ]]` → "parse error:
+    // condition expected: "), and the bump makes the lexer keep `(` literal
+    // in the RHS word (`[[ x =~ (foo) ]]`).
+    let s2 = tokstr().unwrap_or_default();
+    let s2_chars: Vec<char> = s2.chars().collect();
+    let dble = s2_chars.len() == 2 && IS_DASH(s2_chars[0]);
+    set_incond(incond() + 1);
+    zshlex();
+    skip_cond_separators();
+    set_incond(incond() - 1);
+
+    // c:2604-2622
+    if tok() == STRING_LEX && !dble {
+        let s3 = tokstr().unwrap_or_default();
+        zshlex(); // c:2606 `do condlex(); while (COND_SEP());`
+        skip_cond_separators();
+        if tok() == STRING_LEX {
+            // c:2607-2616 — a fourth word: every remaining STRING joins the
+            // operand list and the whole term is `par_cond_multi(s1, l)`.
+            let mut l: Vec<String> = vec![s2, s3];
+            while tok() == STRING_LEX {
+                l.push(tokstr().unwrap_or_default());
+                zshlex();
+                skip_cond_separators();
+            }
+            // c:2716-2719 par_cond_multi —
+            //   if (!IS_DASH(a[0]) || !a[1])
+            //       COND_ERROR("condition expected: %s", a);
+            if !(s1_chars.len() >= 2 && IS_DASH(s1_chars[0])) {
+                cond_error!("condition expected: {}", s1);
+            }
+            return Some(ZshCond::ModCond(s1, l)); // c:2722-2726 COND_MOD
+        }
+
+        // c:2618 `par_cond_triple(s1, s2, s3)` (c:2659-2712). The operator
+        // checks run in C's order: `=`, `<`/`>`, `==`, `!=`, `=~`, a dash
+        // operator, then a dash FIRST word.
+        let bc = &s2_chars;
+        let is_eq = |ch: char| ch == '=' || ch == Equals;
+        let is_bang = |ch: char| ch == '!' || ch == Bang;
+        // c:2663 `(b[0] == Equals || b[0] == '=') && !b[1]` → COND_STREQ
+        // c:2668 `(b[0] == '>' || Outang || '<' || Inang) && !b[1]`
+        // c:2674 `==` → COND_STRDEQ, c:2680 `!=` → COND_STRNEQ
+        let string_op = (bc.len() == 1
+            && (is_eq(bc[0]) || matches!(bc[0], '<' | '>') || bc[0] == Inang || bc[0] == Outang))
+            || (bc.len() == 2 && is_eq(bc[0]) && is_eq(bc[1]))
+            || (bc.len() == 2 && is_bang(bc[0]) && is_eq(bc[1]));
+        // c:2685-2686 `(b[0] == Equals || '=') && (b[1] == '~' || Tilde) &&
+        // !b[2]` → COND_REGEX. The lexer hands the TOKEN forms (`=` at word
+        // start → Equals, `~` → Tilde) inside cond bodies.
+        if bc.len() == 2 && is_eq(bc[0]) && (bc[1] == '~' || bc[1] == Tilde) {
+            return Some(ZshCond::Regex(s1, s3));
+        }
+        // c:2692-2702 — `IS_DASH(b[0])`: a numeric/file operator
+        // (`get_cond_num`) or an infix module condition (COND_MODI). Both
+        // stay a Binary node; the evaluator reports an unknown `-X`.
+        if string_op || bc.first().is_some_and(|&ch| IS_DASH(ch)) {
+            return Some(ZshCond::Binary(s1, s2, s3));
+        }
+        // c:2703-2707 — `IS_DASH(a[0]) && a[1]`: `WCB_COND(COND_MOD, 2)`
+        // named by the first word, so `[[ -n a b ]]` evaluates to "unknown
+        // condition: -n" (status 2) instead of failing to parse.
+        if s1_chars.len() >= 2 && IS_DASH(s1_chars[0]) {
+            return Some(ZshCond::ModCond(s1, vec![s2, s3]));
+        }
+        // c:2709 `COND_ERROR("condition expected: %s", b)`.
+        cond_error!("condition expected: {}", s2);
+    }
+
+    // c:2620 `par_cond_double(s1, s2)` (c:2626-2640) —
+    //   if (!IS_DASH(a[0]) || !a[1])
+    //       COND_ERROR("parse error: condition expected: %s", a);
+    //   else if (!a[2] && strspn(a+1, "abcdefgknoprstuvwxzhLONGS") == 1)
+    //       WCB_COND(a[1], 0)          -- the builtin unary test
+    //   else
+    //       WCB_COND(COND_MOD, 1)      -- a one-operand module condition
+    if !(s1_chars.len() >= 2 && IS_DASH(s1_chars[0])) {
+        cond_error!("parse error: condition expected: {}", s1);
+    }
+    if s1_chars.len() == 2 && "abcdefgknoprstuvwxzhLONGS".contains(s1_chars[1]) {
+        return Some(ZshCond::Unary(s1, s2)); // c:2631-2632
+    }
+    Some(ZshCond::ModCond(s1, vec![s2])) // c:2634-2637
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
