@@ -1143,3 +1143,29 @@ mod unknown_option_status_through_not_and_or {
         assert_parity("[[ -o invalidoption || x == [a- ]] 2>/dev/null; echo bad:$?");
     }
 }
+
+/// c:Src/cond.c:195-200 — `cond_subst(&left, !fromtest)` runs on the left
+/// operand of every binary test, `==` included, and a word ending in a glob
+/// qualifier is filename-generated there (c:40-53). The right side of `=` /
+/// `==` / `!=` is a pattern and never is. zshrs kept a qualified left side
+/// literal, so the test was false and a qualifier matching nothing raised no
+/// error.
+mod glob_qualifier_on_the_left_of_a_pattern_match {
+    use super::*;
+
+    const DIR: &str = "cd \"$(mktemp -d)\" && touch hello && setopt extendedglob; ";
+
+    #[test]
+    fn the_left_operand_is_filename_generated() {
+        assert_parity(&format!("{DIR}[[ hello(#q.) == hello ]] && print lhs1; print rc=$?"));
+        assert_parity(&format!("{DIR}[[ hello(#q/) == hello ]] 2>/dev/null && print lhs2; print rc=$?"));
+        assert_parity(&format!("{DIR}[[ nope(#qN) == '' ]] && print empty"));
+    }
+
+    #[test]
+    fn the_right_operand_and_plain_words_stay_patterns() {
+        assert_parity(&format!("{DIR}[[ z == *(#q.) ]] && print rhs"));
+        assert_parity(&format!("{DIR}[[ -n hello(#q.) ]] && print unary"));
+        assert_parity(&format!("{DIR}[[ a* = a* ]] && print lit; [[ a{{2,3}} == 'a{{2,3}}' ]] && print br"));
+    }
+}

@@ -11637,7 +11637,20 @@ impl ZshCompiler {
                 // without the bump it brace-expanded and `[[ a{2,3} ==
                 // 'a{2,3}' ]]` compared `a2 a3` against `a{2,3}` → 1.
                 let left_has_unquoted_glob = Self::cond_operand_suppresses_glob(left);
-                if left_has_unquoted_glob {
+                if Self::cond_operand_has_globqual(left) {
+                    // c:Src/cond.c:195-200 — `cond_subst(&left, !fromtest)` runs
+                    // on the left operand of EVERY binary test, `=` / `==` /
+                    // `!=` included, and a word ending in a glob qualifier takes
+                    // its `prefork(args, 0, NULL)` + `zglob` branch (c:40-53):
+                    // `[[ hello(#q.) == hello ]]` compares the generated name,
+                    // and a qualifier that matches nothing is "no matches
+                    // found". The right side of `=` / `==` / `!=` is a pattern
+                    // and never reaches cond_subst (c:201-208).
+                    let saved = self.singsub_depth;
+                    self.singsub_depth = 0;
+                    self.compile_word_str(left);
+                    self.singsub_depth = saved;
+                } else if left_has_unquoted_glob {
                     self.compile_singsub_word_noglob(left);
                 } else {
                     self.compile_word_str(left);
