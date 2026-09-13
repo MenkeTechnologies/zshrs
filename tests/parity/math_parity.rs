@@ -1057,3 +1057,46 @@ mod non_numeric_scalar_operand {
         assert_parity(r#"x="foo bar"; echo $(( x )) 2>&1; let x 2>&1; echo rc=$?"#);
     }
 }
+
+/// c:Src/math.c:819 / :827 / :1147 — `zerr("bad output format specification")`,
+/// `zerr("invalid base …")` and `zerr("division by zero")` carry no
+/// "bad math expression:" prefix, and a `${name:offset:length}` substring
+/// reports them exactly as `$(( ))` does.
+mod substring_math_errors_are_reported_verbatim {
+    use super::*;
+
+    fn assert_stderr_parity(script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = std::process::Command::new(zsh_path()).args(["-f", "-c", script]).output().expect("zsh");
+        let r = std::process::Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("zshrs");
+        // Strip the `name:line: ` diagnostic prefix each shell derives from argv[0].
+        let msg = |b: &[u8]| {
+            String::from_utf8_lossy(b)
+                .lines()
+                .map(|l| l.splitn(3, ':').nth(2).unwrap_or(l).trim().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(msg(&z.stderr), msg(&r.stderr), "stderr divergence on script:\n{script}");
+        assert_eq!(z.status.code(), r.status.code(), "exit divergence on script:\n{script}");
+    }
+
+    #[test]
+    fn offset_and_length_errors() {
+        assert_stderr_parity("foo=abc; print ${foo:0:[}");
+        assert_stderr_parity("foo=abc; print ${foo:[}");
+        assert_stderr_parity("foo=abc; print ${foo:1/0}");
+        assert_stderr_parity("foo=abc; print ${foo:0:[#1]1}");
+        assert_stderr_parity("a=(a b c); print ${a[@]:0:[}");
+    }
+
+    #[test]
+    fn prefixed_messages_keep_their_prefix() {
+        assert_stderr_parity("foo=abc; print ${foo:0:1+}");
+        assert_stderr_parity("foo=abc; print ${foo:(1)x:2}");
+    }
+}

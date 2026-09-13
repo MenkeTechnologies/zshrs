@@ -20342,14 +20342,11 @@ pub fn paramsubst(
                     let off = match crate::ported::math::mathevali(&singsub(parts[0])) {
                         Ok(n) => n,
                         Err(e) => {
-                            // Same shape as the length arm: mathevali's message
-                            // already carries the prefix for real parse errors,
-                            // so only add it when it is missing.
-                            if e.starts_with("bad math expression") {
-                                crate::ported::utils::zerr(&e);
-                            } else {
-                                crate::ported::utils::zerr(&format!("bad math expression: {e}"));
-                            }
+                            // c:Src/math.c:819 / :1147 and friends — mathevali's
+                            // message is C's own `zerr` text, prefixed only where
+                            // C prefixes it (`bad output format specification`,
+                            // `division by zero` carry none). Report it verbatim.
+                            crate::ported::utils::zerr(&e);
                             errflag_set_error(); // c:3622
                             return (String::new(), 0, Vec::new()); // c:3623
                         }
@@ -20513,14 +20510,9 @@ pub fn paramsubst(
                             Some(s) => match crate::ported::math::mathevali(&singsub(s)) {
                                 Ok(n) => Some(n),
                                 Err(e) => {
-                                    if e.starts_with("bad math expression") {
-                                        crate::ported::utils::zerr(&e);
-                                    } else {
-                                        crate::ported::utils::zerr(&format!(
-                                            "bad math expression: {}",
-                                            e
-                                        ));
-                                    }
+                                    // c:Src/math.c — mathevali's message is C's own `zerr` text; see the
+                                    // offset arm above. Report it verbatim.
+                                    crate::ported::utils::zerr(&e);
                                     errflag_set_error();
                                     return (String::new(), 0, Vec::new());
                                 }
@@ -20606,14 +20598,9 @@ pub fn paramsubst(
                             Some(s) => match crate::ported::math::mathevali(&singsub(s)) {
                                 Ok(n) => Some(n),
                                 Err(e) => {
-                                    if e.starts_with("bad math expression") {
-                                        crate::ported::utils::zerr(&e);
-                                    } else {
-                                        crate::ported::utils::zerr(&format!(
-                                            "bad math expression: {}",
-                                            e
-                                        ));
-                                    }
+                                    // c:Src/math.c — mathevali's message is C's own `zerr` text; see the
+                                    // offset arm above. Report it verbatim.
+                                    crate::ported::utils::zerr(&e);
                                     errflag_set_error();
                                     return (String::new(), 0, Vec::new());
                                 }
@@ -23688,14 +23675,9 @@ pub fn paramsubst(
                         match crate::ported::math::mathevali(expanded.trim()) {
                             Ok(n) => n,
                             Err(e) => {
-                                if e.starts_with("bad math expression") {
-                                    crate::ported::utils::zerr(&e);
-                                } else {
-                                    crate::ported::utils::zerr(&format!(
-                                        "bad math expression: {}",
-                                        e
-                                    ));
-                                }
+                                // c:Src/math.c — mathevali's message is C's own `zerr` text; see the
+                                // offset arm above. Report it verbatim.
+                                crate::ported::utils::zerr(&e);
                                 0 // c:Src/math.c:1546
                             }
                         }
