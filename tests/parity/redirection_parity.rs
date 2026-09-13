@@ -896,3 +896,26 @@ mod heredoc_members_of_an_input_multio {
         assert_parity_in(d.path(), "{ cat; cat <&3 } <<x 3<<<three\nfoo\nx");
     }
 }
+
+/// c:Src/lex.c:649-668 + c:828-836 / c:868-870 — a digit before `<` or `>` is
+/// taken as a redirection fd, but when the operator turns out to open a
+/// process substitution (`2<(…)`, `2>(…)`) the `unpeekfd:` step pushes the
+/// digit back into the word. zshrs dropped the digit.
+mod digit_before_a_process_substitution {
+    use super::*;
+
+    #[test]
+    fn the_digit_stays_in_the_word() {
+        let d = tdir();
+        assert_parity_in(d.path(), "print -r -- 2<(true) | cut -c1-3");
+        assert_parity_in(d.path(), "print -r -- a 2>(true) | cut -c1-3");
+        assert_parity_in(d.path(), "cat 2<(print z) 2>/dev/null; print rc=$?");
+    }
+
+    #[test]
+    fn a_real_fd_redirection_is_unchanged() {
+        let d = tdir();
+        assert_parity_in(d.path(), "print hi 2>/dev/null; print -r -- <(print y) | cut -c1-3");
+        assert_parity_in(d.path(), "{ print err >&2 } 2>&1 | cat");
+    }
+}

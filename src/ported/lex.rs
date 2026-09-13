@@ -1733,6 +1733,13 @@ fn gettok() -> lextok {
                     // apply (process-sub, not a redir).
                     hungetc('(');
                     LEX_LEXSTOP.set(false);
+                    // c:831-835 `unpeekfd:` — a digit read as a redirection fd
+                    // (`2>(x)`, `2<(x)`) belongs to the word after all: push the
+                    // operator back and restart the word at the digit.
+                    if peekfd != -1 {
+                        hungetc('<'); // c:833
+                        return gettokstr(((b'0' as i32) + peekfd) as u8 as char, false); // c:834
+                    }
                     return gettokstr('<', false);
                 }
                 Some('>') => INOUTANG,
@@ -1831,6 +1838,13 @@ fn gettok() -> lextok {
                     // `>(...)` process substitution.
                     hungetc('(');
                     LEX_LEXSTOP.set(false);
+                    // c:831-835 `unpeekfd:` — a digit read as a redirection fd
+                    // (`2>(x)`, `2<(x)`) belongs to the word after all: push the
+                    // operator back and restart the word at the digit.
+                    if peekfd != -1 {
+                        hungetc('>'); // c:833
+                        return gettokstr(((b'0' as i32) + peekfd) as u8 as char, false); // c:834
+                    }
                     return gettokstr('>', false);
                 }
                 Some('&') => {
