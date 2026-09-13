@@ -3884,6 +3884,18 @@ impl ZshCompiler {
             fusevm::shell_builtins::builtin_id(dispatch_first_raw)
                 .or_else(|| fusevm::shell_builtins::builtin_id(&first_clean))
         };
+        // c:Src/builtin.c:7239-7244 — `[` is `bin_test` with BIN_BRACKET, which
+        // demands the closing `]` and reports "']' expected" (status 2) without
+        // it. fusevm maps `[` and `test` to the one BUILTIN_TEST slot, whose
+        // handler could only guess the spelling from a trailing `]`, so `[ a`
+        // ran as `test a` and quietly succeeded. The command word is known
+        // here, so hand `[` its own slot.
+        let builtin_id = match builtin_id {
+            Some(fusevm::shell_builtins::BUILTIN_TEST) if first_clean == "[" => {
+                Some(crate::fusevm_bridge::BUILTIN_TEST_BRACKET)
+            }
+            other => other,
+        };
         // u8 argc overflow. `CallBuiltin`/`CallFunction` carry argc as a u8
         // (op.rs `Call{,Builtin,Function}(u16, u8)`), so a command invoked
         // with >255 args wraps argc mod 256 and the dispatch pops only the

@@ -2321,24 +2321,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
+    // `[ … ]` — c:Src/builtin.c:7231 `bin_test` with BIN_BRACKET. See
+    // BUILTIN_TEST_BRACKET.
+    vm.register_builtin(BUILTIN_TEST_BRACKET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(dispatch_builtin("[", args))
+    });
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
         let args = pop_args(vm, argc);
-        // Distinguish `[ … ]` from `test …` by sniffing the trailing
-        // `]` — `[` requires it (c:Src/builtin.c:7241), `test` rejects
-        // it. The compile path emits BUILTIN_TEST for both, so the
-        // dispatch name carries the `[` vs `test` semantic for
-        // execbuiltin's funcid (BIN_BRACKET=21 vs BIN_TEST=20). Without
-        // this, bin_test's `if func == BIN_BRACKET` arm (which pops
-        // the trailing `]`) never fired for `[` calls, so the `]`
-        // leaked into evalcond as a positional and silently changed
-        // the result. Bug surfaced via test_test_dashdash_unknown_condition.
-        let name = if args.last().map(|s| s.as_str()) == Some("]") {
-            "["
-        } else {
-            "test"
-        };
-        let status = dispatch_builtin(name, args);
-        Value::Status(status)
+        // c:Src/builtin.c:7231 `bin_test` with funcid BIN_TEST. The `[`
+        // spelling compiles to BUILTIN_TEST_BRACKET, so this slot is only ever
+        // `test`. It used to guess the spelling from a trailing `]`, which ran
+        // `test a ]` as `[ a ]` (status 0) where zsh reports "condition
+        // expected: a" (status 2), and ran `[ a` as `test a`.
+        Value::Status(dispatch_builtin("test", args))
     });
 
     // Variable declaration. `local` (Src/builtin.c bin_local) handles
@@ -16528,6 +16524,12 @@ pub const BUILTIN_TYPESET_POSTASSIGNS_END: u16 = 685;
 /// `disable typeset` does not stop the reserved-word form. No args; sets the
 /// carrier dispatch_builtin consumes before its disabled-builtin test.
 pub const BUILTIN_TYPESET_RESWD: u16 = 686;
+/// The `[` spelling of the test builtin (c:Src/builtin.c:7231 `bin_test`,
+/// funcid BIN_BRACKET). fusevm's name table maps `[` and `test` to one
+/// BUILTIN_TEST slot, which cannot tell them apart when the closing `]` is
+/// missing; compile_zsh emits this id when the command word is `[`, so
+/// bin_test sees BIN_BRACKET and reports "']' expected".
+pub const BUILTIN_TEST_BRACKET: u16 = 690;
 /// Emitted right before the dispatch of a command that carried the `-`
 /// precommand modifier (c:Src/builtin.c:42 `BIN_PREFIX("-", BINF_DASH)`,
 /// accumulated into `cflags` at c:Src/exec.c:3246). No args; sets the

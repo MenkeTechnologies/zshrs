@@ -1169,3 +1169,26 @@ mod glob_qualifier_on_the_left_of_a_pattern_match {
         assert_parity(&format!("{DIR}[[ a* = a* ]] && print lit; [[ a{{2,3}} == 'a{{2,3}}' ]] && print br"));
     }
 }
+
+/// c:Src/builtin.c:7239-7244 — `[` requires its closing `]` ("']' expected",
+/// status 2) and `test` treats a trailing `]` as an ordinary operand. The two
+/// spellings share one fusevm builtin slot, so the spelling must come from the
+/// command word, not from the last argument.
+mod bracket_versus_test_spelling {
+    use super::*;
+
+    #[test]
+    fn bracket_without_closing_bracket_fails() {
+        assert_parity("[ a; print rc=$?");
+        assert_parity("[ a = a; print rc=$?");
+        assert_parity("[ ; print rc=$?");
+        assert_parity("print $(( [ )); print rc=$?");
+    }
+
+    #[test]
+    fn test_with_trailing_bracket_is_an_operand() {
+        assert_parity("test a ]; print rc=$?");
+        assert_parity("test ] ; print rc=$?; test a = a; print rc=$?");
+        assert_parity("[ a = a ]; print rc=$?; [ ]; print rc=$?; f() { [ \"$1\" = x ] }; f x; print rc=$?");
+    }
+}
