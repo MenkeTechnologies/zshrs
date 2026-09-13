@@ -5482,6 +5482,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the expanded one so nothing downstream has to re-flatten
         // `name[key]` and re-split it (c:Src/params.c:2008 parses the
         // subscript BEFORE expansion; see `assign_hash_element`).
+        //   argc 6 = [name, key, value, key_src, dynamic, append] — `+=`;
+        //            value is the pre-concatenated read-modify-write.
+        let append = if _argc >= 6 {
+            vm.pop().to_int() != 0
+        } else {
+            false
+        };
         let key_is_dynamic = if _argc >= 5 {
             vm.pop().to_int() != 0
         } else {
@@ -5495,6 +5502,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // c:Src/params.c:3250-3266 — assignsparam ASSPM_AUGMENT on a
+        // subscripted integer/float:
+        //     case PM_INTEGER: case PM_EFLOAT: case PM_FFLOAT:
+        //         zsfree(val); unqueue_signals();
+        //         zerr("attempt to add to slice of a numeric variable");
+        //         return NULL;
+        if append {
+            let numeric = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(&name).map(|pm| crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)))
+                .is_some_and(|t| {
+                    t == crate::ported::zsh_h::PM_INTEGER
+                        || t == crate::ported::zsh_h::PM_EFLOAT
+                        || t == crate::ported::zsh_h::PM_FFLOAT
+                });
+            if numeric {
+                crate::ported::utils::zerr("attempt to add to slice of a numeric variable"); // c:3264
+                return Value::Status(1);
+            }
+        }
         let key_src = key_src.unwrap_or_else(|| key.clone());
         // c:Src/params.c:3203-3207 — `if (!isident(s)) { zerr("not an
         // identifier: %s", s); errflag |= ERRFLAG_ERROR; return NULL; }`.
