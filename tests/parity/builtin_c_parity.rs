@@ -1733,3 +1733,18 @@ print rc=$?"#;
         assert_parity(SCRIPT);
     }
 }
+
+/// The in-process `env CMD` stand-in waited for its child with
+/// `Command::status()` while the shell's SIGCHLD reaper (`waitpid(-1)`,
+/// c:Src/signals.c:285 wait_for_processes) could collect the same child
+/// first; `status()` then failed with ECHILD and every `env CMD` returned 127.
+/// zsh runs `/usr/bin/env`, which returns the command's own status.
+mod env_command_exit_status {
+    use super::*;
+
+    #[test]
+    fn env_returns_the_status_of_the_command_it_runs() {
+        assert_parity(r#"env /usr/bin/true; echo rc=$?; env FOO=1 /usr/bin/false; echo rc=$?; env /bin/sh -c 'exit 7'; echo rc=$?"#);
+        assert_parity(r#"env /bin/sh -c 'echo hi'; echo rc=$?; env >/dev/null; echo rc=$?"#);
+    }
+}

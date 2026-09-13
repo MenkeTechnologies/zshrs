@@ -8443,13 +8443,23 @@ impl ShellExecutor {
         if clear_env {
             cmd.env_clear();
         }
+        cmd.env_remove("ARGV0"); // c:Src/exec.c:768 — before env's own assignments
         for u in &unset {
             cmd.env_remove(u);
         }
         for (k, v) in &assignments {
             cmd.env(k, v);
         }
-        match cmd.status() {
+        // The shell's SIGCHLD reaper (`waitpid(-1)`, c:Src/signals.c:285
+        // wait_for_processes) runs on any thread and collected this child
+        // before `status()` could, so `status()` failed with ECHILD and every
+        // `env CMD` returned 127. Hold signals across the wait exactly as the
+        // external-command spawn does (vm_helper.rs, ForegroundWaitGuard).
+        let status_result = {
+            let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
+            cmd.status()
+        };
+        match status_result {
             Ok(status) => status.code().unwrap_or(127),
             Err(_) => 127,
         }
