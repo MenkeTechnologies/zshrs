@@ -4335,3 +4335,34 @@ mod logical_compound_assign_compiled {
         assert_parity("x=5; (( x ^^= 1 )); print $x; (( x ^^= 1, x += 1 )); print $x");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// `##^X` / `##\M-^X` character constants in arithmetic.
+//
+// c:Src/utils.c:7194-7196 — getkeystring under GETKEYS_MATH (GETKEY_CTRL)
+// treats `^X` as a control char, and c:7261-7275 apply control/meta after the
+// following char is decoded (`^?` → 127, else `& 0x9f`). The port had no `^`
+// arm, masked `\C-` with 0x1f (so `\C-?` was 31), could not combine `\C`/`\M`,
+// and decoded `\c` as a control prefix where C sends it to `def:`.
+// ─────────────────────────────────────────────────────────────────────
+mod math_char_constant_control {
+    use super::*;
+
+    /// zsh: `1 1 127 30 27`.
+    #[test]
+    fn caret_control_chars() {
+        assert_parity(r#"print $(( ##^A )) $(( ##^a )) $(( ##^? )) $(( ##^^ )) $(( ##^\e ))"#);
+    }
+
+    /// zsh: `127 129 129 129`.
+    #[test]
+    fn control_meta_ordering() {
+        assert_parity(r#"print $(( ##\C-? )) $(( ##\M-^a )) $(( ##^\M-a )) $(( ##\C-\M-a ))"#);
+    }
+
+    /// zsh: `bad math expression: operator expected at `a '`, status 1.
+    #[test]
+    fn backslash_c_is_literal() {
+        assert_parity(r#"print $(( ##\ca ))"#);
+    }
+}

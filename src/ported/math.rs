@@ -815,110 +815,153 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
 /// set (OCTAL_ESC | EMACS | CTRL). Allowlisted in fake_fn_allowlist.txt.
 fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
     let cs: Vec<char> = s.chars().collect();
-    if cs.is_empty() {
-        return None;
-    }
-    if cs[0] != '\\' {
-        // c:Src/utils.c:7198-7207 — the wide-character arm is reached ONLY
-        // when `isset(MULTIBYTE)`; a byte above 127 otherwise falls past it.
-        // c:7209-7210 — `else if (*s == Meta) *t++ = *++s ^ 32;` decodes the
-        // escaped byte, and c:7211 takes any remaining byte as itself. So
-        // `##` answers a CHARACTER code in multibyte mode and a BYTE value in
-        // byte mode: `unsetopt multibyte; $(( ##${gr[1]} ))` is 206 (0xce),
-        // not 945 (`α`).
-        if cs[0] == char::from(crate::ported::zsh_h::Meta) {
-            if let Some(&n) = cs.get(1) {
-                return Some((((n as u32) ^ 32) as i64, 2));
+    // One pass of `getkeystring`'s per-char body (c:Src/utils.c:6990-7260)
+    // for GETKEYS_MATH, minus the `\C` / `\M` / `^` modifier arms, which loop
+    // below. Returns (code, chars used); `used == 0` flags the multibyte early
+    // return (c:7198-7206), where no modifier applies and one char is consumed.
+    let decode_one = |cs: &[char]| -> Option<(i64, usize)> {
+        if cs.is_empty() {
+            return None;
+        }
+        if cs[0] != '\\' {
+            // c:Src/utils.c:7198-7207 — the wide-character arm is reached ONLY
+            // when `isset(MULTIBYTE)`; a byte above 127 otherwise falls past it.
+            // c:7209-7210 — `else if (*s == Meta) *t++ = *++s ^ 32;` decodes the
+            // escaped byte, and c:7211 takes any remaining byte as itself. So
+            // `##` answers a CHARACTER code in multibyte mode and a BYTE value in
+            // byte mode: `unsetopt multibyte; $(( ##${gr[1]} ))` is 206 (0xce),
+            // not 945 (`α`).
+            if cs[0] == char::from(crate::ported::zsh_h::Meta) {
+                if let Some(&n) = cs.get(1) {
+                    return Some((((n as u32) ^ 32) as i64, 2));
+                }
             }
+            let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+            if !mb && (cs[0] as u32) > 127 {
+                // c:7211 — one raw byte, which for text held as UTF-8 is the
+                // lead byte of the character at the cursor.
+                let mut buf = [0u8; 4];
+                return Some((cs[0].encode_utf8(&mut buf).as_bytes()[0] as i64, 1));
+            }
+            if (cs[0] as u32) > 127 {
+                // c:7198-7206 — MULTIBYTE wide char: `*misc = wc; return`.
+                return Some((cs[0] as i64, 0));
+            }
+            return Some((cs[0] as i64, 1));
         }
-        let mb = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
-        if !mb && (cs[0] as u32) > 127 {
-            // c:7211 — one raw byte, which for text held as UTF-8 is the
-            // lead byte of the character at the cursor.
-            let mut buf = [0u8; 4];
-            return Some((cs[0].encode_utf8(&mut buf).as_bytes()[0] as i64, 1));
+        // `\X` escape — `\` plus at least one more char.
+        let e = match cs.get(1) {
+            Some(c) => *c,
+            None => return Some(('\\' as i64, 1)),
+        };
+        let simple = |code: i64| Some((code, 2));
+        match e {
+            'n' => simple(10),
+            't' => simple(9),
+            'r' => simple(13),
+            'e' | 'E' => simple(27),
+            'a' => simple(7),
+            'b' => simple(8),
+            'f' => simple(12),
+            'v' => simple(11),
+            '\\' => simple(92),
+            '0'..='7' => {
+                // \NNN octal (GETKEY_OCTAL_ESC), up to 3 digits.
+                let mut val: i64 = 0;
+                let mut n = 0;
+                while n < 3 {
+                    match cs.get(1 + n) {
+                        Some(c @ '0'..='7') => {
+                            val = val * 8 + (*c as i64 - '0' as i64);
+                            n += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                Some((val, 1 + n))
+            }
+            'x' => {
+                // \xNN hex, up to 2 digits.
+                let mut val: i64 = 0;
+                let mut n = 0;
+                while n < 2 {
+                    match cs.get(2 + n).and_then(|c| c.to_digit(16)) {
+                        Some(d) => {
+                            val = val * 16 + d as i64;
+                            n += 1;
+                        }
+                        None => break,
+                    }
+                }
+                if n == 0 {
+                    Some(('x' as i64, 2))
+                } else {
+                    Some((val, 2 + n))
+                }
+            }
+            // c:7064-7071 `case 'c'` — GETKEYS_MATH lacks GETKEY_BACKSLASH_C,
+            // so `goto def`, and c:7180-7185 (GETKEY_EMACS) emit the char
+            // itself: `##\ca` is `c` followed by a stray `a`, not a control
+            // char. `\C` / `\M` are modifiers, handled in the loop below.
+            other => simple(other as i64),
         }
-        return Some((cs[0] as i64, 1));
-    }
-    // `\X` escape — `\` plus at least one more char.
-    let e = match cs.get(1) {
-        Some(c) => *c,
-        None => return Some(('\\' as i64, 1)),
     };
-    let simple = |code: i64| Some((code, 2));
-    match e {
-        'n' => simple(10),
-        't' => simple(9),
-        'r' => simple(13),
-        'e' | 'E' => simple(27),
-        'a' => simple(7),
-        'b' => simple(8),
-        'f' => simple(12),
-        'v' => simple(11),
-        '\\' => simple(92),
-        '0'..='7' => {
-            // \NNN octal (GETKEY_OCTAL_ESC), up to 3 digits.
-            let mut val: i64 = 0;
-            let mut n = 0;
-            while n < 3 {
-                match cs.get(1 + n) {
-                    Some(c @ '0'..='7') => {
-                        val = val * 8 + (*c as i64 - '0' as i64);
-                        n += 1;
-                    }
-                    _ => break,
-                }
-            }
-            Some((val, 1 + n))
+    // c:Src/utils.c:6920 — `int meta = 0, control = 0`. `\C-`, `\M-` and a
+    // bare `^` only set these and `continue` to the next input char; the
+    // char that follows is decoded, then c:7261-7275 apply them in C's
+    // order (meta-before-control when `\M` came after `^`, i.e. meta == 2).
+    let mut meta = 0;
+    let mut control = false;
+    let mut i = 0;
+    loop {
+        let rest = cs.get(i..).unwrap_or(&[]);
+        if rest.is_empty() {
+            // c:7314-7317 — ran out of input: "couldn't find a character".
+            return None;
         }
-        'x' => {
-            // \xNN hex, up to 2 digits.
-            let mut val: i64 = 0;
-            let mut n = 0;
-            while n < 2 {
-                match cs.get(2 + n).and_then(|c| c.to_digit(16)) {
-                    Some(d) => {
-                        val = val * 16 + d as i64;
-                        n += 1;
-                    }
-                    None => break,
-                }
+        match rest[0] {
+            // c:7041-7052 `case 'C'` (GETKEY_EMACS) — optional dash, then
+            // `control = 1; continue`.
+            '\\' if rest.get(1) == Some(&'C') => {
+                i += if rest.get(2) == Some(&'-') { 3 } else { 2 };
+                control = true;
+                continue;
             }
-            if n == 0 {
-                Some(('x' as i64, 2))
-            } else {
-                Some((val, 2 + n))
+            // c:7029-7040 `case 'M'` — `meta = 1 + control` preserves the
+            // order of `^` and meta.
+            '\\' if rest.get(1) == Some(&'M') => {
+                i += if rest.get(2) == Some(&'-') { 3 } else { 2 };
+                meta = 1 + control as i32;
+                continue;
             }
+            // c:7194-7196 — `*s == '^' && !control && (how & GETKEY_CTRL)
+            // && s[1]`: `^X` is a control char.
+            '^' if !control && rest.len() > 1 => {
+                i += 1;
+                control = true;
+                continue;
+            }
+            _ => {}
         }
-        'c' => {
-            // \cX control char (GETKEY_CTRL): code = X & 0x1f.
-            match cs.get(2) {
-                Some(c) => Some(((*c as i64) & 0x1f, 3)),
-                None => Some(('c' as i64, 2)),
-            }
+        let (mut code, used) = decode_one(rest)?;
+        if used == 0 {
+            // c:7198-7206 — the multibyte arm returns straight away, so a
+            // pending `^` / `\C` / `\M` never reaches a wide character.
+            return Some((code, i + 1));
         }
-        'C' => {
-            // c:Src/utils.c:7041-7046 — `case 'C': if (how & GETKEY_EMACS) {
-            // if (s[1]=='-') s++; control=1; }`. `\C-X` / `\CX` → control
-            // char `X & 0x1f` (e.g. `##\C-a` → 1). GETKEYS_MATH sets
-            // GETKEY_EMACS, so the dash is optional and consumed when present.
-            let dash = cs.get(2) == Some(&'-');
-            let tidx = if dash { 3 } else { 2 };
-            match cs.get(tidx) {
-                Some(c) => Some(((*c as i64) & 0x1f, tidx + 1)),
-                None => Some(('C' as i64, 2)),
-            }
+        i += used;
+        if meta == 2 {
+            code |= 0x80; // c:7261-7264
+            meta = 0;
         }
-        'M' => {
-            // c:Src/utils.c — GETKEY_EMACS meta: `\M-X` / `\MX` → `X | 0x80`.
-            let dash = cs.get(2) == Some(&'-');
-            let tidx = if dash { 3 } else { 2 };
-            match cs.get(tidx) {
-                Some(c) => Some(((*c as i64) | 0x80, tidx + 1)),
-                None => Some(('M' as i64, 2)),
-            }
+        if control {
+            // c:7265-7271
+            code = if code == '?' as i64 { 0x7f } else { code & 0x9f };
         }
-        other => simple(other as i64),
+        if meta != 0 {
+            code |= 0x80; // c:7272-7275
+        }
+        return Some((code, i));
     }
 }
 
