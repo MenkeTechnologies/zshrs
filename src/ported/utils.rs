@@ -6395,6 +6395,25 @@ pub fn inittyptab() {
                 }
             }
         };
+        // c:4205-4213 — under MULTIBYTE, `set_widearray(ifs)`; an IFS that
+        // does not convert (`!ifs_wide.chars`) warns and is reset to the
+        // default, which is what the ISEP walk below then reads.
+        let multibyte = isset(crate::ported::zsh_h::MULTIBYTE);
+        let src = if multibyte && !src.is_empty() && set_widearray(&src).is_empty() {
+            zwarn("IFS has an invalid character; resetting IFS to default"); // c:4208
+            // c:4210 `ztrdup(CURRENT_DEFAULT_IFS)` — as the parameter value,
+            // i.e. unmetafied (`DEFAULT_IFS` is the metafied spelling, c:149).
+            let dflt = " \t\n\0".to_string();
+            *crate::ported::params::ifs_lock().lock().expect("ifs poisoned") = dflt.clone();
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("IFS") {
+                    pm.u_str = Some(dflt.clone());
+                }
+            }
+            dflt
+        } else {
+            src
+        };
         let bytes = src.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
@@ -6408,7 +6427,7 @@ pub fn inittyptab() {
             // c:4218-4223 — MULTIBYTE non-ASCII skip. Bytes >= 0x80
             // (after demetafy) are not classified by typtab — they
             // reach wcsitype via WC_ZISTYPE instead.
-            if c >= 0x80 {
+            if multibyte && c >= 0x80 {
                 i += 1;
                 continue;
             }

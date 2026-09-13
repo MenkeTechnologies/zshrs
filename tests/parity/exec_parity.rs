@@ -545,3 +545,15 @@ mod argv0_environment_variable {
         assert_parity(r#"ARGV0=foo /bin/sh -c 'echo $0'; ARGV0=foo sh -c 'echo $0'; ARGV0=foo /usr/bin/env | grep -c ARGV0"#);
     }
 }
+
+/// c:Src/utils.c:4205-4213 inittyptab — under MULTIBYTE an IFS that does not
+/// convert to wide characters warns "IFS has an invalid character; resetting
+/// IFS to default" and the parameter takes the default value.
+mod invalid_multibyte_ifs {
+    use super::*;
+
+    #[test]
+    fn warns_and_resets_to_default() {
+        assert_parity(r#"{ IFS=$'\x80'; echo x; print -r ${(q)IFS}; v='a b'; print -rl -- ${=v} } 2>&1"#);
+    }
+}
