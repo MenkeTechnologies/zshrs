@@ -207,3 +207,13 @@ fn read_up_alias_no_coproc_error() {
     // c:Src/builtin.c:6494 — `-u p` routes to the same coproc gate.
     assert_parity("read -up ans");
 }
+
+#[test]
+fn coproc_as_a_later_chain_element() {
+    // c:Src/parse.c:864-876 par_sublist2 — `coproc` is flagged per chain
+    // element, so `true && coproc cmd` starts a coproc as the second element.
+    // zshrs only honoured it on the first pipeline and ran `cat` in the
+    // foreground.
+    assert_parity("true && coproc cat; jobs; kill %1");
+    assert_parity("false || coproc cat; print -p hi; read -p l; print $l; kill %1");
+}

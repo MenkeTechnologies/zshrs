@@ -1037,11 +1037,16 @@ impl ZshCompiler {
         // each `!` in its own ZshSublist node — flattening must capture
         // each one or the inner negate is silently dropped.
         let mut pipe_nots: Vec<bool> = vec![sublist.flags.not];
+        // c:Src/parse.c:864-876 par_sublist2 — `coproc` is per chain ELEMENT
+        // (WC_SUBLIST_COPROC on each sublist code), so `true && coproc cmd`
+        // starts a coproc as the second element.
+        let mut pipe_coprocs: Vec<bool> = vec![sublist.flags.coproc];
         let mut next_link = sublist.next.as_ref();
         while let Some((op, next_sublist)) = next_link {
             ops.push(*op);
             pipes.push(&next_sublist.pipe);
             pipe_nots.push(next_sublist.flags.not);
+            pipe_coprocs.push(next_sublist.flags.coproc);
             next_link = next_sublist.next.as_ref();
         }
 
@@ -1061,7 +1066,11 @@ impl ZshCompiler {
                     SublistOp::And => self.builder.emit(Op::JumpIfFalse(0), 0),
                     SublistOp::Or => self.builder.emit(Op::JumpIfTrue(0), 0),
                 };
-                self.compile_pipe(pipes[i + 1]);
+                if pipe_coprocs[i + 1] {
+                    self.compile_coproc_pipe(pipes[i + 1]);
+                } else {
+                    self.compile_pipe(pipes[i + 1]);
+                }
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
             return;
@@ -1189,12 +1198,19 @@ impl ZshCompiler {
                 self.errexit_suppress_depth += 1;
                 self.emit_noerrexit_suppress(); // c:1538
             }
-            self.compile_pipe(pipes[i + 1]);
-            // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
-            // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
-            // element, so each RHS gets its own sublist code — and,
-            // like the head above, before its `!` is applied.
-            self.emit_sublist_finish(pipes[i + 1], pipe_nots[i + 1]);
+            if pipe_coprocs[i + 1] {
+                // c:Src/exec.c:1764-1765 — a coproc element runs Z_ASYNC and
+                // its execpline returns `lastval = 0` (c:1818) with no job
+                // wait, so there is no per-element sublist finish.
+                self.compile_coproc_pipe(pipes[i + 1]);
+            } else {
+                self.compile_pipe(pipes[i + 1]);
+                // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
+                // (WC_SUBLIST_OR) re-read WC_SUBLIST_SIMPLE per chain
+                // element, so each RHS gets its own sublist code — and,
+                // like the head above, before its `!` is applied.
+                self.emit_sublist_finish(pipes[i + 1], pipe_nots[i + 1]);
+            }
             // Apply this pipe's `!` flag (parser nested it on the next
             // ZshSublist). `true && ! false` parses as
             //   ZshSublist{ true, And, ZshSublist{ !false, not=true } }
