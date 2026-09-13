@@ -15139,15 +15139,13 @@ mod tests {
             return;
         }
         // Save and set WORDCHARS to a single non-ASCII char.
-        // C dispatches `pm->gsu.s->{get,set}fn(pm, val)`; mirror via
-        // paramtab lookup.
-        let saved = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| {
-                t.get("WORDCHARS")
-                    .map(|pm| crate::ported::params::wordcharsgetfn(pm))
-            })
+        // Snapshot the store `wordcharssetfn` writes: the `wordchars` global
+        // itself. A paramtab read finds no WORDCHARS node in a bare test
+        // process and yields "", and restoring that left an EMPTY WORDCHARS
+        // behind for every later typtab test.
+        let saved = crate::ported::params::wordchars_lock()
+            .lock()
+            .map(|g| g.clone())
             .unwrap_or_default();
         // wordcharssetfn ignores its `_pm` arg and re-enters paramtab's
         // read lock via inittyptab (sibling of the IFS deadlock above).
@@ -15169,7 +15167,10 @@ mod tests {
             "c:4364 — wordchars membership through canonical global"
         );
         // Restore.
-        do_set(&mut dummy, saved);
+        *crate::ported::params::wordchars_lock()
+            .lock()
+            .expect("wordchars poisoned") = saved;
+        crate::ported::utils::inittyptab();
     }
 
     /// `Src/utils.c:2090-2097` — `addmodulefd(fd, fdt)`. Stores the
