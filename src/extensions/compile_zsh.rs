@@ -3008,6 +3008,24 @@ impl ZshCompiler {
                         self.dq_context_depth += 1; // expanded, never globbed
                         self.compile_word_str(word);
                         self.dq_context_depth -= 1;
+                    } else if opcode != fusevm::shell_builtins::BUILTIN_EXEC
+                        && is_typeset_scalar_assign(word)
+                        && needs_word_split(word)
+                        && matches!(
+                            crate::lex::untokenize(&simple.words[1]).as_str(),
+                            "declare"
+                                | "export"
+                                | "float"
+                                | "integer"
+                                | "local"
+                                | "private"
+                                | "readonly"
+                                | "typeset"
+                        )
+                    {
+                        // Reached through `builtin` / `command`, a typeset-family
+                        // head is never the WC_TYPESET reserved word.
+                        self.emit_asssub_assign_word(word);
                     } else {
                         self.compile_word_str(word);
                     }
@@ -14271,6 +14289,28 @@ impl ZshCompiler {
     /// `"…"`. Without that split, `${(o)a}` skipped the `${(flags)NAME}` fast
     /// path — the only one that carries `ssub` — and the c:4301-4326 sort ran
     /// where c:4226's `if (isarr && ssub)` collapse takes it off the table.
+    /// A `NAME=value` argument of a typeset-family builtin that is NOT the
+    /// WC_TYPESET reserved word (`builtin typeset`, `\typeset`, after `disable
+    /// -r typeset`). c:Src/exec.c:3353-3355 preforks such a BINF_MAGICEQUALS
+    /// command with PREFORK_TYPESET, and c:Src/subst.c:103 `asssub = (flags &
+    /// PREFORK_TYPESET) && isset(KSHTYPESET)` keeps the word whole only under
+    /// KSH_TYPESET; otherwise its substitutions word-split like any argument
+    /// (`\typeset y=$(echo g h)` sets `y=g` and declares `h`). The option is
+    /// read at run time.
+    fn emit_asssub_assign_word(&mut self, word: &str) {
+        self.assign_context_depth += 1;
+        self.compile_word_str(word);
+        self.assign_context_depth -= 1;
+        let opt = self.builder.add_constant(Value::str("kshtypeset"));
+        self.builder.emit(Op::LoadConst(opt), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_SET, 1), 0);
+        let keep_whole = self.builder.emit(Op::JumpIfTrue(0), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+        self.builder.patch_jump(keep_whole, self.builder.current_pos());
+    }
+
     fn compile_singsub_word_noglob(&mut self, w: &str) {
         self.singsub_depth += 1;
         self.dq_context_depth += 1;

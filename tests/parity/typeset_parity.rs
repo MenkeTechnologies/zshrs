@@ -1259,3 +1259,26 @@ mod private_assoc_restored_at_scope_end {
         );
     }
 }
+
+/// c:Src/exec.c:3353-3355 + c:Src/subst.c:103 — through `builtin` / `command`
+/// a typeset-family command is a plain BINF_MAGICEQUALS builtin, preforked
+/// with PREFORK_TYPESET: a `name=$(…)` word stays whole only under KSH_TYPESET
+/// (asssub). zshrs's precommand fast path always split it.
+mod kshtypeset_through_a_precommand_modifier {
+    use super::*;
+
+    #[test]
+    fn the_assignment_word_stays_whole_under_kshtypeset() {
+        assert_parity("setopt kshtypeset; builtin typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("setopt kshtypeset; builtin export y=$(echo g h); print -r -- \"[$y]\"");
+        assert_parity("setopt kshtypeset; f(){ builtin local y=$(echo g h); print -r -- \"[$y]\"; }; f");
+        assert_parity("setopt kshtypeset posixbuiltins; command typeset y=$(echo g h); print -r -- \"[$y]\"");
+    }
+
+    #[test]
+    fn without_kshtypeset_it_splits_like_any_argument() {
+        assert_parity("builtin typeset y=$(echo g h); print -r -- \"[$y]\" ${+h}");
+        assert_parity("setopt kshtypeset; v='a b'; builtin typeset y=$v; print -r -- \"[$y]\"");
+        assert_parity("setopt kshtypeset; builtin print y=$(echo g h)");
+    }
+}
