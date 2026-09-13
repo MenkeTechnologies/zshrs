@@ -2659,8 +2659,18 @@ pub fn adjustwinsize(from: i32) {
             // leaves both globals at 0 and `zlevargetfn` (c:Src/params.c:362-363,
             // IPDEF5) answers `$LINES`/`$COLUMNS` with 0. Seed, then return
             // as C does — the results are deliberately discarded.
-            let _ = adjustcolumns();
-            let _ = adjustlines();
+            //
+            // Seed ONLY on the setupvals-style call (from 0), the one that in
+            // C fills `shttyinfo.winsize` before anything else runs. A
+            // `zlevarsetfn` call (from 2/3, c:Src/params.c:4232) has just
+            // stored the user's value in the global (c:4230) and C returns
+            // here leaving it untouched — `f(){ local +h COLUMNS; print
+            // $COLUMNS }` prints 0 because createparam's zlevarsetfn stored
+            // 0. Re-seeding there replaced it with the 80 fallback.
+            if from == 0 {
+                let _ = adjustcolumns();
+                let _ = adjustlines();
+            }
             return; // c:1901
         }
         #[cfg(unix)]
@@ -17142,13 +17152,22 @@ mod tests {
         let saved_columns = ZTERM_COLUMNS.load(Ordering::SeqCst);
         let saved_shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         crate::ported::init::SHTTY.store(-1, Ordering::Relaxed); // c:1900
+                                                                 // A sentinel the assignment must overwrite. Without the c:4230
+                                                                 // mirror the readers keep answering with this, whatever `$COLUMNS`
+                                                                 // says.
+        ZTERM_COLUMNS.store(999, Ordering::SeqCst);
 
         setiparam("COLUMNS", 61); // c:4230
+        let mirrored = ZTERM_COLUMNS.load(Ordering::SeqCst);
         let seen = adjustcolumns();
 
         crate::ported::init::SHTTY.store(saved_shtty, Ordering::Relaxed);
         ZTERM_COLUMNS.store(saved_columns, Ordering::SeqCst);
 
+        assert_eq!(
+            mirrored, 61,
+            "c:Src/params.c:4230 — `*p = x` writes zterm_columns itself"
+        );
         assert_eq!(
             seen, 61,
             "COLUMNS=61 must be what the zterm_columns readers see (c:Src/params.c:362)"

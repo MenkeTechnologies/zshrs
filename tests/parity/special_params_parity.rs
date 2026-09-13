@@ -527,7 +527,6 @@ mod local_special_starts_empty {
     /// `COLUMNS` is zeroed through zlevarsetfn; C's adjustwinsize returns
     /// early without a terminal, so it stays 0. The port re-derives 80.
     #[test]
-    #[ignore = "zshrs gap: utils.rs adjustwinsize re-derives COLUMNS after zlevarsetfn stores 0"]
     fn columns_starts_at_zero() {
         assert_parity(r#"f(){ local +h COLUMNS; print "[$COLUMNS]" }; COLUMNS=77; f; print $COLUMNS"#);
     }
