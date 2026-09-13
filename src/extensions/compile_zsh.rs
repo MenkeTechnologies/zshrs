@@ -919,38 +919,19 @@ impl ZshCompiler {
         self.builder.patch_jump(prologue_fast, prologue_fast_at);
 
         // ZshList = sublist + flags (async / disown).
-        if list.flags.async_ && list.sublist.next.is_none() && list.sublist.pipe.next.is_some() {
-            // `pipeline &` — a MULTI-STAGE pipeline in the background.
-            //
-            // c:Src/exec.c:1795 — the Z_ASYNC arm of execpline calls
-            // `execpline2()` in the CURRENT shell; it does not wrap the
-            // pipeline in one extra process. execpline2 then recurses once per
-            // stage (c:2092) and each stage's execcmd forks and calls
-            // `addproc(pid, text, …)` (c:2907), so the job ends up holding one
-            // proc PER STAGE, each with its own pid and its own text. That is
-            // what makes `jobs` print `sleep 5 |` and `cat` as two lines and
-            // `jobs -l` show a different pid on each.
-            //
-            // Emit the per-stage sub-chunks and texts; BUILTIN_RUN_BG forks one
-            // child per stage in this shell and addprocs each one.
-            let stages = self.compile_pipe_stages(&list.sublist.pipe);
-            let n = stages.len();
-            for (idx, text) in &stages {
-                let c = self.builder.add_constant(Value::str(text));
-                self.builder.emit(Op::LoadConst(c), 0);
-                self.builder.emit(Op::LoadInt(*idx as i64), 0);
-            }
-            self.builder.emit(Op::LoadInt(n as i64), 0);
-            self.builder
-                .emit(Op::LoadInt(i64::from(list.flags.disown)), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, (2 * n + 2) as u8),
-                0,
-            );
-            self.builder.emit(Op::SetStatus, 0);
+        if list.flags.async_ && !list.sublist.flags.coproc {
+            // c:Src/parse.c:660-667 — `&` / `&!` set Z_ASYNC on the LIST
+            // code, and execlist hands that `ltype` ONLY to the chain's
+            // final (WC_SUBLIST_END) pipeline (c:Src/exec.c:1545). Every
+            // pipeline before an `&&` / `||` runs `execpline(state, code,
+            // Z_SYNC, 0)` (c:1557, c:1590) in this shell. So
+            // `sleep 1 && echo x &` sleeps in the foreground, and
+            // `sleep 1 || true &` short-circuits and never makes a job.
+            self.compile_sublist_impl(&list.sublist, Some(list.flags.disown));
         } else if list.flags.async_ {
-            // Background: compile the sublist into a sub-chunk + emit
-            // BUILTIN_RUN_BG.
+            // `coproc … &` — the coproc flag already forces Z_ASYNC inside
+            // execpline (c:Src/exec.c:1764-1765). Compile the sublist into
+            // a sub-chunk + emit BUILTIN_RUN_BG.
             let mut sub = ZshCompiler::new();
             sub.compile_sublist(&list.sublist);
             let sub_end = sub.builder.current_pos();
@@ -959,13 +940,12 @@ impl ZshCompiler {
             }
             let sub_chunk = sub.builder.build();
             let sub_idx = self.builder.add_sub_chunk(sub_chunk);
-            // c:Src/exec.c::execpline — the async job's display text
-            // comes from `getjobtext(state->prog, ...)` (Src/text.c:235)
-            // and lands in the proc entry via addproc. Reconstruct the
-            // sublist text at compile time and pass it alongside the
-            // sub-chunk index so BUILTIN_RUN_BG can addproc with it.
+            // c:Src/exec.c:2061-2064 — the job text is
+            // `getjobtext(state->prog, state->pc)` taken at the PIPE, past
+            // the sublist code, so the `coproc ` prefix gettext2 prints for
+            // WC_SUBLIST_COPROC (c:Src/text.c:466-467) is not part of it.
             // c:Src/text.c:342 — `untokenize(jbuf)` over the finished buffer.
-            let job_text = tstr(&render_sublist_for_debug(&list.sublist, true));
+            let job_text = tstr(&render_pipe_for_debug(&list.sublist.pipe, true));
             let text_const = self.builder.add_constant(Value::str(&job_text));
             self.builder.emit(Op::LoadConst(text_const), 0);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
@@ -1032,6 +1012,14 @@ impl ZshCompiler {
     }
 
     fn compile_sublist(&mut self, sublist: &ZshSublist) {
+        self.compile_sublist_impl(sublist, None);
+    }
+
+    /// `async_tail` is `Some(disown)` when the enclosing list ended in `&`
+    /// (`false`) or `&!` / `&|` (`true`): C's `ltype` carries Z_ASYNC and
+    /// execlist passes it to the final pipeline only (c:Src/exec.c:1545),
+    /// while every earlier chain element stays Z_SYNC (c:1557, c:1590).
+    fn compile_sublist_impl(&mut self, sublist: &ZshSublist, async_tail: Option<bool>) {
         // Flatten the && / || chain into a sequence of (pipe, op-to-next).
         // Shell semantics: each connector skips ONLY the IMMEDIATELY-next
         // pipe, not the rest of the chain. `false && echo no || echo yes`
@@ -1077,6 +1065,18 @@ impl ZshCompiler {
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
             return;
+        }
+
+        // c:Src/exec.c:1540-1545 — a lone WC_SUBLIST_END element runs
+        // `execpline(state, code, ltype, …)` with the list's Z_ASYNC.
+        // execpline's async arm returns `lastval = 0` (c:1818) before any
+        // `WC_SUBLIST_NOT` inversion, and c:1548-1549 exempts `!` from the
+        // ZERR / errexit block, so there is no finish, negate or check here.
+        if ops.is_empty() {
+            if let Some(disown) = async_tail {
+                self.emit_async_pipe(pipes[0], disown);
+                return;
+            }
         }
 
         // Emit pipe[0]. `!` (sublist.flags.not) applies to pipe[0] only,
@@ -1172,6 +1172,16 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
                 self.builder.emit(Op::Pop, 0);
             }
+            // c:Src/exec.c:1545 — the final element of an async list is the
+            // only one that gets Z_ASYNC; its status is execpline's
+            // `lastval = 0` (c:1818), never negated and never checked.
+            if i == ops.len() - 1 {
+                if let Some(disown) = async_tail {
+                    self.emit_async_pipe(pipes[i + 1], disown);
+                    self.builder.patch_jump(skip, self.builder.current_pos());
+                    continue;
+                }
+            }
             // c:1533-1538 — this element is `isandor` unless it is the final
             // (WC_SUBLIST_END) one; `isnot` is its own `!`.
             let elem_suppressed = i + 1 < ops.len() || pipe_nots[i + 1];
@@ -1219,6 +1229,67 @@ impl ZshCompiler {
         for _ in 0..chain_pushes {
             self.emit_cmd_pop();
         }
+    }
+
+    /// One pipeline run with `how & Z_ASYNC` — c:Src/exec.c:1795-1818.
+    ///
+    /// The job text is `getjobtext(state->prog, state->pc)` recorded per
+    /// PIPELINE at c:2059-2064, so a `!` or the `a && ` in front of it is
+    /// never part of what `jobs` / `$jobtexts` show.
+    fn emit_async_pipe(&mut self, pipe: &ZshPipe, disown: bool) {
+        if pipe.next.is_some() {
+            // `pipeline &` — a MULTI-STAGE pipeline in the background.
+            //
+            // c:Src/exec.c:1795 — the Z_ASYNC arm of execpline calls
+            // `execpline2()` in the CURRENT shell; it does not wrap the
+            // pipeline in one extra process. execpline2 then recurses once per
+            // stage (c:2092) and each stage's execcmd forks and calls
+            // `addproc(pid, text, …)` (c:2907), so the job ends up holding one
+            // proc PER STAGE, each with its own pid and its own text. That is
+            // what makes `jobs` print `sleep 5 |` and `cat` as two lines and
+            // `jobs -l` show a different pid on each.
+            //
+            // Emit the per-stage sub-chunks and texts; BUILTIN_RUN_BG forks one
+            // child per stage in this shell and addprocs each one.
+            let stages = self.compile_pipe_stages(pipe);
+            let n = stages.len();
+            for (idx, text) in &stages {
+                let c = self.builder.add_constant(Value::str(text));
+                self.builder.emit(Op::LoadConst(c), 0);
+                self.builder.emit(Op::LoadInt(*idx as i64), 0);
+            }
+            self.builder.emit(Op::LoadInt(n as i64), 0);
+            self.builder.emit(Op::LoadInt(i64::from(disown)), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, (2 * n + 2) as u8),
+                0,
+            );
+            self.builder.emit(Op::SetStatus, 0);
+            return;
+        }
+        // Single-stage: execcmd forks once for the whole command
+        // (c:Src/exec.c:2891-2907). Compile it into a sub-chunk + emit
+        // BUILTIN_RUN_BG with one proc.
+        let mut sub = ZshCompiler::new();
+        sub.compile_pipe(pipe);
+        let sub_end = sub.builder.current_pos();
+        for patch in std::mem::take(&mut sub.return_patches) {
+            sub.builder.patch_jump(patch, sub_end);
+        }
+        let sub_chunk = sub.builder.build();
+        let sub_idx = self.builder.add_sub_chunk(sub_chunk);
+        // c:Src/text.c:342 — `untokenize(jbuf)` over the finished buffer.
+        let job_text = tstr(&render_pipe_for_debug(pipe, true));
+        let text_const = self.builder.add_constant(Value::str(&job_text));
+        self.builder.emit(Op::LoadConst(text_const), 0);
+        self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
+        self.builder.emit(Op::LoadInt(1), 0); // one proc for the whole command
+        // `&|` / `&!` (disown): BUILTIN_RUN_BG deletes the job (c:1808-1811)
+        // instead of announcing it via spawnjob.
+        self.builder.emit(Op::LoadInt(i64::from(disown)), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 4), 0);
+        self.builder.emit(Op::SetStatus, 0);
     }
 
     fn compile_coproc_pipe(&mut self, pipe: &ZshPipe) {

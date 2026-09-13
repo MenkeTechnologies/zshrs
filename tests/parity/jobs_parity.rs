@@ -852,3 +852,67 @@ fn bg_subshell_wrapping_a_pipeline_is_one_process() {
 fn bg_single_command_still_one_process() {
     assert_parity_cols(20, "sleep 5 & jobs -l; kill %1");
 }
+
+// ── async `&&` / `||` / `!` chains: only the final pipeline is a job ───
+//
+// c:Src/parse.c:660-667 puts Z_ASYNC on the LIST code. execlist runs each
+// pipeline ahead of `&&` / `||` with `execpline(state, code, Z_SYNC, 0)`
+// (c:Src/exec.c:1557, c:1590) and hands `ltype` only to the final
+// WC_SUBLIST_END pipeline (c:1545). Its job text is `getjobtext()` taken at
+// that PIPE (c:2059-2064), and execpline's async arm returns `lastval = 0`
+// (c:1818) before any `!` inversion. zshrs used to fork the whole chain as
+// one job titled with the whole chain.
+
+#[test]
+fn async_and_chain_job_text_is_final_pipeline() {
+    assert_parity(r#"true && sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn async_or_chain_jobs_listing_is_final_pipeline() {
+    assert_parity_cols(80, "false || sleep 5 & jobs; kill %1");
+}
+
+#[test]
+fn async_negated_job_text_drops_bang() {
+    assert_parity(r#"! sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+#[test]
+fn async_and_chain_final_brace_group_text() {
+    assert_parity(r#"true && { sleep 5; } & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
+
+/// The head runs in THIS shell, so its assignment is visible to the parent.
+#[test]
+fn async_and_chain_head_runs_in_foreground() {
+    assert_parity("x=0; { x=1 } && sleep 5 & print x=$x; kill %1");
+}
+
+#[test]
+fn async_or_chain_middle_runs_in_foreground() {
+    assert_parity(r#"x=0; false || { x=2 } || sleep 5 & print -r -- "x=$x n=${#jobtexts}""#);
+}
+
+/// `sleep || true &` — the sync head succeeds, `||` skips the tail, and no
+/// job is ever created.
+#[test]
+fn async_or_chain_short_circuit_makes_no_job() {
+    assert_parity(r#"sleep 0.2 || true & print -r -- "st=$? bang=$! n=${#jobtexts}"; kill %1"#);
+}
+
+#[test]
+fn async_and_chain_skipped_tail_keeps_head_status() {
+    assert_parity(r#"false && sleep 5 & print -r -- "st=$? bang=$! n=${#jobtexts}""#);
+}
+
+/// The child runs the bare pipeline; `!` is never applied to its status.
+#[test]
+fn async_negated_child_status_not_inverted() {
+    assert_parity("! false & wait $!; print w=$?");
+}
+
+#[test]
+fn async_coproc_job_text_drops_keyword() {
+    assert_parity(r#"coproc sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1"#);
+}
