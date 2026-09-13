@@ -262,30 +262,23 @@ mod local_shadow {
         assert_parity("f(){ local -A commands=(x y); }; f; print ${#${(k)commands}}");
     }
 
-    /// zshrs gap: a function-local ASSOC shadow of a magic name reads
-    /// EMPTY. zsh prints `x`; zshrs prints nothing.
-    ///
-    /// Not the stored-map routing — the single-key form below fails the
-    /// same way and takes a different path (the bridge's `magic_getnode`
-    /// arm sends PARTAB names to `paramsubst`, never to `gethkparam`).
-    /// `local -a` (array, above) is unaffected, so it is specific to the
-    /// assoc shadow.
+    /// A function-local ASSOC shadow of a magic name reads its own pairs:
+    /// zsh prints `x`. zshrs once printed nothing here, and the
+    /// single-key and count forms below failed the same way through a
+    /// different reader, so each shape is pinned separately.
     #[test]
-    #[ignore = "zshrs gap: a function-local assoc shadow of a magic hash reads empty"]
     fn assoc_shadow_keys() {
         assert_parity("f(){ local -A commands=(x y); print ${(k)commands} }; f");
     }
 
     /// Same gap, single-key read: zsh `y`, zshrs empty.
     #[test]
-    #[ignore = "zshrs gap: a function-local assoc shadow of a magic hash reads empty"]
     fn assoc_shadow_single_key() {
         assert_parity("f(){ local -A commands=(x y); print ${commands[x]} }; f");
     }
 
     /// Same gap, element count: zsh `1`, zshrs `0`.
     #[test]
-    #[ignore = "zshrs gap: a function-local assoc shadow of a magic hash reads empty"]
     fn assoc_shadow_count() {
         assert_parity("f(){ local -A commands=(x y); print ${#commands} }; f");
     }
@@ -293,8 +286,37 @@ mod local_shadow {
     /// Same gap on a magic hash that does not depend on `$PATH`, so the
     /// fix cannot be mistaken for a `cmdnamtab` problem.
     #[test]
-    #[ignore = "zshrs gap: a function-local assoc shadow of a magic hash reads empty"]
     fn assoc_shadow_of_builtins() {
         assert_parity("f(){ local -A builtins=(x y); print ${(k)builtins} }; f");
+    }
+
+    /// `local -a aliases; aliases=(a b c)` — the shape completion
+    /// functions use. Must neither error ("bad set of key/value pairs")
+    /// nor reach the alias table.
+    #[test]
+    fn array_shadow_of_aliases_assigned_after_declare() {
+        assert_parity("alias a1=b; f(){ local -a aliases; aliases=(a b c); print ${#aliases} $aliases }; f; print ${(k)aliases}");
+    }
+
+    /// `local -a aliases=(a b c)` must leave the real aliastab intact.
+    #[test]
+    fn array_shadow_of_aliases_declared_with_value() {
+        assert_parity("alias a1=b; f(){ local -a aliases=(a b c) }; f; print ${#aliases} ${(k)aliases}");
+    }
+
+    /// Element unset on a hashed shadow of a MATERIALIZED row acts on the
+    /// local's own table (c:Src/builtin.c:3891-3895 via the local's
+    /// stdhash gsu), not the module's `unsetpmcommand`.
+    #[test]
+    fn element_unset_on_assoc_shadow() {
+        assert_parity(r#"f(){ local -A commands=(x y z w); unset "commands[x]"; print ${(kv)commands} }; f"#);
+    }
+
+    /// Whole-hash reassignment after unsetting the shadow lands in the
+    /// local, not in aliastab: zsh `c d`, zshrs printed the real aliases.
+    #[test]
+    #[ignore = "zshrs gap: params.rs whole-assoc magic dispatch ignores a PM_UNSET local shadow"]
+    fn reassign_after_unset_of_aliases_shadow() {
+        assert_parity("alias a1=b; f(){ local -A aliases=(a b); unset aliases; aliases=(c d); print ${(kv)aliases} }; f; print ${(k)aliases}");
     }
 }

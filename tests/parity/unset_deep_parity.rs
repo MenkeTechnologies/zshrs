@@ -271,6 +271,64 @@ mod unset_export {
     }
 }
 
+/// `unset` of a function-local shadow of a zsh/parameter row the script
+/// never read. No `zmodload` on purpose: the row is still the PM_AUTOLOAD
+/// stub, and bin_unset's stub removal (c:Src/params.c:3874) must apply only
+/// to that global stub, not to the local node `getnode2` returns
+/// (c:Src/builtin.c:3884-3886), whose `pm->old` holds the special.
+mod unset_local_shadow_of_magic_row {
+    use super::*;
+
+    /// zsh `1 1`; zshrs dropped the local with its `old` chain: `0 0`.
+    #[test]
+    fn assoc_shadow_unset_keeps_commands() {
+        assert_parity(
+            r#"f(){ local -A commands; unset commands }; f; print $+commands $(( ${#commands} > 0 ))"#,
+        );
+    }
+
+    /// Same on the alias row completion functions shadow.
+    #[test]
+    fn assoc_shadow_unset_keeps_aliases() {
+        assert_parity(
+            r#"alias a1=b; f(){ local -A aliases; unset aliases }; f; print $+aliases ${(k)aliases}"#,
+        );
+    }
+
+    /// Array-shaped row (PARTAB_ARRAY).
+    #[test]
+    fn array_shadow_unset_keeps_dirstack() {
+        assert_parity(r#"f(){ local -a dirstack; unset dirstack }; f; print $+dirstack"#);
+    }
+
+    /// Pattern unset walks the same stub arm.
+    #[test]
+    fn pattern_unset_of_shadow_keeps_commands() {
+        assert_parity(r#"f(){ local -A commands; unset -m 'command?' }; f; print $+commands"#);
+    }
+
+    /// Unset from a nested function still hits the caller's local.
+    #[test]
+    fn unset_from_callee_keeps_commands() {
+        assert_parity(r#"g(){ unset commands }; f(){ local -A commands; g }; f; print $+commands"#);
+    }
+
+    /// Element unset acts on the local's own table: zsh `z w`, zshrs
+    /// warned "assignment to invalid subscript range" and kept `x`.
+    #[test]
+    fn element_unset_on_assoc_shadow() {
+        assert_parity(r#"f(){ local -A commands=(x y z w); unset "commands[x]"; print ${(kv)commands} }; f"#);
+    }
+
+    /// The shapes completion functions use must not touch aliastab.
+    #[test]
+    fn array_shadow_of_aliases_leaves_aliastab() {
+        assert_parity(
+            r#"alias a1=b; f(){ local -a aliases; aliases=(a b c); print ${#aliases} }; f; g(){ local -a aliases=(a b c) }; g; print ${(k)aliases}; alias"#,
+        );
+    }
+}
+
 mod unset_pattern {
     use super::*;
 

@@ -9122,6 +9122,23 @@ pub fn bin_unset(
 ) -> i32 {
     let mut returnval = 0i32; // c:3823
     let mut match_count = 0i32; // c:3823
+    // c:3884-3886 — every arm below acts on the node `getnode2` returns,
+    // which is the VISIBLE binding. When `local -A commands` (or
+    // `local -a aliases`) shadows a zsh/parameter row, that node is the
+    // plain local createparam made at c:Src/params.c:1147-1156 with
+    // `pm->old` holding the special, so neither the autoload-stub removal
+    // (c:3874 applies to the GLOBAL PM_AUTOLOAD stub only) nor the magic
+    // element dispatch (the local's gsu is stdhash_gsu, not the module's)
+    // may run. zshrs keys both of those on the NAME (the stub side-set and
+    // PARTAB), so ask what the visible node is. A `local -A +h commands`
+    // kept the special struct (PM_SPECIAL, c:Src/builtin.c:2386-2425) and
+    // still dispatches magically.
+    let plain_local_shadow = |nm: &str| -> bool {
+        paramtab().read().ok().is_some_and(|t| {
+            t.get(nm)
+                .is_some_and(|pm| pm.level > 0 && (pm.node.flags as u32 & PM_SPECIAL) == 0)
+        })
+    };
 
     // PFA-SMR aspect: emit unset events for each named param. The
     // recorder tracks state-mutations across the shell session for
@@ -9189,6 +9206,7 @@ pub fn bin_unset(
                         // `functrace` where zsh unsets the lot. Same
                         // stub-state branch as the literal-name arm below.
                         if crate::vm_helper::module_param_is_autoload_stub(nm)
+                            && !plain_local_shadow(nm)
                             && (crate::ported::modules::parameter::PARTAB
                                 .iter()
                                 .any(|e| e.name == nm.as_str())
@@ -9289,7 +9307,7 @@ pub fn bin_unset(
                 // Mirror of the element-SET dispatch in `assignsparam`
                 // (`src/ported/params.rs:6455`), which routes
                 // `functions[m]=body` to `setpmfunction` for the same reason.
-                {
+                if !plain_local_shadow(nm) {
                     use crate::ported::modules::parameter as pmod;
                     use crate::ported::zsh_h::Param;
                     // c:3884-3886 — `pm = (paramtab == realparamtab ?
@@ -9709,6 +9727,7 @@ pub fn bin_unset(
                 // branch: node kept, `PM_UNSET` stamped, readonly rows
                 // rejected.
                 if crate::vm_helper::module_param_is_autoload_stub(nm)
+                    && !plain_local_shadow(nm)
                     && (crate::ported::modules::parameter::PARTAB
                         .iter()
                         .any(|e| e.name == nm)
@@ -19290,17 +19309,15 @@ fn printf_format(
                 // c:Src/builtin.c:5414-5419 — a bare `%%` prints `%`, but a
                 // `%` directive carrying any flag / width / precision / `*` is
                 // an "invalid directive": zsh handles doubled `%%` in the
-                // literal scan and only reaches the conversion switch (which
-                // has no `%` case → default) once modifiers intervened. Here a
-                // plain `%%` arrives with `spec == "%"`; anything else means
-                // modifiers were consumed.
-                Some('%') if spec != "%" || saw_prec_star => {
-                    let disp = if saw_prec_star && spec == "%" {
-                        "%.*"
-                    } else {
-                        spec.as_str()
-                    };
-                    return Err((out, format!("{disp}%: invalid directive")));
+                // literal scan (c:5172) and only reaches the conversion switch
+                // (which has no `%` case → default) once modifiers intervened.
+                // The test is on the SOURCE text (`raw`, C's `start`), not on
+                // the rebuilt `spec`: a `*` width whose argument list is
+                // exhausted adds nothing to `spec` (c:5232 `if (*argp)`), yet
+                // `%*%` is still a directive with a modifier, and the message
+                // prints `start` verbatim (`%*%`, not the substituted `%3%`).
+                Some('%') if raw != "%" => {
+                    return Err((out, format!("{raw}%: invalid directive"))); // c:5419
                 }
                 Some('%') => out.push('%'),
                 Some('n') => {
