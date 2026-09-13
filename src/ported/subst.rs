@@ -7369,6 +7369,22 @@ pub fn paramsubst(
             }
             if idx > sub_start {
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
+                // c:Src/params.c:2029-2045 — getindex's FIRST step is
+                // `parse_subscript(s, dq, ']')`, which lexes the bracket text
+                // with dquote_parse in math mode; an unbalanced `(` or `)`
+                // fails there (c:Src/lex.c:1603-1613) and getindex reports
+                // `invalid subscript` before any `@`/`*` test or expansion:
+                //   arr=(x y); print ${arr[)]}     zsh: invalid subscript, rc 1
+                // The bracket scan above only balances `[`/`]`, so without
+                // this the text reached the math evaluator ("operand
+                // expected at `)'").
+                if closed_literal.is_some()
+                    && crate::ported::lex::parse_subscript(&format!("{}]", raw_sub), ']').is_none()
+                {
+                    zerr("invalid subscript"); // c:2042
+                    errflag_set_error();
+                    return (String::new(), idx + 1, vec![]);
+                }
                 // Bug #338 sub-issue — DQ-wrapped literal subscript
                 // `${h["q'q"]}` inside outer `"…"`: the literal `"…"`
                 // delimiters around the key are part of the stored

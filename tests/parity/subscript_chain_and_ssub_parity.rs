@@ -535,3 +535,21 @@ mod three_or_more_chained_subscripts {
         p("a=(ab cd); ", "${a[1][2][1,2,3]}");
     }
 }
+
+/// c:Src/params.c:2029-2045 — getindex's first step is `parse_subscript`,
+/// whose dquote_parse fails on an unbalanced `(`/`)` (c:Src/lex.c:1603-1613),
+/// giving `invalid subscript` before any evaluation.
+mod unbalanced_paren_subscript {
+    use super::*;
+
+    #[test]
+    fn unmatched_paren_is_an_invalid_subscript() {
+        assert_parity(r#"{ arr=(x y); print ${arr[)]}; print rc=$? } 2>&1"#);
+        assert_parity(r#"{ arr=(x y); print ${arr[(]}; print rc=$? } 2>&1"#);
+    }
+
+    #[test]
+    fn balanced_parens_still_evaluate() {
+        assert_parity(r#"arr=(x y z); print ${arr[(r)y]} ${arr[$((1+1))]} ${arr[(i)z]}"#);
+    }
+}
