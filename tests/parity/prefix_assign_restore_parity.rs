@@ -200,3 +200,28 @@ fn the_other_parameter_types_are_unchanged() {
         ],
     );
 }
+
+/// A user `typeset -T` pair. `restore_params` removes the temporary scalar with
+/// `unsetparam_pm(pm, 0, 0)` (c:Src/exec.c:4529), and that call cascades to the
+/// tied partner through `pm->ename` (c:Src/params.c:3793-3836) before the
+/// scalar is put back as a plain copy — so in zsh the ARRAY half is gone
+/// afterwards. The port only cascaded from the `unsetparam` wrapper, so the
+/// array survived.
+#[test]
+fn a_tied_pair_loses_its_partner_like_zsh() {
+    assert_matches_oracle(
+        "typeset -T pair under `SCALAR=x cmd`",
+        &[
+            "typeset -T PZs PZarr=(x y); f(){ print -r -- \"in=$PZs|${(t)PZarr}\"; }; \
+             PZs=q:r f; \
+             print -r -- \"s=$PZs|ts=${(t)PZs}|ta=${(t)PZarr}|n=${#PZarr}\"",
+            "typeset -T PZs PZarr=(x y); PZs=q:r true; \
+             print -r -- \"s=$PZs|ts=${(t)PZs}|ta=${(t)PZarr}|n=${#PZarr}\"",
+            // Plain `unset` of either half.
+            "typeset -T PZs PZarr=(x y); unset PZs; \
+             print -r -- \"[${(t)PZs}][${(t)PZarr}]${#PZarr}\"",
+            "typeset -T PZs PZarr=(x y); unset PZarr; \
+             print -r -- \"[${(t)PZs}][${(t)PZarr}]\"",
+        ],
+    );
+}

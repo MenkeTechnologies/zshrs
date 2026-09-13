@@ -10474,7 +10474,7 @@ pub fn unsetparam(name: &str) -> i32 {
     // same way: a shadow that HIDES a tied special (`typeset -h +g PATH`
     // builds a plain `scalar-local-hide`, Src/builtin.c:2083-2085) has no tie
     // and must not drag its partner down with it.
-    let (found, is_nameref, param_ename, param_tied) = {
+    let (found, is_nameref, param_ename, param_tied, param_special) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
             Some(pm) => (
@@ -10482,8 +10482,9 @@ pub fn unsetparam(name: &str) -> i32 {
                 (pm.node.flags as u32 & PM_NAMEREF) != 0,
                 pm.ename.clone(),
                 (pm.node.flags as u32 & PM_TIED) != 0,
+                (pm.node.flags as u32 & PM_SPECIAL) != 0,
             ),
-            None => (false, false, None, false),
+            None => (false, false, None, false, false),
         }
     };
     if found && !is_nameref {
@@ -10492,7 +10493,10 @@ pub fn unsetparam(name: &str) -> i32 {
         // of paramtab so we can mutate it (unsetparam_pm wants
         // &mut), run the readonly-guard + env teardown, then re-insert
         // or fully remove based on the readonly path.
-        let mut pm_owned = paramtab().write().unwrap().remove(name).unwrap();
+        // The node stays in the table while `unsetparam_pm` runs, as in C —
+        // c:3874 `removenode` is the LAST step — so the tied-partner cascade
+        // (c:3805-3836) and the partner's setfn still see this name bound.
+        let mut pm_owned = paramtab().read().unwrap().get(name).cloned().unwrap();
         let rejected = unsetparam_pm(&mut pm_owned, 0, 1); // c:3831
         if rejected != 0 {
             retval = 1; // c:Src/builtin.c:3952-3953 surfaced to bin_unset
@@ -10557,9 +10561,11 @@ pub fn unsetparam(name: &str) -> i32 {
                 .unwrap()
                 .insert(name.to_string(), pm_owned);
         }
-        // No pm.old + no rejection + not PM_SPECIAL → drop entirely
-        // (matches the C path at c:3935 where the node is removed
-        // from paramtab).
+        else {
+            // No pm.old + no rejection + not PM_SPECIAL → drop entirely
+            // (c:3874 `paramtab->removenode(paramtab, pm->node.nam)`).
+            paramtab().write().unwrap().remove(name);
+        }
     }
     // c:Src/params.c:3905-3935 — tied-alt removal. Cascade the
     // unset to the paired name (PATH↔path etc.). Also clear the OS
@@ -10571,19 +10577,24 @@ pub fn unsetparam(name: &str) -> i32 {
     // exists but is not tied (typically a `-h` shadow of PATH/path), and C
     // would leave the partner alone; only fall back to the static pair map
     // when the name has no node at all (the pre-createparamtable `-fc` path).
+    // A live node carrying `ename` was already cascaded by `unsetparam_pm`
+    // itself (c:3805-3836); only the static-pair fallback for a name with no
+    // node, or a tie with no `ename`, is left to the block below.
+    let cascaded = found && param_ename.is_some() && !param_special;
     let effective_alt: Option<String> = if found && !param_tied && param_ename.is_none() {
         None
     } else {
         tied_alt.map(|s| s.to_string()).or(param_ename)
     };
     if let Some(alt) = effective_alt.as_deref() {
-        let alt_present = paramtab()
-            .read()
-            .map(|t| t.contains_key(alt))
-            .unwrap_or(false);
+        let alt_present = !cascaded
+            && paramtab()
+                .read()
+                .map(|t| t.contains_key(alt))
+                .unwrap_or(false);
         if alt_present {
             if let Some(mut alt_pm) = paramtab().write().ok().and_then(|mut t| t.remove(alt)) {
-                let _ = unsetparam_pm(&mut alt_pm, 1, 1);
+                let _ = unsetparam_pm(&mut alt_pm, 1, 1); // c:3828
                 // c:Src/params.c:3892-3925 — the partner obeys the same
                 // keep-the-node rules as the primary: a local that shadows an
                 // outer binding stays in the table marked PM_UNSET so
@@ -10655,6 +10666,23 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         zerr(&format!("read-only {}: {}", kind, pm.node.nam));
         return 1; // c:3854
     }
+    // c:3793-3796 — `if (pm->ename && !altflag) altremove = ztrdup(pm->ename);
+    // else altremove = NULL;`. Captured before the unsetfn, which clears a
+    // tied param's `ename` (stdunsetfn c:3932-3938).
+    //
+    // !!! DEVIATION — the cascade below runs only for a NON-special pm !!!
+    // The tied specials (PATH/path, FPATH/fpath, MANPATH/manpath, …) keep
+    // derived state outside the node (the executor array bag, cmdnamtab, the
+    // environ mirror); `unsetparam`'s static-pair block below owns their
+    // partner teardown, and running this generic cascade for them left
+    // `unset PATH; print $+path` reading 1 where zsh reads 0. User
+    // `typeset -T` ties have no such state and take C's path.
+    let altremove: Option<String> =
+        if altflag == 0 && (pm.node.flags as u32 & PM_SPECIAL) == 0 {
+            pm.ename.clone()
+        } else {
+            None
+        };
     pm.node.flags &= !(PM_DECLARED as i32); // c:3868
                                             // c:3870 — WHICH unsetfn `pm->gsu.s->unsetfn` is comes from
                                             // createspecialhash (c:1227-1228): a SPECIALPMDEF hash whose
@@ -10684,13 +10712,95 @@ pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
         delenv(&pm.node.nam); // c:3872 delenv(pm)
         pm.env = None;
     }
-    // Tied alt-name removal + paramtab restore-from-old not yet
-    // possible without HashTable backend; the C postlude (lines
-    // 3853-3935) is a paramtab->removenode + addnode dance that
-    // requires the missing vtable.
+    // c:3804-3836 — "remove it under its alternate name if necessary".
+    // Every caller hands this fn a node it has already copied out of (or
+    // removed from) paramtab and holds no guard, so the partner is taken
+    // out of the table, unset, and put back (or not) here.
+    if let Some(alt) = altremove.as_deref() {
+        // c:3806 — `altpm = (Param) paramtab->getnode(paramtab, altremove);`
+        let top = paramtab().write().ok().and_then(|mut t| t.remove(alt));
+        if let Some(mut top) = top {
+            // c:3815-3821 — `if (altpm && !(altpm->node.flags & PM_SPECIAL))
+            // while (altpm && altpm->level > pm->level) { oldpm = altpm;
+            // altpm = altpm->old; }` — tied parameters are at the same local
+            // level as each other, so skip locals hidden above that level.
+            let mut depth = 0usize;
+            let mut reached = true;
+            if (top.node.flags as u32 & PM_SPECIAL) == 0 {
+                let mut cur: &param = &top;
+                while cur.level > pm.level {
+                    match cur.old.as_deref() {
+                        Some(o) => {
+                            cur = o;
+                            depth += 1;
+                        }
+                        None => {
+                            reached = false; // c:3819 altpm = NULL
+                            break;
+                        }
+                    }
+                }
+            }
+            if reached {
+                if depth == 0 {
+                    // c:3828 — `unsetparam_pm(altpm, 1, exp);` on the visible node.
+                    let _ = unsetparam_pm(&mut top, 1, exp);
+                    // c:3851-3890 postlude for the partner, which this port
+                    // leaves to whoever took the node out of paramtab: the
+                    // same keep-or-drop rule `unsetparam` applies to its
+                    // static-pair fallback below (see the note there on why
+                    // a global tied special is dropped, not kept).
+                    let keep = top.old.is_some()
+                        || (top.level > 0
+                            && locallevel.load(Ordering::Relaxed) as i32 >= top.level);
+                    if keep {
+                        paramtab().write().unwrap().insert(alt.to_string(), top);
+                    } else {
+                        crate::ported::exec::unset_array(alt); // c:3874 removenode
+                        crate::ported::exec::unset_assoc(alt);
+                    }
+                } else {
+                    let mut oldpm: &mut param = &mut top;
+                    for _ in 1..depth {
+                        oldpm = oldpm.old.as_deref_mut().unwrap();
+                    }
+                    if oldpm.old.as_ref().is_some_and(|a| a.level == 0) {
+                        // c:3823-3827 — `if (oldpm && !altpm->level) {
+                        // oldpm->old = NULL; altpm->level = 1; }` — detach the
+                        // global from the shadow chain so removenode is not
+                        // called; the detached node is then unset and freed.
+                        let mut altpm = oldpm.old.take().unwrap();
+                        altpm.level = 1; // c:3826
+                        let _ = unsetparam_pm(&mut altpm, 1, exp); // c:3828
+                    } else if let Some(altpm) = oldpm.old.as_deref_mut() {
+                        // c:3828 — a hidden local at pm's level stays in the
+                        // chain marked PM_UNSET (c:3851-3853 keeps locals).
+                        let _ = unsetparam_pm(altpm, 1, exp);
+                    }
+                    paramtab().write().unwrap().insert(alt.to_string(), top);
+                }
+                pm.node.flags |= PM_UNSET as i32; // c:3829 "so we must repeat this"
+            } else {
+                paramtab().write().unwrap().insert(alt.to_string(), top);
+            }
+        }
+        // c:3833-3836 — `if (!(pm->node.flags & PM_SPECIAL)) {
+        // pm->gsu.s = &stdscalar_gsu; pm->node.flags &= ~PM_ARRAY; }`
+        if (pm.node.flags as u32 & PM_SPECIAL) == 0 {
+            pm.gsu_s = Some(Box::new(gsu_scalar {
+                getfn: strgetfn,
+                setfn: strsetfn,
+                unsetfn: stdunsetfn,
+            }));
+            pm.node.flags &= !(PM_ARRAY as i32);
+        }
+    }
+    // The c:3851-3890 removenode/addnode postlude for `pm` itself stays with
+    // the callers, which own the node (see `unsetparam`).
     pm.node.flags |= PM_UNSET as i32;
     0
 }
+
 
 // -----------------------------------------------------------
 // GSU dispatch callbacks — direct ports against `param.u_*`
