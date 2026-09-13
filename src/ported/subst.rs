@@ -10161,26 +10161,12 @@ pub fn paramsubst(
                         // zsh says `operand expected at `*''`. Propagate the
                         // diagnostic here, exactly as the final fallback
                         // does, so the reported offset is the one C produces.
-                        match crate::ported::math::mathevali(rest[close + 1..].trim()) {
-                            Ok(n) => Some(n),
-                            Err(e) => {
-                                // mathevali errors already carry the
-                                // "bad math expression:" prefix; don't
-                                // double it (zsh emits it once).
-                                if e.starts_with("bad math expression") {
-                                    crate::ported::utils::zerr(&e);
-                                } else {
-                                    crate::ported::utils::zerr(&format!(
-                                        "bad math expression: {}",
-                                        e
-                                    ));
-                                }
-                                crate::ported::utils::errflag.fetch_or(
-                                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                                None
-                            }
+                        // c:1618 — mathevalarg zerrs its own diagnostic.
+                        let n = crate::ported::math::mathevalarg(rest[close + 1..].trim());
+                        if errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                            None
+                        } else {
+                            Some(n)
                         }
                     })
                     .or_else(|| {
@@ -10235,29 +10221,19 @@ pub fn paramsubst(
                             } else {
                                 sub.to_string()
                             };
-                            // c:Src/params.c getindex -> getarg miss ->
-                            // mathevali; C's matheval zerrs ("bad math
-                            // expression: ...") and raises errflag on
-                            // parse failure, aborting the input —
-                            // `${a[b*]}` is a fatal math error in zsh
-                            // (rc=1), not a silent empty. The previous
-                            // .ok() swallowed it.
-                            match crate::ported::math::mathevali(&untoked) {
-                                Ok(n) => Some(n),
-                                Err(e) => {
-                                    // mathevali errors already carry the
-                                    // "bad math expression:" prefix; don't
-                                    // double it (zsh emits it once).
-                                    if e.starts_with("bad math expression") {
-                                        crate::ported::utils::zerr(&e);
-                                    } else {
-                                        crate::ported::utils::zerr(&format!(
-                                            "bad math expression: {}",
-                                            e
-                                        ));
-                                    }
-                                    None
-                                }
+                            // c:Src/params.c:1618 getindex -> getarg ->
+                            // `r = mathevalarg(s, &s);` — which zerrs ("bad
+                            // math expression: ...") and raises errflag on
+                            // parse failure, aborting the input — `${a[b*]}`
+                            // is a fatal math error in zsh (rc=1), not a
+                            // silent empty. MPREC_ARG, not matheval: `@`
+                            // reports "operand expected at `@'" and trailing
+                            // junk after an operand (`${a[1@]}`) is ignored.
+                            let n = crate::ported::math::mathevalarg(&untoked);
+                            if errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                                None
+                            } else {
+                                Some(n)
                             }
                         }
                     })
@@ -10458,27 +10434,9 @@ pub fn paramsubst(
                         // and aborts. The `(W)` spelling reaches the same place
                         // by a different road: c:1498-1503 `flagerr` rewinds
                         // past the `(`, so the WHOLE `(W)2` is the math text.
-                        match crate::ported::math::mathevali(expanded.trim()) {
-                            Ok(n) => n,
-                            Err(e) => {
-                                // mathevali errors already carry the
-                                // "bad math expression:" prefix when the
-                                // failure came from the parser; the value
-                                // errors ("division by zero") do not, and C
-                                // zerrs those bare too. Same shape as the
-                                // single-subscript arms at subst.rs:9463 and
-                                // subst.rs:10592.
-                                if e.starts_with("bad math expression") {
-                                    crate::ported::utils::zerr(&e);
-                                } else {
-                                    crate::ported::utils::zerr(&format!(
-                                        "bad math expression: {}",
-                                        e
-                                    ));
-                                }
-                                0 // c:Src/math.c:1546 — the zero mnumber
-                            }
-                        }
+                        // mathevalarg zerrs the parser's message verbatim and
+                        // returns c:Src/math.c:1546's zero mnumber.
+                        crate::ported::math::mathevalarg(expanded.trim())
                     };
                     let start: i64 = eval_idx(&start_str);
                     let end: i64 = eval_idx(&end_str);
@@ -11377,7 +11335,18 @@ pub fn paramsubst(
                             // REMAINDER is the subscript expression, math-
                             // evaluated (bare identifier → 0): `s=hello;
                             // ${s[(b:2:)l]}` → "" (eval "l" = 0).
-                            crate::ported::math::mathevali(rest[close + 1..].trim()).ok()
+                            // c:1618 — `r = mathevalarg(s, &s);` on that remainder,
+                            // which zerrs its own diagnostic. `.ok()` dropped it and
+                            // the whole-subscript fallback then read `(e)@` as a
+                            // parenthesised operand, so an expanded `@` (the bridge
+                            // rebuilds `${s[$k]}` as `(e)$k`) indexed 0 silently.
+                            // Same shape as the array arm's flag-group remainder.
+                            let n = crate::ported::math::mathevalarg(rest[close + 1..].trim());
+                            if errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                                None
+                            } else {
+                                Some(n)
+                            }
                         })
                         .or_else(|| {
                             // mathevali fallback for arith subscripts like
@@ -11398,29 +11367,17 @@ pub fn paramsubst(
                             if top_comma {
                                 None
                             } else {
-                                // c:Src/params.c getindex -> matheval —
-                                // a subscript that fails math parse zerrs
-                                // and aborts EVEN when the param is unset:
-                                // `${a[b*]}` with no `a` is rc=1 in zsh.
-                                // (The set-array arm raises the same zerr
-                                // upstream.)
-                                match crate::ported::math::mathevali(sub) {
-                                    Ok(n) => Some(n),
-                                    Err(e) => {
-                                        // mathevali errors already carry the
-                                        // "bad math expression:" prefix (via
-                                        // m_error_set); don't double it (zsh
-                                        // emits it once).
-                                        if e.starts_with("bad math expression") {
-                                            crate::ported::utils::zerr(&e);
-                                        } else {
-                                            crate::ported::utils::zerr(&format!(
-                                                "bad math expression: {}",
-                                                e
-                                            ));
-                                        }
-                                        None
-                                    }
+                                // c:Src/params.c:1618 getindex -> getarg ->
+                                // `r = mathevalarg(s, &s);` — a subscript that
+                                // fails math parse zerrs and aborts EVEN when
+                                // the param is unset: `${a[b*]}` with no `a` is
+                                // rc=1 in zsh. (The set-array arm raises the
+                                // same zerr upstream.)
+                                let n = crate::ported::math::mathevalarg(sub);
+                                if errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                                    None
+                                } else {
+                                    Some(n)
                                 }
                             }
                         })
@@ -11524,25 +11481,9 @@ pub fn paramsubst(
                         // other road: c:1498-1503 `flagerr` rewinds past the
                         // `(`, so the whole `(W)2` is the math text.
                         //
-                        // !!! WARNING: RUST-ONLY HELPER !!! — no C counterpart.
-                        // C has no such closure because `zerr` IS the reporting
-                        // path inside `mathevalarg`; the Rust `mathevali`
-                        // returns the message in `Err` instead, so each of the
-                        // three `mathevalarg` sites below has to hand it to
-                        // `zerr` itself. One closure rather than three copies of
-                        // the five-line match already written out at
-                        // subst.rs:9463 and subst.rs:10592.
-                        let zerr_math = |e: &str| {
-                            // A parser failure already carries the
-                            // "bad math expression:" prefix; a VALUE failure
-                            // ("division by zero") does not, and C zerrs those
-                            // bare too (c:Src/math.c:1592 vs c:1147).
-                            if e.starts_with("bad math expression") {
-                                crate::ported::utils::zerr(e);
-                            } else {
-                                crate::ported::utils::zerr(&format!("bad math expression: {}", e));
-                            }
-                        };
+                        // Every bound below goes through `mathevalarg`, which
+                        // zerrs its own diagnostic (c:Src/math.c:1589-1592) the
+                        // way C's does.
                         let bound_idx = |expr: &str, is_second: bool| -> i64 {
                             let e = expr.trim();
                             if let Some(rest) = e.strip_prefix('(') {
@@ -11687,15 +11628,11 @@ pub fn paramsubst(
                                             // rather than taking a default.
                                             let mut r = match pat_raw.trim().parse::<i64>() {
                                                 Ok(v) => v,
-                                                Err(_) => match crate::ported::math::mathevali(
+                                                // c:1618 — mathevalarg zerrs its own
+                                                // message and returns c:Src/math.c:1546's 0.
+                                                Err(_) => crate::ported::math::mathevalarg(
                                                     &singsub(pat_raw.trim()),
-                                                ) {
-                                                    Ok(v) => v,
-                                                    Err(e) => {
-                                                        zerr_math(&e);
-                                                        0 // c:Src/math.c:1546
-                                                    }
-                                                },
+                                                ),
                                             };
                                             let iw = words.len() as i64; // c:1624
                                             if iw == 0 {
@@ -11748,9 +11685,9 @@ pub fn paramsubst(
                                                     }
                                                     ns.push(cc);
                                                 }
-                                                // c:1458,1471 — mathevalarg, not bare int.
-                                                let v = crate::ported::math::mathevali(ns.trim())
-                                                    .unwrap_or(0);
+                                                // c:1458,1471 — mathevalarg, not bare int;
+                                                // it zerrs its own diagnostic.
+                                                let v = crate::ported::math::mathevalarg(ns.trim());
                                                 if c == 'n' {
                                                     nth = v;
                                                 } else {
@@ -11920,30 +11857,19 @@ pub fn paramsubst(
                                         if let Ok(nv) = t.parse::<i64>() {
                                             return nv;
                                         }
-                                        return match crate::ported::math::mathevali(&singsub(t)) {
-                                            Ok(nv) => nv,
-                                            Err(e) => {
-                                                zerr_math(&e);
-                                                0 // c:Src/math.c:1546
-                                            }
-                                        };
+                                        return crate::ported::math::mathevalarg(&singsub(t)); // c:1618
                                     }
                                 }
                             }
                             // c:Src/params.c::getarg — non-search bound: a math
                             // expression (variable refs, arithmetic). Fast-path a
-                            // bare integer literal, else singsub + mathevali.
+                            // bare integer literal, else singsub + mathevalarg
+                            // (c:Src/params.c:1618), which zerrs its own message.
                             if let Ok(nv) = e.parse::<i64>() {
                                 return nv;
                             }
                             let expanded = singsub(e);
-                            match crate::ported::math::mathevali(&expanded) {
-                                Ok(nv) => nv,
-                                Err(err) => {
-                                    zerr_math(&err);
-                                    0 // c:Src/math.c:1546
-                                }
-                            }
+                            crate::ported::math::mathevalarg(&expanded)
                         };
                         // c:Src/params.c:2099-2104 — getindex rejects a range
                         // whose START bound is an INVERSE subscript. The array
@@ -14798,19 +14724,13 @@ pub fn paramsubst(
                         if t.is_empty() {
                             return crate::ported::math::mathevalarg(t); // c:Src/math.c:1531
                         }
-                        match crate::ported::math::mathevali(t) {
-                            // c:Src/params.c:1618
-                            Ok(n) => n,
-                            Err(msg) => {
-                                zerr(&msg); // c:Src/math.c:1534
-                                errflag.fetch_or(
-                                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                                matherr.set(true);
-                                0
-                            }
+                        // c:Src/params.c:1618 — `r = mathevalarg(s, &s);`, which
+                        // zerrs its own diagnostic (c:Src/math.c:1589-1592).
+                        let n = crate::ported::math::mathevalarg(t);
+                        if errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                            matherr.set(true);
                         }
+                        n
                     };
                     let (start_str, end_str) = match s_trim.split_once(',') {
                         Some((a, b)) => (a, Some(b)),

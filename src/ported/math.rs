@@ -588,7 +588,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             m_string_variables_set(strs);
             m_prec_set(saved.prec);
             m_c_precedences_set(saved.c_precedences);
-            let result = mathevall();
+            let result = mathevall(prec_type::MPREC_TOP);
             // c:Src/math.c::matheval — when the recursive eval errors
             // (e.g. raw is "42xyz" with trailing junk), preserve the error
             // message so it propagates to the outer arith caller instead
@@ -633,7 +633,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             m_prec_set(inherited_prec);
             m_c_precedences_set(inherited_c_prec);
 
-            let result = mathevall();
+            let result = mathevall(prec_type::MPREC_TOP);
             restore_state(saved);
             if let Ok(r) = result {
                 return r;
@@ -668,7 +668,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
 /// Evaluate the expression
 /// Port of `mathevall()` from `Src/math.c:367` — C decl `mathevall(char *s, enum prec_type prec_tp, char **ep)`.
 /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
-pub(crate) fn mathevall() -> Result<mnumber, String> {
+pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
     // c:Src/math.c — matheval reads `isset(CPRECEDENCES)` / `isset(FORCEFLOAT)`
     // / `isset(OCTALZEROES)` live at its use sites (e.g. c:348, 359, 482). The
     // zshrs port caches them in per-eval thread-locals for speed but never
@@ -722,7 +722,9 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
         }
     }
 
-    if m_pos() >= m_input_len() {
+    // c:1609-1613 — mathparse's "Handle empty input" shortcut applies only at
+    // TOPPREC; an empty MPREC_ARG operand falls into checkunary instead.
+    if prec_tp == prec_type::MPREC_TOP && m_pos() >= m_input_len() {
         return Ok(mnumber {
             l: 0,
             d: 0.0,
@@ -730,7 +732,13 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
         });
     }
 
-    mathparse(top_prec());
+    // c:411 — `mathparse(prec_tp == MPREC_TOP ? TOPPREC : ARGPREC);`
+    // c:284-285 — `#define TOPPREC (prec[COMMA]+1)` / `#define ARGPREC (prec[COMMA]-1)`
+    mathparse(if prec_tp == prec_type::MPREC_TOP {
+        top_prec()
+    } else {
+        m_prec()[COMMA as usize] - 1
+    });
 
     if let Some(err) = m_error_take() {
         return Err(err);
@@ -750,7 +758,11 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     }
 
     // Check for trailing characters
-    while let Some(c) = peek() {
+    // !!! WARNING: this is matheval's c:1497-1500 `*junk` check, hoisted into
+    // mathevall because the Rust mathevall has no `char **ep` out-param. C's
+    // mathevalarg (c:1541) hands `*ss` back to getarg WITHOUT a junk check, so
+    // `${arr[1@]}` is element 1 — gate the check on MPREC_TOP to keep that.
+    while let Some(c) = peek().filter(|_| prec_tp == prec_type::MPREC_TOP) {
         if c.is_whitespace() {
             advance();
         } else if c == ')' {
@@ -3218,7 +3230,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 let inherited_vars = saved.variables.clone();
                 new(arg.trim());
                 m_variables_set(inherited_vars);
-                let result = mathevall();
+                let result = mathevall(prec_type::MPREC_TOP);
                 restore_state(saved);
                 // c:math.c::callmathfunc — when a function-arg subeval
                 // fails, the C body's mathevall has already zerr'd the
@@ -4510,7 +4522,7 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let xvariables = m_variables_clone(); // c:395 `xstack = stack;`
     let xstring_variables = m_string_variables_clone();
     new(s);
-    let result = mathevall();
+    let result = mathevall(prec_type::MPREC_TOP);
     // c:455 — `stack = xstack;`, the cache goes out of scope with the
     // frame that owns it. At top level both maps were empty on entry,
     // so this is a clear; under a nested `matheval` it restores the
@@ -4583,7 +4595,7 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     let xstring_variables = m_string_variables_clone();
     new(s_skip);
     m_noeval_set(1); // bump AFTER new() reset
-    let result = mathevall();
+    let result = mathevall(prec_type::MPREC_TOP);
     m_noeval_set(0);
     m_variables_set(xvariables); // c:455
     m_string_variables_set(xstring_variables);
@@ -4644,18 +4656,44 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
         zerr("bad math expression: empty string"); // c:1531
         return 0; // c:1532
     }
-    // c:1534 — `mathevall(s, MPREC_ARG, ss)`. The Rust port doesn't yet
-    // thread the prec_tp arg through mathevall (uses C_PREC/Z_PREC toggle
-    // only); structural follow-up.
-    // c:1538 — `(x.type & MN_FLOAT) ? (zlong)x.u.d : x.u.l`. Bitwise
-    // check against MN_FLOAT; strict equality `== MN_FLOAT` misclassifies
-    // composite type bitfields (e.g. MN_FLOAT|MN_UNSET).
-    let result = matheval(s).map(|n|                                         // c:1538
-        if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l }
-    ).unwrap_or(0);
-    // c:1537 — `mtok = xmtok;` restore.
-    M_MTOK.with(|c| c.set(xmtok)); // c:1537
-    result
+    // c:1540-1542 — `zsh_eval_context_push("math"); x = mathevall(s, MPREC_ARG, ss);`
+    //
+    // ARGPREC, not TOPPREC: mathparse's empty-input shortcut (c:1609-1613) is
+    // skipped, so an operand the lexer cannot start (`@`, zzlex c:907 EOI)
+    // reaches checkunary and reports "operand expected at `@'" (c:1592). The
+    // previous body called `matheval`, which parsed at TOPPREC, returned early
+    // on that EOI and let the c:1497 junk check say "illegal character: @".
+    // The per-frame variable cache is scoped exactly as in `matheval` above
+    // (c:395 `xstack = stack;` / c:455 `stack = xstack;`).
+    let xvariables = m_variables_clone();
+    let xstring_variables = m_string_variables_clone();
+    new(s);
+    let result = mathevall(prec_type::MPREC_ARG); // c:1541
+    m_variables_set(xvariables);
+    m_string_variables_set(xstring_variables);
+    // c:1545 — `mtok = xmtok;` restore.
+    M_MTOK.with(|c| c.set(xmtok)); // c:1545
+    match result {
+        // c:1546 — `(x.type & MN_FLOAT) ? (zlong)x.u.d : x.u.l`. Bitwise
+        // check against MN_FLOAT; strict equality `== MN_FLOAT` misclassifies
+        // composite type bitfields (e.g. MN_FLOAT|MN_UNSET).
+        Ok(n) => {
+            if (n.type_ & MN_FLOAT) != 0 {
+                n.d as i64
+            } else {
+                n.l
+            }
+        }
+        // C's parser zerrs in place (checkunary c:1589-1592, division by zero,
+        // …) and mathevall returns the zero mnumber (c:432-433). The Rust
+        // parser carries the message in Err; raise it here with the same text.
+        // The previous body dropped it (`unwrap_or(0)`), so `arr=(x y);
+        // k='@'; print $arr[$k]` failed silently where zsh reports it.
+        Err(msg) => {
+            zerr(&msg);
+            0
+        }
+    }
 }
 
 /// Port of `checkunary()` from `Src/math.c:1548` — C decl `checkunary(int mtokc, char *mptr)`.
@@ -5979,7 +6017,7 @@ mod tests {
         with_variables(vars);
         assert_eq!(
             ({
-                let __m = mathevall().unwrap();
+                let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
                     __m.d as i64
                 } else {
@@ -5994,7 +6032,7 @@ mod tests {
     fn test_assignment() {
         let _g = crate::test_util::global_state_lock();
         new("x = 5");
-        mathevall().unwrap();
+        mathevall(prec_type::MPREC_TOP).unwrap();
         assert_eq!(
             ({
                 let __m = m_variables_get("x").unwrap();
@@ -6008,7 +6046,7 @@ mod tests {
         );
 
         new("x = 5, x += 3");
-        let result = mathevall().unwrap();
+        let result = mathevall(prec_type::MPREC_TOP).unwrap();
         assert_eq!(
             (if result.type_ == MN_FLOAT {
                 result.d as i64
@@ -6036,7 +6074,7 @@ mod tests {
         with_variables(vars.clone());
         assert_eq!(
             ({
-                let __m = mathevall().unwrap();
+                let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
                     __m.d as i64
                 } else {
@@ -6061,7 +6099,7 @@ mod tests {
         with_variables(vars.clone());
         assert_eq!(
             ({
-                let __m = mathevall().unwrap();
+                let __m = mathevall(prec_type::MPREC_TOP).unwrap();
                 if __m.type_ == MN_FLOAT {
                     __m.d as i64
                 } else {

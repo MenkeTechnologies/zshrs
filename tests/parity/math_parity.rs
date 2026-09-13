@@ -802,3 +802,105 @@ mod arith_command_lastmathval {
         assert_parity("i=5; (( i++ )); echo $i; (( 0 )); echo $?; (( 5>3 )); echo $?");
     }
 }
+
+/// A subscript's arithmetic is `mathevalarg` (c:Src/params.c:1618), which parses
+/// at ARGPREC (c:Src/math.c:1541, c:411). mathparse's empty-input shortcut is
+/// TOPPREC-only (c:1609-1613), so an operand the lexer cannot start (`@` lexes
+/// to EOI, c:907) reaches checkunary and reports "operand expected at `@'"
+/// (c:1589-1592). mathevalarg has no trailing-junk check either (only
+/// matheval's c:1497-1500 does), so `${arr[1@]}` is element 1.
+///
+/// The port parsed subscripts with the TOPPREC `matheval`/`mathevali`, so every
+/// row below said "illegal character: @" (or errored on `1@`), and the
+/// `mathevalarg` entry point it did have dropped its error on the floor.
+///
+/// `assert_parity` above compares stdout and status only; these are diagnostic
+/// defects, so the rows compare stderr too.
+mod subscript_math_is_mathevalarg {
+    use super::*;
+
+    fn same(script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert_eq!(
+            (&z.stdout, &z.stderr, z.exit),
+            (&r.stdout, &r.stderr, r.exit),
+            "divergence (stdout, stderr, exit) on script:\n{script}"
+        );
+    }
+
+    /// The reported repros: `@` as the whole operand or its first token.
+    #[test]
+    fn at_sign_is_operand_expected() {
+        same(r#"arr=(x y); k="@"; print -r -- ${arr[$k]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[@+1]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[@1]}"#);
+        same(r#"arr=(x y); k="@"; print -r -- ${arr[1,$k]}"#);
+        same(r#"s=abc; k="@"; print -r -- ${s[$k]}"#);
+        same(r#"s=abc; k="*"; print -r -- ${s[$k]}"#);
+        same(r#"arr=(x y); k="%"; print -r -- ${arr[$k]}"#);
+    }
+
+    /// After a parsed flag group, getarg hands only the REMAINDER to
+    /// `mathevalarg` (c:Src/params.c:1498-1507, c:1618) — on a scalar as on an
+    /// array. An empty remainder is mathevalarg's "empty string" (c:1530-1532).
+    #[test]
+    fn flag_group_remainder_is_the_math_operand() {
+        same(r#"s=abc; print -r -- "[${s[(e)@]}]""#);
+        same(r#"s=abc; print -r -- "[${s[(e)]}]""#);
+        same(r#"arr=(x y); print -r -- "[${arr[(e)@]}]""#);
+        same(r#"s=abc; print -r -- "[${s[(e)2]}]""#);
+        same(r#"s=abc; print -r -- "[${s[(e)-1]}]""#);
+        same(r#"s=abc; print -r -- "[${s[(n:2:)2]}]""#);
+        same(r#"arr=(x y); print -r -- "[${arr[(e)2]}]""#);
+    }
+
+    /// The unbraced reference reaches the same getarg; its error used to be
+    /// swallowed entirely (status 1, nothing on stderr).
+    #[test]
+    fn unbraced_reference_reports_the_error() {
+        same(r#"arr=(x y); k="@"; print -r -- $arr[$k]"#);
+    }
+
+    /// No trailing-junk check at ARGPREC: the operand before the junk counts.
+    #[test]
+    fn trailing_junk_after_an_operand_is_ignored() {
+        same(r#"arr=(x y); print -r -- ${arr[1@]}"#);
+        same(r#"arr=(x y); k="1@"; print -r -- ${arr[$k]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[1,2@]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[2@,2]}"#);
+        same(r#"s=abc; print -r -- ${s[2@]}"#);
+    }
+
+    /// Value errors keep their own text; C never prefixes them.
+    #[test]
+    fn value_errors_are_not_prefixed() {
+        same(r#"arr=(x y); print -r -- ${arr[1/0]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[1%0]}"#);
+    }
+
+    /// Diagnostics that already agreed must stay as they were.
+    #[test]
+    fn other_subscript_diagnostics_unchanged() {
+        same(r#"arr=(x y); print -r -- ${arr[1 2]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[x+]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[(1,@)]}"#);
+        same(r#"arr=(x y); k="1)"; print -r -- ${arr[$k]}"#);
+        same(r#"arr=(x y); print -r -- ${arr[(2)]}"#);
+        same(r#"arr=(x y); i=1; print -r -- ${arr[i++]} $i"#);
+    }
+
+    /// Top-level arithmetic is `matheval` (TOPPREC + junk check) and keeps
+    /// "illegal character".
+    #[test]
+    fn top_level_arithmetic_keeps_illegal_character() {
+        same(r#"print -r -- $(( @ ))"#);
+        same(r#"print -r -- $(( 1@ ))"#);
+        same(r#"print -r -- $(( 1, @ ))"#);
+        same(r#"integer i; i=@"#);
+        same(r#"let @"#);
+    }
+}
