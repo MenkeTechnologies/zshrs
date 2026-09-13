@@ -3112,7 +3112,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // AND the registered [minargs, maxargs] bounds together, so the
     // arg-count check below sees the same entry that doshfunc dispatches
     // to.
-    let userfunc_impl: Option<(String, i32, i32)> = crate::ported::module::MATHFUNCS
+    let userfunc_impl: Option<(String, i32, i32, i32)> = crate::ported::module::MATHFUNCS
         .lock()
         .ok()
         .and_then(|tab| {
@@ -3123,10 +3123,11 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                         p.module.clone().unwrap_or_else(|| p.name.clone()),
                         p.minargs,
                         p.maxargs,
+                        p.flags,
                     )
                 })
         });
-    if let Some((impl_name, minargs, maxargs)) = userfunc_impl {
+    if let Some((impl_name, minargs, maxargs, fflags)) = userfunc_impl {
         if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
             // c:1059-1062 — `addlinknode(l, n)`: the FIRST positional ($0)
             // is the MATH function NAME (`max`/`min`), NOT the implementing
@@ -3134,13 +3135,46 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             // one function) switches on $0, so it must see the math name.
             // The body to RUN is still the impl shfunc.
             let mut largs: Vec<String> = vec![name.to_string()];
-            let argv_str: Vec<String> = call[paren..]
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let a = call[paren..]
+                .strip_prefix('(')
+                .unwrap_or(&call[paren..]);
+            let a = a.strip_suffix(')').unwrap_or(a);
+            let argv_str: Vec<String> = if (fflags & crate::ported::zsh_h::MFF_STR) != 0 {
+                // c:1064-1068 — `if (!*a) { addlinknode(l, dupstring("")); argc++; }`
+                // c:1077-1080 — otherwise `str = dupstring(a); a = "";`: the
+                // whole raw argument text, commas included, is ONE string.
+                vec![a.to_string()]
+            } else {
+                // c:1069-1071 — `while (iblank(*a)) a++;`
+                // c:1081-1090 — each argument is `mathevall(a, MPREC_ARG, &a)`
+                // and the value is handed to the shell function as text:
+                // `convfloat(marg.u.d, 0, 0, NULL)` or `convbase(buf, marg.u.l, 10)`.
+                let mut strs = Vec::new();
+                for arg in a.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    let saved = save_state();
+                    let inherited_vars = saved.variables.clone();
+                    new(arg);
+                    m_variables_set(inherited_vars);
+                    let result = mathevall(prec_type::MPREC_TOP);
+                    restore_state(saved);
+                    match result {
+                        Ok(n) if n.type_ == MN_FLOAT => {
+                            strs.push(crate::ported::params::convfloat(n.d, 0, 0))
+                        }
+                        Ok(n) => strs.push(crate::ported::params::convbase(n.l, 10)),
+                        Err(msg) => {
+                            // c:1095 — `if (errflag || mtok != COMMA) break;`
+                            crate::ported::utils::zerr(&msg);
+                            return mnumber {
+                                l: 0,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            };
+                        }
+                    }
+                }
+                strs
+            };
             // c:Src/math.c:1106-1107 — `if (argc >= f->minargs &&
             // (f->maxargs < 0 || argc <= f->maxargs))`. The actual arg count
             // (NOT counting the math-fn name pushed as $0 at c:1061) must be

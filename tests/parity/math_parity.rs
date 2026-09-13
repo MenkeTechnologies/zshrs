@@ -960,3 +960,28 @@ mod store_around_a_math_error {
         assert_parity("(( y = 3, x = 5/0, z = 4 )) 2>/dev/null; print y=$y x=$x z=$z");
     }
 }
+
+/// c:Src/math.c:1064-1090 — arguments of a `functions -M` math function
+/// reach the shell function as text. With `-s` (MFF_STR) the whole raw
+/// argument text, commas included, is ONE argument ("" when empty); without
+/// it each argument is evaluated first and passed as its converted value.
+/// The port split the raw text on commas in both cases.
+mod user_math_function_arguments {
+    use super::*;
+
+    #[test]
+    fn string_function_gets_the_whole_text_as_one_argument() {
+        assert_parity(
+            "f() { print -r -- \"$0:$#:$1\"; (( $#1 )) }; functions -Ms slen 1 1 f; \
+             print $(( slen(this, is, a, raw, string) )); print $(( slen() ))",
+        );
+    }
+
+    #[test]
+    fn numeric_function_gets_evaluated_values() {
+        assert_parity(
+            "f() { print -r -- \"$0:$#:$*\"; (( 7 )) }; functions -M g 0 -1 f; \
+             print $(( g(1+2, 1.5*2, x) ))",
+        );
+    }
+}
