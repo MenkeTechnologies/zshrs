@@ -514,7 +514,6 @@ mod local_special_starts_empty {
     /// three NUL history characters (`len ? x[0] : '\0'`), so it reads
     /// empty. The port treats "" as C's NULL and resets `!^#`.
     #[test]
-    #[ignore = "zshrs gap: params.rs histcharssetfn treats an empty string as NULL and restores !^#"]
     fn histchars_starts_empty() {
         assert_parity(r#"f(){ local +h histchars; print -r "[$histchars]" }; f; print $histchars"#);
     }

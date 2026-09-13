@@ -12710,14 +12710,17 @@ pub fn histcharsgetfn(_pm: &param) -> String {
 ///
 pub fn histcharssetfn(_pm: &mut param, x: String) {
     // c:5081
-    // C signature is `histcharssetfn(Param pm, char *x)`. C uses NULL
-    // for the "reset to defaults" path; in Rust the canonical fn-ptr
-    // type is `fn(&mut param, String)` so the empty-string sentinel
-    // takes that role (`x.is_empty()` ≡ C `x == NULL`).
-    let new_chars: [u8; 3] = if x.is_empty() {
-        // c:5100-5103 — defaults `!^#` when x is NULL.
-        [b'!', b'^', b'#']
-    } else {
+    // C signature is `histcharssetfn(Param pm, char *x)`. The `x == NULL`
+    // arm (c:5100-5103, `bangchar = '!'; hashchar = '#'; hatchar = '^'`)
+    // has no caller: the gsu is `{ histcharsgetfn, histcharssetfn,
+    // stdunsetfn }` (c:238-239), so `unset histchars` never reaches it, and
+    // every write, including scanendscope's restore, hands over a string.
+    // An EMPTY string is not NULL: `len` is 0, so all three characters
+    // become '\0' (c:5095-5097) and `$histchars` reads empty, which is what
+    // `histchars=` and `local +h histchars` (c:Src/builtin.c:2617
+    // `setfn(pm, ztrdup(""))`) produce in zsh. Treating "" as NULL restored
+    // `!^#` instead.
+    let new_chars: [u8; 3] = {
         let s = x;
         {
             // c:5086 — `unmetafy(x, &len)`. Strip Meta pairs first.
@@ -16835,11 +16838,16 @@ mod gsu_tests {
         let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        histcharssetfn(&mut param::default(), String::new());
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         assert_eq!(histcharsgetfn(&param::default()), "!^#");
         histcharssetfn(&mut param::default(), "@$&".to_string());
         assert_eq!(histcharsgetfn(&param::default()), "@$&");
+        // c:5095-5097 — an empty string is len 0, not NULL: all three
+        // characters become '\0' and the value reads back empty.
         histcharssetfn(&mut param::default(), String::new());
+        assert_eq!(bangchar.load(Ordering::SeqCst), 0);
+        assert_eq!(histcharsgetfn(&param::default()), "");
+        histcharssetfn(&mut param::default(), "!^#".to_string());
     }
 
     /// Pin: `histcharssetfn` runs `unmetafy` per Src/params.c:5086
@@ -16877,8 +16885,8 @@ mod gsu_tests {
         assert_eq!(bangchar.load(Ordering::SeqCst), b'W' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'X' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'Y' as i32);
-        // Reset to default.
-        histcharssetfn(&mut param::default(), String::new());
+        // Back to the default characters (an explicit value: "" is not NULL).
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
@@ -18149,7 +18157,7 @@ mod tests {
     /// hatchar / hashchar in the per-char globals. Pin the round-trip
     /// for ALL THREE: change HISTCHARS to a custom 3-char string,
     /// verify each atomic global reflects the new value, and verify
-    /// the canonical default `"!^#"` restores on NULL.
+    /// setting the default `"!^#"` back restores all three.
     #[test]
     fn histcharssetfn_syncs_all_three_histchar_globals() {
         let _g = crate::test_util::global_state_lock();
@@ -18157,7 +18165,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Default state.
-        histcharssetfn(&mut param::default(), String::new());
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
@@ -18179,7 +18187,7 @@ mod tests {
             "c:5097 — hashchar = third byte of HISTCHARS"
         );
         // Restore.
-        histcharssetfn(&mut param::default(), String::new());
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
     }
@@ -18200,8 +18208,9 @@ mod tests {
             "@&%",
             "c:5068-5073 — getfn reads atomic globals setfn wrote"
         );
-        // Restore default and verify round-trip.
-        histcharssetfn(&mut param::default(), String::new());
+        // Restore default and verify round-trip (an explicit value: "" is
+        // len 0, not NULL, c:5095-5097).
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         assert_eq!(
             histcharsgetfn(&param::default()),
             "!^#",
@@ -18293,7 +18302,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Reset to defaults.
-        histcharssetfn(&mut param::default(), String::new());
+        histcharssetfn(&mut param::default(), "!^#".to_string());
         let bang_before = bangchar.load(Ordering::SeqCst);
         let hat_before = hatchar.load(Ordering::SeqCst);
         // Try to set HISTCHARS with non-ASCII char.
