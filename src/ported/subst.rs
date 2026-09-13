@@ -6555,6 +6555,18 @@ pub fn paramsubst(
                             && !nm.is_empty()
                             && nm.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                         {
+                            // c:Src/subst.c:2709-2713 — the inner `(P)` hands back
+                            // nm's VALUE as the name to splice; an array value
+                            // with more than one element names no single
+                            // parameter:
+                            //     if (isarr) { if (aval[0] && aval[1]) {
+                            //         zerr("parameter name reference used with array");
+                            //         return NULL; } … }
+                            if crate::ported::subst::arrays_get(&nm).is_some_and(|a| a.len() > 1) {
+                                zerr("parameter name reference used with array"); // c:2711
+                                errflag_set_error();
+                                return (String::new(), new_pos, vec![]); // c:2712
+                            }
                             // `(P)nm` → nm's VALUE is the referenced param
                             // name; if that names an assoc, remember it.
                             if let Some(refname) = vars_get(&nm) {

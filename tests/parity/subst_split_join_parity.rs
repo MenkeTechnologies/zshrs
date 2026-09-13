@@ -367,6 +367,22 @@ mod split_flag_over_nested_substitution {
     }
 }
 
+/// Errors a nested or re-lexed value must raise instead of passing through.
+mod flag_value_errors {
+    use super::*;
+
+    /// c:Src/subst.c:2709-2713 — a `(P)` inner whose name parameter is an
+    /// array of more than one element names no single parameter.
+    #[test]
+    fn nested_p_with_multi_element_array_errors() {
+        assert_parity(
+            r#"f() { local s1=foo s2=bar; local -a val=(s1 s2); print ${${(P)val}[1,3]} }; f; echo rc=$?
+g() { local s1=foo; local -a val=(s1); print ${${(P)val}[1,2]} }; g; echo rc=$?"#,
+        );
+    }
+
+}
+
 /// `(~)` tokenizes the flag argument (c:Src/subst.c:1549 `if (tok_arg)
 /// shtokenize(dst);`), so a `(j)` separator or `(s)` delimiter is a
 /// pattern character, not a literal one.
