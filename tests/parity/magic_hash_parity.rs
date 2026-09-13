@@ -312,6 +312,41 @@ mod local_shadow {
         assert_parity(r#"f(){ local -A commands=(x y z w); unset "commands[x]"; print ${(kv)commands} }; f"#);
     }
 
+    /// `local -A +h functions` keeps the special struct, so the element
+    /// unset DOES remove `f` inside; scanendscope then hands the copy
+    /// typeset_single took back to `setpmfunctions` (c:Src/params.c
+    /// PM_HASHED restore), so `f` is defined again after return. zshrs
+    /// never took the copy: `whence f` failed.
+    #[test]
+    fn keep_special_functions_restored_after_element_unset() {
+        assert_parity(r#"f(){ :; }; g(){ local -A +h functions; unset "functions[f]"; print in ${(k)functions} }; g; whence f"#);
+    }
+
+    /// Same restore through the alias table.
+    #[test]
+    fn keep_special_aliases_restored_after_element_unset() {
+        assert_parity(r#"alias a1=b; g(){ local -A +h aliases; unset "aliases[a1]" }; g; alias a1"#);
+    }
+
+    /// The copy is taken from the table, not from `$functions` reads, so a
+    /// builtin that removes the entry directly is rolled back too.
+    #[test]
+    fn keep_special_functions_restored_after_unfunction() {
+        assert_parity(r#"f(){ :; }; g(){ local -A +h functions; unfunction f }; g; whence f"#);
+    }
+
+    /// The restore only re-adds saved entries: one defined inside survives.
+    #[test]
+    fn keep_special_restore_does_not_remove_new_entries() {
+        assert_parity(r#"g(){ local -A +h functions; functions[zz]="print hi" }; g; zz"#);
+    }
+
+    /// A read-only row is not restored, and leaving its scope is silent.
+    #[test]
+    fn keep_special_readonly_row_exits_quietly() {
+        assert_parity(r#"g(){ local -A +h builtins; print ${+builtins[print]} }; g; print ${+builtins[print]}"#);
+    }
+
     /// Whole-hash reassignment after unsetting the shadow lands in the
     /// local, not in aliastab: zsh `c d`, zshrs printed the real aliases.
     #[test]

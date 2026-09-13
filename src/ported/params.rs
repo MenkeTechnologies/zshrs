@@ -13903,12 +13903,29 @@ pub fn endparamscope() {
                     let restored_is_special =
                         (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0;
                     let restored_is_array = (PM_TYPE(prev.node.flags as u32) & PM_ARRAY) != 0;
+                    // c:5961-5962 — `case PM_HASHED: pm->gsu.h->setfn(pm,
+                    // tpm->u.hash)`. typeset_single's copy of a magic hash
+                    // (builtin.rs, c:Src/builtin.c:2410) is carried as a
+                    // flat key/value list in `u_arr`; take it off the node so
+                    // the restored special does not keep a stale array value.
+                    let restored_is_hashed = PM_TYPE(prev.node.flags as u32) == PM_HASHED;
                     let restored_val = prev.u_str.clone();
-                    let restored_arr = prev.u_arr.clone();
+                    let restored_arr = if restored_is_hashed {
+                        prev.u_arr.take()
+                    } else {
+                        prev.u_arr.clone()
+                    };
                     let restored_setfn = prev.gsu_s.as_ref().map(|g| g.setfn);
                     tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
                     if restored_is_special && !norestore {
-                        if restored_is_array {
+                        if restored_is_hashed {
+                            // c:5962 — replayed after the lock drops through
+                            // assignaparam's whole-hash special arm, which is
+                            // the per-row `setpm*s` dispatch (gsu.h->setfn).
+                            if let Some(pairs) = restored_arr {
+                                deferred_arrays.push((n.clone(), pairs));
+                            }
+                        } else if restored_is_array {
                             // ARRAY side of a tied pair — re-fire the
                             // saved element vector through the
                             // name-routed array setter so the tied

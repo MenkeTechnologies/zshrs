@@ -6157,6 +6157,37 @@ pub fn bin_typeset(
             // along only for the newspecial case above — c:2425 stamps it
             // on the preserved struct (`… | on | PM_SPECIAL) & ~off`) and
             // createparam keys its accessor inheritance off it.
+            // c:2410 — `copyparam(tpm, pm, 1)` saves the special's value
+            // before the local takes over, and for a hash that is a COPY of
+            // the table (c:Src/params.c:1288-1289 `tpm->u.hash =
+            // copyparamtable(pm->gsu.h->getfn(pm), pm->node.nam)`).
+            // scanendscope hands that copy back to the special's own setfn on
+            // return (c:Src/params.c:5962 `pm->gsu.h->setfn(pm,
+            // tpm->u.hash)`), which is how `local -A +h functions; unset
+            // "functions[f]"` leaves `f` defined after the function returns.
+            // Must be taken HERE: once createparam installs the shadow, the
+            // scan below no longer reaches the special. PM_READONLY rows are
+            // not copied because c:5945 skips their restore anyway.
+            let mut special_hash_snapshot: Option<Vec<String>> = if keep_special {
+                crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .find(|e| e.name == arg_name && (e.flags as u32 & PM_READONLY) == 0)
+                    .and_then(|e| {
+                        let keys = crate::vm_helper::partab_scan_keys(arg_name)?; // c:1289 getfn
+                        let mut flat = Vec::with_capacity(keys.len() * 2);
+                        for k in keys {
+                            // c:621 scancopyparams → c:609 copyparam per element
+                            let v = (e.getfn)(std::ptr::null_mut(), &k)
+                                .and_then(|p| p.u_str)
+                                .unwrap_or_default();
+                            flat.push(k);
+                            flat.push(v);
+                        }
+                        Some(flat)
+                    })
+            } else {
+                None
+            };
             let _ = createparam(
                 arg_name,
                 kind as i32 | PM_LOCAL as i32 | if keep_special { PM_SPECIAL as i32 } else { 0 },
@@ -6221,11 +6252,21 @@ pub fn bin_typeset(
                     // (B02typeset.ztst:67) — base 0 suppressed the radix and
                     // the missing PM_READONLY dropped the `-r` letter.
                     if keep_special {
-                        if let Some(old) = pm.old.as_ref() {
+                        if let Some(old) = pm.old.as_mut() {
                             pm.base = old.base; // c:2412
                             pm.width = old.width; // c:2413
                             pm.node.flags |= (old.node.flags as u32 & PM_READONLY) as i32;
                             // c:2426
+                            // !!! WARNING: RUST-ONLY REPRESENTATION !!!
+                            // C keeps the copied table in `tpm->u.hash`. zshrs's
+                            // `u_hash` is not populated for the magic rows, so the
+                            // snapshot rides on the saved node as a flat
+                            // key/value list in `u_arr`; endparamscope takes it
+                            // back out and replays it through the whole-hash
+                            // setfn.
+                            if special_hash_snapshot.is_some() {
+                                old.u_arr = special_hash_snapshot.take(); // c:1289
+                            }
                         }
                     }
                 }
