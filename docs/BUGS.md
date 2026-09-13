@@ -60279,3 +60279,20 @@ before word expansion, as the dynamic-external path at 11490-11503 already
 does. With that in place the subst.rs branch becomes
 `subst = if c == Equals { getoutputfile(..) } else { getproc(..) }` followed by
 the `c:250-273` splice, replacing the drain.
+
+**Scope of the unblocking change (measured 2026-09-13, not attempted).** The job
+store the guard needs is not one line on one path. C allocates a job per
+pipeline in `execpline` (`c:Src/exec.c:1745-1762`: `pj = thisjob; … thisjob =
+newjob = initjob()`) and puts the caller's back when the command finishes
+(`c:1388`/`c:1981` `thisjob = pj`), with the job's filelist cleaned by
+`deletefilelist`. In zshrs the compiled command's words are expanded by VM ops
+BEFORE any dispatch builtin runs, so the store would have to be emitted by the
+compiler at statement start (`compile_zsh.rs` prologue / `BUILTIN_STMT_PROLOGUE_FAST`)
+and torn down on every exit of every dispatch path —
+`fusevm_bridge.rs` `dispatch_builtin`, `ShellHost::call_function`,
+`ShellHost::exec`, `BUILTIN_RUN_PIPELINE` and the async paths that already
+set their own — including the `waitjobs` for a `>(…)` proc that `getproc`
+addprocs (`src/ported/exec.rs:4529`, `c:Src/exec.c:5090`) and the
+`pipestatus` / reaper interplay those paths carry today. That is a job-model
+change across the compiler and the bridge, not a local fix; the subst.rs branch
+stays as documented above until it lands.
