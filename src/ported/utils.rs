@@ -1930,7 +1930,12 @@ pub fn preprompt() {
     if isset(crate::ported::zsh_h::PROMPTSP)
         && isset(crate::ported::zsh_h::PROMPTCR)
         && crate::ported::init::use_exit_printed.load(Ordering::SeqCst) == 0
-        && crate::ported::init::SHTTY.load(Ordering::Relaxed) >= 0
+        // c:1543 `&& shout` — init_shout (c:Src/init.c:735-739) points
+        // `shout` at stderr for an interactive shell without a tty
+        // (SHTTY == -1), and init_io only calls it when interactive
+        // (c:Src/init.c:705-706).
+        && (crate::ported::init::SHTTY.load(Ordering::Relaxed) >= 0
+            || isset(crate::ported::zsh_h::INTERACTIVE))
         && !zle_owns_screen
     {
         // c:1550-1554 — `$PROMPT_EOL_MARK`, default `%B%S%#%s%b`.
@@ -1948,7 +1953,11 @@ pub fn preprompt() {
         if let Some(p) = percents {
             crate::ported::options::opt_state_set("promptpercent", p);
         }
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        // c:1560 `zputs(str, shout)` — the tty, or stderr (c:Src/init.c:738).
+        let fd = match crate::ported::init::SHTTY.load(Ordering::Relaxed) {
+            -1 => 2,
+            tty => tty,
+        };
         let columns = adjustcolumns() as i32;
         // c:1561-1562 — `fprintf(shout, "%*s\r%*s\r",
         //   zterm_columns - w - !hasxn, "", w, "")`.

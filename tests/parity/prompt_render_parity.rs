@@ -206,3 +206,46 @@ fn a_partial_line_is_followed_by_a_fresh_prompt() {
         "a prompt was drawn after a newline-less line",
     );
 }
+
+/// c:Src/utils.c:1543 — the PROMPT_SP mark is written when `shout` is set,
+/// and an interactive shell without a tty has `shout = stderr`
+/// (c:Src/init.c:735-739). Gating on SHTTY dropped the mark (and its
+/// padding) for `zsh -i` fed from a pipe. Byte-compares stdout+stderr with
+/// no pty, so it does not go through the zpty harness.
+#[test]
+fn prompt_sp_goes_to_stderr_without_a_tty() {
+    use std::io::Write as _;
+    let zsh = "/opt/homebrew/bin/zsh";
+    if !std::path::Path::new(zsh).exists() {
+        return;
+    }
+    let zshrs = std::env::var("CARGO_BIN_EXE_zshrs")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/zshrs").to_string());
+    let run = |bin: &str, args: &[&str], input: &str| {
+        let mut child = std::process::Command::new(bin)
+            .args(args)
+            .env("COLUMNS", "20")
+            .env("PS1", "%% ")
+            .env_remove("ZSHRS_CACHE")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let o = child.wait_with_output().expect("wait");
+        (o.stdout, o.stderr, o.status.code())
+    };
+    for input in ["print -n foo\nprint bar\nexit\n", "setopt nopromptsp\nprint -n foo\nexit\n"] {
+        assert_eq!(
+            run(zsh, &["-fi"], input),
+            run(&zshrs, &["--zsh", "-fi"], input),
+            "interactive, no tty: {input:?}"
+        );
+        assert_eq!(
+            run(zsh, &["-f"], input),
+            run(&zshrs, &["--zsh", "-f"], input),
+            "non-interactive: {input:?}"
+        );
+    }
+}
