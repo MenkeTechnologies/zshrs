@@ -10004,6 +10004,13 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         if let Ok(mut tab) = paramtab().write() {
             tab.insert(s.to_string(), pm.clone());
         }
+        // c:3665-3666 — `if (flags & ASSPM_WARN) check_warn_pm(v->pm,
+        // "numeric", !was_unset, 1);`. The new parameter was CREATED, so
+        // WARN_CREATE_GLOBAL reports `(( n=8 ))` in a function exactly as
+        // it reports the scalar `n=8`.
+        if (flags & ASSPM_WARN) != 0 {
+            check_warn_pm(&pm, "numeric", (!was_unset) as i32, 1);
+        }
         return Some(pm);
     }
     if (flags & ASSPM_WARN) != 0 {

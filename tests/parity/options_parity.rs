@@ -261,3 +261,26 @@ mod continue_on_error {
         assert_parity(r#"setopt continueonerror; readonly r=1; f(){ r=5; print inf; }; f; print st=$?"#);
     }
 }
+
+/// c:Src/params.c:3665-3666 — assignnparam reports a parameter it CREATED
+/// with `check_warn_pm(v->pm, "numeric", !was_unset, 1)`, so under
+/// WARN_CREATE_GLOBAL an arithmetic assignment that creates a global inside
+/// a function warns like a scalar one. The port's create branch returned
+/// before the check, so `(( n=8 ))` and `$(( n=8 ))` stayed silent.
+mod warn_create_global_numeric {
+    use super::*;
+
+    #[test]
+    fn arithmetic_assignment_that_creates_a_global_warns() {
+        assert_parity(
+            "fn() { setopt warncreateglobal; (( foo5=8 )); foo6=$(( foo7=2 )); integer foo8=9; (( foo8=10 )); local l; (( l=1 )) }; fn 2>&1; echo done",
+        );
+    }
+
+    #[test]
+    fn existing_or_top_level_parameters_do_not_warn() {
+        assert_parity(
+            "setopt warncreateglobal; (( top=1 )); fn() { (( top=2 )); typeset -g g; (( g=1 )) }; fn 2>&1; echo $top",
+        );
+    }
+}
