@@ -452,6 +452,62 @@ fn script_file_runs_each_command_before_parsing_the_next() {
     assert!(bad.is_empty(), "script-file divergences:\n{}", bad.join("\n"));
 }
 
+/// A shell reading its script from STDIN keeps going after a syntax error.
+/// C parse_event returns NULL when par_event fails (c:Src/parse.c:622-625,
+/// c:670-689), and loop() continues on LEXERR when SHINSTDIN at top level
+/// (c:Src/init.c:171); the next hbegin clears the error (c:Src/hist.c:1115).
+/// zshrs's parse_event handed back the lists parsed before the error, so the
+/// loop ran them, saw errflag, and exited 1 without reading `print 4`.
+#[test]
+fn stdin_script_continues_after_a_parse_error() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::TempDir::new().expect("tmp");
+    let cases: [(&str, &str); 3] = [
+        ("late_parse_error", "print 1\nprint 2\nprint )\nprint 4\n"),
+        (
+            "heredoc_before_error",
+            "print 1\ncat <<X\na\nprint )\nX\nprint 3\nprint )\nprint 4\n",
+        ),
+        ("same_line_before_error", "print 1; print )\nprint 2\n"),
+    ];
+    let mut bad = Vec::new();
+    for (name, body) in cases {
+        let mut got = Vec::new();
+        for (prog, args) in [
+            (zsh_path().to_string(), vec!["-f"]),
+            (zshrs_bin().to_string_lossy().into_owned(), vec!["--zsh", "-f"]),
+        ] {
+            let mut child = Command::new(prog)
+                .args(&args)
+                .current_dir(d.path())
+                .env_remove("ZSHRS_CACHE")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn");
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(body.as_bytes())
+                .expect("write stdin");
+            let o = child.wait_with_output().expect("wait");
+            got.push((
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                o.status.code().unwrap_or(-1),
+            ));
+        }
+        if got[0] != got[1] {
+            bad.push(format!("{name}:\n  zsh   = {:?}\n  zshrs = {:?}", got[0], got[1]));
+        }
+    }
+    assert!(bad.is_empty(), "stdin divergences:\n{}", bad.join("\n"));
+}
+
 /// Push a dump's mtime a couple of seconds ahead of the source so the
 /// `stc.st_mtime >= stn.st_mtime` gate (`Src/parse.c:3762-3784`) picks
 /// it — the two files are written in the same second otherwise. zsh

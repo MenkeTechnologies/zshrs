@@ -819,7 +819,12 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     //     execlist `oldlineno` discipline (exec.c:28/292), so per-statement
     //     SET_LINENO doesn't freeze `$LINENO` for the next event.
     let mut program = parse_program_until(None, true);
-    if program.lists.is_empty() {
+    // c:622-625 `if (!par_event(endtok)) { clear_hdocs(); return NULL; }` —
+    // par_event sets `tok = LEXERR` on a syntax error (c:670-682) and returns
+    // 0 (c:686-689), so a failed event yields NULL even when lists before the
+    // error parsed. loop() then sees "no program" + LEXERR and, reading a
+    // shell's stdin at top level, keeps reading (c:Src/init.c:171).
+    if program.lists.is_empty() || tok() == LEXERR {
         clear_hdocs();
         return None;
     }
