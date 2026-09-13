@@ -2981,8 +2981,36 @@ impl ZshCompiler {
             };
             if let Some(opcode) = opcode {
                 let argc = (simple.words.len() - 1) as u8;
+                // c:Src/exec.c:3257-3280 — `exec`'s own options are consumed
+                // in the precommand walk, before `globlist(args, 0)` (c:3757),
+                // so the argv0 given with `-a` is expanded but never
+                // filename-generated: `exec -a foo* cmd` passes `foo*`.
+                let mut exec_opts_open = opcode == fusevm::shell_builtins::BUILTIN_EXEC;
+                let mut exec_argv0_next = false;
                 for word in &simple.words[1..] {
-                    self.compile_word_str(word);
+                    let mut argv0_word = std::mem::take(&mut exec_argv0_next);
+                    if exec_opts_open && !argv0_word {
+                        let flag = crate::lex::untokenize(word);
+                        if flag == "--" || flag.len() < 2 || !flag.starts_with('-') {
+                            exec_opts_open = false;
+                        } else if let Some(pos) = flag[1..].find('a') {
+                            // c:3268-3273 — `case 'a': if (cmdopt[1]) exec_argv0
+                            // = cmdopt+1; else … the next word`.
+                            exec_opts_open = pos + 2 == flag.len();
+                            if exec_opts_open {
+                                exec_argv0_next = true;
+                            } else {
+                                argv0_word = true;
+                            }
+                        }
+                    }
+                    if argv0_word {
+                        self.dq_context_depth += 1; // expanded, never globbed
+                        self.compile_word_str(word);
+                        self.dq_context_depth -= 1;
+                    } else {
+                        self.compile_word_str(word);
+                    }
                 }
                 // c:Src/exec.c:3285-3304 → c:3720 — pipe fds and then
                 // the redirect scope open after arg expansion, before

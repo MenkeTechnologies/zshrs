@@ -385,3 +385,28 @@ mod prefix_assignment_error_skips_the_command {
         assert_parity(r#"f(){ print fn }; x=$((1/0)) f; print rc=$?"#);
     }
 }
+
+/// c:Src/exec.c:3257-3280 — `exec`'s own options are consumed in the
+/// precommand walk, before `globlist(args, 0)` (c:3757), so the argv0 given
+/// with `-a` is expanded but never filename-generated. zshrs globbed it:
+/// `exec -a foo* cmd` passed a matching file name as $0.
+/// ztst A01grammar "rationalisation of arguments to exec -a".
+mod exec_argv0_is_not_globbed {
+    use super::*;
+
+    const DIR: &str = "cd \"$(mktemp -d)\" && touch foo1 && ";
+
+    #[test]
+    fn the_argv0_word_keeps_its_glob_characters() {
+        assert_parity(&format!("{DIR}(exec -a foo* /bin/sh -c 'echo $0')"));
+        assert_parity(&format!("{DIR}(exec -afoo* /bin/sh -c 'echo $0')"));
+    }
+
+    #[test]
+    fn other_exec_words_and_argv0_expansion_are_unchanged() {
+        assert_parity(&format!("{DIR}v=nm; (exec -a $v /bin/sh -c 'echo $0')"));
+        assert_parity(&format!("{DIR}(exec -a '' /bin/sh -c 'echo \"[$0]\"')"));
+        assert_parity(&format!("{DIR}(exec /bin/echo foo*)"));
+        assert_parity(&format!("{DIR}(exec -c /bin/echo foo*)"));
+    }
+}
