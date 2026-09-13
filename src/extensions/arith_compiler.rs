@@ -1275,6 +1275,17 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
         if tok == Tok::Eoi {
             break;
         }
+        // c:Src/math.c:1456-1476 `bop` and c:1321-1331 `op` — `&&=` / `||=`
+        // raise `noeval` over the right operand when the left one already
+        // decides the result, and coerce both to integer (type[] BOOL|OP_E2IO,
+        // c:297). `^^=` is `RL|OP_A2IO` (c:297): it has no OP_E2 bit, so C
+        // computes the xor and never stores it. The compiled `assign_expr`
+        // lowered all three like `+=` (eager RHS, float operands, store), so
+        // `x=0; (( x &&= y++ ))` bumped y and `(( x ^^= 1 ))` overwrote x.
+        // The runtime evaluator is the port of op()/bop() itself.
+        if matches!(tok, Tok::LogAndAssign | Tok::LogOrAssign | Tok::LogXorAssign) {
+            return Some("logical compound assignment");
+        }
         if prec_of(Z_PREC, tok).is_some() {
             ops.push(tok);
         }

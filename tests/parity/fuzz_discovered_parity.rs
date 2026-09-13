@@ -4305,3 +4305,33 @@ mod job_text_compound_placeholder {
         assert_parity("case x in x) sleep 3;; esac &\njobs\nwait");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// `&&=` / `||=` / `^^=` in a compiled `(( ))` statement.
+//
+// c:Src/math.c:297 type[]: DANDEQ/DOREQ are BOOL|OP_E2IO (short-circuit via
+// `bop` noeval c:1456-1476, integer-coerced operands), DXOREQ is RL|OP_A2IO —
+// no OP_E2 bit, so `^^=` never stores. The compiled arith path lowered all
+// three like `+=`: eager RHS, float truth, unconditional store.
+// ─────────────────────────────────────────────────────────────────────
+mod logical_compound_assign_compiled {
+    use super::*;
+
+    /// zsh: `0 1` / `1 1` — the RHS `y++` is under noeval.
+    #[test]
+    fn and_or_assign_short_circuit_rhs() {
+        assert_parity("x=0 y=1; (( x &&= y++ )); print $x $y; x=3 y=1; (( x ||= y++ )); print $x $y");
+    }
+
+    /// zsh: `0` — OP_E2IO truncates `0.5` to 0 before the truth test.
+    #[test]
+    fn and_assign_truncates_float_lhs() {
+        assert_parity("x=0.5; (( x &&= 2 )); print $x");
+    }
+
+    /// zsh: `5 6` — `^^=` computes the xor but leaves x alone.
+    #[test]
+    fn xor_assign_does_not_store() {
+        assert_parity("x=5; (( x ^^= 1 )); print $x; (( x ^^= 1, x += 1 )); print $x");
+    }
+}
