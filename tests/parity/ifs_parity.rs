@@ -619,3 +619,22 @@ mod default_word_whitespace_edges {
         assert_parity(r#"t() { print -r $#: "$@" }; t x${:- foo bar }y"#);
     }
 }
+
+/// c:Src/subst.c:4366-4437 — the fields of a `${=…}` split take the word's
+/// text first/last like any array; only RC_EXPAND_PARAM cross-products them.
+mod equals_split_fields_splice_with_affixes {
+    use super::*;
+
+    #[test]
+    fn operator_forms_splice() {
+        assert_parity(r#"x="a b"; print -rl -- x${=x:-q}y x${=:-a b}y x${(j:-:)=x:-q}y"#);
+        assert_parity(r#"t() { print -r $#: "$@" }; t x${=:- foo bar }y"#);
+        assert_parity(r#"x="a b"; print -rl -- "x${=x:-q}y" "${=x:-q}"; a=(x${=x:-q}y); print $#a"#);
+    }
+
+    #[test]
+    fn rc_expand_param_still_cross_products() {
+        assert_parity(r#"setopt rcexpandparam; print -rl -- x${=:-a b}y"#);
+        assert_parity(r#"s="a b"; print -rl -- x${=s}y x${=s} "split ${=s} wise""#);
+    }
+}

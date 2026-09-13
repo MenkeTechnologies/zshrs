@@ -14308,6 +14308,21 @@ fn is_splice_expansion(s: &str) -> bool {
         if after_flag_group.starts_with('@') {
             return true;
         }
+        // c:Src/subst.c:2558-2569 — an unparenthesised `=` sets `spbreak = 2`
+        // (a doubled `==` clears it), and c:3913 `force_split = !ssub &&
+        // (spbreak || spsep)` splits the value even inside double quotes: C
+        // tests `qt` only in c:1707's SH_WORD_SPLIT default. The split fields
+        // then take the word's text first/last, like any array (c:4366-4437),
+        // and cross-product only under RC_EXPAND_PARAM, which CONCAT_SPLICE
+        // reads at run time. So `=` is a SPLICE shape, the one the `(s:…:)`
+        // flag already gets here: `x${=:-a b}y` is `xa` `by`. Left
+        // unclassified, a whole-word `"${=x:-y}"` compiled to the DQ concat
+        // that sepjoins arrays (one word `two words`); classified as a
+        // DISTRIBUTE shape (94dd141269), it cross-producted instead
+        // (`xay` `xby`).
+        if after_flag_group.starts_with('=') && !after_flag_group.starts_with("==") {
+            return true;
+        }
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
@@ -14320,29 +14335,6 @@ fn is_splice_expansion(s: &str) -> bool {
         // Bug #183 in docs/BUGS.md.
         if inner.starts_with("@:") || inner.starts_with("*:") {
             return true;
-        }
-        // `${=NAME}` — forced word-split per Src/subst.c:2558. The
-        // resulting words splice with first/last sticking semantics,
-        // same as `${arr[@]}`. Without this, `"split ${=str} wise"`
-        // joined the two split words back into a single arg via
-        // CONCAT_DISTRIBUTE's default-join path.
-        if inner.starts_with('=') && !inner.starts_with("==") {
-            let rest = &inner[1..];
-            // Identifier check — bare `${=name}` only.
-            let bare = rest
-                .strip_suffix("[@]")
-                .or_else(|| rest.strip_suffix("[*]"))
-                .unwrap_or(rest);
-            if !bare.is_empty()
-                && bare
-                    .chars()
-                    .next()
-                    .map(|c| c == '_' || c.is_ascii_alphabetic())
-                    .unwrap_or(false)
-                && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-            {
-                return true;
-            }
         }
         // `(@)NAME` flag form is the splice equivalent of `[@]` —
         // each element becomes its own arg; surrounding literals
@@ -14537,22 +14529,6 @@ fn is_distribute_expansion(s: &str) -> bool {
             // `${^^a}` must NOT distribute (the array joins): with
             // `setopt rcexpandparam`, `foo${^^a}bar` → "foo1 2 3bar".
             return !inner.starts_with("^^");
-        }
-        // c:Src/subst.c:2558-2569 — an unparenthesised `=` sets `spbreak = 2`
-        // (a doubled `==` clears it), and c:3913 `force_split = !ssub &&
-        // (spbreak || spsep)` splits the value even inside double quotes: C
-        // tests `qt` only in c:1707's SH_WORD_SPLIT default, not here. The
-        // result is the same array shape `(s:…:)` produces below, so it has to
-        // distribute too. Unlisted, a whole-word `"${=x:-y}"` compiled to the
-        // DQ concat (BUILTIN_CONCAT_DISTRIBUTE argc 1), which sepjoins arrays,
-        // and zsh's `two` `words` came back as the single word `two words`.
-        // The flag loop runs after a `(flags)` group, so look past one.
-        let after_flags = inner
-            .strip_prefix('(')
-            .and_then(|r| r.split_once(')'))
-            .map_or(inner, |(_, tail)| tail);
-        if after_flags.starts_with('=') && !after_flags.starts_with("==") {
-            return true;
         }
         if let Some(rest) = inner.strip_prefix('(') {
             if let Some(close) = rest.find(')') {
