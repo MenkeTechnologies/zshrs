@@ -1060,3 +1060,36 @@ mod case_attributes {
         assert_bytes(r#"v=ÉLITE; print -r -- "${v:l}" "${(L)v}""#);
     }
 }
+
+/// c:Src/builtin.c:2362-2369 — a type change carries the old value over only
+/// when neither the old nor the new type is PM_ARRAY/PM_HASHED; otherwise the
+/// old parameter is dropped (c:2375 `unsetparam_pm`) and the new one starts
+/// empty.
+mod type_change_from_array {
+    use super::*;
+
+    /// zsh `[0] integer`; zshrs fed the joined `1 2` to the integer setfn
+    /// ("bad math expression") and kept the array.
+    #[test]
+    fn array_to_integer_starts_at_zero() {
+        assert_parity(r#"typeset -a a=(1 2); typeset -i a; print -r -- "[$a]" ${(t)a}; a=(3); print $a ${(t)a}"#);
+    }
+
+    /// Same for a float.
+    #[test]
+    fn array_to_float_starts_at_zero() {
+        assert_parity(r#"typeset -a a=(1 2); typeset -F a; print -r -- "[$a]" ${(t)a}"#);
+    }
+
+    /// Controls: scalar values still carry into a numeric type.
+    #[test]
+    fn scalar_to_numeric_still_carries() {
+        assert_parity(r#"a=5; typeset -i a; print "[$a]" ${(t)a}; b=1.5; typeset -F b; print "[$b]" ${(t)b}"#);
+    }
+
+    /// Hash to integer, which already agreed.
+    #[test]
+    fn hash_to_integer_starts_at_zero() {
+        assert_parity(r#"typeset -A h=(k v); typeset -i h; print "[$h]" ${(t)h}"#);
+    }
+}

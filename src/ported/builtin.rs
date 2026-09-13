@@ -7621,6 +7621,18 @@ pub fn bin_typeset(
             // (a plain E↔F swap keeps the parameter, so it is not a conversion).
             let chflags = ((off & cur_flags) | (on & !cur_flags)) & TYPE_CONV_BITS;
             let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2118
+            // c:2362-2369 — "Try to carry over a value, but not when changing
+            // from, to, or between non-scalar types":
+            //     if (!ASG_VALUEP(asg) && !((pm->node.flags|on) & (PM_ARRAY|PM_HASHED)))
+            //         asg->value.scalar = dupstring(getsparam(pname));
+            // `typeset -a a=(1 2); typeset -i a` therefore starts the integer at
+            // 0. getsparam here joins an array, so re-storing it unconditionally
+            // fed `1 2` to the integer setfn: "bad math expression".
+            // `pm->node.flags` is the type at ENTRY: by this point the `+a`/`+A`
+            // arm above has already replaced an array with an empty scalar
+            // (`-i` puts PM_ARRAY in `off`), so `cur_flags` no longer shows it.
+            // `already_typed` was read before that arm ran.
+            let carry = !already_typed && (on & (PM_ARRAY | PM_HASHED)) == 0;
             let pre_assign_to_clear = (off
                 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
                 as i32;
@@ -7640,7 +7652,7 @@ pub fn bin_typeset(
                 // param has its value as a string (PM_SCALAR
                 // semantics now apply). flags=0 — typeset-internal
                 // restore, never WARN_CREATE_GLOBAL (c:2322).
-                if tc {
+                if tc && carry {
                     if let Some(ref val) = saved_val {
                         crate::ported::params::assignsparam(arg, val, 0);
                     }
@@ -7664,7 +7676,7 @@ pub fn bin_typeset(
                 // c:2372-2378 — re-assign saved value through new type's
                 // setfn so u_val (for PM_INTEGER) or u_dval (for PM_*FLOAT)
                 // catches the value migration from u_str.
-                if tc {
+                if tc && carry {
                     if let Some(ref val) = saved_val {
                         setsparam(arg, val);
                     }
