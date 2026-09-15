@@ -617,3 +617,24 @@ mod unbraced_chkset_unclosed_subscript {
         assert_parity(r#"a=(1 2); print $+a[1] $+a[5] $+a $+b"#);
     }
 }
+
+/// c:Src/subst.c:3033-3034 — `if (qt && !getlen && isarr > 0) { val =
+/// sepjoin(aval, sep, 1); isarr = 0; }`. Inside double quotes an UNBRACED
+/// subscript that selects an array — a range, or nothing at all — is ONE word
+/// joined on IFS[0]. The unbraced form returned the raw array, so an empty
+/// selection vanished (`"$action[1]"` with `action=()`, which is how
+/// `_arguments` sh:465 runs an empty action) and a range split on a space.
+/// The braced and unquoted rows are the controls: they were already right.
+mod unbraced_quoted_subscript_is_one_word {
+    use super::*;
+
+    #[test]
+    fn an_empty_selection_is_still_one_word() {
+        assert_parity(r#"a=(); n=(x); t() { print $(( $# )) }; t "$a[1]"; t "$n[5]"; t "$a[-1]"; t "$a[1,2]"; t "${a[1]}"; t $a[1]"#);
+    }
+
+    #[test]
+    fn a_range_joins_on_the_first_ifs_character() {
+        assert_parity(r#"n=(x y); IFS=:; t() { print -r -- "$# [$1]" }; t "$n[1,2]"; t "${n[1,2]}"; t $n[1,2]"#);
+    }
+}

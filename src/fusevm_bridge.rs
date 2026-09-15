@@ -5415,6 +5415,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `compile_word_str`, which the `PREFORK_SINGLE` callers do not
             // use. Pass `false` until a measured divergence says otherwise.
             let v = array_index_lookup(&name, &idx, false);
+            // c:Src/subst.c:3033-3034 — `if (qt && !getlen && isarr > 0)
+            // { val = sepjoin(aval, sep, 1); isarr = 0; }`. Inside double
+            // quotes a subscript that selects an array (a range, or nothing
+            // at all) is joined into ONE word on IFS[0]; an empty selection
+            // joins to "" and still counts as a word. `array_index_lookup`
+            // rebuilds a flat `${name[idx]}` that carries no `qt`, so the
+            // unbraced form returned the raw array: `"$a[1]"` on an empty
+            // array vanished and `"$n[1,2]"` split into two words.
+            let v = match v {
+                Value::Array(items) if quoted => {
+                    let strs: Vec<String> = items.iter().map(|x| x.to_str()).collect();
+                    Value::str(crate::ported::utils::sepjoin(&strs, None)) // c:3034
+                }
+                other => other,
+            };
             if suffix.is_empty() {
                 return v;
             }
