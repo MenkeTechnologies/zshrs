@@ -5019,9 +5019,45 @@ gstack
 #               was passed on to `_describe`
 #
 # ---------------------------------------------------------------------------
-# OPEN 1 — completion match SORT ORDER diverges under a UTF-8 locale.
-#          Root-caused, not fixed: the fix is a comparator restructure.
+# OPEN 1 — RESOLVED 2026-09-14 (54dee3ae0c + 186807461e) for every cell whose
+#          comparator is a total order; the residue is the qsort class.
 # ---------------------------------------------------------------------------
+# Re-measured 2026-09-14, both shells under en_US.UTF-8, comptab_screen.py:
+#
+#   seq <TAB> with _advm1 (below)       zsh == zshrs  (54dee3ae0c metafied
+#                                        matchcmp's operands, c:3194)
+#   ${(o)a}, print -o                   zsh == zshrs  on total-order input
+#   *(oe:'REPLY=$REPLY':) / *(Oe:…:)   fixed by 186807461e — gmatchcmp's
+#                                        GS_EXEC keys are METAFIED in C
+#                                        (c:Src/glob.c:1938-1941 store
+#                                        getsparam("REPLY") as-is, compared
+#                                        at c:981); zshrs passed plain text
+#
+# Operand form at every C zstrcmp call site, verified against the C:
+#   strmetasort       c:Src/sort.c:299-315        unmetafied
+#   gmatchcmp GS_NAME c:Src/glob.c:945            unmetafied (uname, c:1963-1973)
+#   cd_sort           c:Src/Zle/computil.c:235    unmetafied (sortstr, c:301-302)
+#   gmatchcmp GS_EXEC c:Src/glob.c:981            METAFIED
+#   matchcmp          c:Src/Zle/compcore.c:3194   METAFIED
+# The two metafied sites share src/metafied_key.rs.
+#
+# The eltpcmp/zstrcmp role swap (src/ported/sort.rs:160-173) was NOT done:
+# the blocker recorded below no longer holds — metafying happens at the call
+# site, so zstrcmp never needed to change its operands — and moving the body
+# into eltpcmp would cost a sortelt allocation per comparison on a
+# comparator that runs ~725k times per completion.
+#
+# STILL DIVERGING, NOT FIXABLE HERE: 'ls /tmp/uni/' (the non-ASCII path entry
+# further down) and the same names under *(oe:…:). Modelled through libc
+# strcoll via ctypes: over METAFIED bytes that name set has 15 three-cycles
+# (e.g. ascii_plain < Ünïcödé < αβγ < ascii_plain), over raw bytes 11 ties.
+# A comparator with cycles has no correct order; the result is whatever
+# permutation the sort algorithm and the readdir input order produce — libc
+# qsort in zsh, the stable merge sort in zshrs (src/tolerant_sort.rs). Same
+# class as 'getconf ' / 'ktrace -'. Do not chase.
+#
+# Original record, kept for context:
+#
 # Reproducer (no completion needed for the mechanism, but this is where it is
 # visible). Both shells run under `LC_ALL=en_US.UTF-8`:
 #
@@ -6296,8 +6332,12 @@ gstack
 #   Living elsewhere is not a reason not to clear it.
 #
 # ---------------------------------------------------------------------------
-# OPEN — non-ASCII path completion under a UTF-8 locale is OPEN 1 (the
-#        metafied-vs-raw strcoll split), now with a filename repro.
+# NOT FIXABLE (qsort class) — non-ASCII path completion under a UTF-8 locale.
+#        Re-measured 2026-09-14 after OPEN 1 was resolved (54dee3ae0c,
+#        186807461e): zshrs already hands strcoll the metafied bytes zsh
+#        does, and that comparator has 15 three-cycles over this name set,
+#        so the order is sort-algorithm-dependent. See OPEN 1. Was: OPEN 1
+#        (the metafied-vs-raw strcoll split), now with a filename repro.
 # ---------------------------------------------------------------------------
 #
 #   mkdir /tmp/uni && cd /tmp/uni
