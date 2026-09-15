@@ -214,8 +214,10 @@ pub fn _files(argv: &[String]) -> i32 {
     // binding; otherwise the array outlives the completion in the global
     // param table and `_parameters` (which filters with `~*local*`)
     // offers `expl` as a parameter name.
+    // sh:3 `local -a match mbegin mend` — sh:83's `(#b)` substitution writes
+    // all three.
     let _locals = crate::compsys::ported::shared::LocalScope::declare(
-        &["expl"],
+        &["expl", "match", "mbegin", "mend"],
         crate::ported::zsh_h::PM_ARRAY,
     );
     let curcontext = get_str("curcontext");
@@ -359,8 +361,23 @@ pub fn _files(argv: &[String]) -> i32 {
     // sh:81-151 — the tag loop.
     let mut tried: Vec<String> = Vec::new();
     for def in &pats {
-        // sh:83 — eval re-split into specs (approx: whitespace split).
-        let specs: Vec<String> = def.split_whitespace().map(String::from).collect();
+        // sh:83 — eval "def=( ${${def//\\:/\\\\\\:}//(#b)([][()|*?^#~<>])/\\${match[1]}} )"
+        //
+        // Run for real, not re-split in Rust: the `(#b)` escape of the glob
+        // characters only applies under EXTENDED_GLOB, and a widget whose
+        // function is the completer body has no `_main_complete` to set it.
+        // Then the `*` stays live, the eval fails with `no matches found`,
+        // nothing is assigned, and `def` keeps its SCALAR value — which
+        // sh:89 `for sdef in "$def[@]"` walks as ONE spec.
+        crate::compsys::ported::shared::declare_locals(&["_cs_files_def"], 0);
+        let _ = setsparam("_cs_files_def", def);
+        let _ = crate::ported::exec::execute_script(
+            r##"_cs_files_def="${${_cs_files_def//\\:/\\\\\\:}//(#b)([][()|*?^#~<>])/\\${match[1]}}""##,
+        );
+        let escaped = getsparam("_cs_files_def").unwrap_or_default();
+        let _ = crate::ported::params::unsetparam("_cs_files_def");
+        let specs: Vec<String> =
+            crate::compsys::ported::eval_action_words_status(&escaped).unwrap_or_else(|_| vec![def.clone()]);
         // sh:85-87 — dedup on the pattern-head set.
         let key: String = specs
             .iter()
