@@ -3673,7 +3673,29 @@ impl ZshCompiler {
         // as the lexer left it; zglob untokenizes a word with no wildcards
         // (c:Src/glob.c:1232) and globs one that has them, which the text mask
         // hands to BUILTIN_GLOBLIST. All paths meet before the postassign close.
-        if !cut_pads.is_empty() {
+        //
+        // Past the 63-word globlist limit neither mask is ever set, so the pads
+        // differ only in where they start: the pad for cut i pushes the words up
+        // to the next cut and falls into that cut's pad. A pad per cut repeating
+        // every later word was quadratic — thefuck's `fuck` alias function (2066
+        // alias words, a `$PATH` among them) needed millions of pool entries and
+        // hit fusevm's u16 constant-pool limit at shell startup.
+        if !cut_pads.is_empty() && !globlist_argv {
+            let skip = self.builder.emit(Op::Jump(0), 0);
+            for (n, &(jump, cut_index, _, _)) in cut_pads.iter().enumerate() {
+                let pad = self.builder.current_pos();
+                self.builder.patch_jump(jump, pad);
+                let stop = cut_pads.get(n + 1).map_or(argv_words.len() - 1, |next| next.1);
+                for later in &argv_words[cut_index + 1..=stop] {
+                    // c:Src/exec.c:2134 untokenize, as in the masked pads below.
+                    let pushed = crate::ported::lex::untokenize_ztokens(later);
+                    let idx = self.builder.add_constant(Value::str(pushed.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                }
+            }
+            let join = self.builder.current_pos();
+            self.builder.patch_jump(skip, join);
+        } else if !cut_pads.is_empty() {
             let mut joins = vec![self.builder.emit(Op::Jump(0), 0)];
             for (jump, cut_index, value_mask, text_mask) in cut_pads {
                 let pad = self.builder.current_pos();
@@ -19026,6 +19048,24 @@ mod tests {
         assert!(
             chunk.constants.len() >= 2,
             "function def needs name + body in constants"
+        );
+    }
+
+    /// A long argv with an expanding word near its end must cost a constant pool
+    /// linear in its length. Every earlier word gets a prefork-cut pad, and each
+    /// pad used to repeat all the words after it — thefuck's `fuck` alias
+    /// function (2066 words) hit fusevm's 65536-entry pool limit and aborted the
+    /// shell at startup.
+    #[test]
+    fn long_argv_prefork_cut_pads_stay_linear() {
+        let words: Vec<String> = (0..3000).map(|i| format!("a{i}='cd -{i}'")).collect();
+        let src = format!("print -r -- {} \"$PATH\"", words.join(" "));
+        let chunk = compile_src(&src);
+        assert!(
+            chunk.constants.len() < 4 * words.len(),
+            "pool grew to {} entries for {} words",
+            chunk.constants.len(),
+            words.len()
         );
     }
 

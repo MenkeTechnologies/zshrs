@@ -1306,6 +1306,20 @@ mod eval_flag_null_cuts_the_command_words {
         assert_parity(r#"a='$('; print -r -- ${(e)a} $(print hi >&2) y; echo rc=$?"#);
     }
 
+    /// Past 63 words the cut pads share one chained tail instead of each
+    /// repeating every later word; a cut early or late must still push
+    /// exactly the words after it.
+    #[test]
+    fn later_words_stay_unexpanded_in_a_long_argv() {
+        let words = (1..=70).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        assert_parity(&format!(
+            r#"a='$('; print -r -- x ${{(e)a}} {words} "$HOME" ${{a}} y; echo rc=$?"#
+        ));
+        assert_parity(&format!(
+            r#"a='$('; print -r -- x {words} ${{(e)a}} z "$HOME" y; echo rc=$?"#
+        ));
+    }
+
     #[test]
     fn a_successful_eval_is_unaffected() {
         assert_parity(r#"b=ok; print -r -- pre${(e)b}post "${(e)b}" x${(e)b}"#);

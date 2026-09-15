@@ -4667,17 +4667,6 @@ pub fn fetchvalue<'a>(
         pm
     };
 
-    // c:430 `IPDEF9("argv", &pparams, NULL, 0)` — the positional alias's
-    // array getter is `arrvargetfn` (c:4231-4236), which dereferences the
-    // LIVE `pparams`. zshrs keeps that vector in `builtin::PPARAMS` and the
-    // node's `u_arr` is stale, so every getindex/getarg/getstrvalue reader
-    // of this Value (they all go through `arrgetfn`) saw the wrong words:
-    // `(( argv[(i)-] ))` answered 1 where zsh answers 2.
-    let mut pm = pm;
-    if matches!(name, "argv" | "@" | "*") {
-        pm.u_arr = Some(PPARAMS.lock().map(|p| p.clone()).unwrap_or_default());
-    }
-
     if let Some(v) = v {
         // c:2274-2282 — populate Value from pm.
         *v = value {
@@ -5127,37 +5116,11 @@ pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
         };
     }
     if v.scanflags != 0 {
-        // c:2626-2632 — `arr = getarrvalue(v); if (arr) { scal = sepjoin(arr,
-        // NULL, 1); return matheval(scal); } else mn.u.l = 0;`. An array
-        // search such as `(( a[(r)2*] + 1 ))` is evaluated from the joined
-        // elements; the port returned 0 for every scanflags value.
-        if v.pm.is_none() {
-            return mnumber {
-                l: 0,
-                d: 0.0,
-                type_: MN_INTEGER,
-            };
-        }
-        // c:2556 — `s = getvaluearr(v)`, which returns `v->arr` first (c:731).
-        // !!! WARNING: RUST-ONLY SLICE RULE !!! this port's getindex `(r)`/`(R)`
-        // arm stores exactly the matched elements in `v.arr` with 1-based
-        // bounds (params.rs getindex, "c:2151"), where C stores an index into
-        // the whole array; those elements ARE the slice, so they are taken
-        // whole. Otherwise C's c:2557-2558 whole-array test, then the slice.
-        let whole = !v.arr.is_empty() || (v.start == 0 && v.end == -1);
-        let (start, end) = (v.start as i64, v.end as i64);
-        let full = getvaluearr(Some(&mut *v));
-        let arr = if whole {
-            full
-        } else {
-            getarrvalue(&full, start + 1, end)
-        };
-        let scal = crate::ported::utils::sepjoin(&arr, None);
-        return matheval(&scal).unwrap_or(mnumber {
+        return mnumber {
             l: 0,
             d: 0.0,
             type_: MN_INTEGER,
-        });
+        };
     }
     let pm = match v.pm.as_mut() {
         Some(p) => p,
