@@ -858,6 +858,21 @@ mod subscript_math_is_mathevalarg {
         same(r#"arr=(x y); print -r -- "[${arr[(e)2]}]""#);
     }
 
+    /// A subscript flag inside ARITHMETIC goes through getvalue/getnumvalue
+    /// (c:Src/math.c:343,358), so every getarg flag applies and `argv` is the
+    /// positional parameters. `_sequence` sh:39 is `(( minus = argv[(ib:2:)-] ))`.
+    #[test]
+    fn arithmetic_subscript_flags_use_getvalue() {
+        same(r#"f() { (( m = argv[(ib:2:)-] )); (( n = argv[(i)-] )); print -r -- $m $n }; f compadd - 1 2 3"#);
+        same(r#"f() { (( m = argv[(ib:2:)-] )); print -r -- $m }; f - a b"#);
+        same(r#"a=(x - y -); (( m = a[(ib:3:)-] )); (( n = a[(I)-] )); (( o = a[(i)z] )); (( p = a[(I)z] )); print -r -- $m $n $o $p"#);
+        same(r#"a=('x*' xy); (( m = a[(ie)x*] )); (( n = a[(i)x*] )); print -r -- $m $n"#);
+        same(r#"typeset -A h; h=(k1 v1 k2 v2); (( m = h[(i)k2] )); print -r -- $m"#);
+        same(r#"a=(1 22 3); (( m = a[(r)2*] + 1 )); print -r -- $m"#);
+        same(r#"a=(1 22 3); (( m = a[(r)z*] + 1 )); (( n = a[(R)2*] * 2 )); print -r -- $m $n"#);
+        same(r#"f() { (( m = argv[(r)[0-9]] + 1 )); print -r -- $m }; f x 7 y"#);
+    }
+
     /// The unbraced reference reaches the same getarg; its error used to be
     /// swallowed entirely (status 1, nothing on stderr).
     #[test]
