@@ -91,6 +91,8 @@ pub fn _wakeup_capable_devices(args: &[String]) -> i32 {
     if call_program_capture(&[
         "wakeup-capable-devices".to_string(),
         "acpitool -w".to_string(),
+        // sh:6 `_call_program … acpitool -w 2> /dev/null`
+        "2>/dev/null".to_string(),
     ])
     .1 == 0
     {

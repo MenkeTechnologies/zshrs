@@ -2034,6 +2034,21 @@ pub fn plus_builtins(name: &str) -> bool {
     }
 }
 
+/// `(( $+commands[name] ))` — is `name` a hashed command?
+///
+/// c:Src/Modules/parameter.c:213 `getpmcommand` is the getfn behind the
+/// `commands` special hash, which is NOT paramtab-hashed storage, so
+/// `getaparam("commands")` cannot answer this. `getpmcommand` always returns a
+/// param — on a miss one carrying `PM_UNSET` (c:239) — so existence is the
+/// flag, which is what `$+` reads. The subscript fetch also loads the
+/// `zsh/parameter` autoload stub, hence `mark_module_param_used`.
+pub fn plus_commands(name: &str) -> bool {
+    crate::vm_helper::mark_module_param_used("commands");
+    crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), name)
+        .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod plus_builtins_tests {
     use super::plus_builtins;

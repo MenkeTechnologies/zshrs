@@ -52,22 +52,8 @@ const RGB_TXT_CANDIDATES: &[&str] = &[
 ];
 
 /// sh:22 — `(( $+commands[showrgb] ))`: is `showrgb` a hashed command?
-/// Mirrors the identical `has_command` helper in `_users_on.rs`.
 fn has_command(name: &str) -> bool {
-    // c:Src/Modules/parameter.c:213 `getpmcommand` — the getfn behind the
-    // `commands` special hash. `commands` is NOT paramtab-hashed storage, so
-    // `getaparam("commands")` returned None and this predicate was ALWAYS
-    // false: the `(( $+commands[…] ))` guard never fired. Same defect and the
-    // same fix as `_set_command.rs:99-116`, which is the one site that was
-    // converted when this was first found.
-    //
-    // `getpmcommand` ALWAYS returns `Some` — on a miss it returns a param
-    // carrying `PM_UNSET` (c:239) rather than `None` — so the existence test
-    // is the flag, not `is_some()`. That is what `$+` reads.
-    crate::vm_helper::mark_module_param_used("commands");
-    crate::ported::modules::parameter::getpmcommand(std::ptr::null_mut(), name)
-        .map(|pm| (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0)
-        .unwrap_or(false)
+    crate::compsys::ported::shared::plus_commands(name)
 }
 
 /// sh:21/23/28 — `${line##*\t\t}`: strip the longest prefix ending in

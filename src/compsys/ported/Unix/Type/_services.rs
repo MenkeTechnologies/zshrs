@@ -103,14 +103,19 @@ pub fn _services(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:12-18 — chkconfig (SysV + xinetd) split.
-    let _ = call_program_capture(&[
+    // sh:12 `elif chkconfig --list > /dev/null 2>&1` and sh:13's
+    //   `chkconfig --list 2> /dev/null` — the branch is taken on the command's
+    //   STATUS, and its stderr never reaches the terminal. Without the
+    //   redirection every host lacking chkconfig printed
+    //   `(eval):1: command not found: chkconfig` on each completion.
+    let (_, chk_status) = call_program_capture(&[
         "services".to_string(),
         "chkconfig".to_string(),
         "--list".to_string(),
+        "2>/dev/null".to_string(),
     ]);
     let chk = getsparam("REPLY").unwrap_or_default();
-    if !chk.trim().is_empty() {
+    if chk_status == 0 {
         // sh:14 approx — everything before the "xinetd based services:" line
         //   is SysV; everything after is xinetd. First field of each row.
         let lines: Vec<&str> = chk.lines().collect();

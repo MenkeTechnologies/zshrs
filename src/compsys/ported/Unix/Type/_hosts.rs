@@ -162,20 +162,42 @@ pub fn _hosts_impl(args: &[String]) -> i32 {
             let useip = zstyle_t(&ctx, "use-ip");
             let mut c: Vec<String> = Vec::new();
 
-            // getent hosts, else /etc/hosts.
-            if call_program_capture(&[
-                "hosts".to_string(),
-                "getent".to_string(),
-                "hosts".to_string(),
-            ])
-            .1 == 0
-            {
+            // sh:17 `if (( ${+commands[getent]} ))` — getent is only RUN when
+            // it is a hashed command, and sh:22 discards its stderr. Calling
+            // it unconditionally printed `(eval):1: command not found:
+            // getent` on every host completion where it is absent (macOS).
+            if crate::compsys::ported::shared::plus_commands("getent") {
+                let _ = call_program_capture(&[
+                    "hosts".to_string(),
+                    "getent".to_string(),
+                    "hosts".to_string(),
+                    "2>/dev/null".to_string(),
+                ]);
                 c.extend(parse_hosts_body(
                     &getsparam("REPLY").unwrap_or_default(),
                     useip,
                 ));
-            } else if let Ok(body) = std::fs::read_to_string("/etc/hosts") {
-                c.extend(parse_hosts_body(&body, useip));
+            } else {
+                // sh:24
+                if let Ok(body) = std::fs::read_to_string("/etc/hosts") {
+                    c.extend(parse_hosts_body(&body, useip));
+                }
+                // sh:25-27 `(( ${+commands[ypcat]} )) &&
+                //   tmp=$(_call_program hosts ypcat hosts.byname 2>/dev/null)`
+                if crate::compsys::ported::shared::plus_commands("ypcat") {
+                    let (_, status) = call_program_capture(&[
+                        "hosts".to_string(),
+                        "ypcat".to_string(),
+                        "hosts.byname".to_string(),
+                        "2>/dev/null".to_string(),
+                    ]);
+                    if status == 0 {
+                        c.extend(parse_hosts_body(
+                            &getsparam("REPLY").unwrap_or_default(),
+                            useip,
+                        ));
+                    }
+                }
             }
 
             // known-hosts-files style (default list).
