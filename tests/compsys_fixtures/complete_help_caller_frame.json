@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/2",
  "id": "complete_help_caller_frame",
- "title": "_complete_help attributes every tag to one caller too many: zshrs adds `_normal`",
+ "title": "GUARD (fixed in f799727619) — was: _complete_help attributes every tag to one caller too many: zshrs adds `_normal`",
  "harness": "compsys_spec_fuzz",
  "run": {
   "buffer": "fzc0001 -d",
@@ -19,10 +19,30 @@
    "completer": "#compdef fzc0001\n\nlocal curcontext=\"$curcontext\" state state_descr line ret=1\ntypeset -A opt_args\n\n_arguments  \\\n  '1:file:_files -/' && ret=0\n\nreturn ret\n"
   }
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-09-15",
+  "previous_expect": "diverges",
+  "fix_commit": "f799727619",
+  "fix_commit_subject": "fix(compsys): `_complete_help` credited every tag to `_normal`, and `_describe` ignored EXTENDED_GLOB",
+  "why": "Two defects, both fixed there. (1) The recorded note blamed a missing $funcstack frame; that was real but NOT what printed `_normal`. Base/Widget/_complete_help sh:84 builds `$f` with \"${${(@)…funcstack[3,(i)_(main_complete|complete|approximate|normal)]…}% *}\": the outer expansion has no (@), so the words are joined and `% *` drops the LAST word, the frame the (i) subscript stopped on. The port (derive_responsible_func) stripped each element instead and kept `_normal` in every caller list. With only (2) applied the grid still showed `_normal` on all four rows. (2) A self-calling definition file (`_complete_help() {…}` … `_complete_help \"$@\"`) runs two `_complete_help` frames on its first autoload (c:Src/exec.c:5823 doshfunc -> loadautofn c:5735); the port ran one. compsys::router::run_port adds that frame once per name, which is what the variant's FS: line measures.",
+  "evidence": "re-verified first-hand with scripts/compsys_regressions.py --only complete_help_caller_frame --variants: on the fixed binary the unflipped fixture scored NOW-PASSES -> NOW-PASSES -> NOW-PASSES for the cell and variant0 alike, and the runner reported the binary MOVED since the stamp (6420c23cecc13c35 -> 7bbe77b1d2005663), the \"somebody fixed the bug\" branch. With expect flipped to agrees, three runs scored 2 CONTROL-HOLDS each (cell + variant0). A direct two-TAB probe (comptab_screen.py, bindkey ^I _complete_help, completer logging $funcstack) printed identical grids and identical FS lines on both shells: `_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help|_complete_help` on the first TAB, one `_complete_help` on the second."
+ },
  "group": "completer-machinery",
  "fingerprint": null,
+ "fingerprint_when_diverging": null,
  "observed": {
+  "verdict": "PASS",
+  "detail": "byte-identical grid",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-09-15, fix commit f799727619, a copy of target/debug/zshrs built from the shared tree carrying that change (zshrs 0.12.64, 113752400 bytes, sha256 7bbe77b1d2005663) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "both shells print `argument-1  (_arguments _fzc0001)` and `globbed-files`/`directories`/`all-files  (_files _arguments _fzc0001)`; zshrs no longer appends `_normal`."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "detail": "4 row(s) differ",
   "category": "grid-diff",
@@ -46,7 +66,8 @@
   ],
   "zsh_diagnostics": [],
   "zshrs_diagnostics": [],
-  "notes": "The parenthesised list after each tag is the caller chain _complete_help prints; zshrs appends `_normal` to all four. The cause is one frame short in $funcstack under this widget, measured directly by the variant below: zsh `_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help|_complete_help`, zshrs the same minus the trailing `_complete_help`. _complete_help slices $funcstack with ${a[3,(i)_(main_complete|complete_help)]}; that subscript evaluated on a literal array is byte-identical on both shells, so what is pinned here is the funcstack CONTENT, not the subscript."
+  "notes": "The parenthesised list after each tag is the caller chain _complete_help prints; zshrs appends `_normal` to all four. The cause is one frame short in $funcstack under this widget, measured directly by the variant below: zsh `_fzcfs|(eval)|_dispatch|_normal|_complete|_main_complete|_complete_help|_complete_help`, zshrs the same minus the trailing `_complete_help`. _complete_help slices $funcstack with ${a[3,(i)_(main_complete|complete_help)]}; that subscript evaluated on a literal array is byte-identical on both shells, so what is pinned here is the funcstack CONTENT, not the subscript.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 sha256 6420c23cecc13c35 (the confirmed stamp this retirement moves into history)"
  },
  "controls": [],
  "variants": [
@@ -72,18 +93,19 @@
   "round-3 compsys_spec_fuzz widget sweep (target/spec-fuzz-401/case0001.min.zsh, destroyed with target/)"
  ],
  "confirmed": {
-  "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "date": "2026-09-15",
+  "commit": "f799727619",
   "harness_sha256_16": {
-   "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   "scripts/compsys_spec_fuzz.py": "843c02a85fc75292"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
-   "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "size": 113752400,
+   "mtime": "2026-09-15 00:13:12",
+   "version": "zshrs 0.12.64",
+   "sha256_16": "7bbe77b1d2005663",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the runs executed a byte-identical copy passed with --zshrs; the shared tree it was built from also held other agents' uncommitted edits, so the exact commit tree was additionally built and unit-tested from a git archive before pushing"
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -91,10 +113,46 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "target/debug/zshrs zshrs 0.12.64 (113752400 bytes, 2026-09-15 00:13:12)",
+  "note": "retirement run: fixture cell and variant0 PASS on the fixed binary; see retired.evidence and guard_verified."
+ },
+ "guard_verified": {
+  "date": "2026-09-15",
+  "against": "a copy of target/debug/zshrs built 2026-09-14 23:40:48 from the shared tree before f799727619, zshrs 0.12.64, 113667744 bytes, sha256 7f5fcca7cd2543e0; on it the unflipped fixture scored STILL-DIVERGES (4 row(s) differ) for the cell and variant0",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED"
+  ],
+  "detail": "4 row(s) differ",
+  "variants_on_the_old_binary": {
+   "complete_help_caller_frame/variant0": "CONTROL-MOVED"
+  },
+  "note": "run with expect flipped: `compsys_regressions.py --only complete_help_caller_frame --variants --zshrs <old copy>` exited 1 with 2 CONTROL-MOVED, and the detail matches observed_when_diverging (4 row(s) differ), so the guard fails on this bug and not on something else."
  },
  "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  },
   {
    "date": "2026-08-30",
    "commit": "d1d16a132d",
