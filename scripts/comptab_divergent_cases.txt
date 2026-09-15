@@ -6659,3 +6659,30 @@ gstack
 #                  tools; see the sweep log for the rows.
 #      bfe7f62107/1fc24cf64e _shadow/_unshadow, afd3016e17 _expand -J,
 #      f0e85c8d42 _wanted -2 -V — REF-REFUSED (zsh 5.9.2 rejects the call).
+#
+# 2026-09-15 follow-up on the residue above (25b920adb7). Same pins, binary
+# built from an archive of that commit, `--fn-sweep --fn-only/--fn-derive-only`
+# over the 15 names listed, --jobs 2 --confirm 1:
+#   before (7e4f986b0a):  # 1 passed, 29 failed, 30 call(s)
+#   after  (25b920adb7):  # 13 passed, 17 failed, 30 call(s)
+#   FIXED: 3de4771a42 _xt_session_id (`_message -e` lacked sh:6 locals);
+#          39ef74d63e _absolute_command_paths (sh:22/24 pass no "$@");
+#          65ada75973 _login_classes, 07bced45c4/2e6ab4409d _sequence,
+#          c5d55188ae _physical_volumes (diagnostics); a3290ef831
+#          _history_complete_word (gen_matches sh:105-118 insert unported).
+#   STILL OPEN:
+#     21055f3134 _bpf_filters _object_classes — zshrs `expl[1] = ''` vs zsh
+#                `expl[0] =`: an empty element survives the unwind, not the
+#                `-J -default-` leak `_message` had.
+#     8eeb73f7bd _zmodload — `files` missing from `_lastdescr`. The user's
+#                fpath `_files` (zpwr, `_alternative 'files:files:…'`) runs in
+#                zsh; the port calls the Rust `_files` directly. Dispatching it
+#                by name reached the zpwr function but diverged far worse
+#                (539 matches + fasd tags vs zsh's 1), so it was not landed.
+#     7a077463ab _as_if (no args, 6900 vs 32) and _mac_applications — the
+#                "probe never ran" reading was wrong: both sides ran; zsh's
+#                listing scrolled row 0 away. _mac_applications is
+#                nmatches 1032 (zsh) vs 0 (zshrs, rc 1) — not root-caused.
+#     ba4967baa5 _math, 6325f8772d _umountable, 822a0c3fb8 _email_addresses,
+#     a2b997bf45 __arguments — `_comp_tags` spacing/order still diverges on a
+#                tip carrying the funcstack fixes 7d7cfa6192 / f799727619.
