@@ -232,11 +232,15 @@ pub fn cpcpattern(o: Option<&Cpattern>) -> Option<Box<Cpattern>> // c:218
 // state survives across builtin calls without threading it through
 // SubstState. Names match the C globals exactly.
 
-/// Port of `int incompfunc` from comp.h. 1 while inside a
-/// completion function (set by makecompparams, cleared by
-/// compunsetfn); checked by comp_check / cond_psfix / cond_range
-/// to refuse calls outside completion context.
-pub static INCOMPFUNC: AtomicI32 = AtomicI32::new(0); // c:complete.c
+/// `int incompfunc` — ONE global in C, `mod_export int incompfunc;` at
+/// c:Src/utils.c:46. 1 while inside a completion function; checked by
+/// comp_check / cond_psfix / cond_range and the comp builtins. This used
+/// to be a second, separate static, so the saves/clears that
+/// `subst_string_by_func` (c:4028) and the prompt hooks do on the utils
+/// copy never reached the copy `compadd` reads: a `zsh_directory_name`
+/// hook run from `~[…]` expansion inside a completer could still call
+/// `compadd`, where C refuses it (Y01completion #10).
+pub use crate::ported::utils::INCOMPFUNC;
 
 /// Port of `int compcurrent` — index into compwords[] of the word
 /// being completed.

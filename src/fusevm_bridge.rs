@@ -6920,15 +6920,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 pattern
             };
-            let matches = with_executor(|exec| exec.expand_glob(&pattern));
-            if matches.is_empty() {
-                // No match: keep the literal (like nullglob off).
-                out.push(pattern);
-            } else {
-                for m in matches {
-                    out.push(m);
-                }
-            }
+            // c:Src/glob.c:1872-1886 — `expand_glob` already owns the whole
+            // no-match dispatch: NULL_GLOB drops the word, NOMATCH errors, and
+            // only with both off does it hand the literal back. Pushing the
+            // literal again on an empty result undid NULL_GLOB and kept a
+            // word whose filesub had failed, so under `_expand`'s options
+            // `${~exp//…}` of `~[]` "expanded" to itself (Y01completion #10).
+            out.extend(with_executor(|exec| exec.expand_glob(&pattern)));
         }
         if out.len() == 1 {
             Value::str(out.into_iter().next().unwrap())

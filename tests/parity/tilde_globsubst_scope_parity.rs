@@ -359,3 +359,69 @@ mod inner_default_word_glob_stays_inside_an_outer_pattern_op {
         assert_parity(&format!("{DIR}print -r -- ${{${{~:-bor*}}:u}} ${{${{~:-*}}}}"));
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A `${~…}` whose value went through a modifier reaches filename generation
+// through the same c:Src/glob.c:1872-1886 no-match dispatch as a bare `${~v}`:
+// NULL_GLOB drops the word, NOMATCH errors, and only with both off does the
+// literal survive. The modifier path used to push the literal back on every
+// empty result, so under NULL_GLOB `${~w//x/y}` kept a word `${~w}` dropped —
+// which is what made compsys `_expand` offer `~[]` as its own expansion
+// (Y01completion #10).
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod no_match_dispatch_after_a_modifier {
+    use super::assert_parity;
+
+    #[test]
+    fn null_glob_drops_the_substituted_word() {
+        for form in [r"${~w}", r"${~w//x/y}", r"${~w/x/y}", r"${~w#q}", r"${~w:-z}", r"${~${w}}"] {
+            assert_parity(&format!(
+                "setopt nullglob; w='/nonexistent_zz_dir/*'; a=( {form} ); print -r -- \"n=$#a [$a]\""
+            ));
+        }
+    }
+
+    #[test]
+    fn nomatch_off_keeps_the_literal_and_nomatch_on_errors() {
+        for opts in ["setopt nonomatch", ""] {
+            assert_parity(&format!(
+                "{opts}; w='/nonexistent_zz_dir/*'; a=( ${{~w//x/y}} ); print -r -- \"n=$#a [$a]\""
+            ));
+        }
+    }
+
+    #[test]
+    fn a_failed_dynamic_directory_name_is_dropped_under_null_glob() {
+        assert_parity(
+            "setopt nullglob nonomatch; w='~[]'; a=( ${~w//x/y} ); print -r -- \"n=$#a [$a]\"",
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A function run from INSIDE a `${~…}` expansion — the `zsh_directory_name`
+// hook behind `~[name]` (c:Src/subst.c:762, c:Src/utils.c:4017) — must neither
+// see the forced GLOB_SUBST nor leave it behind. C keeps the switch in a
+// paramsubst local; zshrs's carrier was consumed by the hook's own command
+// boundary and a LOCAL_OPTIONS restore at its return re-applied ON, so every
+// later statement of the caller ran with GLOB_SUBST set. Stock `_expand`
+// (Completion/Base/Completer/_expand:110-117) is exactly that caller: its
+// quoting fallback then globbed `~[]` away (Y01completion #10).
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod hook_inside_tilde_expansion_does_not_leak_globsubst {
+    use super::assert_parity;
+
+    #[test]
+    fn localoptions_caller_keeps_its_own_globsubst() {
+        for hook in ["zsh_directory_name() { return 1 }", "zsh_directory_name() { reply=(/tmp); return 0 }"] {
+            assert_parity(&format!(
+                "{hook}; f() {{ setopt localoptions nullglob nonomatch; local -a exp; \
+                 exp=('~[x]'); exp=( ${{~exp//q/r}} ); print -r -- \"n=$#exp [$exp] $options[globsubst]\"; \
+                 exp=( ${{w:-'~[x]'}} ); print -r -- \"later n=$#exp [$exp] $options[globsubst]\" }}; \
+                 zmodload zsh/parameter; f 2>/dev/null; print -r -- \"after $options[globsubst]\""
+            ));
+        }
+    }
+}

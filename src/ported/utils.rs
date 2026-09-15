@@ -6083,6 +6083,22 @@ pub fn subst_string_by_func(
         .read()
         .ok()
         .and_then(|t| t.get(func_name).cloned());
+    // !!! WARNING: RUST-ONLY CARRIER SCOPING — NO C COUNTERPART !!!
+    // In C the `${~spec}` GLOB_SUBST switch is a paramsubst LOCAL
+    // (c:Src/subst.c:1671, c:2596), so a hook run from inside that expansion
+    // (`~[name]` -> zsh_directory_name) sees the user's option and cannot
+    // touch the local. zshrs carries the switch through the global option
+    // table plus subst::TILDE_GLOBSUBST_CARRIER, so the hook body's command
+    // boundary consumed the carrier, and under LOCAL_OPTIONS doshfunc's
+    // restore then put the forced ON back with nothing left to undo it:
+    // GLOB_SUBST stayed on for the rest of the caller, and compsys `_expand`
+    // filename-generated a word it meant to quote (Y01completion #10).
+    // Hand the hook the user's value and re-apply the forced one afterwards.
+    let tilde_user = crate::ported::subst::TILDE_GLOBSUBST_CARRIER.with(|c| c.take());
+    let forced_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+    if let Some(user) = tilde_user {
+        crate::ported::options::opt_state_set("globsubst", user);
+    }
     let rc = if let Some(mut shf) = shf_clone {
         let name_for_body = func_name.to_string();
         let body_args = args.clone();
@@ -6093,6 +6109,10 @@ pub fn subst_string_by_func(
     } else {
         callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut())
     };
+    if let Some(user) = tilde_user {
+        crate::ported::options::opt_state_set("globsubst", forced_globsubst);
+        crate::ported::subst::TILDE_GLOBSUBST_CARRIER.with(|c| c.set(Some(user)));
+    }
     // c:4033 — `ret = getaparam("reply")` against paramtab. `reply`
     // is a shell-local PM_ARRAY entry, never exported to env.
     let ret: Option<Vec<String>> = if rc != 0 {
