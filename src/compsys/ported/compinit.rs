@@ -1188,10 +1188,20 @@ pub fn install_standard_complete_widgets() -> usize {
             count += 1;
         }
     }
-    // sh:560 — `zle -C menu-select .menu-select _main_complete` (only
-    // succeeds when the `.menu-select` base widget exists, i.e.
-    // `zsh/complist` is loaded; bin_zle_complete returns 1 otherwise).
-    {
+    // sh:544 — `zle -la menu-select && zle -C menu-select .menu-select _main_complete`.
+    // The `zle -la` guard is what keeps compinit silent without
+    // `zsh/complist`: an unguarded `zle -C` warns "invalid widget
+    // `.menu-select'" on every compinit.
+    let mut la_ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    la_ops.ind[b'a' as usize] = 1;
+    let has_menu_select =
+        crate::ported::zle::zle_thingy::bin_zle_list("zle", &["menu-select".to_string()], &la_ops, 0) == 0;
+    if has_menu_select {
         let args = [
             "menu-select".to_string(),
             ".menu-select".to_string(),

@@ -250,6 +250,37 @@ print -r -- "mc=${{+functions[_main_complete]}} cp=${{+functions[_complete]}} nm
         );
     }
 
+    /// compinit sh:544 guards `zle -C menu-select .menu-select _main_complete`
+    /// with `zle -la menu-select`, so without `zsh/complist` it binds nothing
+    /// and says nothing. The native compinit ran the `zle -C` unguarded and
+    /// printed "invalid widget `.menu-select'" on every shell start.
+    #[test]
+    fn native_compinit_without_complist_skips_menu_select_silently() {
+        let Some(fpath) = zsh_completion_fpath() else {
+            return;
+        };
+        let dump = std::env::temp_dir().join(format!("zshrs-menu-select-{}", std::process::id()));
+        let script = format!(
+            r#"fpath=({fpath})
+autoload -U compinit
+compinit -u -d {dump}
+print -r -- "ms=[$widgets[menu-select]]""#,
+            dump = dump.display()
+        );
+        let o = Command::new(zshrs_bin())
+            .args(["-f", "-c", &script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        let _ = std::fs::remove_file(&dump);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            !stderr.contains("invalid widget"),
+            "compinit must not warn about .menu-select without zsh/complist: {stderr}"
+        );
+        assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "ms=[]");
+    }
+
     /// The stub count has to be in the same league as the reference shell's,
     /// not just non-zero — a handful of hardcoded names would satisfy the
     /// test above while still leaving `_tmux`'s `${(M)${(k)functions}:#_tmux-*}`
