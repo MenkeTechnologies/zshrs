@@ -398,6 +398,14 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             return ret; // c:290 — `return ret;` (NULL is not an error)
         }
         rest = chars.as_str();
+        // c:292-297 — `s += 2; if (!*s) { "missing patterns"; return pcm_err; }`
+        if rest.is_empty() {
+            if !name.is_empty() {
+                zwarnnam(name, "missing patterns");
+            }
+            PCM_ERR.with(|f| f.set(true));
+            return None;
+        }
 
         // c:297-313 — `(fl & CMF_LEFT) && !fl2` → parse left anchor.
         let mut left: Option<Box<Cpattern>> = None;
@@ -677,23 +685,18 @@ pub fn parse_pattern<'a>(
 
         if next_ch == '[' || next_ch == '{' {
             // c:435
-            // c:436 — `s = parse_class(n, s);`.
-            //          Rust parse_class already advances past the
-            //          close bracket internally (returns slice AFTER
-            //          `]`/`}`), so we don't re-advance here. C's
-            //          `s++` at c:442 is for the C parse_class which
-            //          leaves s pointing AT the close bracket.
-            //          Unterminated → parse_class returns empty input;
-            //          treat as error.
-            let before_len = rest.len();
+            // c:436 — `s = parse_class(n, s);` leaves s AT the close
+            //          bracket, or at the NUL when there is none.
             rest = parse_class(&mut node, rest);
-            if rest.len() == before_len {
-                // parse_class didn't advance — unterminated.
+            // c:437-441 — `if (!*s) { *err = 1; "unterminated character class"; }`
+            if rest.is_empty() {
                 if !name.is_empty() {
                     zwarnnam(name, "unterminated character class");
                 }
                 return (None, rest, 0, true);
             }
+            // c:442 — `s++;` past the close bracket.
+            rest = &rest[1..];
         } else if next_ch == '?' {
             // c:443
             node.tp = CPAT_ANY;
@@ -860,9 +863,9 @@ pub fn parse_class<'a>(
     // verbatim; marker bytes (0x80 + PP_*) survive without UTF-8 munging.
     p.str = Some(out);
 
-    // c:565 — `return iptr;` — input ptr now past the close-bracket.
-    let consumed = (i + 1).min(bytes.len());
-    &iptr[consumed..]
+    // c:566 — `return iptr;` — AT the close bracket; the caller's
+    // c:442 `s++` steps over it. Empty when the input ran out.
+    &iptr[i.min(bytes.len())..]
 }
 
 /// Direct port of `parse_ordering(const char *arg, int *flags)` from `Src/Zle/complete.c:573`.
@@ -3815,7 +3818,8 @@ mod tests {
         let rest = parse_class(&mut p, "[abc]rest");
         assert_eq!(p.tp, CPAT_CCLASS);
         assert_eq!(p.str.as_deref(), Some(b"abc".as_slice()));
-        assert_eq!(rest, "rest");
+        // c:566 — returns AT the close bracket.
+        assert_eq!(rest, "]rest");
     }
 
     #[test]
@@ -3862,7 +3866,7 @@ mod tests {
         let mut p = Cpattern::default();
         let rest = parse_class(&mut p, "[a-z]rest");
         assert_eq!(p.tp, CPAT_CCLASS);
-        assert_eq!(rest, "rest");
+        assert_eq!(rest, "]rest");
         assert!(p.str.is_some());
     }
 
