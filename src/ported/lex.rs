@@ -3622,6 +3622,17 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     let dup = dupstring_wlen(&untok, untok.len());
     // c:1748 `zcontext_save();`
     zcontext_save();
+    // Park LEX_INPUT/LEX_POS exactly as `parsestr` does. C has one input
+    // stack, so once the pushed subscript drains `hgetc` sets lexstop
+    // (c:1750-1784 reach nothing past `t`). zshrs's hgetc falls through
+    // to the Rust-only LEX_INPUT window instead, so a subscript with no
+    // `endchar` (`${x:2}` → parse_subscript("2", ':')) read on into the
+    // sourced file's NEXT EVENT until it met a `:` and ate that text.
+    let saved_lex_input = LEX_INPUT.with_borrow(|s| s.clone());
+    let saved_lex_pos = LEX_POS.get();
+    LEX_INPUT.with_borrow_mut(|b| b.clear());
+    LEX_POS.set(0);
+    LEX_LEXSTOP.set(false);
     // c:1750 `inpush(t, 0, NULL);`
     inpush(&dup, 0, None);
     // c:1751 `strinbeg(0);`
@@ -3642,6 +3653,10 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
                                                            // `zcontext_restore();`
     strinend();
     inpop();
+    // Put the outer window back so the caller's lexer resumes where it
+    // stopped. Pairs with the park above.
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
     // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
     DPUTS!(
         // c:1785
