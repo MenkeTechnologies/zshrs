@@ -637,3 +637,44 @@ mod typeset_reassign_keeps_type {
         assert_parity("typeset -A g=(a 1); f() { local g=(m n); typeset -p g }; f; typeset -p g");
     }
 }
+
+/// A hash pattern scan leaves `v->scanflags` set (c:Src/params.c:1731-1747),
+/// so c:Src/subst.c:2916-2917 makes its result an ARRAY for the operator that
+/// follows. The port decided array-vs-single-slot from the subscript TEXT and
+/// read `(R)pat` as a single slot, so `:#` filtered the JOINED matches once:
+/// `${(k)a[(R)*]:#k2}` gave the one word `k1 k2 k3`. Upstream `_parameters`
+/// builds every list that way, which emptied `: $path<TAB>` under
+/// `extra-verbose` and dropped the value descriptions (Y01completion #30/#31).
+mod assoc_scan_result_is_an_array_for_operators {
+    use super::*;
+
+    const A: &str = "typeset -A a=( k1 v1 k2 v2 k3 v3 );";
+
+    #[test]
+    fn filter_removes_elements_of_a_many_match_scan() {
+        assert_parity(&format!("{A} print -rl -- ${{(k)a[(R)*]:#k2}} ${{a[(R)v*]:#v2}}"));
+        assert_parity(&format!("{A} print -rl -- ${{(k)a[(I)*]:#k2}}; x=( ${{(k)a[(I)k*]:#k3}} ); print $#x"));
+    }
+
+    #[test]
+    fn match_flag_and_quoted_splice_keep_the_array_shape() {
+        assert_parity(&format!("{A} print -rl -- ${{(M)a[(R)*]:#v2}}"));
+        assert_parity(&format!(r#"{A} print -rl -- "${{(@)a[(R)*]:#v2}}"; print -rl -- "${{a[(R)*]:#v2}}""#));
+    }
+
+    #[test]
+    fn single_replace_runs_per_match() {
+        assert_parity(&format!("{A} print -rl -- ${{a[(R)*]/v/X}} ${{a[(r)v1]/v/X}}"));
+    }
+
+    /// The exact `_parameters` sh:43 shape, with the `$IPREFIX = *\$` filter.
+    #[test]
+    fn parameters_completer_list_shape() {
+        assert_parity(
+            "setopt extendedglob; typeset -A t=( p array-tied-special q scalar-hideval r scalar s scalar-local x.y scalar );\
+             f() { local -a pattern=( -g \\* ) n; local pfilt; pfilt+='|*.*';\
+             n=( ${(k)t[(R)${~pattern[2]}~*local*]:#$~pfilt} ); print -rl -- ${(o)n};\
+             n=( ${(k)t[(R)$~pattern[2]~^(*(hideval|special)*)~*local*]:#$~pfilt} ); print -rl -- ${(o)n} }; f",
+        );
+    }
+}

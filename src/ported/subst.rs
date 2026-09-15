@@ -4889,6 +4889,13 @@ pub fn paramsubst(
         // for the scan that filled `assoc_scan_chain` — decides whether a chained
         // single index keeps the array shape (c:2174-2178).
         let mut assoc_scan_matchmany = false;
+        // c:Src/subst.c:2916-2917 `isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1 :
+        // v->scanflags ? 1 : 0` — a hash pattern scan leaves `v->scanflags` set
+        // (c:Src/params.c:1731-1747), so its result is `aval`, an ARRAY, for the
+        // operators that follow (`:#`, `#`/`%`, `/`). The operator arms below tell
+        // a single-slot subscript from an array-shaped one by the subscript TEXT,
+        // which cannot see a scan; this carries the scan arm's own `isarr`.
+        let mut assoc_scan_isarr = false;
                                                          // c:Src/subst.c:3032 — set when the DQ qt-sepjoin transition
                                                          // (`val = sepjoin(aval, sep, 1); isarr = 0`) collapses an array
                                                          // to a scalar in double-quote context. C joins EXACTLY ONCE here,
@@ -9899,6 +9906,7 @@ pub fn paramsubst(
                     } else {
                         split_parts = Some(out.clone());
                         isarr = if out.is_empty() { -1 } else { 1 };
+                        assoc_scan_isarr = true;
                     }
                     // c:Src/params.c:1513-1531 — the mask the scan hands to a
                     // CHAINED subscript (`${A[(K)pat][N]}`). C only augments the
@@ -15405,7 +15413,8 @@ pub fn paramsubst(
                                   // set (SCANPM_ISVAR_AT path at c:2027-2029) so the
                                   // array iteration MUST fire — `\${arr[@]:#pat}` filters
                                   // the elements, not the joined scalar.
-                let is_array_subscript = matches!(splat_sub!(), Some("@") | Some("*"))
+                let is_array_subscript = assoc_scan_isarr // c:2917
+                    || matches!(splat_sub!(), Some("@") | Some("*"))
                     || subscript.as_deref().map_or(false, |s| {
                         crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
                             .is_some()
@@ -18291,7 +18300,8 @@ pub fn paramsubst(
                 // dispatches to getmatch (scalar) at subst.c:3451.
                 // Only literal-index subscripts; `[@]`/`[*]`/`[N,M]`
                 // keep array shape.
-                let has_subscript_one = subscript
+                let has_subscript_one = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
@@ -18411,7 +18421,8 @@ pub fn paramsubst(
                 // has_subscript guard — same as `/`/`//` arms.
                 // Per subst.c:2915 + 3422-3451, scalar subscript
                 // dispatches to getmatch on the single element.
-                let has_scalar_sub = subscript
+                let has_scalar_sub = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
