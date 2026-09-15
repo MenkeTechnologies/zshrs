@@ -4584,10 +4584,20 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             }
 
             // c:2362 — end-pattern compile for rest-args (skipped by the
-            // `goto cont` jumps at c:2147/c:2162).
-            if !goto_cont && state.def.is_some() && state.curopt.is_some() {
-                let dt = state.def.as_deref().map_or(0, |d| d.r#type);
-                if dt == CAA_RREST || dt == CAA_RARGS {
+            // `goto cont` jumps at c:2147/c:2162). The type test is part of
+            // the FIRST arm's condition (c:2362-2363), so a CAA_REST option
+            // argument (`-o:*a:...`) with `curopt` set falls to the c:2379
+            // `else if` and gets its end pattern. With the test nested inside,
+            // that arm swallowed CAA_REST, `endpat` stayed unset, and the
+            // c:2142 end test never fired: after `tst -o a`, zsh completes
+            // the next positional where zshrs kept completing `-o`'s argument.
+            let dt = state.def.as_deref().map_or(0, |d| d.r#type);
+            if !goto_cont
+                && state.def.is_some()
+                && state.curopt.is_some()
+                && (dt == CAA_RREST || dt == CAA_RARGS)
+            {
+                {
                     let end_pat_str = state.def.as_deref().and_then(|d| d.end.clone());
                     if let Some(eps) = end_pat_str {
                         endpat = patcompile(
