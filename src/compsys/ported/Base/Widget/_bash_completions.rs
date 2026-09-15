@@ -46,7 +46,15 @@ pub fn _bash_completions() -> i32 {
         '@' => vec!["_hosts".to_string()],
         '/' => vec!["_files".to_string()],
         '~' => vec!["_users".to_string()],
-        _ => return 1,
+        // sh:44 `*) _message "Key $key is not understood"` — the function's
+        // status is `_message`'s, not a bare failure.
+        _ => {
+            return dispatch_function_call(
+                "_message",
+                &[format!("Key {} is not understood", key)],
+            )
+            .unwrap_or(1)
+        }
     };
 
     dispatch_function_call("_main_complete", &argv).unwrap_or(1)

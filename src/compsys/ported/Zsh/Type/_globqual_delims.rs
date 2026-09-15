@@ -27,6 +27,7 @@
 //! pairs. Reports whether the delimited region is fully closed.
 
 use crate::ported::params::{getsparam, setsparam};
+use crate::ported::subst::singsub;
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -68,11 +69,15 @@ pub fn _globqual_delims_impl() -> i32 {
     // sh:6
     set_compstate_str("restore", "no");
 
-    // sh:10
+    // sh:8 `delim=$PREFIX[1]` — empty when `$PREFIX` is. `delim` is not
+    //   local: `_globquals` reads it back.
     let prefix = getsparam("PREFIX").unwrap_or_default();
-    let mut delim = prefix.chars().next().unwrap_or(' ').to_string();
+    let _ = setsparam(
+        "delim",
+        &prefix.chars().next().map(String::from).unwrap_or_default(),
+    );
 
-    // sh: 9
+    // sh:9
     let _ = bin_compset(
         "compset",
         &["-p".to_string(), "1".to_string()],
@@ -80,18 +85,21 @@ pub fn _globqual_delims_impl() -> i32 {
         0,
     );
 
-    // sh:11-16  bracket-pair mirror
-    let matchl = "<({[";
-    let matchr = ">)}]";
-    if let Some(idx) = matchl.find(delim.as_str()) {
-        if let Some(closing) = matchr.chars().nth(idx) {
-            delim = closing.to_string();
-        }
+    // sh:13 `local matchl="<({[" matchr=">)}]"`
+    crate::compsys::ported::shared::declare_locals(&["matchl", "matchr"], 0);
+    let _ = setsparam("matchl", "<({[");
+    let _ = setsparam("matchr", ">)}]");
+    // sh:14 `integer ind=${matchl[(I)$delim]}` — `(I)` takes `$delim` as a
+    //   PATTERN, so the shell's own subscript search decides it: an empty or
+    //   `*` delim gives 5 (the empty match past the end), `(` and `[` give 0
+    //   (bad pattern), `?` gives 4. A literal `find` gets all three wrong.
+    let ind: usize = singsub("${matchl[(I)$delim]}").parse().unwrap_or(0);
+    // sh:16 `(( ind )) && delim=$matchr[ind]` — past the end reads empty.
+    if ind > 0 {
+        let closing = ">)}]".chars().nth(ind - 1).map(String::from).unwrap_or_default();
+        let _ = setsparam("delim", &closing);
     }
-
-    // Publish delim for the caller (`_globquals` reads it via dynamic
-    //   scoping in shell; we use the shell-side param table).
-    let _ = setsparam("delim", &delim);
+    let delim = getsparam("delim").unwrap_or_default();
 
     // sh:18  compset -P "[^$delim]#$delim"
     let pat = format!("[^{}]#{}", delim, delim);
@@ -109,12 +117,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opening_paren_sets_closing_paren_as_delim() {
-        // sh:18 — `(` should map to `)` via the bracket-pair table.
+    fn delim_follows_the_shells_pattern_subscript_search() {
+        // sh:14 `${matchl[(I)$delim]}` searches with `$delim` as a PATTERN.
+        // Measured with zsh 5.9.2 over matchl="<({[": `<` -> 1, `{` -> 3,
+        // `(` -> 0 (a lone `(` is a bad pattern), empty -> 5 (past the end).
         let _g = crate::test_util::global_state_lock();
-        let _ = setsparam("PREFIX", "(foo");
-        let _ = _globqual_delims_impl();
-        assert_eq!(getsparam("delim").as_deref(), Some(")"));
+        for (prefix, want) in [("<foo", ">"), ("{foo", "}"), ("(foo", "("), ("", "")] {
+            let _ = setsparam("PREFIX", prefix);
+            let _ = _globqual_delims_impl();
+            assert_eq!(getsparam("delim").as_deref(), Some(want), "PREFIX={prefix:?}");
+        }
     }
 
     #[test]

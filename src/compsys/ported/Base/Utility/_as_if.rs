@@ -31,6 +31,15 @@ pub fn _as_if(args: &[String]) -> i32 {
     //   the shell's `local` scoping).
     let saved_words = getaparam("words").unwrap_or_default();
     let saved_current = getsparam("CURRENT").unwrap_or_default();
+    // sh:3 `local _comp_command1 _comp_command2 _comp_command`. `_set_command`
+    // returns without writing them when the new `$words[1]` is empty
+    // (`_as_if` with no arguments), so sh:10 must then dispatch on EMPTY
+    // names. Without the locals it read the caller's values and re-ran the
+    // caller's own completer.
+    crate::compsys::ported::shared::declare_locals(
+        &["_comp_command1", "_comp_command2", "_comp_command"],
+        0,
+    );
 
     // sh:5  words[1]=("$@") — replace element 1 with full argv,
     //   splatted in place (zsh array-element-is-array semantic).

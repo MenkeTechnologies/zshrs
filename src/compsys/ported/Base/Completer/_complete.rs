@@ -369,7 +369,10 @@ pub fn _complete_impl() -> i32 {
         set_compstate_str("context", "vared");
     }
 
-    // sh:114-140
+    // sh:114 `ret=1` — whatever the -first- hook returned is discarded here;
+    // only the context dispatch below decides `_complete`'s status.
+    ret = 1;
+    // sh:115-140
     let context = get_compstate_str("context").unwrap_or_default();
     if context == "command" {
         // sh:116 `curcontext="$oldcontext"` — undo any `ccarray[3]`

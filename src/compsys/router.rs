@@ -549,6 +549,15 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_absolute_command_paths" => {
             Some(|_: &[String]| _absolute_command_paths::_absolute_command_paths())
         }
+        // The two functions Unix/Type/_absolute_command_paths sh:4 and sh:19
+        // define and its sh:32-33 `_alternative` specs call by name. Without
+        // arms, `_alternative` found neither and printed `command not found`.
+        "_hashed_absolute_command_paths" => {
+            Some(_absolute_command_paths::_hashed_absolute_command_paths)
+        }
+        "_typed-in_absolute_command_paths" => {
+            Some(_absolute_command_paths::_typed_in_absolute_command_paths)
+        }
         "_all_matches" => Some(|_: &[String]| _all_matches::_all_matches()),
         "_assign" => Some(|_: &[String]| _assign::_assign()),
         "_autocd" => Some(|_: &[String]| _autocd::_autocd()),
@@ -705,6 +714,15 @@ mod tests {
     fn returns_fn_pointer_for_registered_names() {
         assert!(rust_compsys_lookup("_main_complete").is_some());
         assert!(rust_compsys_lookup("_setup").is_some());
+    }
+
+    /// Unix/Type/_absolute_command_paths sh:32-33 name its sh:4/sh:19 inner
+    /// functions as `_alternative` actions; both must resolve, or every call
+    /// prints `command not found` and adds no matches.
+    #[test]
+    fn absolute_command_paths_inner_functions_are_routed() {
+        assert!(rust_compsys_lookup("_hashed_absolute_command_paths").is_some());
+        assert!(rust_compsys_lookup("_typed-in_absolute_command_paths").is_some());
     }
 
     #[test]

@@ -55,16 +55,18 @@ pub fn _set_command() -> i32 {
 }
 
 /// `_set_command` — classify `$words[1]` and publish
-/// `_comp_command`, `_comp_command1`, `_comp_command2`. Returns 0
-/// on success, 1 when `$words[1]` is empty.
+/// `_comp_command`, `_comp_command1`, `_comp_command2`. Returns 0,
+/// including when `$words[1]` is empty.
 pub fn _set_command_impl() -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_set_command");
     let words = getaparam("words").unwrap_or_default();
     // sh:8
     let command = words.first().cloned().unwrap_or_default();
-    // sh:7
+    // sh:10 `[[ -z "$command" ]] && return` — a bare `return` hands back the
+    // status of the `[[ ]]` that just succeeded, so an empty command word
+    // returns 0 without touching `_comp_command{,1,2}`.
     if command.is_empty() {
-        return 1;
+        return 0;
     }
 
     // sh:12 — builtin OR function lookup (we approximate: check the
@@ -196,10 +198,13 @@ mod tests {
     use crate::ported::params::setaparam;
 
     #[test]
-    fn empty_words_returns_one() {
+    fn empty_words_returns_zero_and_publishes_nothing() {
+        // sh:10 `[[ -z "$command" ]] && return` returns the `[[ ]]` status.
         let _g = crate::test_util::global_state_lock();
         setaparam("words", Vec::new());
-        assert_eq!(_set_command_impl(), 1);
+        let _ = setsparam("_comp_command", "outer");
+        assert_eq!(_set_command_impl(), 0);
+        assert_eq!(getsparam("_comp_command").as_deref(), Some("outer"));
     }
 
     #[test]
