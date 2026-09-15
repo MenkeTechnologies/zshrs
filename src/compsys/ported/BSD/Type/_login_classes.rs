@@ -85,10 +85,21 @@ pub fn _login_classes(args: &[String]) -> i32 {
     //
     // kind 0, as sh:3 spells a bare `local`.
     crate::compsys::ported::shared::declare_locals(&["expl"], 0);
-    // sh:5
-    let mut login_classes = std::fs::read_to_string("/etc/login.conf")
-        .map(|s| parse_login_classes(&s))
-        .unwrap_or_default();
+    // sh:5 — `$(</etc/login.conf)`. A file that cannot be opened is
+    // c:Src/exec.c:4798 `zwarn("%e: %s", errno, s)`, so zsh prints
+    // `_login_classes:5: no such file or directory: /etc/login.conf` on a
+    // host without the file (macOS) and substitutes nothing.
+    let mut login_classes = match std::fs::read_to_string("/etc/login.conf") {
+        Ok(s) => parse_login_classes(&s),
+        Err(e) => {
+            crate::compsys::ported::shared::set_sh_lineno(5);
+            crate::ported::utils::zwarn(&format!(
+                "{}: /etc/login.conf",
+                crate::ported::utils::zsh_errno_msg(e.raw_os_error().unwrap_or(0))
+            ));
+            Vec::new()
+        }
+    };
 
     // sh:6-8
     let ostype = getsparam("OSTYPE").unwrap_or_default();

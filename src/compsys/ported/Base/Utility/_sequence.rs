@@ -19,7 +19,6 @@
 //! passed through. Default separator is `,`; `-s <sep>` overrides;
 //! `-n <max>` limits count; `-d` allows dupes.
 
-use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::utils::quotestring;
@@ -362,17 +361,19 @@ pub fn _sequence(args: &[String]) -> i32 {
     } else {
         Vec::new()
     };
-    if cmd_chunk.is_empty() {
-        return 1;
-    }
-    let cmd = cmd_chunk[0].clone();
-    let mut call_argv: Vec<String> = cmd_chunk[1..].to_vec();
-    call_argv.extend(opts);
-    call_argv.push("-F".to_string());
-    call_argv.push("dedup".to_string());
-    call_argv.extend(pref);
-    call_argv.extend(suf);
-    call_argv.extend(extras);
+    // sh:40 is ONE simple command whose words are the concatenation below; its
+    // command word is simply the first of them. With no action before the `-`
+    // (a bare `_sequence`) that is `-F` from sh:40's own literal, and zsh
+    // reports `_sequence:40: command not found: -F` with status 127.
+    let mut words: Vec<String> = cmd_chunk.to_vec();
+    words.extend(opts);
+    words.push("-F".to_string());
+    words.push("dedup".to_string());
+    words.extend(pref);
+    words.extend(suf);
+    words.extend(extras);
+    let cmd = words.remove(0);
+    let call_argv = words;
     // `compadd` is a BUILTIN, so `dispatch_function_call` finds no shell
     // function and the per-element completer adds NOTHING — silently, with no
     // diagnostic. Same omission `9caf16845d` fixed on `_alternative` sh:61 and
@@ -389,7 +390,9 @@ pub fn _sequence(args: &[String]) -> i32 {
             0,
         );
     }
-    dispatch_function_call(&cmd, &call_argv).unwrap_or(1)
+    // A name that resolves to no function, builtin or `$PATH` entry reaches
+    // c:Src/exec.c:903 — `shared::dispatch_action_command` carries that arm.
+    crate::compsys::ported::shared::dispatch_action_command(&cmd, &call_argv, 40)
 }
 
 #[cfg(test)]
@@ -428,11 +431,14 @@ mod tests {
     }
 
     #[test]
-    fn returns_one_for_empty_command() {
+    fn command_word_that_resolves_to_nothing_is_not_found() {
+        // sh:40 runs its words as ONE command. Measured with zsh -f:
+        //   `_sequence -` → `_sequence:40: command not found: -`,  rc=127
+        //   `_sequence`   → `_sequence:40: command not found: -F`, rc=127
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = crate::ported::params::setsparam("SUFFIX", "");
-        let r = _sequence(&["-".to_string()]);
-        assert_eq!(r, 1);
+        assert_eq!(_sequence(&["-".to_string()]), 127);
+        assert_eq!(_sequence(&[]), 127);
     }
 }

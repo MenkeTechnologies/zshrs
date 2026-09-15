@@ -119,11 +119,17 @@ pub fn _hashed_absolute_command_paths(args: &[String]) -> i32 {
 }
 
 /// sh:19-28 — inner helper.
-pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
+///
+/// sh:22/24 call `_path_files` WITHOUT `"$@"` (the TODO at sh:20 says the
+/// caller's description and tag are ignored). Forwarding the `-J`/`-X`
+/// options `_alternative` passes made `_path_files` skip its own
+/// `_description files expl file` (its sh:115 `$mopts[(I)-[JVX]]` gate), so
+/// `_lastdescr` lacked the trailing `file` zsh records.
+pub fn _typed_in_absolute_command_paths(_args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     if prefix.is_empty() {
         // sh:22
-        let mut a: Vec<String> = vec![
+        let a: Vec<String> = vec![
             "-/".to_string(),
             "-g".to_string(),
             "*(-*)".to_string(),
@@ -132,18 +138,16 @@ pub fn _typed_in_absolute_command_paths(args: &[String]) -> i32 {
             "-W".to_string(),
             "/".to_string(),
         ];
-        a.extend(args.iter().cloned());
         dispatch_function_call("_path_files", &a).unwrap_or(1)
     } else if prefix.starts_with('/') {
         // sh:24
-        let mut a: Vec<String> = vec![
+        let a: Vec<String> = vec![
             "-/".to_string(),
             "-g".to_string(),
             "*(-*)".to_string(),
             "-W".to_string(),
             "/".to_string(),
         ];
-        a.extend(args.iter().cloned());
         dispatch_function_call("_path_files", &a).unwrap_or(1)
     } else {
         // sh:26

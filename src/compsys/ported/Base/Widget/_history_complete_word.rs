@@ -29,12 +29,42 @@ use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
-/// Helper: dispatch `_main_complete _history` to seed matches.
-fn gen_matches() -> i32 {
-    let r = dispatch_function_call("_main_complete", &["_history".to_string()]).unwrap_or(1);
-    let _hist_menu_length = get_compstate_str("nmatches").unwrap_or_default();
-    let _ = setsparam("_hist_menu_length", &_hist_menu_length);
-    r
+/// sh:95-119 `_history_complete_word_gen_matches`.
+///
+/// The port used to stop after sh:103, so `compstate[insert]` was never set
+/// on a fresh completion: zsh inserts the newest history word (`true zpfEND`)
+/// where zshrs only listed the two matches.
+fn gen_matches(direction: &str) -> i32 {
+    // sh:97
+    let hist_stop = getsparam("_hist_stop").unwrap_or_default();
+    if !hist_stop.is_empty() {
+        let _ = setsparam("PREFIX", &getsparam("_hist_old_prefix").unwrap_or_default());
+    }
+    // sh:99
+    let _ = dispatch_function_call("_main_complete", &["_history".to_string()]);
+    // sh:101
+    let ctx = getsparam("curcontext").unwrap_or_default();
+    if zstyle_T(&format!(":completion:{}:history-words", ctx), "list") != 0 {
+        set_compstate_str("list", "");
+    }
+    // sh:103
+    let menu_len = get_compstate_str("nmatches").unwrap_or_default();
+    let _ = setsparam("_hist_menu_length", &menu_len);
+    // sh:105-114
+    let lastcomp_insert =
+        crate::compsys::ported::shared::assoc_get("_lastcomp", "insert").unwrap_or_default();
+    if !lastcomp_insert.contains("unambig") {
+        let n: i64 = menu_len.parse().unwrap_or(0);
+        let stop_adj = if hist_stop.is_empty() { 0 } else { 1 };
+        match direction {
+            "newer" => set_compstate_str("insert", &(n - stop_adj).to_string()),
+            "older" => set_compstate_str("insert", &(1 + stop_adj).to_string()),
+            _ => {}
+        }
+    }
+    // sh:116-118
+    let _ = setsparam("_hist_stop", "");
+    0
 }
 
 /// `_history_complete_word` — history-word navigation widget.
@@ -84,8 +114,21 @@ pub fn _history_complete_word() -> i32 {
         .unwrap_or(0);
 
     if in_history_chain && (!old_list.is_empty() || !hist_stop.is_empty()) {
+        let old_prefix = getsparam("_hist_old_prefix").unwrap_or_default();
         if direction == "older" {
-            if old_insert < menu_len {
+            if hist_stop == "new" {
+                // sh:41-45
+                let _ = setsparam("PREFIX", &old_prefix);
+                let _ = gen_matches(direction);
+                set_compstate_str("insert", "2");
+                let _ = setsparam("_hist_stop", "");
+            } else if hist_stop == "old" {
+                // sh:46-50
+                let _ = setsparam("PREFIX", &old_prefix);
+                let _ = gen_matches(direction);
+                set_compstate_str("insert", "1");
+                let _ = setsparam("_hist_stop", "");
+            } else if old_insert < menu_len {
                 set_compstate_str("old_list", "keep");
                 set_compstate_str("insert", &(old_insert + 1).to_string());
             } else if stop_on {
@@ -99,7 +142,24 @@ pub fn _history_complete_word() -> i32 {
             }
         } else {
             // newer
-            if old_insert > 1 {
+            let nmatches = || -> i64 {
+                get_compstate_str("nmatches")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            };
+            if hist_stop == "old" {
+                // sh:63-67
+                let _ = setsparam("PREFIX", &old_prefix);
+                let _ = gen_matches(direction);
+                set_compstate_str("insert", &(nmatches() - 1).to_string());
+                let _ = setsparam("_hist_stop", "");
+            } else if hist_stop == "new" {
+                // sh:68-72
+                let _ = setsparam("PREFIX", &old_prefix);
+                let _ = gen_matches(direction);
+                set_compstate_str("insert", &nmatches().to_string());
+                let _ = setsparam("_hist_stop", "");
+            } else if old_insert > 1 {
                 set_compstate_str("old_list", "keep");
                 set_compstate_str("insert", &(old_insert - 1).to_string());
             } else if stop_on {
@@ -120,7 +180,7 @@ pub fn _history_complete_word() -> i32 {
     let _ = setsparam("_hist_stop", "");
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let _ = setsparam("_hist_old_prefix", &prefix);
-    let _ = gen_matches();
+    let _ = gen_matches(direction);
 
     let nm: i64 = get_compstate_str("nmatches")
         .and_then(|s| s.parse().ok())

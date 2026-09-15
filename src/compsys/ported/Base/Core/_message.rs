@@ -135,7 +135,12 @@ pub fn _message_impl(args: &[String]) -> i32 {
     let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_message");
     // sh:5  -e mode
     if args.first().map(|s| s == "-e").unwrap_or(false) {
-        // sh:6
+        // sh:6 `local expl ret=1 tag`. `_next_label` below writes `expl`
+        // through its NAME, so without the shell binding the array landed in
+        // the caller's scope and outlived the call: `_xt_session_id` (sh:3,
+        // a bare `_message -e ids 'session ID'`) left `expl=(-J -default-)`
+        // behind where zsh leaves the caller's `expl` untouched.
+        crate::compsys::ported::shared::declare_locals(&["expl", "ret", "tag"], 0);
         let mut ret: i32 = 1;
         // sh:8
         let _ = setsparam("_comp_mesg", "yes");
