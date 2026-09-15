@@ -1,0 +1,76 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "second_completion_module_builtin_command",
+ "title": "`mv <TAB><BS><TAB>`: a second completion on a zsh/files builtin name drew no listing",
+ "harness": "comptab_parity",
+ "run": {
+  "buffer": "mv ",
+  "keys": [
+   "tab",
+   "bs",
+   "tab"
+  ],
+  "flags": [],
+  "zstyle": []
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "measured": "2026-09-14, a pinned, re-codesigned copy of target/debug/zshrs built at 7f0c69113a (zshrs 0.12.64, 113616528 bytes, sha256 5542a9533839f466) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0), --jobs 1, also at --settle 1200",
+  "notes": "Before dd61c02640 the second TAB (command position, word `mv`) drew nothing where zsh lists `mv mview mvim mvimdiff mvimex mvn mvnDebug mvnyjp`; fingerprint 3e189505ba. The same defect covered `chmod ` (4a0f2f20b6), `mkdir `/`rmdir ` (ebc8295378) and `ln ` (6ec692b03c) — every one a zsh/files module builtin name; `cp `, which zsh/files does not define, always passed. The ported `_set_command`/`_shadow` answered `$+builtins[X]` from `createbuiltintable()`, which holds every statically linked module's builtins, where C's getpmbuiltin (c:Src/Modules/parameter.c:784-799) reports only loaded, enabled ones. dd61c02640 routed both through `shared::plus_builtins`."
+ },
+ "why_this_fixture_exists": "The divergence was recorded OPEN in scripts/comptab_divergent_cases.txt as a list-state residue (lastambig/menucmp/validlist/...) and was instead fixed as a side effect of a `$builtins` accessor change, without any cell covering it. A later change that re-widens `$+builtins` to the static table (or loads zsh/files by default) brings it back silently; this cell is the only guard.",
+ "controls": [
+  {
+   "note": "`cp ` is not a zsh/files builtin; it passed before and after the fix, so the split is the command name, not the key sequence.",
+   "buffer": "cp ",
+   "keys": [
+    "tab",
+    "bs",
+    "tab"
+   ]
+  }
+ ],
+ "variants": [
+  {
+   "note": "same defect, described-listing shape (zsh: `a -- all` .. `+ - \\=`; zshrs before the fix: nothing).",
+   "buffer": "chmod ",
+   "keys": [
+    "tab",
+    "bs",
+    "tab"
+   ]
+  }
+ ],
+ "origin": [
+  "ledger entry 'SECOND COMPLETION' recorded at 7c77805470; first-parent bisect over 7c77805470..7d3e59d1f1 with this cell: f9553ed4a2 FAIL, dd61c02640 PASS"
+ ],
+ "confirmed": {
+  "date": "2026-09-14",
+  "commit": "7f0c69113a",
+  "harness_sha256_16": {
+   "scripts/comptab_parity.py": "1415c63bb7e0ddae",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 113616528,
+   "version": "zshrs 0.12.64",
+   "sha256_16": "5542a9533839f466",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a byte-identical, re-codesigned copy of this file, passed with --zshrs"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "a pinned, re-codesigned copy of target/debug/zshrs at 7f0c69113a (sha256 5542a9533839f466)",
+  "guard_verified": "fails on a pinned pre-fix build at f9553ed4a2 (zshrs 0.12.60, sha256 54b504a12d544c24), the first-parent parent of dd61c02640"
+ },
+ "history": []
+}
