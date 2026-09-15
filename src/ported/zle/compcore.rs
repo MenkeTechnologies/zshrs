@@ -2146,7 +2146,14 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
             g.clear(); // c:980
         }
-        insmnum.store(ZMULT.load(Ordering::Relaxed), Ordering::Relaxed); // c:981
+        // c:981 — `insmnum = zmult;` where `zmult` is `zmod.mult` (c:Src/Zle/zle.h:267).
+        // Read ZMOD, not the ZMULT copy: nothing syncs ZMULT before a fresh
+        // completion, so `reverse-menu-complete`'s negation (zle_tricky.c:347)
+        // never reached do_ambig_menu and the menu started at the FIRST match.
+        insmnum.store(
+            crate::ported::zle::zle_main::ZMOD.lock().map(|g| g.mult).unwrap_or(1),
+            Ordering::Relaxed,
+        );
         oldlist.store(0, Ordering::Relaxed); // c:986
         oldins.store(0, Ordering::Relaxed); // c:986
         begcmgroup(Some("default"), 0); // c:987
@@ -7733,7 +7740,14 @@ fn runhookdef_compctlmake(
     if let Ok(mut g) = isuf.get_or_init(|| Mutex::new(String::new())).lock() {
         g.clear(); // c:1821
     }
-    insmnum.store(ZMULT.load(Ordering::Relaxed), Ordering::Relaxed); // c:1822
+    // c:1822 — `insmnum = zmult;` where `zmult` is `zmod.mult` (c:Src/Zle/zle.h:267).
+    // Read ZMOD, not the ZMULT copy: nothing syncs ZMULT before a fresh
+    // completion, so `reverse-menu-complete`'s negation (zle_tricky.c:347)
+    // never reached do_ambig_menu and the menu started at the FIRST match.
+    insmnum.store(
+        crate::ported::zle::zle_main::ZMOD.lock().map(|g| g.mult).unwrap_or(1),
+        Ordering::Relaxed,
+    );
     oldlist.store(0, Ordering::Relaxed); // c:1829
     oldins.store(0, Ordering::Relaxed); // c:1829
     begcmgroup(Some("default"), 0); // c:1830
