@@ -6563,3 +6563,49 @@ gstack
 #   scripts/comptab_parity.py --zsh /opt/homebrew/bin/zsh --dump <dump> \
 #     --case 'getconf ' --keys tab
 #   zsh 293 possibilities (147 lines) / zshrs 294 — fp b29792c9a7, 1 FAIL.
+
+# ══════════════════════════════════════════════════════════════════════════
+# compsys_spec_fuzz seeds 9101 (--mode zsh) and 9102 (--mode native),
+# 25 cases each, kinds arguments,values,describe,alternative — 2026-09-14.
+# 9101: 5 FAIL of 25.  9102: 8 FAIL of 25.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# FIXED — each re-scored with --replay against a build of the commit:
+#   5538e5f86b  nested `_alternative` action: getopts clustering/recovery
+#               (`_alternative:7: bad option: -J` + one per letter of
+#               `-default-`). 9102 case0000/0014/0017 FAIL -> PASS(err);
+#               fixture alternative_nested_action_bad_option NOW-PASSES.
+#   4588351e79  `insmnum = zmult` (c:Src/Zle/compcore.c:979) read the ZMULT
+#               copy, so reverse-menu-complete began at the FIRST match.
+#               9102 case0010 FAIL -> PASS(err), 9101 case0024 FAIL -> PASS.
+#   810b94ea26  `eval` left the NOMATCH cell set, so `eval 'x=( *nomatch )'`
+#               skipped the caller's next command. 9102 case0023 FAIL ->
+#               PASS(err).
+#   c67727aa8  `_files` sh:83 re-split in Rust instead of `eval`; under a
+#               widget with no `_main_complete` (no EXTENDED_GLOB) zsh's eval
+#               fails and walks the scalar as one spec. 9102 case0020 and 9101
+#               case0000 FAIL -> PASS(err); fixture files_glob_from_zle_c_widget
+#               NOW-PASSES.
+# Both NOW-PASSES fixtures still carry `expect: diverges`; retiring them as
+# guards needs the fix-reverted build check b40be08aa6 describes, not done here.
+#
+# OPEN — second `complete-word` press lists where zsh does not.
+#   scripts/compsys_spec_fuzz.py --replay target/spec-fuzz-9102/case0019.min.zsh \
+#     --keys cx-w,cx-w --mode native
+#   `_describe` of two options sharing one description, widget from
+#   `compdef -K … complete-word '^Xw'`. One `cx-w` PASSES; on the second, zshrs
+#   draws `-p  -i  -- tilde~home pipe|bar` and zsh draws nothing.
+#
+# OPEN — menu-select second press (9101 case0012, case0013).
+#   case0013 (`_alternative` whose action is `{ _values … }`, `compdef -k
+#   menu-select`) PASSES with one `cx-w`; on the second zsh lists the `_values`
+#   row plus the files and zshrs inserts `beta.txt`. case0012 (`_arguments`,
+#   `cx-w,ctrl-n,ctrl-n`) leaves zsh at `fzc0012 -` with no list while zshrs is
+#   at `-q` with the option list drawn. Not minimized further.
+#
+# OPEN — `_complete_help` frame lists (9101 case0008).
+#   zsh `options (_arguments _sfz_main _fzc0008)`; zshrs appends `_normal`, and
+#   its `messages` row lacks `_message`.
+#
+# OPEN — 9102 case0024 (`_history-complete-older`, `tab,tab,ctrl-g`): grids
+#   match, painted bytes differ at offset 176. Not examined.
