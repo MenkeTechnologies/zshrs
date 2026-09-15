@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/2",
  "id": "files_glob_from_zle_c_widget",
- "title": "`_files -g '*.txt'` reached from a `zle -C` widget: zsh errors and inserts the .txt match, zshrs completes a directory",
+ "title": "GUARD (fixed in c67727aaa8) — was: `_files -g '*.txt'` reached from a `zle -C` widget: zsh errors and inserts the .txt match, zshrs completes a directory",
  "harness": "compsys_spec_fuzz",
  "run": {
   "buffer": "fzc0007 a",
@@ -29,10 +29,43 @@
    "completer": "#compdef fzc0007\n\nlocal curcontext=\"$curcontext\" state state_descr line ret=1\ntypeset -A opt_args\n\n_arguments  \\\n  '*::arg name: _files -g '\\''*.txt'\\''' && ret=0\n\nreturn ret\n"
   }
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-09-14",
+  "previous_expect": "diverges",
+  "fix_commit": "c67727aaa8",
+  "fix_commit_subject": "fix(compsys): `_files` split its file-patterns on whitespace where upstream evals them",
+  "why": "the native _files port (src/compsys/ported/Unix/Type/_files.rs) split the -g pattern on whitespace where Unix/Type/_files:83 runs it through `eval`; the eval'd `*.txt:globbed-files` now raises zsh's `(eval):1: no matches found` and takes the same fallback, so the `alpha.txt` insert and the diagnostic this fixture recorded as only-zsh now happen on both.",
+  "evidence": "re-verified first-hand by scripts/compsys_regressions.py --variants --confirm-moved 3 at 0b11157986: the fixture cell scored NOW-PASSES four times (both shells report `no matches found: *.txt:globbed-files`), and every variant/control agreed. The runner reported the binary CHANGED since the stamp (6420c23cecc13c35 -> dde9ed4252d2e7e5), the 'somebody fixed the bug' branch the README names.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file: the cell stays in the evidence base and the gate now FAILS if the divergence comes back."
+ },
+ "guard_verified": {
+  "date": "2026-09-14",
+  "against": "debug build of 0b11157986 with c67727aaa8 reverse-applied (113783920 bytes, sha256 6065a3c25e9a7518) — carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "3 row(s) differ",
+  "controls_on_the_old_binary": "files_glob_from_zle_c_widget/control0: CONTROL-HOLDS (PASS)",
+  "note": "pointed the gate at a build of 0b11157986 with c67727aaa8 reverse-applied (git archive export, own CARGO_TARGET_DIR, sha256 6065a3c25e9a7518): `compsys_regressions.py --zshrs <that build> --only files_glob_from_zle_c_widget --variants`. It reported CONTROL-MOVED with the same harness detail observed_when_diverging records, so the guard fails on THIS bug."
+ },
  "group": "completer-machinery",
  "fingerprint": null,
  "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "attempts": [
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES",
+   "NOW-PASSES"
+  ],
+  "measured": "2026-09-14, commit 0b11157986, a codesigned byte-identical copy of target/debug/zshrs passed with --zshrs (zshrs 0.12.64, 113648832 bytes, sha256 dde9ed4252d2e7e5) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "both shells report `no matches found: *.txt:globbed-files`; the grids agree."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "detail": "3 row(s) differ",
   "category": "one-sided-error",
@@ -48,7 +81,8 @@
    "no matches found: *.txt:globbed-files"
   ],
   "zshrs_diagnostics": [],
-  "notes": "The widget's function IS the completer body, so there is no _main_complete frame above it. zsh reports `(eval):1: no matches found: *.txt:globbed-files` and still inserts `alpha.txt`; zshrs reports nothing and inserts the directory `adir/`, which the -g glob excludes. Two one-sided facts in one cell: the diagnostic only zsh emits, and the match set."
+  "notes": "The widget's function IS the completer body, so there is no _main_complete frame above it. zsh reports `(eval):1: no matches found: *.txt:globbed-files` and still inserts `alpha.txt`; zshrs reports nothing and inserts the directory `adir/`, which the -g glob excludes. Two one-sided facts in one cell: the diagnostic only zsh emits, and the match set.",
+  "recorded_under": "commit 3b4a01f0cd, target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47, sha256 6420c23cecc13c35), zsh 5.9.2 (aarch64-apple-darwin25.4.0) — the divergence AS MEASURED BEFORE c67727aaa8. It is history, not current behaviour; the fixture now asserts the two shells AGREE."
  },
  "controls": [
   {
@@ -68,18 +102,20 @@
   "round-3 compsys_spec_fuzz widget sweep (target/spec-fuzz-900/case0007.min.zsh, destroyed with target/)"
  ],
  "confirmed": {
-  "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "date": "2026-09-14",
+  "commit": "0b11157986",
   "harness_sha256_16": {
-   "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   "scripts/compsys_spec_fuzz.py": "843c02a85fc75292",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
-   "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "size": 113648832,
+   "mtime": "2026-09-14 23:19:34",
+   "version": "zshrs 0.12.64",
+   "sha256_16": "dde9ed4252d2e7e5",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the run executed a codesigned byte-identical copy passed with --zshrs, so peer rebuilds of target/debug/zshrs could not change the binary mid-sweep; sha256_16 identifies the bytes that ran."
   },
   "zsh_binary": {
    "path": "/opt/homebrew/bin/zsh",
@@ -87,8 +123,8 @@
    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
   },
   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '3 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
+  "zshrs": "codesigned copy of target/debug/zshrs, zshrs 0.12.64 (113648832 bytes, sha256 dde9ed4252d2e7e5)",
+  "note": "RETIRED AS A GUARD. `expect` was flipped diverges -> agrees on this run: the fixture cell and all of its variants and controls agreed, against a binary that moved since the previous stamp. The cell is now the regression guard for c67727aaa8."
  },
  "history": [
   {
@@ -115,6 +151,29 @@
    "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
    "zshrs": "target/debug/zshrs zshrs 0.12.46 (101596360 bytes, 2026-08-30 03:13:45)",
    "note": "the three sibling harnesses were being edited by other agents while this was confirmed, and `target/` was deleted mid-session (disk full) taking every round-3 reproducer with it; every cell below was re-run against the rebuilt binary identified above."
+  },
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/compsys_spec_fuzz.py": "044a87012ebab462"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '3 row(s) differ'; this harness computes no fingerprint, so what was re-verified is the verdict and that detail line, not row-for-row identity with `observed`"
   }
  ]
 }
