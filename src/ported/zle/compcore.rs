@@ -6016,43 +6016,13 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
     // qsort-tie order while zsh listed them deterministically.
     //
     // Metafy to put the same bytes in front of the same `strcoll` C uses.
-    // The `metafy()` loop is inlined here rather than called: the ported
-    // `utils::metafy` returns a `String` and so goes lossy on precisely the
-    // inputs that matter (a metafied `日` is `e6 83 b7 a5`, not UTF-8), and
-    // this is its only byte-level caller.
-    //
-    // Metafication rewrites only `{0x00} ∪ [0x83, 0xa2]` (`Src/utils.c:4195-
-    // 4201`), so it is the IDENTITY on every ASCII match name and the ASCII
-    // ordering — including the case-insensitive collation noted above — is
-    // untouched. Skip the copy entirely when neither operand holds such a
-    // byte: this is a sort comparator, called O(n log n) times.
-    let metafy = |s: &str| -> Vec<u8> {
-        // c:Src/utils.c:4880
-        let mut out = Vec::with_capacity(s.len());
-        for &b in s.as_bytes() {
-            if crate::ported::utils::imeta_byte(b) {
-                out.push(crate::ported::zsh_h::Meta);
-                out.push(b ^ 32);
-            } else {
-                out.push(b);
-            }
-        }
-        out
-    };
-    let any_meta = |s: &str| {
-        s.as_bytes()
-            .iter()
-            .any(|&b| crate::ported::utils::imeta_byte(b))
-    };
-    let (am, bm): (Vec<u8>, Vec<u8>);
-    let (ab, bb): (&[u8], &[u8]) = if any_meta(as_) || any_meta(bs) {
-        am = metafy(as_);
-        bm = metafy(bs);
-        (&am, &bm)
-    } else {
-        (as_.as_bytes(), bs.as_bytes())
-    };
-    let base = crate::ported::sort::zstrcmp(ab, bb, flags);
+    // Metafication is the IDENTITY on ASCII, so the ASCII ordering —
+    // including the case-insensitive collation noted above — is untouched.
+    let base = crate::ported::sort::zstrcmp(
+        crate::metafied_key::metafied_key(as_),
+        crate::metafied_key::metafied_key(bs),
+        flags,
+    );
     if sortdir < 0 {
         base.reverse()
     } else {

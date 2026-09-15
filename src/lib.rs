@@ -61,6 +61,8 @@ pub mod compsys;
 pub mod exec_jobs;
 /// `extensions` submodule.
 pub mod extensions;
+/// `metafied_key` submodule (Rust-only; see the module docs).
+pub mod metafied_key;
 /// `ported` submodule.
 pub mod ported;
 /// `pattern_data_escape` submodule (Rust-only; see the module docs).

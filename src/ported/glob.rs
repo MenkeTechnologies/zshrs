@@ -1298,9 +1298,13 @@ pub fn gmatchcmp(
             let idx = ((key as u32) >> 16) as usize;
             let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
             let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+            // c:981 `zstrcmp(*bsortstrp, *asortstrp, …)` — unlike GS_NAME's
+            // unmetafied `uname`, the keys are METAFIED: c:1938-1941 stores
+            // `getsparam("REPLY")` or `tmpptr->name` as-is. Under a UTF-8
+            // locale that decides the order, so collate C's bytes.
             zstrcmp(
-                asx,
-                bsx,
+                crate::metafied_key::metafied_key(asx),
+                crate::metafied_key::metafied_key(bsx),
                 if numeric_sort {
                     crate::zsh_h::SORTIT_NUMERICALLY as u32
                 } else {
