@@ -14304,6 +14304,10 @@ pub fn eval(argv: &[String]) -> i32 {
 
     // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
     errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+    // The executor's NOMATCH cell is the Rust half of that error state
+    // (set beside `zerr` for c:Src/glob.c:1877); clear it with the bit, or
+    // an `x=( *nomatch )` in the body skips the caller's NEXT command.
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.current_command_glob_failed.set(false));
     // c:6222 — `scriptname = oscriptname;`
     crate::ported::utils::set_scriptname(oscriptname);
     // c:6223 — `ineval = oineval;`

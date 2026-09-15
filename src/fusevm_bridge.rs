@@ -2517,6 +2517,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             crate::ported::utils::errflag
                 .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            // The NOMATCH cell is the Rust half of that error state (set
+            // beside `zerr` for c:Src/glob.c:1877). The builtin dispatcher
+            // reads it BEFORE the next command runs, so one left over from
+            // `eval 'x=( *nomatch )'` skipped the caller's next command.
+            with_executor(|exec| exec.current_command_glob_failed.set(false));
         }
         crate::ported::utils::set_scriptname(oscriptname);
         Value::Status(status)

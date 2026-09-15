@@ -195,6 +195,17 @@ mod syntax_errors {
     fn eval_unclosed_quote_errors() {
         assert_parity(r#"eval 'echo "unterminated' 2>/dev/null; echo $?"#);
     }
+
+    /// A NOMATCH in an eval'd array assignment ends the eval body only: the
+    /// caller's next command runs and sees `$? == 1`, at top level and in a
+    /// function. `_files` sh:83 reaches this through `eval "def=( … )"`.
+    #[test]
+    fn eval_assignment_nomatch_does_not_skip_next_command() {
+        assert_parity(r#"eval 'x=( /nonexistent_zshrs_q9/*zz )' 2>/dev/null; echo top $?"#);
+        assert_parity(
+            r#"f() { eval 'x=( /nonexistent_zshrs_q9/*zz )' 2>/dev/null; echo in-f $?; }; f; echo after $?"#,
+        );
+    }
 }
 
 mod local_scope {
