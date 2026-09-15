@@ -3701,6 +3701,15 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     let dup = dupstring_wlen(&untok, untok.len());
     // c:1803 `zcontext_save();`
     zcontext_save();
+    // Park LEX_INPUT/LEX_POS as `parsestr` and `parse_subscript` do: C has
+    // one input stack, so when the pushed string drains `hgetc` sets
+    // lexstop. zshrs's hgetc falls through to the Rust-only LEX_INPUT
+    // window instead and lexed the sourced file's next event into the word.
+    let saved_lex_input = LEX_INPUT.with_borrow(|s| s.clone());
+    let saved_lex_pos = LEX_POS.get();
+    LEX_INPUT.with_borrow_mut(|b| b.clear());
+    LEX_POS.set(0);
+    LEX_LEXSTOP.set(false);
     // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
     inpush(&dup, 0, None);
     // c:1806 `strinbeg(0);`
@@ -3727,6 +3736,9 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     strinend();
     // c:1815 `inpop();`
     inpop();
+    // Put the outer window back. Pairs with the park above.
+    LEX_INPUT.with_borrow_mut(|b| *b = saved_lex_input);
+    LEX_POS.set(saved_lex_pos);
     // c:1816 — DPUTS(cmdsp, "BUG: parse_subst_string: cmdstack not empty.")
     DPUTS!(
         // c:1816
@@ -6462,6 +6474,27 @@ mod tests {
             parse_subst_string(&nul).is_ok(),
             "c:1802 — nulstring sentinel → Ok"
         );
+    }
+
+    /// `Src/lex.c:1805-1815` — `parse_subst_string` lexes ONLY the string it
+    /// pushes; once that drains, `hgetc` sets lexstop. zshrs's outer
+    /// `LEX_INPUT` window (a sourced file's unread text) must be neither
+    /// read nor moved by the call, same as `parsestr` and `parse_subscript`.
+    #[test]
+    fn parse_subst_string_does_not_read_the_outer_lex_window() {
+        let _g = crate::test_util::global_state_lock();
+        errflag.store(0, Ordering::Relaxed);
+        let outer = "echo next:event\n".to_string();
+        LEX_INPUT.with_borrow_mut(|b| *b = outer.clone());
+        LEX_POS.set(0);
+        let r = parse_subst_string("abc");
+        let after_input = LEX_INPUT.with_borrow(|b| b.clone());
+        let after_pos = LEX_POS.get();
+        LEX_INPUT.with_borrow_mut(|b| b.clear());
+        LEX_POS.set(0);
+        assert_eq!(r.as_deref(), Ok("abc"), "c:1811 — only the pushed string is lexed");
+        assert_eq!(after_input, outer, "outer LEX_INPUT must survive the call");
+        assert_eq!(after_pos, 0, "outer LEX_POS must not advance");
     }
 
     /// `Src/lex.c:1819` — `parse_subst_string` MUST restore the
