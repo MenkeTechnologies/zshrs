@@ -6357,8 +6357,23 @@ gstack
 #   without un-porting them.
 #
 # ---------------------------------------------------------------------------
-# OPEN — undo after MENU NAVIGATION drops the auto-added `/`.
+# RESOLVED by ec41ca8c6e — undo after MENU NAVIGATION drops the auto-added `/`.
 # ---------------------------------------------------------------------------
+#
+#   Re-measured 2026-09-14 at 7f0c69113a, --jobs 1: both cells below PASS,
+#   with no zstyle and with parity_combos/force-menu-select.zsh, and so do
+#   tab_undo / tab_undo2 / tab_undo_tab / tab2_undo / tab_down_undo /
+#   tab_accept_undo on both buffers (24/24).
+#
+#   Cause: `execute_widget` ran `removesuffix()` (c:Src/Zle/zle_main.c:1469)
+#   and THEN took its pre-widget `handleundo()` snapshot, so down's removal
+#   of the `/` became the undo baseline instead of a recorded change.
+#   ec41ca8c6e moved `handleundo()` to after the widget in the key loop
+#   (c:1161), which records the removal on its own. Pinned by
+#   tests/parity/zle_undo_parity.rs
+#   `undo_after_a_suffix_removing_widget_restores_the_slash`.
+#
+#   Original record, kept for context:
 #
 #   scripts/comptab_parity.py --case 'cd /u' --keys tab,down,ctrl-_
 #     zsh    $ cd /usr/

@@ -49,6 +49,33 @@ zpty -w -n w $'\r'"#,
     );
 }
 
+/// A widget without ZLE_KEEPSUFFIX removes the completion's auto-added `/`
+/// before it runs (c:Src/Zle/zle_main.c:1468-1469), and the key loop records
+/// that removal as its own change afterwards (c:1161 `handleundo()`). So
+/// TAB, down, `^_` undoes only the removal and the `/` comes back. zshrs
+/// snapshotted the line AFTER `removesuffix` and BEFORE the widget, which
+/// folded the removal into the baseline: the undo left `qqdir` bare.
+#[test]
+fn undo_after_a_suffix_removing_widget_restores_the_slash() {
+    assert_same_verdict(
+        &driver(
+            "mkdir -p /tmp/zshrs_undo_sfx/qqdir; cd /tmp/zshrs_undo_sfx",
+            r#"zpty -w -n w 'print -r -- qq'
+sleep 1
+zpty -w -n w $'\t'
+sleep 2
+zpty -w -n w $'\e[B'
+sleep 1
+zpty -w -n w $'\C-_'
+sleep 1
+zpty -w -n w $'ZZ\r'"#,
+            "qqdir/ZZ",
+        ),
+        "K",
+        "`^_` after down restored the completion's `/`",
+    );
+}
+
 /// Every line starts a new change list with `undo_changeno = 0`
 /// (c:Src/Zle/zle_main.c:1295 `initundo()`, c:Src/Zle/zle_utils.c:1460).
 /// zshrs never called `initundo`, so the counter ran on across lines.
