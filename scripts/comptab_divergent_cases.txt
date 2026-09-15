@@ -6686,3 +6686,112 @@ gstack
 #     ba4967baa5 _math, 6325f8772d _umountable, 822a0c3fb8 _email_addresses,
 #     a2b997bf45 __arguments — `_comp_tags` spacing/order still diverges on a
 #                tip carrying the funcstack fixes 7d7cfa6192 / f799727619.
+
+# ============================================================================
+# compsys_spec_fuzz round 2 (R2-F) — seeds 9301..9307, --kind all, both modes
+# ============================================================================
+# Pinned binary: codesigned copy of target/debug/zshrs at 0b11157986
+# (sha256_16 dde9ed4252d2e7e5), zsh 5.9.2, --jobs 2, --cases 25.
+#
+# VERBATIM totals (zsh mode / native mode, identical in every seed):
+#   9301  # 25 case(s): 20 PASS, 0 PASS(err), 5 FAIL, 0 SKIP
+#   9302  # 25 case(s): 20 PASS, 1 PASS(err), 4 FAIL, 0 SKIP
+#   9303  # 25 case(s): 18 PASS, 3 PASS(err), 4 FAIL, 0 SKIP
+#   9304  # 25 case(s): 21 PASS, 1 PASS(err), 3 FAIL, 0 SKIP
+#   9305  # 25 case(s): 19 PASS, 3 PASS(err), 3 FAIL, 0 SKIP
+#   9306  # 25 case(s): 18 PASS, 1 PASS(err), 6 FAIL, 0 SKIP
+#   9307 --hostile, native only
+#         # 25 case(s): 16 PASS, 1 PASS(err), 8 FAIL, 0 SKIP
+#
+# NOT REPRODUCIBLE serially: 9307 case0004 / case0008 / case0016 PASS on a
+# `--replay` against the SAME pinned binary (load from peer sessions during
+# the sweep). 9306 case0010 (reverse-menu-complete + down) FAILs on the pinned
+# binary and on the e125c02174-only build, PASSes on a later shared-tree build
+# — not attributed.
+#
+# FIXED e125c02174 — a zerr inside a `zle -C` / `compdef -k` completion
+# widget ended the edit line. docomplete never ported c:Src/Zle/zle_tricky.c:700
+# `zcontext_save()` / c:873 `zcontext_restore()`; the restore's
+# parse_context_restore clears ERRFLAG_ERROR (c:Src/parse.c:354), the only
+# clear between the widget's error and zlecore's `!errflag` gate when no
+# `_main_complete`/`eval` frame is above it. Located on an instrumented
+# zsh 5.9.999 (errflag=1 after callcompfunc's doshfunc, 0 at docomplete end).
+# 9301 case0020 + case0021 FAIL -> PASS(err). Pinned by
+# completion_keys_parity::a_zerr_in_a_completion_widget_keeps_the_edit_line
+# (fails on a build without the fix).
+#
+# FIXTURES RETIRED 1fe6c15e8c — alternative_nested_action_bad_option (guard for
+# 5538e5f86b) and files_glob_from_zle_c_widget (guard for c67727aaa8):
+# NOW-PASSES x4 on the fixed binary, CONTROL-MOVED with the recorded row
+# counts on 0b11157986 builds with each fix reverse-applied.
+#
+# OPEN (hand-off, `_describe` owner) — `_describe -O option` outside
+# `_main_complete` adds its matches in zshrs; zsh adds none:
+#
+#     _dw() { local -a next=( -m:m -j:j ); _describe -O option next
+#             print -u2 "ret=$? nm=$compstate[nmatches]" }
+#     zle -C _dw_w complete-word _dw; bindkey '^I' _dw_w   # then `fzc -<TAB>`
+#
+#     zsh   : ret=1 nm=0          zshrs : ret=0 nm=2
+#
+# Same result with a `_tags options; while _tags` loop around it. This is the
+# whole of 9301 case0011 (`_arguments -C … '*::deeper:->deeper'` in a
+# `zle -C menu-expand-or-complete` widget: zsh leaves `fzc0011 gamma x -`,
+# zshrs inserts `-j`) — probed through a copy of stock _arguments: the gate
+# values, `comparguments -O` (ret=0 next=(-m:m) odirect=(-j:j)) and the inputs
+# to sh:527 `_describe -O option next …` are IDENTICAL on both; only the
+# _describe call diverges. Same class, all a completer body run directly by a
+# `zle -C` widget (no `_main_complete` above it), zsh adds nothing, zshrs adds:
+#   9302 case0013  `_describe 'hash#mark' _m _d` -> zshrs lists `-v -- …`
+#   9304 case0010  `_describe 'two  spaces' _m` -> zshrs inserts `-a `
+#   9304 case0016  `_arguments {-t,--five}'[…]'` at `fzc0016 -` -> zshrs lists
+#                  `--five  -t  -- keep going at@sign` (options branch ends in
+#                  sh:527 `_describe -O option`)
+#
+# FIXED 7e4f986b0a (core shell) — an UNBRACED quoted subscript that selects
+# an array was not one word (c:Src/subst.c:3033-3034 `qt && isarr` sepjoin):
+#
+#     a=(); n=(x); t "$a[1]" "$n[5]" "$a[-1]" "$a[1,2]"   zsh 1 word each, zshrs 0
+#     n=(x y); IFS=:; t "$n[1,2]"                         zsh 1 [x:y], zshrs 2
+#
+# Pinned by subscript_chain_and_ssub_parity::unbraced_quoted_subscript_is_one_word.
+#
+# STILL OPEN — the compsys half of the same cell:
+#
+# Reached through compsys as 9303 case0002: `_arguments '*:what\:ever:'` from a
+# `compdef -K` widget. The action is empty, so sh:463
+# `eval "action=( $action )"` leaves `action=()` and sh:465 runs
+# `"$action[1]" …` — the command word `""`. zsh then prints
+# `_arguments:465: permission denied: ` (c:Src/exec.c:898-899 — execve of
+# `$dir/` fails EACCES for every $path entry); zshrs prints nothing. With the
+# core word-drop fixed the cell still fails (re-measured on 7e4f986b0a's
+# build), because the native port at
+# src/compsys/ported/Base/Utility/_arguments.rs:1491
+# `parts.split_first()` skips the call entirely when the action evaluates to
+# no words, where the shell still calls `""`. `dispatch_action_command("")`
+# would also report `command not found:` rather than C's errno-derived
+# `permission denied:` — its no-fork path has no port of execute()'s
+# per-$path errno search.
+#
+# FIXED by e125c02174 as well (FAIL on the pinned binary, PASS(err) on the
+# fixed one): 9303 case0010 (`compadd` NOMATCH in a `zle -C
+# expand-or-complete-prefix` widget), 9305 case0005 (`bad pattern` in a
+# `zle -C menu-complete` widget), 9305 case0023 (NOMATCH in a `compdef -K`
+# widget, then btab), 9306 case0006 / case0016 / case0018 (`_files -/`'s
+# `bad pattern: *(#q-/)` from `#compdef -K`, `zle -C complete-word` and
+# `compdef -K` widgets).
+#
+# OPEN, owned elsewhere this round (not chased here):
+#   9301 case0001  menu-select widget + typed `a`: zsh `exact= a`, zshrs
+#                  `exact=a` (menu-select owner)
+#   9301 case0012  `compdef -k … menu-complete` + btab: zshrs inserts the
+#                  match twice and compstate[old_list] reads empty (zsh
+#                  `shown`)
+#   9302 case0002  `_complete_help` frames (funcstack owner)
+#   9302 case0010  menu-select tab,space,tab (menu-select owner)
+#   9302 case0015  accept-and-menu-complete (blocked on the allowlist decision)
+#
+# HARNESS-VISIBLE, NOT A COMPLETION BUG: the fuzzer's locale canary reports
+# zh_CN.GB2312 and ja_JP.eucJP as `zsh char/col 5/6, zshrs 9/9 <-- DIVERGES`
+# — zshrs reads non-UTF-8 multibyte locales byte-wise. Every case drawn in
+# those locales carries that difference; cells above were re-checked under C.
