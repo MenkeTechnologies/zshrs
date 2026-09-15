@@ -667,6 +667,31 @@ mod assoc_scan_result_is_an_array_for_operators {
         assert_parity(&format!("{A} print -rl -- ${{a[(R)*]/v/X}} ${{a[(r)v1]/v/X}}"));
     }
 
+    /// c:Src/subst.c:3444 getmatcharr — `#`/`%`/`//` run per match too, not
+    /// once over a scalar the scan never was.
+    #[test]
+    fn strip_and_replace_all_run_per_match() {
+        assert_parity(&format!(
+            "{A} print -rl -- ${{a[(R)v*]#v}} ${{a[(r)v*]#v}} ${{a[(R)v*]%2}} ${{(k)a[(R)v*]%%2}}"
+        ));
+        assert_parity(&format!(
+            r#"{A} print -rl -- ${{a[(R)v*]//v/x}} "${{(@)a[(R)v*]//v/x}}" ${{(v)a[(r)v*]//v/x}}"#
+        ));
+    }
+
+    /// c:Src/subst.c:3033 — under DQ a scan result joins to ONE word whatever
+    /// outer (k)/(v) flag agrees with it, and an empty scan joins to "".
+    #[test]
+    fn quoted_scan_with_agreeing_flag_is_one_word() {
+        assert_parity(&format!(
+            r#"{A} x=( "${{(v)a[(R)v*]}}" ); print $#x; x=( "${{(k)a[(I)k*]}}" ); print $#x"#
+        ));
+        assert_parity(&format!(
+            r#"{A} x=( "${{(k)a[(I)zz*]}}" "${{(v)a[(K)k*]}}" "${{(k)a[(i)zz*]}}" "${{a[(I)zz*]}}" ); print $#x"#
+        ));
+        assert_parity(&format!("{A} x=( ${{(k)a[(I)zz*]}} ${{a[(R)zz*]}} ); print $#x"));
+    }
+
     /// The exact `_parameters` sh:43 shape, with the `$IPREFIX = *\$` filter.
     #[test]
     fn parameters_completer_list_shape() {

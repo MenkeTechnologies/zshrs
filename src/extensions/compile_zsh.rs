@@ -8396,8 +8396,13 @@ impl ZshCompiler {
                     && !key.contains('@')
                     && !key.contains('*')
                     && !key.contains(',');
-                let redundant = (only_k_flag && key_starts_with_idx_flag)
-                    || (only_v_flag && key_starts_with_value_flag)
+                // `(k)NAME[(I)pat]` / `(v)NAME[(R)pat]` are NOT folded here even
+                // though the flag agrees with the scan: BUILTIN_ARRAY_INDEX
+                // returns the bare match array, so under DQ it splatted one word
+                // per match (`"${(v)h[(R)v*]}"` → 3 words, zsh 1) and an empty
+                // match produced no word (zsh ""). They fall through to the
+                // paramsubst bridge below, where c:Src/subst.c:3033 joins them.
+                let redundant =
                     // `(v)` asks for the VALUE of an assoc element, which a
                     // simple subscript already yields -- genuinely redundant.
                     // `(V)` is a different flag entirely (make non-printing
@@ -8407,7 +8412,7 @@ impl ZshCompiler {
                     // paramsubst's `mods & 2` arm. Whole-array `${(V)a}` and
                     // scalar `${(V)s}` took the flag path and were correct,
                     // which is why only the subscripted form misbehaved.
-                    || (only_v_flag && key_is_simple)
+                    (only_v_flag && key_is_simple)
                     || (only_kv_flag && key_is_simple);
                 // `(k)NAME[simple_key]` — KEY-EXISTENCE query per
                 // zsh: present → return key, absent → return empty

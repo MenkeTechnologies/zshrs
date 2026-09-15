@@ -9905,7 +9905,13 @@ pub fn paramsubst(
                         isarr = 0;
                     } else {
                         split_parts = Some(out.clone());
-                        isarr = if out.is_empty() { -1 } else { 1 };
+                        // c:Src/subst.c:2916-2917 — `isarr = (v->scanflags & SCANPM_ISVAR_AT) ? -1
+                        // : v->scanflags ? 1 : 0`. A (I)/(R) scan leaves scanflags set and
+                        // never SCANPM_ISVAR_AT, so an EMPTY match list is isarr 1 like a full
+                        // one; c:3033 then joins it to "" under DQ (one empty word) and c:3896
+                        // scalarises it unquoted. -1 skipped the c:3033 join, so
+                        // `"${(k)h[(I)nomatch]}"` produced no word where zsh produces one.
+                        isarr = 1;
                         assoc_scan_isarr = true;
                     }
                     // c:Src/params.c:1513-1531 — the mask the scan hands to a
@@ -17482,7 +17488,8 @@ pub fn paramsubst(
                 //     `red X green` instead of `red X` (the C path
                 //     joins "red blue green" first and the greedy
                 //     `b*` swallows past element boundaries).
-                let has_scalar_subscript = subscript
+                let has_scalar_subscript = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
@@ -18795,7 +18802,8 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let has_scalar_sub = subscript
+                let has_scalar_sub = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
@@ -19077,7 +19085,8 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let has_scalar_sub = subscript
+                let has_scalar_sub = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
@@ -19345,7 +19354,8 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let has_scalar_sub = subscript
+                let has_scalar_sub = !assoc_scan_isarr // c:2917
+                    && subscript
                     .as_deref()
                     .map(|s| {
                         let t = s.trim();
