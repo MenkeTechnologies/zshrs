@@ -6581,7 +6581,7 @@ gstack
 #   810b94ea26  `eval` left the NOMATCH cell set, so `eval 'x=( *nomatch )'`
 #               skipped the caller's next command. 9102 case0023 FAIL ->
 #               PASS(err).
-#   c67727aa8  `_files` sh:83 re-split in Rust instead of `eval`; under a
+#   c67727aaa8 `_files` sh:83 re-split in Rust instead of `eval`; under a
 #               widget with no `_main_complete` (no EXTENDED_GLOB) zsh's eval
 #               fails and walks the scalar as one spec. 9102 case0020 and 9101
 #               case0000 FAIL -> PASS(err); fixture files_glob_from_zle_c_widget
