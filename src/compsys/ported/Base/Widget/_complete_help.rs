@@ -457,15 +457,21 @@ fn derive_responsible_func() -> String {
             let e = el.as_str();
             !(filter.iter().any(|f| f == e) || e == "(eval)" || e == "(anon)")
         })
-        // `% *` — strip a trailing " <suffix>" (from the last space).
-        .map(|el| match el.rfind(' ') {
-            Some(pos) => el[..pos].to_string(),
-            None => el.clone(),
-        })
+        .cloned()
         .collect();
 
-    // Outer `${(@)…}` assigned to a scalar → joined with a space.
-    kept.join(" ")
+    // `"${…% *}"` — the outer expansion carries no `(@)`, so inside the
+    // quotes the array is joined with a space FIRST and `% *` then removes
+    // the shortest ` *` suffix of that one string: the last word, i.e. the
+    // `_(main_complete|complete|approximate|normal)` frame the `(i)`
+    // subscript stopped on. Stripping each element instead left that frame
+    // in, and every tag was attributed to `_normal` too. Measured on zsh
+    // 5.9.2: `c=("_x y" _z); print "${${(@)c}% *}"` prints `_x y`.
+    let joined = kept.join(" ");
+    match joined.rfind(' ') {
+        Some(pos) => joined[..pos].to_string(),
+        None => joined,
+    }
 }
 
 #[cfg(test)]
@@ -545,7 +551,7 @@ mod tests {
         let _ = setsparam("curcontext", ":completion::complete:mycmd:");
         // funcstack: [ _help_sort_tags, _tags, _files, _main_complete ]
         //   → slice[3,(i)_main_complete] = (_files _main_complete),
-        //   filtered → "_files _main_complete" joined.
+        //   joined, and `% *` drops the terminating `_main_complete`: `_files`.
         set_test_funcstack(&["_help_sort_tags", "_tags", "_files", "_main_complete"]);
         let _ = _help_sort_tags(&["files".to_string(), "directories".to_string()]);
         let funcs = assoc_get("help_funcs", ":completion::complete:mycmd:");
@@ -556,7 +562,7 @@ mod tests {
         );
         let tags = assoc_get(
             "help_tags",
-            &format!(":completion::complete:mycmd:{}", "_files _main_complete"),
+            &format!(":completion::complete:mycmd:{}", "_files"),
         );
         assert!(
             tags.contains("files directories"),
@@ -569,7 +575,9 @@ mod tests {
     #[test]
     fn derive_responsible_func_slices_and_filters() {
         // sh:84 — filter set drops `_dispatch`/`_wanted`; scan set
-        //   terminates the slice at `_main_complete`.
+        //   terminates the slice at `_main_complete`, and `% *` on the
+        //   joined words then drops that terminating frame. zsh 5.9.2 over
+        //   this exact stack prints `_files`.
         let _g = crate::test_util::global_state_lock();
         set_test_funcstack(&[
             "_help_sort_tags",
@@ -580,7 +588,7 @@ mod tests {
             "_normal",
         ]);
         let f = derive_responsible_func();
-        assert_eq!(f, "_files _main_complete");
+        assert_eq!(f, "_files");
         clear_test_funcstack();
     }
 }

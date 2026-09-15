@@ -5410,7 +5410,7 @@ impl ShellExecutor {
                 return rc;
             }
             if let Some(f) = direct_rust_fn {
-                return f(&body_args);
+                return crate::compsys::router::run_port(&name_owned, &body_args, f);
             }
             // The function body is already this closure's own copy (taken at
             // dispatch, above), and fusevm's VM owns the chunk it runs. Move

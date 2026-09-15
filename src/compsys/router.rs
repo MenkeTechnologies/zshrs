@@ -283,7 +283,92 @@ pub fn dispatch_compsys(name: &str, args: &[String]) -> Option<i32> {
     if let Some(rc) = crate::extensions::plugin_host::dispatch_compfn(name, args) {
         return Some(rc);
     }
-    try_rust_dispatch(name).map(|f| f(args))
+    try_rust_dispatch(name).map(|f| run_port(name, args, f))
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// Run port `f` for `name`, adding the frame zsh adds the first time it
+/// autoloads a SELF-CALLING definition file.
+///
+/// c:Src/exec.c:5823 `doshfunc` → `loadautofn` (c:5735): the file's text
+/// becomes the body of the call in progress. A file shaped `name() { … }` …
+/// `name "$@"` (`Base/Widget/_complete_help`, `_next_tags`,
+/// `Unix/Type/_path_commands`, …) redefines `name` and then calls it, so that
+/// call runs TWO `name` frames and every later call runs the redefined
+/// function in one. A port has no file to load and always ran one frame, so
+/// `_complete_help` — which slices `$funcstack[2,(i)_(main_complete|…)]` —
+/// attributed every tag to `_normal` as well.
+pub fn run_port(name: &str, args: &[String], f: fn(&[String]) -> i32) -> i32 {
+    if !first_call_of_self_calling_file(name) {
+        return f(args);
+    }
+    let mut shf = crate::ported::zsh_h::shfunc {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: 0,
+        },
+        filename: None,
+        lineno: 0,
+        funcdef: None,
+        redir: None,
+        sticky: None,
+        body: None,
+        redir_text: None,
+    };
+    let mut largs = Vec::with_capacity(args.len() + 1);
+    largs.push(name.to_string());
+    largs.extend_from_slice(args);
+    // The file's closing `name "$@"` is an ordinary command: noreturnval 0.
+    crate::ported::exec::doshfunc(&mut shf, largs, false, || f(args))
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// True exactly once per `name`: on its first call, when `$fpath`'s file for
+/// it is a self-calling definition ([`is_self_calling_definition`]). The memo
+/// stands in for zsh replacing the autoload stub with the inner definition,
+/// and keeps the file read off every later call.
+fn first_call_of_self_calling_file(name: &str) -> bool {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static CALLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let called = CALLED.get_or_init(|| Mutex::new(HashSet::new()));
+    if !called
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(name.to_string())
+    {
+        return false;
+    }
+    let mut fdir: Option<String> = None;
+    let mut dump = None;
+    // c:6219 `getfpfunc(…, test_only)` — a pure probe that fills the dir.
+    if crate::ported::exec::getfpfunc(name, &mut fdir, None, 1, &mut dump).is_none() {
+        return false;
+    }
+    let Some(dir) = fdir else {
+        return false;
+    };
+    std::fs::read_to_string(std::path::Path::new(&dir).join(name))
+        .is_ok_and(|text| is_self_calling_definition(name, &text))
+}
+
+/// !!! WARNING: RUST-ONLY HELPER !!!
+///
+/// A definition file that defines `name` and ends by calling it with the
+/// caller's arguments — the shape whose first autoload runs two frames.
+fn is_self_calling_definition(name: &str, text: &str) -> bool {
+    let def = format!("{name}() {{");
+    let def_spaced = format!("{name} () {{");
+    let defines = text.lines().map(str::trim_start).any(|l| l.starts_with(&def) || l.starts_with(&def_spaced));
+    let last_command = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .last();
+    defines && last_command == Some(format!("{name} \"$@\"").as_str())
 }
 
 /// True if a plugin override (ABI v4) OR a built-in Rust port handles
@@ -596,6 +681,19 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stock self-calling files: `Base/Widget/_complete_help` opens with
+    /// `#compdef -k …`, defines helpers after the main function, and ends in
+    /// the call. A file that only defines, or only calls a helper, loads in
+    /// one frame.
+    #[test]
+    fn self_calling_definition_shape() {
+        let complete_help = "#compdef -k complete-word \\C-xh\n\n_x() {\n  eval \"$_comp_setup\"\n}\n\n_x_sort() {\n  :\n}\n\n_x \"$@\"\n";
+        assert!(is_self_calling_definition("_x", complete_help));
+        assert!(!is_self_calling_definition("_x", "_x() {\n  :\n}\n"));
+        assert!(!is_self_calling_definition("_x", "#autoload\n\nlocal a\n_x_helper \"$@\"\n"));
+        assert!(!is_self_calling_definition("_x", "_xy() {\n}\n_xy \"$@\"\n"));
+    }
 
     #[test]
     fn rejects_non_underscore_names() {

@@ -57,7 +57,7 @@ use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetpar
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_compdescribe;
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{isset, options, EXTENDEDGLOB, MAX_OPS};
 
 fn make_ops() -> options {
     options {
@@ -138,6 +138,27 @@ fn extract_match_parts(arr: &[String]) -> Vec<String> {
             String::from_utf8(out).unwrap_or_default()
         })
         .collect()
+}
+
+/// sh:112/115 — the extraction [`extract_match_parts`] implements, evaluated
+/// by the shell for the case it does not cover: `EXTENDED_GLOB` unset.
+///
+/// `##` and `(#b)` are extended-glob syntax. `_main_complete`'s
+/// `$_comp_setup` sets the option, so an ordinary completion takes the native
+/// path. A completion widget that calls `_values` / `_describe` directly runs
+/// without it, and zsh then reads `##` literally: `(M)` keeps nothing, the
+/// word handed to `compadd -D` is empty, and the entry is dropped —
+/// `zle -C w complete-word f; f() { _values d 'alpha[x]:v:_h' }` adds no
+/// match in zsh. Running the upstream expansion leaves the option in charge.
+fn extract_match_parts_via_shell(arr_name: &str) -> Vec<String> {
+    declare_locals(&["_cs_describe_words"], 0);
+    let script = format!(
+        r#"_cs_describe_words=( "${{(@)${{(@M)${{(@){arr_name}}}##([^:\\]|\\?)##}}//\\(#b)(?)/$match[1]}}" )"#
+    ) + "\n";
+    let _ = crate::ported::exec::execute_script(&script);
+    let words = getaparam("_cs_describe_words").unwrap_or_default();
+    let _ = unsetparam("_cs_describe_words");
+    words
 }
 
 /// sh:79-83 / sh:92-96 — stash one grouped-pre-pass argument into `name`.
@@ -461,10 +482,13 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                         cadd.push(mn.clone());
                     }
                     cadd.push("-".to_string());
-                    let words = if mats_name.is_some() {
-                        extract_match_parts(&mats_vals)
-                    } else {
-                        extract_match_parts(&vals)
+                    // sh:112/115 — the native extraction is the meaning of
+                    // `##` / `(#b)` under EXTENDED_GLOB only.
+                    let words = match (&mats_name, isset(EXTENDEDGLOB)) {
+                        (Some(_), true) => extract_match_parts(&mats_vals),
+                        (None, true) => extract_match_parts(&vals),
+                        (Some(mn), false) => extract_match_parts_via_shell(mn),
+                        (None, false) => extract_match_parts_via_shell(&_strs),
                     };
                     cadd.extend(words);
                     // The two upstream branches are merged into one call here,
@@ -642,6 +666,38 @@ mod tests {
                 "-b:block special file".to_string()
             ]
         );
+    }
+
+    /// sh:115 without EXTENDED_GLOB (a completion widget calling `_values`
+    /// directly, spec-fuzz 9101 case0008): zsh reads `##` literally, so every
+    /// word is empty and `compadd -D` drops the entry. Measured on zsh 5.9.2
+    /// over `(alpha:x 'b\:c:d' plain)`: `alpha b:c plain` with the option,
+    /// three empty words without it.
+    #[test]
+    fn match_parts_follow_extended_glob() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        let had_extendedglob = isset(EXTENDEDGLOB);
+        setaparam(
+            "_a_t4",
+            vec!["alpha:x".to_string(), "b\\:c:d".to_string(), "plain".to_string()],
+        );
+        let _ = crate::ported::exec::execute_script("setopt extendedglob\n");
+        assert_eq!(
+            extract_match_parts_via_shell("_a_t4"),
+            vec!["alpha".to_string(), "b:c".to_string(), "plain".to_string()]
+        );
+        let _ = crate::ported::exec::execute_script("unsetopt extendedglob\n");
+        assert_eq!(
+            extract_match_parts_via_shell("_a_t4"),
+            vec![String::new(), String::new(), String::new()]
+        );
+        let _ = unsetparam("_a_t4");
+        // The option table is process-global: leave it as found, or every
+        // later test that globs runs without EXTENDED_GLOB.
+        let restore = if had_extendedglob { "setopt" } else { "unsetopt" };
+        let _ = crate::ported::exec::execute_script(&format!("{restore} extendedglob\n"));
     }
 
     /// Y05describe #2: `'(( a b:descb "c\:c:descc" ))'` cannot be assigned
