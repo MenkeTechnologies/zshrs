@@ -3935,9 +3935,18 @@ pub fn complistmatches(
         && mselect >= 0;
     MNEW.store(if mnew { 1 } else { 0 }, Ordering::SeqCst);
 
-    // c:2031-2040 — empty list / no-zle bail-out.
+    // c:2031-2040 — empty list / no-zle bail-out:
+    //   if (!listdat.nlines || (mselect >= 0 &&
+    //       !(isset(USEZLE) && !termflags && complastprompt && *complastprompt)))
+    // Under NO_ALWAYS_LAST_PROMPT `complastprompt` is "" (compcore.c:325), so
+    // menu selection is refused and the matches are only listed.
     let usezle = isset(USEZLE);
-    if listdat_nlines == 0 || (mselect >= 0 && !(usezle/* && !termflags && complastprompt valid */))
+    let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
+    let complastprompt_set = crate::ported::zle::complete::COMPLASTPROMPT
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| !g.is_empty()))
+        .unwrap_or(false);
+    if listdat_nlines == 0 || (mselect >= 0 && !(usezle && termflags == 0 && complastprompt_set))
     {
         SHOWINGLIST.store(0, Ordering::SeqCst);
         LISTSHOWN.store(0, Ordering::SeqCst);

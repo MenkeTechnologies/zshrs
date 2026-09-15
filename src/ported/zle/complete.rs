@@ -286,6 +286,7 @@ comp_string_global!(pub COMPCONTEXT,   "compcontext",   59);
 comp_string_global!(pub COMPPARAMETER, "compparameter", 60);
 comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
 comp_string_global!(pub COMPPATINSERT, "comppatinsert", 69);
+comp_string_global!(pub COMPLASTPROMPT, "complastprompt", 57);
 comp_string_global!(pub COMPVARED,     "compvared",     73);
 
 /// Port of `char **compwords` (complete.c:45) — argv-style array of

@@ -197,6 +197,16 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     crate::ported::zle::complete::COMPLISTMAX
         .store(env_iparam("LISTMAX") as i64, Ordering::Relaxed); // c:324
 
+    // c:325 — `complastprompt = ztrdup(isset(ALWAYSLASTPROMPT) ? "yes" : "")`.
+    // The global outlives `$compstate`, which is gone once the completion
+    // function returns; complistmatches reads it at c:2033.
+    let lastprompt_v = if opt_isset("ALWAYSLASTPROMPT") != 0 { "yes" } else { "" };
+    if let Ok(mut g) = crate::ported::zle::complete::COMPLASTPROMPT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+    {
+        *g = lastprompt_v.into();
+    }
     set_compstate_str(
         // c:326
         "last_prompt",
@@ -1912,6 +1922,18 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
             .lock()
         {
             *g = post_patins;
+        }
+    }
+
+    // `complastprompt` (complete.c:57) is `VAL()`-bound to
+    // `$compstate[last_prompt]` (complete.c:1293); mirror a completer's
+    // write into the global the same way.
+    if let Some(post_lastprompt) = post("last_prompt") {
+        if let Ok(mut g) = crate::ported::zle::complete::COMPLASTPROMPT
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = post_lastprompt;
         }
     }
 
