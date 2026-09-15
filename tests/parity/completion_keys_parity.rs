@@ -552,6 +552,39 @@ fn compinit_through_a_zwc_digest_registers_the_same_comps() {
     assert_eq!(z_def, r_def, "the `autoload -rUz` stub for _zzauto differs");
 }
 
+/// A `zerr` inside a completion widget's own function must NOT abort the
+/// edit line. The widget is `zle -C`, so there is no `_main_complete` and no
+/// `eval` above the error to swallow it; what clears ERRFLAG_ERROR in zsh is
+/// docomplete's `zcontext_restore()` (Src/Zle/zle_tricky.c:873), whose
+/// parse_context_restore ends in `errflag &= ~ERRFLAG_ERROR`
+/// (Src/parse.c:354). Without that, zlecore's `!errflag` gate
+/// (Src/Zle/zle_main.c:1128) ended the line: the typed `Z` then ran alone.
+///
+/// Verdict: the command that runs after Return is `print KEPTZ`, so its
+/// output line `KEPTZ` appears only when the buffer survived the widget.
+#[test]
+fn a_zerr_in_a_completion_widget_keeps_the_edit_line() {
+    let driver = format!(
+        "{OPEN}
+zpty -w w 'unsetopt beep'
+zpty -w w 'zmodload zsh/complete'
+zpty -w w '_kwf() {{ readonly RO=1; RO=2; compadd x }}'
+zpty -w w 'zle -C _kw list-choices _kwf'
+zpty -w w 'bindkey \"^Xw\" _kw'
+sleep 1
+zpty -w -n w 'print KEPT'
+sleep 1
+zpty -w -n w $'\\C-xw'
+sleep 2
+zpty -w -n w $'Z\\r'
+sleep 2
+{DRAIN}
+if [[ $all == *$'\\n'KEPTZ* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+"
+    );
+    assert_same_verdict(&driver, "K", "the edit line survived a zerr inside a zle -C widget");
+}
+
 /// Guard for the fixture itself: if these three files ever stop
 /// existing the completion cases above would all report "no" on both
 /// sides and pass as false agreement.

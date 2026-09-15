@@ -1124,6 +1124,15 @@ pub fn docomplete(lst: i32) -> i32 {
         crate::ported::zle::zle_utils::foredel(chl, crate::ported::zle::zle_h::CUT_RAW); // c:694
         ZLEMETACS.store(ocs, Ordering::SeqCst); // c:695
     }
+    // c:697 `freeheap();` — no Rust counterpart.
+    // c:698-700 — "Save the lexer state, in case the completion code uses the
+    // lexer somewhere": `zcontext_save();`. Paired with the c:873 restore
+    // below, whose parse_context_restore (c:Src/parse.c:354) also clears
+    // ERRFLAG_ERROR — the ONLY thing that keeps a zerr raised inside a
+    // `zle -C` / `compdef -k` completer body (no `_main_complete` / `eval`
+    // frame above it to swallow it) from reaching zlecore's `!errflag` gate
+    // (c:Src/Zle/zle_main.c:1128) and aborting the edit line.
+    crate::ported::context::zcontext_save(); // c:700
     // c:701-702 — `if (inwhat == IN_ENV) lincmd = 0;`. Missing from the port:
     // completing the VALUE of an environment assignment (`FOO=<TAB>`) still
     // reported command position, so `_main_complete` dispatched the
@@ -1512,6 +1521,10 @@ pub fn docomplete(lst: i32) -> i32 {
         // completion.
         ret = docompletion(&s_word, lst, lincmd);
     }
+
+    // c:872-873 — "Reset the lexer state, pop the heap.": `zcontext_restore();`
+    // (c:874 `popheap();` has no Rust counterpart).
+    crate::ported::context::zcontext_restore(); // c:873
 
     // c:878 — `runhookdef(AFTERCOMPLETEHOOK, &dat)`. Same dispatch
     // shape as the BEFORECOMPLETEHOOK call above; passes a 2-element
