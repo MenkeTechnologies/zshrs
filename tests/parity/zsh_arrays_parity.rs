@@ -1319,3 +1319,25 @@ mod array_assignment_needs_its_closing_paren {
         assert_parity("x=(); print ${#x}");
     }
 }
+
+/// c:Src/exec.c:2595-2623 (addvars) — `if (errflag) { state->pc = opc;
+/// return; }` after prefork and globlist: an array assignment whose element
+/// expansion failed never reaches assignaparam. zshrs assigned an empty array,
+/// so `local x; x=( *(zz) )` turned the scalar `x` into `array-local` — which
+/// is how `_describe desc '(( a b ))'` lost the one empty match zsh offers
+/// (Y05describe #2).
+mod failed_array_assignment_keeps_the_old_parameter {
+    use super::*;
+
+    #[test]
+    fn a_glob_error_leaves_type_and_value() {
+        assert_parity(r#"x=s; eval 'x=( *(zz) )'; print -r -- "rc=$? ${(t)x} [$x]""#);
+        assert_parity(r#"x=s; eval 'x+=( *(zz) )'; print -r -- "rc=$? ${(t)x} [$x]""#);
+        assert_parity(r#"f() { local w; eval 'w=( a *(zz) )'; print -r -- "rc=$? ${(t)w}" }; f"#);
+    }
+
+    #[test]
+    fn a_nomatch_leaves_type_and_value() {
+        assert_parity(r#"y=(a b); eval 'y=( zshrs_nomatch_q* )'; print -r -- "rc=$? ${(t)y} [$y]""#);
+    }
+}

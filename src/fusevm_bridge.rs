@@ -830,6 +830,18 @@ fn flatten_array_value(v: Value, out: &mut Vec<String>) {
     }
 }
 
+/// c:Src/exec.c:2595-2598, 2605-2608, 2620-2623 (addvars) — `if (errflag)
+/// { state->pc = opc; return; }` after ecgetlist, prefork and globlist. An
+/// array assignment whose element expansion failed (`x=( *(zz) )`, a NOMATCH)
+/// never reaches assignaparam, so the parameter keeps its old type and value.
+/// Shared gate of BUILTIN_SET_ARRAY / BUILTIN_APPEND_ARRAY.
+fn array_assignment_expansion_failed() -> bool {
+    (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::zsh_h::ERRFLAG_ERROR)
+        != 0
+        || with_executor(|exec| exec.current_command_glob_failed.get())
+}
+
 /// pop/flatten prologue of BUILTIN_SET_ARRAY / BUILTIN_APPEND_ARRAY.
 fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<String>) {
     let n = argc as usize;
@@ -4485,6 +4497,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for v in popped {
             flatten_array_value(v, &mut values);
         }
+        if array_assignment_expansion_failed() {
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
+        }
         // Bash sparse: a full `a=(...)` reassign resets the array to dense
         // (drops any prior holes from subscript-assign / unset).
         if crate::dash_mode::sparse_arrays() {
@@ -4784,6 +4800,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut values: Vec<String> = Vec::new();
         for v in popped {
             flatten_array_value(v, &mut values);
+        }
+        if array_assignment_expansion_failed() {
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
         }
         let blocked = with_executor(|exec| -> bool {
             // Assoc append `m+=(k1 v1 ...)`: merge the (k,v) pairs into

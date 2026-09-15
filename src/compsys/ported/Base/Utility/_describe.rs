@@ -140,56 +140,40 @@ fn extract_match_parts(arr: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// sh:80 `eval local "_a_$_try$_i;_a_$_try$_i"'='$1` — for the literal
-/// form the WHOLE `( … )` text is spliced into the eval'd command line,
-/// so the shell PARSER sees it: `\ ` joins two fields into one element,
-/// quotes group, `$…` expands. Run the same eval instead of guessing at
-/// its result.
+/// sh:79-83 / sh:92-96 — stash one grouped-pre-pass argument into `name`.
 ///
-/// The previous `split_whitespace` approximation broke every caller that
-/// writes a description with a space in it — `_condition`'s
-/// `'( -a:existing\ file … )'` (sh:18) came back as `-a:existing\` +
-/// `file`, one element per word.
-fn eval_array_literal(literal: &str) -> Vec<String> {
-    // The name the eval assigns into has no upstream counterpart — sh:80
-    // evaluates straight into the `local`-declared `_a_$_try$_i`. Declaring it
-    // is still required, for the same reason that line says `local`: an
-    // undeclared assignment inside a function creates a level-0 parameter and
-    // prints `_describe: array parameter _cs_lit_dst created globally in
-    // function _describe` for every literal `( … )` argument once a completer
-    // has set WARN_CREATE_GLOBAL for its own body.
-    declare_locals(&["_cs_lit_dst"], PM_ARRAY);
-    let _ = crate::ported::exec::execute_script(&format!("_cs_lit_dst={}", literal));
-    let out = getaparam("_cs_lit_dst").unwrap_or_default();
-    let _ = crate::ported::params::unsetparam("_cs_lit_dst");
-    out
-}
-
-/// Resolve one grouped-pre-pass argument to array values: either a
-/// literal `(a b c)` list (sh:79-80) or the contents of the named array
-/// param (sh:81-82).
-fn resolve_array_arg(arg: &str) -> Vec<String> {
-    if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
-        eval_array_literal(arg)
+/// sh:80 `eval local "_a_$_try$_i;_a_$_try$_i"'='$1` splices the WHOLE
+/// `( … )` literal into the eval'd command line, so the shell PARSER decides
+/// where elements end: `\ ` joins two fields into one element, quotes group,
+/// `$…` expands (`_condition` sh:18 relies on that).
+///
+/// sh:82 `eval local "_a_$_try$_i;_a_$_try$_i"'=( "${'$1'[@]}" )'` builds the
+/// stash by SPLATTING the caller's array, and a quoted splat of an UNSET name
+/// is one EMPTY element (c:Src/subst.c:3603-3610 leaves `isarr` 0 and `val`
+/// ""), where an empty ARRAY splats to nothing.
+///
+/// Both arms run the upstream line as a real `eval`, so the stash `name` is
+/// declared by the `local` inside it (never beforehand — a bare `local` of an
+/// existing name prints it when TYPESET_SILENT is off). A literal the shell
+/// cannot assign — `'(( a b ))'` fails with `(eval):1: unknown file
+/// attribute` — leaves `name` the SCALAR `''` from the `local` half, and the
+/// eval clears the error so `_describe` carries on; sh:115 then splats that
+/// scalar as one empty match (Y05describe #2).
+fn stash_array_arg(name: &str, arg: &str) -> Vec<String> {
+    declare_locals(&["_cs_describe_src"], 0);
+    let _ = crate::ported::params::setsparam("_cs_describe_src", arg);
+    let script = if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
+        // sh:80/93 `eval local "_a_$_try$_i;_a_$_try$_i"'='$1`
+        format!("eval local \"{name};{name}\"'='$_cs_describe_src\n")
     } else {
-        getaparam(arg).unwrap_or_default()
-    }
-}
-
-/// sh:82 `eval local "_a_$_try$_i;_a_$_try$_i"'=( "${'$1'[@]}" )'` — the
-/// per-call stash is built by SPLATTING the caller's array, and a quoted
-/// splat of an UNSET name is one EMPTY element (c:Src/subst.c:3603-3610
-/// leaves `isarr` 0 and `val` ""), where an empty ARRAY splats to nothing.
-/// Only this stash sees that distinction; every other array read in the port
-/// wants the plain value, so it stays on [`resolve_array_arg`].
-fn stash_array_arg(arg: &str) -> Vec<String> {
-    if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
-        return resolve_array_arg(arg);
-    }
-    match getaparam(arg) {
-        Some(v) => v,
-        None => vec![String::new()],
-    }
+        // sh:82/95 `eval local "_a_$_try$_i;_a_$_try$_i"'=( "${'$1'[@]}" )'`
+        format!("eval local \"{name};{name}\"'=( \"${{'$_cs_describe_src'[@]}}\" )'\n")
+    };
+    let _ = crate::ported::exec::execute_script(&script);
+    let _ = unsetparam("_cs_describe_src");
+    getaparam(name)
+        .or_else(|| getsparam(name).map(|s| vec![s]))
+        .unwrap_or_default()
 }
 
 /// Reach `_describe` as a BARE COMMAND WORD, the way every upstream caller
@@ -421,12 +405,9 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                 while p < _oargv.len() {
                     // sh:76-84 — value array → _a_<try><i>.
                     let _strs = format!("_a_{}{}", _try, _i);
-                    // sh:80/82 — `eval local "_a_$_try$_i;_a_$_try$_i"'=…'`.
-                    // The `local` half of that line was dropped in the port,
-                    // so each stash was created at level 0 and announced
-                    // itself under WARN_CREATE_GLOBAL.
-                    declare_locals(&[_strs.as_str()], PM_ARRAY);
-                    let vals = stash_array_arg(&_oargv[p]); // sh:82
+                    // sh:80/82 — `eval local "_a_$_try$_i;_a_$_try$_i"'=…'`;
+                    // the `local` inside the eval scopes the stash.
+                    let vals = stash_array_arg(&_strs, &_oargv[p]); // sh:79-83
                     setaparam(&_strs, vals.clone());
                     a_names.push(_strs.clone());
                     _argv.push(_strs.clone());
@@ -443,8 +424,7 @@ pub fn _describe_impl(args: &[String]) -> i32 {
                     } else {
                         let mn = format!("_a_{}{}", _try, _i);
                         // sh:93/95 — same `eval local "…"` line as sh:80/82.
-                        declare_locals(&[mn.as_str()], PM_ARRAY);
-                        let mv = stash_array_arg(&_oargv[p]); // sh:95
+                        let mv = stash_array_arg(&mn, &_oargv[p]); // sh:92-96
                         setaparam(&mn, mv.clone());
                         a_names.push(mn.clone());
                         _argv.push(mn.clone());
@@ -647,20 +627,42 @@ mod tests {
     ///
     /// Needs a live executor because the resolution IS an eval.
     #[test]
-    fn resolve_array_arg_parses_inline_literal() {
+    fn stash_array_arg_parses_inline_literal() {
         let _g = crate::test_util::global_state_lock();
         let mut exec = crate::vm_helper::ShellExecutor::new();
         let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
         assert_eq!(
-            resolve_array_arg("(a b c)"),
+            stash_array_arg("_a_t1", "(a b c)"),
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
         assert_eq!(
-            resolve_array_arg("( -a:existing\\ file -b:block\\ special\\ file )"),
+            stash_array_arg("_a_t2", "( -a:existing\\ file -b:block\\ special\\ file )"),
             vec![
                 "-a:existing file".to_string(),
                 "-b:block special file".to_string()
             ]
+        );
+    }
+
+    /// Y05describe #2: `'(( a b:descb "c\:c:descc" ))'` cannot be assigned
+    /// (`(eval):1: unknown file attribute`). The `local` half of sh:80 still
+    /// ran, so the stash is the scalar `''` — one empty element — and the
+    /// eval's error is cleared rather than left to abort `_describe`.
+    #[test]
+    fn stash_array_arg_unassignable_literal_leaves_one_empty_element() {
+        let _g = crate::test_util::global_state_lock();
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        crate::ported::utils::errflag.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            stash_array_arg("_a_t3", "(( a b:descb \"c\\:c:descc\" ))"),
+            vec![String::new()]
+        );
+        assert_eq!(
+            crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR,
+            0,
+            "c:Src/builtin.c:6221 — eval clears ERRFLAG_ERROR"
         );
     }
 }

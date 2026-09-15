@@ -1549,16 +1549,14 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
         // the fusevm Chunk dispatch (via exec accessors).
-        let rc = if let Some(rc) =
-            crate::compsys::router::dispatch_compsys(&fn_name_owned, &largs_for_body[1..])
-        {
-            // Plugin override (ABI v4) wins over the built-in Rust port.
-            // C convention: largs[0] = fn name, [1..] = real argv.
-            rc
-        } else {
-            crate::ported::exec::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
-                .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
-        };
+        // BODY ONLY: the enclosing `doshfunc` below is c:835's single
+        // frame. `dispatch_function_call` wraps a second doshfunc, which
+        // pushed the completion function onto $funcstack twice —
+        // `compdef -K _fk …` saw `(_fk2 _fk _fk)` where zsh has
+        // `(_fk2 _fk)`. run_function_body keeps the Rust-port and autoload
+        // short-circuits. C convention: largs[0] = fn name, [1..] = argv.
+        let rc = crate::ported::exec::run_function_body(&fn_name_owned, &largs_for_body[1..])
+            .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
         // Capture `$compstate` before the enclosing doshfunc scope ends.
         if let Ok(tab) = paramtab_hashed_storage().lock() {
             if let Some(h) = tab.get("compstate") {
