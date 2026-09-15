@@ -503,3 +503,31 @@ mod argv_prefork_before_glob {
         run("(exit 5); print x(a) =nosuchcmd_zz");
     }
 }
+
+/// c:Src/glob.c:3633-3643 `zshtokenize` turns a backslash before a
+/// metacharacter into `Bnull`, which is a token, so c:Src/pattern.c:605-610
+/// sends that component through full compilation and c:650-664 hands the
+/// scanner the UNQUOTED string. A backslash before any other character is
+/// data and stays in the literal. The PAT_PURES fast path kept the
+/// backslashes of `A\(B\)` and stat'ed a directory that does not exist, so
+/// `_path_files` never descended into `A(B)/` (Y01completion #16).
+mod escaped_metachar_in_a_literal_dir {
+    use super::*;
+
+    #[test]
+    fn globsubst_descends_through_a_quoted_component() {
+        let d = mkdir_with_files(&["A(B)/C/f", "A*B/C/f", "A[B/C/f", "Ab/C/f"]);
+        for pat in [
+            r"A\(B\)/*",
+            r"A\*B/*",
+            r"A\[B/*",
+            r"A\b/*",
+            r"A\(B\)/C/*",
+        ] {
+            assert_parity_in(
+                d.path(),
+                &format!("setopt nullglob; y='{pat}'; c=( $~y ); print -rl -- \"[$y]\" $c"),
+            );
+        }
+    }
+}

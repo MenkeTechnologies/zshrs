@@ -1054,6 +1054,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         // pure). `\X` is an escaped literal — skip both chars.
         let mut cut = s.len();
         let mut at_token = false;
+        // The component's literal spelling. c:Src/glob.c:3633-3643
+        // `zshtokenize` turns `\` before a `ztokens` metacharacter into
+        // `Bnull`, a token, so C compiles that component and c:650-664
+        // hands the scanner the UNQUOTED string (`A\(B\)` -> `A(B)`). Before
+        // any other character the backslash is data and stays. Copying the
+        // escapes verbatim stat'ed `A\(B\)`, so a quoted directory component
+        // never matched (Y01completion #16).
+        let mut literal_s = String::with_capacity(s.len());
         let mut it = s.char_indices();
         while let Some((i, c)) = it.next() {
             if c == '/' {
@@ -1061,7 +1069,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 break;
             }
             if c == '\\' {
-                it.next(); // escaped literal — both chars stay literal
+                match it.next() {
+                    Some((_, n)) if crate::ported::lex::ztokens.contains(n) => literal_s.push(n),
+                    Some((_, n)) => {
+                        literal_s.push('\\');
+                        literal_s.push(n);
+                    }
+                    None => literal_s.push('\\'),
+                }
                 continue;
             }
             if matches!(c, '*' | '?' | '[' | '(' | '|' | '~' | '^' | '#' | '<') {
@@ -1069,6 +1084,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 at_token = true;
                 break;
             }
+            literal_s.push(c);
         }
         // c:1414-1416 — `.` and `..` stay pure even under case-insensitive or
         // approximate matching, so a `../x` path component still descends by
@@ -1076,7 +1092,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         let dot_or_dotdot = matches!(&s[..cut], "." | ".."); // c:1414-1415
                                                              // c:610 — pure iff we stopped at end or '/', not at a glob meta.
         if !at_token && (case_or_approx == 0 || dot_or_dotdot) {
-            let literal = s[..cut].as_bytes().to_vec();
+            let literal = literal_s.into_bytes();
             drop(p);
             let mlen = literal.len() as i64;
             if let Some(end) = endexp.as_deref_mut() {
