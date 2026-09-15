@@ -1045,6 +1045,126 @@ pub fn set_sh_lineno(line: u64) {
     crate::ported::lex::set_lineno(line);
 }
 
+/// `while getopts OPTSTRING var; do case $var in … esac; done` — the whole
+/// loop, for a port whose upstream function parses its options that way.
+///
+/// Port of `bin_getopts` (c:Src/builtin.c:5656-5776), called repeatedly until
+/// it returns 1, starting from the `zoptind = 1` / `optcind = 0` that
+/// `doshfunc` gives every function entry. `on_opt(var, optarg)` receives what
+/// each call stores in `var` — `"o"` for `-o`, `"+o"` for `+o`, `"?"` for an
+/// invalid option or a missing argument (`":"` for the latter when the
+/// optstring opens with `:`) — so a caller matches the same strings its
+/// upstream `case` arms do and ignores the rest.
+///
+/// Three getopts behaviours a per-word match cannot express:
+///   * CLUSTERING — the characters of one word are options one at a time, so
+///     `-default-` is `-d -e -f -a -u -l -t -` (c:5704-5706);
+///   * RECOVERY — an invalid option is reported with `zwarn` (not
+///     `zwarnnam`, so the prefix is `fn:LINE:`) and the loop CARRIES ON
+///     (c:5715-5731);
+///   * `+` words are options too unless POSIX_BUILTINS is set (c:5696).
+///
+/// `$OPTARG` receives every value C stores in `zoptarg`. Returns OPTIND-1,
+/// the count `shift OPTIND-1` removes.
+pub fn getopts_loop(
+    args: &[String],
+    optstring: &str,
+    sh_line: u64,
+    mut on_opt: impl FnMut(&str, Option<&str>),
+) -> usize {
+    use crate::ported::params::setsparam;
+    let quiet = optstring.starts_with(':'); // c:5681
+    let optstr = &optstring[quiet as usize..]; // c:5682
+    let posix = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS); // c:5667
+    let warn = |msg: String| {
+        set_sh_lineno(sh_line);
+        crate::ported::utils::zwarn(&msg);
+    };
+    let mut zoptind = 1usize; // c:5673
+    let mut optcind = 0usize; // c:5674
+    loop {
+        if args.len() < zoptind {
+            return zoptind - 1; // c:5676-5678
+        }
+        let mut str: Vec<char> = args[zoptind - 1].chars().collect();
+        if str.is_empty() {
+            return zoptind - 1; // c:5687-5688
+        }
+        if optcind >= str.len() {
+            // c:5689-5694
+            optcind = 0;
+            zoptind += 1;
+            if args.len() < zoptind {
+                return zoptind - 1;
+            }
+            str = args[zoptind - 1].chars().collect();
+        }
+        if optcind == 0 {
+            // c:5695-5703
+            if str.len() < 2 || (str[0] != '-' && (posix || str[0] != '+')) {
+                return zoptind - 1;
+            }
+            if str.len() == 2 && str[0] == '-' && str[1] == '-' {
+                zoptind += 1;
+                return zoptind - 1;
+            }
+            optcind = 1;
+        }
+        let opch = str[optcind]; // c:5704
+        optcind += 1; // c:5706
+        let sign = if str[0] == '+' { "+" } else { "-" }; // c:5707-5711
+        let optbuf = if str[0] == '+' { format!("+{}", opch) } else { opch.to_string() };
+        // c:5715 — check for legality
+        let pos = if opch == ':' { None } else { optstr.find(opch) };
+        let Some(pos) = pos else {
+            if posix {
+                optcind = 0;
+                zoptind += 1;
+            }
+            if quiet {
+                let _ = setsparam("OPTARG", &format!("{}{}", sign, opch)); // c:5725
+            } else {
+                warn(format!("bad option: {}{}", sign, opch)); // c:5727
+                let _ = setsparam("OPTARG", ""); // c:5729
+            }
+            on_opt("?", None); // c:5723
+            continue;
+        };
+        // c:5735 — check for required argument
+        if optstr.as_bytes().get(pos + opch.len_utf8()) == Some(&b':') {
+            let optarg: String = if optcind == str.len() {
+                if args.len() <= zoptind {
+                    // c:5737-5753
+                    if posix {
+                        optcind = 0;
+                        zoptind += 1;
+                    }
+                    if quiet {
+                        let _ = setsparam("OPTARG", &format!("{}{}", sign, opch));
+                        on_opt(":", None);
+                    } else {
+                        let _ = setsparam("OPTARG", "");
+                        warn(format!("argument expected after {}{} option", sign, opch));
+                        on_opt("?", None);
+                    }
+                    continue;
+                }
+                zoptind += 1; // c:5755
+                args[zoptind - 1].clone()
+            } else {
+                str[optcind..].iter().collect() // c:5757
+            };
+            optcind = 0; // c:5765
+            zoptind += 1; // c:5766
+            let _ = setsparam("OPTARG", &optarg); // c:5768
+            on_opt(&optbuf, Some(&optarg)); // c:5774
+        } else {
+            let _ = setsparam("OPTARG", ""); // c:5771
+            on_opt(&optbuf, None); // c:5774
+        }
+    }
+}
+
 /// `eval "$comp"` — the way every compsys dispatcher invokes the completer
 /// named by `$_comps` / `$_patcomps` (`_dispatch` sh:31/63/76/87,
 /// `_normal` sh:32).
@@ -1415,6 +1535,39 @@ mod lineno_scope_tests {
     /// (`Src/utils.c:301` — `&& lineno`), so a port body must start at 0:
     /// an un-annotated statement has to report NO line rather than inherit
     /// the caller's, which belongs to a different file.
+    #[test]
+    fn getopts_loop_clusters_and_recovers_like_bin_getopts() {
+        let _g = crate::test_util::global_state_lock();
+        let run = |args: &[&str], optstring: &str| {
+            let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            let mut seen: Vec<String> = Vec::new();
+            let n = getopts_loop(&args, optstring, 7, |opt, optarg| {
+                seen.push(format!("{}={}", opt, optarg.unwrap_or("")));
+            });
+            (n, seen)
+        };
+        // A nested `_alternative` action gets `$expl[@]`: `-J` and every
+        // letter of `-default-` are invalid options, reported and skipped,
+        // and the first spec word ends the options (OPTIND-1 == 2).
+        let (n, seen) = run(&["-J", "-default-", "t:d:(a b)"], "O:C:");
+        assert_eq!(n, 2);
+        assert_eq!(seen.len(), 9, "{:?}", seen);
+        assert!(seen.iter().all(|s| s == "?="));
+        // Attached and separated arguments; `--` is consumed.
+        let (n, seen) = run(&["-Oargs", "-C", "ctx", "--", "-"], "O:C:");
+        assert_eq!(n, 4);
+        assert_eq!(seen, ["O=args", "C=ctx"]);
+        // `+x` is an option outside POSIX_BUILTINS and stores `+x`; a
+        // missing argument is `?` and ends the walk.
+        let (n, seen) = run(&["+x", "-t"], "t:x");
+        assert_eq!(n, 2);
+        assert_eq!(seen, ["+x=", "?="]);
+        // `-ot-` clusters: `o`, then `t` swallows the rest of the word.
+        let (n, seen) = run(&["-ot-", "rest"], "oOt:12JVx");
+        assert_eq!(n, 1);
+        assert_eq!(seen, ["o=", "t=-"]);
+    }
+
     #[test]
     fn fn_scope_zeroes_lineno_for_the_port_body() {
         let _g = crate::test_util::global_state_lock();

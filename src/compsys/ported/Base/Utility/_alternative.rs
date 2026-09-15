@@ -109,7 +109,6 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let mut subopts: Vec<String> = Vec::new();
     let mut curcontext = saved_curcontext.clone();
-    let mut idx = 0usize;
 
     // sh:7-13  getopts O:/C:
     //
@@ -139,30 +138,30 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
     // column is padded with `-E<n>` dummy matches (`CRT_DUMMY`,
     // `Src/Zle/computil.c:754-768`): one lost column cost 91 matches, so
     // `-<TAB><TAB>` offered "all 2080 possibilities" against zsh's 2171.
-    while idx < args.len() {
-        let a = &args[idx];
-        if a == "-O" && idx + 1 < args.len() {
-            // Read the named array `${(@P)OPTARG}`
-            let _ = setsparam("OPTARG", &args[idx + 1]); // c:builtin.c:5776
-            subopts = getaparam(&args[idx + 1]).unwrap_or_default();
-            idx += 2;
-        } else if a == "-C" && idx + 1 < args.len() {
-            let _ = setsparam("OPTARG", &args[idx + 1]); // c:builtin.c:5776
-                                                         // Replace last `:`-field of curcontext
-            if let Some(i) = curcontext.rfind(':') {
-                curcontext.truncate(i);
+    //
+    // The walk is `shared::getopts_loop`, so an option word the optstring
+    // does not know is clustered and reported, not treated as the end of
+    // the options: a nested `_alternative` action receives `$expl[@]`
+    // (sh:65-70), and zsh prints `_alternative:7: bad option: -J` followed
+    // by one diagnostic per letter of `-default-` before completing.
+    // sh:14 `shift OPTIND-1`
+    let mut idx = crate::compsys::ported::shared::getopts_loop(&args, "O:C:", 7, |opt, optarg| {
+        let optarg = optarg.unwrap_or("");
+        match opt {
+            // sh:9  O) subopts=( "${(@P)OPTARG}" ) ;;
+            "O" => subopts = getaparam(optarg).unwrap_or_default(),
+            // sh:10  C) curcontext="${curcontext%:*}:$OPTARG" ;;
+            "C" => {
+                if let Some(i) = curcontext.rfind(':') {
+                    curcontext.truncate(i);
+                }
+                curcontext.push(':');
+                curcontext.push_str(optarg);
+                let _ = setsparam("curcontext", &curcontext);
             }
-            curcontext.push(':');
-            curcontext.push_str(&args[idx + 1]);
-            let _ = setsparam("curcontext", &curcontext);
-            idx += 2;
-        } else if a.starts_with('-') && a != "-" && a != "--" {
-            // Unknown option terminator
-            break;
-        } else {
-            break;
+            _ => {}
         }
-    }
+    });
 
     // sh:16
     if idx < args.len() && (args[idx] == "-" || args[idx] == "--") {

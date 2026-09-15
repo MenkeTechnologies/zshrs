@@ -296,63 +296,20 @@ pub fn _describe_impl(args: &[String]) -> i32 {
     // The diagnostic carries no command name because C's getopts uses
     // `zwarn`, not `zwarnnam` (c:Src/builtin.c:5736) — hence the rendered
     // prefix is `_describe:21:`, not `_describe:getopts:21:`.
-    const OPTSTRING: &str = "oOt:12JVx";
-    let mut idx = 0usize;
-    while idx < args.len() {
-        let tok = args[idx].clone();
-        // getopts stops at the first word that is not an option, at `--`,
-        // and at a bare `-`.
-        if !tok.starts_with('-') || tok.len() < 2 || tok == "--" {
-            break;
-        }
-        let chars: Vec<char> = tok.chars().skip(1).collect();
-        let mut ci = 0usize;
-        let mut consumed_next = false;
-        while ci < chars.len() {
-            let c = chars[ci];
-            ci += 1;
-            match OPTSTRING.find(c) {
-                None => {
-                    crate::compsys::ported::shared::set_sh_lineno(21);
-                    crate::ported::utils::zwarn(&format!("bad option: -{}", c));
-                }
-                Some(pos) => {
-                    if OPTSTRING.as_bytes().get(pos + 1) == Some(&b':') {
-                        // Option takes an argument: the rest of THIS word if
-                        // any is left, otherwise the next word.
-                        let rest: String = chars[ci..].iter().collect();
-                        ci = chars.len();
-                        let val = if !rest.is_empty() {
-                            rest
-                        } else if idx + 1 < args.len() {
-                            consumed_next = true;
-                            args[idx + 1].clone()
-                        } else {
-                            String::new()
-                        };
-                        if c == 't' {
-                            _type = val; // sh:27
-                        }
-                    } else {
-                        match c {
-                            'o' => _type = "options".to_string(), // sh:22
-                            'O' => {
-                                _type = "options".to_string(); // sh:24
-                                _noprefix = true; // sh:25
-                            }
-                            // sh:28-29 — `-1 -2 -J -V -x` are collected and
-                            // passed through to `_description` verbatim.
-                            _ => _jvx12.push(format!("-{}", c)),
-                        }
-                    }
-                }
+    let mut idx = crate::compsys::ported::shared::getopts_loop(args, "oOt:12JVx", 21, |opt, optarg| {
+        match opt {
+            "o" => _type = "options".to_string(), // sh:22
+            "O" => {
+                _type = "options".to_string(); // sh:24
+                _noprefix = true; // sh:25
             }
+            "t" => _type = optarg.unwrap_or("").to_string(), // sh:27
+            // sh:28-29 — `-1 -2 -J -V -x` are collected and passed through
+            // to `_description` verbatim.
+            "1" | "2" | "J" | "V" | "x" => _jvx12.push(format!("-{}", opt)),
+            _ => {}
         }
-        idx += 1;
-        if consumed_next {
-            idx += 1;
-        }
-    }
+    });
 
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
