@@ -4305,7 +4305,18 @@ pub fn join_psfx(
                     // c:2531-2540 — drop o, splice joinl into its slot.
                     drop(o_node);
                 }
-                remaining = Some(joinl); // c:2541
+                // c:2539-2540 `o = joinl; join = 0;` then c:2590-2591
+                // `p = o; o = o->next;` — joinl becomes the previous node and
+                // the walk resumes AFTER it. Feeding joinl back through
+                // sub_match consumed the new list a second time and marked the
+                // prefix CLF_MISS where C does not.
+                remaining = joinl.next.take();
+                unsafe {
+                    *result_tail_ptr = Some(joinl);
+                    let nxt = &mut (*result_tail_ptr).as_mut().unwrap().next;
+                    result_tail_ptr = nxt as *mut _;
+                }
+                have_prev = true;
                 continue 'walk;
             }
 
@@ -7440,5 +7451,66 @@ mod tests {
              chain is being deep-copied per call again (c:591-593)",
             elapsed
         );
+    }
+
+    /// c:Src/Zle/compmatch.c:2539-2540 then c:2590-2591 — when `join_sub`
+    /// builds a cline for the differing rest, `join_psfx` makes it the
+    /// previous node (`o = joinl; join = 0;` … `p = o; o = o->next;`) and walks
+    /// on AFTER it. The port fed `joinl` back through `sub_match`, which
+    /// consumed the new list a second time and left the wrong prefix list.
+    ///
+    /// Inputs are the clines zsh builds for `compadd -M 'm:{a-zA-Z}={A-Za-z}'
+    /// - ABC Abc abc` with PREFIX=aB, captured with lldb from
+    /// `join_clines` (Y02compmatch #27). The expected merge is zsh's own
+    /// result at `cline_str` in that run.
+    #[test]
+    fn join_psfx_resumes_after_a_joined_sub_cline() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        use crate::ported::zle::comp_h::{CLF_DIFF, CLF_LINE, CLF_MATCHED, CLF_NEW};
+        let bm = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        *bm.lock().unwrap() = None;
+        add_bmatchers(
+            crate::ported::zle::complete::parse_cmatcher("t", "m:{a-zA-Z}={A-Za-z}").as_deref(),
+        );
+
+        // (line, llen, word, wlen) for each prefix node.
+        let build = |parts: &[(Option<&str>, i32, &str, i32)]| {
+            let mut prefix: Option<Box<Cline>> = None;
+            for &(l, ll, w, wl) in parts.iter().rev() {
+                let mut n = get_cline(l.map(str::to_string), ll, Some(w.to_string()), wl, None, 0, CLF_MATCHED);
+                n.next = prefix;
+                prefix = Some(n);
+            }
+            let mut top = get_cline(None, 0, None, 0, None, 0, CLF_MATCHED | CLF_NEW);
+            top.prefix = prefix;
+            Some(top)
+        };
+        let abc_upper = build(&[(Some("a"), 1, "A", 1), (None, 1, "BC", 2)]);
+        let abc_mixed = build(&[(Some("a"), 1, "A", 1), (Some("B"), 1, "b", 1), (None, 0, "c", 1)]);
+        let abc_lower = build(&[(None, 0, "a", 1), (Some("B"), 1, "b", 1), (None, 0, "c", 1)]);
+
+        let mut joined = join_clines(None, abc_upper);
+        joined = join_clines(joined, abc_mixed);
+        joined = join_clines(joined, abc_lower);
+        let top = joined.expect("merged cline");
+
+        let mut got = Vec::new();
+        let mut cur = top.prefix.as_deref();
+        while let Some(n) = cur {
+            got.push((n.word.clone(), n.wlen, n.llen, n.flags & (CLF_DIFF | CLF_LINE)));
+            cur = n.next.as_deref();
+        }
+        assert_eq!(
+            got,
+            vec![
+                (Some("A".to_string()), 1, 1, CLF_DIFF | CLF_LINE),
+                (Some("B".to_string()), 1, 1, 0),
+                (Some("C".to_string()), 1, 0, CLF_DIFF),
+            ],
+            "zsh merges ABC/Abc/abc under PREFIX=aB into A + B + C"
+        );
+        assert_eq!((top.min, top.max), (3, 3));
+        *bm.lock().unwrap() = None;
     }
 }

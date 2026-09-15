@@ -609,42 +609,21 @@ pub fn before_complete(lst: &mut i32) -> i32 {
 
     // c:488-489 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
     //              zlecs = zlell;` — re-entering an in-word completion
-    //              restores the cursor to `lastend` (clamped to `zlell`).
+    //              moves the cursor back to `lastend` (clamped to `zlell`).
     //
-    // KNOWN DIVERGENCE, deliberately not made literal — see below.
-    //
-    // C names `zlecs`/`zlell` here, i.e. the INTERACTIVE editor buffer, and
-    // its comment at c:483-487 says why ("Currently this hook runs before
-    // metafication. This is the only hook of the three defined here of which
-    // that is true."). It can do that because C has ONE line buffer: the
-    // `lastend` that `do_single` records (`lastend = zlemetacs`,
-    // compresult.c:479/672) indexes the same characters `zlecs` does.
-    //
-    // This port splits that buffer — `zle_main::ZLELINE`/`ZLECS` is the
-    // editor's, `compcore::ZLELINE` + `ZLEMETALINE`/`ZLEMETACS` are
-    // completion's — and `lastend` is written in the COMPLETION buffer's
-    // coordinates. Storing it into `zle_main::ZLECS` was measured to break
-    // the second TAB of a menu-select round outright: with the store
-    // enabled, `docomplete` bailed before `do_completion` ever ran (no
-    // `callcompfunc` reached on TAB 2), and `cd /<TAB><TAB>s` lost the whole
-    // interactive menu. `lastend` is simply not a valid editor-cursor value
-    // here.
-    //
-    // So the store stays on `ZLEMETACS`, which is where the port has always
-    // put it. That is not what C writes, but it is inert (docomplete's
-    // `metafy_line()` at zle_tricky.rs:815 recomputes it from the editor
-    // buffer straight afterwards) rather than actively wrong.
-    //
-    // Honouring c:488 literally requires `lastend` to be maintained in
-    // editor-buffer coordinates — i.e. `compresult`'s two `lastend =
-    // zlemetacs` assignments need an editor-space counterpart, or the port
-    // needs to stop splitting the line buffer. Neither is a compcore.rs
-    // change; until one lands, this line cannot be ported faithfully.
+    // c:483-487: this hook "runs before metafication", so C writes the EDITOR
+    // cursor. In this port that is `zle_main::ZLECS`, which docomplete copies
+    // into the completion buffer right after the hook returns
+    // (zle_tricky.rs, the block before `metafy_line()`). C stores the
+    // metafied `lastend` into the unmetafied `zlecs` as is; so does this.
+    // The store used to land on `ZLEMETACS`, which that metafy_line()
+    // recomputes, so the move never happened: after `tst aB<TAB>` left the
+    // cursor at `a|BC`, the next TAB completed `a` + `BC` where zsh
+    // completes `aBC`.
     if (fromcomp.load(Ordering::Relaxed) & crate::ported::zle::comp_h::FC_INWORD) != 0 {
-        let le = lastend.load(Ordering::Relaxed); // c:488 `zlecs = lastend`
-        let ll = ZLEMETALL.load(Ordering::Relaxed);
-        let new_cs = if le > ll { ll } else { le }; // c:489 `zlecs = zlell`
-        ZLEMETACS.store(new_cs, Ordering::Relaxed);
+        let le = lastend.load(Ordering::Relaxed).max(0) as usize; // c:488 `zlecs = lastend`
+        let ll = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(le.min(ll), Ordering::SeqCst); // c:489 `zlecs = zlell`
     }
 
     // c:494-496 — automenu trigger.
@@ -9766,5 +9745,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// c:Src/Zle/compcore.c:483-489 — `before_complete` runs before
+    /// metafication and moves the EDITOR cursor to `lastend` when the last
+    /// completion left it inside the word (`FC_INWORD`), clamped to the line
+    /// length. docomplete copies the editor cursor into the completion buffer
+    /// after the hook, so the store has to land on `zle_main::ZLECS`. It used to
+    /// land on `ZLEMETACS`, which that copy overwrites: the second TAB of
+    /// `tst aB` (cursor left at `a|BC`) completed PREFIX=a SUFFIX=BC where zsh
+    /// completes PREFIX=aBC (Y02compmatch #27, #40).
+    #[test]
+    fn before_complete_in_word_moves_the_editor_cursor_to_lastend() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        use crate::ported::zle::zle_main::{ZLECS as EDCS, ZLELL as EDLL};
+        let s = Ordering::SeqCst;
+        if let Some(m) = MINFO.get() {
+            m.lock().unwrap().cur = None;
+        }
+        MENUCMP.store(0, s);
+        startauto.store(0, s);
+
+        // `tst aBC`, cursor at `a|BC`, last completion ended at 7.
+        EDLL.store(7, s);
+        EDCS.store(5, s);
+        lastend.store(7, s);
+        fromcomp.store(crate::ported::zle::comp_h::FC_INWORD, s);
+        let mut lst = COMP_COMPLETE;
+        assert_eq!(before_complete(&mut lst), 0);
+        assert_eq!(EDCS.load(s), 7, "c:488 — zlecs = lastend");
+
+        // c:489 — clamped to zlell.
+        EDCS.store(5, s);
+        lastend.store(9, s);
+        before_complete(&mut lst);
+        assert_eq!(EDCS.load(s), 7, "c:489 — zlecs = zlell when lastend > zlell");
+
+        // Without FC_INWORD the cursor stays where the user left it.
+        EDCS.store(5, s);
+        fromcomp.store(0, s);
+        before_complete(&mut lst);
+        assert_eq!(EDCS.load(s), 5, "no FC_INWORD, no move");
+
+        lastend.store(0, s);
+        EDCS.store(0, s);
+        EDLL.store(0, s);
     }
 }
