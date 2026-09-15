@@ -6609,3 +6609,53 @@ gstack
 #
 # OPEN — 9102 case0024 (`_history-complete-older`, `tab,tab,ctrl-g`): grids
 #   match, painted bytes differ at offset 176. Not examined.
+
+# ============================================================================
+# 2026-09-15 NATIVE SWEEP — stride tab1, `tab,tab,down`, derived utility sweep
+# ============================================================================
+# Pins: zshrs debug at 0b11157986 (sha256 dde9ed4252d2e7e5), private copy of
+# the zpwr dump (3df8afb6c6b9335d), zsh 5.9.2, `--skip-missing --confirm 1`.
+#
+# 1. `--sequences tab1` over every 20th discovered case (414 buffers, --jobs 4):
+#      # 412 passed, 2 failed, 414 cell(s)
+#    'grc '   +12 in the ask-prompt count — the HELPDIR/INFOPATH/MANPATH band
+#             recorded above, not new.
+#    'pidof ' live process list, not new.
+#
+# 2. `--keys tab,tab,down` over every 40th discovered case (207 buffers):
+#      # 206 passed, 1 failed, 207 cell(s)
+#    'ssh-agent ' `_parameters` listing — the same count band.
+#
+# 3. `--fn-sweep --fn-derive` (every router arm called directly, bare and
+#    with `-J zpfgrp`, --jobs 2):
+#      # 311 passed, 76 failed, 393 call(s)
+#    FIXED in efada3961a / 6eedae5a00, re-verified on a build carrying them
+#    (20 calls, `--fn-only`/`--fn-derive-only` on those names: 18 pass):
+#      5e5ca020b9  _first _bash_completions _globqual_delims — status 1 vs 0
+#      7187796a1c  _absolute_command_paths — inner functions unrouted
+#      09c64b2a44  _hosts _x_display — `command not found: getent`
+#      4a02b47219  _services — `command not found: chkconfig`
+#      27f97a3daf  _wakeup_capable_devices — `command not found: acpitool`
+#    Residue of those:
+#      39ef74d63e  _absolute_command_paths — same 5544 matches, but zsh's
+#                  `_lastdescr` carries a trailing 'file' zshrs does not.
+#      7a077463ab  _as_if with NO arguments — zsh lists 6900 files, zshrs 32
+#                  after the fix (no real caller passes zero arguments).
+#    OPEN, not examined in this sweep:
+#      4b9b1804ac  _assign _autocd _brace_parameter _cmdstring _command
+#                  _condition … (21 calls) — `_parameters` count band.
+#      a2b997bf45  __arguments; 822a0c3fb8 _email_addresses; ba4967baa5 _math;
+#                  6325f8772d _umountable — `_comp_tags` order / spacing, which
+#                  depends on the `$#funcstack > _tags_level` gate.
+#      21055f3134  _bpf_filters _object_classes; 3de4771a42 _xt_session_id —
+#                  `expl` left set after the call.
+#      8eeb73f7bd  _zmodload — `_lastdescr` lacks 'files'.
+#      65ada75973  _login_classes; 07bced45c4/2e6ab4409d _sequence;
+#      c5d55188ae  _physical_volumes — zsh prints the missing-file /
+#                  missing-command diagnostic, the ports stay silent.
+#      a3290ef831  _history_complete_word; 7a077463ab _mac_applications —
+#                  the probe never ran on the zshrs side.
+#      953605ded6 _volume_groups, e9387a177c _zfs_pool, 65ada75973 — per-host
+#                  tools; see the sweep log for the rows.
+#      bfe7f62107/1fc24cf64e _shadow/_unshadow, afd3016e17 _expand -J,
+#      f0e85c8d42 _wanted -2 -V — REF-REFUSED (zsh 5.9.2 rejects the call).
