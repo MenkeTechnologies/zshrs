@@ -6217,29 +6217,9 @@ gstack
 #               tab2_undo/tab_down_undo/tab_accept_undo across the battery.
 #
 # ---------------------------------------------------------------------------
-# RESOLVED by dd61c02640 — "SECOND COMPLETION": after ANY completion, an edit,
-#        then a second completion, zshrs drew no listing where zsh drew one.
+# OPEN — "SECOND COMPLETION": after ANY completion, an edit, then a second
+#        completion, zshrs draws no listing where zsh draws one.
 # ---------------------------------------------------------------------------
-#
-#   Re-measured 2026-09-14 at 7f0c69113a, --jobs 1, pinned binary: all six
-#   affected cells PASS (`chmod ` `mv ` `mkdir ` `rmdir ` `ln ` `env `, also at
-#   --settle 1200), and so do the `cp ` `grep ` `ls ` controls.
-#
-#   It was never list state. First-parent bisect over 7c77805470..7d3e59d1f1
-#   with `--case 'mv ' --keys tab,bs,tab`: f9553ed4a2 FAIL (fp 3e189505ba),
-#   dd61c02640 PASS. The split followed the command NAME because every
-#   failing name is a zsh/files module builtin and `cp` is not: the ported
-#   `_set_command`/`_shadow` answered `$+builtins[X]` from the static
-#   `createbuiltintable()`, which links every module's builtins, where C's
-#   getpmbuiltin (c:Src/Modules/parameter.c:784-799) reports only loaded,
-#   enabled ones. `env ` still carries the separate HELPDIR band (fp
-#   a2b623249f on the pre-fix build), not this defect.
-#
-#   Pinned by tests/compsys_fixtures/second_completion_module_builtin_command.json
-#   (mv cell, chmod variant, cp control): holds on the fixed build, MOVES on
-#   a pinned f9553ed4a2 build.
-#
-#   Original record, kept for context:
 #
 #   scripts/comptab_parity.py --case 'mv ' --keys tab,bs,tab
 #
