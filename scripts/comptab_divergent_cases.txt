@@ -6985,3 +6985,84 @@ gstack
 #     BEFORE its native match arm — which is sh:17-88's
 #     `(( $+functions[_email-<name>] )) ||` guard expressed in Rust. A user
 #     plugin is picked up and run today; it is now pinned by a unit test.
+
+# ══════════════════════════════════════════════════════════════════════════
+# `expl` SCALAR-vs-ARRAY PREMISE — REFUTED 2026-09-18.  Do not re-chase it.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# (a) THE PREMISE WAS WRONG.  275 `declare_locals` sites exist under
+#     src/compsys/ported/; 73 of them name `expl`, ALL with `kind 0`
+#     (PM_SCALAR).  Classified against each port's stock file: 72
+#     STOCK-SCALAR, 1 STOCK-ARRAY.  So `kind 0` is FAITHFUL — stock spells
+#     plain `local expl`.  (A first classifier said 71/1/1; its regex used
+#     `[^=]*` before the name and so missed `_urls` sh:40
+#     `local ipre scheme host user uhosts ret=1 expl match glob suf`, where a
+#     `name=value` word precedes `expl`.  Tokenise the `local`/`typeset`
+#     line; do not regex across it.)
+#
+#     The lone STOCK-ARRAY hit is a PER-FILE artefact, not a defect:
+#     Completion/Unix/Type/_email_addresses declares `expl` TWICE — sh:48
+#     `local -a expl ali res filter` in one function and sh:93
+#     `local plugin rcfile muttrc expl sep ret fret` in `_email_addresses()`
+#     at sh:90.  The port's site `_email_addresses.rs:467` sits inside
+#     `pub fn _email_addresses` (rs:445), which ports sh:90 — so the SCALAR
+#     at sh:93 is its spec, and the port's own comment at rs:465 already
+#     says `ali` (sh:48) belongs to a different function.  Classify per
+#     FUNCTION scope, never per file.
+#
+# (b) EMPIRICAL DISPROOF.  `--fn-only _bpf_filters,_physical_volumes,\
+#     _mac_applications --fn-derive-only <same>`, pinned build of a672515387:
+#
+#       # _bpf_filters       port       0     2     0     0     0  DIVERGES
+#       # _mac_applications  port       0     2     0     0     0  DIVERGES
+#       # _physical_volumes  port       2     0     0     0     0
+#       # 2 passed, 4 failed, 6 call(s)
+#
+#     `_physical_volumes` PASSES 2/2 while declaring `expl` with the same
+#     `kind 0` — retyping cannot be the cure for a cell that already passes.
+#     `_mac_applications`'s two failures are fingerprint 7a077463ab
+#     (`ref/$ cat -- $ZPF_OUT` vs `test/$ true`), a harness-echo row, NOT
+#     `expl`; same shape already recorded for `_as_if`.
+#
+# (c) THE ONE REAL CELL IS SHADOW ALLOCATION, NOT TYPING.  `_bpf_filters`,
+#     fingerprint 21055f3134:
+#
+#       zsh  :   expl[0] =
+#       zshrs:   expl[1] = ''
+#
+#     `_zpf_dump` (scripts/comptab_parity.py:5940-5954) prints `name[COUNT]`
+#     ONLY when `${(tP)n}` contains `array`/`association`, and `name = "val"`
+#     otherwise — so BOTH sides report an ARRAY and the difference is one
+#     empty element, not a type.  Stock `_bpf_filters` declares no `expl` at
+#     all; its spec is full of `: _message -e …` actions.  Stock `_message`
+#     sh:6 `local expl ret=1 tag` absorbs the write, so zsh leaves the
+#     caller's `expl` untouched.  In zshrs `_message.rs:143` declares the
+#     same three names, but `declare_locals` (shared.rs:53-80) allocates a
+#     shadow only when `pm.level < locallevel`, and the port has no frame of
+#     its own — `router.rs:444` dispatches `_message_impl`, the RAW body,
+#     bypassing `call_compfn` -> `dispatch_function_call` -> `doshfunc`
+#     (c:Src/exec.c:6254/6260).  So no shadow is created and `_next_label`'s
+#     `set -A $2` (stock sh:17) lands in the PROBE's `expl`.
+#     NOT FIXED, and not a quick one: routing `_message` through the wrapper
+#     collides with `_message.rs:119`, which reserves `_message_impl` for
+#     callers that must not re-enter dispatch.
+#
+# (d) THE SCOPE-LEAK THEORY WAS SEPARATELY REFUTED.  A fresh parameter is
+#     zshcalloc'ed with no level stamp (c:Src/params.c:1157); only
+#     `typeset_single` stamps locals (c:Src/builtin.c:2572); the reuse arm
+#     keeps the existing level (c:1154); `scanendscope` deletes only
+#     `pm->level > locallevel` (c:5907).  Probes agree on both shells, so a
+#     blanket port scope guard CANNOT eat `_description`'s write to its
+#     caller's `$2` array.  That guard was built and measured: these cells
+#     did not move (0 passed / 4 failed before and after).  Diff kept at
+#     scratchpad/r3R/r3R_param_scope_guard.diff; it wraps only
+#     `run_port`'s non-first-call branch, which this path never takes.
+#
+# (e) TWO HARNESS HAZARDS, both cost real time here:
+#     * `cargo build … | tail -5` MASKS the exit status — a failed build
+#       reported success and nearly produced a stale-binary measurement.
+#       Build to a log and check `EXIT=$?`.
+#     * `--fn-derive-only NAME` ALONE still runs every hand-written probe.
+#       The restrict form needs BOTH `--fn-only NAME` and
+#       `--fn-derive-only NAME`.  (`--keep` does not exist; `--raw-diff`
+#       is what prints the row-level diff.)
