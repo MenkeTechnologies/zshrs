@@ -3645,6 +3645,14 @@ pub fn boot_(m: *const module) -> i32 {
     let _ = crate::ported::module::addhookfunc("complete", complete_hook);
     let _ = crate::ported::module::addhookfunc("before_complete", before_complete_hook);
     let _ = crate::ported::module::addhookfunc("after_complete", after_complete_hook);
+    // c:1773 — `addhookfunc("accept_completion", (Hookfn) accept_last);`.
+    // C casts `int accept_last(void)` (c:compresult.c:1284) to Hookfn and the
+    // two hook arguments are simply never read by the callee; this transmute
+    // IS that cast. No thunk is written for it because a thunk would be a
+    // Rust-original name under src/ported/ (build.rs:155).
+    let accept_last_as_hook: crate::ported::zsh_h::Hookfn =
+        unsafe { std::mem::transmute(crate::ported::zle::compresult::accept_last as fn() -> i32) };
+    let _ = crate::ported::module::addhookfunc("accept_completion", accept_last_as_hook);
     let _ = crate::ported::module::addhookfunc("list_matches", list_matches_hook);
     let _ = crate::ported::module::addhookfunc("invalidate_list", invalidate_list_hook);
     0 // c:1767
@@ -3714,6 +3722,12 @@ pub fn cleanup_(m: *const module) -> i32 {
     // Mirrors the registration: deletehookfunc removes one Hookfn entry.
     let _ = crate::ported::module::deletehookfunc("list_matches", list_matches_hook);
     let _ = crate::ported::module::deletehookfunc("invalidate_list", invalidate_list_hook);
+    // c:1787 — `deletehookfunc("accept_completion", (Hookfn) accept_last);`.
+    // Same cast as the registration in boot_; deletehookdeffunc matches on the
+    // pointer value (c:module.c:963), so it must be the identical transmute.
+    let accept_last_as_hook: crate::ported::zsh_h::Hookfn =
+        unsafe { std::mem::transmute(crate::ported::zle::compresult::accept_last as fn() -> i32) };
+    let _ = crate::ported::module::deletehookfunc("accept_completion", accept_last_as_hook);
     0 // c:1783
 }
 
@@ -3766,6 +3780,43 @@ fn lock_vec(g: &'static std::sync::OnceLock<Mutex<Vec<String>>>) -> &'static Mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:Src/Zle/complete.c:1773 — `addhookfunc("accept_completion",
+    /// (Hookfn) accept_last)`. The hook's NAME is `accept_completion`
+    /// (c:Src/Zle/zle_main.c:2229, `HOOKDEF("accept_completion", NULL, 0)`);
+    /// the port looked it up as `accept_comp` in `acceptandmenucomplete`
+    /// and `boot_` attached no function to it at all, so
+    /// `runhookdef(ACCEPTCOMPHOOK, NULL)` (c:Src/Zle/zle_tricky.c:358) ran
+    /// an empty chain and `accept_last` never fired from that widget.
+    #[test]
+    fn boot_registers_accept_last_on_the_accept_completion_hook() {
+        let _g = crate::test_util::global_state_lock();
+        // c:zle_main.c:2306 — the six ZLE HOOKDEFs must exist first.
+        let _ = crate::ported::zle::zle_main::boot_(std::ptr::null());
+        let _ = boot_(std::ptr::null());
+        let h = crate::ported::module::gethookdef("accept_completion");
+        assert!(
+            !h.is_null(),
+            "c:zle_main.c:2229 — the ACCEPTCOMPHOOK hookdef is named accept_completion"
+        );
+        let want = crate::ported::zle::compresult::accept_last as fn() -> i32 as usize;
+        let mut found = false;
+        unsafe {
+            let funcs = (*h).funcs;
+            assert!(!funcs.is_null(), "c:1773 — boot_ must attach a Hookfn");
+            let mut node = (*funcs).first.as_ref();
+            while let Some(n) = node {
+                if n.dat == want {
+                    found = true;
+                }
+                node = n.next.as_ref();
+            }
+        }
+        assert!(
+            found,
+            "c:1773 — accept_last must be the accept_completion hook function"
+        );
+    }
 
     /// c:1479-1494 — `get_compqstack` emits ONE char per open quoting level:
     /// `*ptr++ = *comp_quoting_string(*cqp)` (c:1489-1490), i.e. the FIRST

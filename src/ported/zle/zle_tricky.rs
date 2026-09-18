@@ -384,7 +384,7 @@ pub fn acceptandmenucomplete(args: &[String]) -> i32 {
     // c:358 — `runhookdef(ACCEPTCOMPHOOK, NULL)`. Fires registered
     // accept-completion hooks (used by `_menu`, etc.) before
     // advancing the menu cursor.
-    let h_accept = gethookdef("accept_comp");
+    let h_accept = gethookdef("accept_completion");
     if !h_accept.is_null() {
         crate::ported::module::runhookdef(h_accept, std::ptr::null_mut());
     }
