@@ -8290,44 +8290,55 @@ pub fn mb_metacharlenconv(s: &[u8]) -> (usize, Option<char>, String) {
     // codec, so c:5583 `mbrtowc(&wc, &inchar, 1, mbsp)` returns 1 with `wc` =
     // the byte. C needs no such test because it calls the real `mbrtowc`; the
     // Rust UTF-8 decoder below is locale-blind, so it has to ask.
-    let mb_single_byte = unsafe {
-            // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
-            // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
-            // the wide character, so `\303\255` is TWO characters under
-            // LC_ALL=C, not `í`. Rust's UTF-8 decoder has no such notion, so
-            // the locale has to be asked directly. Inlined rather than
-            // factored out: src/ported/ is a port and build.rs rejects any fn
-            // with no C counterpart (its stated remedy #1 is to inline).
-            //
-            // Rust never calls `setlocale` on its own, so run it once from the
-            // environment before asking `nl_langinfo` — otherwise the startup
-            // default ("C") would shadow the process's LC_CTYPE.
-            let _ = *MB_LOCALE_READY;
-            let cs_ptr = libc::nl_langinfo(libc::CODESET);
-            if cs_ptr.is_null() {
-                false
-            } else {
-                let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
-                !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
-            }
-        };
-    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true)
-        || mb_single_byte
-        || s[0] <= 0x7f
-    {
+    // Rust never calls `setlocale` on its own, so run it once from the
+    // environment; otherwise `mbrtowc` below would still be the startup
+    // "C" codec and shadow the process's LC_CTYPE.
+    let _ = *MB_LOCALE_READY;
+    // c:5613 — `if (!isset(MULTIBYTE) || (unsigned char) *s <= 0x7f)`:
+    // treat as a single byte. The option is read from the live slot with
+    // its declared default (on, c:Src/options.c:197) rather than through
+    // `isset()`, which maps a never-written slot to false and would invert
+    // the default in any context that skips init's `emulate()`.
+    //
+    // There is deliberately NO codeset test here, because C has none: it
+    // calls `mbrtowc` and lets the locale decide. A `CODESET != "UTF-8"`
+    // short-circuit used to send EVERY non-UTF-8 locale down the
+    // single-byte path, but `zh_CN.GB2312` and `ja_JP.eucJP` are multibyte
+    // (`MB_CUR_MAX` 2 and 3), so `${s[1]}` yielded one byte where zsh
+    // yields the whole two-byte character. Single-byte locales still take
+    // the single-byte path — `mbrtowc` itself consumes exactly one byte
+    // under `LC_ALL=C` and returns that byte as the wide character.
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) || s[0] <= 0x7f {
         // c:5616 — the byte itself is the scalar.
         return (1, Some(s[0] as char), encode(&s[..1]));
     }
     // c:5635 → mb_metacharlenconv_r: feed bytes to mbrtowc until one
-    // character completes (c:5577-5585). Rust's UTF-8 validation is the
-    // mbrtowc analogue — the shortest valid prefix is one character.
-    let hi = (s.len()).min(4);
-    for end in 1..=hi {
-        if let Ok(v) = std::str::from_utf8(&s[..end]) {
-            if let Some(c) = v.chars().next() {
-                return (end, Some(c), v.to_string());
-            }
+    // character completes (c:5577-5585).
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
+    let mut n: usize = 0;
+    while n < s.len() {
+        let inchar = s[n];
+        n += 1;
+        let mut wc: libc::wchar_t = 0;
+        let ret = unsafe {
+            mbrtowc(
+                &mut wc,
+                &inchar as *const u8 as *const libc::c_char,
+                1,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+        if ret == MB_INVALID {
+            // c:5579-5580 — break out and fall through to the single-byte
+            // answer below.
+            break;
         }
+        if ret == MB_INCOMPLETE {
+            // c:5581-5582 — keep feeding bytes.
+            continue;
+        }
+        // c:5583-5585 — one complete character of `n` bytes.
+        return (n, char::from_u32(wc as u32), encode(&s[..n]));
     }
     // c:5592-5593 — no valid multibyte sequence: treat as a single byte.
     (1, None, encode(&s[..1]))
@@ -8379,39 +8390,81 @@ pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
     if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
         return bytes.len();
     }
+    // The decode is `mbrtowc`, not Rust's UTF-8 validator, because C's is
+    // LOCALE-driven (c:5689). `zh_CN.GB2312` and `ja_JP.eucJP` are multibyte
+    // codesets that are not UTF-8: zsh counts `\xc4\xe3\xba\xc3\xca\xc0` as
+    // 3 characters there, and a UTF-8-only scan counted 6. `setlocale` has
+    // to have run first or `mbrtowc` would still be the startup "C" codec.
+    let _ = *MB_LOCALE_READY;
     let mut num: usize = 0; // c:5658 size_t ret / counter
+    let mut num_in_char: usize = 0; // c:5660
+    let mut complete = true; // c:5660
     let mut i: usize = 0;
+    let mut laststart: usize = 0; // c:5657
+                                  // c:5670 — memset(&mb_shiftstate, 0, sizeof(mb_shiftstate)).
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
     while i < bytes.len() {
+        // c:5672-5676 — the stream is already demetafied above, so C's
+        // inline `*ptr == Meta ? *++ptr ^ 32` step has nothing left to undo.
+        let inchar = bytes[i];
+        i += 1;
+
         // c:5678-5687 — 7-bit US-ASCII subset: one character, skip mbrtowc.
-        if bytes[i] <= 0x7f {
+        if complete && inchar <= 0x7f {
             num += 1;
-            i += 1;
+            laststart = i;
+            num_in_char = 0;
             continue;
         }
-        // c:5691 — mbrtowc: take the shortest valid UTF-8 character.
-        let mut num_in_char: usize = 1; // c:5701 trailing-octet span
-        let hi = (i + 4).min(bytes.len());
-        for end in (i + 1)..=hi {
-            if std::str::from_utf8(&bytes[i..end]).is_ok() {
-                num_in_char = end - i;
-                break;
-            }
-        }
-        if width {
-            // c:5717-5723 — WCWIDTH of the assembled character (≥0).
-            let wcw = std::str::from_utf8(&bytes[i..i + num_in_char])
-                .ok()
-                .and_then(|s| s.chars().next())
-                .and_then(unicode_width::UnicodeWidthChar::width)
-                .unwrap_or(0);
-            num += wcw;
+
+        // c:5689 — `ret = mbrtowc(&wc, &inchar, 1, &mb_shiftstate);`.
+        let mut wc: libc::wchar_t = 0;
+        let ret = unsafe {
+            mbrtowc(
+                &mut wc,
+                &inchar as *const u8 as *const libc::c_char,
+                1,
+                &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+            )
+        };
+
+        if ret == MB_INCOMPLETE {
+            // c:5691-5708 — trailing octets of a character still being
+            // assembled; counted once at c:5736 if it never completes.
+            num_in_char += 1;
+            complete = false;
         } else {
-            // c:5727 — one character (complete, or invalid treated as one).
-            num += 1;
+            if ret == MB_INVALID {
+                // c:5710-5714 — reset the shift state and treat the byte
+                // that started the run as ONE character. This arm runs
+                // BEFORE the width test, so an invalid byte counts 1 even
+                // when a WIDTH was asked for: `${(m)#}` over six invalid
+                // bytes is 6 in zsh, and taking `WCWIDTH` of an
+                // undecodable byte (0, via `unwrap_or`) made it 0 here.
+                mbs = MBSTATE_ZERO;
+                i = laststart + 1;
+                num += 1;
+            } else if width {
+                // c:5715-5726 — WCWIDTH(wc); C turns "not printable" (-1)
+                // into 0 and adds nothing.
+                let wcw = char::from_u32(wc as u32)
+                    .and_then(unicode_width::UnicodeWidthChar::width)
+                    .unwrap_or(0);
+                if wcw > 0 {
+                    num += wcw;
+                }
+            } else {
+                // c:5727-5728 — one character.
+                num += 1;
+            }
+            laststart = i;
+            num_in_char = 0;
+            complete = true;
         }
-        i += num_in_char;
     }
-    num
+    // c:5735-5736 — "If incomplete, treat remainder as trailing single
+    // character".
+    num + usize::from(num_in_char != 0)
 }
 
 /// Port of `mb_charlenconv_r()` from `Src/utils.c:5747` — C decl `mb_charlenconv_r(const char *s, int slen, wint_t *wcp, mbstate_t *mbsp)`.

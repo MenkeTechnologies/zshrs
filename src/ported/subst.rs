@@ -13647,27 +13647,19 @@ pub fn paramsubst(
                     // else → byte count. Inlined here because the
                     // src/ported/ port-only check forbids
                     // Rust-original helper fns.
-                    let utf8 = unsafe {
-                        // Ensure setlocale has been called from the
-                        // environment so nl_langinfo reflects the
-                        // user's LC_*. Rust test harnesses don't run
-                        // setlocale by default, so the C-locale
-                        // codeset (US-ASCII) would shadow the
-                        // process-environment LC_CTYPE setting.
-                        // Cached lazily via Once.
-                        static SETLOCALE_DONE: std::sync::Once = std::sync::Once::new();
-                        SETLOCALE_DONE.call_once(|| {
-                            let empty = std::ffi::CString::new("").unwrap();
-                            libc::setlocale(libc::LC_CTYPE, empty.as_ptr());
-                        });
-                        let ptr = libc::nl_langinfo(libc::CODESET);
-                        if ptr.is_null() {
-                            true
-                        } else {
-                            let cs = std::ffi::CStr::from_ptr(ptr).to_string_lossy();
-                            cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
-                        }
-                    };
+                    // There is no codeset test here any more, because C has
+                    // none: `MB_METASTRLEN2` goes straight to
+                    // `mb_metastrlenend`, whose own guard is
+                    // `!isset(MULTIBYTE) || MB_CUR_MAX == 1`
+                    // (c:Src/utils.c:5662-5663) and whose counting loop is
+                    // `mbrtowc` (c:5689). A `CODESET != "UTF-8"` branch sent
+                    // every non-UTF-8 locale to a BYTE count, but
+                    // `zh_CN.GB2312` and `ja_JP.eucJP` are multibyte
+                    // (`MB_CUR_MAX` 2 and 3): zsh reports `${#s}` of
+                    // `\xc4\xe3\xba\xc3\xca\xc0` as 3 there, not 6. Genuine
+                    // single-byte locales still come out as bytes, because
+                    // `mbrtowc` consumes exactly one byte per character
+                    // under `LC_ALL=C`.
                     // The MULTIBYTE check that used to sit here is gone:
                     // it now lives inside `mb_metastrlenend` where C
                     // keeps it (c:Src/utils.c:5662-5663), so every
@@ -13681,32 +13673,19 @@ pub fn paramsubst(
                     // `${#$'\xe6'}` gave 4 (Meta and the escaped byte
                     // are two `char`s = four UTF-8 bytes) against zsh's
                     // 1, and `${#$'\xe6\x97\xa5'}` gave 12 against 3.
-                    if utf8 {
-                        // c:3867 — `len = MB_METASTRLEN2(val, multi_width)`.
-                        // MB_METASTRLEN demetafies then mbrtowc-counts, so
-                        // `$'\xc3\xa9'` (metafied é) counts 1 char, not the
-                        // 4 metafied bytes a plain char-count would see.
-                        // c:2376 — the `(m)` flag sets multi_width, switching
-                        // the count from characters to display CELLS, so
-                        // `${(m)#日本語}` returns 6 (3 wide chars × 2 cells),
-                        // not 3. width != 0 ⇔ multi_width set.
-                        crate::ported::utils::mb_metastrlenend(
-                            &raw_value_for_len,
-                            multi_width != 0,
-                            raw_value_for_len.len(),
-                        )
-                    } else {
-                        // c:Src/utils.c:5662-5663 — the `MB_CUR_MAX == 1`
-                        // arm returns `ztrlen(ptr)`, the length of the
-                        // DEMETAFIED byte stream. `raw_value_for_len.len()`
-                        // is the UTF-8 length of the METAFIED `String`,
-                        // which is the same defect the MULTIBYTE sibling
-                        // arm above was already fixed for: under `LC_ALL=C`
-                        // `${#$(printf 'caf\xe9')}` reported 7 (`caf` plus
-                        // the two chars, four bytes, that encode the one
-                        // byte) against zsh's 4.
-                        crate::ported::utils::unmetafy_str(&raw_value_for_len).len()
-                    }
+                    // c:3867 — `len = MB_METASTRLEN2(val, multi_width)`.
+                    // MB_METASTRLEN demetafies then mbrtowc-counts, so
+                    // `$'\xc3\xa9'` (metafied é) counts 1 char, not the
+                    // 4 metafied bytes a plain char-count would see.
+                    // c:2376 — the `(m)` flag sets multi_width, switching
+                    // the count from characters to display CELLS, so
+                    // `${(m)#日本語}` returns 6 (3 wide chars × 2 cells),
+                    // not 3. width != 0 ⇔ multi_width set.
+                    crate::ported::utils::mb_metastrlenend(
+                        &raw_value_for_len,
+                        multi_width != 0,
+                        raw_value_for_len.len(),
+                    )
                 } else {
                     // c:3869 word count
                     let multi = if getlen > 3 { 1 } else { 0 };

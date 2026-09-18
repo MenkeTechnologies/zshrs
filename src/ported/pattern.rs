@@ -5826,6 +5826,7 @@ pub fn patmatch(
             return 1; // c:1947
         };
         let mut raw: Vec<u8> = Vec::new();
+        let mut steps: Vec<usize> = Vec::new();
         let mut advance = 0usize;
         let mut chs = rest.chars();
         while let Some(c) = chs.next() {
@@ -5833,20 +5834,69 @@ pub fn patmatch(
                 if let Some(n) = chs.clone().next() {
                     if (n as u32) >= 0x80 {
                         raw.push((n as u32 as u8) ^ 32);
-                        advance += c.len_utf8() + n.len_utf8();
+                        steps.push(c.len_utf8() + n.len_utf8());
                         chs.next();
-                        // c:1946 — one raw byte IS one character without
-                        // GF_MULTIBYTE; otherwise keep collecting bytes
-                        // until `mbrtowc` would have completed one
-                        // character (c:1949).
-                        if !multibyte || std::str::from_utf8(&raw).is_ok() {
+                        // c:1946-1947 — one raw byte IS one character
+                        // without GF_MULTIBYTE.
+                        if !multibyte {
+                            advance += steps[0];
                             break;
                         }
-                        continue;
+                        // c:1949 — `ret = mbrtowc(&wc, x, y-x, &shiftstate)`.
+                        // LOCALE-driven, which is the point: `zh_CN.GB2312`
+                        // and `ja_JP.eucJP` are multibyte codesets that are
+                        // not UTF-8. Collecting bytes "until they form valid
+                        // UTF-8" also never terminated for input that is not
+                        // UTF-8 at all, so `$'\xc4\xe3'` was consumed as ONE
+                        // character and matched a single `?` where zsh — which
+                        // treats each undecodable byte as its own character —
+                        // matches `??`.
+                        let mut wc: libc::wchar_t = 0;
+                        let mut mbs = crate::ported::utils::MBSTATE_ZERO;
+                        let ret = unsafe {
+                            crate::ported::utils::mbrtowc(
+                                &mut wc,
+                                raw.as_ptr() as *const libc::c_char,
+                                raw.len(),
+                                &mut mbs as *mut crate::ported::utils::MbStateBuf
+                                    as *mut libc::c_void,
+                            )
+                        };
+                        if ret == crate::ported::utils::MB_INCOMPLETE
+                            && raw.len() < crate::ported::zsh_h::MB_CUR_MAX
+                        {
+                            // C hands `mbrtowc` the whole remaining buffer at
+                            // once; the port feeds it the metafied pairs as it
+                            // decodes them, so a still-incomplete character
+                            // means "collect the next pair".
+                            continue;
+                        }
+                        advance += if ret == crate::ported::utils::MB_INVALID
+                            || ret == crate::ported::utils::MB_INCOMPLETE
+                            || ret == 0
+                        {
+                            // c:1951-1955 — "Error.  Treat as single byte."
+                            // c:1959 — `x + (ret ? ret : 1)` for the NUL case.
+                            steps[0]
+                        } else {
+                            steps[..ret.min(steps.len())].iter().sum()
+                        };
+                        break;
                     }
                 }
                 // Lone Meta — count it as one character.
                 advance += c.len_utf8();
+                break;
+            }
+            if !steps.is_empty() {
+                // A metafied run was still assembling a character when a
+                // natively stored one turned up, so the run cannot complete.
+                // C reaches the same answer without noticing the boundary:
+                // `mbrtowc` over the remaining buffer fails and it returns
+                // `x + 1` (c:1951-1955). Leaving `advance` at 0 here dropped
+                // the pending pair entirely, so `$'a\xc4\xe3b'` matched no
+                // `????` even though `${#}` counted its 4 characters.
+                advance = steps[0];
                 break;
             }
             // Natively stored character: its `&str` bytes ARE the raw
@@ -5858,6 +5908,16 @@ pub fn patmatch(
                 c.len_utf8()
             };
             break;
+        }
+        if advance == 0 && !steps.is_empty() {
+            // Input ran out while the collected bytes were still an
+            // incomplete character. C never sees this as a separate case —
+            // it hands `mbrtowc` the whole remaining buffer, gets
+            // MB_INCOMPLETE and returns `x + 1` (c:1951-1955) — but the port
+            // discovers it by exhausting the metafied pairs, and leaving
+            // `advance` at 0 made `P_ANY` read it as "no character left"
+            // (c:2737). A trailing `$'\xe3'` then matched no `?` at all.
+            advance = steps[0];
         }
         advance
     };
