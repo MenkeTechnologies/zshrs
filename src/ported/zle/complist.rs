@@ -3229,9 +3229,33 @@ pub fn clprintm(
 
     // c:1754 — `m = *mp;` (Rust: deref already done by Some(m))
 
-    // c:1756-1757 — bld_all_str for CMF_ALL with empty disp.
-    // (CMF_ALL flag at comp.h:140; bld_all_str ported elsewhere.)
-    let _ = crate::ported::zle::comp_h::CMF_ALL;
+    // c:1756-1757 — `if ((m->flags & CMF_ALL) && (!m->disp || !m->disp[0]))
+    //                    bld_all_str(m);`
+    // The `<all>` placeholder `compadd -C` adds (c:compcore.c:2611-2614) carries
+    // no disp, and every read below is `m->disp ? ... : ...`, so without this the
+    // summary row renders empty: `compadd -C --` under `zmodload zsh/complist`
+    // drew ONE row where zsh draws two. This site previously held only a comment
+    // naming bld_all_str plus a `let _ = CMF_ALL;` to keep the import live.
+    //
+    // C's `bld_all_str(m)` MUTATES the match in place (c:2229-2230), and every
+    // later reader sees it because `mtab` stores the POINTER (c:1767/1773) —
+    // notably `msearch` at c:2327, `(m->disp ? m->disp : m->str)`. Rust `MTAB` is
+    // `Vec<Option<Cmatch>>`, i.e. CLONES, so threading the built string through
+    // this call alone would leave the stored clone's `disp` empty and menu-search
+    // over the summary row would diverge. Rebinding to an owned copy that CARRIES
+    // the string reproduces C's observable behaviour for the whole call, the
+    // `MTAB` store included; `bld_all_str` additionally writes it back onto the
+    // match in `amatches`, which is what makes a later pass reuse it as C does.
+    let all_built: Option<Cmatch> = if (m_ref.flags & crate::ported::zle::comp_h::CMF_ALL) != 0
+        && m_ref.disp.as_deref().map(|d| d.is_empty()).unwrap_or(true)
+    {
+        let mut owned = m_ref.clone();
+        owned.disp = Some(crate::ported::zle::compresult::bld_all_str()); // c:1757
+        Some(owned)
+    } else {
+        None
+    };
+    let m_ref: &Cmatch = all_built.as_ref().unwrap_or(m_ref);
 
     // c:1759 — `mlastm = m->gnum;`
     MLASTM.store(m_ref.gnum, Ordering::SeqCst);
@@ -9024,6 +9048,90 @@ mod tests {
             on, off,
             "c:1835 and c:1878 are one measurement — the on-window arm counted \
              characters where C counts display columns"
+        );
+    }
+
+    /// c:1756-1757 — `clprintm` builds the `<all>` placeholder's display text,
+    /// and C does it by MUTATING the match (c:2229-2230), so the `mtab` cell —
+    /// a POINTER in C (c:1767/1773) — carries it too and `msearch` can find the
+    /// row by its text (c:2327, `(m->disp ? m->disp : m->str)`). Rust `MTAB`
+    /// holds CLONES, so the stored cell has to carry the built string as well:
+    /// threading it through the call alone would leave the cell empty and split
+    /// menu-search from zsh. With the placeholder left unbuilt entirely,
+    /// `compadd -C --` under `zmodload zsh/complist` drew ONE row where zsh
+    /// draws two.
+    ///
+    /// A regression inside `bld_all_str` HANGS rather than fails (it walked an
+    /// unbounded range before 7a3c10d6a3), so the call is bounded by a timeout.
+    #[test]
+    fn clprintm_builds_the_all_placeholder_into_the_stored_cell() {
+        let _g = crate::test_util::global_state_lock();
+        let _z = crate::ported::zle::zle_main::zle_test_setup();
+
+        let saved = (
+            MLBEG.load(Ordering::SeqCst),
+            MLEND.load(Ordering::SeqCst),
+            MSELECT.load(Ordering::SeqCst),
+            MCOLS.load(Ordering::SeqCst),
+            MLINES.load(Ordering::SeqCst),
+        );
+
+        // Two visible matches for bld_all_str to summarise (c:2202-2218).
+        let mut m1 = Cmatch::default();
+        m1.str = Some("alpha".to_string());
+        let mut m2 = Cmatch::default();
+        m2.str = Some("beta".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![m1, m2];
+        g.mcount = 2;
+        g.lcount = 2;
+        if let Ok(mut a) = crate::ported::zle::compcore::amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![g];
+        }
+        if let Ok(mut t) = MTAB.lock() {
+            *t = vec![None; 4];
+        }
+
+        MSELECT.store(0, Ordering::SeqCst); // c:1761 — take the mtab-store arm
+        MCOLS.store(1, Ordering::SeqCst);
+        MLINES.store(4, Ordering::SeqCst);
+        MLBEG.store(1, Ordering::SeqCst); // row 0 is off-window, so c:1778-1780
+        MLEND.store(2, Ordering::SeqCst); // returns after the store, drawing none
+
+        // The placeholder exactly as compcore.c:2611-2614 adds it: CMF_ALL,
+        // whole-line display, no disp of its own.
+        let all = Cmatch {
+            gnum: 1,
+            flags: crate::ported::zle::comp_h::CMF_ALL | CMF_DISPLINE,
+            ..Default::default()
+        };
+        let group = std::sync::Arc::new(Cmgroup::default());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(clprintm(Some(&group), Some(&all), 0, 0, 1, 0));
+        });
+        let ret = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("c:1757 — bld_all_str must return, not spin");
+
+        let stored = MTAB.lock().ok().and_then(|t| t.first().cloned().flatten());
+
+        MLBEG.store(saved.0, Ordering::SeqCst);
+        MLEND.store(saved.1, Ordering::SeqCst);
+        MSELECT.store(saved.2, Ordering::SeqCst);
+        MCOLS.store(saved.3, Ordering::SeqCst);
+        MLINES.store(saved.4, Ordering::SeqCst);
+
+        assert_eq!(ret, 0, "c:1780 — the off-window arm returns 0");
+        assert_eq!(
+            stored.and_then(|m| m.disp),
+            Some("alpha beta".to_string()),
+            "c:1756-1757 + c:1767 — the mtab cell must carry the built \
+             placeholder text, as C's stored pointer does for msearch (c:2327)"
         );
     }
 }

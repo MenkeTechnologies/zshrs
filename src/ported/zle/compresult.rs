@@ -3919,6 +3919,26 @@ pub fn bld_all_str() -> String {
         let _ = Relaxed;
         g_idx = (gi + 1..groups.len()).find(|&i| groups[i].mcount != 0);
     }
+    // c:2229-2230 — `zsfree(all->disp); all->disp = ztrdup(buf);`. C takes the
+    // match as an argument and STORES the built string on it, so the work is
+    // done once and every later reader sees it: both call sites test
+    // `(!m->disp || !m->disp[0])` first (c:1756, c:2244) and skip the rebuild on
+    // a second pass. The Rust signature RETURNS the string instead — `groups`
+    // above is a clone of `amatches` (:3848), so writing through it would be
+    // lost — hence the store goes back to the live table here. Callers still use
+    // the return value for the pass in flight, because the listing loop takes
+    // its own `Arc` snapshot of the groups before calling (complist.rs:2492).
+    if let Some(a) = amatches.get() {
+        if let Ok(mut live) = a.lock() {
+            for g in live.iter_mut() {
+                for m in g.matches.iter_mut() {
+                    if (m.flags & CMF_ALL) != 0 {
+                        m.disp = Some(buf.clone()); // c:2230
+                    }
+                }
+            }
+        }
+    }
     buf // c:2238 ztrdup(buf)
 }
 
