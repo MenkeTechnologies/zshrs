@@ -6916,22 +6916,17 @@ gstack
 #   collected bytes "until they form valid UTF-8", which never terminates
 #   for non-UTF-8 input, so both bytes were consumed as ONE character.
 #
-# OPEN 1 — display WIDTH is locale-blind. `${(m)#}` and `(ml:N:)` padding
-# always decode UTF-8: they honour the MULTIBYTE option but not the locale.
-# With v=$'日本語' (9 UTF-8 bytes):
+# OPEN 1 — RESOLVED b54ff03301; the full account is the 2026-09-18 `(m)` WIDTH
+# entry at the end of this file. C opens `mb_metastrlenend` with
+# `!isset(MULTIBYTE) || MB_CUR_MAX == 1` (c:Src/utils.c:5662-5663) and only the
+# MULTIBYTE half was ported, so a single-byte locale still ran the mbrtowc loop
+# and charged the C1 bytes (0x80-0x9f) of each UTF-8 sequence zero columns.
 #
-#   LC_ALL=C             zsh ${(m)#v}=9   zshrs 6   (${#v}=9 on BOTH — the
-#                        character COUNT is already right)
-#   unsetopt multibyte   both shells 9, every locale
-#   ${(ml:10:)v}         zsh pads 1 space, zshrs 4
-#
-# NOT the arm ec57980a78 fixed: `mb_metastrlenend(width=true)` over those
-# bytes returns 9 on every branch under LC_ALL=C (single-byte decode gives
-# WCWIDTH 1 nine times; MB_INVALID gives 1 nine times), and
-# BUILTIN_PARAM_LENGTH (src/fusevm_bridge.rs:13913) re-enters paramsubst as
-# a plain `${#name}` WITHOUT the `(m)` flag. So the `(m)` width is computed
-# somewhere not yet located — find that site before attempting a fix.
-#
+# The guess recorded below — that the `(m)` width was "computed somewhere not
+# yet located" — was wrong: it is that same function, reached from
+# c:Src/subst.c:3878 `MB_METASTRLEN2(val, multi_width)`. BUILTIN_PARAM_LENGTH
+# is not on the `${(m)#}` path at all; it serves the unbraced/plain `${#name}`
+# form, which is why dropping the flag there never showed up in the numbers.
 # OPEN 2 — a natively stored UTF-8 `char` is stepped by `len_utf8()` under a
 # non-UTF-8 locale. Same v under zh_CN.GB2312: zsh sees 5 characters and
 # REJECTS `???`; zshrs matches it. `${#v}`=5 and `${(m)#v}`=6 already agree
