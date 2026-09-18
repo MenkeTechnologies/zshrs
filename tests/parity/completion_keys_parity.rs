@@ -32,7 +32,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_verdict, sq, DRAIN, OPEN};
+use crate::zpty_probe::{assert_same_dump, assert_same_verdict, sq, DRAIN, OPEN, OPEN_PUMPED};
 use std::path::{Path, PathBuf};
 
 /// A directory holding one unique name and two that share a prefix.
@@ -413,6 +413,72 @@ fn describe_shows_the_description_text() {
         &compsys_driver(DESCRIBE, "first"),
         "K",
         "_describe displayed the description text",
+    );
+}
+
+/// `compadd -k NAME` must enumerate an association's keys in the same
+/// order `${(k)NAME}` does.
+///
+/// That agreement is what makes `compadd -k NAME -d DISP` work at all:
+/// the caller builds `DISP` from `${(kv)NAME}` — the shape
+/// `Completion/Unix/Command/_git`'s `__git_diff_filters` uses — and the
+/// two arrays are then paired ELEMENT-FOR-ELEMENT. C gets it for free
+/// because both sides reach the SAME scan: `compadd -k` goes
+/// `get_data_arr` → `fetchvalue` → `getarrvalue` → `getvaluearr` →
+/// `paramvalarr` (`Src/params.c:735-736`), and `${(k)}` reaches
+/// `paramvalarr` too, so each walks `scanhashtable`'s hash-bucket order
+/// (`Src/params.c:718`, `Src/hashtable.c:426`).
+///
+/// zshrs instead read the keys straight out of its insertion-ordered
+/// storage map, so `filters=(A added C copied b 'pairing broken')`
+/// enumerated `A C b` where zsh scans `b A C`. Every key then drew
+/// ANOTHER key's display string, and since `matchcmp` sorts by `disp`
+/// whenever one is present (`Src/Zle/compcore.c:3179-3191`), two
+/// otherwise-equal matches carrying mismatched `disp` stopped being
+/// adjacent — so the consecutive-run dedup at `compcore.c:3271`, which
+/// only collapses ADJACENT equals, left the duplicate behind and
+/// `git diff --diff-filter=<TAB>` listed `b -- pairing broken` twice.
+///
+/// The completer dumps BOTH orders rather than a listing: the order is
+/// the actual invariant, and two shells legitimately differ on how they
+/// redraw a list. `A`/`C`/`b` are chosen because their bucket order
+/// (`b A C`) differs from their insertion order (`A C b`), so a shell
+/// that confuses the two cannot accidentally agree.
+///
+/// `OPEN_PUMPED` rather than `OPEN` + blind sleeps: `compinit` over the
+/// stock function directory produces enough output to fill the inner
+/// shell's pty buffer, and a shell blocked on write never reaches the
+/// TAB — the reference then dumps NOTHING and the case fails as a
+/// broken probe rather than a divergence. Draining between writes is
+/// what keeps it unblocked (see the note on `OPEN_PUMPED`).
+#[test]
+fn compadd_k_enumerates_keys_in_scan_order() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let setup = sq(concat!(
+        r#"_mytest(){ local -a outk; typeset -A filters; "#,
+        r#"filters=( A added C copied b 'pairing broken' ); "#,
+        r#"compadd -O outk -k filters; "#,
+        r#"print -r -- "KEYS=[${(j: :)outk}] SCAN=[${(j: :)${(k)filters}}]" >! $OUTFILE; "#,
+        r#"compadd -k filters }; compdef _mytest mytest"#,
+    ));
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=(/usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w {setup}; pump
+zpty -w -n w 'mytest '; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\C-u'; pump
+zpty -w -n w $'\\r'; pump
+zpty -d w 2>/dev/null
+"
+    );
+    assert_same_dump(
+        &driver,
+        "compadd -k enumerated the assoc's keys in ${(k)} scan order",
     );
 }
 

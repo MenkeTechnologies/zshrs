@@ -3841,17 +3841,57 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
     // which is why `compadd -k commands` previously added the literal
     // word "commands" instead of every command name.
     let result = if keys {
-        // SCANPM_WANTKEYS — assoc keys (gethkparam handles special hashes,
-        // returning Some incl. Some(empty)). But `compadd -k` on a REGULAR
-        // array (e.g. `_setopt`'s `local -a onopts`) must add its ELEMENTS:
-        // C's `fetchvalue(SCANPM_WANTKEYS)` ignores WANTKEYS for a non-hash and
-        // returns the value array. gethkparam returns None for a non-hash, so
-        // fall back to the elements — without this, `setopt`/`unsetopt <tab>`
-        // (and any `compadd -k <plain-array>`) produced ZERO matches.
-        match crate::ported::params::gethkparam(name) {
-            Some(k) => Some(k),
-            None => crate::ported::params::getaparam(name),
-        }
+        // c:2028-2033 — `fetchvalue(…, SCANPM_WANTKEYS | SCANPM_MATCHMANY)`
+        // then `getarrvalue` (c:2556) → `getvaluearr` → for a PM_HASHED param
+        // `paramvalarr(v->pm->gsu.h->getfn(v->pm), v->scanflags)`
+        // (`Src/params.c:735-736`). `paramvalarr` emits through
+        // `scanhashtable` (`Src/params.c:718`, `Src/hashtable.c:426`), so C
+        // hands back an assoc's keys in HASH-BUCKET order — the very order
+        // `${(k)assoc}` produces, since `${(k)}` reaches that same
+        // `paramvalarr`.
+        //
+        // That agreement is load-bearing for `compadd -k NAME -d DISP`: the
+        // caller builds DISP from `${(kv)NAME}` (e.g.
+        // `Completion/Unix/Command/_git`'s __git_diff_filters), so the two
+        // arrays are paired element-for-element ONLY while `-k` enumerates in
+        // the same order `${(kv)}` did.
+        //
+        // `gethkparam` reads `paramtab_hashed_storage` directly
+        // (`params.rs:6801`), an INSERTION-ordered `IndexMap`: for
+        // `filters=(A added C copied b "pairing broken")` it yields `A C b`
+        // where zsh scans `b A C`. Every key then drew the WRONG display
+        // string, and since `matchcmp` sorts by `disp` when present
+        // (c:3179-3191) two otherwise-`matcheq` matches with mismatched `disp`
+        // stopped being adjacent, so the consecutive-run dedup at c:3271 —
+        // which only collapses ADJACENT equals — left the duplicate in the
+        // list (`git diff --diff-filter=<TAB>` listed `b -- pairing broken`
+        // twice).
+        //
+        // `subst::assoc_get` IS this port's `gsu.h->getfn(pm)`: it rebuilds
+        // zsh's bucket layout to recover the scan order (`subst.rs:28164-28172`)
+        // and is exactly what `getvaluearr` feeds to `paramvalarr`
+        // (`params.rs:1480-1481`). Route the keys through that same pair.
+        crate::ported::subst::assoc_get(name)
+            .map(|ht| {
+                crate::ported::params::paramvalarr(
+                    &ht,
+                    crate::ported::zsh_h::SCANPM_WANTKEYS as i32,
+                )
+            })
+            .filter(|k| !k.is_empty())
+            // A magic hash (`commands`, `builtins`, `functions`, …) has no
+            // `paramtab_hashed_storage` row at all, so `assoc_get` yields
+            // nothing and the module scanfn behind `gethkparam` is the only
+            // backing. gethkparam also answers Some(empty) for an assoc that
+            // exists but holds nothing, which is C's "exists, no entries".
+            .or_else(|| crate::ported::params::gethkparam(name))
+            // But `compadd -k` on a REGULAR array (e.g. `_setopt`'s
+            // `local -a onopts`) must add its ELEMENTS: C's
+            // `fetchvalue(SCANPM_WANTKEYS)` ignores WANTKEYS for a non-hash and
+            // returns the value array. gethkparam returns None for a non-hash,
+            // so fall back to the elements — without this, `setopt`/`unsetopt
+            // <tab>` (and any `compadd -k <plain-array>`) produced ZERO matches.
+            .or_else(|| crate::ported::params::getaparam(name))
     } else {
         // SCANPM_WANTVALS — plain-array elements, else assoc values.
         crate::ported::params::getaparam(name)
