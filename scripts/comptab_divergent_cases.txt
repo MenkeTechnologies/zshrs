@@ -6879,7 +6879,16 @@ gstack
 #                  `shown`)
 #   9302 case0002  `_complete_help` frames (funcstack owner)
 #   9302 case0010  menu-select tab,space,tab (menu-select owner)
-#   9302 case0015  accept-and-menu-complete (blocked on the allowlist decision)
+#   9302 case0015  FIXED 78ba508094 — NOT an allowlist matter.  `iremovesuffix`
+#                  gated its removal on `keep == 0`, but C gates only the
+#                  `invalidatelist()` call (c:Src/Zle/zle_misc.c:1828-1829);
+#                  `backdel(sl, CUT_RAW)` at c:1817 runs either way.  So
+#                  `accept_last`'s `iremovesuffix(' ', 1)` (c:1337, line
+#                  metafied per c:1288-1293) never stripped the slash c:1109
+#                  had just added, and the accepted word read `adir//` where
+#                  zsh leaves `adir/`.  Re-measured after the fix: the cell
+#                  PASSes, and a PTY repro (tab, ^X, w) gives
+#                  `fzc0015 adir alpha.txt` on BOTH shells.
 #
 # LOCALE-DRIVEN MULTIBYTE — the count/subscript/pattern half is FIXED
 # (ec57980a78); a display-WIDTH residue remains.
