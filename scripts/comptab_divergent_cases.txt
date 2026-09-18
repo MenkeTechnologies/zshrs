@@ -7289,3 +7289,50 @@ gstack
 # UTF-8, locale-independent — so it always finds the delimiter and pads.
 # Fixing it means stepping that scan through the locale, i.e. the same
 # byte-buffer problem as OPEN 2 above, so it is recorded, not patched.
+
+# ══════════════════════════════════════════════════════════════════════════
+# zformat: the port stays HYBRID, and the remaining step is a USER DECISION.
+# Measured 2026-09-18, follow-up to the seeding split recorded above.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# (a) WHY AN UNSEEDED WALKER ENTRY IS UNREACHABLE IN C.
+#     `static char *zformat_substring(char* instr, char **specs, ...)` c:816.
+#     Call sites: c:895 and c:899 (its own recursion) and `bin_zformat` only
+#     — c:990 pre-a04c944804, c:1067 at fork tip.  `bin_zformat` builds the
+#     table: `char *specs[256] = {0}` c:972, seeds `specs['%'] = "%";` and
+#     `specs[')'] = ")";` c:975-976, fills the rest from argv c:979-987, and
+#     passes it by pointer.  The walker only ever READS specs[]; NO C line
+#     seeds inside it.  So "callers build the table" is the faithful shape,
+#     and an unseeded entry is a state C cannot produce.
+#
+# (b) MEASURED with the fork-tip unwind REMOVED and the two production
+#     compsys callers seeded exactly as bin_zformat does (_numbers.rs:404,
+#     _wakeup_capable_devices.rs:66).  zshrs `--zsh -fc` vs the 5.9.2 binary,
+#     `zformat -f REPLY <fmt> x:XX` — stdout, stderr and exit all identical:
+#       %%            MATCH  rc=0 REPLY=[%]
+#       %)            MATCH  rc=0 REPLY=[)]
+#       %(%.yes.no)   MATCH  stdout empty, exit 0,
+#                            stderr `bad math expression: operand expected at `%''
+#
+# (c) BUT FOUR TESTS REGRESS, because they call the PUBLIC walker directly
+#     with an empty specs map — the unreachable state from (a):
+#       ported::modules::zutil::tests::test_zformat_escape
+#       ported::modules::zutil::tests::zformat_close_paren_escape
+#       ported::modules::zutil::tests::zformat_substring_percent_percent_is_literal_percent
+#       ported::modules::zutil::tests::zformat_substring_percent_close_paren_is_literal_close_paren
+#     zutil::  76 passed / 1 failed  ->  73 passed / 4 failed.
+#     The one that FLIPS TO PASSING is
+#     `zformat_substring_caller_override_of_percent_wins`, exactly as the
+#     c:890 analysis predicted.  _numbers:: 4/0 and _wakeup_capable_devices::
+#     4/0 both stay green, so seeding those two callers costs nothing.
+#     Everything was restored byte-identically (checksum) and rebuilt; the
+#     committed port is unchanged and still 76/1.
+#
+# (d) USER DECISION, NOT TAKEN HERE.  Mirroring C cannot make those four
+#     pass: caller-side seeding cannot reach them, and walker-side seeding
+#     has no C counterpart.  The options are (1) update those four tests to
+#     build the table the way `bin_zformat` does — they encode a CLI-level
+#     contract while calling an internal function that C keeps static — and
+#     then drop the unwind, making the port consistently released-5.9.x; or
+#     (2) leave the port hybrid (seeding + fork-tip unwind) as it is today.
+#     No test was touched, ignored or deleted.
