@@ -2171,6 +2171,24 @@ pub fn bin_compset(
             if let Some(s) = sa.as_mut() {
                 tokenize(s); // c:1213
                 remnulargs(s); // c:1214
+                                          // !!! RUST-ONLY ADAPTER — no C counterpart, encoding
+                                          // transposition only. After c:1213-1214 every raw `\`
+                                          // still in the string is a literal backslash CHARACTER:
+                                          // the escapes `zshtokenize` honored became `Bnull` at the
+                                          // backslash's own position (c:Src/glob.c:3600-3602 /
+                                          // 3642-3643) and `remnulargs` (c:Src/glob.c:3658) deleted
+                                          // them. C compiles that byte as ordinary text —
+                                          // `patcomppiece` has no `case '\\'`
+                                          // (c:Src/pattern.c:1579-1601, only `case Bnullkeep` at
+                                          // c:1589). zshrs's pattern normalizer instead reads a raw
+                                          // `\X` as a QUOTE of X, so the backslash silently
+                                          // vanished and the pattern matched the UNescaped text.
+                                          // Symptom: `_git`'s `__git_format_ref` does
+                                          // `compset -P '%\\\((\*|)'`, whose pattern is `%` + a
+                                          // literal `\` + a literal `(`; against `$PREFIX='%('`
+                                          // zsh does NOT match (and offers the single match `%(`),
+                                          // while zshrs matched and offered 39 ref fields.
+                *s = crate::pattern_data_escape::escape_tokenized_data_backslashes(s);
             }
             nb = 0;
         }

@@ -54,6 +54,7 @@ mod command_builtin_parity;
 mod command_defpath_parity;
 mod command_hash_table_parity;
 mod command_precedence_parity;
+mod compset_pattern_parity;
 mod compsys_local_leak_parity;
 mod completion_keys_parity;
 mod completion_continuation_parity;

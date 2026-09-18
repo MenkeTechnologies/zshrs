@@ -129,6 +129,42 @@ pub fn escape_data_backslashes(v: &str) -> String {
     out
 }
 
+/// The same DATA-vs-QUOTE split as [`escape_data_backslashes`], applied one
+/// step LATER: to a string that has ALREADY been through `tokenize()` +
+/// `remnulargs()` and is about to be handed straight to `patcompile`.
+///
+/// `zshtokenize` (c:Src/glob.c:3585, flags 0) folds every backslash it
+/// honors into a `Bnull` written at the BACKSLASH's own position, leaving
+/// the escaped character raw (c:3600-3602 `s[-1] = … Bnull` and c:3642-3643
+/// for the `ztokens` scan). `remnulargs` (c:Src/glob.c:3658) then deletes
+/// those `Bnull`s. So in the string C finally hands to `patcompile` every
+/// surviving raw `\` is a literal backslash CHARACTER: `patcomppiece` has
+/// no `case '\\'` at all (c:Src/pattern.c:1579-1601 — only `case Bnullkeep`
+/// at c:1589 is special), so that byte compiles as ordinary text. This is
+/// why real zsh answers
+///
+/// ```text
+/// # the pattern is `\` + `(`, so it needs a literal backslash in the word
+/// compset -P '\\\('     # PREFIX='('   -> no match
+/// compset -P '\('       # PREFIX='('   -> match
+/// ```
+///
+/// `ported::pattern`'s normalizer instead reads a raw `\X` as a QUOTE of X
+/// (src/ported/pattern.rs, the `\\` arm) and spells a literal backslash as
+/// the pair `\\`. Doubling every remaining backslash is therefore the exact
+/// transposition of C's post-`remnulargs` encoding into the Rust one.
+///
+/// Distinct from [`escape_data_backslashes`], which runs BEFORE `tokenize`
+/// and must leave a `\<metachar>` pair alone so the tokenizer can still fold
+/// it into a quote. Here the tokenizer has already run, so no pair is
+/// pending and every backslash left is data.
+pub fn escape_tokenized_data_backslashes(v: &str) -> String {
+    if !v.contains('\\') {
+        return v.to_string();
+    }
+    v.replace('\\', "\\\\")
+}
+
 /// The SH_GLOB half of the same `strcatsub` step: `shtokenize` builds its
 /// flags from the option (c:Src/glob.c:3575-3580)
 ///
