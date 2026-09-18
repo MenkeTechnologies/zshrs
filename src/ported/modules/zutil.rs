@@ -1706,6 +1706,7 @@ pub fn bin_zformat(
                 // c:980
                 let ab = ap.as_bytes();
                 if ab.is_empty() || ab[0] == b'-' || ab[0] == b'.'            // c:981
+                    || ab[0] == b'%' || ab[0] == b')'                        // c:1028
                     || ab[0].is_ascii_digit()
                     || ab.len() < 2 || ab[1] != b':'
                 {
@@ -5218,6 +5219,40 @@ mod tests {
         };
         let r = bin_zformat("zformat", &[], &ops, 0);
         assert_ne!(r, 0, "zformat no args → usage error");
+    }
+
+    /// c:1027-1032 — `-f`/`-F` reject a spec whose name is `%` or `)`,
+    /// alongside `-`, `.`, a digit, and a missing `:`. Measured against
+    /// zsh 5.9.2: `zformat -f R "%n" "%:O"` warns `invalid argument: %:O`
+    /// and returns 1, leaving the parameter untouched; zshrs accepted
+    /// both `%` and `)` silently and returned 0.
+    #[test]
+    fn bin_zformat_rejects_percent_and_paren_spec_names() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'f' as usize] = 1;
+        let call = |spec: &str| {
+            bin_zformat(
+                "zformat",
+                &[
+                    "ZFMT_PIN".to_string(),
+                    "%n".to_string(),
+                    spec.to_string(),
+                ],
+                &ops,
+                0,
+            )
+        };
+        assert_ne!(call("%:OVERRIDE"), 0, "c:1028 — `%` is not a valid spec name");
+        assert_ne!(call("):OVERRIDE"), 0, "c:1028 — `)` is not a valid spec name");
+        // Control: a legal spec name still works, so the added guard did
+        // not swallow the ordinary path (c:1026-1032 falls through).
+        assert_eq!(call("n:alice"), 0, "c:1061 — an ordinary spec is accepted");
     }
 
     /// c:2022 — `bin_zregexparse` returns i32 (compile-time pin).
