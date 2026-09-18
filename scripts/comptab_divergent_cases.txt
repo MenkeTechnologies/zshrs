@@ -6803,7 +6803,52 @@ gstack
 #   9302 case0010  menu-select tab,space,tab (menu-select owner)
 #   9302 case0015  accept-and-menu-complete (blocked on the allowlist decision)
 #
-# HARNESS-VISIBLE, NOT A COMPLETION BUG: the fuzzer's locale canary reports
-# zh_CN.GB2312 and ja_JP.eucJP as `zsh char/col 5/6, zshrs 9/9 <-- DIVERGES`
-# — zshrs reads non-UTF-8 multibyte locales byte-wise. Every case drawn in
-# those locales carries that difference; cells above were re-checked under C.
+# LOCALE-DRIVEN MULTIBYTE — the count/subscript/pattern half is FIXED
+# (ec57980a78); a display-WIDTH residue remains.
+#
+# Was recorded as "zshrs reads non-UTF-8 multibyte locales byte-wise", from
+# the fuzzer's locale canary (`zsh char/col 5/6, zshrs 9/9 <-- DIVERGES`).
+# Root cause: `mb_metastrlenend`, `mb_metacharlenconv` and the pattern
+# matcher's CHARINC decoded UTF-8 directly where C calls `mbrtowc`, which is
+# LOCALE-driven (c:Src/utils.c:5689, c:5635, c:Src/pattern.c:1949), and
+# `${#}` carried a `CODESET != "UTF-8"` branch that sent every non-UTF-8
+# locale to a byte count. `zh_CN.GB2312` and `ja_JP.eucJP` have MB_CUR_MAX
+# 2 and 3, so C decodes them; only a genuine single-byte locale is bytes.
+#
+# Measured with s=$'\xc4\xe3\xba\xc3\xca\xc0', zsh vs zshrs after ec57980a78
+# — IDENTICAL in zh_CN.GB2312, ja_JP.eucJP, en_US.UTF-8 and C:
+#
+#   locale         ${#s}  ${s[1]}  $s == ???  $s == ??????  ${(m)#s}
+#   zh_CN.GB2312   3      c4e3     yes        no            6
+#   en_US.UTF-8    6      c4       no         yes           6
+#
+#   Before: GB2312 gave 6 / c4 / no / no, and `${(m)#s}` was 0 in EVERY
+#   locale — C's MB_INVALID arm counts 1 per undecodable byte BEFORE the
+#   width test (c:5710-5714), where the port took WCWIDTH of an undecodable
+#   byte and got 0. `[[ $'\xc4\xe3' == ?? ]]` also failed: the port
+#   collected bytes "until they form valid UTF-8", which never terminates
+#   for non-UTF-8 input, so both bytes were consumed as ONE character.
+#
+# OPEN 1 — display WIDTH is locale-blind. `${(m)#}` and `(ml:N:)` padding
+# always decode UTF-8: they honour the MULTIBYTE option but not the locale.
+# With v=$'日本語' (9 UTF-8 bytes):
+#
+#   LC_ALL=C             zsh ${(m)#v}=9   zshrs 6   (${#v}=9 on BOTH — the
+#                        character COUNT is already right)
+#   unsetopt multibyte   both shells 9, every locale
+#   ${(ml:10:)v}         zsh pads 1 space, zshrs 4
+#
+# NOT the arm ec57980a78 fixed: `mb_metastrlenend(width=true)` over those
+# bytes returns 9 on every branch under LC_ALL=C (single-byte decode gives
+# WCWIDTH 1 nine times; MB_INVALID gives 1 nine times), and
+# BUILTIN_PARAM_LENGTH (src/fusevm_bridge.rs:13913) re-enters paramsubst as
+# a plain `${#name}` WITHOUT the `(m)` flag. So the `(m)` width is computed
+# somewhere not yet located — find that site before attempting a fix.
+#
+# OPEN 2 — a natively stored UTF-8 `char` is stepped by `len_utf8()` under a
+# non-UTF-8 locale. Same v under zh_CN.GB2312: zsh sees 5 characters and
+# REJECTS `???`; zshrs matches it. `${#v}`=5 and `${(m)#v}`=6 already agree
+# with zsh, so only the pattern walk diverges. C matches over an unmetafied
+# raw byte buffer (patallocstr) and re-decodes those bytes through the
+# locale; a Rust `&str` cannot be sliced mid-character, so closing this means
+# moving the matcher onto a byte buffer — structural, not a one-line repair.
