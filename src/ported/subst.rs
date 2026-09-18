@@ -2762,7 +2762,17 @@ pub fn dopadding(
             // byte. Otherwise mbrtowc assembles one character
             // (c:5635 → mb_metacharlenconv_r); a byte that begins no
             // valid sequence stands alone (c:5712).
-            let n = if !mb || bytes[i] <= 0x7f {
+            // c:5613 — C's test is `!isset(MULTIBYTE) || *s <= 0x7f`, and
+            // its multibyte arm is `mbrtowc` (c:5635), which in a
+            // SINGLE-BYTE locale consumes exactly one byte per call. The
+            // UTF-8 walk below therefore has to be skipped when
+            // `MB_CUR_MAX == 1`, or a 3-byte `中` stays one unit where C
+            // has three: `${(ml:10::中:)ab}` under `LC_ALL=C` kept whole
+            // characters while zsh cuts the pad mid-character.
+            let n = if !mb
+                || bytes[i] <= 0x7f
+                || (unsafe { crate::ported::utils::mb_cur_max_raw() } as usize) == 1
+            {
                 1
             } else {
                 let hi = (i + 4).min(bytes.len());
@@ -2811,8 +2821,49 @@ pub fn dopadding(
         };
         wcpadwidth(wc, multi_width) as usize // c:2376
     };
-    let cells = |t: &str| -> usize { units(t).iter().map(|u| width_of(u)).sum() }; // c:919
+    // c:919-923 — every length C measures here is
+    // `MB_METASTRLEN2(str, multi_width)`, i.e. `mb_metastrlenend` with
+    // the `(m)` counter passed straight through. Summing `width_of`
+    // over units is NOT the same function: under a single-byte locale
+    // `mb_metastrlenend` returns BYTES and never consults the width at
+    // all (c:5662-5663), so `${(ml:12::x:)日本語}` padded with six `x`
+    // where zsh pads with three, and a WIDE pad string measured 1 per
+    // character instead of its columns (`${(ml:10::中:)ab}` repeated
+    // the pad eight times against zsh's four).
+    let cells = |t: &str| -> usize {
+        crate::ported::utils::mb_metastrlenend(t, multi_width, t.len()) // c:919
+    };
     let len = cells(s); // c:919
+    // c:1074-1109 / c:1276-1317 — C copies a PARTIAL repeat of the pad
+    // by walking characters and charging each one `WCPADWIDTH`, so the
+    // budget is in CELLS. Indexing a unit vector by a cell count is the
+    // same conflation the lengths above had.
+    let take_last_cells = |us: &[String], want: usize| -> String {
+        let mut acc = 0usize;
+        let mut from = us.len();
+        for i in (0..us.len()).rev() {
+            let w = width_of(&us[i]);
+            if acc + w > want {
+                break;
+            }
+            acc += w;
+            from = i;
+        }
+        us[from..].concat()
+    };
+    let take_first_cells = |us: &[String], want: usize| -> String {
+        let mut acc = 0usize;
+        let mut out = String::new();
+        for u in us {
+            let w = width_of(u);
+            if acc + w > want {
+                break;
+            }
+            acc += w;
+            out.push_str(u);
+        }
+        out
+    };
     let total_width = prenum + postnum; // c:893
 
     if total_width == 0 || total_width == len {
@@ -2881,7 +2932,7 @@ pub fn dopadding(
             if let Some(pre) = preone {
                 // c:893
                 let pre_units = units(pre); // c:1074
-                let pre_len = pre_units.len(); // c:921
+                let pre_len = cells(pre); // c:921
                 if pre_len <= padding_needed {
                     // c:893
                     // Room for repeated padding first
@@ -2889,14 +2940,14 @@ pub fn dopadding(
                     if !premul.is_empty() {
                         // c:893
                         let mul_units = units(premul); // c:1099
-                        let mul_len = mul_units.len(); // c:922
+                        let mul_len = cells(premul); // c:922
                         let full_repeats = repeat_len / mul_len; // c:893
                         let partial = repeat_len % mul_len; // c:893
 
                         // Partial repeat
                         if partial > 0 {
                             // c:893
-                            result.push_str(&mul_units[mul_len - partial..].concat());
+                            result.push_str(&take_last_cells(&mul_units, partial));
                             // c:893
                         } // c:893
                           // Full repeats
@@ -2909,7 +2960,7 @@ pub fn dopadding(
                 } else {
                     // c:893
                     // Only part of preone fits
-                    result.push_str(&pre_units[pre_len - padding_needed..].concat());
+                    result.push_str(&take_last_cells(&pre_units, padding_needed));
                     // c:893
                 } // c:893
             } else {
@@ -2918,13 +2969,13 @@ pub fn dopadding(
                 if !premul.is_empty() {
                     // c:893
                     let mul_units = units(premul); // c:1099
-                    let mul_len = mul_units.len(); // c:922
+                    let mul_len = cells(premul); // c:922
                     let full_repeats = padding_needed / mul_len; // c:893
                     let partial = padding_needed % mul_len; // c:893
 
                     if partial > 0 {
                         // c:893
-                        result.push_str(&mul_units[mul_len - partial..].concat());
+                        result.push_str(&take_last_cells(&mul_units, partial));
                         // c:893
                     } // c:893
                     for _ in 0..full_repeats {
@@ -2973,7 +3024,7 @@ pub fn dopadding(
             if let Some(post) = postone {
                 // c:893
                 let post_units = units(post); // c:1276
-                let post_len = post_units.len(); // c:921
+                let post_len = cells(post); // c:921
                 if post_len <= padding_needed {
                     // c:893
                     result.push_str(post); // c:893
@@ -2981,7 +3032,7 @@ pub fn dopadding(
                     if !postmul.is_empty() {
                         // c:893
                         let mul_units = units(postmul); // c:1317
-                        let mul_len = mul_units.len(); // c:923
+                        let mul_len = cells(postmul); // c:923
                         let full_repeats = remaining / mul_len; // c:893
                         let partial = remaining % mul_len; // c:893
 
@@ -2991,17 +3042,17 @@ pub fn dopadding(
                         } // c:893
                         if partial > 0 {
                             // c:893
-                            result.push_str(&mul_units[..partial].concat()); // c:893
+                            result.push_str(&take_first_cells(&mul_units, partial)); // c:893
                         } // c:893
                     } // c:893
                 } else {
                     // c:893
-                    result.push_str(&post_units[..padding_needed].concat()); // c:893
+                    result.push_str(&take_first_cells(&post_units, padding_needed)); // c:893
                 } // c:893
             } else if !postmul.is_empty() {
                 // c:893
                 let mul_units = units(postmul); // c:1317
-                let mul_len = mul_units.len(); // c:923
+                let mul_len = cells(postmul); // c:923
                 let full_repeats = padding_needed / mul_len; // c:893
                 let partial = padding_needed % mul_len; // c:893
 
@@ -3011,7 +3062,7 @@ pub fn dopadding(
                 } // c:893
                 if partial > 0 {
                     // c:893
-                    result.push_str(&mul_units[..partial].concat()); // c:893
+                    result.push_str(&take_first_cells(&mul_units, partial)); // c:893
                 } // c:893
             } // c:893
         } // c:893
@@ -13610,7 +13661,7 @@ pub fn paramsubst(
                             len += (sl as i64)
                                 + (crate::ported::utils::mb_metastrlenend(
                                     elem,
-                                    multi_width != 0,
+                                    multi_width as i32,
                                     elem.len(),
                                 ) as i64); // c:3858
                         }
@@ -13683,7 +13734,7 @@ pub fn paramsubst(
                     // not 3. width != 0 ⇔ multi_width set.
                     crate::ported::utils::mb_metastrlenend(
                         &raw_value_for_len,
-                        multi_width != 0,
+                        multi_width as i32,
                         raw_value_for_len.len(),
                     )
                 } else {
@@ -23372,6 +23423,25 @@ pub fn paramsubst(
                     value = crate::ported::utils::sepjoin(&parts, None); // c:3909
                     split_parts = None; // c:3910 `isarr = 0`
                     isarr = 0; // c:3910
+                } else if parts.len() == 1 {
+                    // c:Src/subst.c:3899-3906 — `else if (isarr && aval &&
+                    // aval[0] && !aval[1]) { val = aval[0]; isarr = 0; }`: a
+                    // ONE-element array is treated as a scalar BEFORE the
+                    // c:3912 force_split block, so the c:3931
+                    // `if (force_split && !isarr)` sepsplit still fires on it.
+                    // The port demoted only arrays of length > 1 (the c:3914
+                    // join above), so a single-element array kept `isarr`,
+                    // made `unjoined_array` true at c:3931 and skipped the
+                    // split entirely: `a=("x y z"); print ${#${=${a}}}` was 1
+                    // where zsh is 3. `_git`'s __git_merge_strategies splits
+                    // exactly this shape — `${=${(M)${(f)…}:#[Aa]vailable …
+                    // strategies are: *}}` matches ONE line — so
+                    // `git merge --strategy=<TAB>` inserted
+                    // `octopus\ ours\ recursive\ resolve\ subtree` as a single
+                    // backslash-escaped word instead of listing five matches.
+                    value = parts[0].clone(); // c:3904 `val = aval[0]`
+                    split_parts = None; // c:3905 `isarr = 0`
+                    isarr = 0; // c:3905
                 }
             }
         }

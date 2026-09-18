@@ -2321,7 +2321,7 @@ pub fn get_match_ret(imd: &mut imatchdata, b: usize, e: usize) -> Option<String>
     }
     if (fl & SUB_BIND) != 0 {
         // c:2594 position of start of matched portion
-        buf = format!("{} ", MB_METASTRLEN2END(mstr_owned.as_str(), false, b) + 1); // c:2596
+        buf = format!("{} ", MB_METASTRLEN2END(mstr_owned.as_str(), 0, b) + 1); // c:2596
         bl = buf.len(); // c:2597 bl = strlen(buf)
         ll += bl as i64; // c:2597 ll += bl
     }
@@ -2329,7 +2329,7 @@ pub fn get_match_ret(imd: &mut imatchdata, b: usize, e: usize) -> Option<String>
         // c:2599 position of end of matched portion
         buf.push_str(&format!(
             "{} ",
-            MB_METASTRLEN2END(mstr_owned.as_str(), false, e) + 1
+            MB_METASTRLEN2END(mstr_owned.as_str(), 0, e) + 1
         )); // c:2601
         bl = buf.len(); // c:2602 bl = strlen(buf)
         ll += bl as i64; // c:2602 ll += bl
@@ -2343,7 +2343,7 @@ pub fn get_match_ret(imd: &mut imatchdata, b: usize, e: usize) -> Option<String>
         };
         buf.push_str(&format!(
             "{} ",
-            MB_METASTRLEN2END(sub, false, e.saturating_sub(b))
+            MB_METASTRLEN2END(sub, 0, e.saturating_sub(b))
         )); // c:2605
         bl = buf.len(); // c:2606 bl = strlen(buf)
         ll += bl as i64; // c:2606 ll += bl
