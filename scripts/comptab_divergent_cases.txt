@@ -7228,3 +7228,64 @@ gstack
 # the reference this project measures against — and wrong only under fork tip.
 # zshrs fails it because the port is the hybrid described above: it carries
 # the fork-tip unwind.  "Correct-but-unimplemented", not "known-wrong".
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2026-09-18 (R3-U) — the two `(m)`-pad residues of b54ff03301 RE-MEASURED.
+# The recorded framing ("the residue is the CUT POINT, not the arithmetic")
+# is REFUTED for the left-pad case, and the unencodable-pad case is
+# root-caused to the FLAG PARSER, not to padding. NOT FIXED.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Binary: shared-tree target/debug/zshrs built 2026-09-18 14:51 (b54ff03301).
+# Reference: /opt/homebrew/bin/zsh.  All values `v=ab`, pad `中` = e4 b8 ad.
+#
+# LEFT PAD, LC_ALL=C — zsh drops the REPEATS AND THE VALUE, keeping only the
+# partial-pad tail.  This is not a cut point; the value never appears:
+#
+#   ${(l:10::中:)v}    zsh b8ad e4b8ad e4b8ad 6162   (10 bytes, zshrs IDENTICAL)
+#   ${(ml:10::中:)v}   zsh b8ad                      (2 bytes — no repeats, no value)
+#   zshrs              e4b8ad e4b8ad e4b8ad 6162     (11 bytes)
+#
+#   width  3    4     5       6    8       10    12     (zsh, v=ab, `ml`)
+#          ad   b8ad  e4b8ad  ad   e4b8ad  b8ad  ad     — 6162 NEVER present
+#   v=abcd 3    4         5   6     8   10      12
+#          626364 61626364 ad  b8ad ad  e4b8ad  b8ad
+#
+# The drop correlates with a ZERO-WIDTH byte in the pad, not with position:
+# `中` ends in ad = U+00AD SOFT HYPHEN (wcwidth 0), and the value is dropped;
+# `é` (c3 a9) and `ä` (c3 a4) are all width-1 bytes and the value SURVIVES:
+#
+#   ${(ml:5::é:)v}  a9 c3a9 6162      ${(ml:10::é:)v}  c3a9 x4 6162
+#   ${(ml:6::ä:)v}  c3a4 c3a4 6162
+#
+# RIGHT pad is NOT affected the same way: `${(mr:10::中:)v}` is byte-identical
+# to the unflagged `r` form on zsh (6162 e4b8ad e4b8ad e4b8); zshrs emits 11
+# bytes (…e4b8ad), so only zshrs's final-pad cut diverges there.
+#
+# TWO CONTROLS THAT KILL THE "WIDTH CHARGE" THEORY:
+#   `unsetopt multibyte` + ${(ml:10::中:)v}  →  zsh STILL b8ad, while the
+#   unflagged form on the same input gives the full 10 bytes.  WCPADWIDTH is
+#   a compile-time 1 in that mode (c:Src/subst.c:869), so the charge cannot
+#   be the cause.  And `(mm)` (multi_width=2, c:2378 `multi_width++`) is also
+#   b8ad under C, yet pads fully under en_US.UTF-8.
+#   No arm of `dopadding` (c:Src/subst.c:892-1330) read end-to-end explains
+#   dropping `while (*str) *r++ = *str++` (c:1230-1232).  Settling this needs
+#   an INSTRUMENTED reference build, not more black-box probing.
+#
+# UNENCODABLE PAD — it is a FLAG-PARSE failure, not a padding decision.
+# `${(mr:8::PAD:)ab}` under zh_CN.GB2312, zsh vs zshrs:
+#
+#   PAD       e4b8ad   ad     | ed959c  c3a9  c3a4  a1a1  b0a1  e4a1  e4b8  41
+#   zsh       flagerr  flagerr| pads    pads  pads  pads  pads  pads  pads  pads
+#   zshrs     pads     pads   | pads    pads  pads  pads  pads  pads  pads  pads
+#
+#   zsh: `zsh:1: error in flags near position 9 in '${(mr:8::中:)v}"'`
+#
+# CAUSE: `get_strarg`'s delimiter scan (c:Src/subst.c:1403-1412) walks with
+# MB_METACHARLENCONV, so a sequence the LOCALE cannot decode consumes the
+# rest of the flag string; the closing `:` is never found, `t` lands on NUL,
+# and c:2361 `if (!*t) goto flagerr` raises the c:2528 diagnostic.  The port
+# (`get_strarg`, src/ported/subst.rs:3096-3129) walks `char_indices()` — pure
+# UTF-8, locale-independent — so it always finds the delimiter and pads.
+# Fixing it means stepping that scan through the locale, i.e. the same
+# byte-buffer problem as OPEN 2 above, so it is recorded, not patched.
