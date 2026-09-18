@@ -153,22 +153,14 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
     if cur_depth > prev_level {
+        // `${_comp_tags% * }` — the SHORTEST suffix matching
+        //   `<space>*<space>`, which leaves no trailing space and strips
+        //   nothing at all when the value does not end in one. Shared with
+        //   `_all_labels` sh:27, which runs the identical line.
         let comp_tags = getsparam("_comp_tags").unwrap_or_default();
-        // `${_comp_tags% * }` — strip the longest suffix matching
-        //   " <something> " (the trailing tag-spec word + trailing
-        //   space). Implemented as: trim trailing space, drop last
-        //   space-separated token, re-pad with trailing space.
-        let trimmed = comp_tags.trim_end_matches(' ');
-        let last_sp = trimmed.rfind(' ');
-        let kept = match last_sp {
-            Some(i) => &trimmed[..i],
-            None => "",
-        };
-        let mut rebuilt = String::from(kept);
-        if !rebuilt.is_empty() {
-            rebuilt.push(' ');
-        }
-        let _ = setsparam("_comp_tags", &rebuilt);
+        let stripped =
+            crate::compsys::ported::shared::strip_shortest_space_delimited_suffix(&comp_tags);
+        let _ = setsparam("_comp_tags", &stripped);
     }
 
     // sh:10  _tags_level=$#funcstack

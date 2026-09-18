@@ -322,18 +322,11 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
         if cur_depth > prev_level {
+            // sh:27  _comp_tags="${_comp_tags% * }"
             let comp_tags = getsparam("_comp_tags").unwrap_or_default();
-            let trimmed = comp_tags.trim_end_matches(' ');
-            let last_sp = trimmed.rfind(' ');
-            let kept = match last_sp {
-                Some(i) => &trimmed[..i],
-                None => "",
-            };
-            let mut rebuilt = String::from(kept);
-            if !rebuilt.is_empty() {
-                rebuilt.push(' ');
-            }
-            let _ = setsparam("_comp_tags", &rebuilt);
+            let stripped =
+                crate::compsys::ported::shared::strip_shortest_space_delimited_suffix(&comp_tags);
+            let _ = setsparam("_comp_tags", &stripped);
         }
         let _ = setsparam("_tags_level", &cur_depth.to_string());
 

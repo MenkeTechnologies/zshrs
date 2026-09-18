@@ -2348,3 +2348,86 @@ pub fn right_pad_or_truncate(s: &str, n: usize) -> String {
         format!("{}{}", s, " ".repeat(n - len))
     }
 }
+
+/// `${s% * }` — remove the SHORTEST suffix matching `<space>*<space>`.
+///
+/// `_all_labels` sh:27 and `_next_label` sh:9 both run
+/// `_comp_tags="${_comp_tags% * }"` before appending the new spec with
+/// sh:29 / sh:11 `_comp_tags="$_comp_tags $__spec "`, so the exact spacing
+/// this leaves is load-bearing: `_comp_tags` is pattern-matched elsewhere as
+/// `*\ ${tag}\ *` and is published to the user as `$_lastcomp[tags]`
+/// (`_main_complete` sh:416).
+///
+/// Two properties of `%` (shortest match, anchored at the end) that a
+/// "drop the last word" paraphrase gets wrong, both measured against
+/// `zsh -f`:
+///
+/// * nothing is stripped when the value does NOT end in a space — the
+///   pattern's own trailing space has nothing to match (`" a b"` → `" a b"`);
+/// * what remains keeps NO trailing space, because the pattern's LEADING
+///   space is consumed too (`" a b c "` → `" a b"`, `"a b "` → `"a"`,
+///   `" abc "` → `""`).
+///
+/// The previous inline copies in both ports trimmed the trailing spaces,
+/// dropped the last word and re-appended a space, so the sh:29 / sh:11
+/// append then produced `" a b  spec "` with a doubled space where zsh
+/// produces `" a b spec "`.
+pub fn strip_shortest_space_delimited_suffix(s: &str) -> String {
+    // The pattern ends in a space, so a value that does not cannot match.
+    if !s.ends_with(' ') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    // `<space>*<space>` needs two spaces; a lone trailing one cannot match
+    // (`" "` is unchanged in zsh).
+    if bytes.len() < 2 {
+        return s.to_string();
+    }
+    // The shortest match starts at the LAST space that is not the trailing
+    // one; everything from it is removed. Space is ASCII, so this byte index
+    // is always a char boundary.
+    match bytes[..bytes.len() - 1].iter().rposition(|&b| b == b' ') {
+        Some(i) => s[..i].to_string(),
+        None => s.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod strip_shortest_space_delimited_suffix_tests {
+    use super::strip_shortest_space_delimited_suffix as strip;
+
+    /// Every shape below was measured with `zsh -f` running
+    /// `x=<input>; print -r -- "${x% * }"`.
+    #[test]
+    fn matches_zsh_parameter_expansion_on_every_measured_shape() {
+        assert_eq!(strip(" a b c "), " a b");
+        assert_eq!(strip(" a b "), " a");
+        assert_eq!(strip("  a  b  "), "  a  b");
+        assert_eq!(strip("a b "), "a");
+        assert_eq!(strip(" abc "), "");
+    }
+
+    /// `%` is anchored at the end: with no trailing space the pattern's own
+    /// trailing space has nothing to match, so the value is untouched.
+    #[test]
+    fn a_value_without_a_trailing_space_is_unchanged() {
+        assert_eq!(strip(" a b"), " a b");
+        assert_eq!(strip("abc"), "abc");
+        assert_eq!(strip(""), "");
+    }
+
+    /// A single trailing space is not enough for `<space>*<space>`.
+    #[test]
+    fn a_lone_space_is_unchanged() {
+        assert_eq!(strip(" "), " ");
+    }
+
+    /// The regression this helper exists for: `_all_labels` sh:27-29 and
+    /// `_next_label` sh:9-11 strip and then append `" $__spec "`. The result
+    /// must carry ONE space between specs, not two.
+    #[test]
+    fn strip_then_append_leaves_a_single_space_between_specs() {
+        let after_strip = strip(" tag1 tag2 ");
+        assert_eq!(format!("{} {} ", after_strip, "tag3"), " tag1 tag3 ");
+    }
+}
