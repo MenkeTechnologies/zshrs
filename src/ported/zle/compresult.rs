@@ -3909,7 +3909,7 @@ pub fn bld_all_str() -> String {
             mp += 1;
             if mp >= g.matches.len() {
                 // c:2232
-                g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
+                g_idx = (gi + 1..groups.len()).find(|&i| groups[i].mcount != 0);
                 if g_idx.is_none() {
                     break 'outer;
                 }
@@ -3917,7 +3917,7 @@ pub fn bld_all_str() -> String {
             }
         }
         let _ = Relaxed;
-        g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
+        g_idx = (gi + 1..groups.len()).find(|&i| groups[i].mcount != 0);
     }
     buf // c:2238 ztrdup(buf)
 }
@@ -5728,6 +5728,46 @@ mod tests {
     }
 
     /// c:1350 — `printlist(0, 0)` returns i32.
+    /// `Src/Zle/compresult.c:2219-2227` — `bld_all_str`'s group advance walks
+    /// the group list and STOPS when it runs off the end (`do { if (!(g =
+    /// g->next)) break; } while (!g->mcount); if (!g) break;`). The port
+    /// searched an UNBOUNDED `(gi + 1..)` range with the bounds test inside
+    /// the predicate, and `Iterator::find` only stops when the predicate is
+    /// true or the iterator ends — a `RangeFrom` never ends. So once no later
+    /// group had matches the walk spun forever: a single `compadd -C --`
+    /// group hung inside `iprintm`, and the ENTIRE listing (not just the
+    /// `<all>` row) never printed. A regression here HANGS rather than fails,
+    /// so the call is bounded by a timeout.
+    #[test]
+    fn bld_all_str_stops_at_the_last_group() {
+        let _g = crate::test_util::global_state_lock();
+        let _z = zle_test_setup();
+
+        let mut m1 = Cmatch::default();
+        m1.str = Some("alpha".to_string());
+        let mut m2 = Cmatch::default();
+        m2.str = Some("beta".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![m1, m2];
+        g.mcount = 2;
+        g.lcount = 2;
+        if let Ok(mut a) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *a = vec![g];
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(bld_all_str());
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("c:2227 — bld_all_str must stop at the last group, not spin");
+        assert_eq!(got, "alpha beta", "c:2202-2218 — space-joined visible matches");
+    }
+
     #[test]
     fn printlist_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
