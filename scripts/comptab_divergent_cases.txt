@@ -6725,28 +6725,40 @@ gstack
 # NOW-PASSES x4 on the fixed binary, CONTROL-MOVED with the recorded row
 # counts on 0b11157986 builds with each fix reverse-applied.
 #
-# OPEN (hand-off, `_describe` owner) — `_describe -O option` outside
-# `_main_complete` adds its matches in zshrs; zsh adds none:
+# WAS OPEN (hand-off, `_describe` owner) — NOT REPRODUCIBLE, entry retired
+# 2026-09-18 (R3-F2).  The hand-off below was recorded from a sweep whose
+# pinned binary was 0b11157986, which PREDATES f799727619 (`git log
+# 0b11157986..ff7a8d861c` lists it).  Every cell it names passes now.
+#
+# The recorded repro, re-measured on a target/debug/zshrs built at
+# ff7a8d861c (comptab_screen.py, --buffer 'fzc -' --keys tab, 24x80):
 #
 #     _dw() { local -a next=( -m:m -j:j ); _describe -O option next
-#             print -u2 "ret=$? nm=$compstate[nmatches]" }
+#             print -u2 "RET=$? NM=$compstate[nmatches]" }
 #     zle -C _dw_w complete-word _dw; bindkey '^I' _dw_w   # then `fzc -<TAB>`
 #
-#     zsh   : ret=1 nm=0          zshrs : ret=0 nm=2
+#     zsh            : RET=1 NM=0      (was: ret=1 nm=0)
+#     zshrs --zsh    : RET=1 NM=0      (was: ret=0 nm=2)
+#     zshrs (native) : RET=1 NM=0
 #
-# Same result with a `_tags options; while _tags` loop around it. This is the
-# whole of 9301 case0011 (`_arguments -C … '*::deeper:->deeper'` in a
-# `zle -C menu-expand-or-complete` widget: zsh leaves `fzc0011 gamma x -`,
-# zshrs inserts `-j`) — probed through a copy of stock _arguments: the gate
-# values, `comparguments -O` (ret=0 next=(-m:m) odirect=(-j:j)) and the inputs
-# to sh:527 `_describe -O option next …` are IDENTICAL on both; only the
-# _describe call diverges. Same class, all a completer body run directly by a
-# `zle -C` widget (no `_main_complete` above it), zsh adds nothing, zshrs adds:
-#   9302 case0013  `_describe 'hash#mark' _m _d` -> zshrs lists `-v -- …`
-#   9304 case0010  `_describe 'two  spaces' _m` -> zshrs inserts `-a `
-#   9304 case0016  `_arguments {-t,--five}'[…]'` at `fzc0016 -` -> zshrs lists
-#                  `--five  -t  -- keep going at@sign` (options branch ends in
-#                  sh:527 `_describe -O option`)
+# The four cells, re-run one at a time (--cases 1 --jobs 1, locale pool
+# C,en_US.UTF-8,C.UTF-8), BOTH modes, verbatim summaries:
+#
+#   9301 case0011  zsh mode `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#                  native   `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#   9302 case0013  zsh mode `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#                  native   `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#   9304 case0010  zsh mode `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#                  native   `# 1 case(s): 1 PASS, 0 PASS(err), 0 FAIL, 0 SKIP`
+#   9304 case0016  zsh mode `# 1 case(s): 0 PASS, 1 PASS(err), 0 FAIL, 0 SKIP`
+#                  native   `# 1 case(s): 0 PASS, 1 PASS(err), 0 FAIL, 0 SKIP`
+#
+# ATTRIBUTION IS INFERRED, NOT MEASURED: f799727619 gates the native
+# `extract_match_parts` on EXTENDED_GLOB and its own doc comment cites this
+# exact shape (a `zle -C` widget runs without the option, so stock
+# `_describe` sh:112/115 `##([^:\\]|\\?)##` matches nothing and zsh adds no
+# match).  A build with that commit reverse-applied was NOT made, so the
+# credit is a reading of the diff, not a bisect.
 #
 # FIXED 7e4f986b0a (core shell) — an UNBRACED quoted subscript that selects
 # an array was not one word (c:Src/subst.c:3033-3034 `qt && isarr` sepjoin):
