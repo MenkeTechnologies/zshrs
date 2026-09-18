@@ -197,7 +197,23 @@ pub fn _message_impl(args: &[String]) -> i32 {
         if tags_rc == 0 {
             loop {
                 let nl_args = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                if _next_label_impl(&nl_args) != 0 {
+                // sh:16 — in zsh `_next_label` is a shell function, so this
+                // call runs one `FUNCSTACK` frame deeper than `_message`. The
+                // raw `_impl` call below skips `doshfunc`, and `_next_label`
+                // sh:9 gates its `_comp_tags` strip on
+                // `(( $#funcstack > _tags_level ))`: without the frame the
+                // guard never fires and a tag zsh drops survives. Measured on
+                // `_arguments : '1::optional delimiter:(\:)' '*:spec'` —
+                // zsh `_tags_level=9 _comp_tags=' argument-rest '`, zshrs
+                // `_tags_level=8 _comp_tags=' argument-1  argument-rest '`.
+                // The frame is supplied on its own, NOT via `doshfunc`, so the
+                // hand-managed `locallevel` pairing above stays intact.
+                let nl_rc = {
+                    let _nl_frame =
+                        crate::compsys::ported::shared::PortFuncstackFrame::push("_next_label");
+                    _next_label_impl(&nl_args)
+                };
+                if nl_rc != 0 {
                     break;
                 }
                 // sh:17  compadd ${expl:/-X/-x}
@@ -362,6 +378,53 @@ mod tests {
             ])
         });
         assert_eq!(r, 0);
+    }
+
+    /// sh:16 — `_next_label` is a shell function, so `_message -e` calls it
+    /// one `FUNCSTACK` frame deeper than itself. `_next_label` sh:9 gates its
+    /// `_comp_tags` strip on `(( $#funcstack > _tags_level ))`, so the frame
+    /// decides whether a tag the caller published is dropped.
+    ///
+    /// Without it, `_arguments : '1::optional delimiter:(\:)' '*:spec'` — an
+    /// empty rest action, which sh:413-417 routes here — left
+    /// `_comp_tags=' argument-1  argument-rest '` where zsh leaves
+    /// `' argument-rest '`, and `_tags_level` read 8 against zsh's 9.
+    #[test]
+    fn dash_e_runs_next_label_one_funcstack_frame_deeper() {
+        fn depth() -> usize {
+            crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .map(|s| s.len())
+                .unwrap_or(0)
+        }
+
+        // `with_incompfunc` takes `global_state_lock()` itself, and that guard
+        // is a plain non-reentrant `Mutex` (test_util.rs:24-37): taking it here
+        // too would deadlock this thread against itself. Everything therefore
+        // runs inside the closure, as in every sibling test.
+        let (before, after_call, inner, after_drop) = with_incompfunc(|| {
+            let before = depth();
+            let _ = _message_impl(&[
+                "-e".to_string(),
+                "some_tag".to_string(),
+                "descr".to_string(),
+            ]);
+            let after_call = depth();
+
+            // The guard itself: one FS_FUNC frame while it is alive.
+            let inner = {
+                let _f = crate::compsys::ported::shared::PortFuncstackFrame::push("_next_label");
+                depth()
+            };
+            (before, after_call, inner, depth())
+        });
+
+        assert_eq!(
+            after_call, before,
+            "the frame must be popped again (c:6218-6219)"
+        );
+        assert_eq!(inner, before + 1, "c:6005-6016 — one FS_FUNC frame pushed");
+        assert_eq!(after_drop, before, "c:6218-6219 — popped on drop");
     }
 
     #[test]
