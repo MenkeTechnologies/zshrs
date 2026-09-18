@@ -7336,3 +7336,70 @@ gstack
 #     then drop the unwind, making the port consistently released-5.9.x; or
 #     (2) leave the port hybrid (seeding + fork-tip unwind) as it is today.
 #     No test was touched, ignored or deleted.
+
+# ==========================================================================
+# 2026-09-18 — a `compadd -C` <all> placeholder SUPPRESSES THE WHOLE PLAIN-PATH
+# LISTING, and R3-V's clprintm port must NOT be landed as written.
+# ==========================================================================
+#
+# MINIMAL REPRO, outside the fuzzer (init is 3 lines; buffer 'zzc ', key tab):
+#
+#     _sfzc() { compadd -C -- ; compadd alpha beta }
+#     zle -C _sfz_w complete-word _sfzc
+#     bindkey '^I' _sfz_w
+#
+#   zsh    rows: `alpha beta` / `alpha  beta`   (row 1 = the <all> display that
+#                                                bld_all_str builds)
+#   zshrs  rows: <none>
+#
+# `compadd alpha beta` ALONE lists identically on both shells (`alpha  beta`),
+# so the trigger is the PRESENCE of the CMF_ALL placeholder, not the matches.
+# With `-X 'out-arrays'` zshrs prints ONLY the explanation and no match rows.
+# Adding `-U -Q`, `-J <grp>` or `-X` changes nothing: the split is `-C` alone.
+#
+# NOT widget-specific — same completer, tab, four widgets, zsh always 3 rows:
+#     complete-word / menu-complete / reverse-menu-complete /
+#     delete-char-or-list  ->  zshrs draws NO listing in all four.
+#
+# NOT a match-count or list-decision divergence. A probe printing compstate
+# from inside the completer (reads only; adds no match) gives IDENTICALLY on
+# both shells:  nm=3 list=ambiguous ins=menu
+#
+# THE PLAIN AND COMPLIST PATHS DIFFER. With `zmodload -i zsh/complist` and
+# `zle -C _sfz_w menu-select _sfzc`:
+#     zsh    `alpha beta` / `out-arrays` / `alpha  beta`
+#     zshrs               `out-arrays` / `alpha  beta`   (2 of 3 — only the
+#                                                         <all> row missing)
+# So complist lists and drops one row; the plain path drops everything.
+#
+# RULED OUT BY READING AGAINST C (do not re-chase):
+#   * `skipnolist` (compresult.rs:2653 <-> c:1477-1487) — faithful, incl. the
+#     mask and the `disp && (CMF_DISPLINE|CMF_HIDE)` clause.
+#   * `addmatch`'s placeholder init (compcore.rs:3933-3939 <-> c:2051-2059) —
+#     faithful: C ALSO stores `dupstring("")` + CMF_DISPLINE for the `line`
+#     arm, so the port's `Some(String::new())` is correct; this is NOT a
+#     `NULL` vs `Some("")` divergence.
+#   * `do_allmatches` (c:900-945) — the insert-all path, not the listing path.
+#
+# NEXT STEP: instrument `calclist` (c:1491, `listdat.nlines`) and the
+# `ilistmatches` bail at c:2282 `if (!listdat.nlines) return 1` — the
+# explanation-only output points at the per-match count, not the list decision.
+#
+# R3-V's clprintm port (bld_all_str at complist.rs:3232-3234, c:1756-1757) was
+# reported "measured inert". RE-MEASURED: it is NOT inert — it REGRESSES the
+# complist path from 2 rows to ZERO (applied: no listing at all; reverted and
+# rebuilt: `out-arrays` / `alpha  beta` returns). R3-V measured only the
+# plain-path cells, which never enter clprintm: the fuzzer sets
+# `plan["complist"]` ONLY for `menu-select` (compsys_spec_fuzz.py:647,657),
+# while 9402/0023 and 9403/0021 use `delete-char-or-list` /
+# `reverse-menu-complete`. Diff kept at scratchpad/r3V_clprintm.diff — do not
+# land it without fixing that regression.
+#
+# NOTE for whoever ports c:1756-1757 properly: C's `bld_all_str` ENDS with
+# `zsfree(all->disp); all->disp = ztrdup(buf);` (c:2229-2230) — it STORES on
+# the match, so the built string persists across calls and is visible through
+# `mtab`. The Rust `clprintm` takes `m: &Cmatch` and `g: &Arc<Cmgroup>`, and
+# MTAB holds CLONES, so a threaded local (the sibling idiom at
+# compresult.rs:3972-3983) is observably narrower for menu-select. Storing
+# needs the group's matches reachable mutably — a structural change, not a
+# one-line port.
