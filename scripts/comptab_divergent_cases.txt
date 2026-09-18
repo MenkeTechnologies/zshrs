@@ -6939,3 +6939,49 @@ gstack
 # raw byte buffer (patallocstr) and re-decodes those bytes through the
 # locale; a Rust `&str` cannot be sliced mid-character, so closing this means
 # moving the matcher onto a byte buffer — structural, not a one-line repair.
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2026-09-18 (R3-P) — `_email_addresses` `_comp_tags` ORDER re-measured. The
+# 6686-6688 entry above lumps it with the funcstack-gate SPACING class; that
+# half is fixed (4d341ef67a) and what is left here is ORDER ALONE, with a
+# different cause. Two claims in the hand-off were also backwards.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Binary: shared-tree target/debug/zshrs built 2026-09-18 14:24 at ff7a8d861c.
+#   scripts/comptab_parity.py --fn-only _email_addresses \
+#     --fn-derive-only _email_addresses --jobs 1
+#   # 0 passed, 2 failed, 2 call(s)   (fingerprint 5c2b1d971b, calls bare + group-J)
+#     zsh  :   _comp_tags = ' users  email-ldap  options  email-mutt '
+#     zshrs:   _comp_tags = ' email-ldap  users  options  email-mutt '
+#
+# The SET is identical; only the position of `users` vs `email-ldap` differs,
+# i.e. plugin `local` vs `ldap`. `users` is what `_email-local` emits (sh:86
+# `_users`); `email-ldap` is `_email-ldap`'s own `_wanted` tag (sh:72).
+#
+# CAUSE. sh:138 derives the plugin list AND its order from the live table:
+#   plugins=( ${${(k)functions[(I)_email-*]#*-}:#(${(kj.|.)~files})} ... )
+# `$functions` is a hash, so zsh's order is hash order — on this host `local`
+# before `ldap`, which is NOT alphabetical (`ldap` < `local`). The port
+# (`src/compsys/ported/Unix/Type/_email_addresses.rs:621`) stands in for the
+# seven upstream plugins with a fixed list in FILE-DEFINITION order
+#   ["mail","mutt","mush","MH","pine","ldap","local"]      (sh:17/31/32/34/40/46/76)
+# so it yields `ldap` before `local`.
+#
+# NOT FIXED, and deliberately so. In zshrs those seven plugins are native
+# Rust with no `shfunctab` node, so deriving the list from the live table —
+# the faithful-looking repair — would leave NO built-in plugins at all. The
+# only way to reproduce zsh's order is to emulate zsh's hash iteration; see
+# [[hash_iteration_order_nondeterminism]]. Sorting or re-ordering the fixed
+# list to match this host would encode one machine's hash order as a
+# constant, which is a lie the next host breaks.
+#
+# TWO HAND-OFF CLAIMS CORRECTED (both measured, not inferred):
+#   * The order was reported as zshrs `users`-first / zsh `email-ldap`-first.
+#     It is the other way round, as the verbatim lines above show.
+#   * "The hardcoded list silently ignores user-defined `_email-*` plugins"
+#     is false. `shfunc_names_with_prefix("_email-")` already feeds any such
+#     shell function into `plugins` (rs:641-658), and `call_email_plugin`
+#     (rs:412-421) looks the name up with `getshfunc` and dispatches to it
+#     BEFORE its native match arm — which is sh:17-88's
+#     `(( $+functions[_email-<name>] )) ||` guard expressed in Rust. A user
+#     plugin is picked up and run today; it is now pinned by a unit test.
