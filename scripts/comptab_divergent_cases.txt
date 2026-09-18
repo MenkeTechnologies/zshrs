@@ -7146,3 +7146,85 @@ gstack
 #    `中` has no form, and zsh rejects the whole flag —
 #    `zsh:1: error in flags near position 25` — where zshrs pads normally.
 #    That is flag PARSING, not width, and is untouched by this work.
+
+# ══════════════════════════════════════════════════════════════════════════
+# VERSION SPLIT — `zformat -f` seeds `specs['%']`/`specs[')']` in RELEASED
+# zsh but not at fork tip.  Measured 2026-09-18.  zshrs follows RELEASED zsh.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Found while chasing R3-Q's note that `src/ported/modules/zutil.rs:1703-1704`
+# pre-populates two spec slots "citing c:976/977 — lines that do not exist".
+# The citation was STALE DRIFT, not an invention: in the tree this port was
+# written against, `specs['%'] = "%";` / `specs[')'] = ")";` sit at c:975-976
+# (one off), and the zsh-5.9.1 tag still carries the first at c:943.
+#
+# Upstream `a04c944804` ("54580: zformat: better handle literal % in format
+# string", 2026-05-18) DELETED both lines and added the unwind now at
+# c:851-856.  That commit is in NO tag and is NOT an ancestor of zsh-5.9,
+# zsh-5.9.0.4-test or zsh-5.9.1; `~/forkedRepos/zsh` (5.9.999.3-test) is past
+# it, hence its zero-initialised `char *specs[256] = {0}` at c:1021.
+#
+# MEASURED, `zformat -f REPLY <fmt> x:XX` then `print` (all three shells):
+#
+#   fmt            zsh 5.9.2            fork tip 5.9.999.3-test   zshrs (now)
+#   %%             `%`      rc 0        `%`      rc 0             `%`   rc 0
+#   %)             `)`      rc 0        `)`      rc 0             `)`   rc 0
+#   %(%.yes.no)    bad math expression  `yes`    rc 0             bad math …
+#                  script abandoned,
+#                  exit 0
+#
+# So the two ends genuinely disagree, and the split is REAL.  zshrs keeps the
+# seeded entries: every released zsh has them, and `/opt/homebrew/bin/zsh`
+# 5.9.2 — the oracle `comptab_parity.py` and `compsys_spec_fuzz.py` measure
+# against — is one of them.  A future move to fork-tip semantics means
+# deleting the two seeds AND keeping the unwind, not one or the other.
+#
+# THE PORT WAS A HYBRID, and that was the real defect.  It carried the
+# pre-a04c944804 seeding AND the post-a04c944804 unwind (zutil.rs:698), and
+# reached fork-tip OUTPUT by a third route: `mathevali(sv).unwrap_or(0)`
+# (zutil.rs:741) SWALLOWED the math error, so `%(%.yes.no)` scored 0 == 0 and
+# printed the true branch.  C reports it (checkunary -> zerr), leaves errflag
+# set and yields 0 (c:Src/math.c:1505-1509); `bin_zformat` never checks the
+# flag, which is why the shell abandons the rest of the script but still
+# exits 0.  Fixed: the Err is surfaced through `zerr` + errflag exactly as
+# `bin_let` (builtin.rs:17151) and `paramsubst` (subst.rs:3171) already do.
+# zshrs `--zsh -fc` is now byte-identical to 5.9.2 on stdout, stderr and exit.
+# Pinned by `zformat_ternary_bad_math_in_spec_value_reports_and_abandons`
+# (tests/parity/zsh_modules_corpus_parity.rs).
+#
+# NOT A DEFECT, recorded so it is not re-chased: this swallow was version
+# independent.  Whichever end is chosen, a spec VALUE that is not a valid
+# math expression (`s:6*3x`) must report and set errflag — never score 0.
+#
+# PRE-EXISTING, NOT MINE: `zformat_substring_caller_override_of_percent_wins`
+# (zutil.rs:5014) fails alone and in the module run (`left: "%"`, `right:
+# "OVERRIDE"`).  Left untouched — the decision is with the user.  zutil::
+# module run: 76 passed, 1 failed (that one).
+#
+# R3-Q called it "unreachable behaviour", reasoning from the FORK TIP only.
+# Re-checked against BOTH trees, because the c:849-856 unwind Q cited is the
+# code a04c944804 ADDED and released zsh does not have.  The verdict splits by
+# SURFACE:
+#
+#   (a) The `%`/`)` spec-name rejection is NOT post-a04c944804 — it predates
+#       it.  Pre-removal tree c:980-982 and the zsh-5.9.1 tag c:948-950 both
+#       read `ap[0][0] == '%' || ap[0][0] == ')'` -> `zwarnnam(nam, "invalid
+#       argument: %s", *ap); return 1;`.  So Q's first citation holds for both.
+#
+#   (b) On the real 5.9.2 binary, a caller therefore never gets a `%` spec in:
+#         % zformat -f REPLY "%%" %:OVERRIDE
+#         zsh:zformat:1: invalid argument: %:OVERRIDE
+#         rc=1 REPLY=[UNSET]
+#
+#   (c) BUT the unit test does not go through the builtin — it calls
+#       `zformat_substring` with a specs map directly, and there the two trees
+#       differ.  Pre-removal C reaches `} else if ((spec = specs[(unsigned
+#       char) *s])) {` (c:890) with NO unwind ahead of it, so a specs['%']
+#       entry IS consulted and an override WOULD win.  At fork tip the unwind
+#       (c:851-856) intercepts `%%`/`%)` before that lookup, so it cannot.
+#
+# CONCLUSION: unreachable through the BUILTIN in both versions, but as an
+# INTERNAL-function test its expectation is correct under released 5.9.x —
+# the reference this project measures against — and wrong only under fork tip.
+# zshrs fails it because the port is the hybrid described above: it carries
+# the fork-tip unwind.  "Correct-but-unimplemented", not "known-wrong".
