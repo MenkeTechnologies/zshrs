@@ -504,3 +504,61 @@ mod tokenized_flag_argument_reaches_globlist {
         assert_parity(r#"x=a; y=${(~l:5::*:)x}; print -r -- $y"#);
     }
 }
+
+/// c:Src/subst.c:3899-3906 — `else if (isarr && aval && aval[0] && !aval[1])
+/// { val = aval[0]; isarr = 0; }` demotes a ONE-element array to a scalar
+/// BEFORE the c:3912 force_split block, so c:3931
+/// `if (force_split && !isarr)` still sepsplits it. The port demoted only
+/// arrays of length > 1 (the c:3914 join), so a single-element array kept
+/// `isarr` and the split was skipped: `a=("x y z"); print ${#${=${a}}}` came
+/// back as 1 where zsh is 3. `_git`'s `__git_merge_strategies` parses
+/// `git merge -s ''` output with exactly this shape — the `(M)…:#…` filter
+/// matches ONE line — so `git merge --strategy=<TAB>` inserted
+/// `octopus\ ours\ recursive\ resolve\ subtree` as one backslash-escaped word
+/// instead of offering five matches.
+mod one_element_array_under_force_split {
+    use super::*;
+
+    #[test]
+    fn explicit_split_flag_splits_a_one_element_array() {
+        assert_parity(r##"a=("x y z"); y=(${=${a}}); print -r -- ${#y}; print -rl -- $y"##);
+        assert_parity(r##"a=("x y z"); y=(${=${(@)a}}); print -r -- ${#y}"##);
+        assert_parity(r##"a=("x y z"); y=(${=${${a}}}); print -r -- ${#y}"##);
+    }
+
+    /// The multi-element join (c:3914) and the plain-scalar path were already
+    /// correct — they must stay that way.
+    #[test]
+    fn multi_element_and_scalar_paths_are_unchanged() {
+        assert_parity(r##"a=("x y" "z w"); y=(${=${a}}); print -r -- ${#y}"##);
+        assert_parity(r##"s="x y z"; y=(${=${s}}); print -r -- ${#y}"##);
+        assert_parity(r##"a=("xyz"); y=(${=${a}}); print -r -- ${#y}"##);
+    }
+
+    /// The option-driven half of c:1707 `spbreak` reaches the same gate.
+    #[test]
+    fn shwordsplit_option_splits_a_one_element_array() {
+        assert_parity(r##"setopt shwordsplit; a=("x y z"); y=(${${a}}); print -r -- ${#y}"##);
+    }
+
+    /// c:3931 `sepsplit(val, spsep, 0, 1)` splits on IFS, and an EMPTY IFS
+    /// (c:1817 `nojoin` 1) keeps the element whole.
+    #[test]
+    fn ifs_governs_the_one_element_split() {
+        assert_parity(r##"IFS=:; a=("x:y:z"); y=(${=${a}}); print -r -- ${#y}"##);
+        assert_parity(r##"IFS=; a=("x y z"); y=(${=${a}}); print -r -- ${#y}"##);
+    }
+
+    /// The `_git` shape itself: `(f)` splits the program output, `(M)…:#…`
+    /// keeps the single "Available strategies are: …" line, and `${=…}` has
+    /// to split that lone element into one match per strategy.
+    #[test]
+    fn git_merge_strategies_parse_shape() {
+        assert_parity(
+            r##"out="Could not find merge strategy 'help'.
+Available strategies are: octopus ours recursive resolve subtree."
+s=(${=${${${(M)${(f)out}:#Available*}#Available strategies are: }%.}})
+print -r -- ${#s}; print -rl -- $s"##,
+        );
+    }
+}
