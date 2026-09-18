@@ -3322,8 +3322,8 @@ pub(crate) fn getarg<'a>(
     //   i/I (value-search → key/all keys),
     //   k/K (key-search → value/all values),
     //   e (exact match — disables glob),
-    //   n<DELIM>NUM<DELIM> (Nth match — params.c:1431-1442),
-    //   b<DELIM>NUM<DELIM> (begin offset — params.c:1443-1454),
+    //   n<DELIM>EXPR<DELIM> (Nth match — params.c:1452-1463),
+    //   b<DELIM>EXPR<DELIM> (begin offset — params.c:1464-1475),
     //   w (word index on scalar),
     //   f (word index split by newline; alias for `w` + sep="\n"),
     //   p (escapes for next get_strarg),
@@ -3392,9 +3392,28 @@ pub(crate) fn getarg<'a>(
                     bad = true;
                     break;
                 }
-                // Parse the argument as a signed decimal integer.
+                // c:Src/params.c:1452-1463 (`n`) / c:1464-1475 (`b`) — the text
+                // between the `get_strarg` delimiters is an ARITHMETIC
+                // expression, not a decimal literal. C evaluates it:
+                // c:1458 `num = mathevalarg(s + arglen, &d);` and
+                // c:1471 `if ((beg = mathevalarg(s + arglen, &d)) > 0) beg--;`.
+                // This port ran `str::parse` and bailed out of the WHOLE
+                // function with `ok()?` when it failed, so any non-literal
+                // argument discarded the entire flag group and the raw
+                // subscript text fell through to the math lexer instead —
+                // `_git-archive` sh:7's `words[(b:CURRENT-1:I)--format=*]`
+                // reported "bad math expression" where zsh searches from the
+                // computed offset. Keep the decimal fast path (mathevalarg of
+                // "2" is 2) and route every other form through the canonical
+                // evaluator, exactly as the c:1597 numeric bound below does.
+                // mathevalarg owns its own diagnostics, so an empty argument
+                // still raises c:Src/math.c:1530-1532's "bad math expression:
+                // empty string" rather than being silently dropped here.
                 let arg = std::str::from_utf8(&bytes[arg_start..arg_end]).ok()?;
-                let parsed: i64 = arg.trim().parse().ok()?;
+                let parsed: i64 = match arg.trim().parse::<i64>() {
+                    Ok(n) => n, // fast path; identical to mathevalarg on a decimal literal
+                    Err(_) => crate::ported::math::mathevalarg(arg), // c:1458 / c:1471
+                };
                 if c == 'n' {
                     num = if parsed == 0 { 1 } else { parsed };
                 } else {

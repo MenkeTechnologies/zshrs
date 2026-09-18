@@ -873,6 +873,38 @@ mod subscript_math_is_mathevalarg {
         same(r#"f() { (( m = argv[(r)[0-9]] + 1 )); print -r -- $m }; f x 7 y"#);
     }
 
+    /// The `n`/`b` subscript-flag ARGUMENT is an arithmetic expression, not a
+    /// decimal literal. C evaluates it: c:Src/params.c:1458
+    /// `num = mathevalarg(s + arglen, &d);` and c:1471
+    /// `if ((beg = mathevalarg(s + arglen, &d)) > 0) beg--;`.
+    ///
+    /// `params::getarg` ran `str::parse` on that text and, when it failed,
+    /// returned None for the WHOLE function — discarding the flag group, so the
+    /// raw subscript text `(b:CURRENT-1:I)pat` fell through to the math lexer
+    /// and every computed offset became "bad math expression" instead of a
+    /// search. `_git-archive` sh:7 is
+    /// `if (( words[(b:CURRENT-1:I)--format=*] )); then`, so `git archive --<TAB>`
+    /// reported the error where zsh offers the option list.
+    #[test]
+    fn n_and_b_flag_arguments_are_arithmetic() {
+        same(
+            r#"words=(git archive --add-file --format=zip); CURRENT=4; if (( words[(b:CURRENT-1:I)--format=*] )); then print YES; else print NO; fi"#,
+        );
+        same(r#"w=(a b c); CURRENT=4; (( x = w[(b:CURRENT-1:I)c] )); print -r -- $x"#);
+        same(r#"w=(a b c); CURRENT=4; print -r -- $(( 10 + w[(b:CURRENT-1:I)c] ))"#);
+        same(r#"w=(a b c); C=2; (( x = w[(n:C:i)c] )); print -r -- $x"#);
+        same(r#"w=(a b c); (( x = w[(b:1+1:I)c] )); print -r -- $x"#);
+        same(r#"w=(a b c); (( x = w[(b:0-1:I)c] )); print -r -- $x"#);
+        // The argument is full arithmetic, so it may itself be subscripted.
+        same(r#"w=(a b c); n=(1 2 3); (( x = w[(b:n[2]:I)c] )); print -r -- $x"#);
+        // An unset name is 0 (c:Src/math.c:1534) and a float truncates through
+        // `(zlong)` (c:1546); neither is an error, so the search still runs.
+        same(r#"w=(a b c); (( x = w[(b:NOPE:I)c] )); print -r -- $x"#);
+        same(r#"w=(a b c); (( x = w[(b:1.9:I)c] )); print -r -- $x"#);
+        // The decimal fast path must keep the literal forms byte-identical.
+        same(r#"f() { (( m = argv[(ib:2:)-] )); print -r -- $m }; f compadd - 1 2 3"#);
+    }
+
     /// The unbraced reference reaches the same getarg; its error used to be
     /// swallowed entirely (status 1, nothing on stderr).
     #[test]
