@@ -2459,34 +2459,62 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
         }
     }
 
-    // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before the cursor
-    // from the LIVE editor line. `doinsert` — the sole keep==0 caller — is
-    // about to insert into the interactive ZLE buffer (zle_main::ZLELINE, a
-    // Vec<char>), so the removable suffix must be stripped from that same
-    // buffer, not the compcore metafied completion line. Dropping from the
-    // wrong buffer left the completion suffix in place, so typing a
-    // suffix-removal char (space, `;`, `&`, …) produced a doubled character.
-    if sl > 0 && keep == 0 {
-        let cs = ZLECS.load(SeqCst);
-        let drop_n = (sl as usize).min(cs);
-        let new_cs = cs - drop_n;
-        if let Ok(mut g) = ZLELINE.lock() {
-            if cs <= g.len() {
-                g.drain(new_cs..cs);
-            }
-            ZLELL.store(g.len(), SeqCst);
-        }
-        ZLECS.store(new_cs, SeqCst);
-        // c:1819-1826 — SUFFLAGS_SPACE: after removing the suffix, add a space
-        // and advance over it (the `-r`/`-R` spec asked for a trailing space).
+    // c:1815-1830 — `if (sl) { backdel(sl, CUT_RAW); ...; if (!keep)
+    // invalidatelist(); }`. `keep` gates ONLY the `invalidatelist()` call
+    // (c:1828-1829); the removal itself is unconditional. This port used to
+    // gate the removal on `keep == 0` too, so the two keep==1 call sites —
+    // `accept_last`'s `iremovesuffix(',', 1)` / `iremovesuffix(' ', 1)`
+    // (c:1324, c:1337) — never stripped the suffix, and accepting a directory
+    // match kept the `/` that c:1109 had just inserted: `adir//` where zsh
+    // leaves `adir/`.
+    //
+    // The removal also has to reach the METAFIED line: `accept_last` metafies
+    // at entry (c:1288-1293). `backdel(sl, CUT_RAW)` is C's own call here and
+    // already picks the metafied or the live buffer (zle_utils.rs:1026, c:1086-1088),
+    // which keeps `doinsert`'s unmetafied keep==0 path working as before.
+    if sl != 0 {
+        crate::ported::zle::zle_utils::backdel(sl, CUT_RAW); // c:1817
+        // c:1818-1827 — SUFFLAGS_SPACE: add a space and advance over it (the
+        // `-r`/`-R` spec asked for a trailing space).
         if sflags & SUFFLAGS_SPACE != 0 {
-            let cs2 = ZLECS.load(SeqCst);
-            if let Ok(mut g) = ZLELINE.lock() {
-                let pos = cs2.min(g.len());
-                g.insert(pos, ' ');
-                ZLELL.store(g.len(), SeqCst);
+            // !!! Rust-only: C calls `spaceinline(1)` (c:1821) and then assigns
+            // into `zlemetaline[zlemetacs++]` / `zleline[zlecs++]` (c:1822-1826).
+            // This port's `spaceinline` implements only C's NON-metafied arm
+            // (c:815-844; the c:789-814 metafied arm is unported), so the
+            // metafied case opens its own slot instead of calling it. Same
+            // effect, one buffer each way.
+            use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+            let metafied = ZLEMETALL.load(SeqCst) > 0 && ZLEMETALINE.get().is_some();
+            if metafied {
+                if let Some(m) = ZLEMETALINE.get() {
+                    if let Ok(mut g) = m.lock() {
+                        let cs = ZLEMETACS.load(SeqCst).max(0) as usize;
+                        let pos = cs.min(g.len());
+                        if g.is_char_boundary(pos) {
+                            g.insert(pos, ' '); // c:1823
+                            ZLEMETALL.store(g.len() as i32, SeqCst);
+                            ZLEMETACS.store((pos + 1) as i32, SeqCst);
+                        }
+                    }
+                }
+            } else {
+                spaceinline(1); // c:1821
+                let cs2 = ZLECS.load(SeqCst);
+                if let Ok(mut g) = ZLELINE.lock() {
+                    let pos = cs2.min(g.len());
+                    if pos < g.len() {
+                        g[pos] = ' '; // c:1825
+                    } else {
+                        g.insert(pos, ' ');
+                    }
+                    ZLELL.store(g.len(), SeqCst);
+                }
+                ZLECS.store(cs2 + 1, SeqCst); // c:1825
             }
-            ZLECS.store(cs2 + 1, SeqCst);
+        }
+        // c:1828-1829 — `if (!keep) invalidatelist();`.
+        if keep == 0 {
+            invalidatelist();
         }
     }
 
@@ -3339,6 +3367,46 @@ mod tests {
         let r = acceptline();
         assert_eq!(r, 0);
         assert_eq!(DONE.load(SeqCst), 1);
+    }
+
+    /// c:1815-1830 — in `iremovesuffix`, `keep` gates ONLY the
+    /// `invalidatelist()` call (c:1828-1829); `backdel(sl, CUT_RAW)` (c:1817)
+    /// runs either way. `accept_last` calls `iremovesuffix(' ', 1)` (c:1337)
+    /// with the line METAFIED (c:1288-1293), so accepting a directory match
+    /// has to strip the `/` that c:1109 inserted. While the removal was gated
+    /// on `keep == 0` the slash survived and the accepted word read `adir//`
+    /// where zsh leaves `adir/`.
+    #[test]
+    fn iremovesuffix_keeping_the_list_still_strips_the_metafied_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+
+        // The line as `accept_last` sees it: the match plus the auto-added
+        // slash, cursor just past it.
+        let line = "adir/".to_string();
+        let m = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = line.clone();
+        ZLEMETALL.store(line.len() as i32, SeqCst);
+        ZLEMETACS.store(line.len() as i32, SeqCst);
+
+        // c:1117-1118 — exactly what the directory branch registers.
+        fixsuffix();
+        makesuffix(1);
+        addsuffix(crate::ported::zle::zle_h::SUFTYP_POSSTR, 0, vec!['/'], 1, 1);
+
+        // c:1337 — accept_last's own call, keep == 1.
+        iremovesuffix(' ' as i32, 1);
+
+        let got = m.lock().unwrap().clone();
+        // Restore the metafied statics before asserting so a failure cannot
+        // leak `adir/` into the next test in this process.
+        *m.lock().unwrap() = String::new();
+        ZLEMETALL.store(0, SeqCst);
+        ZLEMETACS.store(0, SeqCst);
+        fixsuffix();
+
+        assert_eq!(got, "adir", "c:1817 — backdel runs even when keep == 1");
     }
 
     #[test]
