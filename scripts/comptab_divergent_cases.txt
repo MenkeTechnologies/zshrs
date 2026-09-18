@@ -7066,3 +7066,88 @@ gstack
 #       The restrict form needs BOTH `--fn-only NAME` and
 #       `--fn-derive-only NAME`.  (`--keep` does not exist; `--raw-diff`
 #       is what prints the row-level diff.)
+# ══════════════════════════════════════════════════════════════════════════
+# `(m)` WIDTH IS LOCALE-DRIVEN — fixed 2026-09-18, with two `(m)`-pad cells
+# left open.  Follows up the non-UTF-8 locale entry ec57980a78/766020fc0d,
+# which fixed COUNTS, subscripting and pattern stepping but left WIDTH.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# WAS: `${(m)#s}` and `${(ml:…:)}`/`${(mr:…:)}` ignored the locale.  Under
+# `LC_ALL=C` with `s=日本語`, zsh answers 9 and zshrs answered 6.
+#
+# ROOT CAUSE, and it is one guard, not a width table.  `MB_METASTRLEN2` is
+# `mb_metastrlenend(str, multi_width, NULL)` (c:Src/zsh.h:3281) and that
+# function opens with
+#
+#     if (!isset(MULTIBYTE) || MB_CUR_MAX == 1)
+#         return eptr ? (int)(eptr - ptr) : ztrlen(ptr);   c:Src/utils.c:5662-5663
+#
+# so in a SINGLE-BYTE locale every length is a BYTE count and the `width`
+# argument is never consulted at all.  The port kept only the `MULTIBYTE`
+# half of that test, ran its `mbrtowc` loop anyway, and then charged the C1
+# bytes (0x80-0x9f) of each UTF-8 sequence ZERO columns via the width table:
+# `日本語` is 9 bytes of which 0x97, 0x9c and 0x9e are C1, hence 6.  `aé日`
+# (one C1 byte) gave 5 against zsh's 6.  The character COUNT was already
+# right because that path adds 1 per decoded byte.
+#
+# `MB_CUR_MAX` is a C macro over a per-platform accessor, so the libc crate
+# cannot re-export it; the two spellings (`___mb_cur_max` on Darwin,
+# `__ctype_get_mb_cur_max` on glibc) are declared beside the existing
+# `mbrtowc`/`wcrtomb` externs and read INLINE at the guard, since
+# src/ported/ takes no Rust-original helper functions.  `setlocale` has to
+# have run first (`MB_LOCALE_READY`), so the guard sits after it.
+#
+# SECOND DEFECT, same family: C's `width` is an `int` straight from the
+# `(m)` flag's `multi_width` counter (c:Src/subst.c:2376), and
+# c:Src/utils.c:5722-5725 splits `width == 1` (add the glyph's COLUMNS)
+# from `width >= 2` (add ONE per printable character).  The port's
+# parameter was a `bool`, collapsing the two, so `${(mm)#日本語}` answered
+# 6 — the `(m)` column total — against zsh's 3.
+#
+# THIRD: `dopadding` (c:919-923) measures the value AND all four pad
+# strings with that same `MB_METASTRLEN2`, where the port summed a per-unit
+# width.  Hence `${(ml:12::x:)日本語}` padded with six `x` under `LC_ALL=C`
+# where zsh pads with three, and a WIDE pad string was measured one per
+# character instead of its columns: `${(ml:10::中:)ab}` repeated the pad
+# eight times against zsh's four.  The partial-repeat copies now walk units
+# accumulating cells (c:1074-1109, c:1276, c:1317) instead of indexing a
+# unit vector by a cell count, and `units()` itself steps ONE BYTE in a
+# single-byte locale, which is what `mb_metacharlenconv` does there
+# (c:Src/utils.c:5613 + the `mbrtowc` arm at c:5635).
+#
+# MEASURED AFTER, zsh vs zshrs identical in all four locales
+# (`${#s}`/`${(m)#s}`/`${(mm)#s}`):
+#
+#   locale          é          日本語      aé日
+#   C               2/2/2      9/9/9      6/6/6
+#   en_US.UTF-8     1/1/1      3/6/3      3/4/3
+#   zh_CN.GB2312    1/2/1      5/6/5      4/5/4
+#   ja_JP.eucJP     1/2/1      5/6/5      4/5/4
+#
+# and `${(ml:12::x:)日本語}` is `xxx日本語` under C, `xxxxxx日本語` under
+# UTF-8, on both shells.  Pinned by three tests in
+# tests/parity/locale_parity.rs (module `multibyte_width_is_locale_driven`),
+# which run the identical script in each locale on both shells and compare
+# bytes.
+#
+# ── STILL OPEN, both narrow ────────────────────────────────────────────────
+#
+# 1. `(m)`-FLAGGED PADDING WITH A MULTI-BYTE PAD UNDER `LC_ALL=C` cuts the
+#    pad at a different point.  Unflagged `(l)` already matches byte for
+#    byte, so this is the mid-character cut, not the width arithmetic.
+#    Measured with `s=ab`, pad `中` (e4 b8 ad), field width 10:
+#
+#      ${(l:10::中:)s}    zsh b8ad e4b8ad e4b8ad 6162   zshrs IDENTICAL
+#      ${(mr:10::中:)s}   zsh 6162 e4b8ad e4b8ad e4b8   zshrs …e4b8ad (11 bytes)
+#      ${(ml:10::中:)s}   zsh b8ad                      zshrs e4b8ad e4b8ad e4b8ad 6162
+#
+#    zsh fills to a BYTE budget and will cut a pad after two of three bytes;
+#    zshrs emits whole units.  zsh's `(ml:)` answer is two bytes for a
+#    field of ten, which looks like its left-pad truncation arm firing on a
+#    value it measured as wider than the field — not re-derived here, so it
+#    is recorded rather than matched.
+#
+# 2. A PAD THE LOCALE CANNOT ENCODE: in `zh_CN.GB2312` and `ja_JP.eucJP`,
+#    `中` has no form, and zsh rejects the whole flag —
+#    `zsh:1: error in flags near position 25` — where zshrs pads normally.
+#    That is flag PARSING, not width, and is untouched by this work.
