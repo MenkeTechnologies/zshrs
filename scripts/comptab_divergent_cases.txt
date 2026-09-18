@@ -7462,3 +7462,67 @@ gstack
 # Rust `clprintm` takes `&Cmatch` + `&Arc<Cmgroup>` and MTAB holds CLONES, so a
 # threaded local is observably narrower than C; storing needs mutable group
 # access — a structural change, not a one-liner.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# `compadd -C --` under complist: the `<all>` row — FIXED ba5a44e53b.
+# Supersedes the three earlier verdicts on this cell; two of them were VOID.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The defect: `complist.rs:3232-3234` carried the comment `c:1756-1757 —
+# bld_all_str for CMF_ALL with empty disp` and then only `let _ = CMF_ALL;`.
+# C builds the `compadd -C` placeholder's display string there when the match
+# carries none (c:complist.c:1756-1757), and every read below is
+# `m->disp ? ... : ...`, so the summary row rendered empty.
+#
+# HOW THE VERDICTS WENT WRONG — worth reading before trusting a "measured" claim:
+#   R3-V  wrote the port, measured only PLAIN-path cells (which never enter
+#         `clprintm`; the fuzzer sets complist only for `menu-select`,
+#         compsys_spec_fuzz.py:647,657) and reported it INERT. VOID.
+#   R3-W  re-measured on the complist path and reported a REGRESSION, 2 rows
+#         -> 0. VOID: that binary was SPINNING (R3-X's unbounded `RangeFrom`
+#         in bld_all_str, fixed 7a3c10d6a3). Applying the port merely entered
+#         the loop; the harness settles on quiet, so a hang renders as
+#         "drew nothing".
+#   R3-X  found and fixed the spin, and said explicitly that W's rejection was
+#         void. It did not re-apply the port.
+#   R3-Y  re-measured on a clean export of d8948f68c0 (which contains the spin
+#         fix) and the port holds up. Landed.
+#
+# MEASURED, `_x() { compadd -C --; compadd alpha beta }`, buffer `xcmd `, TAB:
+#   complist (`zmodload zsh/complist` + `menu select=1`)
+#     zsh            'alpha beta' / 'alpha  beta'      (2 rows)
+#     zshrs before   'alpha  beta'                     (1 row — summary missing)
+#     zshrs after    'alpha beta' / 'alpha  beta'      (2 rows, = zsh)
+#   plain (no complist)   2 rows on both shells, before and after — the path
+#                         R3-X's spin fix already covered; no regression here.
+#
+# FAITHFUL SHAPE — why a threaded local was NOT enough, decided against C:
+#   C's `bld_all_str(all)` MUTATES the match (c:2229-2230 `zsfree(all->disp);
+#   all->disp = ztrdup(buf);`) and `mtab` stores the POINTER (c:1767/1773), so
+#   every later reader sees it — notably `msearch` at c:2327,
+#   `(m->disp ? m->disp : m->str)`. Rust `MTAB` is `Vec<Option<Cmatch>>`, i.e.
+#   CLONES (complist.rs:7412), and `msearch` reads `disp` out of them
+#   (complist.rs:4562-4567). Threading the built string through `clprintm`
+#   alone would leave the STORED CELL empty and split menu-search from zsh.
+#   So: `clprintm` rebinds to a match copy carrying the string (every read
+#   below, the MTAB store included), and `bld_all_str` writes it back into the
+#   live `amatches` table so a later pass reuses it as C does.
+#   R3-W judged that store "a structural change needing mutable group access".
+#   It is not: `amatches` is `OnceLock<Mutex<Vec<Cmgroup>>>` — OWNED groups
+#   behind a mutex (compcore.rs:6854) — and `bld_all_str` already locks it
+#   (compresult.rs:3848). The `Arc<Cmgroup>` snapshot W reasoned from is the
+#   LISTING LOOP's (complist.rs:2492-2498), taken before the call, which is why
+#   the current pass uses the returned string — exactly as C reads `m->disp`
+#   immediately after writing it.
+#
+# VERIFICATION: new pin `clprintm_builds_the_all_placeholder_into_the_stored_cell`
+# asserts the MTAB cell carries the built text (the msearch observable), bounded
+# by a timeout because a regression in this area HANGS. complist:: 100/0,
+# compresult:: 79/0. Negative control — revert ONLY the clprintm hunk, keep the
+# test: FAILS `left: None, right: Some("alpha beta")`; restore byte-identical,
+# passes again. Y gate UNCHANGED=229 REGRESSED=0 (222 pass / 0 fail / 7 xfail).
+#
+# HARNESS TRAPS confirmed again here: `--compstate-probe always` appends a
+# `compadd` and makes 9403/0021 PASS, masking this class; the screen harness
+# settles on quiet, so classify an empty screen with `ps` (a spin shows `Rs+`
+# at ~100% CPU) before believing "drew nothing".
