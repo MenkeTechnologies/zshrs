@@ -7403,3 +7403,62 @@ gstack
 # compresult.rs:3972-3983) is observably narrower for menu-select. Storing
 # needs the group's matches reachable mutably — a structural change, not a
 # one-line port.
+
+# ============================================================================
+# RESOLVED 7a3c10d6a311 — a bare `compadd -C --` HUNG the shell; it was never
+# a dropped row.  Supersedes the "compadd -C lists nothing" entries above and
+# VOIDS the verdict recorded against the clprintm diff.
+# ============================================================================
+#
+# ROOT CAUSE, src/ported/zle/compresult.rs:3912 and :3920 in `bld_all_str`:
+#
+#   g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
+#
+# `(gi + 1..)` is an UNBOUNDED RangeFrom and `Iterator::find` returns only when
+# the predicate holds or the iterator ends — a RangeFrom never ends.  Once no
+# later group carried matches the search spun forever.  C walks the list and
+# stops at its end (c:Src/Zle/compresult.c:2219-2227):
+#     do { if (!(g = g->next)) break; } while (!g->mcount);  if (!g) break;
+# Fix: bound the range, `(gi + 1..groups.len()).find(|&i| …)`.
+#
+# `iprintm` calls `bld_all_str` for a CMF_ALL match with empty disp (c:2244-
+# 2245), so the hang took the WHOLE listing, not just the `<all>` row.
+#
+# REPRO (3 lines, no fuzzer):  _x() { compadd -C --; compadd alpha beta }
+#   zsh    rows: `alpha beta` then `alpha  beta`
+#   before rows: none, shell pegged at 100% CPU (ps state Rs+, minutes of CPU)
+#   after  rows: byte-identical to zsh
+#
+# WHY THREE AGENTS MISSED IT — the harness settles on a QUIET INTERVAL, so an
+# infinite loop inside the shell renders as "drew nothing", indistinguishable
+# from a dropped listing; it does NOT report a timeout.  Classify with `ps`
+# (100% CPU, state Rs+) before concluding "no output" means "printed nothing".
+# One earlier export left 12 children pegged at 100% CPU for 18 minutes.
+#
+# INSTRUMENTATION THAT SETTLED IT (printlist entry / CGF_HASDL block / grid
+# filter / group end): `printlist` and the HASDL block fired, the grid filter
+# and group end never did.  Everything upstream was ALREADY CORRECT and is not
+# worth re-investigating: lcount=3 mcount=3 dcount=2 cols=2 lins=1 nlines=2,
+# group flags 0x4 == CGF_HASDL exactly, and the `<all>` match flags 0x2040 ==
+# CMF_ALL|CMF_DISPLINE with disp Some("") — a faithful port of c:2056-2059.
+# Refuted along the way: the add site's disp argument, makearray's `nl`
+# accounting, `lcount = nn - nl`, skipnolist, and a "detached clone" of the
+# group flags.
+#
+# STILL OPEN — the complist path.  With the hang fixed, `zmodload zsh/complist`
+# + `menu select` gives:
+#     zsh    `alpha beta` / `alpha  beta`      zshrs  `alpha  beta` only
+# i.e. the `<all>` row is still absent there.  complist.rs:3232-3234 carries
+# the comment `c:1756-1757 — bld_all_str for CMF_ALL with empty disp` followed
+# only by `let _ = CMF_ALL;` — the line is UNPORTED.
+#
+# THE EARLIER REJECTION OF THAT PORT IS VOID.  It was measured as "a regression,
+# 2 rows -> 0" on a binary that still had the spin, so applying it merely routed
+# clprintm into the infinite loop.  Re-measure it on 7a3c10d6a311 or later
+# before treating it as harmful.
+# Design note for whoever does: C ENDS bld_all_str by STORING the built string
+# on the match (`zsfree(all->disp); all->disp = ztrdup(buf)`, c:2229-2230), so
+# it persists for later reads and later calls, and is visible through `mtab`.
+# Rust `clprintm` takes `&Cmatch` + `&Arc<Cmgroup>` and MTAB holds CLONES, so a
+# threaded local is observably narrower than C; storing needs mutable group
+# access — a structural change, not a one-liner.
