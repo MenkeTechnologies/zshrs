@@ -8080,3 +8080,48 @@ gstack
 # with no empty-action positional, which never reaches `_message`; and an
 # unquoted `$funcstack` that zshrs split per frame, making the two shells'
 # output structurally incomparable.
+
+# ============================================================================
+# 9403/0013 and 9404/0020 — reproduced 4/4 on a clean build of 707d713675,
+# both modes, deterministic. NEITHER SHARES A CAUSE. One characterisation in
+# the round-4 hand-off was WRONG; corrected here (R5-C).
+# ============================================================================
+#
+# RIG: sanity arm passed on BOTH shells (`READY% while`, EXIT=0), export build,
+# own CARGO_TARGET_DIR, build exit from a log, reference /opt/homebrew/bin/zsh
+# 5.9.2. Caveat: a peer's `comptab_parity.py --jobs 2` ran throughout; the
+# 30-minute wait-for-quiet gate expired. Results are 4/4 deterministic with a
+# live sanity arm, but the 3-identical-runs rule is still owed.
+#
+# 9403/0013 — as briefed. Both shells print the identical
+# `(eval):1: no matches found: *:globbed-files`; on the REDRAW zsh restores
+# `fzc0013 -b`, zshrs restores `fzc0013` (cursor 16 vs 14). Escape diff: zshrs
+# writes the short word then a bare `\e[1C`. The restore arm
+# (`compcore.rs:481-500` ↔ c:425-432) transcribes all four steps FAITHFULLY, so
+# the defect is in an INPUT — `ORIGLINE`, `ZLEMETALL`, or whether that arm is
+# reached at all. Needs instrumentation, not more reading.
+# NOTE the two restore sites that are NOT this path: c:856-863 is the expansion
+# branch, c:2305-2312 is COMP_LIST_EXPAND only.
+#
+# 9404/0020 — THE HAND-OFF'S "missing separating space" IS WRONG.
+#   zsh   : `fzc0020 -b a`  and NO LISTING AT ALL
+#   zshrs : `fzc0020 -ba`   PLUS five rows of listing and compstate
+# zsh ACCEPTED the menu entry and DISMISSED the list; zshrs left the menu OPEN,
+# so the third key landed inside it. The `-ba` is a SYMPTOM, not the bug.
+# Reduces to `_arguments -w` with ZERO specs.
+# LIVE SUSPECT, found by reading: `after_complete` (`compcore.rs`, port of
+# c:503-535) adds an `iforcemenu == -1` guard that C does NOT have at c:505,
+# documented as preventing the `ret >= 2` arm from discarding a just-inserted
+# match. That is the shape of this cell. Second candidate: the
+# `accept_last`/`menuacc` dismissal path. `do_menucmp` itself reads faithful
+# against c:1249-1272 (including the `showinglist = -2` early return and the
+# `zmult` stepping), and the add-a-space arm (c:1145-1158 ↔
+# `compresult.rs:1969-1983`) transcribes its guard faithfully — so for 9404 the
+# divergence is in that gate's INPUTS, not the condition.
+#
+# TWO HARNESS TRAPS PAID FOR HERE (both the agent's own, both void runs):
+# `comptab_screen.py` REQUIRES `--init` (a missing one exits 2 on both shells,
+# which reads as a dead sanity arm); and `set -- $spec` does NOT word-split in
+# zsh, so a joined "9403 13" reached `--seed` and `--start` got nothing — four
+# replays parsed no arguments and produced empty output that looks exactly like
+# a divergence.
