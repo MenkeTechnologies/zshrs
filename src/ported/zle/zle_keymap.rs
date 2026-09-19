@@ -1860,7 +1860,19 @@ pub fn bin_bindkey_bind(
                 // node would linger after `bindkey -r`.
                 bind: target.map(|n| {
                     crate::ported::zle::zle_thingy::rthingy(&n); // c:1042
-                    Thingy::builtin(&n)
+                    // c:1042 — `fn = rthingy(*++argv)` yields the TABLE node, so
+                    // the key slot and whatever `zle -C`/`zle -N` bound to that
+                    // name are the SAME object. Fabricating one here shadowed the
+                    // registration: `compdef -k _generic menu-select` left the table
+                    // entry at WIDGET_NCOMP|ZLE_MENUCMP|ZLE_KEEPSUFFIX (518) while the
+                    // slot held `widget::builtin(name)` = bare WIDGET_INT (1) with a
+                    // NO-OP fn, so the menu loop read ncomp=false (c:3276-3285).
+                    crate::ported::zle::zle_thingy::thingytab()
+                        .lock()
+                        .unwrap()
+                        .get(&n)
+                        .cloned()
+                        .unwrap_or_else(|| Thingy::builtin(&n))
                 }),
                 str: None,
                 prefixct: 0,
@@ -3407,6 +3419,71 @@ mod tests {
     use super::*;
 
     // ---------- thingytab population by `bindkey` (c:1042) ----------
+
+    /// `bindkey <key> <name>` must put the THINGY TABLE's node in the key
+    /// slot, not a fabricated one. C's `bin_bindkey_bind` does
+    /// `fn = rthingy(*++argv)` (c:Src/Zle/zle_keymap.c:1042), which RETURNS
+    /// the table node, so the slot and whatever `zle -C`/`zle -N` bound to
+    /// that name are the SAME object.
+    ///
+    /// The port called `rthingy` for its side effect only (it returns `()`,
+    /// zle_thingy.rs:281-293) and stored `Thingy::builtin(name)` — a fresh
+    /// node whose widget is `widget::builtin(name)`: bare `WIDGET_INT` plus a
+    /// NO-OP fn for any non-internal name. Measured on
+    /// `compdef -k _generic menu-select '^Xw'`: the table entry held
+    /// WIDGET_NCOMP|ZLE_MENUCMP|ZLE_KEEPSUFFIX (518) while the slot held 1,
+    /// so `complist.rs:6477` read `ncomp=false`, set `acc=1`, and the clear
+    /// at `:6882` wiped `hasoldlist` — the second `^Xw` re-completed and
+    /// double-inserted. All 15 `compdef -k` widgets bound a no-op.
+    #[test]
+    fn bindkey_slot_carries_the_registered_widget_not_a_fabrication() {
+        use crate::ported::zle::zle_h::{widget, WidgetImpl, WIDGET_NCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP};
+        use crate::ported::zle::zle_thingy::{bindwidget, rthingy, thingytab};
+        use std::sync::Arc;
+
+        let _g = crate::test_util::global_state_lock();
+        let name = "_r5f_pin_widget";
+
+        // Registration, as `zle -C` does it (zle_thingy.rs:1301-1311 / c:616-621).
+        rthingy(name);
+        let w = Arc::new(widget {
+            flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
+            first: None,
+            u: WidgetImpl::Comp {
+                fn_: |_args: &[String]| 0i32,
+                wid: ".menu-select".to_string(),
+                func: name.to_string(),
+            },
+        });
+        assert_eq!(bindwidget(w, name), 0, "registration must bind the widget");
+
+        // What the bindkey path puts in the slot for that name.
+        let mut km = Keymap::default();
+        rthingy(name);
+        let slot = thingytab()
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Thingy::builtin(name));
+        bindkey(&mut km, b"\x18z", Some(slot), None);
+
+        let flags = km
+            .multi
+            .get(&b"\x18z".to_vec())
+            .and_then(|kb| kb.bind.as_ref())
+            .and_then(|t| t.widget.as_ref())
+            .map(|w| w.flags)
+            .unwrap_or(0);
+        thingytab().lock().unwrap().remove(name);
+        assert_ne!(
+            flags & WIDGET_NCOMP,
+            0,
+            "key slot must carry the REGISTERED completion widget \
+             (WIDGET_NCOMP); Thingy::builtin() yields bare WIDGET_INT with a \
+             no-op fn, so the menu loop reads ncomp=false. got flags={flags}"
+        );
+    }
 
     /// Set up an empty-ish keymap world plus the fixed thingy table so
     /// `bin_bindkey_bind` has a "main" keymap to write into. Returns
