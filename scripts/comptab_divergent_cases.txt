@@ -7855,3 +7855,54 @@ gstack
 #   * 9409/0014: whether `domenuselect` is re-entered on the SECOND `^Xw`,
 #     and if not, what exited it — that decides both the duplicate insertion
 #     and why `^G` reached the main keymap.
+
+# ============================================================================
+# spec-fuzz 9409/case0014 — a second `menu-select` re-completes instead of
+# stepping the live menu, inserting the match TWICE, and the following `^G`
+# then aborts the line. ROOT-CAUSED, NOT FIXED (R4-H, measured).
+# ============================================================================
+#
+#   buffer 'fzc0014 a', keys cx-w,cx-w,ctrl-g, widget compdef-k:menu-select
+#   (`compdef -k _generic menu-select '^Xw'`), 3 byte-identical runs.
+#
+#     zsh    row0 `fzc0014 wide-cjk=3/6:日本語` + 3 listing rows, cursor (0,33)
+#     zshrs  row0 `fzc0014 emoji-zwj=7/8:…devemoji-zwj=7/8:…dev` — the SAME
+#            match inserted twice — then \e[?2004l, `%`, a fresh prompt at
+#            row 1, rows 2-3 absent, cursor (1,6)
+#
+# MEASURED with probes at `menuselect` entry and at every `hasoldlist`
+# set/clear site (clean export of tip 077ba947f6, own CARGO_TARGET_DIR):
+#
+#     menuselect ENTER cur_set=false hasoldlist=0   <- first ^Xw
+#     hasoldlist=1                                   (set by the completion)
+#     valid_match ENTER mi=0 next=0 zmult=1
+#     menuloop cmd="_generic" mode=0 nolist=0        <- menu loop EXITS here
+#     hasoldlist=0                                   <- CLEARED
+#     menuselect ENTER cur_set=true hasoldlist=0     <- second ^Xw
+#     hasoldlist=1
+#     valid_match ENTER mi=0 next=0 zmult=1          <- a FRESH completion
+#     ...second copy inserted, then the line aborts
+#
+# THE DIVERGENCE, against C: the menu loop leaves on an unrecognised widget
+# at c:Src/Zle/complist.c:3411-3418 — `ungetkeycmd()`, then `acc = 0;
+# broken = 2` when the widget is a COMPLETION widget (`WIDGET_NCOMP`), else
+# `acc = 1`. The clear at c:3436-3437 (`menucmp = lastambig = hasoldlist = 0`)
+# runs only under `if (acc && validlist && minfo.cur)`. `_generic` IS a
+# completion widget, so C takes the `acc = 0` arm and does NOT clear
+# `hasoldlist`; the next `menu-select` therefore finds an old list and steps
+# the existing menu. zshrs cleared it, so the second `^Xw` re-completed.
+#
+# The port reads structurally faithful at both sites — `complist.rs:6474-6488`
+# mirrors c:3411-3418 (including the `WIDGET_NCOMP` test at :6480 and
+# `broken = 2` at :6484), and the clear at `complist.rs:6882` carries C's
+# exact `acc != 0 && validlist != 0 && cur.is_some()` guard. So the remaining
+# question is narrow and NOT "is it ported": at that exit `acc` was non-zero,
+# which means the `WIDGET_NCOMP` test returned FALSE for the widget arriving
+# as `_generic`. The next probe belongs on that flag — where a `compdef -k`
+# widget gets its flags (`zleparameter.rs:537`/`:573` set WIDGET_NCOMP for the
+# `zle -C` shape) — not on the menu loop, which is faithful.
+#
+# NOT the send-break arm: `complist.rs:5733` is a faithful port of c:2644
+# (`zbeep(); molbeg = -1; break;`). The `^G` only reaches the main keymap
+# because no menu loop is live by then — the duplicate insert provably
+# precedes the abort.
