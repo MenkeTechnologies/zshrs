@@ -1012,6 +1012,87 @@ impl FnScope {
     }
 }
 
+/// !!! WARNING: Rust-only helper, no C counterpart !!!
+///
+/// This is NOT a port of anything. No C function corresponds to it; it exists
+/// only because a Rust port can reach a sibling port's body without the frame
+/// a shell-function call would have opened.
+///
+/// It supplies ONLY the `FUNCSTACK` half of a `doshfunc` frame — the push at
+/// `c:Src/exec.c:6005-6016` and the pop at `c:6218-6219` — and nothing else of
+/// that prologue.
+///
+/// It is deliberately NOT `doshfunc` itself. `doshfunc` also bumps
+/// `locallevel`, and `comptags` is indexed by that level
+/// (`Src/Zle/computil.c:3782`). The ports that call `_impl` bodies pair their
+/// own `inc_locallevel`/`dec_locallevel` around a `_tags` registration and the
+/// `comptags -A` lookup that consumes it; a second bump landing between them
+/// splits that pair. `_message.rs` records that dispatching there also flips
+/// fourteen tests (`dash_e_registers_its_own_tag_level`,
+/// `default_mode_registers_the_messages_tag`, and eleven `_x_*`
+/// `routes_to_message_*`), which is why the level is managed by hand and only
+/// the frame is restored here.
+///
+/// Why the frame has to exist at all: `_next_label` sh:9 (and `_all_labels`
+/// sh:27) gate their `_comp_tags` strip on `(( $#funcstack > _tags_level ))`.
+/// A raw `_next_label_impl` call leaves `$#funcstack` one short, so that guard
+/// is unobservable and a tag zsh drops survives.
+///
+/// The `FUNCSTACK` half of a `doshfunc` frame, for a port that deliberately
+/// calls a sibling port's raw `_impl` body instead of dispatching.
+///
+/// `doshfunc` pushes one `FS_FUNC` frame per shell-function call
+/// (`Src/exec.c:6005-6016`) and pops it on the way out (`c:6218-6219`).
+/// [`call_compfn`] gets that for free; a raw `_impl` call does not, and
+/// `call_compfn`'s own contract says the caller "must supply the missing piece
+/// inside its own `fallback` closure rather than assume this helper does it".
+///
+/// The missing frame is not cosmetic. `_next_label` sh:9 and `_all_labels`
+/// sh:27 gate their `_comp_tags` strip on `(( $#funcstack > _tags_level ))`,
+/// so a callee running one frame shallower than zsh's silently keeps a tag
+/// zsh drops. Measured on `_arguments : '1::optional delimiter:(\:)' '*:spec'`
+/// (an empty rest action, which sh:413-417 routes to `_message -e`):
+///
+/// ```text
+/// zsh    _tags_level=9   _comp_tags=' argument-rest '
+/// zshrs  _tags_level=8   _comp_tags=' argument-1  argument-rest '
+/// ```
+///
+/// This guard supplies ONLY the funcstack frame. It deliberately does not go
+/// through `doshfunc`, which would also bump `locallevel` — `comptags` is
+/// indexed by that level (`Src/Zle/computil.c:3782`), and the ports that call
+/// `_impl` bodies pair their own `inc_locallevel`/`dec_locallevel` around the
+/// registration and its lookup. Adding a second bump between them would split
+/// that pair.
+pub struct PortFuncstackFrame;
+
+impl PortFuncstackFrame {
+    /// `funcstack = &funcsave->fstack` with `tp = FS_FUNC` (c:6005-6016).
+    pub fn push(name: &str) -> Self {
+        if let Ok(mut stack) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            stack.push(crate::ported::zsh_h::funcstack {
+                prev: None,                   // c:6014 (Vec-stack: index encodes link)
+                name: name.to_string(),       // c:6005
+                filename: None,               // c:6019
+                caller: None,                 // c:6011
+                flineno: 0,                   // c:6018
+                lineno: crate::ported::lex::lineno() as i64, // c:6013
+                tp: crate::ported::zsh_h::FS_FUNC, // c:6015
+            });
+        }
+        PortFuncstackFrame
+    }
+}
+
+impl Drop for PortFuncstackFrame {
+    /// c:6218-6219 — `if (fpushed) funcstack = funcstack->prev;`
+    fn drop(&mut self) {
+        if let Ok(mut stack) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            stack.pop();
+        }
+    }
+}
+
 impl Drop for FnScope {
     /// `scriptname = funcsave->scriptname` (`Src/exec.c:6124`) and
     /// `lineno = oldlineno` (`Src/exec.c:1696`).
@@ -1342,8 +1423,53 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
         return crate::ported::zle::complete::bin_compadd("compadd", argv, &ops, 0);
     }
 
-    if let Some(rc) = crate::ported::exec::dispatch_function_call(cmd, argv) {
-        return rc;
+    // c:Src/exec.c:3105-3109 and the identical gate at c:3484-3488 —
+    // `execcmd` resolves a command word as
+    //     if (!(cflags & (BINF_BUILTIN | BINF_COMMAND)) &&
+    //         (hn = shfunctab->getnode(shfunctab, cmdarg))) { is_shfunc = 1; break; }
+    // and only THEN as a builtin and a `$PATH` executable. `getnode` finds a
+    // node that is ALREADY in `shfunctab`: a defined function, or the autoload
+    // STUB `autoload` / `compinit` put there. A FILE sitting in `$fpath` is not
+    // a command in zsh — nothing autoloads it on demand.
+    //
+    // zshrs's `dispatch_function_call` DOES autoload it on demand:
+    // `src/vm_helper.rs:4816-4845` takes any `_`-prefixed name with no
+    // shfunctab entry, probes `$fpath` with `getfpfunc`, and on a hit runs
+    // `autoload -rUz -- NAME` and executes the file. That gate keys on the
+    // FILENAME, where `compinit` keys on the file's TAG LINE (`compinit`
+    // sh:533-548 — `read -rA _i_line < $_i_file`, then `case $_i_tag in
+    // (\#compdef) compdef -na … ;; (\#autoload) autoload -rUz … ;; esac`), so
+    // an UNTAGGED `_`-file is registered by neither shell yet run by zshrs.
+    //
+    // The user-visible cost is a SWALLOWED DIAGNOSTIC. On this host
+    // `~/.zpwr/autoload/comp_utils` holds an untagged `__fasd_files_comp`, and
+    // the user's `_files` sh:167-169 offers it as an `_alternative` action.
+    // After `compinit` both shells agree it is not a function
+    // (`${+functions[__fasd_files_comp]}` == 0, while `${+functions[_cat]}`
+    // == 1 because `_cat` carries `#compdef`), yet on `cat zzzzqqq<TAB>`:
+    //     zsh    _alternative:71: command not found: __fasd_files_comp
+    //            _alternative:71: command not found: __fasd_dirs_comp
+    //     zshrs  (nothing at all)
+    // because zshrs ran the file instead of diagnosing the name. A completion
+    // that should report an error showed silence.
+    //
+    // So resolve the command word the way `execcmd` does, instead of letting
+    // dispatch invent a function out of `$fpath`. A Rust port or a plugin
+    // override counts as resolvable: each stands in for the STOCK file of that
+    // name, which `compinit` would have stubbed.
+    let is_shfunc = crate::fusevm_bridge::try_with_executor(|e| e.function_exists(cmd))
+        // No executor installed (unit tests): consult `shfunctab` directly.
+        // `getshfunc` is `shfunctab->getnode` — DISABLED nodes read as absent,
+        // `Src/hashtable.c:231`.
+        .unwrap_or_else(|| crate::ported::utils::getshfunc(cmd).is_some()) // c:3105
+        || crate::compsys::router::try_rust_dispatch(cmd).is_some()
+        || crate::extensions::plugin_host::compfn_override(cmd).is_some();
+
+    if is_shfunc {
+        // c:3107 `is_shfunc = 1` → c:4157 `if (is_shfunc) { … doshfunc … }`
+        if let Some(rc) = crate::ported::exec::dispatch_function_call(cmd, argv) {
+            return rc;
+        }
     }
 
     // Neither a shell function nor a registered port. zsh looks for a builtin

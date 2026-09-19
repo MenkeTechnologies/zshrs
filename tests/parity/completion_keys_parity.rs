@@ -519,6 +519,107 @@ fn compadd_d_lists_the_parallel_display_strings() {
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Command-word resolution inside a completion action
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A `$fpath` directory holding ONE `_`-prefixed file that carries no
+/// `#compdef` and no `#autoload` tag line.
+///
+/// `compinit` reads the first line of every `_`-file it finds and acts on
+/// it only through `case $_i_tag in (\#compdef) compdef -na … ;;
+/// (\#autoload) autoload -rUz … ;; esac` (`compinit` sh:533-548), so an
+/// untagged file registers NOTHING: after `compinit` both shells report
+/// `${+functions[_zzuntagged_action]}` as 0, while a tagged stock
+/// completer such as `_cat` reports 1.
+///
+/// The body would `compadd` a marker if it were ever run. Nothing in
+/// either shell should run it, and the marker is what says so when this
+/// case fails.
+fn untagged_fpath_fixture() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-untagged-fpath-fixture");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(
+        dir.join("_zzuntagged_action"),
+        "# not a compdef tag line\n_zzuntagged_action(){ compadd zzfromtheuntaggedfile }\n",
+    );
+    dir
+}
+
+/// An action naming something that is not a command must be DIAGNOSED,
+/// not silently run off `$fpath`.
+///
+/// `execcmd` resolves a completion action's command word the same way it
+/// resolves any other: `if (!(cflags & (BINF_BUILTIN | BINF_COMMAND)) &&
+/// (hn = shfunctab->getnode(shfunctab, cmdarg))) { is_shfunc = 1; break; }`
+/// (`Src/exec.c:3105-3109`, repeated at `:3484-3488`), then the builtin
+/// table, then `$PATH`, and only then `zerr("command not found: %s",
+/// arg0)` (`Src/exec.c:903`). `getnode` finds a node ALREADY in
+/// `shfunctab` — a definition, or the autoload stub `autoload` /
+/// `compinit` put there. A FILE in `$fpath` is not a command in zsh.
+///
+/// zshrs autoloaded it anyway: `src/vm_helper.rs:4816-4845` takes any
+/// `_`-prefixed name with no shfunctab entry, probes `$fpath` with
+/// `getfpfunc`, and on a hit runs `autoload -rUz -- NAME` and executes
+/// the file. The gate keys on the FILENAME where `compinit` keys on the
+/// TAG LINE, so an untagged `_`-file — registered by neither shell — ran
+/// in zshrs and the diagnostic zsh prints was never reached.
+///
+/// Measured on a host whose `~/.zpwr/autoload/comp_utils` holds an
+/// untagged `__fasd_files_comp` that the user's `_files` sh:167-169
+/// offers as an `_alternative` action, on `cat zzzzqqq<TAB>`:
+///
+/// ```text
+/// zsh    _alternative:71: command not found: __fasd_files_comp
+///        _alternative:71: command not found: __fasd_dirs_comp
+/// zshrs  (nothing at all)
+/// ```
+///
+/// The verdict is the DIAGNOSTIC, not the absence of matches: a shell
+/// that merely completed nothing would still be swallowing the error,
+/// which is the bug. `_alternative` is the caller because it is where
+/// this was found, and its sh:71 arm is the one that names the action as
+/// a command word.
+///
+/// `OPEN_PUMPED` rather than `OPEN` + blind sleeps, for the reason its
+/// own note gives: `compinit` over the 1203-file stock tree fills the
+/// inner shell's pty buffer, and a shell blocked on write never reaches
+/// the later writes. Measured with the sleeping form, the reference
+/// shell's transcript ended at the `compdef` line — the `mytest ` write
+/// and the TAB after it were dropped, so zsh scored `K=no` and
+/// `assert_same_verdict` failed the case as a broken probe rather than
+/// reporting a divergence that was not there.
+#[test]
+fn an_action_naming_an_untagged_fpath_file_is_reported_as_not_found() {
+    if !stock_fpath_exists() {
+        eprintln!("skip: no /usr/share/zsh/*/functions to compinit against");
+        return;
+    }
+    let setup = sq(r#"_mytest(){ _alternative 'x:x:_zzuntagged_action' }; compdef _mytest mytest"#);
+    let driver = format!(
+        "{OPEN_PUMPED}
+zpty -w w 'fpath=({fixture} /usr/share/zsh/*/functions(N))'; pump
+zpty -w w 'autoload -Uz compinit; compinit -u -D'; pump; pump
+zpty -w w {setup}; pump
+zpty -w -n w 'mytest '; pump
+zpty -w -n w $'\\t'; pump; pump
+zpty -w -n w $'\\C-u'; pump
+zpty -d w 2>/dev/null
+setopt extended_glob
+all=\"${{all//$'\\e'\\[[0-9;?]#[a-zA-Z]/}}\"
+if [[ $all == *'command not found: _zzuntagged_action'* ]]; then print \"K=yes\"; else print \"K=no\"; fi
+",
+        fixture = untagged_fpath_fixture().display(),
+    );
+    assert_same_verdict(
+        &driver,
+        "K",
+        "an action naming an untagged $fpath file was reported as not found",
+    );
+}
+
 /// `compinit` through an `$fpath` DIGEST: compinit runs `autoload -rUz`
 /// for `#autoload` files and `compdef -na` completers (Completion/compinit
 /// sh:333, sh:540), and `-r` makes check_autoload look each name up with
