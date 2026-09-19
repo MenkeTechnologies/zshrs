@@ -162,6 +162,20 @@ pub fn _values(args: &[String]) -> i32 {
     values_impl(args)
 }
 
+/// sh:6 — `w+ C 1 2 n` take no argument, so attached text in `-ws,` is the
+/// NEXT spec of a cluster. Returns the no-argument letter and the remainder
+/// rewritten as a fresh option word, or `None` when the word is not such a
+/// cluster. Measured on zsh 5.9.2 against this spec set: `-ws,` decomposes to
+/// `keep=(-w -s ,)` with the positionals untouched, exactly like `-w -s,`.
+fn split_no_arg_cluster(word: &str) -> Option<(u8, String)> {
+    let b = word.as_bytes();
+    if b.len() > 2 && b[0] == b'-' && matches!(b[1], b'w' | b'C' | b'1' | b'2' | b'n') {
+        Some((b[1], format!("-{}", &word[2..])))
+    } else {
+        None
+    }
+}
+
 fn values_impl(args: &[String]) -> i32 {
     // sh:6-9 — zparseopts. `keep` collects the `-s SEP` / `-S SEP` / `-w`
     // flags that feed `compvalues -i`; `-C` → usecc; `-O ARR` → subopts
@@ -171,9 +185,12 @@ fn values_impl(args: &[String]) -> i32 {
     let mut usecc = false;
     let mut subopts: Vec<String> = Vec::new();
     let mut idx = 0usize;
+    // A cluster like `-ws,` is rewritten in place as `-s,` after its leading
+    // no-argument spec is consumed, so the walk needs an owned copy.
+    let mut argv: Vec<String> = args.to_vec();
 
-    while idx < args.len() {
-        let a = &args[idx];
+    while idx < argv.len() {
+        let a = &argv[idx].clone();
         let b = a.as_bytes();
         if b.len() < 2 || b[0] != b'-' {
             break;
@@ -187,17 +204,40 @@ fn values_impl(args: &[String]) -> i32 {
         // loop with the option still in place: it became the DESCRIPTION
         // positional and was handed on to `_describe`, which rejected it
         // (`_describe:21: bad option: -s`) where zsh completed normally.
-        // A no-argument spec (`w+ C 1 2 n`) is still an exact two-byte word;
-        // zparseopts does not split clusters.
+        // zparseopts ALSO splits a CLUSTER whose leading specs take no
+        // argument: measured on zsh 5.9.2, `-ws,` against this very spec set
+        // yields `keep=(-w -s ,)` with `rest=(desc a b c d)` — identical to
+        // the separate-word form `-w -s,` — and `-Cws,` yields the same
+        // `keep` plus `usecc=(-C)`. So a no-argument spec (`w C 1 2 n`)
+        // consumes ONLY its own letter and the REST OF THE SAME WORD is
+        // re-parsed as a fresh option word. The port used to require an
+        // exactly-two-byte word for those, so `_values -ws, …` fell out of
+        // the loop with `-ws,` still in place: it became the DESCRIPTION
+        // positional and reached `_describe`, which rejected it
+        // (`_describe:21: bad option: -w`) and left `Y06values` "-w with -s"
+        // listing nothing where zsh lists the unused values.
         let attached: Option<&str> = if b.len() > 2 { Some(&a[2..]) } else { None };
-        let takes_arg = attached.is_some() || idx + 1 < args.len();
+        let takes_arg = attached.is_some() || idx + 1 < argv.len();
         // How far to step, and what the argument is, for an arg-taking option.
         let arg_of = |attached: Option<&str>, idx: usize| -> (String, usize) {
             match attached {
                 Some(v) => (v.to_string(), idx + 1),
-                None => (args[idx + 1].clone(), idx + 2),
+                None => (argv[idx + 1].clone(), idx + 2),
             }
         };
+        // sh:6 — `w+ C 1 2 n` take no argument, so attached text is the NEXT
+        // spec in a cluster: consume this letter and re-parse `-<rest>` in
+        // place. Measured: `-ws,` -> keep=(-w -s ,), `-Cws,` -> usecc + the
+        // same keep.
+        if let Some((letter, rest)) = split_no_arg_cluster(a) {
+            match letter {
+                b'w' => keep.push("-w".to_string()),
+                b'C' => usecc = true,
+                _ => {}
+            }
+            argv[idx] = rest;
+            continue;
+        }
         match b[1] {
             // s+:=keep / S+:=keep — flag + arg, kept for `compvalues -i`.
             b's' | b'S' if takes_arg => {
@@ -239,7 +279,7 @@ fn values_impl(args: &[String]) -> i32 {
     // the description + value specs.
     let mut cvi: Vec<String> = vec!["-i".to_string()];
     cvi.extend(keep.iter().cloned());
-    cvi.extend(args[idx..].iter().cloned());
+    cvi.extend(argv[idx..].iter().cloned());
     crate::compsys::ported::shared::set_sh_lineno(11);
     if bin_compvalues("compvalues", &cvi, &make_ops(), 0) != 0 {
         // sh:156-159 — `oldcontext` is declared at sh:14 inside the
@@ -635,6 +675,39 @@ mod tests {
             "val:msg:action".to_string(),
         ]);
         assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn zparseopts_splits_a_no_arg_cluster() {
+        // sh:6 — `zparseopts -D -a garbage s+:=keep S+:=keep w+=keep C=usecc`.
+        // Measured on zsh 5.9.2 against that exact spec set:
+        //   -ws,  -> keep=(-w -s ,)            rest=(desc a b c d)
+        //   -Cws, -> keep=(-w -s ,) usecc=(-C) rest=(desc a)
+        //   -w -s, (separate words) -> keep=(-w -s ,)
+        // A no-argument spec consumes ONLY its own letter; the rest of the
+        // word is re-parsed as a fresh option word. The port used to require
+        // an exactly-two-byte word for those, so `-ws,` fell out of the loop,
+        // became the DESCRIPTION positional and reached `_describe`
+        // (`_describe:21: bad option: -w`), which is Y06values "-w with -s".
+        // `-ws,` is `-w` followed by `-s,`; `-Cws,` peels `-C` first.
+        assert_eq!(
+            split_no_arg_cluster("-ws,"),
+            Some((b'w', "-s,".to_string())),
+            "a no-arg spec must consume only its own letter"
+        );
+        assert_eq!(
+            split_no_arg_cluster("-Cws,"),
+            Some((b'C', "-ws,".to_string()))
+        );
+        assert_eq!(split_no_arg_cluster("-1s,"), Some((b'1', "-s,".to_string())));
+
+        // Not clusters: the lone no-arg forms, an arg-taking spec with its
+        // argument attached, and a bare positional.
+        assert_eq!(split_no_arg_cluster("-w"), None);
+        assert_eq!(split_no_arg_cluster("-C"), None);
+        assert_eq!(split_no_arg_cluster("-s,"), None, "-s takes an argument");
+        assert_eq!(split_no_arg_cluster("-S="), None);
+        assert_eq!(split_no_arg_cluster("desc"), None);
     }
 
     #[test]
