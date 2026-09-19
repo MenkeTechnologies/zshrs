@@ -7656,3 +7656,67 @@ gstack
 #   identically on UNMODIFIED BASE and with the hunk (101 passed / 1 failed in
 #   both arms) and passes ALONE (1/0): the known order-dependent intermittent.
 # ============================================================================
+
+# ============================================================================
+# RAW BYTE IN THE TOKEN RANGE (0x83..0xa1) INSIDE SOURCE TEXT IS REWRITTEN AT
+# PARSE TIME -> the word is corrupted, the completion yields ZERO MATCHES.
+# STRUCTURAL; no fix shipped. Supersedes the "non-UTF-8 byte kills the native
+# path" framing of seeds 9409/9410 (R4-B).
+# ============================================================================
+#
+# REPRO (deterministic, two independent drivers):
+#   fixture  target/spec-fuzz-9409/case0015.min.zsh  (also 0006, 0012, 0022)
+#   driver   scripts/comptab_screen.py --shell "<zshrs> -f -i" \
+#              --init <case0015>/init.zsh --buffer 'fzc0015 --' --keys tab
+#   zsh      7 rows  (@SFZ@ fzc0015 _sfz_a= / out-arrays / _sfz_a= / compstate / 3)
+#   zshrs    1 row   (@SFZ@ fzc0015 --)    -- nothing drawn, nothing inserted
+# The completer file contains an UNQUOTED raw 0x85 byte: `compadd  -- x<85>y nel`.
+#
+# ROOT CAUSE, measured at the byte level, not inferred.  Autoload the fixture's
+# completer and print `${functions[_fzc0015]}` on both shells; the bodies are
+# the same LENGTH (525 bytes) and differ in exactly ONE byte:
+#     zsh    ...  -   x 205   y   n e l ...        (raw 0x85 preserved)
+#     zshrs  ...  -   x   $   y   n e l ...        (rewritten to '$')
+# 0x85 IS the `String` token char: `pub const Stringg: char = '\u{85}'`
+# (src/ported/zsh_h.rs:145, c:Src/zsh.h:160).  zshrs stores source text as Rust
+# `char`s, so a literal 0x85 in the input is indistinguishable from the token
+# and untokenizes back to `$`.  C cannot hit this: `Meta` is 0x83
+# (c:Src/zsh.h:144), `Pound` 0x84 (:159), `Nularg` 0xa1 (:206), and
+# `inittyptab` marks Pound..LAST_NORMAL_TOK and Snull..Nularg as ITOK|IMETA
+# (c:Src/utils.c:4196-4201), so input bytes in that span are METAFIED
+# (Meta + byte^32) and real data never collides with token space.
+#
+# WHY IT LOOKS LIKE A COMPLETION BUG BUT IS NOT: parsing and loading succeed.
+# `whence -w` reports a function, `autoload +X` succeeds, body length matches
+# zsh exactly.  Only the one byte inside the word is wrong, so `compadd` adds a
+# different string than the script wrote.
+#
+# DISPROVED ALONG THE WAY (each measured on a clean export of the tip; do not
+# re-chase any of these):
+#   * "native path only" (R4-B): case0012 FAILS in BOTH --mode native and
+#     --mode zsh.  The native-vs---zsh split holds only for case0015.
+#   * the compsys cache: `--env ZSHRS_CACHE=0` changes nothing.
+#   * `zmodload zsh/complist`, `menu select=1`, `zle -C _sfz_w
+#     menu-expand-or-complete _generic`, the menu-navigation keys (literal ^N),
+#     and the two probe `compadd -U -Q -J ... -X ...` lines: each added to a
+#     passing repro individually and in combination -- ALL still pass.
+#   * `compinit -u -D` vs `compinit -u -d <dump>`: no effect.
+#   * RPROMPT / PS2 / `builtin cd <work>` / `print -u2 ''` / `setopt no_beep`:
+#     removed one at a time from the FAILING fixture init -- still fails.
+#   * the completed word `--`, and the keys: a single TAB reproduces.
+#   * the byte written as `$'x\x85y'` (shell escape) PASSES on both shells.
+#     Only the RAW byte in the file's source text fails -- that is the whole
+#     difference, and it is why every hand-typed repro passed.
+#   * a raw 0x85 in a plain sourced script (`v=x<85>y; print -r -- "got:$v"`)
+#     prints IDENTICALLY on zsh, `zshrs` and `zshrs --zsh`.  The collision
+#     needs the byte to reach the LEXER as part of a word, not a string value.
+#
+# NOT FIXED, and not fixable locally: faithfulness requires metafying input
+# bytes in 0x83..0xa1 the way C does (or carrying source as raw bytes).  Same
+# structural family as the recorded pattern-walk-over-natively-stored-text and
+# the flag-scan-steps-UTF-8-regardless-of-locale limits.  A local patch in the
+# completion code would only mask a lexer-level data/token collision.
+#
+# STILL OPEN, and NOT explained by the above: why case0015 PASSES in
+# `--mode zsh` while failing natively, when the corrupting rewrite happens at
+# parse time in both.  Probe that before assuming this entry covers it.
