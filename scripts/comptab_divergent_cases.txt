@@ -8031,3 +8031,52 @@ gstack
 # probe must dump `_ra_actions` on both shells for the three-alternative
 # shape above; a two-alternative variant does NOT reproduce (the buffer
 # completes to a single match and never exercises the path).
+
+# ============================================================================
+# 9405/0017 `_complete_help` FRAME LIST — the missing frame is `_tags`, NOT
+# `_message`. MEASURED (R5-B), and it is a USER DECISION, not a blind edit.
+# ============================================================================
+#
+# Observe-only `$_sort_tags` parameter hook, empty-action positional `'*:spec: '`,
+# 2/2 identical per shell, clean export build of c9cb56d6df, reference
+# /opt/homebrew/bin/zsh 5.9.2. At the `messages` registration:
+#
+#   zsh    level=0 depth=11  [_probe_sort_tags _tags _message _arguments _sfz_main …]
+#   zshrs  level=0 depth=10  [_probe_sort_tags       _message _arguments _sfz_main …]
+#
+# `_message` IS present in zshrs. `_tags` is not: `_message_impl` calls
+# `_tags_impl` RAW at `_message.rs:196`, while zsh's `_tags` is a real shell
+# function carrying a doshfunc frame (push c:Src/exec.c:6065-6076, pop c:6104).
+# CONTROL: at the `options` registration, where `_arguments` reaches `_tags`
+# through dispatch, both shells show `_tags` and agree. Cell fails in BOTH modes.
+#
+# THE OBVIOUS EDIT IS INERT. Wrapping `call_compfn`'s fallback cannot add a
+# `_tags` frame: `call_compfn` = `dispatch_function_call(…).unwrap_or_else(fallback)`
+# (`shared.rs:936-938`) and its own contract (`:907-909`) restricts that fallback
+# to "no shell function AND no registered port … unit tests with no executor".
+# `_message` is routed (`router.rs:444`, `:774`) and `run_port` ends in
+# `doshfunc` (`:324`). Blast radius measured: 59 `call_compfn` sites across 56
+# files vs 125 RAW `_impl` call sites — the latter are the real frame loss.
+#
+# DECISION REQUIRED (not taken): the faithful fix is to DISPATCH
+# `_tags_impl`/`_next_label_impl` instead of calling the raw bodies.
+# `_message.rs:181-194` already calls that "arguably the faithful arrangement"
+# and records that it flips THIRTEEN named tests —
+# `dash_e_registers_its_own_tag_level`, `default_mode_registers_the_messages_tag`
+# and eleven `_x_*` `routes_to_message_*`. Either those tests encode zshrs's
+# behaviour rather than zsh's, or the hand-rolled `inc_locallevel` pairing is
+# right and this is narrower. No test may be weakened to settle it.
+#
+# C CITATION DRIFT in the port's comments: funcstack push is c:Src/exec.c:6065-6076
+# and pop c:6104 (cited as c:6005-6016 / c:6218-6219); `doshfunc` is c:5882
+# (cited c:5823); `loadautofn` is c:5738 (cited c:5735). Mechanism correct,
+# numbers stale.
+#
+# FIVE DEAD RIGS caught before any conclusion (each would have produced a false
+# finding): redefining `_message` as a shell function (a shell function beats the
+# port, so it measures a path the cell never takes); `-f` suppressing startup
+# files (both shells fell through to file completion); attaching the hook via
+# `zstyle` when `_tags` sh:40-41 consults the PARAMETER `$_sort_tags`; a fixture
+# with no empty-action positional, which never reaches `_message`; and an
+# unquoted `$funcstack` that zshrs split per frame, making the two shells'
+# output structurally incomparable.
