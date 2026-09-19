@@ -7526,3 +7526,59 @@ gstack
 # `compadd` and makes 9403/0021 PASS, masking this class; the screen harness
 # settles on quiet, so classify an empty screen with `ps` (a spin shows `Rs+`
 # at ~100% CPU) before believing "drew nothing".
+
+# ============================================================================
+# `_bpf_filters` `expl` CELL (fp 21055f3134) — STOPPED after five agents, with
+# the full disproof chain. Do NOT restart this without new user-visible impact.
+# ============================================================================
+#
+#   ref/expl[#] =        (zsh: zero elements)
+#   test/expl[#] = ''    (zshrs: ONE empty element)
+#
+# Cost so far: five agents. Every hypothesis below was disproved BY MEASUREMENT
+# on a verified binary, not by reading. Recorded so nobody re-derives them.
+#
+#   1. "expl is declared PM_SCALAR where the stock fn uses an array."
+#      REFUTED (R3-T): 73 of 275 declare_locals sites name `expl`, ALL kind 0,
+#      and 72 of 73 match a stock scalar `local expl`. The lone array hit is a
+#      per-file artifact (`_email_addresses` sh:48 belongs to another function).
+#      `_physical_volumes` PASSES 2/2 with the same kind 0 declaration, and
+#      `_mac_applications`' failures carry a different fingerprint (7a077463ab).
+#
+#   2. "A port is not its own parameter frame, so declare_locals never unwinds."
+#      REFUTED (R3-R): C stamps no level in `createparam` (c:params.c:1157,
+#      c:1226) and `scanendscope` deletes only `pm->level > locallevel`
+#      (c:5907); probes behave IDENTICALLY on both shells. A blanket scope
+#      guard measured 0 passed/4 failed -> 0 passed/4 failed, and was reverted.
+#
+#   3. "`_message.rs:143`'s declare_locals should be a LocalScope."  REFUTED
+#      (R4-C): cells identical after the swap; `_message::` unit tests 5/0.
+#   4. "The generated fn's sh:64-65 locals are missing in dispatch_registered."
+#      REFUTED (R4-C): identical after adding them and dropping its unsetparam.
+#   5. "`local -a` itself creates one empty element."  REFUTED (R4-C): both
+#      shells report `n=0 t=array-local`.
+#   6. "`${(@P)}` over the restored husk reads one element instead of zero."
+#      REFUTED (R4-D): 14/14 hermetic probe lines byte-identical outside
+#      compsys, including the sweep's own `v=( "${(@P)n}" ); $#v` shape; empty
+#      scalar and unset both return 1 on BOTH shells, proving the probe
+#      discriminates. C serves a NULL array slot as `&nullarray`
+#      (c:params.c:4010-4013) and `(P)` is just `aspar = 1`
+#      (c:subst.c:2273-2275), matching `subst.rs:5461-5463`.
+#
+# OWNERSHIP, settled (R4-C): the `expl` on this path belongs to the
+# `_regex_arguments`-GENERATED function (sh:64 `local _ra_p1 … expl tmp nm=…`),
+# not `_message` (sh:6 owns it only inside its own `-e` branch) and not
+# `_bpf_filters` (declares none, sh:5-10; reaches `_message -e` via actions at
+# sh:15/19/86/105/108/111/132). zsh containment verified directly: a nested
+# `set -A $1` under `local expl` leaves the caller with zero elements.
+#
+# INSTRUMENTED (R4-C): 444 writes, 4 creations, 2 scopes. EVERY write is
+# `["-J","-default-"]` inside `_alternative_impl`'s LocalScope
+# (`_alternative.rs:104`, names `["expl","ws"]`); at save `live_value=Some([])`,
+# at restore the node is a husk (`u_arr=None, u_str=None`).
+#
+# WHAT IS LEFT, if anyone ever resumes: the read is identical and a husk
+# provably reads as ZERO, so the single empty string was WRITTEN. Neither the
+# husk nor the logged `["-J","-default-"]` writes explains `['']`. The next
+# probe is WHICH NODE the dump sees and WHAT wrote one empty string into it —
+# not the typing, not the scope, not the read path.
