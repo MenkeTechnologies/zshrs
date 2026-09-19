@@ -41,6 +41,10 @@ fn zsh_available() -> bool {
 
 struct R {
     stdout: String,
+    /// `untagged_fpath_file_is_not_a_command` pins a DIAGNOSTIC
+    /// (c:Src/exec.c:903 `zerr("command not found: %s", arg0)`), which
+    /// never reaches stdout.
+    stderr: String,
     exit: i32,
 }
 
@@ -52,6 +56,7 @@ fn run_zsh_in(d: &Path, s: &str) -> R {
         .expect("zsh");
     R {
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
         exit: o.status.code().unwrap_or(-1),
     }
 }
@@ -65,6 +70,7 @@ fn run_zshrs_in(d: &Path, s: &str) -> R {
         .expect("zshrs");
     R {
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
         exit: o.status.code().unwrap_or(-1),
     }
 }
@@ -596,6 +602,86 @@ fn hyphenated_ksh_style_autoload_runs_on_first_call() {
         let r = run_zshrs_in(d.path(), script);
         assert_eq!(r.stdout, z.stdout, "divergence on: {script}");
         assert_eq!(r.exit, z.exit, "exit divergence on: {script}");
+    }
+}
+
+/// c:Src/exec.c:3105-3109 — `execcmd` resolves a command word as
+///     if (!(cflags & (BINF_BUILTIN | BINF_COMMAND)) &&
+///         (hn = shfunctab->getnode(shfunctab, cmdarg))) { is_shfunc = 1; break; }
+/// with the identical gate at c:3484-3488, then `builtintab`, then `$PATH`;
+/// a name that resolves nowhere ends at c:903 `zerr("command not found: %s",
+/// arg0)` and c:908 `_exit(… 127)`. `getnode` only ever finds a node ALREADY
+/// in `shfunctab` — a real definition, or the autoload STUB that `autoload`
+/// or `compinit` installed. A file merely PRESENT in `$fpath` is therefore
+/// NOT a command, whatever it is named: `compinit` registers one only by its
+/// TAG LINE (sh:511-525 — `IFS=$' \t' read -rA _i_line < $_i_file`, then
+/// `case $_i_tag in (\#compdef) compdef -na … ;; (\#autoload) autoload -rUz
+/// "$_i_line[@]" ${_i_name} ;; esac`).
+///
+/// `dispatch_function_call` used to probe `$fpath` by FILENAME for any
+/// `_`-prefixed command word (`getfpfunc`, c:Src/exec.c:6279) and, on a hit,
+/// run `autoload -rUz -- NAME` and EXECUTE the file — so zshrs ran files zsh
+/// reports as not found. The cost was a swallowed diagnostic: with the
+/// untagged `__fasd_files_comp` in the user's `$fpath`, a `_files` override
+/// offering it as an `_alternative` action makes zsh print
+/// `_alternative:71: command not found: __fasd_files_comp` where zshrs
+/// printed nothing at all.
+#[test]
+fn untagged_fpath_file_is_not_a_command() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fns = d.path().join("fns");
+    std::fs::create_dir(&fns).unwrap();
+    // Untagged: registered by neither `compdef -na` nor `autoload -rUz`.
+    std::fs::write(fns.join("__zzz_probe"), "print RAN\n").unwrap();
+    // Tagged, but nothing has SCANNED the directory — `compinit` never ran,
+    // so these have no `shfunctab` node either and resolve exactly as the
+    // untagged one does.
+    std::fs::write(fns.join("_zzz_compdef"), "#compdef zzzcmd\nprint RAN\n").unwrap();
+    std::fs::write(fns.join("_zzz_autoload"), "#autoload\nprint RAN\n").unwrap();
+
+    for name in ["__zzz_probe", "_zzz_compdef", "_zzz_autoload"] {
+        let script = format!("fpath=({}); {name}", fns.display());
+        let z = run_zsh_in(d.path(), &script);
+        let r = run_zshrs_in(d.path(), &script);
+        assert_eq!(
+            (z.stdout.as_str(), z.exit),
+            ("", 127),
+            "zsh sanity — a bare `$fpath` file is not a command ({name}): {:?}",
+            z.stdout
+        );
+        assert_eq!(
+            r.stdout, z.stdout,
+            "zshrs EXECUTED `{name}` straight out of `$fpath`; zsh resolves it \
+             nowhere (c:Src/exec.c:3105-3109)"
+        );
+        assert_eq!(
+            r.stderr, z.stderr,
+            "`{name}` diagnostic divergence (c:Src/exec.c:903)"
+        );
+        assert_eq!(r.exit, z.exit, "`{name}` exit divergence (c:Src/exec.c:908)");
+    }
+
+    // The legitimate route must keep working: an EXPLICIT `autoload` is one of
+    // the two things that puts a stub in `shfunctab`, and the very same files
+    // then run in both shells. This is what stops the fix above from being a
+    // blanket "never load from `$fpath`".
+    for name in ["__zzz_probe", "_zzz_compdef", "_zzz_autoload"] {
+        let script = format!("fpath=({}); autoload -Uz {name}; {name}", fns.display());
+        let z = run_zsh_in(d.path(), &script);
+        let r = run_zshrs_in(d.path(), &script);
+        assert_eq!(
+            z.stdout, "RAN\n",
+            "zsh sanity (explicit autoload of {name}): {:?}",
+            z.stdout
+        );
+        assert_eq!(
+            r.stdout, z.stdout,
+            "zshrs stopped honouring an explicit `autoload -Uz {name}`"
+        );
+        assert_eq!(r.exit, z.exit, "`{name}` exit divergence after autoload");
     }
 }
 

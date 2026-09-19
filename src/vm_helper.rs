@@ -4817,32 +4817,43 @@ impl ShellExecutor {
             && !has_plugin_override
             && !self.functions_compiled.contains_key(name)
         {
-            // compinit bulk-loads $_comps from the dump/cache but (unlike
-            // zsh's `compdef -na`, which `autoload -rUz`s every completer)
-            // does NOT register the completer functions as autoload stubs.
-            // So a shell completer WITHOUT a Rust port (e.g. `_cat`, or the
-            // helpers it calls: `_pick_variant`, `_arguments`…) had no
-            // shfunctab entry — getshfunc returned None, nothing compiled,
-            // dispatch returned None, and the command's completion silently
-            // produced nothing. Register `_`-prefixed helpers from $fpath on
-            // demand (mirrors a fresh `autoload -Uz NAME`) so getshfunc finds
-            // the stub below and loadautofn reads the file. Gated to `_`
-            // names so ordinary commands still fall through to PATH.
-            if name.starts_with('_') && crate::ported::utils::getshfunc(name).is_none() {
-                // c:6219 getfpfunc — gate the stub on the definition file
-                // actually existing in $fpath, mirroring zsh's `compdef -na`
-                // (only autoloads `_`-names present in fpath). Without this a
-                // `_`-name with no file (e.g. a fasd completer trigger absent
-                // from this fpath) got a phantom PM_UNDEFINED stub, and
-                // loadautofn then leaked "function definition file not found"
-                // to the terminal during completion. test_only=1 is a pure
-                // probe; dump_out is preserved so .zwc-dump autoloads resolve.
-                let mut _dir: Option<String> = None;
-                let mut _dump = None;
-                if crate::ported::exec::getfpfunc(name, &mut _dir, None, 1, &mut _dump).is_some() {
-                    let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
-                }
-            }
+            // c:Src/exec.c:3105-3109 — `execcmd` resolves a command word as
+            //     if (!(cflags & (BINF_BUILTIN | BINF_COMMAND)) &&
+            //         (hn = shfunctab->getnode(shfunctab, cmdarg))) {
+            //         is_shfunc = 1; break; }
+            // the identical gate repeating at c:3484-3488, then `builtintab`,
+            // then `$PATH`, with a name that resolves nowhere ending at c:903
+            // `zerr("command not found: %s", arg0)`. `getnode` finds a node
+            // ALREADY IN `shfunctab` — a real definition, or the autoload STUB
+            // that `autoload` / `compinit` put there. A file merely PRESENT in
+            // `$fpath` is NOT a command in zsh; nothing autoloads it on demand.
+            //
+            // This used to probe `$fpath` with `getfpfunc` (c:Src/exec.c:6279)
+            // for ANY `_`-prefixed name with no shfunctab entry and, on a hit,
+            // run `autoload -rUz -- NAME` and execute the file. That gate keyed
+            // on the FILENAME, where zsh keys on the file's TAG LINE: compinit
+            // sh:511-525 reads `IFS=$' \t' read -rA _i_line < $_i_file` and then
+            // `case $_i_tag in (\#compdef) compdef -na … ;; (\#autoload)
+            // autoload -rUz "$_i_line[@]" ${_i_name} ;; esac`, so an UNTAGGED
+            // `_`-file is registered by neither mechanism — yet zshrs ran it:
+            //     fpath=(/tmp/d); __zzz_probe
+            //     zsh    zsh:1: command not found: __zzz_probe   (rc 127)
+            //     zshrs  RAN                                     (rc 0)
+            // The cost was a SWALLOWED DIAGNOSTIC: with the untagged
+            // `__fasd_files_comp` / `__fasd_dirs_comp` in `$fpath`, a `_files`
+            // override offering them as `_alternative` actions makes zsh report
+            // `_alternative:71: command not found: __fasd_files_comp`, where
+            // zshrs reported nothing at all because it executed the file.
+            //
+            // Nothing replaces the probe. The providers that stand in for a
+            // stock `$fpath` file already short-circuit ABOVE this block
+            // (`direct_rust_fn`, `has_plugin_override`), and `compinit` installs
+            // a real PM_UNDEFINED stub for every `#compdef`/`#autoload` file it
+            // scans — on the scan path and from a dump alike
+            // (`register_autoload_stubs`, src/compsys/ported/compinit.rs:831-855,
+            // called at :1137). So the `getshfunc` below IS C's
+            // `shfunctab->getnode`, and a name it misses falls through to
+            // builtin → `$PATH` → command-not-found, exactly as `execcmd` does.
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 // c:Src/exec.c:5684-5704 (loadautofn) — `autoload -U` records
                 // PM_UNALIASED, whose ONLY effect is that the autoloaded body is
