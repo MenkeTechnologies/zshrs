@@ -6916,22 +6916,17 @@ gstack
 #   collected bytes "until they form valid UTF-8", which never terminates
 #   for non-UTF-8 input, so both bytes were consumed as ONE character.
 #
-# OPEN 1 — display WIDTH is locale-blind. `${(m)#}` and `(ml:N:)` padding
-# always decode UTF-8: they honour the MULTIBYTE option but not the locale.
-# With v=$'日本語' (9 UTF-8 bytes):
+# OPEN 1 — RESOLVED b54ff03301; the full account is the 2026-09-18 `(m)` WIDTH
+# entry at the end of this file. C opens `mb_metastrlenend` with
+# `!isset(MULTIBYTE) || MB_CUR_MAX == 1` (c:Src/utils.c:5662-5663) and only the
+# MULTIBYTE half was ported, so a single-byte locale still ran the mbrtowc loop
+# and charged the C1 bytes (0x80-0x9f) of each UTF-8 sequence zero columns.
 #
-#   LC_ALL=C             zsh ${(m)#v}=9   zshrs 6   (${#v}=9 on BOTH — the
-#                        character COUNT is already right)
-#   unsetopt multibyte   both shells 9, every locale
-#   ${(ml:10:)v}         zsh pads 1 space, zshrs 4
-#
-# NOT the arm ec57980a78 fixed: `mb_metastrlenend(width=true)` over those
-# bytes returns 9 on every branch under LC_ALL=C (single-byte decode gives
-# WCWIDTH 1 nine times; MB_INVALID gives 1 nine times), and
-# BUILTIN_PARAM_LENGTH (src/fusevm_bridge.rs:13913) re-enters paramsubst as
-# a plain `${#name}` WITHOUT the `(m)` flag. So the `(m)` width is computed
-# somewhere not yet located — find that site before attempting a fix.
-#
+# The guess recorded below — that the `(m)` width was "computed somewhere not
+# yet located" — was wrong: it is that same function, reached from
+# c:Src/subst.c:3878 `MB_METASTRLEN2(val, multi_width)`. BUILTIN_PARAM_LENGTH
+# is not on the `${(m)#}` path at all; it serves the unbraced/plain `${#name}`
+# form, which is why dropping the flag there never showed up in the numbers.
 # OPEN 2 — a natively stored UTF-8 `char` is stepped by `len_utf8()` under a
 # non-UTF-8 locale. Same v under zh_CN.GB2312: zsh sees 5 characters and
 # REJECTS `???`; zshrs matches it. `${#v}`=5 and `${(m)#v}`=6 already agree
@@ -6985,3 +6980,964 @@ gstack
 #     BEFORE its native match arm — which is sh:17-88's
 #     `(( $+functions[_email-<name>] )) ||` guard expressed in Rust. A user
 #     plugin is picked up and run today; it is now pinned by a unit test.
+
+# ══════════════════════════════════════════════════════════════════════════
+# `expl` SCALAR-vs-ARRAY PREMISE — REFUTED 2026-09-18.  Do not re-chase it.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# (a) THE PREMISE WAS WRONG.  275 `declare_locals` sites exist under
+#     src/compsys/ported/; 73 of them name `expl`, ALL with `kind 0`
+#     (PM_SCALAR).  Classified against each port's stock file: 72
+#     STOCK-SCALAR, 1 STOCK-ARRAY.  So `kind 0` is FAITHFUL — stock spells
+#     plain `local expl`.  (A first classifier said 71/1/1; its regex used
+#     `[^=]*` before the name and so missed `_urls` sh:40
+#     `local ipre scheme host user uhosts ret=1 expl match glob suf`, where a
+#     `name=value` word precedes `expl`.  Tokenise the `local`/`typeset`
+#     line; do not regex across it.)
+#
+#     The lone STOCK-ARRAY hit is a PER-FILE artefact, not a defect:
+#     Completion/Unix/Type/_email_addresses declares `expl` TWICE — sh:48
+#     `local -a expl ali res filter` in one function and sh:93
+#     `local plugin rcfile muttrc expl sep ret fret` in `_email_addresses()`
+#     at sh:90.  The port's site `_email_addresses.rs:467` sits inside
+#     `pub fn _email_addresses` (rs:445), which ports sh:90 — so the SCALAR
+#     at sh:93 is its spec, and the port's own comment at rs:465 already
+#     says `ali` (sh:48) belongs to a different function.  Classify per
+#     FUNCTION scope, never per file.
+#
+# (b) EMPIRICAL DISPROOF.  `--fn-only _bpf_filters,_physical_volumes,\
+#     _mac_applications --fn-derive-only <same>`, pinned build of a672515387:
+#
+#       # _bpf_filters       port       0     2     0     0     0  DIVERGES
+#       # _mac_applications  port       0     2     0     0     0  DIVERGES
+#       # _physical_volumes  port       2     0     0     0     0
+#       # 2 passed, 4 failed, 6 call(s)
+#
+#     `_physical_volumes` PASSES 2/2 while declaring `expl` with the same
+#     `kind 0` — retyping cannot be the cure for a cell that already passes.
+#     `_mac_applications`'s two failures are fingerprint 7a077463ab
+#     (`ref/$ cat -- $ZPF_OUT` vs `test/$ true`), a harness-echo row, NOT
+#     `expl`; same shape already recorded for `_as_if`.
+#
+# (c) THE ONE REAL CELL IS SHADOW ALLOCATION, NOT TYPING.  `_bpf_filters`,
+#     fingerprint 21055f3134:
+#
+#       zsh  :   expl[0] =
+#       zshrs:   expl[1] = ''
+#
+#     `_zpf_dump` (scripts/comptab_parity.py:5940-5954) prints `name[COUNT]`
+#     ONLY when `${(tP)n}` contains `array`/`association`, and `name = "val"`
+#     otherwise — so BOTH sides report an ARRAY and the difference is one
+#     empty element, not a type.  Stock `_bpf_filters` declares no `expl` at
+#     all; its spec is full of `: _message -e …` actions.  Stock `_message`
+#     sh:6 `local expl ret=1 tag` absorbs the write, so zsh leaves the
+#     caller's `expl` untouched.  In zshrs `_message.rs:143` declares the
+#     same three names, but `declare_locals` (shared.rs:53-80) allocates a
+#     shadow only when `pm.level < locallevel`, and the port has no frame of
+#     its own — `router.rs:444` dispatches `_message_impl`, the RAW body,
+#     bypassing `call_compfn` -> `dispatch_function_call` -> `doshfunc`
+#     (c:Src/exec.c:6254/6260).  So no shadow is created and `_next_label`'s
+#     `set -A $2` (stock sh:17) lands in the PROBE's `expl`.
+#     NOT FIXED, and not a quick one: routing `_message` through the wrapper
+#     collides with `_message.rs:119`, which reserves `_message_impl` for
+#     callers that must not re-enter dispatch.
+#
+# (d) THE SCOPE-LEAK THEORY WAS SEPARATELY REFUTED.  A fresh parameter is
+#     zshcalloc'ed with no level stamp (c:Src/params.c:1157); only
+#     `typeset_single` stamps locals (c:Src/builtin.c:2572); the reuse arm
+#     keeps the existing level (c:1154); `scanendscope` deletes only
+#     `pm->level > locallevel` (c:5907).  Probes agree on both shells, so a
+#     blanket port scope guard CANNOT eat `_description`'s write to its
+#     caller's `$2` array.  That guard was built and measured: these cells
+#     did not move (0 passed / 4 failed before and after).  Diff kept at
+#     scratchpad/r3R/r3R_param_scope_guard.diff; it wraps only
+#     `run_port`'s non-first-call branch, which this path never takes.
+#
+# (e) TWO HARNESS HAZARDS, both cost real time here:
+#     * `cargo build … | tail -5` MASKS the exit status — a failed build
+#       reported success and nearly produced a stale-binary measurement.
+#       Build to a log and check `EXIT=$?`.
+#     * `--fn-derive-only NAME` ALONE still runs every hand-written probe.
+#       The restrict form needs BOTH `--fn-only NAME` and
+#       `--fn-derive-only NAME`.  (`--keep` does not exist; `--raw-diff`
+#       is what prints the row-level diff.)
+# ══════════════════════════════════════════════════════════════════════════
+# `(m)` WIDTH IS LOCALE-DRIVEN — fixed 2026-09-18, with two `(m)`-pad cells
+# left open.  Follows up the non-UTF-8 locale entry ec57980a78/766020fc0d,
+# which fixed COUNTS, subscripting and pattern stepping but left WIDTH.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# WAS: `${(m)#s}` and `${(ml:…:)}`/`${(mr:…:)}` ignored the locale.  Under
+# `LC_ALL=C` with `s=日本語`, zsh answers 9 and zshrs answered 6.
+#
+# ROOT CAUSE, and it is one guard, not a width table.  `MB_METASTRLEN2` is
+# `mb_metastrlenend(str, multi_width, NULL)` (c:Src/zsh.h:3281) and that
+# function opens with
+#
+#     if (!isset(MULTIBYTE) || MB_CUR_MAX == 1)
+#         return eptr ? (int)(eptr - ptr) : ztrlen(ptr);   c:Src/utils.c:5662-5663
+#
+# so in a SINGLE-BYTE locale every length is a BYTE count and the `width`
+# argument is never consulted at all.  The port kept only the `MULTIBYTE`
+# half of that test, ran its `mbrtowc` loop anyway, and then charged the C1
+# bytes (0x80-0x9f) of each UTF-8 sequence ZERO columns via the width table:
+# `日本語` is 9 bytes of which 0x97, 0x9c and 0x9e are C1, hence 6.  `aé日`
+# (one C1 byte) gave 5 against zsh's 6.  The character COUNT was already
+# right because that path adds 1 per decoded byte.
+#
+# `MB_CUR_MAX` is a C macro over a per-platform accessor, so the libc crate
+# cannot re-export it; the two spellings (`___mb_cur_max` on Darwin,
+# `__ctype_get_mb_cur_max` on glibc) are declared beside the existing
+# `mbrtowc`/`wcrtomb` externs and read INLINE at the guard, since
+# src/ported/ takes no Rust-original helper functions.  `setlocale` has to
+# have run first (`MB_LOCALE_READY`), so the guard sits after it.
+#
+# SECOND DEFECT, same family: C's `width` is an `int` straight from the
+# `(m)` flag's `multi_width` counter (c:Src/subst.c:2376), and
+# c:Src/utils.c:5722-5725 splits `width == 1` (add the glyph's COLUMNS)
+# from `width >= 2` (add ONE per printable character).  The port's
+# parameter was a `bool`, collapsing the two, so `${(mm)#日本語}` answered
+# 6 — the `(m)` column total — against zsh's 3.
+#
+# THIRD: `dopadding` (c:919-923) measures the value AND all four pad
+# strings with that same `MB_METASTRLEN2`, where the port summed a per-unit
+# width.  Hence `${(ml:12::x:)日本語}` padded with six `x` under `LC_ALL=C`
+# where zsh pads with three, and a WIDE pad string was measured one per
+# character instead of its columns: `${(ml:10::中:)ab}` repeated the pad
+# eight times against zsh's four.  The partial-repeat copies now walk units
+# accumulating cells (c:1074-1109, c:1276, c:1317) instead of indexing a
+# unit vector by a cell count, and `units()` itself steps ONE BYTE in a
+# single-byte locale, which is what `mb_metacharlenconv` does there
+# (c:Src/utils.c:5613 + the `mbrtowc` arm at c:5635).
+#
+# MEASURED AFTER, zsh vs zshrs identical in all four locales
+# (`${#s}`/`${(m)#s}`/`${(mm)#s}`):
+#
+#   locale          é          日本語      aé日
+#   C               2/2/2      9/9/9      6/6/6
+#   en_US.UTF-8     1/1/1      3/6/3      3/4/3
+#   zh_CN.GB2312    1/2/1      5/6/5      4/5/4
+#   ja_JP.eucJP     1/2/1      5/6/5      4/5/4
+#
+# and `${(ml:12::x:)日本語}` is `xxx日本語` under C, `xxxxxx日本語` under
+# UTF-8, on both shells.  Pinned by three tests in
+# tests/parity/locale_parity.rs (module `multibyte_width_is_locale_driven`),
+# which run the identical script in each locale on both shells and compare
+# bytes.
+#
+# ── STILL OPEN, both narrow ────────────────────────────────────────────────
+#
+# 1. `(m)`-FLAGGED PADDING WITH A MULTI-BYTE PAD UNDER `LC_ALL=C` cuts the
+#    pad at a different point.  Unflagged `(l)` already matches byte for
+#    byte, so this is the mid-character cut, not the width arithmetic.
+#    Measured with `s=ab`, pad `中` (e4 b8 ad), field width 10:
+#
+#      ${(l:10::中:)s}    zsh b8ad e4b8ad e4b8ad 6162   zshrs IDENTICAL
+#      ${(mr:10::中:)s}   zsh 6162 e4b8ad e4b8ad e4b8   zshrs …e4b8ad (11 bytes)
+#      ${(ml:10::中:)s}   zsh b8ad                      zshrs e4b8ad e4b8ad e4b8ad 6162
+#
+#    zsh fills to a BYTE budget and will cut a pad after two of three bytes;
+#    zshrs emits whole units.  zsh's `(ml:)` answer is two bytes for a
+#    field of ten, which looks like its left-pad truncation arm firing on a
+#    value it measured as wider than the field — not re-derived here, so it
+#    is recorded rather than matched.
+#
+# 2. A PAD THE LOCALE CANNOT ENCODE: in `zh_CN.GB2312` and `ja_JP.eucJP`,
+#    `中` has no form, and zsh rejects the whole flag —
+#    `zsh:1: error in flags near position 25` — where zshrs pads normally.
+#    That is flag PARSING, not width, and is untouched by this work.
+
+# ══════════════════════════════════════════════════════════════════════════
+# VERSION SPLIT — `zformat -f` seeds `specs['%']`/`specs[')']` in RELEASED
+# zsh but not at fork tip.  Measured 2026-09-18.  zshrs follows RELEASED zsh.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Found while chasing R3-Q's note that `src/ported/modules/zutil.rs:1703-1704`
+# pre-populates two spec slots "citing c:976/977 — lines that do not exist".
+# The citation was STALE DRIFT, not an invention: in the tree this port was
+# written against, `specs['%'] = "%";` / `specs[')'] = ")";` sit at c:975-976
+# (one off), and the zsh-5.9.1 tag still carries the first at c:943.
+#
+# Upstream `a04c944804` ("54580: zformat: better handle literal % in format
+# string", 2026-05-18) DELETED both lines and added the unwind now at
+# c:851-856.  That commit is in NO tag and is NOT an ancestor of zsh-5.9,
+# zsh-5.9.0.4-test or zsh-5.9.1; `~/forkedRepos/zsh` (5.9.999.3-test) is past
+# it, hence its zero-initialised `char *specs[256] = {0}` at c:1021.
+#
+# MEASURED, `zformat -f REPLY <fmt> x:XX` then `print` (all three shells):
+#
+#   fmt            zsh 5.9.2            fork tip 5.9.999.3-test   zshrs (now)
+#   %%             `%`      rc 0        `%`      rc 0             `%`   rc 0
+#   %)             `)`      rc 0        `)`      rc 0             `)`   rc 0
+#   %(%.yes.no)    bad math expression  `yes`    rc 0             bad math …
+#                  script abandoned,
+#                  exit 0
+#
+# So the two ends genuinely disagree, and the split is REAL.  zshrs keeps the
+# seeded entries: every released zsh has them, and `/opt/homebrew/bin/zsh`
+# 5.9.2 — the oracle `comptab_parity.py` and `compsys_spec_fuzz.py` measure
+# against — is one of them.  A future move to fork-tip semantics means
+# deleting the two seeds AND keeping the unwind, not one or the other.
+#
+# THE PORT WAS A HYBRID, and that was the real defect.  It carried the
+# pre-a04c944804 seeding AND the post-a04c944804 unwind (zutil.rs:698), and
+# reached fork-tip OUTPUT by a third route: `mathevali(sv).unwrap_or(0)`
+# (zutil.rs:741) SWALLOWED the math error, so `%(%.yes.no)` scored 0 == 0 and
+# printed the true branch.  C reports it (checkunary -> zerr), leaves errflag
+# set and yields 0 (c:Src/math.c:1505-1509); `bin_zformat` never checks the
+# flag, which is why the shell abandons the rest of the script but still
+# exits 0.  Fixed: the Err is surfaced through `zerr` + errflag exactly as
+# `bin_let` (builtin.rs:17151) and `paramsubst` (subst.rs:3171) already do.
+# zshrs `--zsh -fc` is now byte-identical to 5.9.2 on stdout, stderr and exit.
+# Pinned by `zformat_ternary_bad_math_in_spec_value_reports_and_abandons`
+# (tests/parity/zsh_modules_corpus_parity.rs).
+#
+# NOT A DEFECT, recorded so it is not re-chased: this swallow was version
+# independent.  Whichever end is chosen, a spec VALUE that is not a valid
+# math expression (`s:6*3x`) must report and set errflag — never score 0.
+#
+# PRE-EXISTING, NOT MINE: `zformat_substring_caller_override_of_percent_wins`
+# (zutil.rs:5014) fails alone and in the module run (`left: "%"`, `right:
+# "OVERRIDE"`).  Left untouched — the decision is with the user.  zutil::
+# module run: 76 passed, 1 failed (that one).
+#
+# R3-Q called it "unreachable behaviour", reasoning from the FORK TIP only.
+# Re-checked against BOTH trees, because the c:849-856 unwind Q cited is the
+# code a04c944804 ADDED and released zsh does not have.  The verdict splits by
+# SURFACE:
+#
+#   (a) The `%`/`)` spec-name rejection is NOT post-a04c944804 — it predates
+#       it.  Pre-removal tree c:980-982 and the zsh-5.9.1 tag c:948-950 both
+#       read `ap[0][0] == '%' || ap[0][0] == ')'` -> `zwarnnam(nam, "invalid
+#       argument: %s", *ap); return 1;`.  So Q's first citation holds for both.
+#
+#   (b) On the real 5.9.2 binary, a caller therefore never gets a `%` spec in:
+#         % zformat -f REPLY "%%" %:OVERRIDE
+#         zsh:zformat:1: invalid argument: %:OVERRIDE
+#         rc=1 REPLY=[UNSET]
+#
+#   (c) BUT the unit test does not go through the builtin — it calls
+#       `zformat_substring` with a specs map directly, and there the two trees
+#       differ.  Pre-removal C reaches `} else if ((spec = specs[(unsigned
+#       char) *s])) {` (c:890) with NO unwind ahead of it, so a specs['%']
+#       entry IS consulted and an override WOULD win.  At fork tip the unwind
+#       (c:851-856) intercepts `%%`/`%)` before that lookup, so it cannot.
+#
+# CONCLUSION: unreachable through the BUILTIN in both versions, but as an
+# INTERNAL-function test its expectation is correct under released 5.9.x —
+# the reference this project measures against — and wrong only under fork tip.
+# zshrs fails it because the port is the hybrid described above: it carries
+# the fork-tip unwind.  "Correct-but-unimplemented", not "known-wrong".
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2026-09-18 (R3-U) — the two `(m)`-pad residues of b54ff03301 RE-MEASURED.
+# The recorded framing ("the residue is the CUT POINT, not the arithmetic")
+# is REFUTED for the left-pad case, and the unencodable-pad case is
+# root-caused to the FLAG PARSER, not to padding. NOT FIXED.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Binary: shared-tree target/debug/zshrs built 2026-09-18 14:51 (b54ff03301).
+# Reference: /opt/homebrew/bin/zsh.  All values `v=ab`, pad `中` = e4 b8 ad.
+#
+# LEFT PAD, LC_ALL=C — zsh drops the REPEATS AND THE VALUE, keeping only the
+# partial-pad tail.  This is not a cut point; the value never appears:
+#
+#   ${(l:10::中:)v}    zsh b8ad e4b8ad e4b8ad 6162   (10 bytes, zshrs IDENTICAL)
+#   ${(ml:10::中:)v}   zsh b8ad                      (2 bytes — no repeats, no value)
+#   zshrs              e4b8ad e4b8ad e4b8ad 6162     (11 bytes)
+#
+#   width  3    4     5       6    8       10    12     (zsh, v=ab, `ml`)
+#          ad   b8ad  e4b8ad  ad   e4b8ad  b8ad  ad     — 6162 NEVER present
+#   v=abcd 3    4         5   6     8   10      12
+#          626364 61626364 ad  b8ad ad  e4b8ad  b8ad
+#
+# The drop correlates with a ZERO-WIDTH byte in the pad, not with position:
+# `中` ends in ad = U+00AD SOFT HYPHEN (wcwidth 0), and the value is dropped;
+# `é` (c3 a9) and `ä` (c3 a4) are all width-1 bytes and the value SURVIVES:
+#
+#   ${(ml:5::é:)v}  a9 c3a9 6162      ${(ml:10::é:)v}  c3a9 x4 6162
+#   ${(ml:6::ä:)v}  c3a4 c3a4 6162
+#
+# RIGHT pad is NOT affected the same way: `${(mr:10::中:)v}` is byte-identical
+# to the unflagged `r` form on zsh (6162 e4b8ad e4b8ad e4b8); zshrs emits 11
+# bytes (…e4b8ad), so only zshrs's final-pad cut diverges there.
+#
+# TWO CONTROLS THAT KILL THE "WIDTH CHARGE" THEORY:
+#   `unsetopt multibyte` + ${(ml:10::中:)v}  →  zsh STILL b8ad, while the
+#   unflagged form on the same input gives the full 10 bytes.  WCPADWIDTH is
+#   a compile-time 1 in that mode (c:Src/subst.c:869), so the charge cannot
+#   be the cause.  And `(mm)` (multi_width=2, c:2378 `multi_width++`) is also
+#   b8ad under C, yet pads fully under en_US.UTF-8.
+#   No arm of `dopadding` (c:Src/subst.c:892-1330) read end-to-end explains
+#   dropping `while (*str) *r++ = *str++` (c:1230-1232).  Settling this needs
+#   an INSTRUMENTED reference build, not more black-box probing.
+#
+# UNENCODABLE PAD — it is a FLAG-PARSE failure, not a padding decision.
+# `${(mr:8::PAD:)ab}` under zh_CN.GB2312, zsh vs zshrs:
+#
+#   PAD       e4b8ad   ad     | ed959c  c3a9  c3a4  a1a1  b0a1  e4a1  e4b8  41
+#   zsh       flagerr  flagerr| pads    pads  pads  pads  pads  pads  pads  pads
+#   zshrs     pads     pads   | pads    pads  pads  pads  pads  pads  pads  pads
+#
+#   zsh: `zsh:1: error in flags near position 9 in '${(mr:8::中:)v}"'`
+#
+# CAUSE: `get_strarg`'s delimiter scan (c:Src/subst.c:1403-1412) walks with
+# MB_METACHARLENCONV, so a sequence the LOCALE cannot decode consumes the
+# rest of the flag string; the closing `:` is never found, `t` lands on NUL,
+# and c:2361 `if (!*t) goto flagerr` raises the c:2528 diagnostic.  The port
+# (`get_strarg`, src/ported/subst.rs:3096-3129) walks `char_indices()` — pure
+# UTF-8, locale-independent — so it always finds the delimiter and pads.
+# Fixing it means stepping that scan through the locale, i.e. the same
+# byte-buffer problem as OPEN 2 above, so it is recorded, not patched.
+
+# ══════════════════════════════════════════════════════════════════════════
+# zformat: the port stays HYBRID, and the remaining step is a USER DECISION.
+# Measured 2026-09-18, follow-up to the seeding split recorded above.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# (a) WHY AN UNSEEDED WALKER ENTRY IS UNREACHABLE IN C.
+#     `static char *zformat_substring(char* instr, char **specs, ...)` c:816.
+#     Call sites: c:895 and c:899 (its own recursion) and `bin_zformat` only
+#     — c:990 pre-a04c944804, c:1067 at fork tip.  `bin_zformat` builds the
+#     table: `char *specs[256] = {0}` c:972, seeds `specs['%'] = "%";` and
+#     `specs[')'] = ")";` c:975-976, fills the rest from argv c:979-987, and
+#     passes it by pointer.  The walker only ever READS specs[]; NO C line
+#     seeds inside it.  So "callers build the table" is the faithful shape,
+#     and an unseeded entry is a state C cannot produce.
+#
+# (b) MEASURED with the fork-tip unwind REMOVED and the two production
+#     compsys callers seeded exactly as bin_zformat does (_numbers.rs:404,
+#     _wakeup_capable_devices.rs:66).  zshrs `--zsh -fc` vs the 5.9.2 binary,
+#     `zformat -f REPLY <fmt> x:XX` — stdout, stderr and exit all identical:
+#       %%            MATCH  rc=0 REPLY=[%]
+#       %)            MATCH  rc=0 REPLY=[)]
+#       %(%.yes.no)   MATCH  stdout empty, exit 0,
+#                            stderr `bad math expression: operand expected at `%''
+#
+# (c) BUT FOUR TESTS REGRESS, because they call the PUBLIC walker directly
+#     with an empty specs map — the unreachable state from (a):
+#       ported::modules::zutil::tests::test_zformat_escape
+#       ported::modules::zutil::tests::zformat_close_paren_escape
+#       ported::modules::zutil::tests::zformat_substring_percent_percent_is_literal_percent
+#       ported::modules::zutil::tests::zformat_substring_percent_close_paren_is_literal_close_paren
+#     zutil::  76 passed / 1 failed  ->  73 passed / 4 failed.
+#     The one that FLIPS TO PASSING is
+#     `zformat_substring_caller_override_of_percent_wins`, exactly as the
+#     c:890 analysis predicted.  _numbers:: 4/0 and _wakeup_capable_devices::
+#     4/0 both stay green, so seeding those two callers costs nothing.
+#     Everything was restored byte-identically (checksum) and rebuilt; the
+#     committed port is unchanged and still 76/1.
+#
+# (d) USER DECISION, NOT TAKEN HERE.  Mirroring C cannot make those four
+#     pass: caller-side seeding cannot reach them, and walker-side seeding
+#     has no C counterpart.  The options are (1) update those four tests to
+#     build the table the way `bin_zformat` does — they encode a CLI-level
+#     contract while calling an internal function that C keeps static — and
+#     then drop the unwind, making the port consistently released-5.9.x; or
+#     (2) leave the port hybrid (seeding + fork-tip unwind) as it is today.
+#     No test was touched, ignored or deleted.
+
+# ==========================================================================
+# 2026-09-18 — a `compadd -C` <all> placeholder SUPPRESSES THE WHOLE PLAIN-PATH
+# LISTING, and R3-V's clprintm port must NOT be landed as written.
+# ==========================================================================
+#
+# MINIMAL REPRO, outside the fuzzer (init is 3 lines; buffer 'zzc ', key tab):
+#
+#     _sfzc() { compadd -C -- ; compadd alpha beta }
+#     zle -C _sfz_w complete-word _sfzc
+#     bindkey '^I' _sfz_w
+#
+#   zsh    rows: `alpha beta` / `alpha  beta`   (row 1 = the <all> display that
+#                                                bld_all_str builds)
+#   zshrs  rows: <none>
+#
+# `compadd alpha beta` ALONE lists identically on both shells (`alpha  beta`),
+# so the trigger is the PRESENCE of the CMF_ALL placeholder, not the matches.
+# With `-X 'out-arrays'` zshrs prints ONLY the explanation and no match rows.
+# Adding `-U -Q`, `-J <grp>` or `-X` changes nothing: the split is `-C` alone.
+#
+# NOT widget-specific — same completer, tab, four widgets, zsh always 3 rows:
+#     complete-word / menu-complete / reverse-menu-complete /
+#     delete-char-or-list  ->  zshrs draws NO listing in all four.
+#
+# NOT a match-count or list-decision divergence. A probe printing compstate
+# from inside the completer (reads only; adds no match) gives IDENTICALLY on
+# both shells:  nm=3 list=ambiguous ins=menu
+#
+# THE PLAIN AND COMPLIST PATHS DIFFER. With `zmodload -i zsh/complist` and
+# `zle -C _sfz_w menu-select _sfzc`:
+#     zsh    `alpha beta` / `out-arrays` / `alpha  beta`
+#     zshrs               `out-arrays` / `alpha  beta`   (2 of 3 — only the
+#                                                         <all> row missing)
+# So complist lists and drops one row; the plain path drops everything.
+#
+# RULED OUT BY READING AGAINST C (do not re-chase):
+#   * `skipnolist` (compresult.rs:2653 <-> c:1477-1487) — faithful, incl. the
+#     mask and the `disp && (CMF_DISPLINE|CMF_HIDE)` clause.
+#   * `addmatch`'s placeholder init (compcore.rs:3933-3939 <-> c:2051-2059) —
+#     faithful: C ALSO stores `dupstring("")` + CMF_DISPLINE for the `line`
+#     arm, so the port's `Some(String::new())` is correct; this is NOT a
+#     `NULL` vs `Some("")` divergence.
+#   * `do_allmatches` (c:900-945) — the insert-all path, not the listing path.
+#
+# NEXT STEP: instrument `calclist` (c:1491, `listdat.nlines`) and the
+# `ilistmatches` bail at c:2282 `if (!listdat.nlines) return 1` — the
+# explanation-only output points at the per-match count, not the list decision.
+#
+# R3-V's clprintm port (bld_all_str at complist.rs:3232-3234, c:1756-1757) was
+# reported "measured inert". RE-MEASURED: it is NOT inert — it REGRESSES the
+# complist path from 2 rows to ZERO (applied: no listing at all; reverted and
+# rebuilt: `out-arrays` / `alpha  beta` returns). R3-V measured only the
+# plain-path cells, which never enter clprintm: the fuzzer sets
+# `plan["complist"]` ONLY for `menu-select` (compsys_spec_fuzz.py:647,657),
+# while 9402/0023 and 9403/0021 use `delete-char-or-list` /
+# `reverse-menu-complete`. Diff kept at scratchpad/r3V_clprintm.diff — do not
+# land it without fixing that regression.
+#
+# NOTE for whoever ports c:1756-1757 properly: C's `bld_all_str` ENDS with
+# `zsfree(all->disp); all->disp = ztrdup(buf);` (c:2229-2230) — it STORES on
+# the match, so the built string persists across calls and is visible through
+# `mtab`. The Rust `clprintm` takes `m: &Cmatch` and `g: &Arc<Cmgroup>`, and
+# MTAB holds CLONES, so a threaded local (the sibling idiom at
+# compresult.rs:3972-3983) is observably narrower for menu-select. Storing
+# needs the group's matches reachable mutably — a structural change, not a
+# one-line port.
+
+# ============================================================================
+# RESOLVED 7a3c10d6a311 — a bare `compadd -C --` HUNG the shell; it was never
+# a dropped row.  Supersedes the "compadd -C lists nothing" entries above and
+# VOIDS the verdict recorded against the clprintm diff.
+# ============================================================================
+#
+# ROOT CAUSE, src/ported/zle/compresult.rs:3912 and :3920 in `bld_all_str`:
+#
+#   g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
+#
+# `(gi + 1..)` is an UNBOUNDED RangeFrom and `Iterator::find` returns only when
+# the predicate holds or the iterator ends — a RangeFrom never ends.  Once no
+# later group carried matches the search spun forever.  C walks the list and
+# stops at its end (c:Src/Zle/compresult.c:2219-2227):
+#     do { if (!(g = g->next)) break; } while (!g->mcount);  if (!g) break;
+# Fix: bound the range, `(gi + 1..groups.len()).find(|&i| …)`.
+#
+# `iprintm` calls `bld_all_str` for a CMF_ALL match with empty disp (c:2244-
+# 2245), so the hang took the WHOLE listing, not just the `<all>` row.
+#
+# REPRO (3 lines, no fuzzer):  _x() { compadd -C --; compadd alpha beta }
+#   zsh    rows: `alpha beta` then `alpha  beta`
+#   before rows: none, shell pegged at 100% CPU (ps state Rs+, minutes of CPU)
+#   after  rows: byte-identical to zsh
+#
+# WHY THREE AGENTS MISSED IT — the harness settles on a QUIET INTERVAL, so an
+# infinite loop inside the shell renders as "drew nothing", indistinguishable
+# from a dropped listing; it does NOT report a timeout.  Classify with `ps`
+# (100% CPU, state Rs+) before concluding "no output" means "printed nothing".
+# One earlier export left 12 children pegged at 100% CPU for 18 minutes.
+#
+# INSTRUMENTATION THAT SETTLED IT (printlist entry / CGF_HASDL block / grid
+# filter / group end): `printlist` and the HASDL block fired, the grid filter
+# and group end never did.  Everything upstream was ALREADY CORRECT and is not
+# worth re-investigating: lcount=3 mcount=3 dcount=2 cols=2 lins=1 nlines=2,
+# group flags 0x4 == CGF_HASDL exactly, and the `<all>` match flags 0x2040 ==
+# CMF_ALL|CMF_DISPLINE with disp Some("") — a faithful port of c:2056-2059.
+# Refuted along the way: the add site's disp argument, makearray's `nl`
+# accounting, `lcount = nn - nl`, skipnolist, and a "detached clone" of the
+# group flags.
+#
+# STILL OPEN — the complist path.  With the hang fixed, `zmodload zsh/complist`
+# + `menu select` gives:
+#     zsh    `alpha beta` / `alpha  beta`      zshrs  `alpha  beta` only
+# i.e. the `<all>` row is still absent there.  complist.rs:3232-3234 carries
+# the comment `c:1756-1757 — bld_all_str for CMF_ALL with empty disp` followed
+# only by `let _ = CMF_ALL;` — the line is UNPORTED.
+#
+# THE EARLIER REJECTION OF THAT PORT IS VOID.  It was measured as "a regression,
+# 2 rows -> 0" on a binary that still had the spin, so applying it merely routed
+# clprintm into the infinite loop.  Re-measure it on 7a3c10d6a311 or later
+# before treating it as harmful.
+# Design note for whoever does: C ENDS bld_all_str by STORING the built string
+# on the match (`zsfree(all->disp); all->disp = ztrdup(buf)`, c:2229-2230), so
+# it persists for later reads and later calls, and is visible through `mtab`.
+# Rust `clprintm` takes `&Cmatch` + `&Arc<Cmgroup>` and MTAB holds CLONES, so a
+# threaded local is observably narrower than C; storing needs mutable group
+# access — a structural change, not a one-liner.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# `compadd -C --` under complist: the `<all>` row — FIXED ba5a44e53b.
+# Supersedes the three earlier verdicts on this cell; two of them were VOID.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The defect: `complist.rs:3232-3234` carried the comment `c:1756-1757 —
+# bld_all_str for CMF_ALL with empty disp` and then only `let _ = CMF_ALL;`.
+# C builds the `compadd -C` placeholder's display string there when the match
+# carries none (c:complist.c:1756-1757), and every read below is
+# `m->disp ? ... : ...`, so the summary row rendered empty.
+#
+# HOW THE VERDICTS WENT WRONG — worth reading before trusting a "measured" claim:
+#   R3-V  wrote the port, measured only PLAIN-path cells (which never enter
+#         `clprintm`; the fuzzer sets complist only for `menu-select`,
+#         compsys_spec_fuzz.py:647,657) and reported it INERT. VOID.
+#   R3-W  re-measured on the complist path and reported a REGRESSION, 2 rows
+#         -> 0. VOID: that binary was SPINNING (R3-X's unbounded `RangeFrom`
+#         in bld_all_str, fixed 7a3c10d6a3). Applying the port merely entered
+#         the loop; the harness settles on quiet, so a hang renders as
+#         "drew nothing".
+#   R3-X  found and fixed the spin, and said explicitly that W's rejection was
+#         void. It did not re-apply the port.
+#   R3-Y  re-measured on a clean export of d8948f68c0 (which contains the spin
+#         fix) and the port holds up. Landed.
+#
+# MEASURED, `_x() { compadd -C --; compadd alpha beta }`, buffer `xcmd `, TAB:
+#   complist (`zmodload zsh/complist` + `menu select=1`)
+#     zsh            'alpha beta' / 'alpha  beta'      (2 rows)
+#     zshrs before   'alpha  beta'                     (1 row — summary missing)
+#     zshrs after    'alpha beta' / 'alpha  beta'      (2 rows, = zsh)
+#   plain (no complist)   2 rows on both shells, before and after — the path
+#                         R3-X's spin fix already covered; no regression here.
+#
+# FAITHFUL SHAPE — why a threaded local was NOT enough, decided against C:
+#   C's `bld_all_str(all)` MUTATES the match (c:2229-2230 `zsfree(all->disp);
+#   all->disp = ztrdup(buf);`) and `mtab` stores the POINTER (c:1767/1773), so
+#   every later reader sees it — notably `msearch` at c:2327,
+#   `(m->disp ? m->disp : m->str)`. Rust `MTAB` is `Vec<Option<Cmatch>>`, i.e.
+#   CLONES (complist.rs:7412), and `msearch` reads `disp` out of them
+#   (complist.rs:4562-4567). Threading the built string through `clprintm`
+#   alone would leave the STORED CELL empty and split menu-search from zsh.
+#   So: `clprintm` rebinds to a match copy carrying the string (every read
+#   below, the MTAB store included), and `bld_all_str` writes it back into the
+#   live `amatches` table so a later pass reuses it as C does.
+#   R3-W judged that store "a structural change needing mutable group access".
+#   It is not: `amatches` is `OnceLock<Mutex<Vec<Cmgroup>>>` — OWNED groups
+#   behind a mutex (compcore.rs:6854) — and `bld_all_str` already locks it
+#   (compresult.rs:3848). The `Arc<Cmgroup>` snapshot W reasoned from is the
+#   LISTING LOOP's (complist.rs:2492-2498), taken before the call, which is why
+#   the current pass uses the returned string — exactly as C reads `m->disp`
+#   immediately after writing it.
+#
+# VERIFICATION: new pin `clprintm_builds_the_all_placeholder_into_the_stored_cell`
+# asserts the MTAB cell carries the built text (the msearch observable), bounded
+# by a timeout because a regression in this area HANGS. complist:: 100/0,
+# compresult:: 79/0. Negative control — revert ONLY the clprintm hunk, keep the
+# test: FAILS `left: None, right: Some("alpha beta")`; restore byte-identical,
+# passes again. Y gate UNCHANGED=229 REGRESSED=0 (222 pass / 0 fail / 7 xfail).
+#
+# HARNESS TRAPS confirmed again here: `--compstate-probe always` appends a
+# `compadd` and makes 9403/0021 PASS, masking this class; the screen harness
+# settles on quiet, so classify an empty screen with `ps` (a spin shows `Rs+`
+# at ~100% CPU) before believing "drew nothing".
+
+# ============================================================================
+# `_bpf_filters` `expl` CELL (fp 21055f3134) — STOPPED after five agents, with
+# the full disproof chain. Do NOT restart this without new user-visible impact.
+# ============================================================================
+#
+#   ref/expl[#] =        (zsh: zero elements)
+#   test/expl[#] = ''    (zshrs: ONE empty element)
+#
+# Cost so far: five agents. Every hypothesis below was disproved BY MEASUREMENT
+# on a verified binary, not by reading. Recorded so nobody re-derives them.
+#
+#   1. "expl is declared PM_SCALAR where the stock fn uses an array."
+#      REFUTED (R3-T): 73 of 275 declare_locals sites name `expl`, ALL kind 0,
+#      and 72 of 73 match a stock scalar `local expl`. The lone array hit is a
+#      per-file artifact (`_email_addresses` sh:48 belongs to another function).
+#      `_physical_volumes` PASSES 2/2 with the same kind 0 declaration, and
+#      `_mac_applications`' failures carry a different fingerprint (7a077463ab).
+#
+#   2. "A port is not its own parameter frame, so declare_locals never unwinds."
+#      REFUTED (R3-R): C stamps no level in `createparam` (c:params.c:1157,
+#      c:1226) and `scanendscope` deletes only `pm->level > locallevel`
+#      (c:5907); probes behave IDENTICALLY on both shells. A blanket scope
+#      guard measured 0 passed/4 failed -> 0 passed/4 failed, and was reverted.
+#
+#   3. "`_message.rs:143`'s declare_locals should be a LocalScope."  REFUTED
+#      (R4-C): cells identical after the swap; `_message::` unit tests 5/0.
+#   4. "The generated fn's sh:64-65 locals are missing in dispatch_registered."
+#      REFUTED (R4-C): identical after adding them and dropping its unsetparam.
+#   5. "`local -a` itself creates one empty element."  REFUTED (R4-C): both
+#      shells report `n=0 t=array-local`.
+#   6. "`${(@P)}` over the restored husk reads one element instead of zero."
+#      REFUTED (R4-D): 14/14 hermetic probe lines byte-identical outside
+#      compsys, including the sweep's own `v=( "${(@P)n}" ); $#v` shape; empty
+#      scalar and unset both return 1 on BOTH shells, proving the probe
+#      discriminates. C serves a NULL array slot as `&nullarray`
+#      (c:params.c:4010-4013) and `(P)` is just `aspar = 1`
+#      (c:subst.c:2273-2275), matching `subst.rs:5461-5463`.
+#
+# OWNERSHIP, settled (R4-C): the `expl` on this path belongs to the
+# `_regex_arguments`-GENERATED function (sh:64 `local _ra_p1 … expl tmp nm=…`),
+# not `_message` (sh:6 owns it only inside its own `-e` branch) and not
+# `_bpf_filters` (declares none, sh:5-10; reaches `_message -e` via actions at
+# sh:15/19/86/105/108/111/132). zsh containment verified directly: a nested
+# `set -A $1` under `local expl` leaves the caller with zero elements.
+#
+# INSTRUMENTED (R4-C): 444 writes, 4 creations, 2 scopes. EVERY write is
+# `["-J","-default-"]` inside `_alternative_impl`'s LocalScope
+# (`_alternative.rs:104`, names `["expl","ws"]`); at save `live_value=Some([])`,
+# at restore the node is a husk (`u_arr=None, u_str=None`).
+#
+# WHAT IS LEFT, if anyone ever resumes: the read is identical and a husk
+# provably reads as ZERO, so the single empty string was WRITTEN. Neither the
+# husk nor the logged `["-J","-default-"]` writes explains `['']`. The next
+# probe is WHICH NODE the dump sees and WHAT wrote one empty string into it —
+# not the typing, not the scope, not the read path.
+
+# ============================================================================
+# ROUND 4 — the six spec-fuzz cells left open by the 9401-9410 sweep, each
+# RE-MEASURED on a clean `git archive` export of a1e8210026 (own
+# CARGO_TARGET_DIR; reference /opt/homebrew/bin/zsh 5.9.2, passed explicitly —
+# /bin/zsh here is 5.9 and would be a different reference).
+#
+# ALL SIX still failed, in BOTH --mode zsh and --mode native, and `ps` showed
+# no `Rs+` children in any run — so none is the `bld_all_str` hang class and
+# 7a3c10d6a3 / ba5a44e53b did not touch them.
+#
+# FIXED — 9408/0016 (compadd, std:reverse-menu-complete, keys tab,space,tab).
+#   Harness-reduced repro: `compadd -C -d _sfz_disp -- with space`.
+#     zsh   row5  disp4 `cmd` sub          (the -d array's next entry)
+#     zshrs row5  backslash delta with space   (the match words, joined)
+#   Rows 1-4 (the ordinary display strings) were already identical, which is
+#   what localises this to the `<all>` placeholder rather than to listing.
+#   C: addmatch("<all>", dat->flags | CMF_ALL, &disp, 1) — c:compcore.c:2612 —
+#   passes the SHARED disp cursor, exactly as the dummy loop at c:2615-2616,
+#   so the placeholder consumes the next display string. bld_all_str
+#   (c:2198-2230) concatenates m->str and is reached only when the placeholder
+#   has NO disp. The port passed None; the dummy loop directly below it already
+#   had the correct cursor-advance, its own comment recording that passing None
+#   there "dropped every description line".
+#   Control: hunk reverted -> 1 FAIL; restored byte-identically -> 1 PASS.
+#   Other five cells unchanged by it. Y gate UNCHANGED=229 REGRESSED=0.
+#
+# DUPLICATE — 9406/0009 (arguments, fpdef-K, cx-w,cx-w,down,down) is the
+#   EMPTY-`_arguments`-ACTION class already recorded above for 9303 case0002:
+#   its reduced spec carries `'1:value:'`, zsh prints
+#   `_arguments:465: permission denied:` twice plus `exact=`, zshrs prints
+#   nothing, and the harness's own line reads "only zsh reported". Not
+#   re-root-caused here; see that entry for the C (exec.c:898-899) and for the
+#   port site (_arguments.rs:1491 skipping the call when the action evaluates
+#   to no words).
+#
+# OPEN — 9405/0017 (arguments, fn:_complete_help, tab,tab,btab). One frame:
+#     zsh       messages  (_message _arguments _sfz_main _fzc0017)
+#     zshrs     messages  (_arguments _sfz_main _fzc0017)
+#   `call_compfn` (src/compsys/ported/shared.rs:936) is
+#   `dispatch_function_call(name, args).unwrap_or_else(fallback)`: when a shell
+#   function exists it goes through doshfunc and gets a frame, otherwise the
+#   port body runs as a plain Rust call with NONE. R3-O's PortFuncstackFrame
+#   (shared.rs:1067) already supplies exactly this, one level deeper, around
+#   `_next_label_impl` (_message.rs:213, :416). Wrapping the call_compfn
+#   FALLBACK would fix it — but it shifts $#funcstack for EVERY port and the
+#   `_tags_level` gates read that depth (R3-O measured 14 tests turning on it),
+#   so MEASURE, do not blind-edit.
+#
+# OPEN — 9403/0013 (tags, fpdef-K, cx-w). Both shells print
+#   `(eval):1: no matches found: *:globbed-files`; on the REDRAW zsh keeps
+#   `@SFZ@ fzc0013 -b` and zshrs drops the `-b`. Cursor zsh (2,16) vs (2,14).
+#   Line restoration after an error, not a listing bug.
+#
+# OPEN — 9404/0020 (arguments, compdef-k:menu-select, cx-w,cx-w,a). Row 0 is
+#   the COMMAND LINE: zsh `@SFZ@ fzc0020 -b a`, zshrs `@SFZ@ fzc0020 -ba` —
+#   the separating space after a menu-inserted option. Reduced to a bare
+#   `_arguments -w`; the widget is `compdef -k _generic menu-select '^Xw'`.
+#
+# OPEN — 9401/0022 (describe, fn:_history-complete-older, tab,tab,down,down).
+#   Reduced to an EMPTY `_describe` (`_m=( )`, `_d=( )`): zsh then draws three
+#   further rows (the init.zsh path again, then `source`) and zshrs draws none
+#   — the history-completion widget's fallback with zero matches.
+#
+# METHOD — `print_failure` already dumps the case spec, the FULL generated
+#   completer, the harness's own reduced completer, both grids, every differing
+#   row and a raw escape-stream diff, so fixture bodies never need extracting
+#   by hand (an earlier perl extraction returned nothing for four of them
+#   because they use a different heredoc marker). `--verbose` only prints
+#   PASSES and is not needed for triage.
+# NOT THIS CHANGE — `addmatches_u_flag_match_carries_no_ignored_prefix` fails
+#   identically on UNMODIFIED BASE and with the hunk (101 passed / 1 failed in
+#   both arms) and passes ALONE (1/0): the known order-dependent intermittent.
+# ============================================================================
+
+# ============================================================================
+# RAW BYTE IN THE TOKEN RANGE (0x83..0xa1) INSIDE SOURCE TEXT IS REWRITTEN AT
+# PARSE TIME -> the word is corrupted, the completion yields ZERO MATCHES.
+# STRUCTURAL; no fix shipped. Supersedes the "non-UTF-8 byte kills the native
+# path" framing of seeds 9409/9410 (R4-B).
+# ============================================================================
+#
+# REPRO (deterministic, two independent drivers):
+#   fixture  target/spec-fuzz-9409/case0015.min.zsh  (also 0006, 0012, 0022)
+#   driver   scripts/comptab_screen.py --shell "<zshrs> -f -i" \
+#              --init <case0015>/init.zsh --buffer 'fzc0015 --' --keys tab
+#   zsh      7 rows  (@SFZ@ fzc0015 _sfz_a= / out-arrays / _sfz_a= / compstate / 3)
+#   zshrs    1 row   (@SFZ@ fzc0015 --)    -- nothing drawn, nothing inserted
+# The completer file contains an UNQUOTED raw 0x85 byte: `compadd  -- x<85>y nel`.
+#
+# ROOT CAUSE, measured at the byte level, not inferred.  Autoload the fixture's
+# completer and print `${functions[_fzc0015]}` on both shells; the bodies are
+# the same LENGTH (525 bytes) and differ in exactly ONE byte:
+#     zsh    ...  -   x 205   y   n e l ...        (raw 0x85 preserved)
+#     zshrs  ...  -   x   $   y   n e l ...        (rewritten to '$')
+# 0x85 IS the `String` token char: `pub const Stringg: char = '\u{85}'`
+# (src/ported/zsh_h.rs:145, c:Src/zsh.h:160).  zshrs stores source text as Rust
+# `char`s, so a literal 0x85 in the input is indistinguishable from the token
+# and untokenizes back to `$`.  C cannot hit this: `Meta` is 0x83
+# (c:Src/zsh.h:144), `Pound` 0x84 (:159), `Nularg` 0xa1 (:206), and
+# `inittyptab` marks Pound..LAST_NORMAL_TOK and Snull..Nularg as ITOK|IMETA
+# (c:Src/utils.c:4196-4201), so input bytes in that span are METAFIED
+# (Meta + byte^32) and real data never collides with token space.
+#
+# WHY IT LOOKS LIKE A COMPLETION BUG BUT IS NOT: parsing and loading succeed.
+# `whence -w` reports a function, `autoload +X` succeeds, body length matches
+# zsh exactly.  Only the one byte inside the word is wrong, so `compadd` adds a
+# different string than the script wrote.
+#
+# DISPROVED ALONG THE WAY (each measured on a clean export of the tip; do not
+# re-chase any of these):
+#   * "native path only" (R4-B): case0012 FAILS in BOTH --mode native and
+#     --mode zsh.  The native-vs---zsh split holds only for case0015.
+#   * the compsys cache: `--env ZSHRS_CACHE=0` changes nothing.
+#   * `zmodload zsh/complist`, `menu select=1`, `zle -C _sfz_w
+#     menu-expand-or-complete _generic`, the menu-navigation keys (literal ^N),
+#     and the two probe `compadd -U -Q -J ... -X ...` lines: each added to a
+#     passing repro individually and in combination -- ALL still pass.
+#   * `compinit -u -D` vs `compinit -u -d <dump>`: no effect.
+#   * RPROMPT / PS2 / `builtin cd <work>` / `print -u2 ''` / `setopt no_beep`:
+#     removed one at a time from the FAILING fixture init -- still fails.
+#   * the completed word `--`, and the keys: a single TAB reproduces.
+#   * the byte written as `$'x\x85y'` (shell escape) PASSES on both shells.
+#     Only the RAW byte in the file's source text fails -- that is the whole
+#     difference, and it is why every hand-typed repro passed.
+#   * a raw 0x85 in a plain sourced script (`v=x<85>y; print -r -- "got:$v"`)
+#     prints IDENTICALLY on zsh, `zshrs` and `zshrs --zsh`.  The collision
+#     needs the byte to reach the LEXER as part of a word, not a string value.
+#
+# NOT FIXED, and not fixable locally: faithfulness requires metafying input
+# bytes in 0x83..0xa1 the way C does (or carrying source as raw bytes).  Same
+# structural family as the recorded pattern-walk-over-natively-stored-text and
+# the flag-scan-steps-UTF-8-regardless-of-locale limits.  A local patch in the
+# completion code would only mask a lexer-level data/token collision.
+#
+# STILL OPEN, and NOT explained by the above: why case0015 PASSES in
+# `--mode zsh` while failing natively, when the corrupting rewrite happens at
+# parse time in both.  Probe that before assuming this entry covers it.
+
+# ============================================================================
+# HOSTILE SEEDS 9409/9410 — the five "genuine grid-diff" cells, classified.
+# Three are already-recorded classes; two are real and open; one is UNRESOLVED
+# because my own probes never produced a reproducible two-shell comparison.
+# ============================================================================
+#
+# Method note first, because it invalidated four of my probes before I noticed:
+#   * `comptab_screen.py` REPLACES the child environment wholesale and pins
+#     ZDOTDIR to /nonexistent-zdotdir (:167, :183-184) — only its own `--env`
+#     reaches the child. An outer `ZDOTDIR=...` is silently discarded, and the
+#     reference then completes in $PWD, which LOOKS like a divergence.
+#   * `--init` is sourced by TYPING at the prompt (:248), and zsh finishes
+#     compinit slower than zshrs (:19) — too small a settle yields an empty
+#     REFERENCE screen that also looks like a divergence.
+#   * Named keys are bs cr del down end esc home left nl pgdn pgup right space
+#     tab up. `enter` is NOT one; passing it aborts before a shell starts.
+#   * `--env/--settle/--budget/--lang` ARE accepted and consumed (:163-164,
+#     :172, :257, :260) — the usage line is accurate.
+#   Sanity arm that makes a capture interpretable: complete a BUILTIN name
+#   (`whil`+TAB -> `while`) in the same rc. Both shells pass that here, so a
+#   silent reference on a FIXTURE case is about the fixture, not the harness.
+#
+# CLASSIFICATION (strict UTF-8 validity scan per fixture is the discriminator;
+# a byte census is NOT — most 0x80-0xa2 bytes are continuation bytes of valid
+# UTF-8 (CJK/hangul/emoji-ZWJ) and cannot collide with a token char):
+#
+#   9409/case0001  VALID UTF-8 throughout          -> REAL, open (see below)
+#   9409/case0009  INVALID: 14 bytes incl. 0x85    -> recorded 0x85 class
+#   9409/case0014  VALID UTF-8 throughout          -> REAL, open (see below)
+#   9410/case0009  INVALID: one 0xf0 @159          -> UNRESOLVED (see below)
+#   9410/case0021  INVALID: 0x85 @139, @679        -> recorded 0x85 class
+#
+# The two 0x85 cells are downstream of a2e6bea6c3 (a raw 0x85 in SOURCE TEXT
+# is parsed as the String token char and rewritten). NOT a listing defect: the
+# Rust renderer is a faithful port — complist.rs:1378 `Err(_) =>
+# (nicechar(b0 as char), 1)` citing c:757-767, matching C's `nicechar(*uptr)`
+# at c:Src/Zle/complist.c:760 — and a hermetic probe shows zshrs printing
+# `x$'\205'y`, zsh's exact spelling. 9409/0009's completer loses ALL its own
+# matches and falls back to FILE completion, the same corrupted-body symptom.
+#
+# `--mode zsh` DOES NOT CLEAR THIS CLASS — it hides it. Measured on one
+# fixture, all three at len=610: reference zsh stores `x 205 y` (raw byte
+# kept); zshrs NATIVE stores `x $ y`; zshrs `--zsh` stores `x $ y` too. The
+# rewrite is mode-independent (the only IS_ZSH_MODE consumers in the tree are
+# builtin-dispatch gates, compile_zsh.rs:3853-3900 — nothing at lex time), and
+# `build_case_dir` writes byte-identical fixtures in both modes. So R4-E's
+# open question "why does case0015 pass under --zsh" is answered: the byte is
+# corrupted in BOTH modes; only its visibility downstream differs. Treat any
+# `--mode zsh` PASS on hostile input as a FALSE NEGATIVE for this class.
+#
+# REAL AND OPEN, both valid UTF-8 (so not the class above), both `_describe -O`:
+#   9409/case0001 (combining + wide-cjk, en_US.UTF-8, reverse-menu-complete):
+#     listings are byte-identical; only the INSERTED word differs — zsh inserts
+#     `-m` (first match), zshrs `-x` (third). Match ordering / first-match pick.
+#   9409/case0014 (emoji-zwj + wide-hangul + wide-cjk, compdef-k:menu-select):
+#     zshrs inserts a different first match AND loses listing rows 2-3
+#     (`<absent>`), cursor zsh (0,33) vs zshrs (1,6). The only one of the five
+#     that loses output. Fixture is `_describe -O -1` with a ZWJ description.
+#
+# UNRESOLVED — 9410/case0009, and I am recording it rather than guessing.
+#   Shape: `_describe 'a\xf0b'` with two matches sharing one description under
+#   zle-C:reverse-menu-complete. In the sweep: zsh leaves the line `fzc0009`,
+#   zshrs inserts `-v`; both list the same five matches; cursor 14 vs 16.
+#   C decides this at do_ambiguous (c:Src/Zle/compresult.c:742-761): do_single
+#   ONLY for an exact match, else set lastambig and insert just the unambiguous
+#   prefix (c:787+). zshrs's port has the exact-match arm at compresult.rs:1136
+#   and a menu branch at :1191 (c:773) — so the suspicion is that it takes the
+#   menu branch where zsh takes the prefix branch. NOT CONFIRMED: six probes
+#   produced three different zshrs results for the same nominal case (lists
+#   $PWD with the 0xf0 present; lists both matches in an ASCII control; a bare
+#   `pb -` on the last run), so my setup was not reproducible and no two-shell
+#   comparison of mine is trustworthy. Next person: build the case with the
+#   FUZZER's own repro script (it execs with ZDOTDIR/LANG/LC_ALL set inside the
+#   script) rather than hand-rolling an rc, and get the ASCII control to
+#   reproduce before reading anything into the 0xf0 variant.
+
+# ============================================================================
+# 9409/0001 and 9409/0014 — the two VALID-UTF-8 hostile cells. Re-measured on
+# a clean export of 80f71b4ab0, 3 runs each, byte-identical every run.
+# NO code fix: five hypotheses refuted by measurement; the two live candidates
+# need instrumentation, not reading. Rig was trustworthy (unlike 9410/0009).
+# ============================================================================
+#
+# RIG: `--replay <fixture> --zshrs <export build> --zsh /opt/homebrew/bin/zsh`.
+# The fixture's `@shell` header and the script's `--zshrs` default BOTH point at
+# the shared tree's target/debug/zshrs — peer-contaminated. Pass both flags.
+#
+# 9409/0001 — THE HAND-OFF HAD THIS BACKWARDS.
+#   measured: zsh ends on `-x`, zshrs ends on `-m`  (not "zsh -m / zshrs -x")
+#   row 0 is the ONLY differing row; rows 1-2 differ in SGR attributes only,
+#   i.e. the LISTINGS ARE IDENTICAL and only the selected cell diverges:
+#       zsh   | @SFZ@ fzc0001 -x        zshrs | @SFZ@ fzc0001 -m
+#       grid (both): 1| -m      -- two  spaces   2| -x  -q  -- amp&and
+#   Shape: `^I` = reverse-menu-complete, `menu select=1`, keys tab,^N,^N.
+#   Reverse entry lands on the last match; two `down`s then wrap in a 2-row
+#   grid whose rows have different widths (1 cell vs 2).
+#
+# 9409/0014 — NOT "loses listing rows 2-3". TWO distinct symptoms:
+#   (a) zshrs DUPLICATES the inserted match on the command line:
+#       zshrs | @SFZ@ fzc0014 emoji-zwj=7/8:<emoji> devemoji-zwj=7/8:<emoji> dev
+#       zsh   | @SFZ@ fzc0014 wide-cjk=3/6:<cjk>
+#   (b) zshrs then ABORTS THE LINE where zsh stays in menu selection: the raw
+#       escape stream shows `\e[?2004l`, the `%` partial-line mark and a fresh
+#       `@SFZ@` prompt on row 1; zsh keeps its 3-row listing. cursor zsh (0,33)
+#       vs zshrs (1,6). Consistent with `^G` reaching the MAIN keymap (where
+#       send-break aborts the line) because the menu loop was no longer active
+#       — C's in-loop send-break arm only beeps and breaks (c:2644-2647).
+#
+# REFUTED BY MEASUREMENT (do not re-chase):
+#   1. "(m)/width arithmetic differs" — the fixture computes its own match text
+#      from ${#w} and ${(m)#w}. BOTH shells: w0=7/8 w1=3/6 w2=3/6 (emoji-ZWJ,
+#      hangul, CJK). Identical, so the rows are not different text. b54ff03301
+#      is holding.
+#   2. "do_menucmp0 never advances the cursor" — `valid_match` itself writes
+#      back `group_idx`/`cur_idx` (compresult.rs:2167-2172).
+#   3. "the menu loop is never entered for a compdef -k widget" — the entry
+#      gate is a faithful port of c:2407-2415 (complist.rs:4913-4926), and
+#      `dummy` is NULL for a directly-invoked widget, so it does not bail.
+#   4. "the mline<0 rescan is missing" — present at complist.rs:5443-5468
+#      (c:2492-2503), keyed on gnum like C; the 999999 sentinel matches c:2481
+#      and cannot fire on the first pass because mline starts at 0.
+#   5. "adjust_mcol is a clamp-only stub" — the module-level fn
+#      (complist.rs:4215-4222) IS a stub, but it has NO callers on this path;
+#      the live one is the closure at :5200-5229, a faithful port of
+#      c:2127-2154. (The stub is dead code on this path — worth deleting.)
+#
+# LIVE CANDIDATES, both needing INSTRUMENTATION:
+#   * 9409/0001: the down-walk's wrap arm (`wrap == 1` -> Move::Right,
+#     complist.rs:6525-6528 vs c:2994-2995) and `skipcell`'s CMF_DUMMY
+#     marking (:5178-5188) over a grid whose rows differ in width. Log
+#     mline/mcol/wishcol/wrap per key on both shells and diff the walks.
+#   * 9409/0014: whether `domenuselect` is re-entered on the SECOND `^Xw`,
+#     and if not, what exited it — that decides both the duplicate insertion
+#     and why `^G` reached the main keymap.
+
+# ============================================================================
+# spec-fuzz 9409/case0014 — a second `menu-select` re-completes instead of
+# stepping the live menu, inserting the match TWICE, and the following `^G`
+# then aborts the line. ROOT-CAUSED, NOT FIXED (R4-H, measured).
+# ============================================================================
+#
+#   buffer 'fzc0014 a', keys cx-w,cx-w,ctrl-g, widget compdef-k:menu-select
+#   (`compdef -k _generic menu-select '^Xw'`), 3 byte-identical runs.
+#
+#     zsh    row0 `fzc0014 wide-cjk=3/6:日本語` + 3 listing rows, cursor (0,33)
+#     zshrs  row0 `fzc0014 emoji-zwj=7/8:…devemoji-zwj=7/8:…dev` — the SAME
+#            match inserted twice — then \e[?2004l, `%`, a fresh prompt at
+#            row 1, rows 2-3 absent, cursor (1,6)
+#
+# MEASURED with probes at `menuselect` entry and at every `hasoldlist`
+# set/clear site (clean export of tip 077ba947f6, own CARGO_TARGET_DIR):
+#
+#     menuselect ENTER cur_set=false hasoldlist=0   <- first ^Xw
+#     hasoldlist=1                                   (set by the completion)
+#     valid_match ENTER mi=0 next=0 zmult=1
+#     menuloop cmd="_generic" mode=0 nolist=0        <- menu loop EXITS here
+#     hasoldlist=0                                   <- CLEARED
+#     menuselect ENTER cur_set=true hasoldlist=0     <- second ^Xw
+#     hasoldlist=1
+#     valid_match ENTER mi=0 next=0 zmult=1          <- a FRESH completion
+#     ...second copy inserted, then the line aborts
+#
+# THE DIVERGENCE, against C: the menu loop leaves on an unrecognised widget
+# at c:Src/Zle/complist.c:3411-3418 — `ungetkeycmd()`, then `acc = 0;
+# broken = 2` when the widget is a COMPLETION widget (`WIDGET_NCOMP`), else
+# `acc = 1`. The clear at c:3436-3437 (`menucmp = lastambig = hasoldlist = 0`)
+# runs only under `if (acc && validlist && minfo.cur)`. `_generic` IS a
+# completion widget, so C takes the `acc = 0` arm and does NOT clear
+# `hasoldlist`; the next `menu-select` therefore finds an old list and steps
+# the existing menu. zshrs cleared it, so the second `^Xw` re-completed.
+#
+# The port reads structurally faithful at both sites — `complist.rs:6474-6488`
+# mirrors c:3411-3418 (including the `WIDGET_NCOMP` test at :6480 and
+# `broken = 2` at :6484), and the clear at `complist.rs:6882` carries C's
+# exact `acc != 0 && validlist != 0 && cur.is_some()` guard. So the remaining
+# question is narrow and NOT "is it ported": at that exit `acc` was non-zero,
+# which means the `WIDGET_NCOMP` test returned FALSE for the widget arriving
+# as `_generic`. The next probe belongs on that flag — where a `compdef -k`
+# widget gets its flags (`zleparameter.rs:537`/`:573` set WIDGET_NCOMP for the
+# `zle -C` shape) — not on the menu loop, which is faithful.
+#
+# NOT the send-break arm: `complist.rs:5733` is a faithful port of c:2644
+# (`zbeep(); molbeg = -1; break;`). The `^G` only reaches the main keymap
+# because no menu loop is live by then — the duplicate insert provably
+# precedes the abort.
+
+# ============================================================================
+# Y-GATE MEASUREMENT FACTS (R4-H, 2026-09-19) — two ways to get a void gate.
+# ============================================================================
+#
+# 1. THE CORPUS RESOLVES FROM `zsh_build/Test`, AND FALLS BACK TO THE REPO.
+#    `ztst_compsys.py` reads the suite from `zsh_build / "Test"` (:381, :719,
+#    :1743, :3211); with no `--zsh-build` it uses the gitignored `REPO/src/zsh`
+#    (:47, :284), which vendors only THREE of the six Y files. That yields
+#    "PARTIAL CORPUS: Y04regexargs, Y05describe, Y06values absent ... 188
+#    assertions over 3 files" and the harness then REFUSES to gate — correctly,
+#    since a pin taken on one corpus must not be scored against another.
+#    A reference tree needs the corpus AND the drivers: copying
+#    `~/forkedRepos/zsh/Test/Y0*.ztst` alone is not enough, `comptest` and
+#    `ztst.zsh` must come too (`:1348` reads ztst.zsh). With all eight files in
+#    place the run reports `corpus: 6 file(s), 229 assertion(s), digest
+#    031a0357a801217f, corpus_missing: (none)`.
+#
+# 2. THE STORED PIN IS AGAINST A DIFFERENT REFERENCE, SO --gate GIVES NO
+#    VERDICT. Even with the full corpus, the run ends:
+#      "refusing to gate against tests/ztst_compsys/gate.json: it was pinned
+#       against a different reference. A pin recorded on one corpus must not be
+#       scored against another."
+#    So `--gate` yields RAW COUNTS ONLY (`files=6 assertions=229 fail=2
+#    pass=220 xfail=7`) and no UNCHANGED/REGRESSED line. Those 220 are NOT
+#    comparable to the pinned 222: different reference tree.
+#    TO ATTRIBUTE A CHANGE, run the SAME command against a pristine-tip build
+#    and diff the raw counts. Done for 17dcfe0092: baseline and with-fix are
+#    identical — `fail=2 pass=220 xfail=7` on both, the same two failures
+#    (Y05describe #2 "simple alternation, use of _message for description with
+#    no matches"; Y06values #25 "-w with -s"), both PRE-EXISTING.
+#
+# 3. NEVER PIPE A HARNESS RUN THROUGH `tail`. The first attempt here did, and
+#    the 10 surviving lines held per-test output but no summary — no assertion
+#    count, no corpus warning, no verdict. Capture to a file and grep it.

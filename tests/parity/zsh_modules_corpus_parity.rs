@@ -296,6 +296,58 @@ print $R2"###,
         );
     }
 
+    /// zformat -f ternary whose spec VALUE is not a math expression.
+    ///
+    /// Released zsh seeds `specs['%'] = "%"` (zsh-5.9.1 Src/Modules/
+    /// zutil.c:943), so `%(%.yes.no)` hands `%` to `mathevali`, which
+    /// fails: zsh prints `bad math expression: operand expected at `%'`,
+    /// abandons the rest of the script (the `print` never runs) and still
+    /// exits 0. zshrs discarded that error with `.unwrap_or(0)`, treated
+    /// the test as 0 == 0, and printed the true branch instead.
+    ///
+    /// Upstream a04c944804 (in no release tag) deletes that seeding, so a
+    /// fork-tip zsh prints `yes` here — the split is recorded in the
+    /// ledger; this pin tracks released zsh, which is what the parity
+    /// harnesses measure against.
+    #[test]
+    fn zformat_ternary_bad_math_in_spec_value_reports_and_abandons() {
+        if !zsh_available() {
+            eprintln!("skip: zsh not found");
+            return;
+        }
+        let script = r###"zmodload zsh/zutil
+REPLY=UNSET
+zformat -f REPLY "%(%.yes.no)" x:XX
+print -r -- "after rc=$? REPLY=[$REPLY]""###;
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert!(
+            z.stderr.contains("bad math expression"),
+            "reference zsh must report the bad math expression; got {:?}",
+            z.stderr
+        );
+        assert!(
+            z.stdout.is_empty(),
+            "reference zsh must abandon the script before the print; got {:?}",
+            z.stdout
+        );
+        assert_eq!(
+            z.stdout, r.stdout,
+            "stdout divergence: zsh {:?} vs zshrs {:?}",
+            z.stdout, r.stdout
+        );
+        assert_eq!(
+            z.stderr, r.stderr,
+            "stderr divergence: zsh {:?} vs zshrs {:?}",
+            z.stderr, r.stderr
+        );
+        assert_eq!(
+            z.exit, r.exit,
+            "exit divergence: zsh {} vs zshrs {}",
+            z.exit, r.exit
+        );
+    }
+
     /// zformat -a align.
     #[test]
     fn zformat_align() {

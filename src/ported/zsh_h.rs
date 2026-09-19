@@ -2358,7 +2358,7 @@ pub fn ASG_VALUEP(asg: &asgment) -> bool {
 /// counts metafied chars from `str` up to `eptr` (exclusive).
 #[inline]
 #[allow(non_snake_case)]
-pub fn MB_METASTRLEN2END(s: &str, widthp: bool, eptr: usize) -> usize {
+pub fn MB_METASTRLEN2END(s: &str, widthp: i32, eptr: usize) -> usize {
     let truncated = if eptr <= s.len() { &s[..eptr] } else { s };
     MB_METASTRLEN2(truncated, widthp)
 }
@@ -4768,7 +4768,7 @@ pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
 #[allow(non_snake_case)]
 pub fn MB_METASTRLEN(s: &str) -> usize {
     // c:3279 — mb_metastrlenend(str, 0, NULL); NULL eptr ⇒ whole string.
-    crate::ported::utils::mb_metastrlenend(s, false, s.len())
+    crate::ported::utils::mb_metastrlenend(s, 0, s.len())
 }
 
 /// Port of `MB_METASTRWIDTH` from `Src/zsh.h:3280` — C macro `MB_METASTRWIDTH(str)`. Total display
@@ -4785,7 +4785,7 @@ pub fn MB_METASTRLEN(s: &str) -> usize {
 #[allow(non_snake_case)]
 pub fn MB_METASTRWIDTH(s: &str) -> usize {
     // c:3280 — mb_metastrlenend(str, 1, NULL).
-    crate::ported::utils::mb_metastrlenend(s, true, s.len())
+    crate::ported::utils::mb_metastrlenend(s, 1, s.len())
 }
 
 /// Port of `MB_METASTRLEN2` from `Src/zsh.h:3281/3362` — C macro `MB_METASTRLEN2(str, widthp)`.
@@ -4793,13 +4793,13 @@ pub fn MB_METASTRWIDTH(s: &str) -> usize {
 /// `widthp`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn MB_METASTRLEN2(s: &str, widthp: bool) -> usize {
-    // c:3281
-    if widthp {
-        MB_METASTRWIDTH(s)
-    } else {
-        MB_METASTRLEN(s)
-    }
+pub fn MB_METASTRLEN2(s: &str, widthp: i32) -> usize {
+    // c:3281 — `mb_metastrlenend(str, widthp, NULL)`: `widthp` is C's
+    // `int`, passed through verbatim. It is the `(m)` flag's
+    // `multi_width` counter (c:2376), so 0 counts characters, 1 counts
+    // display columns and 2+ counts one per printable character; a
+    // `bool` here collapsed 1 and 2+.
+    crate::ported::utils::mb_metastrlenend(s, widthp, s.len())
 }
 
 /// Port of `MB_CHARINIT` from `Src/zsh.h:3286/3365` — C macro `MB_CHARINIT()`. No-op

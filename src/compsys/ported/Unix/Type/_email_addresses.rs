@@ -842,4 +842,86 @@ mod tests {
         assert_eq!(repl_blank_colon("bob  bob@x.io more"), "bob:bob@x.io more");
         assert_eq!(repl_blank_colon("noblank"), "noblank");
     }
+
+    /// sh:10-14 documents third-party plugins: "New plugins will be picked up
+    /// and run automatically". Two halves carry that here, and nothing else
+    /// covered them, because the seven upstream plugins are native Rust in
+    /// this port and never exercise the shell-function path:
+    ///
+    ///   * sh:138 `${(k)functions[(I)_email-*]#*-}` — the live-table scan that
+    ///     feeds `plugins` (rs:641-658). `shfunc_names_with_prefix` is the
+    ///     NOT-DISABLED half of `shfunctab` (c:Src/Modules/parameter.c:482).
+    ///   * sh:156 `_call_function fret _email-$plugin` — `call_email_plugin`
+    ///     (rs:412-421) resolves a shell function FIRST, which is how
+    ///     sh:17-88's `(( $+functions[_email-<name>] )) ||` guard lets a user
+    ///     override a built-in plugin or add a new one.
+    ///
+    /// The unknown-name arm is pinned alongside it: with neither a shell
+    /// function nor a native arm (rs:423-437) the port must report "not
+    /// found" so the caller takes sh:157 `_message "$plugin: plugin not
+    /// found"` instead of silently completing nothing.
+    #[test]
+    fn a_user_defined_email_plugin_is_enumerated_and_resolved_first() {
+        let _g = crate::test_util::global_state_lock();
+        {
+            let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+            tab.remove("_email-pintest");
+            tab.add(crate::ported::zsh_h::shfunc {
+                node: crate::ported::zsh_h::hashnode {
+                    nam: "_email-pintest".to_string(),
+                    next: None,
+                    flags: 0,
+                },
+                filename: None,
+                lineno: 0,
+                funcdef: None,
+                redir: None,
+                sticky: None,
+                body: Some("return 7".to_string()),
+                redir_text: None,
+            });
+        }
+
+        // sh:138 — the plugin set is derived from the live table, so a
+        // user-defined completer has to appear in it.
+        let names = crate::compsys::ported::shared::shfunc_names_with_prefix("_email-");
+        let enumerated = names.iter().any(|n| n == "_email-pintest");
+
+        // sh:156 — and `call_email_plugin` must reach it through the
+        // shell-function arm (rs:412-421) rather than merely have it in the
+        // table. `Some` vs `None` is the whole distinction: `pintest` has no
+        // native arm (rs:423-437), so only the `getshfunc` lookup can answer
+        // for it, and deleting that arm turns this into `None`.
+        //
+        // The STATUS is deliberately not asserted. Measured here it is
+        // `Some(1)`, not the body's `return 7`: a `cargo test` process runs no
+        // executor, so `dispatch_function_call` reports failure instead of
+        // running the body. Pinning 1 would pin that artifact; pinning 7 would
+        // require a live shell, which a PTY parity cell covers, not a unit test.
+        let mut pin_reply: Vec<String> = Vec::new();
+        let resolved = call_email_plugin("pintest", &[], &[], "ctx", "tag", &mut pin_reply);
+
+        // rs:423-437 — no shell function, no native arm → sh:157.
+        let mut reply: Vec<String> = Vec::new();
+        let unknown = call_email_plugin("pinnosuch", &[], &[], "ctx", "tag", &mut reply);
+
+        {
+            let mut tab = crate::ported::hashtable::shfunctab_lock().write().unwrap();
+            tab.remove("_email-pintest");
+        }
+
+        assert!(
+            enumerated,
+            "sh:138 — a user `_email-*` function must reach the plugin scan; saw {names:?}"
+        );
+        assert!(
+            resolved.is_some(),
+            "sh:156 — a registered `_email-*` function must be dispatched by name, \
+             not fall through to the native arms; got {resolved:?}"
+        );
+        assert!(
+            unknown.is_none(),
+            "rs:423-437 — an unknown plugin must fall through to sh:157"
+        );
+    }
 }

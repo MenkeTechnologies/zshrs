@@ -713,7 +713,7 @@ impl ZFormat {
             }
 
             if testit && *idx < bytes.len() {
-                // Ternary expression — zutil.c:847-887.
+                // Ternary expression — zutil.c:858-902.
                 let testval: i64 = min.or(max).unwrap_or(0);
                 let spec_char = bytes[*idx];
                 let actval: bool;
@@ -732,20 +732,43 @@ impl ZFormat {
                         };
                     } else {
                         let signed_test = if right { -testval } else { testval };
-                        // c:864 — `actval = (int) mathevali(specs[(unsigned
+                        // c:882 — `actval = (int) mathevali(specs[(unsigned
                         // char) *s]) - testval;`. The spec's VALUE is an
                         // arithmetic expression, not a bare integer: the
                         // documented `%18(s.math.)` with `s:6*3` is true.
                         // The previous `sv.parse()` returned 0 for any
                         // non-literal, so every arithmetic test was false.
-                        let n: i64 = crate::ported::math::mathevali(sv).unwrap_or(0);
+                        //
+                        // C's `mathevali` REPORTS a bad expression on the way
+                        // out (checkunary -> zerr) and leaves `errflag` set,
+                        // yielding 0 (c:Src/math.c:1505-1509); `bin_zformat`
+                        // never checks it, so the shell aborts on the flag.
+                        // Rust's `mathevali` returns that message in `Err`
+                        // instead, and the port discarded it with
+                        // `.unwrap_or(0)` — so `zformat -f R '%(%.yes.no)'`
+                        // printed `yes` where zsh 5.9.2 prints `bad math
+                        // expression: operand expected at `%'` and aborts.
+                        // Surface it the way bin_let (builtin.rs:17151) and
+                        // paramsubst (subst.rs:3171) already do.
+                        let n: i64 = match crate::ported::math::mathevali(sv) {
+                            Ok(v) => v,
+                            Err(msg) => {
+                                crate::ported::utils::zerr(&msg);
+                                errflag.store(
+                                    errflag.load(Ordering::Relaxed)
+                                        | crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    Ordering::Relaxed,
+                                );
+                                0 // c:Src/math.c:1509 — error yields 0
+                            }
+                        };
                         actval = (n - signed_test) != 0;
                     }
                 } else {
                     actval = if presence { !right } else { testval != 0 };
                 }
                 // Skip past the spec char to find the delimiter
-                // (zutil.c:874-876 endcharl = *++s).
+                // (zutil.c:888 `if (!(endcharl = *++s))`).
                 *idx += 1;
                 if *idx >= bytes.len() {
                     return None;
@@ -1699,13 +1722,25 @@ pub fn bin_zformat(
                 zwarnnam(nam, "missing arguments to -f/-F");
                 return 1;
             }
-            let mut specs: HashMap<char, String> = HashMap::new(); // c:973
-            specs.insert('%', "%".to_string()); // c:976
-            specs.insert(')', ")".to_string()); // c:977
+            let mut specs: HashMap<char, String> = HashMap::new(); // c:1021
+            // VERSION SPLIT — these two seeded entries exist in every
+            // RELEASED zsh (`specs['%'] = "%"; specs[')'] = ")";`, lines
+            // 975-976 of the tree this port was written against, and line
+            // 943 of the zsh-5.9.1 tag), and the 5.9.2 binary this repo
+            // measures against still has them. Upstream a04c944804
+            // ("54580: zformat: better handle literal % in format string",
+            // 2026-05-18, in NO tag) DELETED them and added the unwind at
+            // c:851-856 instead. ~/forkedRepos/zsh is past that commit, so
+            // its `specs[256] = {0}` at c:1021 is zero-initialised.
+            // Keeping the seeded entries matches released zsh; see the
+            // ledger entry for the measured behavioural split.
+            specs.insert('%', "%".to_string()); // pre-a04c944804 c:975
+            specs.insert(')', ")".to_string()); // pre-a04c944804 c:976
             for ap in &args[2..] {
                 // c:980
                 let ab = ap.as_bytes();
                 if ab.is_empty() || ab[0] == b'-' || ab[0] == b'.'            // c:981
+                    || ab[0] == b'%' || ab[0] == b')'                        // c:1028
                     || ab[0].is_ascii_digit()
                     || ab.len() < 2 || ab[1] != b':'
                 {
@@ -5218,6 +5253,40 @@ mod tests {
         };
         let r = bin_zformat("zformat", &[], &ops, 0);
         assert_ne!(r, 0, "zformat no args → usage error");
+    }
+
+    /// c:1027-1032 — `-f`/`-F` reject a spec whose name is `%` or `)`,
+    /// alongside `-`, `.`, a digit, and a missing `:`. Measured against
+    /// zsh 5.9.2: `zformat -f R "%n" "%:O"` warns `invalid argument: %:O`
+    /// and returns 1, leaving the parameter untouched; zshrs accepted
+    /// both `%` and `)` silently and returned 0.
+    #[test]
+    fn bin_zformat_rejects_percent_and_paren_spec_names() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'f' as usize] = 1;
+        let call = |spec: &str| {
+            bin_zformat(
+                "zformat",
+                &[
+                    "ZFMT_PIN".to_string(),
+                    "%n".to_string(),
+                    spec.to_string(),
+                ],
+                &ops,
+                0,
+            )
+        };
+        assert_ne!(call("%:OVERRIDE"), 0, "c:1028 — `%` is not a valid spec name");
+        assert_ne!(call("):OVERRIDE"), 0, "c:1028 — `)` is not a valid spec name");
+        // Control: a legal spec name still works, so the added guard did
+        // not swallow the ordinary path (c:1026-1032 falls through).
+        assert_eq!(call("n:alice"), 0, "c:1061 — an ordinary spec is accepted");
     }
 
     /// c:2022 — `bin_zregexparse` returns i32 (compile-time pin).

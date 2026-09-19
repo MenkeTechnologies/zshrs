@@ -121,3 +121,121 @@ fn lc_ctype_assignment_reaches_the_c_library_locale() {
         "a=日本語; q1=${{(q)a}}; unset LC_ALL; export LC_CTYPE={loc}; print -rn -- ${{(q)a}}"
     ));
 }
+
+/// `${(m)#}` / `${(ml:…:)}` widths are a LOCALE decision, not a Unicode one.
+///
+/// `MB_METASTRLEN2` is `mb_metastrlenend(str, multi_width, NULL)`
+/// (`Src/zsh.h:3281`), whose first act is
+/// `if (!isset(MULTIBYTE) || MB_CUR_MAX == 1) return ztrlen(ptr)`
+/// (`Src/utils.c:5662-5663`) — so in a SINGLE-BYTE locale every length is a
+/// BYTE count and the width argument is never consulted. The port kept only
+/// the `MULTIBYTE` half of that guard, ran its `mbrtowc` loop anyway, and
+/// charged the C1 bytes (0x80-0x9f) of a UTF-8 sequence zero columns:
+/// `${(m)#日本語}` answered 6 under `LC_ALL=C` where zsh answers 9.
+///
+/// `multi_width` is also an `int`, not a flag: `width == 1` adds the glyph's
+/// columns and `width >= 2` adds one per printable character
+/// (`Src/utils.c:5722-5725`), which is what separates `(m)` from `(mm)`.
+///
+/// Every expectation here is real zsh's own stdout for the same script, so
+/// the four locales pin behaviour rather than a remembered number.
+mod multibyte_width_is_locale_driven {
+    use super::{zsh_available, zsh_path, zshrs_bin};
+    use std::process::Command;
+
+    /// Locales this host actually has. A host without one skips that case
+    /// instead of guessing, exactly as `utf8_locale` above does.
+    fn have_locale(name: &str) -> bool {
+        let Ok(out) = Command::new("locale").arg("-a").output() else {
+            return false;
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l.trim().eq_ignore_ascii_case(name))
+    }
+
+    fn run_in(bin: &str, locale: &str, script: &str) -> Vec<u8> {
+        let o = Command::new(bin)
+            .args(["-f", "-c", script])
+            .env_remove("LC_CTYPE")
+            .env_remove("LANG")
+            .env_remove("ZSHRS_CACHE")
+            .env("LC_ALL", locale)
+            .output()
+            .expect("shell");
+        o.stdout
+    }
+
+    /// zsh is the oracle: both shells run the identical script in the
+    /// identical locale and must emit identical bytes.
+    fn assert_parity_in(locale: &str, script: &str) {
+        if !zsh_available() || !have_locale(locale) {
+            return;
+        }
+        let want = run_in(zsh_path(), locale, script);
+        let got = run_in(zshrs_bin().to_str().expect("path"), locale, script);
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(&want),
+            "locale {locale}, script {script}"
+        );
+    }
+
+    const LOCALES: [&str; 4] = ["C", "en_US.UTF-8", "zh_CN.GB2312", "ja_JP.eucJP"];
+
+    /// Character count, column width and the `(mm)` per-character count, for
+    /// a narrow accented char, an all-wide string and a mixed one. Under
+    /// `LC_ALL=C` zsh answers 9/9/9 for `日本語`; under `en_US.UTF-8`, 3/6/3.
+    #[test]
+    fn count_width_and_mm_agree_with_zsh_in_every_locale() {
+        for loc in LOCALES {
+            for value in ["é", "日本語", "aé日"] {
+                assert_parity_in(
+                    loc,
+                    &format!("s={value}; print -rn -- ${{#s}}/${{(m)#s}}/${{(mm)#s}}"),
+                );
+            }
+        }
+    }
+
+    /// The same length feeds `dopadding` (c:919-923), so a single-byte
+    /// locale pads to a BYTE budget: `${(ml:12::x:)日本語}` is `xxx日本語`
+    /// in zsh under `LC_ALL=C`, not `xxxxxx日本語`.
+    #[test]
+    fn m_padding_uses_the_locale_length_in_every_locale() {
+        for loc in LOCALES {
+            assert_parity_in(
+                loc,
+                "s=日本語; print -rn -- \"${(ml:12::x:)s}|${(mr:12::y:)s}\"",
+            );
+        }
+    }
+
+    /// The PAD string is measured the same way (c:922-923): a wide pad
+    /// character occupies two columns, so `${(ml:10::中:)ab}` repeats it
+    /// four times, not eight. `(l)` without `(m)` still counts characters.
+    ///
+    /// Only the locales that can ENCODE the pad are pinned here. `中` has no
+    /// GB2312 or eucJP form, and zsh rejects the whole flag there
+    /// (`error in flags near position 25`) where zshrs pads — a flag-parsing
+    /// divergence, not a width one, recorded in the ledger rather than
+    /// asserted by a width test.
+    ///
+    /// `LC_ALL=C` is also left to the ledger, for a different reason: there
+    /// the pad is three BYTES and C cuts it mid-character, which `(m)`
+    /// padding still does differently at the edges — `${(mr:10::中:)ab}` is
+    /// `61 62 e4b8ad e4b8ad e4b8` in zsh (the last pad cut after two bytes)
+    /// against zshrs's whole final pad, and `${(ml:10::中:)ab}` is two bytes
+    /// in zsh. Unflagged `(l)`/`(r)` already match there byte for byte, so
+    /// what remains is the `(m)` mid-character cut, not the width
+    /// arithmetic this module pins.
+    #[test]
+    fn a_wide_pad_string_is_measured_in_columns() {
+        for loc in ["en_US.UTF-8"] {
+            assert_parity_in(
+                loc,
+                "s=ab; print -rn -- \"${(ml:10::中:)s}|${(mr:10::中:)s}|${(l:10::中:)s}\"",
+            );
+        }
+    }
+}

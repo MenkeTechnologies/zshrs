@@ -680,6 +680,23 @@ extern "C" {
     /// character is not representable in the current locale.
     pub fn wcrtomb(s: *mut libc::c_char, wc: libc::wchar_t, ps: *mut libc::c_void)
         -> libc::size_t;
+
+    /// libc `MB_CUR_MAX`: the maximum number of bytes in a multibyte
+    /// character in the CURRENT locale — 1 in a single-byte codeset
+    /// (`LC_ALL=C`), 4 under UTF-8, 2 under `zh_CN.GB2312`. It is a
+    /// MACRO in C (`<stdlib.h>`), so the libc crate cannot re-export
+    /// it; each platform's underlying function is declared here, the
+    /// same way `mbrtowc`/`wcrtomb` are above. Darwin spells it
+    /// `___mb_cur_max()` (SDK `_stdlib.h:133`), glibc
+    /// `__ctype_get_mb_cur_max()`.
+    #[cfg(target_vendor = "apple")]
+    #[link_name = "___mb_cur_max"]
+    pub fn mb_cur_max_raw() -> libc::c_int;
+
+    /// glibc/musl spelling of the same accessor — see the Darwin arm.
+    #[cfg(not(target_vendor = "apple"))]
+    #[link_name = "__ctype_get_mb_cur_max"]
+    pub fn mb_cur_max_raw() -> libc::size_t;
 }
 
 /// Port of `wcs_nicechar_sel()` from `Src/utils.c:593`.
@@ -8367,7 +8384,7 @@ pub fn mb_metacharlenconv(s: &[u8]) -> (usize, Option<char>, String) {
 /// validation is the `mbrtowc` analogue: the shortest valid prefix
 /// is one character; a byte that begins no valid sequence counts as
 /// one (c:5712).
-pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
+pub fn mb_metastrlenend(ptr: &str, width: i32, eptr: usize) -> usize {
     // c:5672 — un-metafy the (optionally end-bounded) slice to raw bytes.
     let bytes = unmetafy_str(&ptr[..eptr.min(ptr.len())]);
     // c:5662-5663 — `if (!isset(MULTIBYTE) || MB_CUR_MAX == 1) return
@@ -8387,15 +8404,35 @@ pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
     // maps a never-written slot to false and would invert the
     // default-on semantics in any context that skips init's
     // `emulate()` — unit tests most of all.
-    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) {
-        return bytes.len();
-    }
     // The decode is `mbrtowc`, not Rust's UTF-8 validator, because C's is
     // LOCALE-driven (c:5689). `zh_CN.GB2312` and `ja_JP.eucJP` are multibyte
     // codesets that are not UTF-8: zsh counts `\xc4\xe3\xba\xc3\xca\xc0` as
     // 3 characters there, and a UTF-8-only scan counted 6. `setlocale` has
-    // to have run first or `mbrtowc` would still be the startup "C" codec.
+    // to have run first or `mbrtowc` would still be the startup "C" codec —
+    // and the `MB_CUR_MAX` test below reads the same locale, so the
+    // initialisation has to happen BEFORE the guard, not after it.
     let _ = *MB_LOCALE_READY;
+    // c:5662-5663 — the guard is `!isset(MULTIBYTE) || MB_CUR_MAX == 1`.
+    // The `MB_CUR_MAX == 1` half was missing, and it is the half that
+    // makes a SINGLE-BYTE locale report BYTES for a WIDTH request too:
+    // C returns `ztrlen` here and never looks at `width`, so under
+    // `LC_ALL=C` every byte counts 1 whatever glyph it belongs to.
+    // Without it the port ran the `mbrtowc` loop, which under that
+    // locale decodes each byte to its own wide character and then
+    // charges C1 bytes (0x80-0x9f) zero columns via the width table:
+    // `${(m)#日本語}` was 6 against zsh's 9 (the three C1 bytes 0x97,
+    // 0x9c, 0x9e dropped), `${(m)#aé日}` 5 against 6, and the same
+    // count reached `dopadding`, so `${(ml:12::x:)日本語}` padded with
+    // six `x` where zsh pads with three. The character COUNT was
+    // already right because that path adds 1 per decoded byte.
+    // `MB_CUR_MAX` is a C macro over a per-platform accessor, so it is
+    // read inline here exactly as C writes it — there is no C function
+    // to port it as, and src/ported/ takes no Rust-original helpers.
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true)
+        || (unsafe { mb_cur_max_raw() } as usize) == 1
+    {
+        return bytes.len();
+    }
     let mut num: usize = 0; // c:5658 size_t ret / counter
     let mut num_in_char: usize = 0; // c:5660
     let mut complete = true; // c:5660
@@ -8444,14 +8481,25 @@ pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
                 mbs = MBSTATE_ZERO;
                 i = laststart + 1;
                 num += 1;
-            } else if width {
+            } else if width != 0 {
                 // c:5715-5726 — WCWIDTH(wc); C turns "not printable" (-1)
                 // into 0 and adds nothing.
                 let wcw = char::from_u32(wc as u32)
                     .and_then(unicode_width::UnicodeWidthChar::width)
                     .unwrap_or(0);
                 if wcw > 0 {
-                    num += wcw;
+                    // c:5722-5725 — `width == 1` adds the glyph's COLUMNS,
+                    // any larger value adds ONE per printable character.
+                    // C takes `width` as an `int` straight from the `(m)`
+                    // flag's `multi_width` counter (c:2376), which counts
+                    // the flag's repetitions: `(m)` is 1, `(mm)` is 2. A
+                    // `bool` here collapsed the two, so `${(mm)#日本語}`
+                    // answered 6 (the `(m)` column total) against zsh's 3.
+                    if width == 1 {
+                        num += wcw;
+                    } else {
+                        num += 1;
+                    }
                 }
             } else {
                 // c:5727-5728 — one character.

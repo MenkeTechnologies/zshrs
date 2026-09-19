@@ -5035,13 +5035,26 @@ pub fn addmatches(
         addexpl(false);
     }
 
-    // c:2612-2614 — `<all>` placeholder when CAF_ALL set.
+    // c:2612-2614 — `<all>` placeholder when CAF_ALL set. C passes the
+    // SHARED disp cursor (`addmatch("<all>", …, &disp, 1)`, c:2612), exactly
+    // as the dummy loop below does, so with `-d` the placeholder CONSUMES the
+    // next display string. Passing None left its disp empty, and
+    // `bld_all_str` (c:2198-2230) then filled it by concatenating the match
+    // `str`s — so `compadd -C -d arr -- a b` listed "a b" where zsh lists the
+    // next entry of `arr`.
     let hasall = hasallmatch.load(Ordering::Relaxed);
     if hasall == 0 && (dat.aflags & CAF_ALL) != 0 {
+        let d: Option<&str> = if disp_idx < disp_arr.len() {
+            let d = Some(disp_arr[disp_idx].as_str());
+            disp_idx += 1;
+            d
+        } else {
+            None
+        };
         addmatch(
             "<all>",
             dat.flags | crate::ported::zle::comp_h::CMF_ALL,
-            None,
+            d,
             true,
         );
         hasallmatch.store(1, Ordering::Relaxed);
