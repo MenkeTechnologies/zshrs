@@ -7906,3 +7906,38 @@ gstack
 # (`zbeep(); molbeg = -1; break;`). The `^G` only reaches the main keymap
 # because no menu loop is live by then — the duplicate insert provably
 # precedes the abort.
+
+# ============================================================================
+# Y-GATE MEASUREMENT FACTS (R4-H, 2026-09-19) — two ways to get a void gate.
+# ============================================================================
+#
+# 1. THE CORPUS RESOLVES FROM `zsh_build/Test`, AND FALLS BACK TO THE REPO.
+#    `ztst_compsys.py` reads the suite from `zsh_build / "Test"` (:381, :719,
+#    :1743, :3211); with no `--zsh-build` it uses the gitignored `REPO/src/zsh`
+#    (:47, :284), which vendors only THREE of the six Y files. That yields
+#    "PARTIAL CORPUS: Y04regexargs, Y05describe, Y06values absent ... 188
+#    assertions over 3 files" and the harness then REFUSES to gate — correctly,
+#    since a pin taken on one corpus must not be scored against another.
+#    A reference tree needs the corpus AND the drivers: copying
+#    `~/forkedRepos/zsh/Test/Y0*.ztst` alone is not enough, `comptest` and
+#    `ztst.zsh` must come too (`:1348` reads ztst.zsh). With all eight files in
+#    place the run reports `corpus: 6 file(s), 229 assertion(s), digest
+#    031a0357a801217f, corpus_missing: (none)`.
+#
+# 2. THE STORED PIN IS AGAINST A DIFFERENT REFERENCE, SO --gate GIVES NO
+#    VERDICT. Even with the full corpus, the run ends:
+#      "refusing to gate against tests/ztst_compsys/gate.json: it was pinned
+#       against a different reference. A pin recorded on one corpus must not be
+#       scored against another."
+#    So `--gate` yields RAW COUNTS ONLY (`files=6 assertions=229 fail=2
+#    pass=220 xfail=7`) and no UNCHANGED/REGRESSED line. Those 220 are NOT
+#    comparable to the pinned 222: different reference tree.
+#    TO ATTRIBUTE A CHANGE, run the SAME command against a pristine-tip build
+#    and diff the raw counts. Done for 17dcfe0092: baseline and with-fix are
+#    identical — `fail=2 pass=220 xfail=7` on both, the same two failures
+#    (Y05describe #2 "simple alternation, use of _message for description with
+#    no matches"; Y06values #25 "-w with -s"), both PRE-EXISTING.
+#
+# 3. NEVER PIPE A HARNESS RUN THROUGH `tail`. The first attempt here did, and
+#    the 10 surviving lines held per-test output but no summary — no assertion
+#    count, no corpus warning, no verdict. Capture to a file and grep it.
