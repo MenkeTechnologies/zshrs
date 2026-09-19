@@ -2526,6 +2526,17 @@ pub fn do_ambig_menu() -> i32 {
     }
     insmnum.store(idx, Relaxed);
 
+    // c:1436 — C reads the single global `zmult` for the direction test
+    // inside `valid_match` (c:1213). zshrs holds that value in ZMOD.mult and
+    // only a COPY in ZMULT, and nothing syncs the copy on this path, so
+    // `reverse-menu-complete`'s negation (c:Src/Zle/zle_tricky.c:347) never
+    // reached the direction test: the menu stepped FORWARD from the wrong
+    // cell. The do_menucmp path already does this same sync
+    // (compcore.rs:577-581).
+    ZMULT.store(
+        crate::ported::zle::zle_main::ZMOD.lock().map(|g| g.mult).unwrap_or(1),
+        Relaxed,
+    );
     // c:1436 — mc = valid_match((minfo.group)->matches + insmnum, 0).
     let mc = valid_match(idx, 0);
 
@@ -5491,6 +5502,55 @@ mod tests {
     #[cfg(unix)]
     fn ztat_tmp_returns_some() {
         assert!(ztat("/tmp", false).is_some(), "/tmp must stat → Some");
+    }
+
+    /// `reverse-menu-complete` negates C's single `zmult`
+    /// (c:Src/Zle/zle_tricky.c:347), and `valid_match` reads that same
+    /// variable for its direction test (c:Src/Zle/compresult.c:1213). zshrs
+    /// keeps the value in `ZMOD.mult` and only a COPY in `ZMULT`, so the
+    /// `do_ambig_menu` entry (c:1436) has to sync the copy before stepping.
+    /// Without it the menu walked FORWARD under a reverse widget and landed
+    /// on the wrong match — spec-fuzz 9409/case0001, where zsh inserts `-x`
+    /// and zshrs inserted `-m`.
+    #[test]
+    fn do_ambig_menu_syncs_zmult_from_zmod_for_reverse_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut a_m = Cmatch::default();
+        a_m.str = Some("alpha".to_string());
+        a_m.orig = Some("alpha".to_string());
+        let mut b_m = Cmatch::default();
+        b_m.str = Some("beta".to_string());
+        b_m.orig = Some("beta".to_string());
+        let mut g = Cmgroup::default();
+        g.matches = vec![a_m, b_m];
+        g.mcount = 2;
+        if let Ok(mut arr) = amatches
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            *arr = vec![g];
+        }
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default();
+        }
+        insmnum.store(0, Relaxed);
+        lastpermmnum.store(2, Relaxed);
+        iforcemenu.store(0, Relaxed);
+        oldlist.store(0, Relaxed);
+        oldins.store(0, Relaxed);
+        ZMULT.store(1, Relaxed);
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -1;
+        let _ = do_ambig_menu();
+        assert_eq!(
+            ZMULT.load(Relaxed),
+            -1,
+            "c:1436 — valid_match's direction test reads ZMULT, so a negated \
+             ZMOD.mult (reverse-menu-complete) must reach it"
+        );
     }
 
     /// c:527 — `do_ambig_menu` returns i32 (compile-time type pin).
