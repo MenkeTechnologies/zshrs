@@ -8125,3 +8125,69 @@ gstack
 # zsh, so a joined "9403 13" reached `--seed` and `--start` got nothing — four
 # replays parsed no arguments and produced empty output that looks exactly like
 # a divergence.
+
+# ============================================================================
+# R5-D: 9401/0022 and 9409/case0014 re-measured. Both handed-down descriptions
+# were WRONG; one named hypothesis REFUTED. Neither fixed — cause unproven.
+# ============================================================================
+#
+# Rig: clean `git archive` export of 707d713675, own CARGO_TARGET_DIR,
+# EXIT=0 read from a log; reference /opt/homebrew/bin/zsh 5.9.2 passed
+# explicitly; 3 identical runs per cell (byte-identical differing-row blocks
+# and totals), so the foreign comptab_parity sweep running throughout
+# (session 541793e1, 0.0-0.7% CPU) did not perturb them.
+#
+# --- 9401/0022 (describe, fn:_history-complete-older, tab,tab) ---------------
+# HANDED DOWN: "from an EMPTY _describe, zsh draws three further rows and
+# zshrs draws NONE". WRONG on both halves.
+#   * Both shells are IDENTICAL after TAB #1 (prompt + wrapped init path +
+#     `source`). The divergence is only on TAB #2: zsh RETAINS the listing
+#     below the inserted word; zshrs inserts and drops the listing.
+#   * The fixture's `_describe` completer is largely irrelevant: `^I` is bound
+#     to `_history-complete-older`, which completes HISTORY WORDS. zsh's extra
+#     rows are the init path + `source` because the harness TYPES the init at
+#     the prompt, so those are history words.
+#   * So this is the `compstate[old_list]=keep` arm at the top of
+#     `_history_complete_word` (stock sh:39-41 gate
+#     `[[ $LASTWIDGET = _history-complete-* && ( -n "$compstate[old_list]" ||
+#     -n $_hist_stop ) ]]`), not `_describe` and not the port's completer.
+# NOT ROOT-CAUSED, and the one rig that seemed to exonerate the widget body is
+# DISQUALIFIED: re-registering via `zle -C … complete-word` made zshrs PASS and
+# produced byte-identical traces on both shells (old_list=[shown] → keep,
+# insert=1). A rig that changes the verdict cannot be evidence about it. A
+# second rig (`functions -c` + redefinition) logged only ONE invocation on
+# BOTH shells while zsh still retained the listing — i.e. TAB #2 re-enters the
+# widget in neither shell — so that rig silently changed the path too.
+# NEXT PROBE: trace without replacing the widget or the function (ZSHRS_LOG /
+# RUST_LOG on the zshrs side; xtrace on the zsh side).
+#
+# --- 9409/case0014 (compdef-k:menu-select, cx-w,cx-w,ctrl-g) ----------------
+# HANDED DOWN: "re-completes and DOUBLE-INSERTS before ^G reaches the main
+# keymap", with the named next probe being the WIDGET_NCOMP flag.
+# MEASURED, key by key (literal control bytes — `cx-w`/`ctrl-g` are the
+# FUZZER's spellings and comptab_screen.py hard-errors on them):
+#   ^Xw #1   both shells identical: inserted word + `width chars/cols` +
+#            both listing rows.
+#   ^Xw #2   zsh UNCHANGED (stays in menu selection on the same match);
+#            zshrs RE-RUNS the completer — appends `-c` to the inserted word
+#            and draws the _describe option list (-c -f -l -q) ON TOP of the
+#            width listing.
+#   ^G       zshrs abandons the line (fresh prompt, cursor (1,6) vs zsh
+#            (0,33)); escape stream shows zshrs `\e[7A` vs zsh `\e[3A`.
+# So the abort is DOWNSTREAM of the re-completion, not a peer symptom.
+# `-O` IS NOT IMPLICATED: the minimized fixture drops `-O` from `_describe`
+# and diverges identically (same 4 rows, same cursors), differing only in
+# showing a doubled insert instead of the `-c` suffix.
+# WIDGET_NCOMP HYPOTHESIS REFUTED: the port sets
+# `WIDGET_NCOMP|ZLE_MENUCMP|ZLE_KEEPSUFFIX` at `zle_thingy.rs:1302`, matching
+# `c:Src/Zle/zle_thingy.c:617`, and BOTH shells register the widget identically
+# (`widgets[_generic]=completion:.menu-select:_generic`). The flag is present,
+# so `acc=0`/`broken=2` should be taken on both. The unrecognised-widget arm
+# itself reads faithful (`complist.rs:6476-6492` ↔ `c:3411-3418`), as does the
+# guarded clear (`complist.rs:6882` ↔ `c:3436-3437`).
+# REMAINING QUESTION: whether the second `^Xw` REACHES that arm at all, or is
+# recognised earlier and handled as a menu command. That needs a probe at the
+# arm printing the command name, the flag and `acc` — an instrumented build.
+#
+# NOT FIXED either cell: no cause is proven, and a fix on an unproven cause is
+# how this session produced four verdicts that later had to be voided.
