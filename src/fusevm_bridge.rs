@@ -7082,6 +7082,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See BUILTIN_PAT_DATA_BACKSLASH docs below for full rationale.
     vm.register_builtin(BUILTIN_PAT_DATA_BACKSLASH, |vm, _argc| {
         let p = vm.pop().to_str();
+        // The word arrives in EXPAND_TEXT mode 12's tokenized form (see the
+        // untokenize there). This leg wants every metacharacter ACTIVE anyway
+        // — `${~spec}` forced them — so both spellings collapse to the same
+        // raw character here, exactly as they did when mode 9 untokenized one
+        // step earlier.
+        let p = crate::lex::untokenize(&p);
         let p = crate::pattern_data_escape::escape_data_backslashes(&p);
         // c:Src/glob.c:3575-3580 + 3617-3620 — the `shtokenize` this
         // builtin stands in for adds ZSHTOK_SHGLOB under SH_GLOB, and
@@ -7129,24 +7135,110 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             return Value::str(p);
         }
-        let mut out = String::with_capacity(p.len() * 2);
-        for c in p.chars() {
-            match c {
-                // c:Src/lex.c:1390-1404 — `-` / `!` are Dash / Bang TOKENS
-                // only when the LEXER sees them unquoted; pattern.c's range
-                // parser (c:1483) and negation test look for the tokens, so
-                // a SUBSTITUTED `-` / `!` must stay an ordinary character
-                // with GLOB_SUBST off. Without these two,
-                // `cset='^a-z'; [[ - = ["$cset"] ]]` built a live `a-z`
-                // range out of substituted text.
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^' | '~' | '-'
-                | '!' | '\\' => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                _ => out.push(c),
-            }
+        // The metacharacters that have to be spelled `\X` to reach
+        // `ported::pattern`'s normalizer as ordinary characters.
+        //
+        // c:Src/lex.c:1390-1404 — `-` / `!` are Dash / Bang TOKENS only when
+        // the LEXER sees them unquoted; pattern.c's range parser (c:1483) and
+        // negation test look for the tokens, so a SUBSTITUTED `-` / `!` must
+        // stay an ordinary character with GLOB_SUBST off. Without those two,
+        // `cset='^a-z'; [[ - = ["$cset"] ]]` built a live `a-z` range out of
+        // substituted text.
+        fn is_pattern_meta(c: char) -> bool {
+            matches!(
+                c,
+                '*' | '?'
+                    | '['
+                    | ']'
+                    | '('
+                    | ')'
+                    | '|'
+                    | '<'
+                    | '>'
+                    | '#'
+                    | '^'
+                    | '~'
+                    | '-'
+                    | '!'
+                    | '\\'
+            )
         }
+        // The character an ACTIVE metacharacter token stands for, or None for
+        // anything that is not one.
+        //
+        // c:Src/glob.c:3640-3645 — `shtokenize` arms a metacharacter by
+        // rewriting it to `(t - ztokens) + Pound`; c:Src/lex.c:38 `ztokens` is
+        // the table that maps back. c:Src/zsh.h:159-183 is the metacharacter
+        // range (Pound 0x84 … Bang 0x9c); c:Src/zsh.h:193-206's Snull / Dnull /
+        // Bnull / Bnullkeep / Nularg are quote and null MARKERS, never
+        // metacharacters, so they are excluded here and travel with the
+        // literal run below — where `untokenize` gives them the same reading
+        // they had when it ran one step earlier (Bnull → `\`, which this pass
+        // then escapes to the normalizer's literal-backslash `\\`).
+        fn active_pattern_token(c: char) -> Option<char> {
+            let cu = c as u32;
+            if !(0x84..=0x9c).contains(&cu) {
+                return None;
+            }
+            let m = crate::ported::lex::ztokens
+                .chars()
+                .nth((cu - 0x84) as usize)?;
+            is_pattern_meta(m).then_some(m)
+        }
+        // !!! RUST-ONLY HELPER — no C counterpart. C needs no such pass: its
+        // `patcompile` consumes the token encoding itself (c:Src/pattern.c:248
+        // — `zpc_chars` holds Star / Quest / Inbrack / …, so a RAW `*` never
+        // dispatches as ZPC_STAR and is literal by construction). zshrs's
+        // `ported::pattern` normalizer uses a raw-ASCII encoding whose literal
+        // form is `\X`, so C's one-byte ACTIVE-vs-DATA distinction has to be
+        // re-SPELLED: a metacharacter `shtokenize` armed becomes the bare
+        // character, a metacharacter that is a raw byte of a VALUE becomes
+        // `\X`. A pattern word holds both at once — c:Src/subst.c:1551-1552
+        // tokenizes the `(~j)` join SEPARATOR while the array ELEMENTS it joins
+        // keep their raw bytes — which is why escaping the word wholesale (or
+        // not at all) is wrong in both directions.
+        //
+        // Non-token text is untokenized in RUNS rather than per character, so
+        // `untokenize`'s multi-character decodes still see their whole input:
+        // the `Meta` pair (lex.rs's metafied high byte) and the
+        // `Qstring Snull` … `Snull` span of a `$'…'` literal
+        // (c:Src/subst.c:301-304).
+        fn flush_literal_run(lit: &mut String, out: &mut String) {
+            if lit.is_empty() {
+                return;
+            }
+            for c in crate::lex::untokenize(lit).chars() {
+                if is_pattern_meta(c) {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+            lit.clear();
+        }
+        let mut out = String::with_capacity(p.len() * 2);
+        let mut lit = String::new();
+        let cs: Vec<char> = p.chars().collect();
+        let mut i = 0;
+        while i < cs.len() {
+            let c = cs[i];
+            // c:Src/glob.c:3593-3596 `case Meta: s++;` — `Meta` and the
+            // character after it are ONE unit and neither is a token.
+            if c as u32 == crate::ported::zsh_h::Meta as u32 && i + 1 < cs.len() {
+                lit.push(c);
+                lit.push(cs[i + 1]);
+                i += 2;
+                continue;
+            }
+            match active_pattern_token(c) {
+                Some(m) => {
+                    flush_literal_run(&mut lit, &mut out);
+                    out.push(m);
+                }
+                None => lit.push(c),
+            }
+            i += 1;
+        }
+        flush_literal_run(&mut lit, &mut out);
         Value::str(out)
     });
 
@@ -13493,9 +13585,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // not run; it also turns off `xpandbraces` (c:Src/subst.c:170)
                 // and c:3913's `force_split`. NO PREFORK_ASSIGN — a `case`
                 // word / cond operand gets no `filesub` colon-walk.
+                // Mode 12 = the same `singsub`, for a `[[ … == pat ]]` RHS or a
+                // `case` arm. It differs from mode 9 only in what it hands
+                // BACK: the word keeps its tokens (see the untokenize below),
+                // because a pattern operand's guard still has to tell a
+                // metacharacter `shtokenize` armed from a raw byte of a value.
                 let pf_flags = if mode == 8 {
                     crate::ported::zsh_h::PREFORK_SINGLE | crate::ported::zsh_h::PREFORK_ASSIGN
-                } else if mode == 9 {
+                } else if mode == 9 || mode == 12 {
                     crate::ported::zsh_h::PREFORK_SINGLE
                 } else if mode == 6 {
                     crate::ported::zsh_h::PREFORK_ASSIGN
@@ -13622,6 +13719,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `case` word (c:Src/loop.c:610-612) and a `[[ … ]]`
                     // operand (c:Src/cond.c:53) are never filename-generated.
                     || mode == 9
+                    // Mode 12 = the pattern-operand spelling of mode 9, so it
+                    // owes the same "singsub never reaches globlist" rule.
+                    || mode == 12
                     // Mode 11 = a segment of a larger word (see compile_zsh's
                     // text-expansion arm): c:Src/exec.c:3755-3757 globs the
                     // assembled word, so the segment itself is not globbed.
@@ -13696,6 +13796,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 .map(crate::lex::untokenize)
                                 .collect::<Vec<_>>()
                                 .join(&nul.to_string())
+                        } else if mode == 12 {
+                            // c:Src/glob.c:3640-3645 — `shtokenize` says "this
+                            // metacharacter is ACTIVE" by rewriting it to a
+                            // TOKEN and says "this one is data" by leaving the
+                            // raw byte, and C carries both spellings into
+                            // `patcompile` unchanged. Mode 12 is a `[[ … ]]` /
+                            // `case` PATTERN operand, the one word where that
+                            // distinction still has a consumer: untokenizing
+                            // here collapses the two, and the guard that runs
+                            // next can then only escape ALL of the word's metas
+                            // or none of them. c:Src/subst.c:1551-1552 puts
+                            // both halves in one string — the `(~j)` separator
+                            // is tokenized, the elements it joins are not — so
+                            // neither answer is right. Hand the word on
+                            // tokenized; BUILTIN_GLOB_SUBST_GUARD /
+                            // BUILTIN_PAT_DATA_BACKSLASH run the untokenize
+                            // once they have escaped the raw half.
+                            s
                         } else {
                             crate::lex::untokenize(&s)
                         };

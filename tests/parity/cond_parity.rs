@@ -1200,41 +1200,35 @@ mod bracket_versus_test_spelling {
 /// `${(~j.?.)x}` joins with the Quest TOKEN and `[[ aXb = ${(~j.?.)x} ]]` is
 /// true in zsh.
 ///
-/// KNOWN DIVERGENCE — zshrs answers false. `untok_and_escape`
-/// (src/ported/subst.rs) is CORRECT: it returns the Quest token (U+0097), and
-/// `prefork(PREFORK_SINGLE)` hands it back intact (`[61, c2, 97, 62]`). The
-/// token is destroyed downstream — `BUILTIN_EXPAND_TEXT` untokenizes the
-/// expanded word (src/fusevm_bridge.rs:13700), then `BUILTIN_GLOB_SUBST_GUARD`
-/// (src/fusevm_bridge.rs:7132-7150) backslash-escapes every raw-ASCII glob
-/// meta, so `patcompile` sees a literal `\?`. The compiler emits that guard
-/// because `seg_forces_glob_subst` (src/extensions/compile_zsh.rs:10790-10807)
-/// recognises only `${~…}` / `$~name`, never a `(~)` FLAG.
+/// The token now survives the VM round-trip, so these run live.
 ///
-/// Pinned with `#[ignore = "documented gap: …"]`, this suite's idiom for a
-/// KNOWN divergence: the assertions stay in the tree and run on demand
-/// (`cargo test --test parity -- tilde_flag_pattern_separator --ignored`)
-/// without turning the shared suite red. Drop the `#[ignore]` lines when the
-/// token survives the VM round-trip; each one then passes as written.
+/// `untok_and_escape` (src/ported/subst.rs) returns the Quest token (U+0097)
+/// and `prefork(PREFORK_SINGLE)` hands it back intact. What used to destroy it
+/// was `BUILTIN_EXPAND_TEXT` untokenizing the expanded word before
+/// `BUILTIN_GLOB_SUBST_GUARD` had read it: with the token gone the guard could
+/// only escape every raw-ASCII metacharacter in the word or none of them, and
+/// `patcompile` saw a literal `\?`. A pattern operand now compiles as
+/// EXPAND_TEXT mode 12 — mode 9's `singsub` with the tokens kept — and the
+/// guard escapes only the raw half, so the same string can hold the ACTIVE
+/// separator and a LITERAL element metacharacter the way C's does
+/// (c:Src/glob.c:3640-3645).
 mod tilde_flag_pattern_separator {
     use super::*;
 
     /// c:Src/subst.c:2309-2314 — the `j` separator goes through
     /// `untok_and_escape(…, tok_arg)`, so `?` joins as Quest, not as data.
     #[test]
-    #[ignore = "documented gap: BUILTIN_EXPAND_TEXT untokenizes the `(~j)` separator"]
     fn tilde_j_quest_separator_matches_any_char() {
         assert_parity(r#"x=( a b ); [[ aXb = ${(~j.?.)x} ]]; echo $?"#);
     }
 
     /// The `(~)` example from the zshparam(1) flag documentation.
     #[test]
-    #[ignore = "documented gap: BUILTIN_EXPAND_TEXT untokenizes the `(~j)` separator"]
     fn tilde_j_bar_separator_is_alternation() {
         assert_parity(r#"foo=( '|' '?' ); [[ '|' = ${(~j.|.)foo} ]]; echo $?"#);
     }
 
     #[test]
-    #[ignore = "documented gap: BUILTIN_EXPAND_TEXT untokenizes the `(~j)` separator"]
     fn tilde_j_star_separator_matches_run() {
         assert_parity(r#"x=( a b ); [[ aZZb = ${(~j.*.)x} ]]; echo $?"#);
     }
@@ -1246,7 +1240,6 @@ mod tilde_flag_pattern_separator {
     /// is ever "fixed" by forcing GLOB_SUBST on, which would wrongly promote
     /// the element's `*` to a live metacharacter too.
     #[test]
-    #[ignore = "documented gap: negative control for the `(~j)` separator fix"]
     fn tilde_j_leaves_element_metas_literal() {
         // Separator active, element `*` literal → matches.
         assert_parity(r#"x=( 'a*' b ); [[ 'a*Xb' = ${(~j.?.)x} ]]; echo $?"#);
@@ -1257,7 +1250,6 @@ mod tilde_flag_pattern_separator {
     /// c:Src/loop.c:610-612 — a `case` arm pattern is expanded by the same
     /// `singsub`, so it carries the identical separator tokenization.
     #[test]
-    #[ignore = "documented gap: BUILTIN_EXPAND_TEXT untokenizes the `(~j)` separator"]
     fn tilde_j_separator_in_case_pattern() {
         assert_parity(r#"x=( a b ); case aXb in (${(~j.?.)x}) echo M;; (*) echo N;; esac"#);
     }

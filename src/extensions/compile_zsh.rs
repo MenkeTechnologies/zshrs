@@ -159,6 +159,22 @@ pub struct ZshCompiler {
     /// the second, so the sites that decide DQ-ness subtract this counter while
     /// every glob-suppression site keeps reading the raw depth.
     pub cond_glob_suppress_depth: i32,
+    /// Depth tracker for "this `singsub` word is a PATTERN operand" — the
+    /// `[[ … == pat ]]` RHS and a `case` arm, both emitted by
+    /// `emit_glob_subst_pattern`.
+    ///
+    /// c:Src/glob.c:3640-3645 — `shtokenize` marks a metacharacter it honors by
+    /// rewriting it to `(t - ztokens) + Pound`, a TOKEN, and leaves the ones it
+    /// declines as raw bytes. C keeps that split alive all the way into
+    /// `patcompile`, which is how a single string can hold an ACTIVE
+    /// metacharacter next to a literal one: c:Src/subst.c:1551-1552
+    /// `if (tok_arg) shtokenize(dst)` tokenizes the `(~j)` join SEPARATOR while
+    /// the array ELEMENTS it joins keep their raw bytes. A pattern operand
+    /// therefore has to reach `BUILTIN_GLOB_SUBST_GUARD` still tokenized, which
+    /// is what `text_mode_for_context`'s mode 12 asks for; every other
+    /// `singsub` word (the cond LHS, the `case` WORD, a redirect target) wants
+    /// mode 9's plain untokenized string.
+    pub pattern_word_depth: i32,
     /// Depth tracker for "compiling a scalar assignment RHS" (NOT array
     /// init). When >0, `"${a[@]}"` joins via JOIN_STAR instead of
     /// splicing — scalar RHS forces single-string output. Array init
@@ -392,6 +408,7 @@ impl ZshCompiler {
             in_cond_operand: false,
             singsub_depth: 0,
             cond_glob_suppress_depth: 0,
+            pattern_word_depth: 0,
             scalar_assign_depth: 0,
             synthetic_dq_wrap_depth: 0,
             array_whole_assign: false,
@@ -461,7 +478,17 @@ impl ZshCompiler {
         } else if base_mode == 0 && scalar_assign_ctx {
             6
         } else if base_mode == 0 && self.singsub_depth > 0 {
-            9
+            // Mode 12 is mode 9 for a PATTERN operand: same `PREFORK_SINGLE`,
+            // same "never filename-generate", but the expanded word comes back
+            // still TOKENIZED so the pattern guard can tell a metacharacter
+            // `shtokenize` armed (c:Src/glob.c:3640-3645, e.g. the `(~j)`
+            // separator of c:Src/subst.c:1551-1552) from one that is a raw
+            // byte of a VALUE. See `pattern_word_depth`.
+            if self.pattern_word_depth > 0 {
+                12
+            } else {
+                9
+            }
         } else if base_mode == 0 && self.redir_word_depth > 0 {
             7
         } else {
@@ -10937,7 +10964,9 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(c), 0);
                 return;
             }
+            self.pattern_word_depth += 1;
             self.compile_singsub_word_noglob(word);
+            self.pattern_word_depth -= 1;
             if !Self::seg_forces_glob_subst(word) {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
@@ -10958,7 +10987,9 @@ impl ZshCompiler {
         for (idx, seg) in segments.iter().enumerate() {
             match seg {
                 PatSeg::Subst(text) => {
+                    self.pattern_word_depth += 1;
                     self.compile_singsub_word_noglob(text);
+                    self.pattern_word_depth -= 1;
                     if !Self::seg_forces_glob_subst(text) {
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
