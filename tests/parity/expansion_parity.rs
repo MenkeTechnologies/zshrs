@@ -1070,8 +1070,16 @@ mod length_with_padding {
 // pair of triggers to every `:`-separated component, which is what makes
 // `a=x:=ls` and the plain assignment `kv=a:=ls` expand too.
 //
-// The `~` spellings already pass; the `=` spellings are the gap. Kept as
-// live parity assertions (not `#[ignore]`) so the divergence stays visible.
+// CLOSED — re-measured 2026-09-19, both spellings now match byte for byte:
+//     a==ls        -> /bin/ls     on zsh and zshrs
+//     a=x:=ls      -> x:/bin/ls   on both
+//     kv=a:=ls     -> a:/bin/ls   on both
+// The note that used to stand here called the `=` spellings an open gap and
+// said the assertions were deliberately left failing so it stayed visible.
+// They pass; leaving that claim in place made this block read as a live
+// divergence and, cited from another test file, argued for committing failing
+// tests. These are ordinary regression guards now — if one goes red, `filesub`
+// lost the `Equals` half of the c:680 trigger pair.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod magic_equals_cmd {
