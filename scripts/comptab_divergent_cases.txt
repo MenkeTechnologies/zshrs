@@ -7796,3 +7796,62 @@ gstack
 #   FUZZER's own repro script (it execs with ZDOTDIR/LANG/LC_ALL set inside the
 #   script) rather than hand-rolling an rc, and get the ASCII control to
 #   reproduce before reading anything into the 0xf0 variant.
+
+# ============================================================================
+# 9409/0001 and 9409/0014 — the two VALID-UTF-8 hostile cells. Re-measured on
+# a clean export of 80f71b4ab0, 3 runs each, byte-identical every run.
+# NO code fix: five hypotheses refuted by measurement; the two live candidates
+# need instrumentation, not reading. Rig was trustworthy (unlike 9410/0009).
+# ============================================================================
+#
+# RIG: `--replay <fixture> --zshrs <export build> --zsh /opt/homebrew/bin/zsh`.
+# The fixture's `@shell` header and the script's `--zshrs` default BOTH point at
+# the shared tree's target/debug/zshrs — peer-contaminated. Pass both flags.
+#
+# 9409/0001 — THE HAND-OFF HAD THIS BACKWARDS.
+#   measured: zsh ends on `-x`, zshrs ends on `-m`  (not "zsh -m / zshrs -x")
+#   row 0 is the ONLY differing row; rows 1-2 differ in SGR attributes only,
+#   i.e. the LISTINGS ARE IDENTICAL and only the selected cell diverges:
+#       zsh   | @SFZ@ fzc0001 -x        zshrs | @SFZ@ fzc0001 -m
+#       grid (both): 1| -m      -- two  spaces   2| -x  -q  -- amp&and
+#   Shape: `^I` = reverse-menu-complete, `menu select=1`, keys tab,^N,^N.
+#   Reverse entry lands on the last match; two `down`s then wrap in a 2-row
+#   grid whose rows have different widths (1 cell vs 2).
+#
+# 9409/0014 — NOT "loses listing rows 2-3". TWO distinct symptoms:
+#   (a) zshrs DUPLICATES the inserted match on the command line:
+#       zshrs | @SFZ@ fzc0014 emoji-zwj=7/8:<emoji> devemoji-zwj=7/8:<emoji> dev
+#       zsh   | @SFZ@ fzc0014 wide-cjk=3/6:<cjk>
+#   (b) zshrs then ABORTS THE LINE where zsh stays in menu selection: the raw
+#       escape stream shows `\e[?2004l`, the `%` partial-line mark and a fresh
+#       `@SFZ@` prompt on row 1; zsh keeps its 3-row listing. cursor zsh (0,33)
+#       vs zshrs (1,6). Consistent with `^G` reaching the MAIN keymap (where
+#       send-break aborts the line) because the menu loop was no longer active
+#       — C's in-loop send-break arm only beeps and breaks (c:2644-2647).
+#
+# REFUTED BY MEASUREMENT (do not re-chase):
+#   1. "(m)/width arithmetic differs" — the fixture computes its own match text
+#      from ${#w} and ${(m)#w}. BOTH shells: w0=7/8 w1=3/6 w2=3/6 (emoji-ZWJ,
+#      hangul, CJK). Identical, so the rows are not different text. b54ff03301
+#      is holding.
+#   2. "do_menucmp0 never advances the cursor" — `valid_match` itself writes
+#      back `group_idx`/`cur_idx` (compresult.rs:2167-2172).
+#   3. "the menu loop is never entered for a compdef -k widget" — the entry
+#      gate is a faithful port of c:2407-2415 (complist.rs:4913-4926), and
+#      `dummy` is NULL for a directly-invoked widget, so it does not bail.
+#   4. "the mline<0 rescan is missing" — present at complist.rs:5443-5468
+#      (c:2492-2503), keyed on gnum like C; the 999999 sentinel matches c:2481
+#      and cannot fire on the first pass because mline starts at 0.
+#   5. "adjust_mcol is a clamp-only stub" — the module-level fn
+#      (complist.rs:4215-4222) IS a stub, but it has NO callers on this path;
+#      the live one is the closure at :5200-5229, a faithful port of
+#      c:2127-2154. (The stub is dead code on this path — worth deleting.)
+#
+# LIVE CANDIDATES, both needing INSTRUMENTATION:
+#   * 9409/0001: the down-walk's wrap arm (`wrap == 1` -> Move::Right,
+#     complist.rs:6525-6528 vs c:2994-2995) and `skipcell`'s CMF_DUMMY
+#     marking (:5178-5188) over a grid whose rows differ in width. Log
+#     mline/mcol/wishcol/wrap per key on both shells and diff the walks.
+#   * 9409/0014: whether `domenuselect` is re-entered on the SECOND `^Xw`,
+#     and if not, what exited it — that decides both the duplicate insertion
+#     and why `^G` reached the main keymap.
