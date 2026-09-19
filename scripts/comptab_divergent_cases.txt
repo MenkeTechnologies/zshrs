@@ -7582,3 +7582,77 @@ gstack
 # husk nor the logged `["-J","-default-"]` writes explains `['']`. The next
 # probe is WHICH NODE the dump sees and WHAT wrote one empty string into it —
 # not the typing, not the scope, not the read path.
+
+# ============================================================================
+# ROUND 4 — the six spec-fuzz cells left open by the 9401-9410 sweep, each
+# RE-MEASURED on a clean `git archive` export of a1e8210026 (own
+# CARGO_TARGET_DIR; reference /opt/homebrew/bin/zsh 5.9.2, passed explicitly —
+# /bin/zsh here is 5.9 and would be a different reference).
+#
+# ALL SIX still failed, in BOTH --mode zsh and --mode native, and `ps` showed
+# no `Rs+` children in any run — so none is the `bld_all_str` hang class and
+# 7a3c10d6a3 / ba5a44e53b did not touch them.
+#
+# FIXED — 9408/0016 (compadd, std:reverse-menu-complete, keys tab,space,tab).
+#   Harness-reduced repro: `compadd -C -d _sfz_disp -- with space`.
+#     zsh   row5  disp4 `cmd` sub          (the -d array's next entry)
+#     zshrs row5  backslash delta with space   (the match words, joined)
+#   Rows 1-4 (the ordinary display strings) were already identical, which is
+#   what localises this to the `<all>` placeholder rather than to listing.
+#   C: addmatch("<all>", dat->flags | CMF_ALL, &disp, 1) — c:compcore.c:2612 —
+#   passes the SHARED disp cursor, exactly as the dummy loop at c:2615-2616,
+#   so the placeholder consumes the next display string. bld_all_str
+#   (c:2198-2230) concatenates m->str and is reached only when the placeholder
+#   has NO disp. The port passed None; the dummy loop directly below it already
+#   had the correct cursor-advance, its own comment recording that passing None
+#   there "dropped every description line".
+#   Control: hunk reverted -> 1 FAIL; restored byte-identically -> 1 PASS.
+#   Other five cells unchanged by it. Y gate UNCHANGED=229 REGRESSED=0.
+#
+# DUPLICATE — 9406/0009 (arguments, fpdef-K, cx-w,cx-w,down,down) is the
+#   EMPTY-`_arguments`-ACTION class already recorded above for 9303 case0002:
+#   its reduced spec carries `'1:value:'`, zsh prints
+#   `_arguments:465: permission denied:` twice plus `exact=`, zshrs prints
+#   nothing, and the harness's own line reads "only zsh reported". Not
+#   re-root-caused here; see that entry for the C (exec.c:898-899) and for the
+#   port site (_arguments.rs:1491 skipping the call when the action evaluates
+#   to no words).
+#
+# OPEN — 9405/0017 (arguments, fn:_complete_help, tab,tab,btab). One frame:
+#     zsh       messages  (_message _arguments _sfz_main _fzc0017)
+#     zshrs     messages  (_arguments _sfz_main _fzc0017)
+#   `call_compfn` (src/compsys/ported/shared.rs:936) is
+#   `dispatch_function_call(name, args).unwrap_or_else(fallback)`: when a shell
+#   function exists it goes through doshfunc and gets a frame, otherwise the
+#   port body runs as a plain Rust call with NONE. R3-O's PortFuncstackFrame
+#   (shared.rs:1067) already supplies exactly this, one level deeper, around
+#   `_next_label_impl` (_message.rs:213, :416). Wrapping the call_compfn
+#   FALLBACK would fix it — but it shifts $#funcstack for EVERY port and the
+#   `_tags_level` gates read that depth (R3-O measured 14 tests turning on it),
+#   so MEASURE, do not blind-edit.
+#
+# OPEN — 9403/0013 (tags, fpdef-K, cx-w). Both shells print
+#   `(eval):1: no matches found: *:globbed-files`; on the REDRAW zsh keeps
+#   `@SFZ@ fzc0013 -b` and zshrs drops the `-b`. Cursor zsh (2,16) vs (2,14).
+#   Line restoration after an error, not a listing bug.
+#
+# OPEN — 9404/0020 (arguments, compdef-k:menu-select, cx-w,cx-w,a). Row 0 is
+#   the COMMAND LINE: zsh `@SFZ@ fzc0020 -b a`, zshrs `@SFZ@ fzc0020 -ba` —
+#   the separating space after a menu-inserted option. Reduced to a bare
+#   `_arguments -w`; the widget is `compdef -k _generic menu-select '^Xw'`.
+#
+# OPEN — 9401/0022 (describe, fn:_history-complete-older, tab,tab,down,down).
+#   Reduced to an EMPTY `_describe` (`_m=( )`, `_d=( )`): zsh then draws three
+#   further rows (the init.zsh path again, then `source`) and zshrs draws none
+#   — the history-completion widget's fallback with zero matches.
+#
+# METHOD — `print_failure` already dumps the case spec, the FULL generated
+#   completer, the harness's own reduced completer, both grids, every differing
+#   row and a raw escape-stream diff, so fixture bodies never need extracting
+#   by hand (an earlier perl extraction returned nothing for four of them
+#   because they use a different heredoc marker). `--verbose` only prints
+#   PASSES and is not needed for triage.
+# NOT THIS CHANGE — `addmatches_u_flag_match_carries_no_ignored_prefix` fails
+#   identically on UNMODIFIED BASE and with the hunk (101 passed / 1 failed in
+#   both arms) and passes ALONE (1/0): the known order-dependent intermittent.
+# ============================================================================
