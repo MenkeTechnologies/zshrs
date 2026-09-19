@@ -1457,19 +1457,21 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     // dispatch invent a function out of `$fpath`. A Rust port or a plugin
     // override counts as resolvable: each stands in for the STOCK file of that
     // name, which `compinit` would have stubbed.
-    let is_shfunc = crate::fusevm_bridge::try_with_executor(|e| e.function_exists(cmd))
-        // No executor installed (unit tests): consult `shfunctab` directly.
-        // `getshfunc` is `shfunctab->getnode` — DISABLED nodes read as absent,
-        // `Src/hashtable.c:231`.
-        .unwrap_or_else(|| crate::ported::utils::getshfunc(cmd).is_some()) // c:3105
-        || crate::compsys::router::try_rust_dispatch(cmd).is_some()
-        || crate::extensions::plugin_host::compfn_override(cmd).is_some();
-
-    if is_shfunc {
-        // c:3107 `is_shfunc = 1` → c:4157 `if (is_shfunc) { … doshfunc … }`
-        if let Some(rc) = crate::ported::exec::dispatch_function_call(cmd, argv) {
-            return rc;
-        }
+    // c:3105-3109 `is_shfunc = 1` → c:4157 `if (is_shfunc) { … doshfunc … }`.
+    // `dispatch_function_call` IS that `shfunctab->getnode` test now: it
+    // resolves a real definition, an autoload stub, a Rust port, a plugin
+    // override or a `_regex_arguments` registration, and returns `None` for
+    // everything else — since fba82d9a40 it no longer invents a function out
+    // of `$fpath` (src/vm_helper.rs). Ask it directly and fall through to
+    // builtin → `$PATH` → not-found on `None`.
+    //
+    // The pre-gate this replaces was not merely redundant, it was a false
+    // NEGATIVE: `_regex_arguments`-registered names are real `eval`-defined
+    // shell functions in zsh, but in zshrs they live in a registry
+    // (`vm_helper.rs`) that `function_exists` / `getshfunc` cannot see, so the
+    // gate reported `command not found` for a name zsh runs.
+    if let Some(rc) = crate::ported::exec::dispatch_function_call(cmd, argv) {
+        return rc;
     }
 
     // Neither a shell function nor a registered port. zsh looks for a builtin
