@@ -7519,6 +7519,26 @@ pub fn paramsubst(
             errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             return (String::new(), new_pos, Vec::new()); // c:3002
         }
+        // c:Src/subst.c:2697-2698 — `while (inull(*s)) s++;`. Once the inner
+        // subexp has been expanded, C steps `s` past the CLOSING quote marker
+        // of a quoted subexp body (`${"${(f)v}"[2]}`, `${(f)"$(cmd)"}`) so the
+        // subscript gate (c:2867) and the operator gate downstream both look at
+        // the real next character. zshrs dropped those markers only in the
+        // derived `rest` string and left `idx` parked on the Dnull/Snull, so
+        // `body_chars[idx] == '['` and the `#`/`%` operator tests silently
+        // declined and the whole joined value came back:
+        //   i=$'a\nb\nc';    ${"${(f)i}"[2]}  -> `a b c`, zsh gives `b`
+        //   i=$'aa\nbb\ncc'; ${"${(f)i}"#aa}  -> unstripped, zsh strips `aa`
+        // `/` happened to survive because the replace path scans the
+        // marker-stripped `rest` rather than testing `body_chars[idx]`.
+        // Only a subexp body can still be sitting on a marker here — the gate
+        // just above rejects a quoted BARE NAME (`${"abc"}`) outright.
+        while (subexp_value.is_some() || subexp_array_temp.is_some())
+            && idx < body_chars.len()
+            && (body_chars[idx] == Snull || body_chars[idx] == Dnull)
+        {
+            idx += 1;
+        }
         // If the subexp produced an array (multsub path above), bind
         // var_name to the temp slot in state.arrays so the rest of
         // paramsubst — splat, subscript, filter, replace — operates
