@@ -8191,3 +8191,49 @@ gstack
 #
 # NOT FIXED either cell: no cause is proven, and a fix on an unproven cause is
 # how this session produced four verdicts that later had to be voided.
+
+# ============================================================================
+# 9404/0020 and 9409/case0014 — INSTRUMENTED (R5-E). Both briefed suspects are
+# REFUTED by trace. Neither fixed; the traces below are the evidence.
+# ============================================================================
+#
+# Rig: clean `git archive` export of a6da7fa15b, own CARGO_TARGET_DIR, build
+# EXIT read from a log. Probes write to a FILE, never to the compared screen.
+# NOTE: `child_env` (compsys_spec_fuzz.py:2908-2939) builds the child env from
+# scratch and forwards ONLY ZSHRS_LOG/RUST_LOG — an env-var-triggered probe
+# NEVER FIRES under the fuzzer, and its empty log reads as "path not taken".
+# The probes therefore hardcode their output path. Do not re-learn this.
+# Contention: a foreign harness (pid 868) ran throughout at 0.0-1.3% CPU;
+# measured through it, with 3 runs per cell and foreign-process counts varying
+# 2 vs 4 between runs while the traces stayed byte-identical.
+#
+# 9404/0020 — the `iforcemenu == -1` suspect is REFUTED. 3/3 runs, identical
+# verdict (1 FAIL) and identical trace:
+#     after_complete gate menucmp=1 oldmenucmp=0 ifm=0 early_return=false
+# `iforcemenu` is 0, NOT -1, so the port's added guard at `compcore.rs:696` is
+# never taken and the gate opens exactly as C's c:505 does. Whatever leaves the
+# menu open, it is not that guard. NO replacement hypothesis — do not guess one.
+#
+# 9409/case0014 — cause located ONE STEP EARLIER than "the flag isn't set".
+# 3/3 runs on the cell's OWN fixture (and identically via 9404's), trace:
+#     unknown_widget name="_generic" cmd_some=true widget_some=true
+#                    flags=Some(1) ncomp=false -> acc=1 broken=0
+#     menu_exit acc=1 validlist=1 cur_some=true mode=0 -> clears_hasoldlist=true
+# `WIDGET_INT` is 1<<0 and `WIDGET_NCOMP` is 1<<1 (`zle_h.rs:500,503`), so
+# `flags=Some(1)` is WIDGET_INT ALONE. But `zle -C` builds its widget as
+# `WIDGET_NCOMP|ZLE_MENUCMP|ZLE_KEEPSUFFIX` with NO WIDGET_INT
+# (`zle_thingy.rs:1302` ↔ c:616-621). So the widget the menu loop resolves at
+# `complist.rs:6477` is NOT the registered completion widget — it is an
+# internal one. Hence ncomp=false -> acc=1 -> the clear at `:6882` wipes
+# `hasoldlist`, which is exactly the chain R4-H measured; its first link is now
+# proven. This SUPERSEDES R5-D's "WIDGET_NCOMP is refuted": the flag IS set at
+# registration, but is absent on the object that reaches the decision.
+#
+# NOT FIXED, and why: `bindwidget` (`zle_thingy.rs:385-389` ↔ c:217-218) does
+# replace the thingy's widget under the table lock, and `getkeycmd`
+# (`zle_keymap.rs:3085`, used at `complist.rs:5718` ↔ c:2628) looks the thingy
+# up by name from that same table — so registration and lookup both read
+# correct. The open question is whether the `_generic` entry the menu loop sees
+# is the SAME table entry `zle -C` wrote to, or a second entry created
+# elsewhere. That needs a live dump of the thingy table for that name, i.e.
+# another measurement cycle. A change made without it would be a guess.
