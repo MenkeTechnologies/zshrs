@@ -7720,3 +7720,79 @@ gstack
 # STILL OPEN, and NOT explained by the above: why case0015 PASSES in
 # `--mode zsh` while failing natively, when the corrupting rewrite happens at
 # parse time in both.  Probe that before assuming this entry covers it.
+
+# ============================================================================
+# HOSTILE SEEDS 9409/9410 — the five "genuine grid-diff" cells, classified.
+# Three are already-recorded classes; two are real and open; one is UNRESOLVED
+# because my own probes never produced a reproducible two-shell comparison.
+# ============================================================================
+#
+# Method note first, because it invalidated four of my probes before I noticed:
+#   * `comptab_screen.py` REPLACES the child environment wholesale and pins
+#     ZDOTDIR to /nonexistent-zdotdir (:167, :183-184) — only its own `--env`
+#     reaches the child. An outer `ZDOTDIR=...` is silently discarded, and the
+#     reference then completes in $PWD, which LOOKS like a divergence.
+#   * `--init` is sourced by TYPING at the prompt (:248), and zsh finishes
+#     compinit slower than zshrs (:19) — too small a settle yields an empty
+#     REFERENCE screen that also looks like a divergence.
+#   * Named keys are bs cr del down end esc home left nl pgdn pgup right space
+#     tab up. `enter` is NOT one; passing it aborts before a shell starts.
+#   * `--env/--settle/--budget/--lang` ARE accepted and consumed (:163-164,
+#     :172, :257, :260) — the usage line is accurate.
+#   Sanity arm that makes a capture interpretable: complete a BUILTIN name
+#   (`whil`+TAB -> `while`) in the same rc. Both shells pass that here, so a
+#   silent reference on a FIXTURE case is about the fixture, not the harness.
+#
+# CLASSIFICATION (strict UTF-8 validity scan per fixture is the discriminator;
+# a byte census is NOT — most 0x80-0xa2 bytes are continuation bytes of valid
+# UTF-8 (CJK/hangul/emoji-ZWJ) and cannot collide with a token char):
+#
+#   9409/case0001  VALID UTF-8 throughout          -> REAL, open (see below)
+#   9409/case0009  INVALID: 14 bytes incl. 0x85    -> recorded 0x85 class
+#   9409/case0014  VALID UTF-8 throughout          -> REAL, open (see below)
+#   9410/case0009  INVALID: one 0xf0 @159          -> UNRESOLVED (see below)
+#   9410/case0021  INVALID: 0x85 @139, @679        -> recorded 0x85 class
+#
+# The two 0x85 cells are downstream of a2e6bea6c3 (a raw 0x85 in SOURCE TEXT
+# is parsed as the String token char and rewritten). NOT a listing defect: the
+# Rust renderer is a faithful port — complist.rs:1378 `Err(_) =>
+# (nicechar(b0 as char), 1)` citing c:757-767, matching C's `nicechar(*uptr)`
+# at c:Src/Zle/complist.c:760 — and a hermetic probe shows zshrs printing
+# `x$'\205'y`, zsh's exact spelling. 9409/0009's completer loses ALL its own
+# matches and falls back to FILE completion, the same corrupted-body symptom.
+#
+# `--mode zsh` DOES NOT CLEAR THIS CLASS — it hides it. Measured on one
+# fixture, all three at len=610: reference zsh stores `x 205 y` (raw byte
+# kept); zshrs NATIVE stores `x $ y`; zshrs `--zsh` stores `x $ y` too. The
+# rewrite is mode-independent (the only IS_ZSH_MODE consumers in the tree are
+# builtin-dispatch gates, compile_zsh.rs:3853-3900 — nothing at lex time), and
+# `build_case_dir` writes byte-identical fixtures in both modes. So R4-E's
+# open question "why does case0015 pass under --zsh" is answered: the byte is
+# corrupted in BOTH modes; only its visibility downstream differs. Treat any
+# `--mode zsh` PASS on hostile input as a FALSE NEGATIVE for this class.
+#
+# REAL AND OPEN, both valid UTF-8 (so not the class above), both `_describe -O`:
+#   9409/case0001 (combining + wide-cjk, en_US.UTF-8, reverse-menu-complete):
+#     listings are byte-identical; only the INSERTED word differs — zsh inserts
+#     `-m` (first match), zshrs `-x` (third). Match ordering / first-match pick.
+#   9409/case0014 (emoji-zwj + wide-hangul + wide-cjk, compdef-k:menu-select):
+#     zshrs inserts a different first match AND loses listing rows 2-3
+#     (`<absent>`), cursor zsh (0,33) vs zshrs (1,6). The only one of the five
+#     that loses output. Fixture is `_describe -O -1` with a ZWJ description.
+#
+# UNRESOLVED — 9410/case0009, and I am recording it rather than guessing.
+#   Shape: `_describe 'a\xf0b'` with two matches sharing one description under
+#   zle-C:reverse-menu-complete. In the sweep: zsh leaves the line `fzc0009`,
+#   zshrs inserts `-v`; both list the same five matches; cursor 14 vs 16.
+#   C decides this at do_ambiguous (c:Src/Zle/compresult.c:742-761): do_single
+#   ONLY for an exact match, else set lastambig and insert just the unambiguous
+#   prefix (c:787+). zshrs's port has the exact-match arm at compresult.rs:1136
+#   and a menu branch at :1191 (c:773) — so the suspicion is that it takes the
+#   menu branch where zsh takes the prefix branch. NOT CONFIRMED: six probes
+#   produced three different zshrs results for the same nominal case (lists
+#   $PWD with the 0xf0 present; lists both matches in an ASCII control; a bare
+#   `pb -` on the last run), so my setup was not reproducible and no two-shell
+#   comparison of mine is trustworthy. Next person: build the case with the
+#   FUZZER's own repro script (it execs with ZDOTDIR/LANG/LC_ALL set inside the
+#   script) rather than hand-rolling an rc, and get the ASCII control to
+#   reproduce before reading anything into the 0xf0 variant.
