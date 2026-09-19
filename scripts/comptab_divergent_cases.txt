@@ -7941,3 +7941,93 @@ gstack
 # 3. NEVER PIPE A HARNESS RUN THROUGH `tail`. The first attempt here did, and
 #    the 10 surviving lines held per-test output but no summary — no assertion
 #    count, no corpus warning, no verdict. Capture to a file and grep it.
+
+# ============================================================================
+# THE Y-SUITE'S TWO UNNAMED FAILURES — named, one fixed, one bounded.
+# The stored pin does NOT reproduce at its own commit.  2026-09-19.
+# ============================================================================
+#
+# BACKGROUND, and the premise this refutes: the two failures were believed to
+# be a scoring artefact — "the pin was taken against a DIFFERENT corpus, so
+# --gate falls back to raw counts".  That is FALSE.  gate.json's own
+# `reference.corpus` records files: 6, assertions: 229, missing: [] against
+# tree fanY/zshsrc (5.9.999.3-test, git_rev 599af4604f, reference_id
+# 4e79fce93c2e), and its per-file `suite` is 222 pass + 7 xfail with ZERO
+# non-pass entries.  That is the SAME complete 229-assertion corpus every
+# later run scored.  Nothing was hiding behind a different population.
+#
+# NOR ARE THEY A REGRESSION from the ~36 commits of rounds 3-4.  Built from
+# two separate clean `git archive` exports, own CARGO_TARGET_DIR, build exit
+# read from a log (never piped):
+#
+#   tip c9cb56d6df : files=6 assertions=229 fail=2 pass=220 xfail=7
+#   pin a8bca1a89d : files=6 assertions=229 fail=2 pass=220 xfail=7
+#
+# Identical, including per-file: Y04regexargs exit=1 fail=1 pass=5 and
+# Y06values exit=1 fail=1 pass=24.  So the PIN is the outlier — it records a
+# state that does not reproduce at its own commit against its own tree.  It
+# was NOT re-pinned: moving it would bury a real failure.  Whoever re-pins
+# must first explain the 222-vs-220 gap, not paper over it.
+#
+# Deterministic, not flaky: three consecutive two-file runs, fail=2 pass=29
+# of 31 every time.  `--fx` excluded as a cause — the script defaults to
+# `off` (ztst_compsys.py:3229) and exports ZSHRS_NATIVE_ZLE_FX=0 (:3351-3352),
+# matching the pin's recorded fx: "off".
+#
+# ---------------------------------------------------------------------------
+# Y06values #25 "-w with -s" — FIXED, 877484d57f.
+# ---------------------------------------------------------------------------
+#     expected              actual (before)
+#     line: {tst b,c }{}    line: {tst b,c  }{}     <- doubled space
+#     DESCRIPTION:{desc}    (nothing else at all)
+#     NO:{a}
+#     NO:{d}
+#
+# GROUND TRUTH, measured on zsh 5.9.2 against _values' own spec set
+# (`s+: S+: w+ C O: M: J: V: 1 2 o+: n F: X:`) — zparseopts DOES split a
+# cluster whose leading spec takes no argument:
+#     -ws,   -> keep=(-w -s ,)             rest=(desc a b c d)
+#     -w -s, -> keep=(-w -s ,)             rest=(desc a)      # identical
+#     -Cws,  -> keep=(-w -s ,) usecc=(-C)  rest=(desc a)
+#
+# The port matched only the SECOND BYTE and required an exactly-two-byte word
+# for the no-argument specs, so `-ws,` fell through the catch-all `break`,
+# stayed in the positionals, became the DESCRIPTION and reached `_describe`.
+# Outside the harness: `_values -ws, desc a b c d` on `tstv b,c ` + TAB gives
+# zsh `a  d`, zshrs `_describe:21: bad option: -w` / `-s` / `-,` then
+# `(eval):1: bad substitution`.  The `-w`-alone control matches on both.
+# The port's comment asserting "zparseopts does not split clusters" was
+# disproved by that measurement and is corrected in the fix.
+#
+#   before  Y06values exit=1 fail=1 pass=24   corpus fail=2 pass=220 xfail=7
+#   after   Y06values exit=0 pass=25          corpus fail=1 pass=221 xfail=7
+# No other file moved.  Control discriminates: reverting only the hunk gives
+# fail=1 pass=24, restoring byte-identically gives pass=25.  Pinned by
+# `zparseopts_splits_a_no_arg_cluster` over `split_no_arg_cluster`.
+#
+# ---------------------------------------------------------------------------
+# Y04regexargs #2 "simple alternation, use of _message for description with
+# no matches" — REPRODUCED and BOUNDED, not fixed.
+# ---------------------------------------------------------------------------
+# zshrs drops the trailing `DESCRIPTION:{number}` — the description of the
+# alternative `: _message -e numbers number`, whose action yields NO matches.
+# Reproduces outside the ztst harness, both shells, 3 identical runs:
+#     _regex_arguments _tstra /$'[^\0]#\0'/ \( /'one '/ ':fixed:fixed:(one)' \|
+#         /'two '/ ':second:second:compadd two' \|
+#         /'[0-9]## '/ ': _message -e numbers number' \)
+#   zsh   : fixed / second / number / one  two
+#   zshrs : fixed / second /          one  two
+#
+# EXCLUDED BY MEASUREMENT, do not re-chase:
+#  * `_alternative`'s space-prefixed action arm (sh:57-64) and `_message -e`.
+#    A direct `_alternative 'numbers:number: _message -e numbers number'
+#    'fixed:fixed:(one)'` prints `number / fixed / one` IDENTICALLY on both
+#    shells.  The `_next_label`-gate theory for that arm is therefore dead.
+#  * The empty-action arm (sh:30-34 -> mesgs -> sh:79-81 `_message -e`): the
+#    failing action is NOT empty, it is a leading-space command.
+# WHAT IS LEFT: `_regex_arguments` itself — the caction rewrite at
+# `_regex_arguments.rs:112-132` (`:_ra_comp $'…'`), `_ra_comp`'s collection
+# (sh:53-55), or which alternatives reach `_alternative` at sh:77.  The next
+# probe must dump `_ra_actions` on both shells for the three-alternative
+# shape above; a two-alternative variant does NOT reproduce (the buffer
+# completes to a single match and never exercises the path).
