@@ -2481,27 +2481,35 @@ fn run_mode(mode: &str, script: &str) -> (i32, String) {
 }
 
 #[test]
-fn korn_dropin_rejects_a_parenthesised_substring_offset() {
+fn korn_dropin_takes_a_parenthesised_substring_offset() {
     if zshrs_bin().is_none() {
         return;
     }
-    // ksh93u+ 2012-08-01 errors on ANY paren in the offset arithmetic;
-    // the space form is the one it accepts.
-    for script in [
-        r#"v=abcdef; print "${v:(-2)}""#,
-        r#"v=abcdef; print "${v:(-3):2}""#,
-        r#"v=abcdef; print "${v:1+(1)}""#,
+    // This case used to assert the OPPOSITE: that `--ksh` rejects any paren
+    // in the offset arithmetic. That was true of ksh93u+ 2012-08-01, the
+    // /bin/ksh macOS froze, and of 93u+m 1.0.4. ksh93u+m changed it, and
+    // measured across the four builds:
+    //
+    //     93u+  2012-08-01 (macOS /bin/ksh)      arithmetic syntax error
+    //     93u+m 1.0.4  2022-10-22 (bookworm)     arithmetic syntax error
+    //     93u+m 1.0.8  2024-01-01 (ubuntu 24.04) ${v:(-3):2} -> de
+    //     93u+m 1.0.10             (brew ksh93)  same as 1.0.8
+    //
+    // zshrs targets the maintained 93u+m 1.0.x line — which is what both CI
+    // runners install, so the emulation-parity matrix measures against it.
+    for (script, want) in [
+        (r#"v=abcdef; printf '%s\n' "${v:(-2)}""#, "ef\n"),
+        (r#"v=abcdef; printf '%s\n' "${v:(-3):2}""#, "de\n"),
+        (r#"v=abcdef; printf '%s\n' "${v:1+(1)}""#, "cdef\n"),
     ] {
         let (ec, out) = run_mode("--ksh", script);
-        assert_ne!(ec, 0, "--ksh must reject {script:?}; got stdout={out:?}");
-        assert_eq!(out, "", "--ksh must print nothing for {script:?}");
+        assert_eq!((ec, out.as_str()), (0, want), "--ksh: {script:?}");
     }
+    // The space form every ksh has always accepted still works.
     let (ec, out) = run_mode("--ksh", r#"v=abcdef; print "${v: -3:2}""#);
     assert_eq!((ec, out.as_str()), (0, "de\n"), "space-offset form is valid ksh");
 
-    // mksh sides with zsh/bash — `mksh -c 'v=abcdef; print "${v:(-2)}"'`
-    // prints `ef` — so the Korn gate must not catch the pdksh line, and
-    // zsh/bash modes must be untouched.
+    // The other drop-ins were never gated and must stay put.
     for mode in ["--mksh", "--zsh", "--bash"] {
         let (ec, out) = run_mode(mode, r#"v=abcdef; printf '%s\n' "${v:(-2)}""#);
         assert_eq!((ec, out.as_str()), (0, "ef\n"), "{mode} must keep parens");
@@ -2509,18 +2517,30 @@ fn korn_dropin_rejects_a_parenthesised_substring_offset() {
 }
 
 #[test]
-fn korn_dropin_never_matches_an_empty_replacement_pattern() {
+fn korn_dropin_matches_an_anchored_empty_replacement_pattern() {
     if zshrs_bin().is_none() {
         return;
     }
-    // ksh93: empty pattern matches nothing, anchored or not.
-    for script in [
-        r#"v=abc; print "[${v/#/X}]""#,
-        r#"v=abc; print "[${v/%/X}]""#,
-        r#"v=abc; print "[${v//X}]""#,
+    // This case used to assert the OPPOSITE: that under `--ksh` an empty
+    // pattern matches nothing, so `${v/#/X}` is a no-op. True of ksh93u+
+    // 2012-08-01 and of 93u+m 1.0.4; ksh93u+m changed it:
+    //
+    //     93u+  2012-08-01 (macOS /bin/ksh)      [abc]
+    //     93u+m 1.0.4  2022-10-22 (bookworm)     [abc]
+    //     93u+m 1.0.8  2024-01-01 (ubuntu 24.04) [Xabc] / [abcX]
+    //     93u+m 1.0.10             (brew ksh93)  same as 1.0.8
+    //
+    // zshrs targets 93u+m 1.0.x, so the anchored empty pattern prepends and
+    // appends as zsh, bash and mksh already did.
+    for (script, want) in [
+        (r#"v=abc; print "[${v/#/X}]""#, "[Xabc]\n"),
+        (r#"v=abc; print "[${v/%/X}]""#, "[abcX]\n"),
+        // UNanchored `${v//X}` removes every `X`; `abc` has none, so it is
+        // unchanged. Never gated, and not the empty-pattern case at all.
+        (r#"v=abc; print "[${v//X}]""#, "[abc]\n"),
     ] {
         let (ec, out) = run_mode("--ksh", script);
-        assert_eq!((ec, out.as_str()), (0, "[abc]\n"), "--ksh: {script:?}");
+        assert_eq!((ec, out.as_str()), (0, want), "--ksh: {script:?}");
     }
     // A NON-empty pattern still anchors, exactly as ksh93 does.
     let (_ec, out) = run_mode("--ksh", r#"v=abc; print "[${v/#a/X}]""#);

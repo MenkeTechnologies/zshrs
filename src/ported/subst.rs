@@ -16893,24 +16893,23 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
-                // !!! EMULATION-ONLY (no C counterpart) !!! An EMPTY pattern
-                // never matches in ksh93, so the whole replacement is a no-op:
-                //     $ ksh -c 'v=abc; print "[${v/#/X}]"'   → [abc]
-                //     $ ksh -c 'v=abc; print "[${v/%/X}]"'   → [abc]
-                //     $ ksh -c 'v=abc; print "[${v//X}]"'    → [abc]
-                // where zsh (and bash) match the empty pattern at the anchor
-                // and prepend/append:  zsh → [Xabc] / [abcX].
-                // ksh93 does support the anchors themselves with a NON-empty
-                // pattern (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`), so the
-                // rule is specifically "empty pattern matches nothing", not
-                // "no anchors". (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.)
+                // HISTORICAL NOTE — a `korn_empty_pat` gate used to make an
+                // EMPTY pattern match nothing under `--ksh`, so `${v/#/X}` and
+                // `${v/%/X}` were no-ops. It was measured against ksh93u+
+                // 2012-08-01, the /bin/ksh macOS froze, and it was accurate for
+                // that build. ksh93u+m then CHANGED, and the gate outlived the
+                // behaviour it described:
                 //
-                // mksh/pdksh side with zsh/bash here, not ksh93: `mksh -c
-                // 'v=abc; print "[${v/#/X}]"'` prints `[Xabc]`, so that line is
-                // excluded via `pdksh_family()`.
-                let korn_empty_pat = crate::dash_mode::korn_mode()
-                    && !crate::dash_mode::pdksh_family()
-                    && pat_after_anchor.is_empty();
+                //     93u+  2012-08-01 (macOS /bin/ksh)      [abc]
+                //     93u+m 1.0.4  2022-10-22 (bookworm)     [abc]
+                //     93u+m 1.0.8  2024-01-01 (ubuntu 24.04) [Xabc] / [abcX]
+                //     93u+m 1.0.10             (brew ksh93)  same as 1.0.8
+                //
+                // zshrs targets the maintained 93u+m 1.0.x line, which is also
+                // what both CI runners install, so the anchored empty pattern
+                // prepends/appends exactly as zsh, bash and mksh do. A NON-empty
+                // anchored pattern was never gated and is unchanged
+                // (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`).
                 // c:Src/subst.c:3360-3412 — C order transposed: the
                 // pattern is pre-tokenized (source metas -> token
                 // chars, as the lexer leaves them for paramsubst),
@@ -17109,11 +17108,6 @@ pub fn paramsubst(
                     }
                 };
                 let replace_global = |val: &str| -> String {
-                    // See `korn_empty_pat` above: ksh93's empty pattern never
-                    // matches, so the replacement is a no-op on every element.
-                    if korn_empty_pat {
-                        return val.to_string();
-                    }
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
                     // Byte offset of every character boundary, plus the end.
@@ -17874,24 +17868,23 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
-                // !!! EMULATION-ONLY (no C counterpart) !!! An EMPTY pattern
-                // never matches in ksh93, so the whole replacement is a no-op:
-                //     $ ksh -c 'v=abc; print "[${v/#/X}]"'   → [abc]
-                //     $ ksh -c 'v=abc; print "[${v/%/X}]"'   → [abc]
-                //     $ ksh -c 'v=abc; print "[${v//X}]"'    → [abc]
-                // where zsh (and bash) match the empty pattern at the anchor
-                // and prepend/append:  zsh → [Xabc] / [abcX].
-                // ksh93 does support the anchors themselves with a NON-empty
-                // pattern (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`), so the
-                // rule is specifically "empty pattern matches nothing", not
-                // "no anchors". (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.)
+                // HISTORICAL NOTE — a `korn_empty_pat` gate used to make an
+                // EMPTY pattern match nothing under `--ksh`, so `${v/#/X}` and
+                // `${v/%/X}` were no-ops. It was measured against ksh93u+
+                // 2012-08-01, the /bin/ksh macOS froze, and it was accurate for
+                // that build. ksh93u+m then CHANGED, and the gate outlived the
+                // behaviour it described:
                 //
-                // mksh/pdksh side with zsh/bash here, not ksh93: `mksh -c
-                // 'v=abc; print "[${v/#/X}]"'` prints `[Xabc]`, so that line is
-                // excluded via `pdksh_family()`.
-                let korn_empty_pat = crate::dash_mode::korn_mode()
-                    && !crate::dash_mode::pdksh_family()
-                    && pat_after_anchor.is_empty();
+                //     93u+  2012-08-01 (macOS /bin/ksh)      [abc]
+                //     93u+m 1.0.4  2022-10-22 (bookworm)     [abc]
+                //     93u+m 1.0.8  2024-01-01 (ubuntu 24.04) [Xabc] / [abcX]
+                //     93u+m 1.0.10             (brew ksh93)  same as 1.0.8
+                //
+                // zshrs targets the maintained 93u+m 1.0.x line, which is also
+                // what both CI runners install, so the anchored empty pattern
+                // prepends/appends exactly as zsh, bash and mksh do. A NON-empty
+                // anchored pattern was never gated and is unchanged
+                // (`${v/#a/X}` → `Xbc`, `${v/%c/X}` → `abX`).
                 // Pattern: keep \X for glob meta literals (untokenize
                 // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
@@ -18133,11 +18126,6 @@ pub fn paramsubst(
                     }
                 };
                 let replace_one = |val: &str| -> String {
-                    // See `korn_empty_pat` above: ksh93's empty pattern never
-                    // matches, so the replacement is a no-op on every element.
-                    if korn_empty_pat {
-                        return val.to_string();
-                    }
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
@@ -20496,34 +20484,21 @@ pub fn paramsubst(
                         }
                     };
                     let parts: Vec<&str> = core_slice.splitn(2, ':').collect();
-                    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93's
-                    // `${var:offset[:length]}` arithmetic accepts no
-                    // parentheses at all — not the `(-3)` idiom bash and zsh
-                    // document for a negative offset, and not even a grouping
-                    // paren in an ordinary expression:
-                    //     $ ksh -c 'v=abcdef; print "${v:(-3):2}"'
-                    //     ksh: \(-3\):2: arithmetic syntax error
-                    //     $ ksh -c 'v=abcdef; print "${v:1+(1)}"'
-                    //     ksh: 1+\(1\): arithmetic syntax error
-                    //     $ ksh -c 'v=abcdef; print "${v: -3:2}"'
-                    //     de
-                    // (ksh93u+ 2012-08-01, /bin/ksh on macOS 15.) zsh accepts
-                    // all three, so the gate is `korn_mode()` — the BARE
-                    // `--ksh`/`--mksh`/`--pdksh` drop-in. `zshrs --ksh --zsh`
-                    // and a runtime `emulate ksh` keep zsh's behavior, which is
-                    // what the zsh-style parity leg measures.
+                    // HISTORICAL NOTE — there used to be a `korn_mode()` gate
+                    // here rejecting ANY paren in the substring arithmetic
+                    // (`${v:(-3):2}`, and `${v:1+(1)}` too). It was measured
+                    // against ksh93u+ 2012-08-01, the /bin/ksh macOS froze, and
+                    // it was accurate for that build. ksh93u+m then CHANGED, and
+                    // the gate outlived the behaviour it described:
                     //
-                    // mksh/pdksh are NOT ksh93 here: `mksh -c 'v=abcdef; print
-                    // "${v:(-2)}"'` prints `ef`, so that line is excluded via
-                    // `pdksh_family()`.
-                    if crate::dash_mode::korn_mode()
-                        && !crate::dash_mode::pdksh_family()
-                        && core_slice.contains('(')
-                    {
-                        zerr(&format!("{}: arithmetic syntax error", core_slice));
-                        errflag_set_error();
-                        return (String::new(), 0, Vec::new());
-                    }
+                    //     93u+  2012-08-01 (macOS /bin/ksh)      syntax error
+                    //     93u+m 1.0.4  2022-10-22 (bookworm)     syntax error
+                    //     93u+m 1.0.8  2024-01-01 (ubuntu 24.04) ${v:(-3):2} -> de
+                    //     93u+m 1.0.10             (brew ksh93)  same as 1.0.8
+                    //
+                    // zshrs targets the maintained 93u+m 1.0.x line, which is
+                    // also what both CI runners install, so parens are accepted
+                    // here exactly as zsh, bash and mksh accept them.
                     // c:Src/subst.c:3825 — `${str:offset:length}` arms
                     // both go through `mathevali` (Src/math.c:1240),
                     // not literal strtol. Allows parentheses, leading
