@@ -14842,7 +14842,18 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // not while `SKIP_FILESUB` marks a `${var/pat/repl}` pattern context where
     // a literal `~` must survive.
     // The word this expansion belongs to runs its own end-of-word drop.
-    let keep_nulargs = saved_defer > 0 && !reentered;
+    // A lone node that is NOTHING BUT the c:36 `nulstring` marker is an
+    // empty FIELD a split produced, not an empty word. C drops the marker
+    // in its final untokenize pass (c:Src/lex.c:2089), but prefork's
+    // node-removal decision at c:183 was made before that, with the marker
+    // still in place, so the word survives as "". Folding it here instead
+    // hands `nodes_to_value` a node it cannot tell from a genuine empty,
+    // and its single-node drop deletes it — see the trace there. `IFS=:;
+    // v=":"; set -- $v` under `--dash` reported `$#` as 0 where dash, bash
+    // and ksh all report 1.
+    let lone_marker =
+        nodes.len() == 1 && nodes[0].chars().eq(std::iter::once(crate::ported::zsh_h::Nularg));
+    let keep_nulargs = (saved_defer > 0 && !reentered) || lone_marker;
     let do_filesub = !qt
         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
         && !crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
@@ -15441,6 +15452,22 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
     //   command args, etc.) must see the post-remnulargs strings. Bug
     //   #185 in docs/BUGS.md: `[[ -z "${b[@]}" ]]` for b=("") returned
     //   false because the leftover `\u{a1}` had StringLen=1.
+    //
+    // ORDER MATTERS, and the single-node drop below is the second half of
+    // it. C tests a node's emptiness at c:183 BEFORE remnulargs runs at
+    // c:170, and `nulstring` is one byte long, so a node holding only the
+    // marker is NON-empty at that test. The drop has ALREADY happened by
+    // the time the marker becomes "", and nothing removes the node twice.
+    //
+    // Traced for `IFS=:; v=":"; set -- $v` under `--dash`:
+    //   spacesplit(":")  -> ["<nul>", ""]   leading marker, trailing empty
+    //   paramsubst c:183 -> ["<nul>"]       the real empty goes, marker stays
+    //   caller's fold    -> [""]            untokenize folds the marker
+    //   here, unguarded  -> []              dropped a second time
+    // `$#` was 0 where dash, bash and ksh all report 1. Two or more nodes
+    // never reach the single-node drop, which is why `::` was already
+    // right and only the lone separator was wrong.
+    let node_was_marked: bool = nodes.len() == 1 && !nodes[0].is_empty();
     let stripped: Vec<String> = nodes
         .into_iter()
         .map(|mut s| {
@@ -15472,7 +15499,7 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
         // (in_dq_context > 0) keeps the empty string so
         // `echo "${UNSET}"` still produces an empty arg per zsh's
         // quoting rules (c:Src/subst.c:1650-1656 isarr comment).
-        if only.is_empty() {
+        if only.is_empty() && !node_was_marked {
             let in_dq = with_executor(|exec| exec.in_dq_context > 0);
             if !in_dq {
                 // One empty node = a SCALAR-shaped empty result (c:4437),
