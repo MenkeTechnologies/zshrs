@@ -10,7 +10,7 @@
 //! sh:6  _normal
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -51,7 +51,13 @@ pub fn _cmdstring_impl() -> i32 {
     // sh:5  compset -q
     let _ = bin_compset("compset", &["-q".to_string()], &make_ops(), 0);
     // sh:6  _normal
-    dispatch_function_call("_normal", &[]).unwrap_or(1)
+    // sh:6 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_normal", &[], 6)
 }
 
 #[cfg(test)]
@@ -61,11 +67,15 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
         INCOMPFUNC.store(1, Ordering::Relaxed);
         let r = _cmdstring_impl();
         INCOMPFUNC.store(0, Ordering::Relaxed);
-        assert_eq!(r, 1);
+        assert_eq!(r, 127);
     }
 }

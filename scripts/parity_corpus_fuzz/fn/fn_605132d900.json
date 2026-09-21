@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_zmodload ",
+  "call_label": "bare",
+  "fingerprint": "605132d900",
+  "function": "_zmodload",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/row0/col0 | ref/$ true | test/$ cat -- $ZPF_OUT",
+  "ref_rows": [
+    "@CT@ true",
+    "@CT@ cat -- $ZPF_OUT",
+    "== _zmodload / bare",
+    "-- argv:",
+    "-- rc: 0",
+    "  nmatches: 0 -> 1",
+    "  compstate[list_lines]: '0' -> '1'",
+    "  compstate[unambiguous]: '' -> 'zsh'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _zmodload --fn-call bare --fn-derive-only _zmodload --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2J/zshrs-fix --zsh /opt/homebrew/bin/zsh --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2J/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_zmodload:1-78 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "@CT@ cat -- $ZPF_OUT",
+    "== _zmodload / bare",
+    "-- argv:",
+    "-- rc: 0",
+    "  nmatches: 0 -> 539",
+    "  compstate[list_lines]: '0' -> '1019'",
+    "  expl[1] = ''",
+    "  _lastdescr[8] = '' 'param' 'module file' 'files' 'file' 'fasd ranked files' 'fasd ranked directories' 'modul"
+  ]
+}

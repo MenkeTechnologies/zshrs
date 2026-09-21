@@ -1,0 +1,12 @@
+{
+  "buffer": "df -",
+  "fingerprint": "c0e0d8772f",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/<LC>#df - | test/-, -- separate thousa",
+  "origin": "style-fuzz/cfg0069",
+  "statements": [
+    "zstyle ':completion:*:*:*:*:*' list-colors 'lc=<LC>' '*.rs=32' sp=33"
+  ]
+}

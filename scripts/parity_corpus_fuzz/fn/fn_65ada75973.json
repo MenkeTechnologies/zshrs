@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_login_classes ",
+  "call_label": "bare",
+  "fingerprint": "65ada75973",
+  "function": "_login_classes",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_login_classes:#: no such file or directory: <path> | test/-- rc: #",
+  "ref_rows": [
+    "_login_classes:5: no such file or directory: /etc/login.conf",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'login class'",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _login_classes --fn-call bare --fn-derive-only _login_classes --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_login_classes:1-11 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'login class'",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ]
+}

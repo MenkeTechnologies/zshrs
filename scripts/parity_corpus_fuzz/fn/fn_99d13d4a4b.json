@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "_math ",
+  "call_label": "bare",
+  "fingerprint": "99d13d4a4b",
+  "function": "_math",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/$ | test/<absent>",
+  "ref_rows": [
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _math --fn-call bare --fn-derive-only _math --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r3D2/zshrs.after --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_math:1-14 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "<absent>"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "__arguments ",
+  "call_label": "bare",
+  "fingerprint": "a2b997bf45",
+  "function": "__arguments",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col2 | ref/_comp_tags = ' argument-rest ' | test/_comp_tags = ' argument-# argument-rest '",
+  "ref_rows": [
+    "  _comp_tags = ' argument-rest '"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only __arguments --fn-call bare --fn-derive-only __arguments --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/__arguments:1-44 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _comp_tags = ' argument-1  argument-rest '"
+  ]
+}

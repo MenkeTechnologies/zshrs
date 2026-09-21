@@ -26,7 +26,7 @@
 
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 
@@ -89,7 +89,13 @@ pub fn _tilde(args: &[String]) -> i32 {
         if _requested(&["users".to_string()]) == 0 {
             let mut users_args: Vec<String> = suf.clone();
             users_args.extend(args.iter().cloned());
-            if dispatch_function_call("_users", &users_args).unwrap_or(1) == 0 {
+            // sh:22 is a COMMAND WORD, so `dispatch_action_command`
+            // (shared.rs:1407) resolves it exactly as `execcmd` does:
+            // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+            // `$PATH`, then c:903's `command not found` with c:908's 127. The
+            // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+            // that resolved nowhere returned in silence.
+            if dispatch_action_command("_users", &users_args, 22) == 0 {
                 ret = 0;
             }
         }
@@ -109,7 +115,13 @@ pub fn _tilde(args: &[String]) -> i32 {
         }
         // sh:27  _requested directory-stack && _directory_stack
         if _requested(&["directory-stack".to_string()]) == 0 {
-            if dispatch_function_call("_directory_stack", &suf).unwrap_or(1) == 0 {
+            // sh:27 is a COMMAND WORD, so `dispatch_action_command`
+            // (shared.rs:1407) resolves it exactly as `execcmd` does:
+            // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+            // `$PATH`, then c:903's `command not found` with c:908's 127. The
+            // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+            // that resolved nowhere returned in silence.
+            if dispatch_action_command("_directory_stack", &suf, 27) == 0 {
                 ret = 0;
             }
         }

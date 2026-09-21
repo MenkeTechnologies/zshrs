@@ -1,0 +1,24 @@
+{
+  "argv": [],
+  "call": "_assign ",
+  "call_label": "bare",
+  "fingerprint": "4b9b1804ac",
+  "function": "_assign",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/nmatches: # -> # | test/nmatches: # -> #",
+  "ref_rows": [
+    "  nmatches: 0 -> 372",
+    "  compstate[list_lines]: '0' -> '93'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _assign --fn-call bare --fn-derive-only _assign --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_assign:1-3 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  nmatches: 0 -> 384",
+    "  compstate[list_lines]: '0' -> '96'"
+  ]
+}

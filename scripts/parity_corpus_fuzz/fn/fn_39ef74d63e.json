@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "_absolute_command_paths ",
+  "call_label": "bare",
+  "fingerprint": "39ef74d63e",
+  "function": "_absolute_command_paths",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'hashed command by absolute path' 'full path to an executable' 'file' | test/_lastdescr[#] = '' 'hashed command by absolute path' 'full path to an executable",
+  "ref_rows": [
+    "  _lastdescr[4] = '' 'hashed command by absolute path' 'full path to an executable' 'file'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _absolute_command_paths --fn-call bare --fn-derive-only _absolute_command_paths --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs.fix2 --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_absolute_command_paths:1-37 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _lastdescr[3] = '' 'hashed command by absolute path' 'full path to an executable'"
+  ]
+}

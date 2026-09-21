@@ -6240,6 +6240,18 @@ pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i
                                                             // always found the FIRST equal element: a run of three identical
                                                             // matches marked one element CMF_DELETE twice instead of two
                                                             // elements once, so only one of the two dupes was ever dropped.
+                // !!! MEASURED DIVERGENCE (see `crate::tolerant_sort`): the
+                // pair walk below kills the LATER member of each equal pair in
+                // THIS sorted copy, and the survivor keeps its slot in `ord`,
+                // i.e. in the displayed order. `matchcmp` returns 0 for two
+                // copies of one match, so the C answer is the platform
+                // `qsort(3)`'s undefined tie order while `qsort_tolerant` is
+                // stable and always keeps the first-added copy. Measured on
+                // `git show <TAB><TAB>`, where `_git` compadds the same 20
+                // commits twice into `-J -default-`: zsh/Darwin lists them in
+                // two ascending runs, zshrs in insertion order. Same set, same
+                // descriptions. Not portably fixable — zsh's own order here is
+                // whatever its libc's quicksort left behind.
                 let mut sord: Vec<usize> = ord.clone();
                 // c:3301-3302 — qsort matchcmp; tolerant sort (non-total-order cmp).
                 crate::tolerant_sort::qsort_tolerant(&mut sord, |a: &usize, b: &usize| {

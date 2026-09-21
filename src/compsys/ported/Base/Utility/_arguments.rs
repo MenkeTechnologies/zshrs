@@ -37,6 +37,7 @@ use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::shared::declare_locals;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
@@ -1384,7 +1385,13 @@ pub fn _arguments_impl(args: &[String]) -> i32 {
                             matcher.clone(),
                         ];
                         dv.extend(subopts.iter().cloned());
-                        if dispatch_function_call("_describe", &dv).unwrap_or(1) != 0
+                        // sh:427 is a COMMAND WORD, so `dispatch_action_command`
+                        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+                        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+                        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+                        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+                        // that resolved nowhere returned in silence.
+                        if dispatch_action_command("_describe", &dv, 427) != 0
                             && alwopt.is_empty()
                         {
                             alwopt = "yes".to_string();

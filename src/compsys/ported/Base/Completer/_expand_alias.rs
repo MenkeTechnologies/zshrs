@@ -42,7 +42,7 @@
 use crate::compsys::ported::_aliases::_aliases;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::compsys::ported::shared::{zstyle_T, zstyle_t};
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
@@ -171,18 +171,26 @@ pub fn _expand_alias() -> i32 {
         w_args.push(tmp.trim_end().to_string());
         if has_main_complete_pre {
             argv.extend(w_args);
-            dispatch_function_call("_main_complete", &argv).unwrap_or(1)
+            // sh:62 `$pre _wanted …` — `$pre` expands to the COMMAND WORD
+            // `_main_complete`, resolved by `dispatch_action_command`
+            // (shared.rs:1407) the way `execcmd` resolves one, ending in
+            // c:903's `command not found` + c:908's 127 rather than a silent 1.
+            dispatch_action_command("_main_complete", &argv, 62)
         } else {
             _wanted(&w_args)
         }
     // sh:63 — `zstyle -t … complete`; see [`zstyle_t`].
     } else if has_main_complete_pre && zstyle_t(&ctx, "complete") == 0 {
         // sh:56-57
-        dispatch_function_call(
+        // sh:64 `$pre _aliases -s "$sel" -S ''` — same COMMAND-WORD
+        // resolution. (`$pre` is non-empty on this branch, so upstream runs
+        // `_main_complete _aliases …`; the port calls `_aliases` directly,
+        // which is a separate, pre-existing divergence.)
+        dispatch_action_command(
             "_aliases",
             &["-s".to_string(), sel, "-S".to_string(), "".to_string()],
+            64,
         )
-        .unwrap_or(1)
     } else {
         // sh:59
         1

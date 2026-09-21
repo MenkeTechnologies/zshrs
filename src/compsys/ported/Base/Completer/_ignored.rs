@@ -28,7 +28,7 @@
 //! ```
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -88,7 +88,13 @@ pub fn _ignored() -> i32 {
         if bare == "_ignored" {
             continue;
         }
-        if dispatch_function_call(bare, &[]).unwrap_or(1) == 0 {
+        // sh:45 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        if dispatch_action_command(bare, &[], 45) == 0 {
             // sh:39-55  single-ignored handling
             // sh:46  if zstyle -s ":completion:${curcontext}:" single-ignored tmp &&
             //

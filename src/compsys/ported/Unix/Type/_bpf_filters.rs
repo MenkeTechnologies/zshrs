@@ -589,8 +589,33 @@ pub fn _bpf_filters(args: &[String]) -> i32 {
     let _ = _regex_arguments(&spec);
 
     // sh:217 — `_bpf "$@"`.
+    //
+    // Upstream sh:217 is a bare command word, and `_regex_arguments` sh:62-83
+    // `eval`-defines `_bpf` as a REAL shell function, so zsh runs it through
+    // `doshfunc` and pushes a `FUNCSTACK` frame named `_bpf`
+    // (c:Src/exec.c:6005-6016, popped at c:6218-6219). `dispatch_registered`
+    // runs the compiled body as a plain Rust call and opens no frame, so every
+    // consumer that reads `$funcstack` BY INDEX from inside `_bpf` ran one
+    // frame too deep. `_help_sort_tags`
+    // (sh:Base/Widget/_complete_help:80) is such a consumer, and it attributed
+    // every tag `_bpf` registers to `_bpf_filters` instead. Measured on
+    // `tcpdump <C-x h>` against zsh 5.9.2:
+    //
+    //   zsh    operators expressions fields … (_bpf _bpf_filters _arguments _tcpdump)
+    //   zshrs  operators expressions fields … (     _bpf_filters _arguments _tcpdump)
+    //
+    // Only the `FUNCSTACK` half of the prologue is supplied here, matching
+    // `_message.rs:219-222` and `_wanted.rs:218-241`. `doshfunc` also bumps
+    // `locallevel` — `_regex_arguments::dispatch_if_registered` does that for
+    // the `_arguments`-action entry point — and this call site does not; that
+    // half is deliberately left alone rather than changed blind, because
+    // `comptags` is indexed by that level (`Src/Zle/computil.c:3782`) and the
+    // tag SET this cell reports is already identical on both shells.
     setaparam("_bpf_argv", args.to_vec());
-    let ret = dispatch_registered("_bpf");
+    let ret = {
+        let _frame = crate::compsys::ported::shared::PortFuncstackFrame::push("_bpf");
+        dispatch_registered("_bpf")
+    };
     drop(_locals);
     ret
 }

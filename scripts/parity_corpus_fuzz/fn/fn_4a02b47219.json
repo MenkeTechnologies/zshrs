@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_services ",
+  "call_label": "bare",
+  "fingerprint": "4a02b47219",
+  "function": "_services",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/-- rc: # | test/(eval):#: command not found: chkconfig",
+  "ref_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'service'",
+    "  _comp_tags = ' services '",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _services --fn-call bare --fn-derive-only _services --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_services:1-36 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "(eval):1: command not found: chkconfig",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'service'",
+    "  _comp_tags = ' services '",
+    "  _comp_colors = ''",
+    "@CT@"
+  ]
+}

@@ -35,7 +35,13 @@
 //!
 //! The level shift is now applied explicitly (`inc_locallevel` /
 //! `dec_locallevel` around the block in [`_wanted_impl`]), same shape as the
-//! guard in `_message.rs`. The live completion-context evidence the earlier
+//! guard in `_message.rs`. `locallevel` is only HALF of what `doshfunc` opens,
+//! though: it also pushes a `FUNCSTACK` frame (c:Src/exec.c:6005-6016), and
+//! that half was missing too, so `$funcstack` lost one entry per `_tags` call
+//! and one per `_all_labels` call. Each raw call is now wrapped in a
+//! [`crate::compsys::ported::shared::PortFuncstackFrame`] naming the callee —
+//! see the measurement quoted at the call sites in [`_wanted_impl`].
+//! The live completion-context evidence the earlier
 //! note asked for was obtained: dropping zsh's own
 //! `Completion/Base/Core/_wanted` into `$fpath` ahead of the port — which
 //! restores the real `doshfunc` frames and changes nothing else — makes
@@ -179,23 +185,61 @@ pub fn _wanted_impl(args: &[String]) -> i32 {
     // `diff3 -<TAB>` byte-identical to the reference shell.
     crate::ported::utils::inc_locallevel();
 
+    // In zsh `_tags` and `_all_labels` are real shell functions, so each call
+    // below opens a `doshfunc` `FUNCSTACK` frame (c:Src/exec.c:6005-6016) that
+    // the callee and everything it reaches can see. The raw `_impl` calls skip
+    // `doshfunc` entirely, so those frames were absent and every consumer that
+    // reads `$funcstack` / `$#funcstack` from inside one of them ran one frame
+    // too shallow. Measured under `_wanted ptag expl … _wanted itag expl2 …
+    // compadd`, reading `$funcstack` from the innermost action (zsh 5.9.2 as
+    // reference):
+    //
+    //   zsh    _probe_inner _all_labels _wanted _probe_outer _all_labels
+    //          _wanted _probecmd (eval) _dispatch _normal _complete
+    //          _main_complete          ($#funcstack 12, $_tags_level 11)
+    //   zshrs  _probe_inner _wanted _probe_outer _wanted _probecmd (eval)
+    //          _dispatch _normal _complete _main_complete
+    //                                  ($#funcstack 10, $_tags_level  9)
+    //
+    // `_all_labels` sh:27-28 gates its `_comp_tags` strip on
+    // `(( $#funcstack > _tags_level ))` and then records `_tags_level` from the
+    // same counter, so the two sites being compared must be measured on the
+    // same scale: `_requested.rs:141` reaches `_all_labels` BY NAME and does
+    // get the frame, and mixing the two depths is what makes that `>` fire on
+    // one path and not the other. The frames are supplied on their own, NOT by
+    // switching to the dispatching `_tags` / `_all_labels`, so the hand-managed
+    // `inc_locallevel` pairing above stays intact — same arrangement, and same
+    // reasoning, as `_message.rs:219-222`.
+    //
     // sh:7  _tags "$__targs[@]" "$1"
     let arg1 = argv.first().cloned().unwrap_or_default();
     let mut tags_args: Vec<String> = targs.clone();
     tags_args.push(arg1);
-    let _ = _tags_impl(&tags_args);
+    {
+        let _tags_frame = crate::compsys::ported::shared::PortFuncstackFrame::push("_tags");
+        let _ = _tags_impl(&tags_args);
+    }
 
     // sh:9-11  while _tags; do _all_labels … && return 0; done
     let mut ret = 1; // sh:13
     loop {
-        if _tags_impl(&[]) != 0 {
+        let next_set_rc = {
+            let _tags_frame = crate::compsys::ported::shared::PortFuncstackFrame::push("_tags");
+            _tags_impl(&[])
+        };
+        if next_set_rc != 0 {
             // sh:9 — _tags's switch-to-next-tag-set form returns
             //   non-zero when no more tag sets exist.
             break;
         }
         let mut labels_args: Vec<String> = gopt.clone();
         labels_args.extend(argv.iter().cloned());
-        if _all_labels_impl(&labels_args) == 0 {
+        let labels_rc = {
+            let _labels_frame =
+                crate::compsys::ported::shared::PortFuncstackFrame::push("_all_labels");
+            _all_labels_impl(&labels_args)
+        };
+        if labels_rc == 0 {
             // sh:10
             ret = 0;
             break;

@@ -403,8 +403,10 @@ pub fn _brace_parameter() -> i32 {
         return _history_modifiers(&[s("p")]);
     }
 
-    // sh:214  _parameters -e
-    call_parameters(&[s("-e")])
+    // sh:214  _parameters -e — a plain COMMAND WORD, resolved by
+    // `call_parameters` the way `execcmd` resolves one (shfunc/port/plugin,
+    // builtin, `$PATH`, then `Src/exec.c:903` `command not found` + 127).
+    call_parameters(&[s("-e")], 214)
 }
 
 #[cfg(test)]
@@ -413,12 +415,15 @@ mod tests {
 
     #[test]
     fn plain_name_falls_to_parameters() {
-        // sh:214 — a bare `${myvar` (no `${(`, no `:`) drops to
-        //   `_parameters -e`; its rc is 0 or 1 (0 when it enumerated
-        //   params, 1 when none) — the point is it reaches `_parameters`.
+        // sh:214 — a bare `${myvar` (no `${(`, no `:`) drops to the command
+        //   word `_parameters -e`. With no executor wired the name resolves to
+        //   no shell function, no builtin and nothing on `$PATH`, which is the
+        //   `Src/exec.c:903` case: the port reports `command not found` and
+        //   returns c:908's 127. The point is still that it REACHES
+        //   `_parameters` — as a command word, not as a pinned Rust call.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "myvar");
-        assert!(matches!(_brace_parameter(), 0 | 1));
+        assert_eq!(_brace_parameter(), 127);
     }
 
     #[test]

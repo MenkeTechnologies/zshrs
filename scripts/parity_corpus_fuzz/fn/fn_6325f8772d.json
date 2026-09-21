@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "_umountable ",
+  "call_label": "bare",
+  "fingerprint": "6325f8772d",
+  "function": "_umountable",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col3 | ref/_comp_tags = ' device-labels device-paths directories ' | test/_comp_tags = ' device-labels device-paths directories '",
+  "ref_rows": [
+    "  _comp_tags = ' device-labels  device-paths  directories '"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _umountable --fn-call bare --fn-derive-only _umountable --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_umountable:1-50 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _comp_tags = ' device-labels   device-paths   directories '"
+  ]
+}

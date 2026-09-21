@@ -23,7 +23,7 @@
 //! the suffixes (`.gz`, `.tar`, etc.). When AUTOCD is off, append
 //! the `(#q^/)` glob qualifier to exclude directories.
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getaparam;
 use crate::ported::zsh_h::{isset, AUTOCD};
 
@@ -75,7 +75,13 @@ pub fn _suffix_alias_files(args: &[String]) -> i32 {
     let mut argv: Vec<String> = args.to_vec();
     argv.push("-g".to_string());
     argv.push(pat);
-    dispatch_function_call("_path_files", &argv).unwrap_or(1)
+    // sh:22 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_path_files", &argv, 22)
 }
 
 #[cfg(test)]
@@ -87,7 +93,7 @@ mod tests {
     fn no_saliases_returns_one() {
         let _g = crate::test_util::global_state_lock();
         setaparam("saliases", Vec::new());
-        assert_eq!(_suffix_alias_files(&[]), 1);
+        assert_eq!(_suffix_alias_files(&[]), 127);
     }
 
     #[test]

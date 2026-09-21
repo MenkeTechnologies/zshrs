@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_shadow ",
+  "call_label": "bare",
+  "fingerprint": "bfe7f62107",
+  "function": "_shadow",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_zpf_probe:#: command not found: _shadow | test/-- rc: #",
+  "ref_rows": [
+    "_zpf_probe:15: command not found: _shadow",
+    "-- rc: 127",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr = ''",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _shadow --fn-call bare --fn-derive-only _shadow --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/Users/wizard/.zinit/plugins/MenkeTechnologies---zsh-more-completions/more_src5/_shadow:1-9 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 0",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr = ''",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ]
+}

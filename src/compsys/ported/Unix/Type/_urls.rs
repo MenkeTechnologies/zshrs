@@ -28,7 +28,6 @@ use crate::compsys::ported::_path_files::_path_files;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset};
@@ -56,8 +55,16 @@ fn compadd(argv: &[String]) -> i32 {
 fn get(name: &str) -> String {
     getsparam(name).unwrap_or_default()
 }
-fn dispatch(name: &str, args: &[String]) -> i32 {
-    dispatch_function_call(name, args).unwrap_or(1)
+/// Dispatch a compsys function BY NAME from upstream line `line`.
+///
+/// Every upstream site this stands in for writes a plain COMMAND WORD, so
+/// `shared::dispatch_action_command` (shared.rs:1407) — `execcmd`'s own
+/// resolution: shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+/// `$PATH`, then c:903's `command not found` with c:908's 127 — is what they
+/// mean. The `.unwrap_or(1)` this replaces had NO not-found arm, so a name the
+/// shell would have DIAGNOSED disappeared without a byte of output.
+fn dispatch(name: &str, args: &[String], line: u64) -> i32 {
+    crate::compsys::ported::shared::dispatch_action_command(name, args, line)
 }
 fn match1() -> String {
     getaparam("match")
@@ -385,7 +392,7 @@ pub fn _urls(args: &[String]) -> i32 {
                         "/:".to_string(),
                     ];
                     h.extend(expl.clone());
-                    if dispatch("_hosts", &h) == 0 {
+                    if dispatch("_hosts", &h, 132) == 0 {
                         ret = 0;
                     }
                 }
@@ -440,7 +447,7 @@ pub fn _urls(args: &[String]) -> i32 {
             if compset(&["-P", "(#b)([^/]#)/"]) != 0 {
                 let mut u = vec!["-S".to_string(), "/".to_string()];
                 u.extend(rest.iter().cloned());
-                return dispatch("_users", &u);
+                return dispatch("_users", &u, 151);
             }
             let user = match1();
             path_after_host_loop(
@@ -500,6 +507,7 @@ pub fn _urls(args: &[String]) -> i32 {
                         "--".to_string(),
                         "ssh".to_string(),
                     ],
+                    178,
                 ) == 0
             {
                 ret = 0;

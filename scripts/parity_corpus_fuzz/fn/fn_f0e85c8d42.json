@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "-2",
+    "-V",
+    "g",
+    "options",
+    "expl",
+    "opt",
+    "compadd",
+    "-o"
+  ],
+  "call": "_wanted '-2' '-V' 'g' 'options' 'expl' 'opt' 'compadd' '-o'",
+  "call_label": "group",
+  "fingerprint": "f0e85c8d42",
+  "function": "_wanted",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_description:#: bad set of key/value pairs for associative array | test/_description: bad set of key/value pairs for associative array",
+  "ref_rows": [
+    "_description:102: bad set of key/value pairs for associative array"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _wanted --fn-call group --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/af6610df-29cd-432f-be8c-9619a73a1a76/scratchpad/parity_rerun/zshrs.pin --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/af6610df-29cd-432f-be8c-9619a73a1a76/scratchpad/parity_rerun/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_wanted:3-13 (zparseopts -D -a __gopt 1 2 V J x C:=__targs; TAG NAME DESCR ACTION...)",
+  "test_rows": [
+    "_description: bad set of key/value pairs for associative array"
+  ]
+}

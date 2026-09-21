@@ -16,12 +16,32 @@
 use std::cmp::Ordering;
 
 /// Bottom-up **stable** merge sort that TOLERATES a comparator which is not a
-/// strict weak ordering — the faithful stand-in for C's `qsort`. O(n log n),
-/// ties keep their input order, never panics on an inconsistent `cmp`.
+/// strict weak ordering — the stand-in for C's `qsort`. O(n log n), ties keep
+/// their input order, never panics on an inconsistent `cmp`.
 ///
 /// The sort runs over indices so a non-transitive `cmp` can only affect the
 /// final order — it can never cause an out-of-bounds access or a non-terminating
 /// loop.
+///
+/// !!! MEASURED DIVERGENCE FROM `qsort(3)` — this sort is STABLE, `qsort` is
+/// not. `man 3 qsort` (Darwin): "The algorithms implemented by qsort(),
+/// qsort_r(), and heapsort() are not stable; that is, if two members compare
+/// as equal, their order in the sorted array is undefined." Wherever the C
+/// code lets a `qsort` TIE decide something observable, this function answers
+/// "input order" and the C answers "whatever the platform libc's quicksort
+/// partitioning left first". Reproducing the C answer is not portable: the
+/// same zsh binary gives a different answer on a different libc, so there is
+/// no single order to port to.
+///
+/// One such site is measured: `makearray`'s CGF_NOSORT duplicate pass
+/// (`compcore.c:3299-3303`, ported at `compcore.rs` `makearray`) sorts a COPY
+/// of the match array only to mark the LATER member of each equal pair
+/// `CMF_DELETE`, and the surviving member keeps its slot in the DISPLAY array.
+/// When the same match set is `compadd`ed twice into one group (`_git`'s
+/// `__git_recent_commits` does, once per completer pass), the tie picks which
+/// copy dies, so the listing order is the tie order. `git show <TAB><TAB>`
+/// lists 20 commits in two ascending runs under zsh/Darwin and in plain
+/// insertion order here; the sets and the descriptions are identical.
 pub fn qsort_tolerant<T: Clone, F>(v: &mut [T], mut cmp: F)
 where
     F: FnMut(&T, &T) -> Ordering,

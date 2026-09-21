@@ -26,7 +26,7 @@
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_path_files::_path_files;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::glob::{matchpat, tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
@@ -45,8 +45,16 @@ fn make_ops() -> options {
 fn compset(argv: Vec<String>) -> i32 {
     bin_compset("compset", &argv, &make_ops(), 0)
 }
-fn dispatch0(name: &str, args: &[String]) -> i32 {
-    dispatch_function_call(name, args).unwrap_or(1)
+/// Dispatch a compsys function BY NAME from upstream line `line`.
+///
+/// Every upstream site this stands in for writes a plain COMMAND WORD, so
+/// `shared::dispatch_action_command` (shared.rs:1407) — `execcmd`'s own
+/// resolution: shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+/// `$PATH`, then c:903's `command not found` with c:908's 127 — is what they
+/// mean. The `.unwrap_or(1)` this replaces had NO not-found arm, so a name the
+/// shell would have DIAGNOSED disappeared without a byte of output.
+fn dispatch0(name: &str, args: &[String], line: u64) -> i32 {
+    crate::compsys::ported::shared::dispatch_action_command(name, args, line)
 }
 fn get_str(name: &str) -> String {
     getsparam(name).unwrap_or_default()
@@ -228,13 +236,19 @@ pub fn _files(argv: &[String]) -> i32 {
     // sh:9-25 — glob-qualifier dispatch.
     let prefix = get_str("PREFIX");
     let eg_on = assoc_get("_comp_caller_options", "extendedglob").as_deref() == Some("on");
-    if dispatch_function_call("_have_glob_qual", &[prefix.clone()]) == Some(0) {
+    // sh:9 `if _have_glob_qual $PREFIX; then` is a COMMAND WORD like every
+    // other, so route it through `dispatch_action_command` (shared.rs:1407):
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then `$PATH`,
+    // then c:903's `command not found` with c:908's 127. The branch is taken
+    // on 0 either way, so only the swallowed diagnostic changes — `== Some(0)`
+    // turned a name the shell DIAGNOSES into a silent false.
+    if dispatch_action_command("_have_glob_qual", &[prefix.clone()], 9) == 0 {
         let mtch = getaparam("match").unwrap_or_default();
         let m1len = mtch.first().map(|s| s.chars().count()).unwrap_or(0);
         compset(vec!["-p".into(), m1len.to_string()]);
         compset(vec!["-S".into(), r"[^\)\|\~]#(|\))".into()]);
         if eg_on && compset(vec!["-P".into(), r"\#".into()]) == 0 {
-            if dispatch0("_globflags", &[]) == 0 {
+            if dispatch0("_globflags", &[], 13) == 0 {
                 ret = 0;
             }
         } else {
@@ -251,12 +265,13 @@ pub fn _files(argv: &[String]) -> i32 {
                         "-S".into(),
                         "".into(),
                     ],
+                    16,
                 ) == 0
                 {
                     ret = 0;
                 }
             }
-            if dispatch0("_globquals", &[]) == 0 {
+            if dispatch0("_globquals", &[], 18) == 0 {
                 ret = 0;
             }
         }
@@ -267,7 +282,7 @@ pub fn _files(argv: &[String]) -> i32 {
         && compset(vec!["-P".into(), r"\(\#".into()]) == 0
     {
         // sh:21-24 — globbing flags can start at word beginning.
-        return dispatch0("_globflags", &[]);
+        return dispatch0("_globflags", &[], 24);
     }
 
     // sh:30-31 — option parse: everything but /,f,g goes to `opts`.

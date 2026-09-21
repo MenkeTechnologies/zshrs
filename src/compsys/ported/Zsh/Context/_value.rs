@@ -42,7 +42,7 @@
 
 use crate::compsys::ported::_default::_default;
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};
@@ -89,7 +89,13 @@ pub fn _value(args: &[String]) -> i32 {
             argv.push(format!("-value-,{},{}", param, s));
             argv.push(format!("-value-,-default-,{}", s));
         }
-        return dispatch_function_call("_dispatch", &argv).unwrap_or(1);
+        // sh:21 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_dispatch", &argv, 21);
     }
 
     // sh:23 — inner -value-,* dispatch
@@ -124,7 +130,13 @@ pub fn _value(args: &[String]) -> i32 {
             format!("-value-,{},-default-", new_param),
             "-value-,-default-,-default-".to_string(),
         ];
-        return dispatch_function_call("_dispatch", &argv).unwrap_or(1);
+        // sh:34 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_dispatch", &argv, 34);
     }
 
     // sh:38-47
@@ -187,12 +199,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn outer_dispatch_returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("service", "-value-");
         let _ = setsparam("_comp_command", "");
         set_compstate_str("context", "value");
         set_compstate_str("parameter", "myvar");
-        assert_eq!(_value(&[]), 1);
+        assert_eq!(_value(&[]), 127);
     }
 }

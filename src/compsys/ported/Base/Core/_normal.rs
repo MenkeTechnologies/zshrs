@@ -30,6 +30,7 @@
 //! ```
 
 use crate::compsys::ported::_set_command::_set_command;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
@@ -164,7 +165,13 @@ pub fn _normal_impl(args: &[String]) -> i32 {
             0,
         );
         // sh:22
-        return dispatch_function_call("_history_modifiers", &["h".to_string()]).unwrap_or(1);
+        // sh:22 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_history_modifiers", &["h".to_string()], 22);
     }
 
     // sh:28  CURRENT == 1: command-position completion
@@ -230,7 +237,13 @@ pub fn _normal_impl(args: &[String]) -> i32 {
     // can warn — so a port calling another port left the callee's frame with
     // no caller line at all, and `$functrace` read `_normal:0`.
     crate::compsys::ported::shared::set_sh_lineno(39);
-    dispatch_function_call("_dispatch", &dispatch_argv).unwrap_or(1)
+    // sh:39 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_dispatch", &dispatch_argv, 39)
 }
 
 #[cfg(test)]

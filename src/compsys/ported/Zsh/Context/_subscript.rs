@@ -12,7 +12,7 @@
 //! sh: 29  elif compset -P '\('  → subscript-flag _values catalog (assoc/scalar/array)
 //! sh: 84  elif (Pt)==assoc*  → _wanted association-keys … compadd -Q -S $suf -a keys
 //! sh: 93  elif (Pt)==array*  → _tags indexes parameters loop (_all_labels / _parameters)
-//! sh:132  else _dispatch -math- -math-
+//! sh:135  else _dispatch -math- -math-
 //! ```
 //!
 //! Local names mirror the source: `osuf`, `flags`, `ind`, `sep`,
@@ -30,7 +30,7 @@ use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_values::_values;
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::{bin_zformat, bin_zstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
@@ -593,8 +593,12 @@ pub fn _subscript(args: &[String]) -> i32 {
                 unsetparam("sep");
             }
 
-            // sh:128  _requested parameters && _parameters && ret=0
-            if _requested(&[s("parameters")]) == 0 && call_parameters(&[]) == 0 {
+            // sh:128  _requested parameters && _parameters && ret=0 —
+            // `_parameters` is a plain COMMAND WORD, so `call_parameters`
+            // resolves it the way `execcmd` does and a name that resolves
+            // nowhere reaches `Src/exec.c:903` instead of quietly running the
+            // Rust port.
+            if _requested(&[s("parameters")]) == 0 && call_parameters(&[], 128) == 0 {
                 ret = 0;
             }
 
@@ -610,8 +614,10 @@ pub fn _subscript(args: &[String]) -> i32 {
         return 1;
     }
 
-    // sh:132  else _dispatch -math- -math-
-    dispatch_function_call("_dispatch", &[s("-math-"), s("-math-")]).unwrap_or(1)
+    // sh:135  else _dispatch -math- -math- — a plain COMMAND WORD; an
+    // unresolvable `_dispatch` must reach `Src/exec.c:903` `command not
+    // found` + c:908's 127, not return a silent 1.
+    dispatch_action_command("_dispatch", &[s("-math-"), s("-math-")], 135)
 }
 
 #[cfg(test)]
@@ -620,16 +626,18 @@ mod tests {
 
     #[test]
     fn smoke_no_executor_falls_to_dispatch() {
-        // Empty PREFIX / ISUFFIX / parameter → no branch matches;
-        //   falls through to `_dispatch -math- -math-`, which returns
-        //   1 without an executor (dispatch_function_call → None).
+        // Empty PREFIX / ISUFFIX / parameter → no branch matches; falls
+        //   through to sh:135's `_dispatch -math- -math-`. Without an
+        //   executor that name resolves to no function, no builtin and
+        //   nothing on `$PATH` — `Src/exec.c:903` — so the port reports
+        //   `command not found` and returns c:908's 127.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
         let _ = crate::ported::params::setsparam("BUFFER", "");
         let _ = crate::ported::params::setsparam("CURSOR", "0");
         crate::ported::zle::compcore::set_compstate_str("parameter", "");
-        assert_eq!(_subscript(&[]), 1);
+        assert_eq!(_subscript(&[]), 127);
     }
 
     #[test]

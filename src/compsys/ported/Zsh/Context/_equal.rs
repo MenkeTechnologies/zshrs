@@ -19,7 +19,7 @@
 //! shell fns — dispatch via `exec accessors`. `compset` calls go to the
 //! real builtin.
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -41,7 +41,13 @@ pub fn _equal() -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
 
     // sh:5  if _have_glob_qual $PREFIX
-    if dispatch_function_call("_have_glob_qual", &[prefix]).unwrap_or(1) == 0 {
+    // sh:5 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    if dispatch_action_command("_have_glob_qual", &[prefix], 5) == 0 {
         // sh:6  compset -p ${#match[1]}
         let match_arr = getaparam("match").unwrap_or_default();
         let match1_len = match_arr.first().map(|s| s.len()).unwrap_or(0);
@@ -59,10 +65,22 @@ pub fn _equal() -> i32 {
             0,
         );
         // sh:8
-        dispatch_function_call("_globquals", &[]).unwrap_or(1)
+        // sh:8 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_globquals", &[], 8)
     } else {
         // sh:10
-        dispatch_function_call("_path_commands", &[]).unwrap_or(1)
+        // sh:10 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_path_commands", &[], 10)
     }
 }
 
@@ -71,8 +89,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_equal(), 1);
+        assert_eq!(_equal(), 127);
     }
 }

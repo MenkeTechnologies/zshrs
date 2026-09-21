@@ -1397,23 +1397,72 @@ pub fn findline() -> (usize, usize) {
 /// Returns 1 for affirmative ('y'/'\t'), 0 for negative ('n'/ctrl/EOF).
 pub fn getzlequery() -> i32 {
     // c:1197
-    // c:1201-1210 — FIONREAD typeahead check → negative response if buffered.
-    //               Without a live tty fd here, skip the typeahead probe.
-    // c:1213 — c = getfullchar(0);
+    // c:1200-1209 —
+    // ```c
+    // #ifdef FIONREAD
+    //     int val;
+    //     /* check for typeahead, which is treated as a negative response */
+    //     ioctl(SHTTY, FIONREAD, (char *)&val);
+    //     if (val) {
+    //         putc('n', shout);
+    //         return 0;
+    //     }
+    // #endif
+    // ```
+    // ZLE reads one byte at a time straight off `SHTTY` (`raw_getbyte`,
+    // zle_main.rs:408 == c:zle_main.c:531-577), so the pending-byte count is
+    // the same quantity C tests. The port used to skip this with "Without a
+    // live tty fd here" — `SHTTY` IS live at this point (`asklist` reads it
+    // to write the question, compresult.rs:3379), so the excuse was false and
+    // typeahead was answered by CONSUMING the queued key instead of declining.
+    let mut val: libc::c_int = 0; // c:1201
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty >= 0 {
+        // c:1204 — `ioctl(SHTTY, FIONREAD, (char *)&val)`. C leaves `val`
+        // uninitialised when the ioctl fails; the port pre-zeroes it, which is
+        // the "no typeahead" answer C gets on every tty where it succeeds.
+        unsafe {
+            libc::ioctl(shtty, libc::FIONREAD, &mut val as *mut libc::c_int);
+        }
+    }
+    if val != 0 {
+        // c:1206 — `putc('n', shout)`, then c:1207 `return 0`.
+        crate::shout::write(b"n");
+        return 0;
+    }
+    // c:1212 — c = getfullchar(0);
     let c = getfullchar(false);
-    // c:1218 — errflag &= ~ERRFLAG_INT;
+    // c:1217 — errflag &= ~ERRFLAG_INT;
     errflag.fetch_and(!ERRFLAG_INT, Ordering::Relaxed);
-    // c:1219-1224 — '\t' → 'y'; ctrl/EOF → 'n'; else tolower.
+    // c:1218-1223 — '\t' → 'y'; ctrl/EOF → 'n'; else tolower.
     let c = match c {
-        Some('\t') => 'y',                   // c:1219-1220
-        Some(ch) if ch.is_control() => 'n',  // c:1221-1222 ZC_icntrl
-        None => 'n',                         // c:1221 ZLEEOF
-        Some(ch) => ch.to_ascii_lowercase(), // c:1223-1224
+        Some('\t') => 'y',                   // c:1218-1219
+        Some(ch) if ch.is_control() => 'n',  // c:1220-1221 ZC_icntrl
+        None => 'n',                         // c:1220 ZLEEOF
+        Some(ch) => ch.to_ascii_lowercase(), // c:1222-1223
     };
-    // c:1226-1231 — echo response (skipping newline). No live tty echo
-    //               here; the canonical zlewrites lands when the
-    //               refresh substrate is wired.
-    // c:1232 — return c == ZWC('y');
+    // c:1224-1230 —
+    // ```c
+    //     /* echo response and return */
+    //     if (c != ZWC('\n')) {
+    //         REFRESH_ELEMENT re;
+    //         re.chr = c;
+    //         re.atr = 0;
+    //         zwcputc(&re);
+    //     }
+    // ```
+    // The `!= '\n'` guard is vacuous after the mapping above (a newline is a
+    // control character, so it already became the LETTER 'n'), but it is C's
+    // test and the port keeps it. `zwcputc` (zle_refresh.rs:516) writes through
+    // the buffered `shout` stream exactly as C's `putc`-family does, so the
+    // echoed character and `asklist`'s follow-up erase (compresult.rs:3400)
+    // reach the terminal in C's order.
+    if c != '\n' {
+        // c:1226-1228 — `REFRESH_ELEMENT re; re.chr = c; re.atr = 0;`
+        let re = crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: c, atr: 0 };
+        crate::ported::zle::zle_refresh::zwcputc(&re); // c:1229
+    }
+    // c:1231 — return c == ZWC('y');
     if c == 'y' {
         1
     } else {

@@ -1,0 +1,39 @@
+{
+  "argv": [
+    "zpfctx",
+    "_default"
+  ],
+  "call": "_dispatch 'zpfctx' '_default'",
+  "call_label": "default",
+  "fingerprint": "4da8672120",
+  "function": "_dispatch",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowtop/col0 | ref/$ cat -- $ZPF_OUT | test/^O@CT",
+  "ref_rows": [
+    "@CT@ cat -- $ZPF_OUT",
+    "== _dispatch / default",
+    "-- argv: 'zpfctx' '_default'",
+    "-- rc: 0",
+    "  nmatches: 0 -> 22",
+    "  compstate[list]: 'list' -> 'list '",
+    "  compstate[list_lines]: '0' -> '22'",
+    "  compstate[unambiguous]: '' -> '-'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _dispatch --fn-call default --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "Completion/Base/Core/_dispatch:3-12 ([-s] CONTEXT NAME...)",
+  "test_rows": [
+    "^O@CT",
+    "zpfEND",
+    "-1  -- remove only consecutive duplicates from group",
+    "-2  -- preserve all duplicates",
+    "-A  -- populate array with expanded matches instead of adding them",
+    "-D  -- delete elements from array corresponding to non-matching candidates",
+    "-F  -- specify array of ignore patterns",
+    "-I  -- specify ignored suffix"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "buffer": "ls **/",
+  "fingerprint": "cc203e3451",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/purity-#j#wp#rkc#/ target<path> | test/target<path> target<path>",
+  "origin": "style-fuzz/cfg0005",
+  "statements": [
+    "zstyle ':completion:*:*:*:*:*' original 1",
+    "zstyle ':completion:*:*' matcher-list 'r:[[:alpha:]]|[A-Z0-9]=by m:{a-z-}={A-Z_}'",
+    "zstyle ':completion:*:*:*:*:default' list-suffixes false",
+    "zstyle ':completion:*:match:grep:*:paths' list-suffixes 1"
+  ]
+}

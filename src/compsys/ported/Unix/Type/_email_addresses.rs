@@ -37,6 +37,7 @@ use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::compsys::ported::_wanted::_wanted;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle, zstyletab};
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, unsetparam};
@@ -375,7 +376,13 @@ fn email_local(args: &[String]) -> i32 {
         // sh:82  _hosts "$@" "$suf[@]"
         let mut a = rest.clone();
         a.extend(suf);
-        dispatch_function_call("_hosts", &a).unwrap_or(1)
+        // sh:82 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_hosts", &a, 82)
     } else {
         // sh:84-87
         let mut suf2: Vec<String> = Vec::new();
@@ -390,7 +397,13 @@ fn email_local(args: &[String]) -> i32 {
         }
         let mut a = suf2;
         a.extend(rest);
-        dispatch_function_call("_users", &a).unwrap_or(1)
+        // sh:86 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_users", &a, 86)
     }
 }
 

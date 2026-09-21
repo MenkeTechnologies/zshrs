@@ -5643,9 +5643,15 @@ mod tests {
     /// means something different on the two shells.
     ///
     /// Driven over a socketpair standing in for the tty. The answer byte
-    /// is queued on the PEER before the call, so `getzlequery`'s
-    /// `raw_getbyte` reads a real `n` instead of an EOF, and the question
-    /// text is read back off that same peer afterwards.
+    /// is queued on the PEER before the call, which makes this the
+    /// TYPEAHEAD case: `getzlequery`'s `ioctl(SHTTY, FIONREAD)`
+    /// (`zle_utils.c:1204`, ported at `zle_utils.rs:1420`) sees a pending
+    /// byte, writes `n` and returns 0 without reading it (c:1206-1207).
+    /// The refusal accounting below is therefore reached by c:1206, not by
+    /// `getfullchar`; `asklist_reads_the_answer_from_the_key_queue` covers
+    /// the other way in. The unread byte is asserted to still be pending
+    /// afterwards, which is the part of c:1206 that has an observable
+    /// consequence: the keystroke stays queued for the line editor.
     #[test]
     fn asklist_queries_when_the_list_outgrows_the_screen() {
         let _g = crate::test_util::global_state_lock();
@@ -5707,6 +5713,17 @@ mod tests {
             .unwrap_or(0);
         reset_asklist_globals();
 
+        // c:1206-1207 — the typeahead path answers WITHOUT reading, so the
+        // queued keystroke is still there for the line editor. A port that
+        // consumed it instead would leave 0 pending here and silently eat a
+        // key on every over-long listing.
+        let mut pending: libc::c_int = 0;
+        unsafe { libc::ioctl(sv[0], libc::FIONREAD, &mut pending as *mut libc::c_int) };
+        assert_eq!(
+            pending, 1,
+            "c:1206 — typeahead is declined, never consumed; the answer byte stays queued"
+        );
+
         // Half-close first: if `asklist` wrote nothing the read then
         // reports EOF instead of blocking the test forever.
         unsafe { libc::shutdown(sv[0], libc::SHUT_WR) };
@@ -5722,11 +5739,109 @@ mod tests {
             out.contains("zsh: do you wish to see all 52856 possibilities (26643 lines)? "),
             "c:1937 — wording and BOTH counts, verbatim; got {out:?}"
         );
+        assert!(
+            out.contains("possibilities (26643 lines)? n"),
+            "c:1206 — `putc('n', shout)` echoes the declined answer right after \
+             the question; got {out:?}"
+        );
         assert_eq!(rc, 1, "c:1953 — a refusal returns 1 and the list is suppressed");
         assert_eq!(
             asked, 2,
             "c:1952 — `minfo.asked = 2` records the refusal for the next TAB"
         );
+    }
+
+    /// c:1212-1231 / c:1963 — the query ANSWERED, not declined.
+    ///
+    /// `asklist_queries_when_the_list_outgrows_the_screen` queues its byte
+    /// on the tty, which is typeahead: c:1206 answers `n` before
+    /// `getfullchar` is ever reached. Nothing then covers the rest of
+    /// `getzlequery` — the read, the `\t`→`y` mapping, the `ZC_tolower`,
+    /// and the c:1229 `zwcputc` echo of the answer. Both of those last two
+    /// were missing from the port until this suite grew this test.
+    ///
+    /// Reached deterministically through the unget queue rather than a
+    /// second thread: `raw_getbyte` drains `KUNGETBUF` first (c:541,
+    /// `zle_main.rs:412`), and a byte there is invisible to the FIONREAD
+    /// probe, so c:1204 measures an empty tty and the read path runs with
+    /// no timing race. `Y` (upper case) also pins c:1223's `ZC_tolower`:
+    /// the comparison at c:1231 is against lower-case `y`, so an
+    /// unfolded answer would read as a refusal.
+    #[test]
+    fn asklist_reads_the_answer_from_the_key_queue() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+
+        let mut sv = [0 as libc::c_int; 2];
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) },
+            0,
+            "socketpair(2)"
+        );
+
+        let saved_tty = SHTTY.load(Relaxed);
+        let saved_lines = crate::ported::utils::ZTERM_LINES.load(Relaxed);
+        SHTTY.store(sv[0], Relaxed);
+        crate::ported::utils::ZTERM_LINES.store(30, Relaxed); // c:1932
+        COMPLISTMAX.store(0, Relaxed); // c:1932
+        crate::ported::zle::compcore::dolastprompt.store(0, Relaxed); // c:1925
+        {
+            // The answer, waiting where c:541 looks before the tty.
+            let mut q = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap();
+            q.clear();
+            q.push_back(b'Y');
+        }
+
+        if let Ok(mut mi) = MINFO
+            .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
+            .lock()
+        {
+            *mi = Menuinfo::default(); // c:1929
+        }
+        if let Ok(mut d) = crate::ported::zle::compcore::listdat
+            .get_or_init(|| std::sync::Mutex::new(Default::default()))
+            .lock()
+        {
+            d.nlist = 52856; // c:1937
+            d.nlines = 26643; // c:1937 — 26643 >= 30, so the query fires
+        }
+
+        let rc = asklist();
+
+        SHTTY.store(saved_tty, Relaxed);
+        crate::ported::utils::ZTERM_LINES.store(saved_lines, Relaxed);
+        let asked = MINFO
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|m| m.asked)
+            .unwrap_or(-1);
+        let left_queued = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().len();
+        reset_asklist_globals();
+
+        unsafe { libc::shutdown(sv[0], libc::SHUT_WR) };
+        let mut buf = [0u8; 4096];
+        let n = unsafe { libc::read(sv[1], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe {
+            libc::close(sv[0]);
+            libc::close(sv[1]);
+        }
+        assert!(n > 0, "c:1937 — the query must reach the terminal");
+        let out = String::from_utf8_lossy(&buf[..n as usize]).to_string();
+        assert!(
+            out.contains("zsh: do you wish to see all 52856 possibilities (26643 lines)? "),
+            "c:1937 — wording and BOTH counts, verbatim; got {out:?}"
+        );
+        assert!(
+            out.contains("possibilities (26643 lines)? y"),
+            "c:1229 — `zwcputc` echoes the answer, FOLDED by c:1223, right \
+             after the question; got {out:?}"
+        );
+        assert_eq!(
+            left_queued, 0,
+            "c:1212 — the read path CONSUMES the answer (contrast c:1206)"
+        );
+        assert_eq!(rc, 0, "c:1967 — `minfo.asked - 1` is 0, so the caller lists");
+        assert_eq!(asked, 1, "c:1963 — an accepted query records `minfo.asked = 1`");
     }
 
     /// c:1929-1932 / c:1967 — the same decision the other way round.

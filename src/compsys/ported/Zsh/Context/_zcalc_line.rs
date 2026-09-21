@@ -23,6 +23,7 @@
 //! sh:78    esac
 //! ```
 
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getiparam, setaparam, setiparam};
 use crate::ported::zle::complete::bin_compset;
@@ -136,7 +137,13 @@ pub fn _zcalc_line() -> i32 {
             alts.push("math:math formula:_math".to_string());
         }
         // sh:33  _alternative $alts
-        return dispatch_function_call("_alternative", &alts).unwrap_or(1);
+        // sh:33 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_alternative", &alts, 33);
     }
 
     // sh:37  case $words[1] in
@@ -170,7 +177,13 @@ pub fn _zcalc_line() -> i32 {
             );
         }
         // sh:46  _normal
-        return dispatch_function_call("_normal", &[]).unwrap_or(1);
+        // sh:46 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_normal", &[], 46);
     }
 
     if word1 == ":function" {
@@ -186,16 +199,34 @@ pub fn _zcalc_line() -> i32 {
                 "--".to_string(),
             ];
             argv.extend(user_math_functions());
-            return dispatch_function_call("_wanted", &argv).unwrap_or(1);
+            // sh:54 is a COMMAND WORD, so `dispatch_action_command`
+            // (shared.rs:1407) resolves it exactly as `execcmd` does:
+            // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+            // `$PATH`, then c:903's `command not found` with c:908's 127. The
+            // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+            // that resolved nowhere returned in silence.
+            return dispatch_action_command("_wanted", &argv, 54);
         } else {
             // sh:57  _math
-            return dispatch_function_call("_math", &[]).unwrap_or(1);
+            // sh:57 is a COMMAND WORD, so `dispatch_action_command`
+            // (shared.rs:1407) resolves it exactly as `execcmd` does:
+            // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+            // `$PATH`, then c:903's `command not found` with c:908's 127. The
+            // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+            // that resolved nowhere returned in silence.
+            return dispatch_action_command("_math", &[], 57);
         }
     }
 
     if word1 == ":local" {
         // sh:61  (:local)  _parameter
-        return dispatch_function_call("_parameter", &[]).unwrap_or(1);
+        // sh:62 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_parameter", &[], 62);
     }
 
     if word1 == ":fix" || word1 == ":sci" || word1 == ":eng" {
@@ -205,16 +236,34 @@ pub fn _zcalc_line() -> i32 {
             let _ = dispatch_function_call("_message", &["precision".to_string()]);
         }
         // sh:69  ;& — fall through to (:*).
-        return dispatch_function_call("_message", &["no more arguments".to_string()]).unwrap_or(1);
+        // sh:72 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_message", &["no more arguments".to_string()], 72);
     }
 
     if word1.starts_with(':') {
         // sh:71  (:*)  _message "no more arguments"
-        return dispatch_function_call("_message", &["no more arguments".to_string()]).unwrap_or(1);
+        // sh:72 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_message", &["no more arguments".to_string()], 72);
     }
 
     // sh:75  ([^:]*)  _math
-    dispatch_function_call("_math", &[]).unwrap_or(1)
+    // sh:76 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_math", &[], 76)
 }
 
 #[cfg(test)]
@@ -223,13 +272,17 @@ mod tests {
     use crate::ported::params::setsparam;
 
     #[test]
-    fn command_position_returns_via_alternative() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         // sh:25-33 — empty word in command position dispatches
         //   `_alternative` (returns 1 with no executor).
         let _g = crate::test_util::global_state_lock();
         setaparam("words", vec!["".to_string()]);
         let _ = setsparam("CURRENT", "1");
-        assert_eq!(_zcalc_line(), 1);
+        assert_eq!(_zcalc_line(), 127);
     }
 
     #[test]

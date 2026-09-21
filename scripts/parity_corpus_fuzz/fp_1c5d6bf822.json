@@ -1,0 +1,12 @@
+{
+  "buffer": "kill -",
+  "fingerprint": "95c2a70f4b",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/-L -- list each signal and corresponding number | test/<absent>",
+  "origin": "style-fuzz/cfg0105",
+  "statements": [
+    "zstyle ':completion:*:*' completer _history _complete"
+  ]
+}

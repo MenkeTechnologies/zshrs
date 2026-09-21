@@ -379,19 +379,23 @@ pub fn _complete_impl() -> i32 {
         //   written by the `-first-` branch before handing off to
         //   `_normal`, which builds its own command field.
         let _ = setsparam("curcontext", &oldcontext);
-        // Direct Rust call, not a shell-function dispatch: `_normal`
-        // therefore contributes no `$funcstack` entry and no
-        // `$zsh_eval_context` frames, which is two of the six frames
-        // zshrs is short inside a live completion. Deliberate — see
-        // docs/COMPLETION_DISPATCH.md, Divergence C — and the two
-        // stacks stay consistent with each other precisely BECAUSE
-        // neither is faked here.
+        // STALE NOTE CORRECTED (2026-09-20): the text here used to say this is
+        // a "direct Rust call, not a shell-function dispatch", so `_normal`
+        // "contributes no `$funcstack` entry". It is not a direct call any
+        // more — `_normal` (`Base/Core/_normal.rs:66-67`) is the dispatching
+        // wrapper over `call_compfn("_normal", …)`, so this goes through
+        // `dispatch_function_call` → `doshfunc` and DOES push a `FUNCSTACK`
+        // frame. Measured live on this binary, reading `$funcstack` from
+        // inside a completion action:
         //
-        // Known consequence: an fpath `_normal` (user or plugin
-        // override) is bypassed, because `router::try_rust_dispatch`'s
-        // `has_fpath_override` gate only runs on the shell-function
-        // dispatch path. Same bug class as the `_command_names`
-        // override fix; tracked separately from Divergence C.
+        //   zshrs  … _probecmd (eval) _dispatch _normal _complete _main_complete
+        //
+        // The `has_fpath_override` gate the old note said was bypassed runs on
+        // that same path, so a user's own `_normal` on `$fpath` wins here too.
+        // `docs/COMPLETION_DISPATCH.md:193-202` still prints the pre-change
+        // table (zshrs `funcstack` without `_normal`, "six-frame deficit") and
+        // needs re-measuring; the `zsh_eval_context` half of that table was NOT
+        // re-measured here, so only this comment is corrected.
         // sh:117 — `_normal -s && ret=0`. Publish the calling line before
         // entering `_normal`, so the frame it pushes records `_complete:117`
         // instead of the `0` `FnScope::enter` leaves behind.

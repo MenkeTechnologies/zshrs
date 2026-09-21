@@ -49,7 +49,7 @@
 //! `zmodload -Fl` errors out and `funcs` stays empty. The gate is
 //! reproduced in [`module_math_funcs`].
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::module::{enables_module, features_module, MODULESTAB};
 
 // sh:5 — local -a modules=( example mathfunc system )
@@ -150,7 +150,13 @@ pub fn _module_math_func() -> i32 {
     // sh:3-4 — local mod; local -a funcs alts (funcs/alts built below).
     let alts = build_alts();
     // sh:12 — _alternative $alts
-    dispatch_function_call("_alternative", &alts).unwrap_or(1)
+    // sh:12 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_alternative", &alts, 12)
 }
 
 #[cfg(test)]
@@ -158,9 +164,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_module_math_func(), 1);
+        assert_eq!(_module_math_func(), 127);
     }
 
     #[test]

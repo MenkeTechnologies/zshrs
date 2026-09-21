@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_absolute_command_paths ",
+  "call_label": "bare",
+  "fingerprint": "7187796a1c",
+  "function": "_absolute_command_paths",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/row0/col0 | ref/$ cat -- $ZPF_OUT | test/$ true",
+  "ref_rows": [
+    "@CT@ cat -- $ZPF_OUT",
+    "== _absolute_command_paths / bare",
+    "-- argv:",
+    "-- rc: 0",
+    "  nmatches: 0 -> 5544",
+    "  compstate[list_lines]: '0' -> '2772'",
+    "  compstate[unambiguous]: '' -> '/'",
+    "  expl[0] ="
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _absolute_command_paths --fn-call bare --fn-derive-only _absolute_command_paths --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_absolute_command_paths:1-37 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "@CT@ true",
+    "@CT@ cat -- $ZPF_OUT",
+    "== _absolute_command_paths / bare",
+    "-- argv:",
+    "_alternative:71: command not found: _hashed_absolute_command_paths",
+    "_alternative:71: command not found: _hashed_absolute_command_paths",
+    "_alternative:71: command not found: _typed-in_absolute_command_paths",
+    "_alternative:71: command not found: _typed-in_absolute_command_paths"
+  ]
+}

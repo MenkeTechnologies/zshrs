@@ -1,0 +1,12 @@
+{
+  "buffer": "ls *(",
+  "fingerprint": "810dc1c9e2",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/row0/col1 | ref/$ ls *(% | test/$ ls *(",
+  "origin": "style-fuzz/cfg0069",
+  "statements": [
+    "zstyle ':completion:*:*:*:*:default' menu true select=0"
+  ]
+}

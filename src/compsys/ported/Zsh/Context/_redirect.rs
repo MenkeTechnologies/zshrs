@@ -24,7 +24,7 @@
 //! ```
 
 use crate::compsys::ported::_set_command::_set_command;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::get_compstate_str;
 
@@ -63,7 +63,13 @@ pub fn _redirect() -> i32 {
         argv.push(format!("-redirect-,{},{}", redir, s));
         argv.push(format!("-redirect-,-default-,{}", s));
     }
-    dispatch_function_call("_dispatch", &argv).unwrap_or(1)
+    // sh:18 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_dispatch", &argv, 18)
 }
 
 #[cfg(test)]
@@ -71,8 +77,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_redirect(), 1);
+        assert_eq!(_redirect(), 127);
     }
 }

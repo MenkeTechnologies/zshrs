@@ -1,0 +1,20 @@
+zstyle ':completion:*' auto-description 'Specify: %d'
+zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger
+zstyle ':completion:*' list-prompt $'\C-[[1;31m-<<\C-[[0;34m%SAt %s\C-[[44;37m%M%p\C-[[0;34m%S, Hit TAB for more, or the characters to insert%s\C-[[0;1;31m>>-\C-[[0m'
+zstyle ':completion:*' list-separator /////////
+zstyle ':completion:*' squeeze-slashes on
+zstyle ':completion:*:("|''|)killall("|''|):*' command 'ps -o command'
+zstyle ':completion:*:*:(f|z|zshz|zpwr-z|zpwr-gitzfordir|zpwr-gitzfordirmain|zpwr-gitzfordirdevelop|zm|zd|zg):*:*' cache-policy zpwrDailyCachingPolicy
+zstyle ':completion:*:*:(zpwr-se|zpwr-see|zpwr-seee|zpwr-redo|zpwr-rsql|zpwr-re|zpwr-searchl|zpwr-searchle|zpwr-searchlee|zpwr-r|zpwr-get):*:*' sort false
+zstyle ':completion:*:*:*:*:ancillary-interrogator-commands' list-colors '=(#b)(*)=1;30=1;34;43;4'
+zstyle ':completion:*:*:*:*:blob-objects' list-colors '=(#b)(*)=1;30=1;34;41;4'
+zstyle ':completion:*:*:*:*:commit-objects' list-colors '=(#b)(*)=1;30=1;37;43'
+zstyle ':completion:*:*:*:*:heads-remote' list-colors '=(#b)(*)=1;30=1;37;46'
+zstyle ':completion:*:*:*:*:last-ten' list-colors '=(#b)(*)=1;33;45'
+zstyle ':completion:*:*:*:*:main-porcelain-commands' list-colors '=(#b)(*)=1;30=1;36;44'
+zstyle ':completion:*:*:*:*:manuals.3p' list-colors '=(#b)(*)=1;30=37;46'
+zstyle ':completion:*:*:*:*:remote-gem' list-colors '=(#b)(*)=1;30=37;46'
+zstyle ':completion:*:*:*:*:revisions' list-colors '=(#b)(*)=1;30=1;37;42'
+zstyle ':completion:*:*:*:*:tmux' list-colors '=(#b)(*)=1;37;45'
+zstyle ':completion:*:*:*:*:users' list-colors '=(#b)(*)=1;30=1;37;42'
+zstyle ':completion:*:*:*:*:vtags' list-colors '=(#b)(*)=1;37;45'

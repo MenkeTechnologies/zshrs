@@ -1,0 +1,12 @@
+{
+  "buffer": "date -",
+  "fingerprint": "45a71c2de0",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/<LC>#date - | test/-I -- display in ISO #",
+  "origin": "style-fuzz/cfg0055",
+  "statements": [
+    "zstyle ':completion:*:*' list-colors 'lc=<LC>' lc= rc=m"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_physical_volumes ",
+  "call_label": "bare",
+  "fingerprint": "c5d55188ae",
+  "function": "_physical_volumes",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_physical_volumes:#: command not found: lsdev | test/-- rc: #",
+  "ref_rows": [
+    "_physical_volumes:5: command not found: lsdev",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'physical volume'",
+    "  _comp_tags = ' physicalvolumes '",
+    "  _comp_colors = ''",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _physical_volumes --fn-call bare --fn-derive-only _physical_volumes --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_physical_volumes:1-6 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'physical volume'",
+    "  _comp_tags = ' physicalvolumes '",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ]
+}

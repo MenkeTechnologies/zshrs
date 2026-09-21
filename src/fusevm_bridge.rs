@@ -13435,7 +13435,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Value::str(crate::ported::lex::untokenize(&out))
                     }
                 } else {
+                    // c:Src/subst.c:3892-3895 — `if (isarr) l->list.flags |=
+                    // LF_ARRAY; else l->list.flags &= ~LF_ARRAY;`. Clear the
+                    // carrier BEFORE the expansion so a word that runs no
+                    // paramsubst at all reads `false` rather than some earlier
+                    // expansion's stamp — the same reset the unquoted arm does
+                    // before its own multsub.
+                    crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
+                    // Read immediately: anything below can re-enter paramsubst
+                    // and overwrite the cell. This is C's `isarr` for the
+                    // OUTERMOST expansion of this word — c:4245 `if (isarr)`.
+                    let seg_is_array = crate::ported::subst::PARAMSUBST_LF_ARRAY.with(|c| c.get());
                     // c:Src/subst.c:655 — multsub returns Vec::new()
                     // for zero-word results (quoted array splat that
                     // resolved to empty array). Surface as
@@ -13452,6 +13463,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // tokens rendered by untokenize (c:Src/exec.c:2134).
                         stopped_nodes_value(nodes)
                     } else if nodes.is_empty() {
+                        // c:Src/subst.c:4245 `if (isarr)` gates the array emit
+                        // block, and c:4362-4365 `if (plan9) { uremnode(l, n);
+                        // return n; }` deletes the WHOLE word from inside it —
+                        // so whether a zero-word expansion removes its word is
+                        // decided by THIS expansion's own `isarr`, never by the
+                        // previous one's. `Value::Array(vec![])` cannot carry
+                        // the bit, so record it here exactly as the unquoted
+                        // arm does (`note_empty_is_scalar(!(seg_zero_words &&
+                        // seg_is_array))`). Without the write the cell still
+                        // held an unrelated earlier expansion's value, and a
+                        // preceding empty-SCALAR read (`local x=$a[2]`, which
+                        // leaves it `true`) resurrected a quoted empty-array
+                        // word as one empty word under RC_EXPAND_PARAM:
+                        // `e=(); r=( q "${e[@]:/A/B}" )` counted 2 where zsh
+                        // counts 1. See EMPTY_EXPANSION_IS_SCALAR.
+                        note_empty_is_scalar(!seg_is_array);
                         Value::array(Vec::new())
                     } else if nodes.len() == 1 {
                         Value::str(crate::ported::lex::untokenize(
@@ -13734,6 +13761,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // pattern: q(", `x=q(a)` "number expected", `x=q(|b)` "no
                     // matches found".
                     || (mode == 8 && !crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBASSIGN));
+                // c:Src/subst.c:168 — prefork's `if (*(char *)getdata(node))`
+                // runs on the node AS IT STANDS, i.e. still carrying the quote
+                // markers the lexer left and the `Nularg` that c:169's
+                // `remnulargs` re-inserts for a node made of nothing else
+                // (c:Src/glob.c:3683-3686). `untokenize` drops that sentinel
+                // (c:Src/exec.c:2143), but only much later, once the node is
+                // already a word. Testing emptiness AFTER the untokenize below
+                // inverted that order and deleted the word C keeps:
+                // `unset u; r=( q ${u:-""} )` counted 1 where zsh counts 2
+                // (same for `${u:-''}`, `${u-""}`, `${1:-""}`, `${a[@]:+""}`).
+                // Record C's answer here and let the empty-result arm consult
+                // it.
+                let nonempty_before_untokenize = brace_expanded.iter().any(|w| !w.is_empty());
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
@@ -13937,7 +13977,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `local lchar="${LBUFFER[-1]}"` (empty prompt +
                     // backspace) into an ARGLESS `local` — the full
                     // parameter-table dump the user saw per keystroke.
-                    if only.is_empty() {
+                    if only.is_empty() && !nonempty_before_untokenize {
                         // A quote span that WRAPS the expansion keeps the
                         // empty arg (`"${v[-1]}"` → one empty arg). But a
                         // quote INSIDE the `${…}` braces — e.g. the alternate

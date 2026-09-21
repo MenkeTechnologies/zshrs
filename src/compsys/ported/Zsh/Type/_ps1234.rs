@@ -32,7 +32,6 @@
 //! `%x` format-specifier catalogue.
 
 use crate::compsys::ported::shared::zstyle_t;
-use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, sethparam};
 use crate::ported::zle::complete::{bin_compadd, bin_compset, cond_psfix};
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -71,11 +70,17 @@ fn prefix_matches(pat: &str) -> bool {
     }
 }
 
-/// Dispatch a compsys helper; `None` (no executor) collapses to a
-/// non-zero (failure) status like a shell call that returned 1.
-fn dfc(name: &str, args: &[&str]) -> i32 {
+/// Dispatch a compsys helper BY NAME from upstream line `line`.
+///
+/// Every upstream site this stands in for writes a plain COMMAND WORD, so
+/// `shared::dispatch_action_command` (shared.rs:1407) — `execcmd`'s own
+/// resolution: shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+/// `$PATH`, then c:903's `command not found` with c:908's 127 — is what they
+/// mean. The `.unwrap_or(1)` this replaces had NO not-found arm, so a name the
+/// shell DIAGNOSES produced no output at all.
+fn dfc(name: &str, args: &[&str], line: u64) -> i32 {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    dispatch_function_call(name, &owned).unwrap_or(1)
+    crate::compsys::ported::shared::dispatch_action_command(name, &owned, line)
 }
 
 /// `(( $+terminfo[colors] ))` + `$terminfo[colors]` — number of
@@ -193,8 +198,8 @@ pub fn _ps1234() -> i32 {
             .collect();
         sethparam("ansi", ansi.clone());
 
-        // sh:40  _description -V ansi-colors expl 'ansi color'
-        let _ = dfc("_description", &["-V", "ansi-colors", "expl", "ansi color"]);
+        // sh:41  _description -V ansi-colors expl 'ansi color'
+        let _ = dfc("_description", &["-V", "ansi-colors", "expl", "ansi color"], 41);
         expl = getaparam("expl").unwrap_or_default();
         // sh:41  grp="$expl[expl[(i)-J]+1]" — element of expl following "-J"
         grp = expl
@@ -226,7 +231,7 @@ pub fn _ps1234() -> i32 {
 
         // sh:45  if (( $#suf )) && compset -P "(<->|%v)"; then
         if !suf.is_empty() && compset_p(r"(<->|%v)") {
-            // sh:46  _wanted ansi-colors expl 'closing brace' compadd -S '' \}
+            // sh:47  _wanted ansi-colors expl 'closing brace' compadd -S '' \}
             if dfc(
                 "_wanted",
                 &[
@@ -238,6 +243,7 @@ pub fn _ps1234() -> i32 {
                     "",
                     "}",
                 ],
+                47,
             ) == 0
             {
                 ret = 0;
@@ -248,10 +254,11 @@ pub fn _ps1234() -> i32 {
             cols = term_cols - 1;
             // sh:49  (( cols = cols > 255 ? 255 : cols ))
             cols = if cols > 255 { 255 } else { cols };
-            // sh:50  _description -V terminal-colors expl 'terminal color'
+            // sh:51  _description -V terminal-colors expl 'terminal color'
             let _ = dfc(
                 "_description",
                 &["-V", "terminal-colors", "expl", "terminal color"],
+                51,
             );
             expl = getaparam("expl").unwrap_or_default();
             // sh:51  grp="$expl[expl[(i)-J]+1]"
@@ -282,7 +289,7 @@ pub fn _ps1234() -> i32 {
             setaparam("_comp_colors", comp_colors);
         } else {
             // sh:57  _message -e terminal-colors "number"
-            let _ = dfc("_message", &["-e", "terminal-colors", "number"]);
+            let _ = dfc("_message", &["-e", "terminal-colors", "number"], 58);
         }
     }
 
@@ -290,12 +297,12 @@ pub fn _ps1234() -> i32 {
     if compset_p(r"%[0-9-\\]#(\\|)\([0-9-]#[^0-9]") {
         // sh:62-64  ternary conditional: first delimiter
         compset_s(r"*");
-        if dfc("_delimiters", &[]) == 0 {
+        if dfc("_delimiters", &[], 65) == 0 {
             ret = 0;
         }
     } else if compset_p(r"%[0-9-\\]#[<>\]]") {
         // sh:66-67  truncation
-        let _ = dfc("_message", &["-e", "replacements", "replacement string"]);
+        let _ = dfc("_message", &["-e", "replacements", "replacement string"], 68);
     } else if compset_p(r"%[0-9-\\]#(\\|)\([0-9-]#") {
         // sh:68-97  ternary conditional: condition character
         // sh:70  compset -S '[.:+/-%]*' || suf=( -S . )
@@ -339,16 +346,16 @@ pub fn _ps1234() -> i32 {
             ];
             argv.extend(suf.clone());
             let owned: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-            if dfc("_describe", &owned) == 0 {
+            if dfc("_describe", &owned, 96) == 0 {
                 ret = 0;
             }
         }
         // sh:97  _message -e numbers number
-        let _ = dfc("_message", &["-e", "numbers", "number"]);
+        let _ = dfc("_message", &["-e", "numbers", "number"], 98);
     } else if compset_p(r"%D(\\|){") {
         // sh:98-100  %D{...} strftime format
         compset_s(r"(\\|)}*");
-        if dfc("_date_formats", &["zsh"]) == 0 {
+        if dfc("_date_formats", &["zsh"], 101) == 0 {
             ret = 0;
         }
     } else if cond_psfix(&["%".to_string()], 0) != 0
@@ -452,12 +459,12 @@ pub fn _ps1234() -> i32 {
         let pre_empty = pre.is_empty();
         argv.extend(pre);
         let owned: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-        if dfc("_describe", &owned) == 0 {
+        if dfc("_describe", &owned, 174) == 0 {
             ret = 0;
         }
         // sh:171  (( ! $#pre )) && _message -e prompt-format-specifiers number
         if pre_empty {
-            let _ = dfc("_message", &["-e", "prompt-format-specifiers", "number"]);
+            let _ = dfc("_message", &["-e", "prompt-format-specifiers", "number"], 176);
         }
     }
 

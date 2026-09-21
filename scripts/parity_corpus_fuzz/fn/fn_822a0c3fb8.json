@@ -1,0 +1,22 @@
+{
+  "argv": [],
+  "call": "_email_addresses ",
+  "call_label": "bare",
+  "fingerprint": "822a0c3fb8",
+  "function": "_email_addresses",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_comp_tags = ' users email-ldap email-mutt ' | test/_comp_tags = ' email-ldap users email-mutt '",
+  "ref_rows": [
+    "  _comp_tags = ' users  email-ldap  email-mutt '"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _email_addresses --fn-call bare --fn-derive-only _email_addresses --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_email_addresses:1-187 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _comp_tags = ' email-ldap   users  email-mutt '"
+  ]
+}

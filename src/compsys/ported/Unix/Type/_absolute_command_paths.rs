@@ -41,6 +41,7 @@
 //! when wired up. The leaf `_absolute_command_paths()` entry point
 //! is what compsys consumers invoke.
 
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
@@ -138,7 +139,13 @@ pub fn _typed_in_absolute_command_paths(_args: &[String]) -> i32 {
             "-W".to_string(),
             "/".to_string(),
         ];
-        dispatch_function_call("_path_files", &a).unwrap_or(1)
+        // sh:22 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_path_files", &a, 22)
     } else if prefix.starts_with('/') {
         // sh:24
         let a: Vec<String> = vec![
@@ -148,7 +155,13 @@ pub fn _typed_in_absolute_command_paths(_args: &[String]) -> i32 {
             "-W".to_string(),
             "/".to_string(),
         ];
-        dispatch_function_call("_path_files", &a).unwrap_or(1)
+        // sh:24 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_path_files", &a, 24)
     } else {
         // sh:26
         1

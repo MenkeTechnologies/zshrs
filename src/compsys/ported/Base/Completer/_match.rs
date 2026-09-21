@@ -42,7 +42,7 @@
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -104,7 +104,13 @@ pub fn _match() -> i32 {
     // sh:32
     if !orig.is_empty() {
         set_compstate_str("pattern_match", "-");
-        if dispatch_function_call("_complete", &[]).unwrap_or(1) == 0 {
+        // sh:34 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        if dispatch_action_command("_complete", &[], 34) == 0 {
             ret = 0;
         }
         set_compstate_str("pattern_match", &opm);
@@ -117,7 +123,13 @@ pub fn _match() -> i32 {
     // sh:42
     if ret != 0 {
         set_compstate_str("pattern_match", "*");
-        if dispatch_function_call("_complete", &[]).unwrap_or(1) == 0 {
+        // sh:44 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        if dispatch_action_command("_complete", &[], 44) == 0 {
             ret = 0;
         }
         set_compstate_str("pattern_match", &opm);

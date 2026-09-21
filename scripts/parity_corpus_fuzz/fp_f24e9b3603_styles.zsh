@@ -1,0 +1,20 @@
+zstyle ':completion:*' cache-path ${HOME}/.zpwr/local/zcompcache
+zstyle ':completion:*' delimiters @ / , %
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*' insert-sections on
+zstyle ':completion:*' list-prompt $'\C-[[1;31m-<<\C-[[0;34m%SAt %s\C-[[44;37m%M%p\C-[[0;34m%S, Hit TAB for more, or the characters to insert%s\C-[[0;1;31m>>-\C-[[0m'
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*:(fasd|fasd-file|zdir)' cache-policy zpwrDailyCachingPolicy
+zstyle ':completion:*:*:*:*:ancillary-manipulator-commands' list-colors '=(#b)(*)=1;30=37;46'
+zstyle ':completion:*:*:*:*:commit-tags' list-colors '=(#b)(*)=1;30=1;34;41;4'
+zstyle ':completion:*:*:*:*:commits' list-colors '=(#b)(*)=1;37;45'
+zstyle ':completion:fasd-complete-d:*' completer _fasd_zsh_word_complete_d
+zstyle ':completion:fasd-complete-d:*' menu-select
+zstyle ':completion:fasd-complete-f:*' menu-select
+zstyle ':fzf-tab:*' ignore false
+zstyle ':fzf-tab:*' no-group-color $'\C-[[37m'
+zstyle ':fzf-tab:*' print-query alt-enter
+zstyle ':vcs_info:*' check-for-changes true
+zstyle ':vcs_info:hg*+set-message:*' hooks vcs-detect-changes
+zstyle ':vcs_info:svn*:*' actionformats '%c%u %F{1}| %a%f'
+zstyle ':completion:*:*' matcher 'l:|[^[:alpha:]]=?'

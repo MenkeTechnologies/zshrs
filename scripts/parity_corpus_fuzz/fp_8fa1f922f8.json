@@ -1,0 +1,12 @@
+{
+  "buffer": "mkdir -",
+  "fingerprint": "4a42bfdbdc",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowlist/col0 | ref/$ mkdir - | test/<absent>",
+  "origin": "style-fuzz/cfg0012",
+  "statements": [
+    "zstyle ':completion:*' last-prompt 0"
+  ]
+}

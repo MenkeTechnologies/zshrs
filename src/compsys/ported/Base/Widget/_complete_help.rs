@@ -56,6 +56,7 @@
 //!     result is only as accurate as the compsys call chain present on
 //!     `FUNCSTACK` when compsys functions are dispatched in-process.
 
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zformat;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
@@ -295,7 +296,13 @@ pub fn _complete_help(args: &[String]) -> i32 {
         .filter(|s| !s.is_empty())
         .cloned()
         .unwrap_or_else(|| "_main_complete".to_string());
-    let ret = dispatch_function_call(&target, &[]).unwrap_or(1);
+    // sh:45 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    let ret = dispatch_action_command(&target, &[], 45);
 
     // sh:52 — `unfunction compadd compcall zstyle` (remove the overrides we
     // installed) then sh:53 `_unshadow` (restore the real builtins' backups).
@@ -505,9 +512,13 @@ mod tests {
     }
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_complete_help(&[]), 1);
+        assert_eq!(_complete_help(&[]), 127);
     }
 
     #[test]

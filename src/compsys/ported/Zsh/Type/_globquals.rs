@@ -32,7 +32,7 @@
 //! presentation and documents the omission — no candidate is faked or
 //! dropped.
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -119,10 +119,21 @@ fn compset(args: &[&str]) -> i32 {
     bin_compset("compset", &a, &make_ops(), 0)
 }
 
-/// Named-function dispatch shim (`_delimiters`, `_users`, …).
-fn call(name: &str, args: &[&str]) -> i32 {
+/// Named-function dispatch shim (`_delimiters`, `_users`, …), called from
+/// upstream line `line`.
+///
+/// Every upstream site this stands in for writes a plain COMMAND WORD, so
+/// `shared::dispatch_action_command` (shared.rs:1407) — `execcmd`'s own
+/// resolution: shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+/// `$PATH`, then c:903's `command not found` with c:908's 127 — is what they
+/// mean. The `.unwrap_or(1)` this replaces had NO not-found arm, so a name the
+/// shell diagnoses returned in silence. That is live here: sh:65 and sh:196
+/// run `_command_names`, and on this host `$fpath`'s first `_command_names`
+/// (`~/.zpwr/autoload/comp_utils/_command_names`) is UNTAGGED, so `compinit`
+/// sh:507-526 registers nothing for the name.
+fn call(name: &str, args: &[&str], line: u64) -> i32 {
     let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    dispatch_function_call(name, &a).unwrap_or(1)
+    crate::compsys::ported::shared::dispatch_action_command(name, &a, line)
 }
 
 /// sh:63 / sh:194 — `[[ $PREFIX = [[:IDENT:]]# ]]`: PREFIX is empty or
@@ -225,10 +236,10 @@ pub fn _globquals() -> i32 {
                 if compset(&["-P", "[-=+][0-7?]##"]) != 0 {
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:26
-                        return call("_delimiters", &["qualifier-f"]);
-                    } else if call("_globqual_delims", &[]) != 0 {
+                        return call("_delimiters", &["qualifier-f"], 26);
+                    } else if call("_globqual_delims", &[], 28) != 0 {
                         // sh:30
-                        return call("_message", &["-e", "modes", "mode spec"]);
+                        return call("_message", &["-e", "modes", "mode spec"], 30);
                     }
                 }
             }
@@ -237,10 +248,10 @@ pub fn _globquals() -> i32 {
             'P' => {
                 if getsparam("PREFIX").unwrap_or_default().is_empty() {
                     // sh:39
-                    return call("_delimiters", &["qualifier-P"]);
-                } else if call("_globqual_delims", &[]) != 0 {
+                    return call("_delimiters", &["qualifier-P"], 39);
+                } else if call("_globqual_delims", &[], 41) != 0 {
                     // sh:43
-                    return call("_message", &["-e", "prefix", "prefix"]);
+                    return call("_message", &["-e", "prefix", "prefix"], 43);
                 }
             }
 
@@ -248,11 +259,11 @@ pub fn _globquals() -> i32 {
             'e' => {
                 if getsparam("PREFIX").unwrap_or_default().is_empty() {
                     // sh:51
-                    return call("_delimiters", &["qualifier-e"]);
-                } else if call("_globqual_delims", &[]) != 0 {
+                    return call("_delimiters", &["qualifier-e"], 51);
+                } else if call("_globqual_delims", &[], 53) != 0 {
                     // sh:55  compset -q; _normal
                     let _ = compset(&["-q"]);
-                    return call("_normal", &[]);
+                    return call("_normal", &[], 56);
                 }
             }
 
@@ -260,7 +271,7 @@ pub fn _globquals() -> i32 {
             '+' => {
                 if all_ident(&getsparam("PREFIX").unwrap_or_default()) {
                     // sh:65
-                    return call("_command_names", &[]);
+                    return call("_command_names", &[], 65);
                 }
                 // sh:68
                 let _ = compset(&["-P", "[[:IDENT:]]##"]);
@@ -270,7 +281,7 @@ pub fn _globquals() -> i32 {
             'd' => {
                 if compset(&["-p", "[[:digit:]]##"]) != 0 {
                     // sh:74
-                    return call("_message", &["-e", "device-ids", "device ID"]);
+                    return call("_message", &["-e", "device-ids", "device ID"], 74);
                 }
             }
 
@@ -278,7 +289,7 @@ pub fn _globquals() -> i32 {
             'l' => {
                 if compset(&["-P", "([-+]|)[[:digit:]]##"]) != 0 {
                     // sh:82
-                    return call("_message", &["-e", "numbers", "link count"]);
+                    return call("_message", &["-e", "numbers", "link count"], 82);
                 }
             }
 
@@ -287,11 +298,11 @@ pub fn _globquals() -> i32 {
                 if compset(&["-P", "[[:digit:]]##"]) != 0 {
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:91
-                        return call("_delimiters", &["qualifier-u"]);
-                    } else if call("_globqual_delims", &[]) != 0 {
+                        return call("_delimiters", &["qualifier-u"], 91);
+                    } else if call("_globqual_delims", &[], 93) != 0 {
                         // sh:95  _users -S $delim
                         let delim = getsparam("delim").unwrap_or_default();
-                        return call("_users", &["-S", &delim]);
+                        return call("_users", &["-S", &delim], 95);
                     }
                 }
             }
@@ -301,11 +312,11 @@ pub fn _globquals() -> i32 {
                 if compset(&["-P", "[[:digit:]]##"]) != 0 {
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:105
-                        return call("_delimiters", &["qualifier-g"]);
-                    } else if call("_globqual_delims", &[]) != 0 {
+                        return call("_delimiters", &["qualifier-g"], 105);
+                    } else if call("_globqual_delims", &[], 107) != 0 {
                         // sh:109  _groups -S $delim
                         let delim = getsparam("delim").unwrap_or_default();
-                        return call("_groups", &["-S", &delim]);
+                        return call("_groups", &["-S", &delim], 109);
                     }
                 }
             }
@@ -374,7 +385,13 @@ pub fn _globquals() -> i32 {
                     ));
                     // sh:143  _alternative $alts
                     let argv: Vec<String> = alts;
-                    return dispatch_function_call("_alternative", &argv).unwrap_or(1);
+                    // sh:143 is a COMMAND WORD, so `dispatch_action_command`
+                    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+                    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+                    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+                    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+                    // that resolved nowhere returned in silence.
+                    return dispatch_action_command("_alternative", &argv, 143);
                 }
             }
 
@@ -403,7 +420,13 @@ pub fn _globquals() -> i32 {
                     // sh:161
                     alts.push("digits:digit: ".to_string());
                     // sh:162  _alternative $alts
-                    return dispatch_function_call("_alternative", &alts).unwrap_or(1);
+                    // sh:162 is a COMMAND WORD, so `dispatch_action_command`
+                    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+                    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+                    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+                    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+                    // that resolved nowhere returned in silence.
+                    return dispatch_action_command("_alternative", &alts, 162);
                 }
             }
 
@@ -423,22 +446,23 @@ pub fn _globquals() -> i32 {
                             "-S",
                             "",
                         ],
+                        182,
                     );
                 } else if getsparam("IPREFIX").unwrap_or_default().chars().last() == Some('e') {
                     // sh:184
                     if getsparam("PREFIX").unwrap_or_default().is_empty() {
                         // sh:186
-                        return call("_delimiters", &["qualifier-oe"]);
-                    } else if call("_globqual_delims", &[]) != 0 {
+                        return call("_delimiters", &["qualifier-oe"], 186);
+                    } else if call("_globqual_delims", &[], 188) != 0 {
                         // sh:189  compset -q; _normal
                         let _ = compset(&["-q"]);
-                        return call("_normal", &[]);
+                        return call("_normal", &[], 190);
                     }
                 } else if getsparam("IPREFIX").unwrap_or_default().chars().last() == Some('+') {
                     // sh:193
                     if all_ident(&getsparam("PREFIX").unwrap_or_default()) {
                         // sh:196
-                        return call("_command_names", &[]);
+                        return call("_command_names", &[], 196);
                     }
                 }
             }
@@ -448,10 +472,10 @@ pub fn _globquals() -> i32 {
                 if compset(&["-P", "(-|)[[:digit:]]##(,(-|)[[:digit:]]##|)]"]) != 0 {
                     if compset(&["-P", "(-|)[[:digit:]]##,"]) == 0 {
                         // sh:206
-                        return call("_message", &["end of range"]);
+                        return call("_message", &["end of range"], 206);
                     } else {
                         // sh:208
-                        return call("_message", &["start of range"]);
+                        return call("_message", &["start of range"], 208);
                     }
                 }
             }
@@ -459,7 +483,7 @@ pub fn _globquals() -> i32 {
             // sh:214  (:)
             ':' => {
                 // sh:216  _history_modifiers q
-                return call("_history_modifiers", &["q"]);
+                return call("_history_modifiers", &["q"], 216);
             }
 
             // Any other char: shell `esac` no-op — keep scanning.
@@ -472,6 +496,7 @@ pub fn _globquals() -> i32 {
     call(
         "_describe",
         &["-t", "globquals", "glob qualifier", "quals", "-Q", "-S", ""],
+        275,
     )
 }
 
@@ -481,12 +506,14 @@ mod tests {
     use crate::ported::params::{getaparam, setsparam};
 
     #[test]
-    fn returns_one_without_executor() {
-        // sh:222 — empty PREFIX skips the while loop and lands on the
-        //   catalogue `_describe`, which returns 1 with no executor.
+    /// sh:222 — an empty PREFIX skips the while loop and lands on sh:275's
+    /// catalogue `_describe`. That is a COMMAND WORD, and with no executor it
+    /// resolves to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so the status is c:908's 127, not a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "");
-        assert_eq!(_globquals(), 1);
+        assert_eq!(_globquals(), 127);
     }
 
     #[test]

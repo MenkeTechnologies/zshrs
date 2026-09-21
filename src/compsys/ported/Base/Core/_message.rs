@@ -193,7 +193,33 @@ pub fn _message_impl(args: &[String]) -> i32 {
         // shell; that was not obtained, so this is left as-is rather than
         // landed on a guess.
         crate::ported::utils::inc_locallevel();
-        let tags_rc = _tags_impl(&[tag.clone()]);
+        // sh:16 — in zsh `_tags` is a shell function, so its `FUNCSTACK`
+        // frame sits between `_message` and whatever `_tags` calls. The raw
+        // `_impl` call skips `doshfunc`, so that frame was absent, and every
+        // consumer that reads the funcstack BY INDEX from inside a `_tags`
+        // callee saw the window shifted one frame too deep. `_help_sort_tags`
+        // (`Base/Widget/_complete_help` sh:80) is exactly such a consumer:
+        // `${funcstack[3,(i)_($~_help_scan_funcstack)]}` expects [1]
+        // `_help_sort_tags`, [2] `_tags`, [3] the innermost real caller — so
+        // the missing frame dropped `_message` itself off the front of every
+        // reported call chain. Measured on `git log --grep=<C-x h>` with zsh
+        // 5.9.2 as reference:
+        //
+        //   zsh    option--grep-1  (_message _arguments _git-log _git _git)
+        //   zshrs  option--grep-1  (          _arguments _git-log _git _git)
+        //
+        // and identically on `git tag -l `, `git stash branch `,
+        // `git ls-tree --format=`, `git repack --window=`, `git --namespace=`.
+        // Supplied on its own rather than by switching to the dispatching
+        // `_tags`, so the hand-managed `locallevel` pairing above stays
+        // intact — same arrangement as the `_next_label` frame below. The
+        // frame is scoped to the `_tags` CALL, so it is gone again before the
+        // `_next_label` loop and `_tags_level` (`_next_label` sh:10) is
+        // unaffected.
+        let tags_rc = {
+            let _tags_frame = crate::compsys::ported::shared::PortFuncstackFrame::push("_tags");
+            _tags_impl(&[tag.clone()])
+        };
         if tags_rc == 0 {
             loop {
                 let nl_args = vec![tag.clone(), "expl".to_string(), descr.clone()];
@@ -263,7 +289,15 @@ pub fn _message_impl(args: &[String]) -> i32 {
     // nested level, so each return path drops it again. Left direct for the
     // same reason as the `-e` branch — see the comment there.
     crate::ported::utils::inc_locallevel();
-    if _tags_impl(&["messages".to_string()]) != 0 {
+    // sh:30 — `_tags` is a shell function in zsh, so it owns a `FUNCSTACK`
+    // frame; supply it here for the same reason as the `-e` branch above (a
+    // funcstack-index consumer such as `_help_sort_tags` otherwise loses the
+    // innermost caller off the front of the chain it reports).
+    let tags_rc = {
+        let _tags_frame = crate::compsys::ported::shared::PortFuncstackFrame::push("_tags");
+        _tags_impl(&["messages".to_string()])
+    };
+    if tags_rc != 0 {
         crate::ported::utils::dec_locallevel();
         return 1;
     }

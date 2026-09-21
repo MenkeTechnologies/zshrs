@@ -39,6 +39,7 @@
 //! ```
 
 use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compset;
@@ -69,7 +70,13 @@ pub fn _tilde_files(args: &[String]) -> i32 {
     let has_w = args.iter().any(|a| a.starts_with("-W"));
     if (isset(MAGICEQUALSUBST) && iprefix.ends_with('=')) || has_w {
         // sh:4
-        return dispatch_function_call("_files", args).unwrap_or(1);
+        // sh:6 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_files", args, 6);
     }
 
     // sh:10
@@ -82,7 +89,13 @@ pub fn _tilde_files(args: &[String]) -> i32 {
         let mut a: Vec<String> = args.to_vec();
         a.push("-W".to_string());
         a.push(home);
-        return dispatch_function_call("_files", &a).unwrap_or(1);
+        // sh:14 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_files", &a, 14);
     }
 
     if prefix.starts_with('~') && prefix[1..].contains('/') {
@@ -103,7 +116,13 @@ pub fn _tilde_files(args: &[String]) -> i32 {
         let mut a: Vec<String> = args.to_vec();
         a.push("-W".to_string());
         a.push(resolved);
-        return dispatch_function_call("_files", &a).unwrap_or(1);
+        // sh:29 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_files", &a, 29);
     }
 
     if prefix.starts_with('~') {
@@ -139,7 +158,13 @@ pub fn _tilde_files(args: &[String]) -> i32 {
     }
 
     // sh:36
-    dispatch_function_call("_files", args).unwrap_or(1)
+    // sh:37 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_files", args, 37)
 }
 
 #[cfg(test)]
@@ -147,11 +172,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("PREFIX", "/tmp");
         let _ = setsparam("IPREFIX", "");
-        assert_eq!(_tilde_files(&[]), 1);
+        // sh:37's `_files "$@"` is a command word: with no executor it
+        //   resolves nowhere, so `Src/exec.c:903` reports `command not
+        //   found` and the status is c:908's 127.
+        assert_eq!(_tilde_files(&[]), 127);
     }
 
     #[test]

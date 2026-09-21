@@ -17,7 +17,7 @@
 //! sh:13  _main_complete _expand
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setsparam};
 
 /// `_expand_word` — front-end widget: set context to `expand-word`
@@ -37,7 +37,13 @@ pub fn _expand_word() -> i32 {
     let _ = setsparam("curcontext", &new_ctx);
 
     // sh:13
-    let r = dispatch_function_call("_main_complete", &["_expand".to_string()]).unwrap_or(1);
+    // sh:13 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    let r = dispatch_action_command("_main_complete", &["_expand".to_string()], 13);
 
     // Restore shell-local scoping
     let _ = setsparam("curcontext", &saved);
@@ -49,9 +55,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_expand_word(), 1);
+        assert_eq!(_expand_word(), 127);
     }
 
     #[test]

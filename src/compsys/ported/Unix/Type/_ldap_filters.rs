@@ -41,7 +41,7 @@
 
 use crate::compsys::ported::_regex_arguments::_regex_arguments;
 use crate::compsys::ported::shared::LocalScope;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setaparam, setsparam};
 use crate::ported::utils::quotestring;
 use crate::ported::zle::compcore::get_compstate_str;
@@ -297,7 +297,13 @@ pub fn _ldap_filters(_args: &[String]) -> i32 {
     // sh:90
     let _ = _regex_arguments(&argv);
     // sh:91
-    dispatch_function_call("_ldap_search_filters", &[]).unwrap_or(1)
+    // sh:91 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_ldap_search_filters", &[], 91)
 }
 
 fn lookup_sep(curcontext: &str) -> String {

@@ -1,0 +1,457 @@
+# git_parity_cases.txt — the `git` TAB-completion parity corpus.
+#
+# Run it, whole, with:
+#
+#   /opt/homebrew/bin/python3 scripts/comptab_parity.py \
+#     --corpus scripts/git_parity_cases.txt --sequences tab1,tab2 \
+#     --jobs 1 --key-budget 25 --dump <a ZSH-WRITTEN .zcompdump>
+#
+# One command-line prefix per line; `#` comments and blank lines are ignored
+# (comptab_parity.py:2209-2210), and a line's TRAILING SPACES are part of the
+# buffer — `git add ` completes an argument, `git add` completes the command
+# name. Never put a comment on the same line as an entry.
+#
+# --dump IS NOT OPTIONAL. `resolve_dump` (comptab_parity.py:316-326) globs
+# `~/.zpwr/local/.zcompdump*` and takes the first hit, which may be a dump
+# written by ZSHRS. zshrs ports the core compsys functions natively and writes
+# no autoload stub for them, so real zsh sourcing such a dump gets
+# `_main_complete: command not found` and completes NOTHING — every cell scores
+# TIMEOUT at any key budget, and `dump_health` does not catch it because
+# `$#_comps` still reads ~51000. Precondition: `grep -c _main_complete <dump>`
+# must be >= 1.
+#
+# PROVENANCE. Generated 2026-09-20 from `git help -a` (git 2.55.0) plus
+# hand-written families, deduplicated in order:
+#   * one argument-position cell per porcelain/ancillary subcommand,
+#     minus the ones whose completer is slow, interactive or network-bound
+#     (fetch/pull/push/clone/submodule/gui/gitk/send-email/p4/svn/gc/fsck/...)
+#   * `git <sub> --` long-option listing for 50+ high-traffic subcommands
+#   * nested subcommand tables: remote, stash, bisect, worktree, notes,
+#     sparse-checkout, bundle, reflog, rerere, config, tag, branch
+#   * `--opt=` value cells (format/pretty/date/diff-filter/strategy/color/
+#     untracked-files/ignore-submodules/sort/cleanup/whitespace/...)
+#   * positional and ref cells (`git checkout main -- `, `git diff main..`,
+#     `git log HEAD`, `git reset --hard `, `git cat-file -p `, ...)
+#   * global-option cells (`git -c `, `git -C `, `git --git-dir=`, `git -p `)
+#
+# Cells that contact a remote are deliberately ABSENT: they make both shells
+# slow by the same amount, which turns into TIMEOUT noise rather than signal.
+#
+git add 
+git am 
+git annotate 
+git apply 
+git archimport 
+git archive 
+git attributes 
+git bisect 
+git blame 
+git branch 
+git bundle 
+git cat-file 
+git check-attr 
+git check-ignore 
+git check-mailmap 
+git check-ref-format 
+git checkout 
+git checkout-index 
+git cherry 
+git cherry-pick 
+git clean 
+git cli 
+git column 
+git commit 
+git commit-graph 
+git commit-tree 
+git config 
+git count-objects 
+git cvsexportcommit 
+git cvsimport 
+git cvsserver 
+git describe 
+git diff 
+git diff-files 
+git diff-index 
+git diff-pairs 
+git diff-tree 
+git fast-export 
+git fast-import 
+git fetch-pack 
+git fmt-merge-msg 
+git for-each-ref 
+git for-each-repo 
+git format-bundle 
+git format-chunk 
+git format-commit-graph 
+git format-index 
+git format-pack 
+git format-patch 
+git format-rev 
+git format-signature 
+git get-tar-commit-id 
+git gitweb 
+git grep 
+git hash-object 
+git help 
+git hook 
+git hooks 
+git ignore 
+git index-pack 
+git init 
+git interpret-trailers 
+git last 
+git last-modified 
+git log 
+git ls-files 
+git ls-remote 
+git ls-tree 
+git m3 
+git m4 
+git mailinfo 
+git mailmap 
+git mailsplit 
+git merge 
+git merge-base 
+git merge-file 
+git merge-index 
+git merge-one-file 
+git merge-tree 
+git mktag 
+git mktree 
+git modules 
+git multi-pack-index 
+git mv 
+git name-rev 
+git notes 
+git pack-objects 
+git pack-redundant 
+git pack-refs 
+git patch-id 
+git protocol-capabilities 
+git protocol-common 
+git protocol-http 
+git protocol-pack 
+git protocol-v2 
+git prune 
+git prune-packed 
+git quiltimport 
+git range-diff 
+git read-tree 
+git rebase 
+git reflog 
+git refs 
+git remote 
+git repack 
+git replace 
+git replay 
+git repo 
+git repository-layout 
+git rerere 
+git reset 
+git restore 
+git rev-list 
+git rev-parse 
+git revert 
+git revisions 
+git rm 
+git sdiff 
+git send-pack 
+git sh-i18n 
+git sh-setup 
+git shortlog 
+git show 
+git show-branch 
+git show-index 
+git show-ref 
+git sparse-checkout 
+git spush 
+git stage 
+git stash 
+git status 
+git stripspace 
+git supdate 
+git switch 
+git symbolic-ref 
+git tag 
+git track 
+git unpack-file 
+git unpack-objects 
+git unstage 
+git untrack 
+git update-index 
+git update-ref 
+git update-server-info 
+git url-parse 
+git var 
+git verify-commit 
+git verify-pack 
+git verify-tag 
+git version 
+git visual 
+git whatchanged 
+git wipe 
+git worktree 
+git write-tree 
+git add --
+git am --
+git archive --
+git bisect --
+git blame --
+git branch --
+git bundle --
+git checkout --
+git cherry-pick --
+git clean --
+git commit --
+git config --
+git describe --
+git diff --
+git for-each-ref --
+git format-patch --
+git grep --
+git log --
+git ls-files --
+git ls-tree --
+git merge --
+git mv --
+git notes --
+git rebase --
+git reflog --
+git remote --
+git replace --
+git reset --
+git restore --
+git rev-list --
+git rev-parse --
+git revert --
+git rm --
+git shortlog --
+git show --
+git show-branch --
+git sparse-checkout --
+git stash --
+git status --
+git switch --
+git tag --
+git update-index --
+git worktree --
+git apply --
+git cat-file --
+git check-ignore --
+git cherry --
+git column --
+git count-objects --
+git diff-tree --
+git merge-base --
+git name-rev --
+git pack-objects --
+git prune --
+git range-diff --
+git repack --
+git symbolic-ref --
+git verify-commit --
+git whatchanged --
+git write-tree --
+git remote add 
+git remote rename 
+git remote remove 
+git remote set-head 
+git remote set-branches 
+git remote get-url 
+git remote set-url 
+git remote show 
+git remote prune 
+git remote update 
+git stash push 
+git stash save 
+git stash list 
+git stash show 
+git stash drop 
+git stash pop 
+git stash apply 
+git stash branch 
+git stash clear 
+git stash create 
+git stash store 
+git bisect start 
+git bisect bad 
+git bisect good 
+git bisect new 
+git bisect old 
+git bisect skip 
+git bisect reset 
+git bisect visualize 
+git bisect replay 
+git bisect log 
+git bisect run 
+git worktree add 
+git worktree list 
+git worktree lock 
+git worktree move 
+git worktree prune 
+git worktree remove 
+git worktree unlock 
+git worktree repair 
+git notes add 
+git notes copy 
+git notes append 
+git notes edit 
+git notes show 
+git notes merge 
+git notes remove 
+git notes prune 
+git notes get-ref 
+git sparse-checkout init 
+git sparse-checkout list 
+git sparse-checkout set 
+git sparse-checkout add 
+git sparse-checkout reapply 
+git sparse-checkout disable 
+git sparse-checkout check-rules 
+git bundle create 
+git bundle verify 
+git bundle list-heads 
+git bundle unbundle 
+git reflog show 
+git reflog expire 
+git reflog delete 
+git reflog exists 
+git rerere clear 
+git rerere forget 
+git rerere diff 
+git rerere status 
+git rerere remaining 
+git rerere gc 
+git config get 
+git config set 
+git config unset 
+git config list 
+git config --global 
+git config --get 
+git config --unset 
+git config --add 
+git config --list 
+git tag -d 
+git tag -v 
+git tag -l 
+git branch -d 
+git branch -D 
+git branch -m 
+git branch --set-upstream-to=
+git branch -u 
+git log --format=
+git log --pretty=
+git log --date=
+git log --decorate=
+git log --diff-filter=
+git log --no-walk=
+git log --encoding=
+git log --since=
+git log --until=
+git log --author=
+git log --grep=
+git diff --diff-filter=
+git diff --color=
+git diff --color-moved=
+git diff --ws-error-highlight=
+git diff --submodule=
+git diff --dirstat=
+git diff --ignore-submodules=
+git diff --word-diff=
+git show --format=
+git show --pretty=
+git show --diff-algorithm=
+git status --untracked-files=
+git status --ignore-submodules=
+git status --porcelain=
+git status --column=
+git archive --format=
+git archive --remote=
+git merge --strategy=
+git merge --strategy-option=
+git merge -X
+git rebase --strategy=
+git rebase --onto=
+git rebase --whitespace=
+git cherry-pick --strategy=
+git cherry-pick --mainline=
+git format-patch --thread=
+git format-patch --suffix=
+git format-patch --base=
+git for-each-ref --format=
+git for-each-ref --sort=
+git for-each-ref --merged=
+git grep --color=
+git grep --threads=
+git clean --exclude=
+git ls-files --format=
+git ls-tree --format=
+git blame --date=
+git blame --encoding=
+git branch --format=
+git branch --sort=
+git tag --format=
+git tag --sort=
+git checkout --conflict=
+git restore --source=
+git restore --worktree 
+git switch --orphan=
+git commit --cleanup=
+git commit --untracked-files=
+git apply --whitespace=
+git apply --directory=
+git am --patch-format=
+git rev-list --date=
+git rev-list --filter=
+git describe --match=
+git update-index --chmod=
+git repack --window=
+git submodule--helper 
+git checkout m
+git checkout HEAD
+git checkout -- 
+git checkout main -- 
+git switch -c 
+git restore --source=HEAD 
+git add -
+git add s
+git mv src 
+git diff HEAD 
+git diff main..
+git diff --stat 
+git diff -- 
+git log HEAD
+git log -- 
+git log main 
+git log --oneline 
+git show HEAD
+git rebase -i 
+git rebase main 
+git reset --hard 
+git reset HEAD 
+git blame src
+git grep -
+git archive HEAD 
+git cat-file -p 
+git format-patch HEAD~1..
+git ls-tree HEAD 
+git clean -
+git commit -
+git config user.
+git config core.
+git help c
+git -c 
+git -C 
+git --git-dir=
+git --work-tree=
+git --exec-path=
+git --namespace=
+git -p 
+git --no-pager 
+git --no-pager l
+sudo git 
+git chec
+git lo
+git s
+git 
+git st

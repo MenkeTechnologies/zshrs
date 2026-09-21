@@ -1,0 +1,12 @@
+{
+  "buffer": "print -",
+  "fingerprint": "d01e9c3626",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/C -- print arguments in s | test/-C -- print arguments in s",
+  "origin": "style-fuzz/cfg0052",
+  "statements": [
+    "zstyle ':completion:*' list-colors 'fi=0;37' ec= rc="
+  ]
+}

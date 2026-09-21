@@ -18,7 +18,7 @@
 //! sh:17      if [[ "$prev" = (\[\[|\|\||\&\&|\!|\() ]]; then
 //! sh:18        _describe -o 'condition code' '( … unary tests … )'
 //! sh:44      else
-//! sh:52        _describe -o 'condition code' '( … binary tests … )'
+//! sh:45        _describe -o 'condition code' '( … binary tests … )'
 //! sh:56      fi
 //! sh:57    _alternative 'files:: _files' 'parameters:: _parameters' && ret=0
 //! sh:59    return ret
@@ -29,8 +29,8 @@ use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_file_descriptors::_file_descriptors;
 use crate::compsys::ported::_options::_options;
 use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::compsys::ported::shared::zstyle_T;
-use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getiparam, getsparam};
 
 const UNARY_TESTS: &[&str] = &[
@@ -104,7 +104,13 @@ pub fn _condition() -> i32 {
     // sh:7
     if is_file_test_op(&prev) {
         if _tags(&["-C".to_string(), prev, "files".to_string()]) == 0 {
-            return dispatch_function_call("_files", &[]).unwrap_or(1);
+            // sh:8 — `_files` is a plain COMMAND WORD, resolved the way
+            // `execcmd` resolves one (`Src/exec.c:3105-3109` shfunc/port/
+            // plugin, then builtin, then `$PATH`, then c:903's `command not
+            // found` + c:908's 127). `dispatch_action_command`
+            // (shared.rs:1407) is that resolution and publishes the caller
+            // line `FnScope` zeroed on entry.
+            return dispatch_action_command("_files", &[], 8);
         }
         return 1;
     }
@@ -114,11 +120,18 @@ pub fn _condition() -> i32 {
     }
     // sh:11
     if prev == "-v" {
-        return dispatch_function_call(
+        // sh:12 — the same COMMAND-WORD resolution, and unresolvable on this
+        // host: `$fpath`'s first `_parameters`
+        // (`~/.zpwr/autoload/comp_utils/_parameters`) is UNTAGGED, so
+        // `compinit` sh:507-526 registers nothing for the name and the Rust
+        // port stands aside for the file (router.rs `has_fpath_override`).
+        // zsh prints `_condition:12: command not found: _parameters`; the port
+        // returned a silent 1.
+        return dispatch_action_command(
             "_parameters",
             &["-r".to_string(), "\\= \\t\\n\\[\\-".to_string()],
-        )
-        .unwrap_or(1);
+            12,
+        );
     }
 
     // sh:13-15  default branch
@@ -140,7 +153,7 @@ pub fn _condition() -> i32 {
         } else {
             BINARY_TESTS.iter().map(|s| s.to_string()).collect()
         };
-        // sh:18 / sh:52 — the catalog reaches `_describe` as ONE argument:
+        // sh:18 / sh:45 — the catalog reaches `_describe` as ONE argument:
         // a parenthesised array literal whose descriptions carry
         // backslash-escaped spaces (`-a:existing\ file`), which
         // `_describe` sh:79-80 splices into `eval local _a_…=$1` so the
@@ -161,7 +174,10 @@ pub fn _condition() -> i32 {
         );
         let describe_argv: Vec<String> =
             vec!["-o".to_string(), "condition code".to_string(), literal];
-        if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
+        // sh:18 (unary branch) / sh:45 (binary branch) — a plain COMMAND WORD
+        // either way, so the not-found arm belongs here too; the line passed
+        // is the branch's own, which is what any diagnostic prints.
+        if dispatch_action_command("_describe", &describe_argv, if group { 18 } else { 45 }) == 0 {
             ret = 0;
         }
     }

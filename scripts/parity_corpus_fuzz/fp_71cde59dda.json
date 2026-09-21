@@ -1,0 +1,12 @@
+{
+  "buffer": "tar -",
+  "fingerprint": "6c296d3e75",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/row0/col1 | ref/$ tar -A | test/$ tar -",
+  "origin": "style-fuzz/cfg0094",
+  "statements": [
+    "zstyle ':completion:*' menu 1 select=2 search"
+  ]
+}

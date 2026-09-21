@@ -1,0 +1,12 @@
+{
+  "buffer": "fc -",
+  "fingerprint": "4306e4e627",
+  "keys": [
+    "tab"
+  ],
+  "note": "cell/rowtop/col0 | ref/RC>-# -- source <path> | test/-# -- source <path>",
+  "origin": "style-fuzz/cfg0037",
+  "statements": [
+    "zstyle ':completion:*:*' list-colors ec= 'rc=<RC>'"
+  ]
+}

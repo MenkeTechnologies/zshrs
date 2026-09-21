@@ -8120,8 +8120,25 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     .map(|s| s.contains_key(name))
                     .unwrap_or(false)
         };
-        let resolved_idx: i64 = if is_hashed {
-            0 // unused for hashed params
+        // c:Src/params.c:2048-2053 — getindex's FIRST test on a subscript body:
+        //     if ((s[0] == '*' || s[0] == '@') && s + 1 == tbrack) {
+        //         if ((v->scanflags || IS_UNSET_VALUE(v)) && s[0] == '@')
+        //             v->scanflags |= SCANPM_ISVAR_AT;
+        //         v->start = 0;
+        //         v->end = -1;
+        //         s += 2;
+        //     } else { … start = getarg(&s, …); … }
+        // A bare `@` / `*` subscript names the WHOLE value, and `getarg` — the
+        // only place the subscript is arithmetic-evaluated — is never reached.
+        // The port had no such arm, so the subscript fell through to
+        // `mathevalarg`, which answered `bad math expression: operand expected
+        // at `@'` and aborted the whole expansion: `e=(); print "${e[@]:=}"`
+        // errored where zsh assigns `('')` and prints one empty word (paramsubst
+        // reaches this through c:Src/subst.c:3313 `setsparam(idbeg, …)`, whose
+        // `idbeg` still carries the `[@]`).
+        let is_whole_value = key == "@" || key == "*"; // c:2048
+        let resolved_idx: i64 = if is_hashed || is_whole_value {
+            0 // unused: hashed params key by name, `[@]`/`[*]` by start/end
         } else {
             key.parse::<i64>().unwrap_or_else(|_| {
                 // c:Src/params.c:2058 getarg → c:1585-1593 — a subscript that
@@ -8197,7 +8214,37 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         if keep_dontimport {
             pm.node.flags |= PM_DONTIMPORT as i32;
         }
-        if (pm.node.flags as u32 & PM_HASHED) != 0 {
+        if is_whole_value {
+            // c:2051-2052 left `v->start = 0, v->end = -1`, so the write is
+            // c:Src/params.c:2700-2706 / :2930-2946 `assignstrvalue` on the
+            // WHOLE value rather than on one element.
+            match PM_TYPE(pm.node.flags as u32) {
+                // c:2700-2706 — `if (PM_TYPE(v->pm->node.flags) == PM_HASHED) {
+                // zerr("%s: attempt to set slice of associative array", …); … }`
+                x if x == PM_HASHED => {
+                    let nam = pm.node.nam.clone();
+                    zerr(&format!("{}: attempt to set slice of associative array", nam)); // c:2701
+                    drop(tab);
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    unqueue_signals();
+                    return None;
+                }
+                // c:2721-2733 — a scalar's whole-value slice is the whole
+                // string, so the param stays a SCALAR: `s=abc; s[@]=X` leaves
+                // `${(t)s}` as `scalar` with the value `X`.
+                x if x == PM_SCALAR => {
+                    pm.u_str = Some(val.to_string());
+                    pm.u_arr = None;
+                }
+                // c:2930-2946 `setarrvalue` with start 0 / end -1 replaces the
+                // array with the assigned value: `e=(); e[@]=v` is `(v)`, one
+                // element, and an UNSET name was created PM_ARRAY at c:3156.
+                _ => {
+                    pm.u_arr = Some(vec![val.to_string()]);
+                    pm.u_str = None;
+                }
+            }
+        } else if (pm.node.flags as u32 & PM_HASHED) != 0 {
             // c:3251 + c:3343 — `getvalue(&vbuf, &t, 1)` re-reads the
             // FULL `name[subscript]` text so `getindex` can resolve the
             // subscript, then `assignstrvalue` performs the write and

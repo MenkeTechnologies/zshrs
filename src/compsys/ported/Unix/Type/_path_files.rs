@@ -34,7 +34,7 @@
 //! `-p-`), matching C's accepted forms (computil.c:5011-5015).
 
 use crate::compsys::ported::shared::{PM_ARRAY, PM_UNIQUE};
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::glob::{tokenize, zglob};
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
@@ -97,8 +97,17 @@ fn compfiles(argv: Vec<String>) -> i32 {
     bin_compfiles("compfiles", &argv, &make_ops(), 0)
 }
 
-fn dispatch0(name: &str, args: &[String]) -> i32 {
-    dispatch_function_call(name, args).unwrap_or(1)
+/// Dispatch a compsys function BY NAME from upstream line `line`.
+///
+/// Every upstream site this stands in for writes a plain COMMAND WORD, so
+/// `shared::dispatch_action_command` (shared.rs:1407) — `execcmd`'s own
+/// resolution: shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+/// `$PATH`, then c:903's `command not found` with c:908's 127 — is what they
+/// mean. The `.unwrap_or(1)` this replaces had NO not-found arm, so a name the
+/// shell DIAGNOSES (`_list_files` and `_description` are ordinary `$fpath`
+/// functions a user can shadow) produced no output at all.
+fn dispatch0(name: &str, args: &[String], line: u64) -> i32 {
+    crate::compsys::ported::shared::dispatch_action_command(name, args, line)
 }
 
 fn get_arr(name: &str) -> Vec<String> {
@@ -463,7 +472,14 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
 
     // sh:22-39 — glob-qualifier dispatch.
     let prefix = get_str("PREFIX");
-    if dispatch_function_call("_have_glob_qual", &[prefix.clone()]) == Some(0) {
+    // sh:22 `_have_glob_qual …` is a COMMAND WORD like any other, so
+    // route it through `dispatch_action_command` (shared.rs:1407):
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // branch is taken on 0 either way, so only the SWALLOWED diagnostic
+    // changes — `== Some(0)` turned a name the shell diagnoses into a
+    // silent false.
+    if dispatch_action_command("_have_glob_qual", &[prefix.clone()], 22) == 0 {
         let mut ret = 1;
         let mtch = get_arr("match");
         let m1len = mtch.first().map(|s| s.chars().count()).unwrap_or(0);
@@ -471,7 +487,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
         compset(vec!["-S".into(), r"[^\)\|\~]#(|\))".into()]);
         let eg_on = assoc_get("_comp_caller_options", "extendedglob").as_deref() == Some("on");
         if eg_on && compset(vec!["-P".into(), r"\#".into()]) == 0 {
-            if dispatch0("_globflags", &[]) == 0 {
+            if dispatch0("_globflags", &[], 27) == 0 {
                 ret = 0;
             }
         } else {
@@ -495,12 +511,13 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                         "-S".into(),
                         "".into(),
                     ],
+                    34,
                 ) == 0
                 {
                     ret = 0;
                 }
             }
-            if dispatch0("_globquals", &[]) == 0 {
+            if dispatch0("_globquals", &[], 36) == 0 {
                 ret = 0;
             }
         }
@@ -755,11 +772,13 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             dispatch0(
                 "_description",
                 &["directories".into(), "expl".into(), "directory".into()],
+                119,
             );
         } else {
             dispatch0(
                 "_description",
                 &["files".into(), "expl".into(), "file".into()],
+                121,
             );
         }
         let expl = get_arr("expl");
@@ -850,8 +869,12 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             mopts = nm;
             let mut tmp2v = Vec::new();
             for t in &pats {
-                if dispatch_function_call("_have_glob_qual", &[t.clone(), "complete".into()])
-                    == Some(0)
+                // sh:175 — a COMMAND WORD; see the sh:22 note above.
+                if dispatch_action_command(
+                    "_have_glob_qual",
+                    &[t.clone(), "complete".into()],
+                    175,
+                ) == 0
                 {
                     let m = get_arr("match");
                     let m1 = m.first().cloned().unwrap_or_default();
@@ -889,11 +912,18 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
     if !cs_s("pattern_match").is_empty() {
         let suffix0 = get_str("SUFFIX");
         let prefix0 = get_str("PREFIX");
+        // sh:215 / sh:216 — two COMMAND WORDS; see the sh:22 note above.
         let hit = (suffix0.is_empty()
-            && dispatch_function_call("_have_glob_qual", &[prefix0.clone(), "complete".into()])
-                == Some(0))
-            || dispatch_function_call("_have_glob_qual", &[suffix0.clone(), "complete".into()])
-                == Some(0);
+            && dispatch_action_command(
+                "_have_glob_qual",
+                &[prefix0.clone(), "complete".into()],
+                215,
+            ) == 0)
+            || dispatch_action_command(
+                "_have_glob_qual",
+                &[suffix0.clone(), "complete".into()],
+                216,
+            ) == 0;
         if hit {
             let m = get_arr("match");
             let tmp3 = m.get(4).cloned().unwrap_or_default(); // match[5]
@@ -904,8 +934,12 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             }
             let mut tmp2v = Vec::new();
             for t in &pats {
-                if dispatch_function_call("_have_glob_qual", &[t.clone(), "complete".into()])
-                    == Some(0)
+                // sh:227 — a COMMAND WORD; see the sh:22 note above.
+                if dispatch_action_command(
+                    "_have_glob_qual",
+                    &[t.clone(), "complete".into()],
+                    227,
+                ) == 0
                 {
                     let mm = get_arr("match");
                     let m1 = mm.first().cloned().unwrap_or_default();
@@ -1009,7 +1043,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             } else if tmp1n <= dirstack.len() as i64 && tmp1n >= 1 {
                 realpath = format!("{}/", dirstack[(tmp1n - 1) as usize]);
             } else {
-                dispatch0("_message", &["not enough directory stack entries".into()]);
+                dispatch0("_message", &["not enough directory stack entries".into()], 310);
                 return 1;
             }
         } else if lp == "-" || lp == "+" {
@@ -1018,7 +1052,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             // sh:316 — eval "realpath=~user/"
             realpath = expand_tilde(&format!("~{}/", lp)).unwrap_or_default();
             if realpath.is_empty() {
-                dispatch0("_message", &[format!("unknown user `{}'", lp)]);
+                dispatch0("_message", &[format!("unknown user `{}'", lp)], 318);
                 return 1;
             }
         }
@@ -1543,7 +1577,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                                 .map(|s| s.split('/').next().unwrap_or("").to_string())
                                 .collect();
                             setaparam("tmp1", tmp1.clone());
-                            dispatch0("_list_files", &["tmp1".into(), anchor2.clone()]);
+                            dispatch0("_list_files", &["tmp1".into(), anchor2.clone()], 695);
                             let listopts = get_arr("listopts");
                             let mut a = vec![uopt.clone()];
                             a.retain(|s| !s.is_empty());
@@ -1587,7 +1621,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                                 })
                                 .collect();
                             setaparam("tmp1", tmp1.clone());
-                            dispatch0("_list_files", &["tmp1".into(), anchor2.clone()]);
+                            dispatch0("_list_files", &["tmp1".into(), anchor2.clone()], 706);
                             let listopts = get_arr("listopts");
                             let mut a = vec![uopt.clone()];
                             a.retain(|s| !s.is_empty());
@@ -1618,7 +1652,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                     } else {
                         // sh:716-722
                         setaparam("tmp1", tmp1.clone());
-                        dispatch0("_list_files", &["tmp1".into(), anchor2.clone()]);
+                        dispatch0("_list_files", &["tmp1".into(), anchor2.clone()], 716);
                         let listopts = get_arr("listopts");
                         let mut a = vec![uopt.clone()];
                         a.retain(|s| !s.is_empty());
@@ -1667,7 +1701,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                         if !listsfx {
                             for it in tmp1.clone() {
                                 setaparam("tmpdisp", vec![it.clone()]);
-                                dispatch0("_list_files", &["tmpdisp".into(), anchor2.clone()]);
+                                dispatch0("_list_files", &["tmpdisp".into(), anchor2.clone()], 733);
                                 let disp = get_arr("tmpdisp").into_iter().next().unwrap_or(it);
                                 let listopts = get_arr("listopts");
                                 let mut a = base.clone();
@@ -1690,7 +1724,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                             }
                             for it in tmp1.clone() {
                                 setaparam("i", vec![it.clone()]);
-                                dispatch0("_list_files", &["i".into(), anchor2.clone()]);
+                                dispatch0("_list_files", &["i".into(), anchor2.clone()], 740);
                                 let disp = get_arr("i").into_iter().next().unwrap_or(it);
                                 let listopts = get_arr("listopts");
                                 let mut a = base.clone();
@@ -1702,7 +1736,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                         }
                     } else {
                         setaparam("tmp1", tmp1.clone());
-                        dispatch0("_list_files", &["tmp1".into(), anchor2.clone()]);
+                        dispatch0("_list_files", &["tmp1".into(), anchor2.clone()], 745);
                         let listopts = get_arr("listopts");
                         let mut a = vec![uopt.clone()];
                         a.retain(|s| !s.is_empty());
@@ -1845,6 +1879,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
                 dispatch0(
                     "_list_files",
                     &["tmp1".into(), format!("{}{}", prepath, realpath)],
+                    864,
                 );
                 let listopts = get_arr("listopts");
                 let mut a = vec![
@@ -1863,7 +1898,7 @@ pub fn _path_files_impl(argv: &[String]) -> i32 {
             } else {
                 // sh:868-873 — normal add.
                 setaparam("tmp1", tmp1.clone());
-                dispatch0("_list_files", &["tmp1".into(), anchor3.clone()]);
+                dispatch0("_list_files", &["tmp1".into(), anchor3.clone()], 869);
                 let listopts = get_arr("listopts");
                 let mut a = vec![uopt.clone()];
                 a.retain(|s| !s.is_empty());

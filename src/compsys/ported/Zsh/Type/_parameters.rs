@@ -242,19 +242,31 @@ fn typeset_m_capture(names: &[String]) -> String {
     })
 }
 
-/// Call `_parameters` by NAME, the way the upstream shell code does.
+/// Call `_parameters` by NAME, the way the upstream shell code does, from
+/// upstream line `line`.
 ///
-/// The shell contexts that end in `_parameters` (`_brace_parameter`,
-/// `_subscript`, `_parameter`, …) write a plain command word, so `$fpath`
-/// arbitration applies: a user's or plugin's own `_parameters` file is
-/// autoloaded instead of the stock one. `dispatch_function_call` runs that
-/// arbitration (`compsys::router::try_rust_dispatch` → `has_fpath_override`);
-/// calling [`_parameters`] as a Rust fn skips it and pins the port, which
-/// silently kills the override. Falls back to the port when there is no
-/// executor in scope (unit tests).
-pub fn call_parameters(args: &[String]) -> i32 {
-    crate::ported::exec::dispatch_function_call("_parameters", args)
-        .unwrap_or_else(|| _parameters(args))
+/// The shell contexts that end in `_parameters` (`_brace_parameter` sh:214,
+/// `_subscript` sh:128, `_parameter` sh:8, …) write a plain command word, so
+/// `execcmd`'s resolution applies in full: a shell function, an autoload stub,
+/// a Rust port or a plugin override (`Src/exec.c:3105-3109`), then a builtin,
+/// then `$PATH`, and a name that resolves NOWHERE reaches `Src/exec.c:903`'s
+/// `zerr("command not found: %s")` and exits 127 (c:908).
+/// [`shared::dispatch_action_command`] is that resolution, including the
+/// `$fpath` arbitration (`compsys::router::try_rust_dispatch` →
+/// `has_fpath_override`) that calling [`_parameters`] as a Rust fn would skip.
+///
+/// **What the previous `.unwrap_or_else(|| _parameters(args))` did:** it ran
+/// the PORT for a name the shell resolves to nothing, which is the not-found
+/// case wearing a success mask. On this host `$fpath`'s first `_parameters`
+/// is `~/.zpwr/autoload/comp_utils/_parameters`, whose first word is a bare
+/// `#`, so `compinit` sh:507-526 registers nothing for the name (it dispatches
+/// on `#compdef`/`#autoload` only) and the port stands aside for the file —
+/// yet the fallback pinned the port anyway. Measured on `echo ${<TAB>`:
+///     zsh    `_brace_parameter:214: command not found: _parameters`, no matches
+///     zshrs  a 150-candidate listing ("do you wish to see all 150 …")
+/// The two shells disagreed on the match set, not just on a diagnostic.
+pub fn call_parameters(args: &[String], line: u64) -> i32 {
+    crate::compsys::ported::shared::dispatch_action_command("_parameters", args, line)
 }
 
 /// `_parameters` — complete non-local parameter names. `-g <pat>`

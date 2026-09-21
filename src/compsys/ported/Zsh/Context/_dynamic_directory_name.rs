@@ -33,7 +33,7 @@
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::utils::getshfunc;
 
@@ -103,7 +103,13 @@ pub fn _dynamic_directory_name_impl() -> i32 {
                 }
                 // sh:19-21
                 for func in &dirfuncs {
-                    if dispatch_function_call(func, &["c".to_string()]).unwrap_or(1) == 0 {
+                    // sh:20 is a COMMAND WORD, so `dispatch_action_command`
+                    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+                    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+                    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+                    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+                    // that resolved nowhere returned in silence.
+                    if dispatch_action_command(func, &["c".to_string()], 20) == 0 {
                         ret = 0;
                     }
                 }

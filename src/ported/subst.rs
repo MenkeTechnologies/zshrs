@@ -308,55 +308,50 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
         if let Some(data) = list.getdata(node_idx) {
             // c:100
             if !data.is_empty() {
-                // c:Src/subst.c:170 — `remnulargs(getdata(node));`
-                // strips inull sentinels (Snull/Dnull/Bnull/Bnullkeep/
-                // Nularg). Empty arrays elements arrive here as the
-                // single Nularg byte (`\u{a1}`) — a sentinel emitted
-                // by `(s./.)` split + auto-splat (and other empty-
-                // emitting paths) so they don't get deleted by the
-                // else-branch below. Strip Nularg-only nodes to true
-                // empty AFTER the if-test that gates deletion has
-                // already passed; this preserves the empty argument
-                // shape (`${(@s./.)X}` with leading empty yields a
-                // 3-element array in DQ) without polluting consumers
-                // with the raw sentinel byte. C zsh's downstream
-                // consumers handle Nularg via per-builtin inull
-                // checks; the Rust port collapses it here so plain
-                // string consumers (print, echo, assignment) see
-                // proper empty.
+                // c:Src/subst.c:169 — `remnulargs(getdata(node));`. Note the
+                // ORDER C has: the emptiness test at c:168 has ALREADY run on
+                // the node as the substitution left it, so this call cannot
+                // change whether c:183-186 deletes the node — it only rewrites
+                // the text of a node already kept.
                 //
-                // c:Src/glob.c:3683-3686 — remnulargs RE-INSERTS the sentinel
-                // when stripping the markers leaves nothing (`if (!*o) { o[0] =
-                // Nularg; o[1] = '\0'; }`), so in C it is still there after this
-                // loop. C drops it later, in the `untokenize` that zglob runs on
-                // every word on the way to execution (c:Src/glob.c zglob →
-                // Src/exec.c:2143 `if (c != Nularg)`); the collapse here stands
-                // in for that step.
+                // c:Src/glob.c:3683-3686 — `remnulargs` RE-INSERTS the sentinel
+                // when stripping the quote markers leaves nothing
+                // (`if (!*o) { o[0] = Nularg; o[1] = '\0'; }`), so in C the node
+                // is still NON-empty after this loop. C drops the sentinel much
+                // later, in the `untokenize` every word goes through on the way
+                // to execution (c:Src/glob.c zglob -> c:Src/exec.c:2143
+                // `if (c != Nularg)`), by which time the node is already a word.
                 //
-                // A PREFORK_SUBEXP prefork is the INNER of a nested `${…${…}…}`
-                // (c:Src/subst.c:2682 `multsub(&val, PREFORK_SUBEXP, …)`), and C
-                // has no untokenize between it and the outer paramsubst — the
-                // sentinel is meant to reach the outer AS a one-char element.
-                // That is what makes `q=("" 1); "${(s::)${(@)q}}"` three words
-                // in zsh: the outer sepjoin (c:3917) builds `<Nularg> 1` and the
-                // char-split (c:3932) hands the sentinel back as its own field,
-                // which this loop then turns into the surviving empty word.
-                // (Observable directly: `${#${(@)q}[1]}` is 1 in zsh, 0 without
-                // the sentinel.) Collapsing it here dropped the field entirely.
+                // The port used to collapse a lone-`Nularg` node to "" right
+                // here, as a stand-in for that untokenize. It is the wrong
+                // place: prefork's list is not always a finished word. Three
+                // callers are hurt by the early collapse, and the guard was
+                // narrowed twice (PREFORK_SUBEXP, then
+                // PARAMSUBST_AFFIXES_DEFERRED) chasing them one at a time:
+                //   - the INNER of a nested `${...${...}...}` (c:2682
+                //     `multsub(&val, PREFORK_SUBEXP, ...)`) — the sentinel is
+                //     meant to reach the outer paramsubst AS a one-char element
+                //     (`q=("" 1); "${(s::)${(@)q}}"` is three words);
+                //   - a word whose segments are preforked one at a time, whose
+                //     c:183-186 drop runs at the END of the word and needs the
+                //     sentinel to tell a c:36 `nulstring` field from a truly
+                //     empty node (`IFS=:; s=a::b; print -rl -- x${=s[1,4]}y` is
+                //     `xa` `` `by`);
+                //   - the c:3227 / c:3313 OPERAND multsub, whose value goes
+                //     straight back to the caller's paramsubst to be glued into
+                //     a word at c:4475 `strcatsub` — the case that stayed
+                //     broken: `unset u; r=( q ${u:-""} )` counted 1 where zsh
+                //     counts 2, because the operand of `${u:-""}` is the lexer's
+                //     two-byte `Dnull Dnull` (c:3207 `val = dupstring(s)`) and
+                //     the collapse turned it into a true empty that c:183-186
+                //     then deleted (same for `${u:-''}`, `${u-""}`, `${1:-""}`
+                //     and `${arr[@]:+""}`).
+                // There is no fourth guard to add: C simply does not collapse
+                // here, so neither does the port. The consumers that need the
+                // true empty run the untokenize C runs — `multsub`'s callers in
+                // `fusevm_bridge` and the word-level pass in `paramsubst_to_value_pf`.
                 let mut s = data.to_string();
                 crate::ported::glob::remnulargs(&mut s);
-                // A word whose segments are preforked one at a time
-                // (`PARAMSUBST_AFFIXES_DEFERRED`) runs c:183-186 at its end,
-                // after the affixes are glued on, and needs the sentinel to
-                // tell a c:36 `nulstring` field from a truly empty node there:
-                // `IFS=:; s=a::b; print -rl -- x${=s[1,4]}y` is `xa` `` `by`.
-                // That end-of-word drop strips the marker afterwards.
-                if s == "\u{a1}"
-                    && flags & PREFORK_SUBEXP == 0
-                    && PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) == 0
-                {
-                    s.clear();
-                }
                 let data = s;
                 list.setdata(node_idx, data.clone()); // c:100
 
@@ -1967,7 +1962,19 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
         return (joined, arr, true, ms_flags); // c:642-647 (array path)
     }
     if l == 1 {
-        // c:653
+        // c:651-652 — `if (l) *s = (char *) ugetnode(&foo);`. C hands the node
+        // back VERBATIM: its quote markers are still in it, and the `remnulargs`
+        // that removes them is c:170, in the prefork of the word this value is
+        // about to be glued into — never here (the comment at the `prefork` call
+        // above says so: "C's multsub (c:625-657) adds no remnulargs of its
+        // own"). The port stripped them, which erased the only evidence that a
+        // one-node result was NON-empty text: the operand of `${u:-""}` is the
+        // two-byte `Dnull Dnull` (c:3207 `val = dupstring(s)` on the LEXER's
+        // word), c:183 keeps that node because it is non-empty, and the c:4475
+        // `strcatsub` then emits one word that untokenize later folds to `""`.
+        // Stripping here made `val` a true empty, so the word was elided and
+        // `unset u; r=( q ${u:-""} )` counted 1 where zsh counts 2 (same for
+        // `${u:-''}`, `${u-""}`, `${1:-""}` and `${arr[@]:+""}`).
         let result = strip_nul(list.getdata(0).cloned().unwrap_or_default()); // c:653
         return (result.clone(), vec![result], false, ms_flags); // c:653
     }
@@ -6288,6 +6295,17 @@ pub fn paramsubst(
         // multsub. C's spbreak is one local; the port recomputes it from
         // pf_flags at the join/split block, so the reset has to be carried.
         let mut spbreak_cleared = false;
+        // c:3227 / c:3313 — the default/alternate word's `multsub` writes
+        // `isarr` unconditionally, so it also ERASES the arrayness c:3030 had
+        // stamped from the `(@)` flag (`if (nojoin) isarr = -1;`). C needs no
+        // extra state for that — c:4245 reads the one `isarr` — but the port
+        // spells the `(@)` splat as a SEPARATE `nojoin == 2` disjunct at the
+        // c:3950 gate, which cannot see the overwrite. This records it:
+        // `true` once the substituted word came back a SCALAR, which is C's
+        // `isarr == 0` at c:4245 and therefore no splat at all.
+        // `e=(a b); print -rl -- "${(@)e:+}"` printed `a` and `b` where zsh
+        // prints one empty line.
+        let mut c3227_scalarized = false; // c:3227 / c:3313
         // c:2603 — `globsubst = 2` when this spec carries a single `~`.
         let mut globsubst_forced = false;
         // c:3307-3310 — `isarr = 1; arrasg = 0;` after an `(A)` assignment: the
@@ -15830,11 +15848,41 @@ pub fn paramsubst(
                     let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
-                    if ms_isarr && !ms_parts.is_empty() {
+                    // c:3227 — `multsub(&val, split_flags, (aspar ? NULL : &aval),
+                    // &isarr, NULL, &ms_flags);` writes `isarr` UNCONDITIONALLY:
+                    // c:642-647 sets it to 1 for an array result, c:647-648 /
+                    // c:653 / c:655-656 CLEAR it to 0 for a scalar one. The
+                    // substituted word REPLACES the value, so whatever arrayness
+                    // the parameter itself had (a `[@]` subscript leaves
+                    // `isarr == -1` at c:2916) is gone by this point.
+                    //
+                    // The port only ever RAISED isarr, and only for a NON-EMPTY
+                    // array result, so an EMPTY substituted word left `[@]`'s -1
+                    // standing and the c:4245 splat re-fetched
+                    // `arrays_get(var_name)`: `e=(a b); r=(q "${e[@]:+}")` came
+                    // back 3 words (`q` `a` `b`) where zsh gives 2 (`q` plus one
+                    // empty word), and `s="${e[@]:+}"` came back `a b` where zsh
+                    // gives the empty string. Clearing isarr routes the empty
+                    // result down the same scalar tail as the already-correct
+                    // `"${u:-}"`, whose c:4465-4466 `if (qt && !*y) y =
+                    // dupstring(nulstring)` port is the single site that mints
+                    // the Nularg sentinel — so it cannot leak from here.
+                    //
+                    // Writing 1 rather than keeping a -1 is C too: an EMPTY ARRAY
+                    // operand (`${x[@]:-$e}` with `e=()`) comes back isarr == 1
+                    // with a zero-element aval (c:633 takes the LF_ARRAY leg with
+                    // l == 0), and c:3896 `isarr > 0 && !plan9 && !aval[0]` then
+                    // collapses it to the empty scalar. Keeping -1 skipped that
+                    // collapse (its port below tests `isarr > 0` as well) and the
+                    // word vanished instead of becoming one empty word.
+                    if ms_isarr {
                         split_parts = Some(ms_parts);
-                        if isarr == 0 {
-                            isarr = 1; // c:3227 multsub writes &isarr
-                        }
+                        isarr = 1; // c:3227
+                        c3227_scalarized = false; // c:3227
+                    } else {
+                        split_parts = None; // c:3227 (aval left alone → not consulted)
+                        isarr = 0; // c:3227
+                        c3227_scalarized = true; // c:3227
                     }
                     // c:Src/subst.c:4237-4245 — a split default word that began or ended
                     // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
@@ -15961,11 +16009,41 @@ pub fn paramsubst(
                     let (ms_joined, ms_parts, ms_isarr, ms_ws) = multsub_operand(default, split_flags);
                     value = ms_joined;
                     default_word_globsubst(default, &value, globsubst_forced); // c:3231-3233
-                    if ms_isarr && !ms_parts.is_empty() {
+                    // c:3227 — `multsub(&val, split_flags, (aspar ? NULL : &aval),
+                    // &isarr, NULL, &ms_flags);` writes `isarr` UNCONDITIONALLY:
+                    // c:642-647 sets it to 1 for an array result, c:647-648 /
+                    // c:653 / c:655-656 CLEAR it to 0 for a scalar one. The
+                    // substituted word REPLACES the value, so whatever arrayness
+                    // the parameter itself had (a `[@]` subscript leaves
+                    // `isarr == -1` at c:2916) is gone by this point.
+                    //
+                    // The port only ever RAISED isarr, and only for a NON-EMPTY
+                    // array result, so an EMPTY substituted word left `[@]`'s -1
+                    // standing and the c:4245 splat re-fetched
+                    // `arrays_get(var_name)`: `e=(a b); r=(q "${e[@]:+}")` came
+                    // back 3 words (`q` `a` `b`) where zsh gives 2 (`q` plus one
+                    // empty word), and `s="${e[@]:+}"` came back `a b` where zsh
+                    // gives the empty string. Clearing isarr routes the empty
+                    // result down the same scalar tail as the already-correct
+                    // `"${u:-}"`, whose c:4465-4466 `if (qt && !*y) y =
+                    // dupstring(nulstring)` port is the single site that mints
+                    // the Nularg sentinel — so it cannot leak from here.
+                    //
+                    // Writing 1 rather than keeping a -1 is C too: an EMPTY ARRAY
+                    // operand (`${x[@]:-$e}` with `e=()`) comes back isarr == 1
+                    // with a zero-element aval (c:633 takes the LF_ARRAY leg with
+                    // l == 0), and c:3896 `isarr > 0 && !plan9 && !aval[0]` then
+                    // collapses it to the empty scalar. Keeping -1 skipped that
+                    // collapse (its port below tests `isarr > 0` as well) and the
+                    // word vanished instead of becoming one empty word.
+                    if ms_isarr {
                         split_parts = Some(ms_parts);
-                        if isarr == 0 {
-                            isarr = 1; // c:3227 multsub writes &isarr
-                        }
+                        isarr = 1; // c:3227
+                        c3227_scalarized = false; // c:3227
+                    } else {
+                        split_parts = None; // c:3227 (aval left alone → not consulted)
+                        isarr = 0; // c:3227
+                        c3227_scalarized = true; // c:3227
                     }
                     // c:Src/subst.c:4237-4245 — a split default word that began or ended
                     // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
@@ -16319,11 +16397,17 @@ pub fn paramsubst(
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
                     default_word_globsubst(alt, &value, globsubst_forced); // c:3231-3233
-                    if ms_isarr && !ms_parts.is_empty() {
+                    // c:3313 — same unconditional `isarr` write as the `:-` arm
+                    // above (`case '+'` falls through into `case '-'`, c:3202);
+                    // see that site for the full derivation.
+                    if ms_isarr {
                         split_parts = Some(ms_parts);
-                        if isarr == 0 {
-                            isarr = 1; // c:3313 multsub writes &isarr
-                        }
+                        isarr = 1; // c:3313
+                        c3227_scalarized = false; // c:3313
+                    } else {
+                        split_parts = None; // c:3313
+                        isarr = 0; // c:3313
+                        c3227_scalarized = true; // c:3313
                     }
                     // c:Src/subst.c:4237-4245 — a split default word that began or ended
                     // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
@@ -16358,7 +16442,16 @@ pub fn paramsubst(
                         }
                     }
                 } else {
-                    value = String::new();
+                    // c:3195-3199 — `case '+': if (vunset) { val = dupstring("");
+                    // copied = 1; isarr = 0; break; }`. The port set `val` but not
+                    // `isarr`, so a `[@]` read kept its c:2916 -1 and the c:4245
+                    // splat re-fetched the (empty) array: `e=(); r=(q "${e[@]:+}")`
+                    // emitted ZERO words for the expansion where zsh emits one
+                    // empty word.
+                    value = String::new(); // c:3196
+                    split_parts = None; // c:3197 (aval no longer consulted)
+                    isarr = 0; // c:3198
+                    c3227_scalarized = true; // c:3198
                 }
                 // Seed split_parts so the downstream c:4245 auto-splat
                 // sees the substituted scalar, not the original array.
@@ -16415,11 +16508,17 @@ pub fn paramsubst(
                     spbreak_cleared = true; // c:3230
                     value = ms_joined;
                     default_word_globsubst(alt, &value, globsubst_forced); // c:3231-3233
-                    if ms_isarr && !ms_parts.is_empty() {
+                    // c:3313 — same unconditional `isarr` write as the `:-` arm
+                    // above (`case '+'` falls through into `case '-'`, c:3202);
+                    // see that site for the full derivation.
+                    if ms_isarr {
                         split_parts = Some(ms_parts);
-                        if isarr == 0 {
-                            isarr = 1; // c:3313 multsub writes &isarr
-                        }
+                        isarr = 1; // c:3313
+                        c3227_scalarized = false; // c:3313
+                    } else {
+                        split_parts = None; // c:3313
+                        isarr = 0; // c:3313
+                        c3227_scalarized = true; // c:3313
                     }
                     // c:Src/subst.c:4237-4245 — a split default word that began or ended
                     // with IFS whitespace (multsub's MULTSUB_WS_AT_START / _AT_END, c:561 /
@@ -16454,7 +16553,16 @@ pub fn paramsubst(
                         }
                     }
                 } else {
-                    value = String::new();
+                    // c:3195-3199 — `case '+': if (vunset) { val = dupstring("");
+                    // copied = 1; isarr = 0; break; }`. The port set `val` but not
+                    // `isarr`, so a `[@]` read kept its c:2916 -1 and the c:4245
+                    // splat re-fetched the (empty) array: `e=(); r=(q "${e[@]:+}")`
+                    // emitted ZERO words for the expansion where zsh emits one
+                    // empty word.
+                    value = String::new(); // c:3196
+                    split_parts = None; // c:3197 (aval no longer consulted)
+                    isarr = 0; // c:3198
+                    c3227_scalarized = true; // c:3198
                 }
                 // None OR empty: a flag-form/search subscript pre-seeds
                 // split_parts=Some([]) up front, which would otherwise
@@ -23730,7 +23838,10 @@ pub fn paramsubst(
         // rides on SUBEXP_SCALAR_CTX (set at subst.rs:5522, the same carrier
         // the c:3032 collapse reads at subst.rs:10930).
         let subexp_dq = SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0; // c:2653
-        if (nojoin == 2 && !sep_forced_join) || auto_splat {
+        // `!c3227_scalarized`: c:3227 / c:3313 overwrote the c:3030 `(@)`
+        // arrayness with 0, so C's `if (isarr)` at c:4245 is false and there
+        // is no splat — see the flag's declaration.
+        if (nojoin == 2 && !sep_forced_join && !c3227_scalarized) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
                 // (s::) split → splat the post-split parts

@@ -23,7 +23,7 @@
 //! sh:19  return ret
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// `_correct` — spelling-correction completer: wraps `_approximate`
@@ -36,7 +36,13 @@ pub fn _correct() -> i32 {
     // sh:13
     set_compstate_str("pattern_match", "-");
     // sh:15
-    if dispatch_function_call("_approximate", &[]).unwrap_or(1) == 0 {
+    // sh:15 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    if dispatch_action_command("_approximate", &[], 15) == 0 {
         ret = 0;
     }
     // sh:17

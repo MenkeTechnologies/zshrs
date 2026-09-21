@@ -1492,3 +1492,135 @@ mod expansion_error_stops_the_later_words {
         assert_parity(r#"x=abc; a=(1 2); print ${x[1]} ${a[2]} $(print ok) "${x:1}"; echo rc=$?"#);
     }
 }
+
+/// c:Src/subst.c:3193-3233 — an EMPTY default / alternate word still REPLACES
+/// the value. `case '+'` with a null value sets `val = dupstring(""); isarr =
+/// 0;` (c:3195-3199); otherwise both `+` and `-` run `multsub(&val,
+/// split_flags, &aval, &isarr, …)` (c:3227), and multsub writes `isarr`
+/// unconditionally — 1 for an array result (c:642-647), 0 for a scalar one
+/// (c:647-648 / c:653 / c:655-656). So after either branch the result is a
+/// SCALAR and the parameter's own arrayness (a `[@]` subscript leaves
+/// `isarr == -1` at c:2916, the `(@)` flag the same at c:3030) is gone.
+///
+/// The port only ever RAISED `isarr`, and only for a non-empty array result,
+/// so an empty substituted word left that -1 standing and the c:4245 splat
+/// re-fetched the ORIGINAL array: `e=(a b); r=(q "${e[@]:+}")` came back
+/// `q a b` instead of `q` plus one empty word.
+mod empty_default_word_replaces_the_array {
+    use super::*;
+
+    /// `:+` on a non-empty array: the empty alternate wins, quoted it is one
+    /// empty word and unquoted it is none. Before the fix all three counted
+    /// the two ORIGINAL elements.
+    #[test]
+    fn colon_plus_empty_alternate_discards_the_array() {
+        assert_parity(r#"e=(a b); r=( q "${e[@]:+}" ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q ${e[@]:+} ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q "${e[@]:+}" x ); print -r "[${(j:|:)r}]""#);
+        assert_parity(r#"e=(a b); s="${e[@]:+}"; print ${#s}"#);
+        assert_parity(r#"e=(a b); printf "<%s>" "${e[@]:+}"; print"#);
+        assert_parity(r#"e=(a b); print -r "x${e[@]:+}y""#);
+    }
+
+    /// c:3195-3199 — the `case '+'` NULL leg: `e=()` is SET but colon-null, so
+    /// the alternate is not taken at all and `val` becomes the empty scalar
+    /// with `isarr = 0`. The port left `isarr` alone, so the expansion emitted
+    /// ZERO words where zsh emits one empty word.
+    #[test]
+    fn colon_plus_on_an_empty_array_is_one_empty_word() {
+        assert_parity(r#"e=(); r=( q "${e[@]:+}" ); print $#r"#);
+        assert_parity(r#"e=(); r=( q "${e[@]:+x}" ); print $#r"#);
+    }
+
+    /// `:-` on an empty array: the empty default is the value, so a quoted
+    /// read contributes exactly one empty word and an unquoted read none.
+    #[test]
+    fn colon_dash_empty_default_is_one_quoted_empty_word() {
+        assert_parity(r#"e=(); r=( q "${e[@]:-}" ); print -r "[${(j:|:)r}]""#);
+        assert_parity(r#"e=(); r=( "${e[@]:-}" ); print $#r"#);
+        assert_parity(r#"e=(); r=( q "${e[@]:-}" y ); print -r "[${(j:|:)r}]""#);
+        assert_parity(r#"e=(); r=( q ${e[@]:-} ); print $#r"#);
+    }
+
+    /// The NO-COLON forms must keep their own trigger: `e=()` is SET, so
+    /// `${e[@]-}` never substitutes and the empty array still splats to
+    /// nothing, while `${e[@]+}` on a set array substitutes the empty word.
+    #[test]
+    fn plain_dash_and_plus_keep_their_unset_test() {
+        assert_parity(r#"e=(); r=( q "${e[@]-}" ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q "${e[@]+}" ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q "${e[@]+y}" ); print $#r"#);
+        assert_parity(r#"unset e; r=( q "${e[@]-}" ); print $#r"#);
+    }
+
+    /// c:3030 — the `(@)` FLAG stamps the same `isarr = -1` a `[@]` subscript
+    /// does, and c:3227's multsub overwrites it just the same. zshrs spells
+    /// the `(@)` splat as a separate `nojoin == 2` gate, which has to honour
+    /// the overwrite or the flag form keeps splatting the original array.
+    #[test]
+    fn the_at_flag_form_follows_the_same_rule() {
+        assert_parity(r#"e=(); r=( q "${(@)e:-}" ); print -r "[${(j:|:)r}]""#);
+        assert_parity(r#"e=(a b); r=( q "${(@)e:+}" ); print $#r"#);
+        assert_parity(r#"e=(a b); print -rl -- "${(@)e:+}"; print END"#);
+        assert_parity(r#"e=(a b); s="${(@)e:+}"; print ${#s}"#);
+    }
+
+    /// c:3896 — `if (isarr > 0 && !plan9 && (!aval || !aval[0])) { val =
+    /// dupstring(""); isarr = 0; }`. An EMPTY ARRAY operand comes back from
+    /// multsub as `isarr == 1` with a zero-element aval (c:633 takes the
+    /// LF_ARRAY leg with `l == 0`), and this collapse turns it into the empty
+    /// scalar. Writing `isarr = 1` at c:3227 rather than keeping `[@]`'s -1 is
+    /// what lets the collapse's `isarr > 0` test see it.
+    #[test]
+    fn an_empty_array_operand_collapses_to_one_empty_word() {
+        assert_parity(r#"x=(); e=(); r=( q "${x[@]:-$e}" ); print $#r"#);
+        assert_parity(r#"x=(); e=(1 2); r=( q "${x[@]:-$e}" ); print $#r"#);
+        assert_parity(r#"x=(); e=(1 2); r=( q "${x[@]:-${e[@]}}" ); print $#r"#);
+    }
+
+    /// A NON-empty substituted word must still replace the array, and a
+    /// nested array-producing word must still come back an array — the
+    /// unconditional `isarr` write has to raise as well as clear.
+    #[test]
+    fn a_non_empty_word_still_replaces_and_keeps_its_shape() {
+        assert_parity(r#"e=(); r=( q "${e[@]:-x}" ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q "${e[@]:+y}" ); print $#r"#);
+        assert_parity(r#"e=(a b); a2=(1 2); r=( q "${(@)e:+$a2}" ); print $#r"#);
+        assert_parity(r#"e=(); a2=(1 2); r=( q "${(@)e:-${a2[@]}}" ); print $#r"#);
+    }
+
+    /// The scalar and `[*]` spellings were already correct; they pin the
+    /// behaviour the array path was made to match.
+    #[test]
+    fn the_scalar_and_star_spellings_are_unchanged() {
+        assert_parity(r#"unset u; r=( q "${u:-}" ); print $#r"#);
+        assert_parity(r#"s=""; r=( q "${s:-}" ); print $#r"#);
+        assert_parity(r#"e=(); r=( q "${e[*]:-}" ); print $#r"#);
+        assert_parity(r#"e=(a b); r=( q "${e[*]:+}" ); print $#r"#);
+    }
+
+    /// c:3208-3214 — `spbreak = 0` after the operand's multsub is what keeps
+    /// `${1+"$@"}` intact, and the option-driven word-splitting / plan9 /
+    /// ksh-array spellings must all land on the same empty result.
+    #[test]
+    fn options_and_positionals_land_on_the_same_result() {
+        assert_parity(r#"set --; r=( q "${1+"$@"}" ); print $#r"#);
+        assert_parity(r#"set -- a b; r=( q "${1+"$@"}" ); print $#r"#);
+        assert_parity(r#"set --; r=( q "${@:-}" ); print $#r"#);
+        assert_parity(r#"setopt shwordsplit; e=(a b); r=( q ${e[@]:+} ); print $#r"#);
+        assert_parity(r#"setopt rcexpandparam; e=(a b); r=( q "${e[@]:+}" ); print $#r"#);
+        assert_parity(r#"setopt rcexpandparam; e=(); r=( q "${e[@]:-}" ); print $#r"#);
+        assert_parity(r#"setopt ksharrays; e=(a b); r=( q "${e[@]:+}" ); print $#r"#);
+        assert_parity(r#"setopt ksharrays; e=(); r=( q "${e[@]:-}" ); print $#r"#);
+    }
+
+    /// Neighbouring operators share the c:3188-3191 colon-NULL test but not
+    /// the substitution; they must not move.
+    #[test]
+    fn the_neighbouring_operators_do_not_move() {
+        assert_parity(r#"e=(a b); r=( q "${e[@]:#}" ); print $#r"#);
+        assert_parity(r#"unset v; r=( q "${v:=}" ); print $#r; print -r "[$v]""#);
+        assert_parity(r#"e=(a b); r=( q "${e[@]:+ }" ); print $#r"#);
+        assert_parity(r#"a=(1 2 3); print -r "${(@j:-:)a}""#);
+    }
+}

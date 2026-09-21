@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_object_classes ",
+  "call_label": "bare",
+  "fingerprint": "6075de9750",
+  "function": "_object_classes",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/row0/col0 | ref/$ true | test/$ cat -- $ZPF_OUT",
+  "ref_rows": [
+    "@CT@ true",
+    "@CT@ cat -- $ZPF_OUT",
+    "== _object_classes / bare",
+    "-- argv:",
+    "_alternative:71: command not found: __fasd_files_comp",
+    "_alternative:71: command not found: __fasd_dirs_comp",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _object_classes --fn-call bare --fn-derive-only _object_classes --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_object_classes:1-6 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "@CT@ cat -- $ZPF_OUT",
+    "== _object_classes / bare",
+    "-- argv:",
+    "-- rc: 1",
+    "  nmatches: 0 -> 536",
+    "  compstate[list]: 'list' -> 'list '",
+    "  compstate[list_lines]: '0' -> '1014'",
+    "  compstate[unambiguous]: '' -> '/'"
+  ]
+}

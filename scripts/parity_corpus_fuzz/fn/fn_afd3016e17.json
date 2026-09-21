@@ -1,0 +1,39 @@
+{
+  "argv": [
+    "-J",
+    "zpfgrp"
+  ],
+  "call": "_expand '-J' 'zpfgrp'",
+  "call_label": "group-J",
+  "fingerprint": "afd3016e17",
+  "function": "_expand",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_expand:#: bad option: -J | test/-- rc: #",
+  "ref_rows": [
+    "_expand:18: bad option: -J",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr = ''",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _expand --fn-call group-J --fn-derive-only _expand --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_expand:1-245 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr = ''",
+    "  _comp_tags = ''",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ]
+}

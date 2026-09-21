@@ -27,7 +27,7 @@
 //! the shell skips it. `_files` and `_value` are siblings dispatched
 //! via `exec accessors`.
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::set_compstate_str;
@@ -127,7 +127,13 @@ pub fn _default_impl(args: &[String]) -> i32 {
     }
 
     // sh:15
-    if dispatch_function_call("_files", args).unwrap_or(1) == 0 {
+    // sh:15 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    if dispatch_action_command("_files", args, 15) == 0 {
         return 0;
     }
 
@@ -142,7 +148,13 @@ pub fn _default_impl(args: &[String]) -> i32 {
             &make_ops(),
             0,
         );
-        dispatch_function_call("_value", args).unwrap_or(1)
+        // sh:24 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        dispatch_action_command("_value", args, 24)
     } else {
         // sh:26
         1

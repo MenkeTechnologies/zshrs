@@ -32,7 +32,7 @@
 //! sh:35  _dispatch "$also" "$also"
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
@@ -81,7 +81,13 @@ pub fn _in_vared() -> i32 {
     set_compstate_str("insert", &cleaned);
 
     // sh:35
-    dispatch_function_call("_dispatch", &[also.clone(), also]).unwrap_or(1)
+    // sh:35 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_dispatch", &[also.clone(), also], 35)
 }
 
 /// sh:22 — return zsh-style typeset code for parameter `name` (or
@@ -106,10 +112,14 @@ mod tests {
     use crate::ported::params::setaparam;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
         set_compstate_str("vared", "myvar");
-        assert_eq!(_in_vared(), 1);
+        assert_eq!(_in_vared(), 127);
     }
 
     #[test]

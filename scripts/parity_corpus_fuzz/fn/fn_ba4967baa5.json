@@ -1,0 +1,24 @@
+{
+  "argv": [],
+  "call": "_math ",
+  "call_label": "bare",
+  "fingerprint": "ba4967baa5",
+  "function": "_math",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col2 | ref/_comp_tags = ' parameters user-math-functions module-math-functions.example module-math-functions.mathfun | test/_comp_tags = ' parameters user-math-functions module-math-funct",
+  "ref_rows": [
+    "  _comp_tags = ' parameters  user-math-functions  module-math-functions.example  module-math-functions.mathfun",
+    "c  module-math-functions.system '"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _math --fn-call bare --fn-derive-only _math --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_math:1-14 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _comp_tags = ' parameters   user-math-functions   module-math-functions.example  module-math-functions.mathf",
+    "unc  module-math-functions.system '"
+  ]
+}

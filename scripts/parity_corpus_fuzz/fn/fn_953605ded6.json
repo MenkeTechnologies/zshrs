@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_volume_groups ",
+  "call_label": "bare",
+  "fingerprint": "953605ded6",
+  "function": "_volume_groups",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/_volume_groups:#: command not found: lsvg | test/-- rc: #",
+  "ref_rows": [
+    "_volume_groups:5: command not found: lsvg",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'volume group'",
+    "  _comp_tags = ' volumegroups '",
+    "  _comp_colors = ''",
+    "@CT@"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _volume_groups --fn-call bare --fn-derive-only _volume_groups --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_volume_groups:1-5 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'volume group'",
+    "  _comp_tags = ' volumegroups '",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ]
+}

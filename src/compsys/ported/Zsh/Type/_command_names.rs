@@ -52,7 +52,7 @@
 
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::shared::zstyle_t;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::utils::quotedzputs;
@@ -252,7 +252,13 @@ pub fn _command_names_impl(args: &[String]) -> i32 {
     // sh:73
     let mut alt_argv: Vec<String> = vec!["-O".to_string(), "args".to_string()];
     alt_argv.extend(defs);
-    dispatch_function_call("_alternative", &alt_argv).unwrap_or(1)
+    // sh:74 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_alternative", &alt_argv, 74)
 }
 
 #[cfg(test)]
@@ -260,9 +266,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_command_names_impl(&[]), 1);
+        assert_eq!(_command_names_impl(&[]), 127);
     }
 
     #[test]

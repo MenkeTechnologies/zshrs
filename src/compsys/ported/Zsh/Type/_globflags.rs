@@ -21,7 +21,7 @@
 //! ```
 
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
@@ -69,7 +69,13 @@ pub fn _globflags() -> i32 {
 
     // sh:11
     if preprefix.contains("#q") {
-        return dispatch_function_call("_globquals", &[]).unwrap_or(1);
+        // sh:14 is a COMMAND WORD, so `dispatch_action_command`
+        // (shared.rs:1407) resolves it exactly as `execcmd` does:
+        // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+        // `$PATH`, then c:903's `command not found` with c:908's 127. The
+        // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+        // that resolved nowhere returned in silence.
+        return dispatch_action_command("_globquals", &[], 14);
     }
     // sh:13
     if preprefix.contains('q') {
@@ -155,7 +161,13 @@ pub fn _globflags() -> i32 {
         "-S".to_string(),
         ")".to_string(),
     ];
-    if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
+    // sh:50 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    if dispatch_action_command("_describe", &describe_argv, 50) == 0 {
         ret = 0;
     }
 
@@ -191,7 +203,13 @@ pub fn _globflags() -> i32 {
         "-S".to_string(),
         "".to_string(),
     ];
-    if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
+    // sh:60 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    if dispatch_action_command("_describe", &describe_argv, 60) == 0 {
         ret = 0;
     }
 

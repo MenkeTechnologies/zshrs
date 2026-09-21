@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_as_if ",
+  "call_label": "bare",
+  "fingerprint": "7a077463ab",
+  "function": "_as_if",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/row0/col0 | ref/$ cat -- $ZPF_OUT | test/$ true",
+  "ref_rows": [
+    "@CT@ cat -- $ZPF_OUT",
+    "== _as_if / bare",
+    "-- argv:",
+    "-- rc: 0",
+    "  nmatches: 0 -> 6900",
+    "  compstate[list_lines]: '0' -> '3440'",
+    "  expl[0] =",
+    "  _lastdescr[3] = '' 'files' 'file'"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _as_if --fn-call bare --fn-derive-only _as_if --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_as_if:1-10 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "@CT@ true",
+    "@CT@ cat -- $ZPF_OUT",
+    "== _as_if / bare",
+    "-- argv:",
+    "-- reentered at depth 2, not re-run",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] ="
+  ]
+}

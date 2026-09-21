@@ -164,9 +164,35 @@ pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
         // option tags at the SAME level — `sed <tab>` (via `_sed_expressions`'s
         // `_alternative`) wiped the whole `-<<option>>-` list. Mirror the
         // function-call level bump around the body.
+        //
+        // `locallevel` is only HALF of what `doshfunc` opens for that call: it
+        // also pushes a `FUNCSTACK` frame naming the function
+        // (c:Src/exec.c:6005-6016), popped at c:6218-6219. That half was
+        // missing, so `$funcstack` had no entry for the generated function and
+        // every consumer that reads the stack BY INDEX from inside it saw the
+        // window one frame too deep. `_help_sort_tags`
+        // (sh:Base/Widget/_complete_help:80) is such a consumer —
+        // `${funcstack[3,(i)_($~_help_scan_funcstack)]}` expects [1]
+        // `_help_sort_tags`, [2] `_tags`, [3] the innermost real caller — so
+        // every tag the generated function registers was attributed to ITS
+        // caller instead. Measured on `git worktree list <C-x h>`, whose
+        // `--expire=` action is `_git_approxidates` (sh:_git:2541), which
+        // `_regex_arguments _git_dates …` compiles and then calls
+        // (sh:_git:8303-8304), with zsh 5.9.2 as reference:
+        //
+        //   zsh    dates specials … numbers  (_git_dates _git_approxidates
+        //                                     _arguments _git-worktree _git _git)
+        //   zshrs  dates specials … numbers  (           _git_approxidates
+        //                                     _arguments _git-worktree _git _git)
+        //
+        // Supplied on its own rather than by routing through `doshfunc`, so the
+        // hand-managed `locallevel` pairing above stays intact — same
+        // arrangement as `_message.rs:219-222` and `_wanted.rs:218-241`.
+        let _frame = crate::compsys::ported::shared::PortFuncstackFrame::push(funcname);
         crate::ported::utils::inc_locallevel();
         let rc = dispatch_registered(funcname);
         crate::ported::utils::dec_locallevel();
+        drop(_frame); // c:6218-6219
         Some(rc)
     } else {
         None

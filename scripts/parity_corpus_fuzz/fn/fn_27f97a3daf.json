@@ -1,0 +1,36 @@
+{
+  "argv": [],
+  "call": "_wakeup_capable_devices ",
+  "call_label": "bare",
+  "fingerprint": "27f97a3daf",
+  "function": "_wakeup_capable_devices",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col0 | ref/-- rc: # | test/(eval):#: command not found: acpitool",
+  "ref_rows": [
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'wakeup capable device'",
+    "  _comp_tags = ' wakeup-capable-devices '",
+    "  _comp_colors = ''",
+    "@CT@",
+    "<absent>"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _wakeup_capable_devices --fn-call bare --fn-derive-only _wakeup_capable_devices --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_wakeup_capable_devices:1-15 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "(eval):1: command not found: acpitool",
+    "-- rc: 1",
+    "  nmatches: 0 -> 0",
+    "  expl[0] =",
+    "  _lastdescr[2] = '' 'wakeup capable device'",
+    "  _comp_tags = ' wakeup-capable-devices '",
+    "  _comp_colors = ''",
+    "@CT@"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "argv": [],
+  "call": "_zmodload ",
+  "call_label": "bare",
+  "fingerprint": "8eeb73f7bd",
+  "function": "_zmodload",
+  "keys": [
+    "ctrl-d",
+    "ctrl-c",
+    "ctrl-o"
+  ],
+  "label": "cell/rowlist/col1 | ref/_lastdescr[#] = '' 'param' 'module file' 'files' 'file' 'module alias' | test/_lastdescr[#] = '' 'param' 'module file' 'file' 'module alias'",
+  "ref_rows": [
+    "  _lastdescr[6] = '' 'param' 'module file' 'files' 'file' 'module alias'",
+    "  _comp_tags = ' globbed-files  directories  aliases '"
+  ],
+  "replay": "scripts/comptab_parity.py --fn-only _zmodload --fn-call bare --fn-derive-only _zmodload --zshrs /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/zshrs --dump /private/tmp/claude-501/-Users-wizard-RustroverProjects-zshrs/39e9f069-5a27-487e-8a9e-22502d1e0b4a/scratchpad/r2G/dump --rows 40 --cols 110",
+  "serves": "port",
+  "source": "/opt/homebrew/Cellar/zsh/5.9.2/share/zsh/functions/_zmodload:1-78 (derived: no positional parameter in the body)",
+  "test_rows": [
+    "  _lastdescr[5] = '' 'param' 'module file' 'file' 'module alias'",
+    "  _comp_tags = ' globbed-files  directories  all-files  aliases '"
+  ]
+}

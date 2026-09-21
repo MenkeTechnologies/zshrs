@@ -54,7 +54,7 @@
 
 use crate::compsys::ported::_message::_message;
 use crate::ported::builtin::bin_print;
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::hashtable_h::BIN_PRINT;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam, setiparam};
@@ -134,7 +134,13 @@ pub fn _complete_debug(args: &[String]) -> i32 {
     if debug_fd != -1 {
         crate::ported::options::setoption("xtrace", 1);
     }
-    let ret = dispatch_function_call(&target, &[]).unwrap_or(1);
+    // sh:25 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    let ret = dispatch_action_command(&target, &[], 25);
     if debug_fd != -1 {
         crate::ported::options::setoption("xtrace", prev_xtrace as i32);
     }
@@ -216,9 +222,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    /// With no executor wired the command word this path ends in resolves
+    /// to no shell function, no builtin and nothing on `$PATH` — the
+    /// `Src/exec.c:903` case — so it reports `command not found` and the
+    /// status is c:908's 127. It used to return a silent 1.
+    fn unresolvable_command_word_reports_not_found() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_complete_debug(&[]), 1);
+        assert_eq!(_complete_debug(&[]), 127);
     }
 
     #[test]

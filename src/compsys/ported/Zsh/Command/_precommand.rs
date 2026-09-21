@@ -15,7 +15,7 @@
 //! `_normal -p $service` (treats remaining argv as a fresh command
 //! invocation).
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 
 /// `_precommand` — prefix-command completion: strip the prefix from
@@ -37,7 +37,13 @@ pub fn _precommand() -> i32 {
 
     // sh:6  _normal -p $service
     let service = getsparam("service").unwrap_or_default();
-    dispatch_function_call("_normal", &["-p".to_string(), service]).unwrap_or(1)
+    // sh:6 is a COMMAND WORD, so `dispatch_action_command`
+    // (shared.rs:1407) resolves it exactly as `execcmd` does:
+    // shfunc/port/plugin (c:Src/exec.c:3105-3109), then builtin, then
+    // `$PATH`, then c:903's `command not found` with c:908's 127. The
+    // `.unwrap_or(1)` this replaces had NO not-found arm, so a name
+    // that resolved nowhere returned in silence.
+    dispatch_action_command("_normal", &["-p".to_string(), service], 6)
 }
 
 #[cfg(test)]

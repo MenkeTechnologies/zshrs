@@ -24,7 +24,7 @@
 //! sh:25  fi
 //! ```
 
-use crate::ported::exec::dispatch_function_call;
+use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;
@@ -63,22 +63,33 @@ pub fn _vars(args: &[String]) -> i32 {
         let after = prefix.splitn(2, '[').nth(1).unwrap_or("");
         let _ = setsparam("PREFIX", after);
 
-        // sh:14 — publish the line `_subscript` is called FROM. `FnScope`
-        // zeroes `lineno` for every port body (shared.rs, mirroring
-        // `Src/exec.c:1429`), and the callee's frame records the caller's
-        // line at push time (`doshfunc`, `Src/exec.c:6013`), so without this
-        // `$functrace`/`$funcfiletrace` read `_vars:0`.
-        crate::compsys::ported::shared::set_sh_lineno(14);
-        return dispatch_function_call("_subscript", &["-q".to_string()]).unwrap_or(1);
+        // sh:14 — `_subscript -q` is a plain COMMAND WORD, so it resolves the
+        // way `execcmd` resolves one (`Src/exec.c:3105-3109` shfunc, then
+        // builtin, then `$PATH`, then c:903 `command not found` + 127).
+        // `dispatch_action_command` (shared.rs:1407) IS that resolution and it
+        // publishes the caller line first: `FnScope` zeroes `lineno` for every
+        // port body (shared.rs, mirroring `Src/exec.c:1429`), and the callee's
+        // frame records the caller's line at push time (`doshfunc`,
+        // `Src/exec.c:6013`), so without it `$functrace`/`$funcfiletrace` read
+        // `_vars:0`.
+        return dispatch_action_command("_subscript", &["-q".to_string()], 14);
     }
 
     // sh:16
     let mut p_args: Vec<String> = vec!["-g".to_string(), "^a*".to_string()];
     p_args.extend(args.iter().cloned());
     // sh:16 — the line the first `_parameters` call sits on; the frame it
-    // pushes records it as the caller line (`Src/exec.c:6013`).
-    crate::compsys::ported::shared::set_sh_lineno(16);
-    if dispatch_function_call("_parameters", &p_args).unwrap_or(1) == 0 {
+    // pushes records it as the caller line (`Src/exec.c:6013`), and a name
+    // that resolves NOWHERE must reach c:903's diagnostic rather than return
+    // a silent 1. Measured on this host, where `$fpath`'s first `_parameters`
+    // (`~/.zpwr/autoload/comp_utils/_parameters`) is UNTAGGED so `compinit`
+    // registers nothing for the name (compinit sh:507-526) and the Rust port
+    // steps aside for the file (router.rs `has_fpath_override`), on `unset
+    // <TAB>`:
+    //     zsh    `_vars:16: command not found: _parameters`
+    //            `_vars:23: command not found: _parameters`
+    //     zshrs  (nothing at all)
+    if dispatch_action_command("_parameters", &p_args, 16) == 0 {
         ret = 0;
     }
 
@@ -108,8 +119,7 @@ pub fn _vars(args: &[String]) -> i32 {
     // sh:23 — the line the second `_parameters` call sits on. Re-published
     // because the sh:18-22 block ran in between; the callee's frame records
     // this as its caller line.
-    crate::compsys::ported::shared::set_sh_lineno(23);
-    if dispatch_function_call("_parameters", &p2_args2).unwrap_or(1) == 0 {
+    if dispatch_action_command("_parameters", &p2_args2, 23) == 0 {
         ret = 0;
     }
 
