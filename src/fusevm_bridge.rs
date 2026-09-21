@@ -14851,8 +14851,15 @@ fn paramsubst_to_value_pf(body: &str, pf_flags: i32) -> Value {
     // and its single-node drop deletes it — see the trace there. `IFS=:;
     // v=":"; set -- $v` under `--dash` reported `$#` as 0 where dash, bash
     // and ksh all report 1.
-    let lone_marker =
-        nodes.len() == 1 && nodes[0].chars().eq(std::iter::once(crate::ported::zsh_h::Nularg));
+    // Only outside `"…"`. A quoted expansion keeps its empty string on its
+    // own (`nodes_to_value`'s `in_dq_context` arm), so there is no drop to
+    // protect it from — and the paths a quoted word takes do not all run
+    // remnulargs afterwards, so keeping the marker there put a literal
+    // U+00A1 in the output: `b=(1 2 3 4 5); c=(2 4 6);
+    // print -r -- "[${(j: :)b:*c}]"` printed `[¡]` instead of `[]`.
+    let lone_marker = !qt
+        && nodes.len() == 1
+        && nodes[0].chars().eq(std::iter::once(crate::ported::zsh_h::Nularg));
     let keep_nulargs = (saved_defer > 0 && !reentered) || lone_marker;
     let do_filesub = !qt
         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)

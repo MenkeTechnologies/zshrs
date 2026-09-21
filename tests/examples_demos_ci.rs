@@ -15,9 +15,18 @@
 //!
 //! Each demo gets its own `#[test]` so cargo-test reports per-demo
 //! pass/fail and parallel runners (`cargo test --jobs N`) execute
-//! independently. Tests skip silently if the `zshrs` binary isn't
-//! built (matches existing `recent_ports_parity.rs` pattern so
-//! local-dev flows that haven't run `cargo build` aren't penalized).
+//! independently.
+//!
+//! These used to skip silently when no binary was found, so that
+//! local-dev flows would not be penalised. The lookup that decided it
+//! read `CARGO_BIN_EXE_zshrs` from the ENVIRONMENT, and cargo sets that
+//! variable at COMPILE time, not at run time — so it was never found,
+//! the fallback looked under `CARGO_MANIFEST_DIR/target/`, and under any
+//! other target directory the whole file reported 376 passes in 0.02s
+//! having executed nothing. A green result that ran no demo is worse
+//! than a red one. `env!` reads the value cargo really does provide, and
+//! it is always provided for an integration test, so there is nothing
+//! left to skip for.
 //!
 //! Per-test timeout: 30s wall-clock. Real-world demos finish well
 //! under 500ms each; a >30s run signals a regression worth failing
@@ -27,20 +36,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-fn zshrs_bin() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
-    }
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        manifest.join("target/debug/zshrs"),
-        manifest.join("target/release/zshrs"),
-    ]
-    .into_iter()
-    .find(|cand| cand.exists())
+/// The `zshrs` cargo built for this test binary. `env!` is the
+/// compile-time form cargo guarantees for an integration test, and it
+/// points at the real artifact whatever `CARGO_TARGET_DIR` is.
+fn zshrs_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_zshrs"))
 }
 
 fn demos_dir() -> PathBuf {
@@ -99,13 +99,12 @@ fn run_demo(bin: &Path, script: &Path) -> (i32, String, String) {
 
 /// Per-demo pass: exit-0, non-empty stdout, no panic-prefixed stderr.
 fn assert_demo_runs_clean(script_name: &str) {
-    let bin = match zshrs_bin() {
-        Some(b) => b,
-        None => {
-            eprintln!("skip: zshrs binary not built — run `cargo build` first");
-            return;
-        }
-    };
+    let bin = zshrs_bin();
+    assert!(
+        bin.exists(),
+        "cargo named {} as this test's zshrs and it is not there",
+        bin.display()
+    );
     let script = demos_dir().join(script_name);
     assert!(
         script.exists(),

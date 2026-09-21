@@ -12,11 +12,18 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Locate the debug-built `zshrs` binary.
+/// The `zshrs` cargo built for this test binary.
+///
+/// This used to be `CARGO_MANIFEST_DIR` + `target/debug/zshrs`, which is
+/// only the right path when the target directory is the default one and
+/// the profile is `debug`. Under any other `CARGO_TARGET_DIR` the ~1158
+/// tests here either failed wholesale or, worse, measured whatever stale
+/// binary happened to be sitting at that path. `CARGO_BIN_EXE_zshrs` is
+/// what cargo sets for an integration test and it names the artifact it
+/// actually just built — the same form `ai_builtin.rs:31` and
+/// `builtin_output_parity.rs:27` already use.
 fn zshrs_bin() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("target/debug/zshrs");
-    p
+    PathBuf::from(env!("CARGO_BIN_EXE_zshrs"))
 }
 
 /// Run a snippet via `zshrs -f -c <code>` with a 5-second timeout.
