@@ -209,10 +209,12 @@ pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
 /// (`vm_helper` consults the registry — see [`dispatch_if_registered`]), but
 /// anything that observes the generated name AS a function does not:
 ///
+/// ```text
 ///     _regex_arguments _t \( "/\(!/" \)
 ///     print "defined=${+functions[_t]} len=${#functions[_t]}"
 ///       zsh   -> defined=1 len=708
 ///       zshrs -> defined=0 len=0
+/// ```
 ///
 /// so `${+functions[…]}`, `functions[…]`, `whence`, `unfunction` and any
 /// consumer that re-evals the body see nothing here. Recorded in

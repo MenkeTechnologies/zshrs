@@ -10,8 +10,10 @@
 //! Rust runtime has begun destroying thread-locals, so anything
 //! TLS-backed raises
 //!
+//! ```text
 //!     cannot access a Thread Local Storage value during or after
 //!     destruction: AccessError
+//! ```
 //!
 //! `tracing`'s fmt layer formats every event into a thread-local buffer
 //! (`tracing_subscriber::fmt::fmt_layer`), so a single `tracing::info!`

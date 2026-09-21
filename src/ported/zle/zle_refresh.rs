@@ -5190,7 +5190,9 @@ pub fn partial_refresh() -> io::Result<()> {
 /// ESC byte skipped and every remaining payload byte counted as visible
 /// width:
 ///
+/// ```text
 ///     PROMPT=$'%{\e]133;A\a%}> '   zsh: lpromptw 2   zshrs: 8  (`]133;A` = 6)
+/// ```
 ///
 /// which shifted the whole edit line right by the payload length and
 /// overwrote it (`> echo hi` painted as `>    hi`).

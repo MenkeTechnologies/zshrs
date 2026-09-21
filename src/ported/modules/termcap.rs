@@ -639,8 +639,10 @@ static STRCODES: LazyLock<Vec<&'static str>> =
 ///
 /// The C it stands in for is `zsetupterm(void)` at `Src/utils.c:386`:
 ///
+/// ```text
 ///     if (term_count++ == 0)
 ///         (void)setupterm((char *)0, 1, &errret);
+/// ```
 ///
 /// Stand-in for the terminal setup C performs in `boot_` (c:347
 /// `zsetupterm()`), so the Rust entry points work even when `boot_`
@@ -648,8 +650,10 @@ static STRCODES: LazyLock<Vec<&'static str>> =
 ///
 /// The C it stands in for is `zsetupterm(void)` at `Src/utils.c:386`:
 ///
+/// ```text
 ///     if (term_count++ == 0)
 ///         (void)setupterm((char *)0, 1, &errret);
+/// ```
 ///
 /// `setupterm`, NOT `tgetent`. termcap.c never calls `tgetent`; the
 /// only `tgetent` in the shell is `init_term()` (`Src/init.c:804`),

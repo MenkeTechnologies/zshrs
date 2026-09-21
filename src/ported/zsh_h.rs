@@ -4867,6 +4867,7 @@ pub fn WCWIDTH(wc: char) -> i32 {
 /// `Src/zsh.h:3311` expands it to `zwcwidth(wc)` (`Src/utils.c:729-741`), and
 /// `Src/zsh.h:3371` defines it as the constant `1` in a non-multibyte build:
 ///
+/// ```text
 ///     int
 ///     zwcwidth(wint_t wc)
 ///     {
@@ -4880,6 +4881,7 @@ pub fn WCWIDTH(wc: char) -> i32 {
 ///             return 1;
 ///         return wcw;
 ///     }
+/// ```
 ///
 /// The two clamps are the whole point of the wrapper and were missing: bare
 /// `WCWIDTH` answers -1 for a control character (per `wcwidth(3)`), so a

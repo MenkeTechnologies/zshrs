@@ -534,9 +534,11 @@ const WCWIDTH9_NONPRINT: &[(u32, u32)] = &[
 /// unassigned as of Unicode 9. zsh therefore refuses to print them raw and
 /// `${(q)}` escapes them; measured against `zsh 5.9.2`:
 ///
+/// ```text
 ///     ${(q)} of U+0378 (first interval, c:621)
 ///       zsh  : $'\315\270'
 ///       zshrs: the raw bytes   (before this table)
+/// ```
 ///
 /// 637 intervals, one per source line c:621..c:1257 — NOT 636; the count is
 /// pinned by the c: citations, every one of which is present exactly once.
@@ -1679,7 +1681,9 @@ mod tests {
     /// Every pair below was measured against the reference build,
     /// `zsh 5.9.2 (aarch64-apple-darwin25.4.0)`, with:
     ///
+    /// ```text
     ///     zsh -f -c 'v=${(#):-0xNNNN}; print -rn -- "${(q)v}"' | od -An -tx1
+    /// ```
     ///
     /// An escaped result (`$'\...'`) means `u9_iswprint` is false; raw UTF-8
     /// bytes mean it is true. In-table samples are spread across the 637

@@ -101,10 +101,12 @@ fn comparguments(sh_line: u64, argv: &[&str]) -> i32 {
 /// `_arguments`; `Completion/Unix/Command/_ansible:296-297` is the case that
 /// exposed it:
 ///
+/// ```text
 ///     words=( role "$words[@]" )
 ///     (( CURRENT++ ))
 ///     …
 ///     _arguments -s -S $args
+/// ```
 ///
 /// zshrs has no gsu binding — the parameters own their own copies and the
 /// globals live in `complete.rs` (`COMPWORDS`/`COMPCURRENT`), documented at

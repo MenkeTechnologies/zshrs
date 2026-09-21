@@ -2745,8 +2745,10 @@ pub fn zleaftertrap(
 /// That left `$zle_bracketed_paste` unset in any shell that had loaded the
 /// module but not yet entered the editor:
 ///
+/// ```text
 ///     zmodload zsh/zle; print ${+zle_bracketed_paste}
 ///     zsh 1    zshrs 0
+/// ```
 ///
 /// Shared by both call sites so `init_thingies()` cannot run twice.
 pub(crate) static ZLE_MODULE_SETUP: std::sync::Once = std::sync::Once::new();

@@ -8,9 +8,11 @@
 //!
 //! zshrs was squatting. A `-c` run held:
 //!
+//! ```text
 //!     fd 3 -> ~/.zshrs/zshrs.log
 //!     fd 4 -> ~/.zshrs/zshrs_history.db          (sqlite)
 //!     fd 5,6,7 -> ~/.zshrs/compsys.db + -wal + -shm
+//! ```
 //!
 //! so `print -u 3 -r -- x` appended `x` to the shell's own LOG and reported
 //! success (zsh: `bad file number: 3`, status 1), and `exec 3>myfile` would

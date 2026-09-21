@@ -4131,9 +4131,11 @@ impl ZshCompiler {
     /// Dup this pipeline stage's pipe fds onto 0/1, if we're compiling
     /// one. Direct port of the addfd pair at c:Src/exec.c:3720-3724:
     ///
+    /// ```text
     ///     /* Add pipeline input/output to mnodes */
     ///     if (input)  addfd(forked, save, mfds, 0, input, 0, NULL);
     ///     if (output) addfd(forked, save, mfds, 1, output, 1, NULL);
+    /// ```
     ///
     /// Called by every dispatch arm of `compile_simple` at exactly the
     /// C position: after the argument words' expansion ops (prefork

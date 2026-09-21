@@ -167,11 +167,13 @@ const BASH_SHOPTS_INVERTED_ZSH_OPT: &[(&str, &str)] = &[("xpg_echo", "bsdecho")]
 /// `shopt -s`/`-u` on them silently — status 0, no diagnostic — and simply
 /// does not change the value:
 ///
+/// ```text
 ///     $ bash -c  'shopt -s login_shell; echo rc=$?; shopt -p login_shell'
 ///     rc=0
 ///     shopt -u login_shell
 ///     $ bash -lc 'shopt -u login_shell; shopt -p login_shell'
 ///     shopt -s login_shell
+/// ```
 ///
 /// zshrs let both be written, so `shopt -s login_shell` made `$BASHOPTS`
 /// claim a login shell in a non-login one. Their VALUES come from the zsh
