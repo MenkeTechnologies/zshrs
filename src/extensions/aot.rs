@@ -471,8 +471,13 @@ pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf
         }
     }
     cmd.arg("-o").arg(out_path);
-    let status = cmd
-        .status()
+    // The shell's SIGCHLD reaper (`waitpid(-1)`, c:Src/signals.c:285
+    // wait_for_processes) runs on any thread and will collect `cc` before this
+    // wait gets there, leaving it with ECHILD — which reached the user as
+    // `zbuild --native: invoking cc: No child processes (os error 10)` on the
+    // macOS corpus job, after the link itself had succeeded. Wait the way
+    // every other foreground spawn does; see foreground_status.
+    let status = crate::fusevm_bridge::foreground_status(&mut cmd)
         .map_err(|e| format!("zbuild --native: invoking cc: {}", e))?;
     let _ = fs::remove_file(&stub);
     let _ = fs::remove_file(&obj);

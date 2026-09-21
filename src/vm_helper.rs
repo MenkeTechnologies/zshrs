@@ -6001,13 +6001,11 @@ impl ShellExecutor {
             } else {
                 // Queue signals across the wait so zshrs's SIGCHLD reaper
                 // (waitpid(-1) in wait_for_processes, delivered on any
-                // thread) can't reap this child before Command::status()
-                // does — otherwise status() fails with ECHILD ("No child
-                // processes"). See ForegroundWaitGuard in fusevm_bridge.
-                let status_result = {
-                    let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
-                    command.status()
-                };
+                // thread) can't reap this child before the wait does, and
+                // claim the status back when it wins anyway. Same hazard
+                // `exec_system_command` hit; see foreground_status in
+                // fusevm_bridge.
+                let status_result = crate::fusevm_bridge::foreground_status(&mut command);
                 match status_result {
                     Ok(status) => Ok(status.code().unwrap_or(1)),
                     Err(e) => {

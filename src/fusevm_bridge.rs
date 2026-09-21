@@ -16021,6 +16021,77 @@ impl Drop for ForegroundWaitGuard {
     }
 }
 
+/// `Command::status()` plus the reaper-stole-it recovery that the forked
+/// pipeline stages already get from [`waitpid_eintr`].
+///
+/// [`ForegroundWaitGuard`] alone is not enough. Its `child_block` masks
+/// SIGCHLD for the CALLING thread, and zshrs is multi-threaded: the signal
+/// is delivered to any thread that has not blocked it, whose `zhandler`
+/// runs `wait_for_processes` → `waitpid(-1, WNOHANG)` and takes the child.
+/// `Command::status()` then fails with ECHILD, and because it owns the
+/// child and never hands back the pid, the status the reaper published
+/// (`extensions/reaped_status.rs`) cannot be claimed — the caller can only
+/// report a failure for a command that ran fine.
+///
+/// That is what `echo a b c | wc -w` hit: the last stage runs in THIS
+/// process, so it goes through here rather than through `waitpid_eintr`.
+/// Measured in a Debian container before this helper existed, it printed
+/// the correct `3` and then exited 127 with
+/// `zshrs: wc: No child processes (os error 10)` on 136 of 200 runs.
+///
+/// Spawning explicitly keeps the pid, so the losing collector can claim
+/// the status exactly as the pipeline's targeted wait does. The status is
+/// rebuilt with `ExitStatus::from_raw`, so every caller keeps its own
+/// mapping of exit codes and signals.
+#[cfg(unix)]
+pub(crate) fn foreground_status(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt as _;
+    let _wait_guard = ForegroundWaitGuard::enter();
+    let mut child = command.spawn()?;
+    let pid = child.id() as i32;
+    match child.wait() {
+        Ok(status) => Ok(status),
+        Err(e) if e.raw_os_error() == Some(libc::ECHILD) => {
+            match take_reaped_status(pid) {
+                Some(raw) => Ok(std::process::ExitStatus::from_raw(raw)),
+                None => Err(e),
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Claim the reaper's record for `pid`, allowing for the fact that ECHILD
+/// arrives BEFORE the record is published.
+///
+/// `wait_for_processes` takes the child with `waitpid` and only then stores
+/// the status (`signals.rs`, `reaped_status::record`). Everything between
+/// those two is a window in which the losing collector already sees ECHILD
+/// and the ring is still empty: reading it once left 8 of 400 runs of
+/// `echo a b c | wc -w` reporting `No child processes` even with the
+/// recovery in place. The child is known dead by then, so waiting out the
+/// window costs nothing that is not already lost, and this runs only on the
+/// lost-race path.
+///
+/// The budget is bounded because the record may never come: a collector
+/// that does not publish (the `waitpid(-1)` in `bin_wait`, say) leaves
+/// nothing to claim, and the caller must be allowed to report the error
+/// rather than spin.
+#[cfg(unix)]
+fn take_reaped_status(pid: i32) -> Option<i32> {
+    const TRIES: u32 = 200; // 200 x 100us = 20ms
+    for _ in 0..TRIES {
+        if let Some(raw) = crate::reaped_status::take(pid) {
+            return Some(raw);
+        }
+        let ts = libc::timespec { tv_sec: 0, tv_nsec: 100_000 };
+        unsafe { libc::nanosleep(&ts, std::ptr::null_mut()) };
+    }
+    None
+}
+
 fn exec_system_command(name: &str, args: &[String]) -> i32 {
     // c:Src/jobs.c — count the fork so `time` reports for an
     // overridable coreutils shadow run as an external (`time sleep 0`,
@@ -16029,17 +16100,15 @@ fn exec_system_command(name: &str, args: &[String]) -> i32 {
     // job and stayed silent. (Builtins that don't reach a spawn never
     // hit this fn.)
     crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Queue signals across the wait so the SIGCHLD reaper can't steal
-    // this child out from under Command::status — see ForegroundWaitGuard.
-    let status = {
-        let _wait_guard = ForegroundWaitGuard::enter();
+    // Queue signals across the wait, and claim the status back when the
+    // reaper wins anyway — see foreground_status.
+    let status = foreground_status(
         std::process::Command::new(name)
             .args(args)
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-    };
+            .stderr(std::process::Stdio::inherit()),
+    );
     match status {
         Ok(s) => s.code().unwrap_or(if s.success() { 0 } else { 1 }),
         Err(e) => {
