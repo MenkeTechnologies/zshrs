@@ -577,9 +577,18 @@ mod tests {
         // test parks a word in `$PREFIX` that makes every later candidate fail
         // to match — so this returned 0 in a full run and 1 on its own.
         crate::test_util::reset_completion_state();
+        // Restore INCOMPFUNC BEFORE asserting, the way the sibling
+        // `_options` case does (`Zsh/Type/_options.rs:88-91`). Asserting
+        // first leaks `INCOMPFUNC = 1` out of this test on the unwind, and
+        // `comptags` then stops reporting "can only be called from
+        // completion function" for every later test in the process — which
+        // is what made the `*_without_registered_tags` cases of `_pgids`,
+        // `_ports`, `_printers` and `_process_names` return 0 in a full
+        // run while passing on their own.
         INCOMPFUNC.store(1, Ordering::Relaxed);
-        assert_eq!(_path_commands(&[]), 1);
+        let r = _path_commands(&[]);
         INCOMPFUNC.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1);
     }
 
     /// sh:3-55 — both file-scope helpers must land in `$functions`.

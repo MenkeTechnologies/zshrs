@@ -1187,7 +1187,16 @@ mod tests {
 
     /// Every counter and table in this module is process-global, so the
     /// tests have to run one at a time against a known-zero baseline.
-    fn reset() {
+    ///
+    /// Nothing enforced that "one at a time" until this returned the
+    /// crate-wide guard. `cargo test --lib -- ai::tests` failed 2-3 of 17
+    /// on any parallel run while passing 17/17 under `--test-threads=1`
+    /// and passing individually: one test zeroed the billing counters, or
+    /// cleared `mocks()`/`cache()`, in the middle of another's
+    /// measurement. The caller binds the guard and holds it for the test.
+    #[must_use = "bind the guard (`let _g = reset();`) or the tests run in parallel again"]
+    fn reset() -> std::sync::MutexGuard<'static, ()> {
+        let g = crate::test_util::global_state_lock();
         COST_USD_MICROS.store(0, Ordering::Relaxed);
         INPUT_TOKENS.store(0, Ordering::Relaxed);
         OUTPUT_TOKENS.store(0, Ordering::Relaxed);
@@ -1198,6 +1207,7 @@ mod tests {
         cache().lock().clear();
         mocks().lock().clear();
         history().lock().clear();
+        g
     }
 
     fn args(s: &[&str]) -> Vec<String> {
@@ -1223,7 +1233,7 @@ mod tests {
 
     #[test]
     fn cache_tokens_bill_at_write_and_read_multipliers() {
-        reset();
+        let _g = reset();
         // 1M input, 0 output, 1M cache-write, 1M cache-read on Opus 5:
         // 5.00 + 0 + 5.00*1.25 + 5.00*0.10 = 11.75.
         bill("claude-opus-5", 1_000_000, 0, 1_000_000, 1_000_000);
@@ -1302,7 +1312,7 @@ mod tests {
 
     #[test]
     fn mock_mode_answers_without_touching_the_network() {
-        reset();
+        let _g = reset();
         std::env::set_var("ZSHRS_AI_MODE", "mock-only");
         mocks().lock().push((
             regex::Regex::new("capital of France").unwrap(),
@@ -1326,7 +1336,7 @@ mod tests {
 
     #[test]
     fn mock_only_mode_refuses_rather_than_calling_out() {
-        reset();
+        let _g = reset();
         std::env::set_var("ZSHRS_AI_MODE", "mock-only");
         let err = run(&args(&["-v", "x", "nothing matches this"])).expect_err("should refuse");
         assert_eq!(err.status(), 1);
@@ -1336,7 +1346,7 @@ mod tests {
 
     #[test]
     fn array_output_splits_the_response_on_lines() {
-        reset();
+        let _g = reset();
         std::env::set_var("ZSHRS_AI_MODE", "mock-only");
         mocks().lock().push((
             regex::Regex::new("^list").unwrap(),
@@ -1361,7 +1371,7 @@ mod tests {
 
     #[test]
     fn sse_decode_assembles_deltas_and_bills_the_whole_stream() {
-        reset();
+        let _g = reset();
         // The billing bug this pins: stryke keeps the token counters as
         // locals inside `next_item`, so only the final chunk's usage is
         // ever charged. Here `message_start` and `message_delta` sit at
@@ -1399,7 +1409,7 @@ mod tests {
 
     #[test]
     fn a_mid_stream_error_event_fails_the_call_but_still_bills_what_arrived() {
-        reset();
+        let _g = reset();
         let body = concat!(
             r#"data: {"type":"message_start","message":{"usage":{"input_tokens":1000000}}}"#,
             "\n\n",
@@ -1423,7 +1433,7 @@ mod tests {
 
     #[test]
     fn sse_ignores_comment_and_event_lines_and_undecodable_payloads() {
-        reset();
+        let _g = reset();
         let body = concat!(
             ": ping\n",
             "event: content_block_delta\n",
