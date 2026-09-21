@@ -4750,11 +4750,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                     }
                     let len = exec.array(&name).map(|a| a.len()).unwrap_or(0);
-                    for i in 0..len {
-                        if !explicit.contains(&i) {
-                            crate::bash_arrays::note_unset(&name, i);
-                        }
-                    }
+                    crate::bash_arrays::note_holes_outside(&name, &explicit, len);
                 }
             }
             #[cfg(feature = "recorder")]

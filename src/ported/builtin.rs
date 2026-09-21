@@ -6972,11 +6972,7 @@ pub fn bin_typeset(
                     }
                     crate::ported::exec::set_array(n, dense.clone());
                     crate::bash_arrays::clear(n);
-                    for i in 0..dense.len() {
-                        if !explicit.contains(&i) {
-                            crate::bash_arrays::note_unset(n, i);
-                        }
-                    }
+                    crate::bash_arrays::note_holes_outside(n, &explicit, dense.len());
                 } else if elems.iter().any(|e| e.starts_with(crate::ported::zsh_h::Marker)) {
                     // c:3019-3020 — the compiler emitted `[k]=v` elements as
                     // Marker triads (c:Src/subst.c:49-79), so the value goes to
@@ -6987,6 +6983,35 @@ pub fn bin_typeset(
                         elems.clone(),
                         crate::ported::zsh_h::ASSPM_KEY_VALUE,
                     );
+                    // !!! BASH-MODE GATE !!! and then the same sparse marking
+                    // the two literal forms above do. This is the shape the
+                    // compiler actually produces for `declare -a a=([5]=x
+                    // [10]=y)` — the bracket-form branch above never sees it,
+                    // because by then the elements are Marker triads and not
+                    // `[5]=x` strings — so the declare form came out DENSE:
+                    // eleven elements with nine empties where bash reports two.
+                    // Triad layout is [Marker, index, value] (c:Src/subst.c:49-79),
+                    // matching the `a=(…)` path in fusevm_bridge.
+                    if crate::dash_mode::sparse_arrays() {
+                        let marker = crate::ported::zsh_h::Marker;
+                        let pure_indexed = !elems.is_empty()
+                            && elems.len() % 3 == 0
+                            && elems.chunks(3).all(|ch| ch[0].starts_with(marker));
+                        if pure_indexed {
+                            let mut explicit: std::collections::BTreeSet<usize> =
+                                std::collections::BTreeSet::new();
+                            for ch in elems.chunks(3) {
+                                if let Ok(i) = ch[1].trim().parse::<usize>() {
+                                    explicit.insert(i);
+                                }
+                            }
+                            let len = crate::ported::params::getaparam(n)
+                                .map(|a| a.len())
+                                .unwrap_or(0);
+                            crate::bash_arrays::clear(n);
+                            crate::bash_arrays::note_holes_outside(n, &explicit, len);
+                        }
+                    }
                 } else {
                     // c:2980-2995 — plain array.
                     crate::ported::exec::set_array(n, elems.clone());

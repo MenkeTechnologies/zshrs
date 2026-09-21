@@ -62,6 +62,28 @@ pub fn note_unset(name: &str, i: usize) {
     });
 }
 
+/// Record every slot of a freshly-written `0..len` array that the literal
+/// did NOT name as a hole.
+///
+/// An explicit-index array literal is sparse in bash: `a=([2]=x [5]=y)`
+/// holds indices {2,5}, not a dense 0..5 with empties. The dense `Vec`
+/// underneath has already been written by the caller's setter; this marks
+/// the slots between the named ones, which is what `${a[@]}`, `${!a[@]}`
+/// and `${#a[@]}` consult.
+///
+/// Shared by all three literal paths — the `a=(…)` builtin, `declare -a`'s
+/// bracket form, and `declare -a`'s Marker-triad form — so they cannot
+/// drift apart the way the first two did: the triad form had no marking at
+/// all, and `declare -a a=([5]=x [10]=y)` came out dense with eleven
+/// elements where bash reports two.
+pub fn note_holes_outside(name: &str, explicit: &BTreeSet<usize>, len: usize) {
+    for i in 0..len {
+        if !explicit.contains(&i) {
+            note_unset(name, i);
+        }
+    }
+}
+
 /// Drop any hole indices >= `new_len` — the array shrank (truncation), so
 /// trailing holes no longer exist.
 pub fn truncate(name: &str, new_len: usize) {
