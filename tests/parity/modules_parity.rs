@@ -1202,6 +1202,38 @@ mod nearcolor_module {
         assert_eq!(z.stdout, r.stdout);
     }
 
+    /// The zshhooks hookdefs (init.c:1085) are registered once per process.
+    /// A script fed on stdin builds a second executor, and re-adding the
+    /// same hookdefs printed `name clash when adding hook `exit'` (and
+    /// before_trap/after_trap/get_color_attr) on stderr before every run.
+    #[test]
+    fn stdin_script_does_not_readd_hookdefs() {
+        if !zsh_available() {
+            return;
+        }
+        use std::io::Write;
+        use std::process::Stdio;
+        let run = |cmd: &mut Command| {
+            let mut child = cmd
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn");
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"zmodload zsh/nearcolor\nprint hi\n")
+                .unwrap();
+            child.wait_with_output().expect("wait")
+        };
+        let z = run(Command::new(zsh_path()).arg("-f"));
+        let r = run(Command::new(zshrs_bin()).args(["--zsh", "-f"]).env_remove("ZSHRS_CACHE"));
+        assert_eq!(String::from_utf8_lossy(&r.stderr), String::from_utf8_lossy(&z.stderr));
+        assert_eq!(String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&z.stdout));
+    }
+
     /// `%F{#hex}` / `%K{#hex}` consult the "get_color_attr" hook
     /// (prompt.c:1989) that a loaded zsh/nearcolor fills
     /// (nearcolor.c:199): the RGB maps to the nearest palette index for

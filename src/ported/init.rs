@@ -186,6 +186,16 @@ pub static zshhooks: once_cell::sync::Lazy<
     std::sync::atomic::AtomicPtr::new(base)
 });
 
+/// !!! RUST-ONLY — NO C COUNTERPART !!!
+/// C registers `zshhooks` exactly once, from setupvals (c:1085). zshrs
+/// has two entry routes to that step: the `-c` route never runs
+/// setupvals, so ShellExecutor::new performs it; the stdin / script /
+/// interactive route runs ShellExecutor::new AND then zsh_main →
+/// setupvals. Both go through this guard so the second attempt does not
+/// re-add the same static hookdefs, which addhookdefs reports as
+/// `name clash when adding hook` (module.c:889).
+pub static ZSHHOOKS_ADDED: std::sync::Once = std::sync::Once::new();
+
 // original argv[0]. This is already metafied                                // c:258
 
 /// Port of `static char *argv0` from Src/init.c:259.
@@ -1145,10 +1155,10 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // c:1085 — `(void)addhookdefs(NULL, zshhooks, sizeof(zshhooks)/sizeof(*zshhooks));`
     // Registers the four well-known hookdefs (exit, before_trap,
     // after_trap, get_color_attr) into the global `hooktab` chain.
-    {
+    ZSHHOOKS_ADDED.call_once(|| {
         let base = zshhooks.load(std::sync::atomic::Ordering::SeqCst);
         let _ = crate::ported::module::addhookdefs(std::ptr::null(), base, 4);
-    }
+    });
     // In C the `zsh/zle` module's boot_ (zle_main.c:2301) registers the
     // before_trap/after_trap hookfuncs AND the comphooks[] hookdefs
     // (insert_match, menu_start, compctl_make, compctl_cleanup,

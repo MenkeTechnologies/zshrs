@@ -3378,10 +3378,11 @@ impl ShellExecutor {
         // hooktab stayed empty: `zmodload zsh/nearcolor`'s boot_
         // (nearcolor.c:199) found no "get_color_attr" hookdef to attach
         // getnearestcolor to, and `%F{#hex}` never mapped to the palette.
-        {
+        // Shared once-guard with setupvals (see init::ZSHHOOKS_ADDED).
+        crate::ported::init::ZSHHOOKS_ADDED.call_once(|| {
             let base = crate::ported::init::zshhooks.load(std::sync::atomic::Ordering::SeqCst);
             let _ = crate::ported::module::addhookdefs(std::ptr::null(), base, 4);
-        }
+        });
         crate::ported::init::init_bltinmods(); // c:Src/init.c:1945
         crate::startup_trace::mark("exec: init_bltinmods");
 
