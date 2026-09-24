@@ -25021,6 +25021,25 @@ pub fn paramsubst(
         } // c:1625
         let var_name: String = chars[var_start..pos].iter().collect(); // c:1625
 
+        // c:1665 — `int plan9 = isset(RCEXPANDPARAM);` holds for the unbraced
+        // reference as much as the braced one: the braced and unbraced forms
+        // run the same paramsubst, whose plan9 emit (c:4316-4359) glues the
+        // prefix AND the substituted suffix to every element. This arm
+        // distributes only first/last, so `setopt rcexpandparam; a=(a b);
+        // print x$a\*` gave `xa b*` for zsh's `xa* xb*`. A bare `$name` with
+        // no subscript or modifier is exactly `${name}` (same precedent as
+        // the `$+name` rewrite above), so hand it to the braced walk.
+        if isset(RCEXPANDPARAM)
+            && !chars
+                .get(pos)
+                .is_some_and(|&c| c == '[' || c == crate::ported::zsh_h::Inbrack || c == ':')
+        {
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[pos..].iter().collect();
+            let rewritten = format!("{}${{{}}}{}", prefix, var_name, suffix);
+            return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
+        }
+
         // Optional `[subscript]`. Per zsh, only valid for declared
         // arrays/assocs — for scalars the `[` stays literal.
         // Accept both literal `[` and tokenized Inbrack (\u{91}) —

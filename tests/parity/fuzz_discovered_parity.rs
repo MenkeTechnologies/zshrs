@@ -4532,3 +4532,25 @@ mod typeset_type_change_on_readonly {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Two word-shape gaps next to the tokenized-glob fix above.
+// ─────────────────────────────────────────────────────────────────────
+mod unbraced_reference_word_shapes {
+    use super::*;
+
+    /// c:Src/subst.c:1665 `plan9 = isset(RCEXPANDPARAM)` holds for the
+    /// unbraced `$a` too: prefix and substituted suffix go on EVERY element
+    /// (c:4316-4359). zsh: `xa* xb*` / `xa-V xb-V`.
+    #[test]
+    fn rc_expand_param_unbraced_distributes_both_affixes() {
+        assert_parity(r#"setopt rcexpandparam; a=(a b); v=V; print -r -- x$a\* x$a-$v"#);
+    }
+
+    /// c:Src/lex.c:1064-1069 — only an unquoted `[` is the Inbrack token
+    /// that opens a subscript. zsh: `b[1] b[1]` / `p q[2]z`.
+    #[test]
+    fn quoted_bracket_after_unbraced_name_is_literal() {
+        assert_parity(r#"x=b; a=(p q); print -r -- $x"[1]" $x'[1]'; print -r -- $a"[2]"z"#);
+    }
+}

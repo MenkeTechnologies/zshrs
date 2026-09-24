@@ -7488,7 +7488,14 @@ impl ZshCompiler {
         // KSHARRAYS is set at expansion time (c:Src/subst.c:2800-2802
         // + 2867), which is a runtime decision: emit the UNBRACED
         // subscript opcode and let the bridge dispatch.
-        if !has_bnull || bnull_in_subscript {
+        //
+        // c:Src/lex.c:1064-1069 — the subscript opener is the Inbrack TOKEN,
+        // which the lexer does not emit for a quoted `[`. `untoked` has lost
+        // the quote markers, so a word whose markers are not one double-quoted
+        // span around the whole reference (`$x"[1]"`, `"$x"[1]`, `$x'[1]'`)
+        // only LOOKS like `$x[1]`: its bracket is literal text (zsh: `b[1]`).
+        let quotes_allow_subscript = !has_quote_markers || word_is_single_dq_span(s);
+        if (!has_bnull || bnull_in_subscript) && quotes_allow_subscript {
             if let Some((name, key)) = bare_subscript_ref(&untoked) {
                 self.emit_unbraced_subscript(
                     name,
@@ -7505,7 +7512,7 @@ impl ZshCompiler {
         // literal `[KEY]` text BEFORE filename generation: zsh 5.9
         // `setopt ksharrays; a=(x y z); print -- $a[0]suffix` →
         // `zsh:1: no matches found: x[0]suffix`).
-        if !has_bnull || bnull_in_subscript {
+        if (!has_bnull || bnull_in_subscript) && quotes_allow_subscript {
             if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
                 self.emit_unbraced_subscript(
                     name,
