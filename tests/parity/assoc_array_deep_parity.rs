@@ -718,3 +718,21 @@ mod scalar_append_to_association {
         assert_parity("a=(x y); a+=z; print -r -- ${(t)a} $a");
     }
 }
+
+/// c:Src/parse.c:1851-1865 — par_simple finds the assignment `=` by walking
+/// to the first Inbrack TOKEN and `skipparens(Inbrack, Outbrack, …)`, so a
+/// quoted or backslashed `[`/`(`/`{` inside the subscript is key text, not a
+/// delimiter. Functions/Prompts/prompt_clint_setup assigns `pc['\[']=…`.
+mod quoted_bracket_in_assignment_subscript {
+    use super::*;
+
+    #[test]
+    fn quoted_open_bracket_key_then_next_command() {
+        assert_parity(r#"typeset -A pc; pc['\[']=a; pc['{']=b; print -r -- ${(k)pc}; print next"#);
+    }
+
+    #[test]
+    fn quoted_key_append_and_following_line() {
+        assert_parity("typeset -A pc; pc['\\[']+=x\npc['\\[']+=y\nprint -r -- ${(kv)pc}");
+    }
+}

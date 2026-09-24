@@ -9545,66 +9545,49 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
 /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
 /// helper for clarity.
 fn parse_assign() -> Option<ZshAssign> {
-    // Helper: locate the Equals-marker that delimits NAME from
-    // VALUE in an assignment-shaped tokstr. The lexer META-encodes
-    // EVERY `=` (including those inside `${var%%=foo}` strip
-    // patterns or `[idx]=...` subscripts), so a naive
-    // `tokstr.find(Equals)` would split at the first inner `=`
-    // and break the whole assignment. Walk the string skipping
-    // brace and bracket depth so the assignment's `=` (the one
-    // after the last `]` of the LHS subscript / or after the
-    // bare name) is the one we land on.
+    // Helper: locate the `=` that delimits NAME from VALUE — the scan
+    // par_simple's ENVSTRING arm runs (c:Src/parse.c:1851-1865):
+    //
+    //     for (ptr = tokstr;
+    //          *ptr && *ptr != Inbrack && *ptr != '=' && *ptr != '+';
+    //          ptr++);
+    //     if (*ptr == Inbrack) skipparens(Inbrack, Outbrack, &ptr);
+    //     if (*ptr == '+') *ptr++ = '\0';
+    //     if (*ptr == '=') { *ptr = '\0'; str = ptr + 1; }
+    //     else equalsplit(tokstr, &str);
+    //
+    // Only the lexer's Inbrack/Outbrack TOKENS delimit the subscript, so a
+    // quoted or backslashed bracket inside it is content. The previous
+    // depth walk counted raw `[`/`(`/`{` as well, so a quoted one in the
+    // key (`pc['\[']=…`, `pc['(']=…` — Functions/Prompts/prompt_clint_setup)
+    // never returned to depth 0, the assignment was dropped and the next
+    // token was a parse error. zshrs's lexer spells the assignment `=` as
+    // the Equals token where C keeps it raw, so both spellings count.
     fn find_assign_equals(s: &str) -> Option<usize> {
-        let target = Equals;
-        let mut brace = 0i32;
-        let mut bracket = 0i32;
-        let mut paren = 0i32;
-        let mut skip_next = false;
-        for (i, c) in s.char_indices() {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            // Bnull/Bnullkeep mark the next char as a backslash-escaped
-            // literal — `A[\[]=v` keys on `[`, `A[\]]=v` on `]`. The
-            // escaped bracket/paren/brace is CONTENT, not a depth
-            // delimiter, so skip the marker and the char it escapes.
-            // Without this, the escaped `[` over-counted bracket depth
-            // and the assignment's `=` was never found (depth never
-            // returned to 0), so the whole assignment was dropped and
-            // `A[\[]=v; cmd` parse-errored on the `;`.
-            if c == '\u{9f}' /* Bnull */ || c == '\u{a0}'
-            /* Bnullkeep */
-            {
-                skip_next = true;
-                continue;
-            }
-            match c {
-                    '{' | '\u{8f}' /* Inbrace */ => brace += 1,
-                    '}' | '\u{90}' /* Outbrace */ => {
-                        if brace > 0 {
-                            brace -= 1;
-                        }
-                    }
-                    '[' | '\u{91}' /* Inbrack */ => bracket += 1,
-                    ']' | '\u{92}' /* Outbrack */ => {
-                        if bracket > 0 {
-                            bracket -= 1;
-                        }
-                    }
-                    '(' | '\u{88}' /* Inpar */ => paren += 1,
-                    ')' | '\u{8a}' /* Outpar */ => {
-                        if paren > 0 {
-                            paren -= 1;
-                        }
-                    }
-                    _ if c == target && brace == 0 && bracket == 0 && paren == 0 => {
-                        return Some(i);
-                    }
-                    _ => {}
-                }
+        use crate::ported::zsh_h::{Inbrack, Outbrack};
+        let is_eq = |c: char| c == '=' || c == Equals;
+        // c:1851-1853
+        let mut ptr = s
+            .char_indices()
+            .find(|&(_, c)| c == Inbrack || c == '+' || is_eq(c))
+            .map_or(s.len(), |(i, _)| i);
+        // c:1854 — `if (*ptr == Inbrack) skipparens(Inbrack, Outbrack, &ptr);`
+        if s[ptr..].starts_with(Inbrack) {
+            let mut cursor = &s[ptr..];
+            crate::ported::utils::skipparens(Inbrack, Outbrack, &mut cursor);
+            ptr = s.len() - cursor.len();
         }
-        None
+        // c:1855-1857 — `+=`
+        if s[ptr..].starts_with('+') {
+            ptr += 1;
+        }
+        // c:1861-1863
+        if s[ptr..].chars().next().is_some_and(is_eq) {
+            return Some(ptr);
+        }
+        // c:1865 — `equalsplit(tokstr, &str)` (c:Src/utils.c:4133): the
+        // first `=` anywhere.
+        s.char_indices().find(|&(_, c)| is_eq(c)).map(|(i, _)| i)
     }
 
     let _ts_tokstr = tokstr()?;
