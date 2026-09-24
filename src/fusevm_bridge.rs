@@ -3127,7 +3127,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _wait_guard = ForegroundWaitGuard::enter();
             let status = match command.spawn() {
                 Ok(mut child) => match child.wait() {
-                    Ok(s) => s.code().unwrap_or(127),
+                    Ok(s) => crate::exec_jobs::wait_status_val(s),
                     Err(_) => 127,
                 },
                 Err(e) => {
@@ -16396,7 +16396,7 @@ fn exec_system_command(name: &str, args: &[String]) -> i32 {
             .stderr(std::process::Stdio::inherit()),
     );
     match status {
-        Ok(s) => s.code().unwrap_or(if s.success() { 0 } else { 1 }),
+        Ok(s) => crate::exec_jobs::wait_status_val(s),
         Err(e) => {
             eprintln!("zshrs: {}: {}", name, e);
             127

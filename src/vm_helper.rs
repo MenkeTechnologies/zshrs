@@ -6039,7 +6039,7 @@ impl ShellExecutor {
                 // fusevm_bridge.
                 let status_result = crate::fusevm_bridge::foreground_status(&mut command);
                 match status_result {
-                    Ok(status) => Ok(status.code().unwrap_or(1)),
+                    Ok(status) => Ok(crate::exec_jobs::wait_status_val(status)),
                     Err(e) => {
                         // c:534-627 — the kernel refused the file; retry with
                         // the interpreter the `#!` line names (or `/bin/sh` for a

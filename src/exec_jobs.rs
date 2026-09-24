@@ -18,6 +18,24 @@ use crate::ported::jobs::stat;
 use crate::ported::jobs::{deletejob, CURJOB, MAXJOB, PREVJOB, THISJOB};
 use crate::ported::zsh_h::job;
 
+/// !!! WARNING: RUST-ONLY ADAPTER !!! The job status C derives from a
+/// finished process's wait status — update_job's `val`
+/// (c:Src/jobs.c:492-496): `WIFSIGNALED ? 0200 | WTERMSIG : WIFSTOPPED ?
+/// 0200 | WSTOPSIG : WEXITSTATUS`. zshrs waits on its foreground externals
+/// through `std::process::ExitStatus`, whose `code()` is `None` for a
+/// signalled child; the call sites turned that into 1, so
+/// `sh -c 'kill $$'; print $?` printed 1 where zsh prints 143.
+pub fn wait_status_val(s: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt as _;
+    if let Some(sig) = s.signal() {
+        0o200 | sig // c:493
+    } else if let Some(sig) = s.stopped_signal() {
+        0o200 | sig // c:495
+    } else {
+        s.code().unwrap_or(0) // c:496
+    }
+}
+
 /// Executor-side stand-in for C `printjob`'s done-job delete tail,
 /// `Src/jobs.c:1350-1363`:
 /// ```c

@@ -429,6 +429,17 @@ fn stopped_job_reads_suspended() {
     assert_parity("sleep 5 & kill -STOP $!; sleep 0.5; jobs; kill -9 %1");
 }
 
+/// c:Src/jobs.c:492-496 — a process killed by a signal leaves $? =
+/// 0200 | WTERMSIG. zshrs read `ExitStatus::code()`, which is `None` for a
+/// signalled child, and reported 1 — in a plain command, a subshell and a
+/// command substitution.
+#[test]
+fn signalled_foreground_command_status() {
+    assert_parity(
+        "sh -c 'kill -TERM $$'; print a=$?; (sh -c 'kill -INT $$'); print b=$?; x=$(sh -c 'kill -USR1 $$'); print c=$?; sh -c 'kill -KILL $$'; print d=$?",
+    );
+}
+
 #[test]
 fn jobstates_markers_two_jobs() {
     // `:+` on curjob, `:-` on prevjob (parameter.c:1346-1351).
