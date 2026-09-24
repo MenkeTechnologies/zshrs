@@ -382,3 +382,90 @@ mod unset_array_local_reads_unset {
         assert_parity(r#"f(){ typeset -ga G=(a); unset G; print -r -- $+G "[${(t)G}]" }; f"#);
     }
 }
+
+/// `unset "name[sub]"` on a SCALAR splices the subscripted character range
+/// out (c:Src/builtin.c:3902-3915: `getindex(&ss, &vbuf, SCANPM_ASSIGNING)`
+/// then `setstrvalue(&vbuf, ztrdup(""))`); on a numeric type it is
+/// `zerrnam(name, "%s: invalid element for unset")` (c:3919-3921). The
+/// scalar arm was missing, so every scalar element unset was a silent no-op.
+mod scalar_element {
+    use super::*;
+
+    #[test]
+    fn single_char_and_ranges() {
+        for sub in ["1", "3", "-1", "2,2", "2,4", "-3,-2", "1,-1", "9"] {
+            assert_parity(&format!(r#"var=value; unset 'var[{sub}]'; echo "[$var]" $?"#));
+        }
+    }
+
+    #[test]
+    fn zero_subscript_is_an_invalid_range() {
+        assert_parity(r#"var=value; unset 'var[0]'; echo "[$var]" $?"#);
+    }
+
+    #[test]
+    fn local_multibyte_and_exported() {
+        assert_parity(r#"f(){ local l=abcd; unset 'l[2,3]'; echo $l }; f"#);
+        assert_parity(r#"var=héllo; unset 'var[2]'; echo $var"#);
+        assert_parity(r#"typeset -x e=xyz; unset 'e[1]'; echo $e; env | grep '^e='"#);
+    }
+
+    #[test]
+    fn readonly_scalar_is_rejected() {
+        assert_parity(r#"readonly r=abc; unset 'r[2]' 2>/dev/null; echo rc=$? $r"#);
+    }
+
+    #[test]
+    fn integer_element_aborts() {
+        assert_parity(r#"integer i=3; unset 'i[1]' 2>/dev/null; echo notreached"#);
+    }
+}
+
+/// Nameref arms of `unset`. The release zsh binary the parity helpers use
+/// has no `typeset -n`, so these are zshrs pins with the expected output of
+/// the zsh dev tree (which agrees with the vendored src/zsh tree here).
+mod nameref_zshrs_pin {
+    use super::*;
+
+    fn out(s: &str) -> String {
+        run_zshrs(s).stdout
+    }
+
+    /// c:3897-3901 — the element unset resolves the ref and splices the
+    /// referent scalar.
+    #[test]
+    fn subscripted_unset_through_a_ref_edits_the_referent() {
+        assert_eq!(
+            out(r#"typeset var=value; typeset -n p=var; unset 'p[2,3]'; typeset -p var"#),
+            "typeset var=vue\n"
+        );
+    }
+
+    /// A placeholder ref resolves to itself (PM_NAMEREF), which the c:3919
+    /// type check rejects.
+    #[test]
+    fn subscripted_unset_of_a_placeholder_ref_is_invalid() {
+        let r = run_zshrs(r#"typeset -n q; unset 'q[1]' 2>/dev/null; echo notreached"#);
+        assert_eq!(r.stdout, "");
+        assert_eq!(r.exit, 1);
+    }
+
+    /// c:3843-3846 — `unset -m` applies the literal-name nameref rule:
+    /// without `-n` the referent goes, with `-n` the ref itself.
+    #[test]
+    fn unset_m_resolves_refs() {
+        let base = r#"typeset var0=foo; typeset -n ref1=var0 ref2=ref1"#;
+        assert_eq!(
+            out(&format!("f() {{ {base}; unset -m ref1; typeset -p var0 ref1 ref2 2>/dev/null }}; f")),
+            "typeset -n ref1=var0\ntypeset -n ref2=ref1\n"
+        );
+        assert_eq!(
+            out(&format!("f() {{ {base}; unset -m ref2; typeset -p var0 ref1 ref2 2>/dev/null }}; f")),
+            "typeset -n ref1=var0\ntypeset -n ref2=ref1\n"
+        );
+        assert_eq!(
+            out(&format!("f() {{ {base}; unset -n -m ref1; typeset -p var0 ref1 ref2 2>/dev/null }}; f")),
+            "typeset var0=foo\ntypeset -n ref2=ref1\n"
+        );
+    }
+}

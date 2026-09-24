@@ -9602,6 +9602,20 @@ pub fn bin_unset(
                             match_count += 1; // c:3848
                             continue;
                         }
+                        // c:3843-3846 — `if (OPT_ISSET(ops,'n') || ((pm =
+                        // resolve_nameref(pm)) && !(pm->node.flags &
+                        // PM_NAMEREF))) unsetparam_pm(pm, 0, 1);` — the
+                        // same test the literal-name arm applies at
+                        // c:3949-3951. unsetparam() skips namerefs, so
+                        // route a matched ref through that arm (the `-m`
+                        // bit cleared, `-n` kept) instead of dropping it.
+                        if crate::ported::params::is_nameref(nm) {
+                            let mut lit_ops = ops.clone();
+                            lit_ops.ind[b'm' as usize] = 0;
+                            bin_unset(name, std::slice::from_ref(nm), &lit_ops, func);
+                            match_count += 1; // c:3848
+                            continue;
+                        }
                         unsetparam(nm); // c:3847 (with guards)
                         match_count += 1; // c:3848
                     }
@@ -9944,6 +9958,104 @@ pub fn bin_unset(
                     {
                         let cur = crate::ported::exec::array(nm).unwrap_or_default();
                         crate::ported::params::assignsparam(scalar, &cur.join(":"), 0);
+                    }
+                } else {
+                    // c:3897-3901 — `if ((pm->node.flags & PM_NAMEREF) &&
+                    // !(pm = resolve_nameref(pm))) continue;` — the element
+                    // unset acts on the referent.
+                    let (target, tflags) = if crate::ported::params::is_nameref(nm) {
+                        use crate::ported::params::nameref_resolution;
+                        match crate::ported::params::resolve_nameref_name(nm, None) {
+                            nameref_resolution::Target {
+                                name: t,
+                                subscript: None,
+                                pm: Some(p),
+                                ..
+                            } => {
+                                let f = p.node.flags as u32;
+                                (t, f)
+                            }
+                            // c:params.c:6341-6342 — a placeholder chain
+                            // resolves to the (PM_NAMEREF) ref itself, which
+                            // falls through to the c:3919 type check below.
+                            nameref_resolution::Placeholder(last) => {
+                                let f = paramtab()
+                                    .read()
+                                    .ok()
+                                    .and_then(|t| t.get(&last).map(|p| p.node.flags as u32))
+                                    .unwrap_or(PM_NAMEREF);
+                                (last, f)
+                            }
+                            _ => continue,
+                        }
+                    } else {
+                        // c:3886-3890 — `getnode2`; `if (!pm) continue;`
+                        match paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(nm).map(|pm| pm.node.flags as u32))
+                        {
+                            Some(f) => (nm.to_string(), f),
+                            None => continue,
+                        }
+                    };
+                    if PM_TYPE(tflags) == PM_SCALAR {
+                        // c:3902-3915 — `vbuf.pm = pm; vbuf.start = 0;
+                        // vbuf.end = -1; … if (getindex(&ss, &vbuf,
+                        // SCANPM_ASSIGNING) == 0 && vbuf.pm &&
+                        // !(vbuf.pm->node.flags & PM_UNSET))
+                        // setstrvalue(&vbuf, ztrdup(""));` — the subscripted
+                        // character range is spliced out (`var=value;
+                        // unset "var[2,3]"` → vue). C's vbuf aliases the
+                        // table node; the Rust value owns a clone, so the
+                        // mutated node is written back.
+                        let pm = paramtab().read().ok().and_then(|t| t.get(&target).cloned());
+                        let mut vbuf = crate::ported::zsh_h::value {
+                            pm,
+                            arr: Vec::new(),
+                            scanflags: 0, // c:3903-3904 (PM_SCALAR)
+                            valflags: 0,  // c:3906
+                            start: 0,     // c:3907
+                            end: -1,      // c:3908
+                        };
+                        let bracketed = format!("[{}]", key); // c:3910 `*ss = '['`
+                        let mut sp: &str = &bracketed;
+                        if crate::ported::params::getindex(
+                            &mut sp,
+                            &mut vbuf,
+                            crate::ported::zsh_h::SCANPM_ASSIGNING as i32,
+                        ) == 0
+                            && vbuf
+                                .pm
+                                .as_ref()
+                                .is_some_and(|p| (p.node.flags as u32 & PM_UNSET) == 0)
+                        {
+                            // c:2125 `if (start > 0) start -= startprevlen;` —
+                            // the getindex port leaves a positive start
+                            // 1-based (see its c:2125 note); assignstrvalue's
+                            // scalar splice wants C's 0-based offset. Same
+                            // adjustment as the subscript-slice store in
+                            // fusevm_bridge.
+                            if vbuf.start > 0 {
+                                vbuf.start -= 1;
+                            }
+                            crate::ported::params::setstrvalue(Some(&mut vbuf), ""); // c:3914
+                            if let Some(pm_back) = vbuf.pm {
+                                if let Ok(mut tab) = paramtab().write() {
+                                    tab.insert(target.clone(), pm_back);
+                                }
+                            }
+                        }
+                        // c:3917-3918 — `returnval = errflag; errflag &=
+                        // ~ERRFLAG_ERROR;`
+                        if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+                            returnval = 1;
+                        }
+                        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+                    } else if PM_TYPE(tflags) != PM_ARRAY && PM_TYPE(tflags) != PM_HASHED {
+                        // c:3919-3921
+                        zerrnam(name, &format!("{}: invalid element for unset", nm));
+                        returnval = 1;
                     }
                 }
             }
