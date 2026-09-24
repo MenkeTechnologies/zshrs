@@ -551,3 +551,50 @@ mod float_zero_status {
         assert_parity(r#"typeset -A h; h[k]=1; (( h[k]++ )); echo "$? ${h[k]}""#);
     }
 }
+
+/// c:Src/math.c:1631 — an `ID` operand is pushed with no value and read
+/// by `getmathparam` only when its operator consumes it. The compiled
+/// `(( ))` path used to read every name the expression mentions up front.
+mod deferred_operand_read {
+    use super::*;
+
+    /// A pure assignment target is never read, so a non-numeric old
+    /// value is no error (C01arith "assigning to scalar which contains
+    /// non-math string").
+    #[test]
+    fn assign_target_with_non_math_value() {
+        assert_parity(r#"x=/bar; (( x = 32 )) 2>&1; echo "$? $x""#);
+    }
+
+    /// A name in a branch that is not taken is never read.
+    #[test]
+    fn untaken_branch_not_read() {
+        assert_parity(r#"y=/bar; (( 0 && y )) 2>&1; echo $?"#);
+        assert_parity(r#"y=/bar; (( 1 || y )) 2>&1; echo $?"#);
+        assert_parity(r#"y=/bar; (( 1 ? 2 : y )) 2>&1; echo $?"#);
+    }
+
+    /// A read after an assignment sees the parameter's stored (typed)
+    /// value, and an assignment's value is the stored value (c:1014-1030).
+    #[test]
+    fn read_after_typed_assignment() {
+        assert_parity(r#"typeset -i x; (( x = 1.7, y = x )); echo $x $y"#);
+        assert_parity(r#"typeset -i x; (( y = (x = 1.7) )); echo $y"#);
+    }
+
+    /// The operand is read when the operator runs, i.e. after a later
+    /// modification of the same name (c:1375).
+    #[test]
+    fn operand_read_after_later_modification() {
+        assert_parity(r#"x=1; (( y = x + (x = 5) )); echo $y"#);
+        assert_parity(r#"x=1; (( x += (x = 5) )); echo $x"#);
+        assert_parity(r#"x=1; (( y = x + x++ )); echo $y $x"#);
+    }
+
+    /// c:1394-1401 / c:1431-1437 — `++`/`--` keep a float a float.
+    #[test]
+    fn float_increment_stays_float() {
+        assert_parity(r#"float f=1.5; (( f++ )); (( g = f * 2 )); echo $f $g"#);
+        assert_parity(r#"float f=1.5; (( ++f )); (( --f )); (( f-- )); echo $f"#);
+    }
+}

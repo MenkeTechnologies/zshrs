@@ -7022,7 +7022,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // assignment operator reached after a math error (`x %= 0`, the
         // `y = 3` of `(( x = 5/0, y = 3 ))`) stores nothing.
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            return Value::Status(0);
+            return arith_push(value);
         }
         // c:Src/math.c:395 `xstack = stack` / c:455 `stack = xstack` —
         // `setmathvar` also memoises the value in the math-local read
@@ -7038,9 +7038,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // entries of an enclosing `matheval` frame intact, which is
         // what c:455 restores.
         let saved = crate::ported::math::m_variables_clone();
-        crate::ported::math::setmathvar(&name, value);
+        // c:Src/math.c:1370-1371 — `c = setmathvar(mvp, c); push(c, …)`:
+        // the stored value, converted to the parameter's type
+        // (c:1014-1030), is the value of the assignment.
+        let stored = crate::ported::math::setmathvar(&name, value);
         crate::ported::math::m_variables_set(saved);
-        Value::Status(0)
+        arith_push(stored)
     });
 
     // c:Src/exec.c:5267 execarith tail + c:Src/math.c:1500 lastmathval.

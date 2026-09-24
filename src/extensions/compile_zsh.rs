@@ -13193,27 +13193,16 @@ impl ZshCompiler {
         );
         ac.builder.emit(Op::Pop, 0);
 
-        // Pre-load: any var the arith expression touches needs its current
-        // value pulled from executor.variables into its slot. Without this
-        // `i=5; (( i+1 ))` reads 0 from the uninitialized slot.
-        // c:Src/math.c:337 getmathparam — arith reads of NAMED params
-        // coerce to numeric (int / float, falling back to 0 for non-
-        // numeric strings via recursive arith eval). BUILTIN_GET_VAR
-        // returns the raw string, which left `(( y = x ))` with
-        // x="hello" storing y="hello" as scalar. Use BUILTIN_GET_MATH_VAR
-        // which mirrors getmathparam exactly. Bug #118 in docs/BUGS.md.
-        let pre_load_names = ac.collect_identifiers(&expr_clean);
-        for name in &pre_load_names {
-            let slot = ac.slot_for(name);
-            let name_const = ac.builder.add_constant(Value::str(name.as_str()));
-            ac.builder.emit(Op::LoadConst(name_const), 0);
-            ac.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_MATH_VAR, 1),
-                0,
-            );
-            ac.builder.emit(Op::SetSlot(slot), 0);
-        }
-
+        // No pre-load pass: every operand read goes through
+        // BUILTIN_GET_MATH_VAR (→ `getmathparam`, c:Src/math.c:337) at the
+        // point the operand is consumed (`ArithCompiler::emit_getmathparam`).
+        // C never reads a parameter up front — c:1631 pushes an `ID` with
+        // no value — so reading every name the expression mentions before
+        // evaluating it raised "bad math expression" for a non-numeric
+        // value that zsh never looks at: a pure assignment target
+        // (`x=/bar; (( x = 32 ))`) or a name in a branch not taken
+        // (`(( 0 && y ))`), and served a stale pre-assignment value to a
+        // later read (`typeset -i x; (( x = 1.7, y = x ))` gave y 1.7).
         ac.expr();
         let new_slots = ac.slots.clone();
         let new_next = ac.next_slot;

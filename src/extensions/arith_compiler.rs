@@ -137,8 +137,15 @@ impl<'a> ArithCompiler<'a> {
     /// `setmathvar` at its own position in the expression, so a store
     /// that ran before an error survives it (`(( y = 3, x = 5/0 ))` keeps
     /// y) and one reached after it never happens (c:1161 `if (errflag)
-    /// return;`, enforced by BUILTIN_SET_MATH_VAR). Stack-neutral.
+    /// return;`, enforced by BUILTIN_SET_MATH_VAR).
+    ///
+    /// Stack: `[value]` → `[stored value]`. c:Src/math.c:1370-1371 —
+    /// `c = setmathvar(mvp, c); push(c, …)`: the value of an assignment
+    /// is what `setmathvar` returns, which c:1014-1030 converts to the
+    /// TYPE of the parameter assigned (`typeset -i x; (( y = (x = 1.7) ))`
+    /// gives y 1, not 1.7). `slot` is scratch only.
     fn emit_setmathvar(&mut self, name: &str, slot: u16) {
+        self.builder.emit(Op::SetSlot(slot), 0);
         let name_const = self.builder.add_constant(Value::str(name));
         self.builder.emit(Op::LoadConst(name_const), 0);
         self.builder.emit(Op::GetSlot(slot), 0);
@@ -146,7 +153,26 @@ impl<'a> ArithCompiler<'a> {
             Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_MATH_VAR, 2),
             0,
         );
-        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// Read a parameter's numeric value where an operator consumes it.
+    /// c:Src/math.c:1631 pushes an `ID` as `MN_UNSET` with no value; the
+    /// value is fetched by `getmathparam` only when an operator pops it
+    /// (c:936 `pop`, c:1375 `op`, c:1462 `bop`, c:1647 `QUEST`). So a
+    /// name that is only ASSIGNED (`x=/bar; (( x = 32 ))`) is never read,
+    /// and neither is one in a branch not taken (`(( 0 && y ))`,
+    /// `(( 1 ? 2 : y ))`) — a non-numeric value there is no error.
+    /// Reading in operand position is equivalent to C's deferred read as
+    /// long as the operand's own name is not modified before its operator
+    /// runs; `arith_uncompilable_reason` sends those expressions to the
+    /// runtime evaluator. Stack: `[]` → `[value]`.
+    fn emit_getmathparam(&mut self, name: &str) {
+        let name_const = self.builder.add_constant(Value::str(name));
+        self.builder.emit(Op::LoadConst(name_const), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_MATH_VAR, 1),
+            0,
+        );
     }
 
     pub fn slot_for(&mut self, name: &str) -> u16 {
@@ -722,8 +748,6 @@ impl<'a> ArithCompiler<'a> {
                     let slot = self.slot_for(&name);
                     self.assigned.insert(name.clone());
                     self.assign_expr();
-                    self.builder.emit(Op::Dup, 0);
-                    self.builder.emit(Op::SetSlot(slot), 0);
                     self.emit_setmathvar(&name, slot);
                     return;
                 }
@@ -731,11 +755,16 @@ impl<'a> ArithCompiler<'a> {
                     let _ = self.next_tok(); // consume op=
                     let slot = self.slot_for(&name);
                     self.assigned.insert(name.clone());
-                    self.builder.emit(Op::GetSlot(slot), 0);
+                    // c:Src/math.c:1373-1375 — `op()` pops the right
+                    // operand, THEN fetches the left one through
+                    // `getmathparam`, so the lvalue is read after the RHS
+                    // ran: `x=1; (( x += (x = 5) ))` is 10. The RHS waits
+                    // in `slot` while the lvalue loads.
                     self.assign_expr();
-                    self.emit_binop(binop);
-                    self.builder.emit(Op::Dup, 0);
                     self.builder.emit(Op::SetSlot(slot), 0);
+                    self.emit_getmathparam(&name);
+                    self.builder.emit(Op::GetSlot(slot), 0);
+                    self.emit_binop(binop);
                     self.emit_setmathvar(&name, slot);
                     return;
                 }
@@ -1004,7 +1033,12 @@ impl<'a> ArithCompiler<'a> {
                 let (_, var_name) = self.next_tok();
                 let slot = self.slot_for(&var_name);
                 self.assigned.insert(var_name.clone());
-                self.builder.emit(Op::PreIncSlot(slot), 0);
+                // c:Src/math.c:1431-1437 PREPLUS — `u.d++` for a float,
+                // `u.l++` otherwise, then setmathvar. `Op::Inc` truncated a
+                // float to an integer (`float f=1.5; (( ++f ))` gave 2).
+                self.emit_getmathparam(&var_name);
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.emit(Op::Add, 0);
                 self.emit_setmathvar(&var_name, slot);
             }
             Tok::PreDec => {
@@ -1012,10 +1046,9 @@ impl<'a> ArithCompiler<'a> {
                 let (_, var_name) = self.next_tok();
                 let slot = self.slot_for(&var_name);
                 self.assigned.insert(var_name.clone());
-                self.builder.emit(Op::GetSlot(slot), 0);
-                self.builder.emit(Op::Dec, 0);
-                self.builder.emit(Op::Dup, 0);
-                self.builder.emit(Op::SetSlot(slot), 0);
+                self.emit_getmathparam(&var_name);
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder.emit(Op::Sub, 0);
                 self.emit_setmathvar(&var_name, slot);
             }
             _ => self.primary_expr(),
@@ -1033,7 +1066,7 @@ impl<'a> ArithCompiler<'a> {
             }
             Tok::Ident => {
                 let slot = self.slot_for(&name);
-                self.builder.emit(Op::GetSlot(slot), 0);
+                self.emit_getmathparam(&name);
 
                 // c:Src/math.c:112-113 POSTPLUS / POSTMINUS — the value of
                 // the expression is the OLD one; the variable keeps the new.
@@ -1043,17 +1076,20 @@ impl<'a> ArithCompiler<'a> {
                         let _ = self.next_tok();
                         self.assigned.insert(name.clone());
                         self.builder.emit(Op::Dup, 0); // keep old value
-                        self.builder.emit(Op::Inc, 0);
-                        self.builder.emit(Op::SetSlot(slot), 0);
+                        // c:Src/math.c:1394-1401 POSTPLUS — float stays float.
+                        self.builder.emit(Op::LoadInt(1), 0);
+                        self.builder.emit(Op::Add, 0);
                         self.emit_setmathvar(&name, slot);
+                        self.builder.emit(Op::Pop, 0);
                     }
                     Tok::PreDec => {
                         let _ = self.next_tok();
                         self.assigned.insert(name.clone());
                         self.builder.emit(Op::Dup, 0);
-                        self.builder.emit(Op::Dec, 0);
-                        self.builder.emit(Op::SetSlot(slot), 0);
+                        self.builder.emit(Op::LoadInt(1), 0);
+                        self.builder.emit(Op::Sub, 0);
                         self.emit_setmathvar(&name, slot);
+                        self.builder.emit(Op::Pop, 0);
                     }
                     _ => {}
                 }
@@ -1304,11 +1340,19 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
     // Precedence-table divergence under `setopt c_precedences`.
     let mut ac = ArithCompiler::new(expr);
     let mut ops: Vec<Tok> = Vec::new();
+    // c:Src/math.c:1631 — an `ID` operand is pushed without a value and
+    // read by `getmathparam` only when its operator pops it (c:1375), so
+    // an operand whose name is MODIFIED later in the expression is read
+    // AFTER that modification: `x=1; (( y = x + (x = 5) ))` is 10. The
+    // compiled path reads in operand position (`emit_getmathparam`), which
+    // only agrees with C while no such later modification exists.
+    let mut toks: Vec<(Tok, String)> = Vec::new();
     loop {
-        let (tok, _) = ac.next_tok();
+        let (tok, text) = ac.next_tok();
         if tok == Tok::Eoi {
             break;
         }
+        toks.push((tok, text.clone()));
         // c:Src/math.c:1456-1476 `bop` and c:1321-1331 `op` — `&&=` / `||=`
         // raise `noeval` over the right operand when the left one already
         // decides the result, and coerce both to integer (type[] BOOL|OP_E2IO,
@@ -1326,6 +1370,25 @@ pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
     }
     if !prec_tables_agree(&ops) {
         return Some("c_precedences-sensitive operator mix");
+    }
+    let modifies = |i: usize| {
+        let next = toks.get(i + 1).map(|t| t.0);
+        let prev = i.checked_sub(1).map(|p| toks[p].0);
+        matches!(next, Some(Tok::Assign | Tok::PreInc | Tok::PreDec))
+            || next.and_then(compound_assign_op).is_some()
+            || matches!(prev, Some(Tok::PreInc | Tok::PreDec))
+    };
+    for (i, (tok, name)) in toks.iter().enumerate() {
+        if *tok != Tok::Ident || modifies(i) {
+            continue;
+        }
+        let modified_later = toks[i + 1..]
+            .iter()
+            .enumerate()
+            .any(|(j, (t, n))| *t == Tok::Ident && n == name && modifies(i + 1 + j));
+        if modified_later {
+            return Some("operand modified later in the expression");
+        }
     }
     None
 }
