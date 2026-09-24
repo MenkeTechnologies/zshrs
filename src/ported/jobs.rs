@@ -6476,12 +6476,14 @@ mod tests {
         assert_eq!(getsigidx("TERM"), getsigidx("SIGTERM"));
     }
 
-    /// c:3333 — case-insensitive on signal name.
+    /// c:3091-3099 — `strcmp`, so the name match is case-SENSITIVE:
+    /// `zsh -fc 'trap x hup'` → "undefined signal: hup".
     #[test]
     #[cfg(unix)]
-    fn getsigidx_case_insensitive() {
+    fn getsigidx_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(getsigidx("hup"), getsigidx("HUP"));
+        assert_eq!(getsigidx("hup"), None);
+        assert_eq!(getsigidx("HUP"), Some(libc::SIGHUP));
     }
 
     /// c:3081 — unknown name returns None.

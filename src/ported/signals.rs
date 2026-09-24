@@ -2766,7 +2766,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(getsigidx("INT"), Some(libc::SIGINT));
         assert_eq!(getsigidx("SIGINT"), Some(libc::SIGINT));
-        assert_eq!(getsigidx("int"), Some(libc::SIGINT));
+        // c:Src/jobs.c:3091-3099 — `strcmp`: lower-case is not a signal name.
+        assert_eq!(getsigidx("int"), None);
         assert_eq!(getsigidx("HUP"), Some(libc::SIGHUP));
         assert_eq!(getsigidx("TERM"), Some(libc::SIGTERM));
         assert_eq!(getsigidx("EXIT"), Some(SIGEXIT));
