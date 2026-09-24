@@ -513,3 +513,33 @@ print -r -- "$b""#,
         );
     }
 }
+
+mod ksh_bang_negation_after_prefix {
+    use super::*;
+
+    /// `!(pat)` compiled by patcompnot(1) must hook every branch of the
+    /// inner switch to its closing node (c:Src/pattern.c:902-911). A
+    /// trailing `*` in the negated group used to re-run the whole
+    /// pattern from the split point, so a literal prefix made these
+    /// match. globtests.ksh: `[[ mad.moo.cow = !(*.*).!(*.*) ]]` is 1.
+    #[test]
+    fn negated_group_ending_in_star_after_literal() {
+        assert_parity(
+            r#"setopt kshglob
+for s p in mad.moo.cow '!(*.*).!(*.*)' mad.cow '!(*.*).!(*.*)' \
+           xmc 'x!(m*)' xm.c 'x!(m.*)' xmc 'x!(*)' xq 'x!(m*)' \
+           mad.moo.cow 'mad.!(*.*)' xmc 'x!(mc|q*)'; do
+  [[ $s = ${~p} ]]; print -r -- "$s $p $?"
+done"#,
+        );
+    }
+
+    /// `(#b)` live at `!(`: patcompswitch numbers the group (c:775-783).
+    #[test]
+    fn negated_group_under_backref_keeps_later_numbering() {
+        assert_parity(
+            r#"setopt kshglob extendedglob
+[[ xab = (#b)x!(q*)(b) ]] && print -r -- "${match[1]}|${match[2]}|$#match""#,
+        );
+    }
+}

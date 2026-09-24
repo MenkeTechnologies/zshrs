@@ -3453,11 +3453,35 @@ pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {
     // c:1776 — `br = (paren ? patcompswitch(1, &dummy) : patcompbranch(&dummy, 0));`
     let mut dummy: i32 = 0;
     let inner = if paren != 0 {
+        // c:1776 `patcompswitch(1, ...)` — in C the switch itself opens
+        // the group: a P_OPEN when `(#b)` is live (c:775-783) and the
+        // closing `ender` every branch is hooked to (c:897-909). The Rust
+        // patcompswitch leaves both to its caller (see the `b'('` arm of
+        // patcomppiece), so emit them here the same way. Without the
+        // ender each branch's operand chain ended in next == 0, which
+        // patmatch reads as "restart the program": a negated group whose
+        // last piece was `*` re-matched the WHOLE pattern from the split
+        // point, so `[[ xmc = x!(m*) ]]` and globtests.ksh's
+        // `[[ mad.moo.cow = !(*.*).!(*.*) ]]` matched.
+        let savglobflags = patglobflags.load(Ordering::Relaxed); // c:770
+        let parno = if (savglobflags & GF_BACKREF) != 0
+            && patnpar.load(Ordering::Relaxed) <= NSUBEXP as i32
+        {
+            patnpar.fetch_add(1, Ordering::Relaxed) // c:782 `parno = patnpar++;`
+        } else {
+            0
+        };
+        let open_off = if parno != 0 {
+            Some(patnode(P_OPEN + parno as u8)) // c:783
+        } else {
+            None
+        };
         let r = patcompswitch(1, &mut dummy);
-        // c:1503-1505 — caller `Inpar` arm expects to consume the
-        // trailing `)`. Mirror here since patcompnot is invoked from
-        // the b'(' atom-arm AFTER it already consumed `(`.
-        if r >= 0 {
+        if r < 0 {
+            return -1;
+        }
+        // c:913 — `if ((paren && *patparse++ != Outpar) ...) return 0;`
+        {
             let cur = patparse_off.load(Ordering::Relaxed);
             let p = patparse.lock().unwrap();
             if cur >= p.len() || p.as_bytes()[cur] != b')' {
@@ -3466,7 +3490,38 @@ pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {
             drop(p);
             patparse_off.fetch_add(1, Ordering::Relaxed);
         }
-        r
+        // c:789-792 — `if (starter) pattail(starter, br); else starter = br;`
+        let starter_sw = match open_off {
+            Some(o) => {
+                set_next(o, r as usize);
+                o
+            }
+            None => r as usize,
+        };
+        // c:902 — `ender = patnode(paren ? parno ? P_CLOSE+parno : P_NOTHING : P_END);`
+        let ender = patnode(if parno != 0 {
+            P_CLOSE + parno as u8
+        } else {
+            P_NOTHING
+        });
+        // c:903 — `pattail(starter, ender);`
+        pattail(starter_sw, ender);
+        // c:909-911 — hook the tail of every branch to the closing node.
+        chain_branches_to(r as usize, ender);
+        // c:919-929 — `if (paren && gfchanged) { pattail(ender,
+        // patnode(P_GFLAGS)); patglobflags = savglobflags; ... }`, with the
+        // same honored-bits mask the `b'('` arm stores.
+        if PATSWITCH_GFCHANGED.load(Ordering::Relaxed) != 0 {
+            let relevant = GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE;
+            let gf_off = patnode(P_GFLAGS);
+            {
+                let mut buf = patout.lock().unwrap();
+                buf.extend_from_slice(&(savglobflags & relevant).to_le_bytes());
+            }
+            pattail(ender, gf_off);
+            patglobflags.store(savglobflags, Ordering::Relaxed); // c:927
+        }
+        starter_sw as i64
     } else {
         patcompbranch(&mut dummy, 0)
     };
