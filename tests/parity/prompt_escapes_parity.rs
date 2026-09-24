@@ -756,3 +756,22 @@ mod script_file_name_components {
         );
     }
 }
+
+/// c:Src/prompt.c:462 / :669 — `%-N(l…)` and `%-N<<` measure against the
+/// `zterm_columns` global as it stands. Without a terminal zsh's is 0, so
+/// `%-5<<` clamps to one column (c:670-671). Snapshotting the prompt state
+/// used to call adjustcolumns(), which seeded the global to 80 as a side
+/// effect, and every negative width saw an 80-column terminal.
+mod negative_width_uses_zterm_columns {
+    use super::*;
+
+    #[test]
+    fn no_terminal_means_zero_columns() {
+        assert_parity(
+            r#"print -r -- $COLUMNS; print -P -- '%-5<<abcdefghij|%-5>>abcdefghij'
+p='%i|%-5>>abcdefghij'; print -r -- "${(%)p}"
+print -P -- '%-10(l.wide.narrow)|%(-5l.wide.narrow)'
+COLUMNS=30; print -P -- '%-5<<abcdefghijklmnopqrstuvwxyz0123456789'"#,
+        );
+    }
+}

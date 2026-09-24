@@ -28,7 +28,6 @@ pub(crate) mod prompt_tls {
     use crate::ported::jobs::JOBTAB;
     use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::{getsparam, paramtab};
-    use crate::ported::utils::adjustcolumns;
     use std::cell::RefCell;
     use std::env;
 
@@ -66,7 +65,7 @@ pub(crate) mod prompt_tls {
     ///   - `curhist` → HISTNUM atomic (hist.c:233)
     ///   - active job count → JOBTAB scan (jobs.c:88)
     ///   - PSVAR → paramtab "psvar" array
-    ///   - term width → `adjustcolumns()` (utils.c)
+    ///   - term width → the `zterm_columns` global (params.c:362)
     ///   - scriptname → utils.rs::scriptname()
     pub(crate) fn sync_from_globals() {
         let pwd = getsparam("PWD")
@@ -138,9 +137,15 @@ pub(crate) mod prompt_tls {
                 .and_then(|t| t.get("psvar").and_then(|p| p.u_arr.clone()))
                 .unwrap_or_default();
         });
-        // c:utils.c adjustcolumns — re-read TIOCGWINSZ.
+        // c:Src/params.c:362 — prompt expansion reads the `zterm_columns`
+        // global as it stands (c:Src/prompt.c:462, :669); it never probes
+        // the terminal. adjustcolumns() here seeded the global to 80 as a
+        // side effect when there is no tty, so `%-5<<` and `%-10(l…)` saw an
+        // 80-column terminal where zsh's zterm_columns is 0.
         TERM_WIDTH.with(|c| {
-            *c.borrow_mut() = adjustcolumns();
+            *c.borrow_mut() = crate::ported::utils::ZTERM_COLUMNS
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .max(0) as usize;
         });
         LINENO.with(|c| {
             *c.borrow_mut() = getsparam("LINENO")
