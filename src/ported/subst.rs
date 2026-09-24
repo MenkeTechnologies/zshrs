@@ -8722,7 +8722,19 @@ pub fn paramsubst(
                 // c:2741
                 var_name = sv.trim().to_string(); // c:2741
                 subexp_value = None; // c:2741 (consumed)
-            } else if let Some(sub) = subscript.clone() {
+            } else if let Some(sub) = subscript
+                .clone()
+                // c:Src/params.c:2210-2214 / 2236-2244 — a digit run is a
+                // positional: fetchvalue takes `$N` whole (`v->start = ppar - 1`)
+                // and leaves the `[...]` for the dereferenced name, so
+                // `set -- a; ${(P)1[2]}` is `${a[2]}`, not `${${1[2]}}`.
+                // (A hash target is left on the old path: C then indexes its VALUES by
+                // number, `${(P)1[2]}` → the 2nd value, which this port does not model.)
+                .filter(|_| {
+                    !var_name.bytes().all(|b| b.is_ascii_digit())
+                        || vars_get(&var_name).is_some_and(|t| assoc_contains(&t))
+                })
+            {
                 // c:Src/subst.c:2800 — the FIRST fetchvalue resolves the
                 // operand reference INCLUDING its subscript (`(P)arr[1]` →
                 // arr[1]="foo") BEFORE the (P) dereference. The subscript

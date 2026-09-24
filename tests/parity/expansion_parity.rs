@@ -1858,3 +1858,26 @@ mod strip_anchors_see_the_whole_value {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/params.c:2210-2244 — for `${(P)N[sub]}` with a positional N the
+// first fetchvalue takes `$N` whole and leaves the subscript for the
+// dereferenced parameter (regexp-replace's `${(P)1[…]}`).
+// ─────────────────────────────────────────────────────────────────────
+mod indirect_positional_subscript {
+    use super::*;
+
+    /// zsh: `y y z x y z z` / `e el` / `y`.
+    #[test]
+    fn subscript_applies_to_the_dereferenced_parameter() {
+        assert_parity(
+            r#"a=(x y z); set -- a; print ${(P)1[2]} ${(P)1[2,3]} ${(P)1} ${(P)1[-1]}; s=hello; set -- s; print ${(P)1[2]} ${(P)1[2,3]}; f() { print ${(P)1[2]}; }; f a"#,
+        );
+    }
+
+    /// A named reference still resolves its own subscript first.
+    #[test]
+    fn named_reference_unchanged() {
+        assert_parity(r#"arr=(foo q); foo=bar; print ${(P)arr[1]}; a=(x y z); n=a; print ${(P)n[2]}"#);
+    }
+}
