@@ -613,3 +613,27 @@ fn put_over_a_linewise_selection_at_the_end() {
         "X02 #68: yank linewise and put over linewise selection at end of buffer",
     );
 }
+
+/// zleread starts every line with `insmode = unset(OVERSTRIKE)`
+/// (`zle_main.c:1267`), so under `setopt overstrike` typing at the start
+/// of a pushed line overwrites, and the initial change `.` repeats is an
+/// `R` replace (`zle_vi.c:104-105`).
+#[test]
+fn overstrike_starts_the_line_in_replace_mode() {
+    let driver = format!(
+        "{OPEN}
+zpty -w w 'bindkey -v; KEYTIMEOUT=1'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w w 'setopt overstrike; print -z bung'
+sleep 1
+zpty -w -n w $'ing\\e2|.'
+sleep 1
+{DUMP_KEY}
+{DRAIN}
+"
+    );
+    assert_same_dump(&driver, "X02 #44: repeat initial edit with overstrike set");
+}

@@ -1371,6 +1371,13 @@ pub fn zleread(
     if crate::ported::params::TERMFLAGS.load(SeqCst) & crate::ported::zsh_h::TERM_UNKNOWN != 0 {
         crate::ported::init::init_term();
     }
+    // c:1267 — `insmode = unset(OVERSTRIKE);` — every line starts in the
+    // mode the option selects; the initial vi change is recorded as `R`
+    // (not `i`/`a`) from this (zle_vi.c:104-105).
+    INSMODE.store(
+        (!crate::ported::zsh_h::isset(crate::ported::zsh_h::OVERSTRIKE)) as i32,
+        SeqCst,
+    );
     *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
     *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
     // Fresh edit session on a fresh terminal row — the multiline
