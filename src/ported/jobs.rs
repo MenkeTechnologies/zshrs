@@ -1246,8 +1246,10 @@ pub fn sigmsg(sig: i32) -> &'static str {
             static RT: OnceLock<Mutex<std::collections::HashMap<i32, &'static str>>> =
                 OnceLock::new();
             let mut m = RT.get_or_init(|| Mutex::new(Default::default())).lock().unwrap();
-            return m.entry(sig).or_insert_with(|| {
-                Box::leak(format!("real-time event {}", sig - lo + 1).into_boxed_str())
+            return *m.entry(sig).or_insert_with(|| {
+                let s: &'static str =
+                    Box::leak(format!("real-time event {}", sig - lo + 1).into_boxed_str());
+                s
             });
         }
     }
