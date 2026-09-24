@@ -95,3 +95,12 @@ fn nomultibyte_dynamic_subscript_is_one_byte() {
     assert_bytes(s, "c3a920c3a96c6c20c3a9206f0ac320c30a");
 }
 
+/// c:Src/params.c:2215-2216 — the unbraced name ends at
+/// `itype_end(s, IIDENT, 0)`, which accepts `iswalnum` characters unless
+/// POSIX_IDENTIFIERS is set (c:Src/utils.c:4347-4350). D07multibyte
+/// "POSIX_IDENTIFIERS option".
+#[test]
+fn unbraced_multibyte_identifier() {
+    let s = r#"hähä=3; print -r -- $hähä "$hähä" x$hähä; setopt posixidentifiers; print -r -- $hähä"#;
+    assert_bytes(s, "3320332078330ac3a468c3a40a");
+}

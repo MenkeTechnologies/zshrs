@@ -15783,11 +15783,21 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             j
         }
         // Identifier: $NAME (optionally followed by [subscript])
-        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {
-            let mut j = i + 1;
-            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
-                j += 1;
-            }
+        // c:Src/params.c:2215-2216 — fetchvalue ends the name at
+        // `itype_end(s, itype, 0)`, whose IIDENT walk accepts any
+        // `iswalnum` character unless POSIX_IDENTIFIERS is set
+        // (c:Src/utils.c:4413-4414, 4466). An ASCII-only scan cut
+        // `$hähä` to `$h` + literal `ähä`.
+        Some(ch)
+            if ch == '_'
+                || ch.is_ascii_alphabetic()
+                || (!ch.is_ascii()
+                    && crate::ported::utils::wcsitype(ch, crate::ported::ztype_h::IIDENT as u32)) =>
+        {
+            let tail: String = chars[i + 1..].iter().collect();
+            let name_bytes =
+                crate::ported::utils::itype_end(&tail, crate::ported::ztype_h::IIDENT as u32, false); // c:2216
+            let mut j = i + 1 + tail[..name_bytes].chars().count();
             // Pull a trailing `[subscript]` into the same expansion so
             // `$NAME[idx]` (especially in DQ context) is one piece, not
             // `$NAME` + literal `[idx]`. The lexer emits Inbrack
