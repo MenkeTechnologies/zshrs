@@ -2314,8 +2314,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // predicates and the non-ASCII literals/ranges SEPARATELY and
             // consult them only when the input char is multibyte (P_ANYOF).
             let mut mb_classmask: u32 = 0;
-            let mut mb_chars: Vec<char> = Vec::new();
-            let mut mb_ranges: Vec<(char, char)> = Vec::new();
+            let mut mb_chars: Vec<u32> = Vec::new();
+            let mut mb_ranges: Vec<(u32, u32)> = Vec::new();
             let mut negate = false;
             let bracket_start = patparse_off.load(Ordering::Relaxed);
             let parse_b = patparse.lock().unwrap();
@@ -2333,7 +2333,59 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 chars.push(b']');
                 i_b += 1;
             }
+            // A METAFIED raw byte (Meta U+0083 + byte^32, how zshrs holds a
+            // byte that is not valid UTF-8) is ONE member, the character
+            // C's range walk decodes from it: the byte itself without
+            // GF_MULTIBYTE, else `mbrtowc` over the raw run, or
+            // WCHAR_INVALID (c:384 metacharinc, compared at c:3634
+            // `metacharinc(&range) == ch`). The input decode above spells
+            // each pair `\<Meta>\<payload>`, which the `\X` arm below took
+            // as two one-byte members — the first UTF-8 byte of each char —
+            // so `[\xcc]` never matched `\xcc`. Rebuild the run of pairs
+            // (a payload is always a 2-byte char, so a pair is 4 bytes
+            // there and 6 here) and decode it with charrefinc.
+            let esc_pair = |at: usize| -> bool {
+                bb.get(at..at + 4) == Some(&[b'\\', 0xc2, 0x83, b'\\'][..])
+                    && bb.get(at + 4).is_some_and(|&x| x >= 0xc2)
+            };
+            let member = |at: usize, z: &mut i32| -> Option<(u32, usize)> {
+                let mut run = String::new();
+                let mut q = at;
+                while esc_pair(q) {
+                    let payload = std::str::from_utf8(bb.get(q + 4..q + 6)?).ok()?;
+                    run.push('\u{83}');
+                    run.push_str(payload);
+                    q += 6;
+                }
+                let mut used = 0;
+                let wc = charrefinc(&run, &mut used, patglobflags.load(Ordering::Relaxed), z)?;
+                Some((wc, at + used / 4 * 6))
+            };
             while i_b < bb.len() && bb[i_b] != b']' {
+                if esc_pair(i_b) {
+                    let mut z = 0;
+                    if let Some((lo, mut p)) = member(i_b, &mut z) {
+                        let mut hi = lo;
+                        if bb.get(p) == Some(&b'-') && esc_pair(p + 1) {
+                            if let Some((h, q)) = member(p + 1, &mut z) {
+                                hi = h;
+                                p = q;
+                            }
+                        }
+                        if (patglobflags.load(Ordering::Relaxed) & GF_MULTIBYTE) == 0 {
+                            // c:1974-1975 — one raw byte per character.
+                            for r in lo..=hi.min(0xff) {
+                                chars.push(r as u8);
+                            }
+                        } else if lo == hi {
+                            mb_chars.push(lo);
+                        } else {
+                            mb_ranges.push((lo, hi));
+                        }
+                        i_b = p;
+                        continue;
+                    }
+                }
                 // c:Src/pattern.c — `\X` inside a class is handled in C
                 // by shtokenize converting it to `Bnullkeep X` upstream;
                 // by the time C's bracket walker runs, the `]` after `\`
@@ -2536,12 +2588,12 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                                 .ok()
                                 .and_then(|s| s.chars().next())
                             {
-                                mb_ranges.push((lo, hi));
+                                mb_ranges.push((lo as u32, hi as u32));
                                 i_b += lolen + 1 + hi.len_utf8();
                                 continue;
                             }
                         }
-                        mb_chars.push(lo);
+                        mb_chars.push(lo as u32);
                         i_b += lolen;
                         continue;
                     }
@@ -2557,7 +2609,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                             .ok()
                             .and_then(|s| s.chars().next())
                         {
-                            mb_ranges.push((lo as char, hich));
+                            mb_ranges.push((lo as u32, hich as u32));
                             for c in lo..=0x7f {
                                 chars.push(c);
                             }
@@ -3732,23 +3784,88 @@ pub fn charnext(x: &str, y: usize) -> usize {
     metacharinc(x, y)
 }
 
-/// Port of `charrefinc()` from `Src/pattern.c:1964`.
-/// C: `wchar_t charrefinc(char **x, char *y, int *z)` from
-/// `Src/pattern.c:1964`. Decode + advance: delegates to the
-/// `charref`-then-`len_utf8`-step pattern. The C body's Meta /
-/// mbrtowc / zshtoken triple collapses to one `chars().next()`
-/// call followed by a byte-count step.
+/// Port of `charrefinc()` from `Src/pattern.c:1969`.
+/// C: `wchar_t charrefinc(char **x, char *y, int *z)` — decode the
+/// character at `*x` and advance past it. A natively stored `char` is
+/// already one decoded character (the byte-at-a-time view of a native
+/// multibyte character without GF_MULTIBYTE is stepped by the callers).
 ///
 /// Rust signature differs from C: C mutates `*x` via the
 /// `char **` to advance; Rust mutates `pos` directly. The `y`
-/// end-of-string sentinel is captured by `&str` length; `z`
-/// (multibyte-completion index) is dropped per the same one-shot
-/// UTF-8 decode argument as `charref`.
-pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
-    // c:1964
-    let c = s[*pos..].chars().next()?;
-    *pos += c.len_utf8();
-    Some(c)
+/// end-of-string sentinel is captured by `&str` length. C reads the
+/// file-static `patglobflags`; the Rust matcher threads its flags as a
+/// value, so they are the `gflags` argument. Returns the C `wchar_t`
+/// as a `u32` because `WCHAR_INVALID` (c:241-242, `0xDC00 + byte`) is a
+/// surrogate no Rust `char` can hold.
+///
+/// zshrs keeps a byte that is not valid UTF-8 METAFIED inside the `&str`
+/// (Meta `U+0083` + `byte ^ 32`, the encoding `script_bytes` and the
+/// `$'\xNN'` decoders produce), where C's matcher sees the raw byte. One
+/// such pair is one raw byte, so it is decoded here the way C decodes
+/// that byte: on its own without GF_MULTIBYTE (c:1974-1975), otherwise
+/// through `mbrtowc` together with any pairs that follow (c:1977), and
+/// as `WCHAR_INVALID` with `*z = 1` when that fails (c:1979-1984).
+pub fn charrefinc(s: &str, pos: &mut usize, gflags: i32, z: &mut i32) -> Option<u32> {
+    // c:1969
+    let rest = s.get(*pos..)?;
+    let mut it = rest.chars();
+    let c = it.next()?;
+    let meta_byte = |n: Option<char>| n.filter(|&n| (n as u32) >= 0x80).map(|n| (n as u32 as u8) ^ 32);
+    let Some(first) = (c == '\u{83}').then(|| meta_byte(it.clone().next())).flatten() else {
+        // A natively stored character is valid UTF-8 already.
+        *pos += c.len_utf8();
+        return Some(c as u32);
+    };
+    let pair_len = c.len_utf8() + it.clone().next().map_or(0, |n| n.len_utf8());
+    // c:1974-1975 — `if (!(patglobflags & GF_MULTIBYTE) || …) return
+    // (wchar_t) (unsigned char) *(*x)++;`
+    if (gflags & GF_MULTIBYTE) == 0 {
+        *pos += pair_len;
+        return Some(first as u32);
+    }
+    // c:1977 — `ret = mbrtowc(&wc, *x, y-*x, &shiftstate);`, over the raw
+    // bytes the following Meta pairs stand for.
+    let mut raw: Vec<u8> = Vec::new();
+    let mut lens: Vec<usize> = Vec::new();
+    let mut scan = it.clone();
+    scan.next();
+    raw.push(first);
+    lens.push(pair_len);
+    loop {
+        let mut wc: libc::wchar_t = 0;
+        let mut mbs = crate::ported::utils::MBSTATE_ZERO;
+        let ret = unsafe {
+            crate::ported::utils::mbrtowc(
+                &mut wc,
+                raw.as_ptr() as *const libc::c_char,
+                raw.len(),
+                &mut mbs as *mut crate::ported::utils::MbStateBuf as *mut libc::c_void,
+            )
+        };
+        if ret == crate::ported::utils::MB_INCOMPLETE && raw.len() < crate::ported::zsh_h::MB_CUR_MAX {
+            let mut look = scan.clone();
+            if look.next() == Some('\u{83}') {
+                if let Some(b) = meta_byte(look.clone().next()) {
+                    let n = look.next().unwrap();
+                    raw.push(b);
+                    lens.push('\u{83}'.len_utf8() + n.len_utf8());
+                    scan = look;
+                    continue;
+                }
+            }
+        }
+        if ret == crate::ported::utils::MB_INVALID
+            || ret == crate::ported::utils::MB_INCOMPLETE
+        {
+            // c:1979-1984 — "Error.  Treat as single byte, but flag."
+            *z = 1;
+            *pos += lens[0];
+            return Some(0xDC00 + first as u32); // c:1984 WCHAR_INVALID (c:241-242)
+        }
+        // c:1988-1990 — `*x += ret ? ret : 1; return wc;`
+        *pos += lens[..ret.max(1).min(lens.len())].iter().sum::<usize>();
+        return Some(wc as u32);
+    }
 }
 
 /// Port of `charsub()` from `Src/pattern.c:1997`.
@@ -6001,7 +6118,21 @@ pub fn patmatch(
         let mbr_start = p;
 
         let bytes = string.as_bytes();
-        let b = bytes[off];
+        // c:1974-1975 — without GF_MULTIBYTE the candidate is one RAW byte.
+        // A metafied pair (Meta U+0083 + byte^32) is that byte; take it and
+        // its whole span through charrefinc rather than the pair's first
+        // UTF-8 byte.
+        let (b, badv) = {
+            let mut p = off;
+            let mut z = 0;
+            match (gflags & GF_MULTIBYTE == 0 && string.is_char_boundary(off))
+                .then(|| charrefinc(string, &mut p, gflags, &mut z))
+                .flatten()
+            {
+                Some(r) if bytes[off] == 0xc2 && p - off > '\u{83}'.len_utf8() => (r as u8, p - off),
+                _ => (bytes[off], 1),
+            }
+        };
         // ASCII input, OR `unsetopt multibyte`: byte-level match (the prior
         // behaviour). C only takes the wide `mb_patmatchrange` path under
         // GF_MULTIBYTE; with it clear a high byte is matched as a raw byte.
@@ -6035,10 +6166,10 @@ pub fn patmatch(
         };
         if b < 0x80 || (gflags & GF_MULTIBYTE) == 0 || !string.is_char_boundary(off) {
             if set.iter().any(|&c| charmatch(b, c, range_flags)) {
-                return (true, 1);
+                return (true, badv);
             }
             if b < 0x80 && live_class_hit(b as char) {
-                return (true, 1);
+                return (true, badv);
             }
             // c:2800 — without GF_MULTIBYTE the input char is a single BYTE
             // (`charref`, c:1919-1920) and `patmatchrange` walks the operand's
@@ -6058,7 +6189,7 @@ pub fn patmatch(
                 for k in 0..n_mbc {
                     let o = mbc_start + k * 4;
                     if member_byte(u32::from_le_bytes(code[o..o + 4].try_into().unwrap())) {
-                        return (true, 1);
+                        return (true, badv);
                     }
                 }
                 for k in 0..n_mbr {
@@ -6066,26 +6197,32 @@ pub fn patmatch(
                     if member_byte(u32::from_le_bytes(code[o..o + 4].try_into().unwrap()))
                         || member_byte(u32::from_le_bytes(code[o + 4..o + 8].try_into().unwrap()))
                     {
-                        return (true, 1);
+                        return (true, badv);
                     }
                 }
             }
-            return (false, 1);
+            return (false, badv);
         }
         // Decode one logical input char + its source byte span.
-        let mut it = string[off..].chars();
-        let (ch, adv) = match it.next() {
-            Some('\u{83}') => match it.next() {
-                Some(n) => (
-                    ((n as u32 as u8) ^ 0x20) as char,
-                    '\u{83}'.len_utf8() + n.len_utf8(),
-                ),
-                None => ('\u{83}', 2),
-            },
-            Some(c) => (c, c.len_utf8()),
-            None => return (false, 1),
+        // c:3612 `mb_patmatchrange(range, ch, …)` receives the character C's
+        // CHARREFINC decoded (c:1969-1990): a metafied run is `mbrtowc`'d as
+        // the raw bytes it stands for, and an undecodable byte is
+        // `WCHAR_INVALID` (0xDC00 + byte, c:241-242) — which no range member
+        // equals except another invalid byte (c:3634 `metacharinc(&range) ==
+        // ch`, metacharinc answering WCHAR_INVALID the same way, c:384).
+        // Decoding the pair to the Latin-1 char `byte` instead made `\xcc`
+        // match `[\ucc]` and no `[\xcc]` at all.
+        let mut adv_pos = off;
+        let mut zmb = 0;
+        let Some(cp) = charrefinc(string, &mut adv_pos, gflags, &mut zmb) else {
+            return (false, 1);
         };
-        let class_hit = (classmask & (1 << 0) != 0 && ch.is_alphabetic())
+        let adv = adv_pos - off;
+        // Class tests take the decoded character (unused when `zmb` is set).
+        let ch = char::from_u32(cp).unwrap_or('\u{FFFD}');
+        // WCHAR_INVALID is in no `iswXXX` class.
+        let class_hit = (zmb == 0
+            && ((classmask & (1 << 0) != 0 && ch.is_alphabetic())
             || (classmask & (1 << 1) != 0 && ch.is_alphanumeric())
             || (classmask & (1 << 2) != 0 && ch.is_uppercase())
             || (classmask & (1 << 3) != 0 && ch.is_lowercase())
@@ -6098,7 +6235,7 @@ pub fn patmatch(
             || (classmask & (1 << 7) != 0 && ch.is_control())
             || (classmask & (1 << 8) != 0 && !ch.is_control())
             || (classmask & (1 << 9) != 0 && !ch.is_control() && !ch.is_whitespace())
-            || live_class_hit(ch)
+            || live_class_hit(ch)))
             // c:3737-3744 — `case PP_INCOMPLETE: if (zmb_ind ==
             // ZMB_INCOMPLETE) return 1;` / `case PP_INVALID: if (zmb_ind ==
             // ZMB_INVALID) return 1;`. C's caller hands mb_patmatchrange the
@@ -6140,7 +6277,6 @@ pub fn patmatch(
         if class_hit {
             return (true, adv);
         }
-        let cp = ch as u32;
         for k in 0..n_mbc {
             let o = mbc_start + k * 4;
             if u32::from_le_bytes(code[o..o + 4].try_into().unwrap()) == cp {
@@ -9591,17 +9727,43 @@ mod tests {
     #[test]
     fn charrefinc_decodes_and_advances_position() {
         let _g = crate::test_util::global_state_lock();
+        let mb = GF_MULTIBYTE;
+        let mut z = 0;
         let mut pos = 0;
-        assert_eq!(charrefinc("abc", &mut pos), Some('a'));
+        assert_eq!(charrefinc("abc", &mut pos, mb, &mut z), Some('a' as u32));
         assert_eq!(pos, 1, "c:1964 — advance by 1 ASCII");
         let mut pos = 0;
-        assert_eq!(charrefinc("é日", &mut pos), Some('é'));
+        assert_eq!(charrefinc("é日", &mut pos, mb, &mut z), Some('é' as u32));
         assert_eq!(pos, 2, "c:1964 — advance by 2 UTF-8 bytes");
-        assert_eq!(charrefinc("é日", &mut pos), Some('日'));
+        assert_eq!(charrefinc("é日", &mut pos, mb, &mut z), Some('日' as u32));
         assert_eq!(pos, 5, "c:1964 — advance by 3 more UTF-8 bytes");
         let mut pos = 0;
-        assert_eq!(charrefinc("", &mut pos), None);
+        assert_eq!(charrefinc("", &mut pos, mb, &mut z), None);
         assert_eq!(pos, 0, "c:1964 — no advance on empty");
+        assert_eq!(z, 0, "no invalid character seen");
+    }
+
+    /// c:1974-1984 — a METAFIED raw byte (Meta U+0083 + byte^32) is one
+    /// raw byte: its own value without GF_MULTIBYTE, `WCHAR_INVALID`
+    /// (0xDC00 + byte, c:241-242) with `*z` set when it does not decode.
+    #[test]
+    fn charrefinc_decodes_a_metafied_raw_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let s = format!("\u{83}{}x", char::from(0xccu8 ^ 32));
+        let mut z = 0;
+        let mut pos = 0;
+        assert_eq!(charrefinc(&s, &mut pos, 0, &mut z), Some(0xcc));
+        assert_eq!((pos, z), (s.len() - 1, 0), "one pair, no flag");
+        // With GF_MULTIBYTE the answer is mbrtowc's, so it follows the
+        // test process's locale: a lone 0xcc is invalid UTF-8 (WCHAR_INVALID,
+        // `*z` set) but an ordinary character in a single-byte locale.
+        let mut pos = 0;
+        let wc = charrefinc(&s, &mut pos, GF_MULTIBYTE, &mut z);
+        assert_eq!(pos, s.len() - 1, "one pair either way");
+        assert!(
+            (wc, z) == (Some(0xDCCC), 1) || (wc, z) == (Some(0xcc), 0),
+            "got {wc:?} z={z}"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

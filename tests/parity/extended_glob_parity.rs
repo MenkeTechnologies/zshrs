@@ -543,3 +543,28 @@ done"#,
         );
     }
 }
+
+/// D07multibyte "Invalid characters in pattern matching": a byte that is
+/// not valid UTF-8 is `WCHAR_INVALID` (0xDC00 + byte, c:Src/pattern.c:241)
+/// on BOTH sides of a bracket (c:1979-1984 charrefinc, c:384 metacharinc,
+/// compared at c:3634), so it matches only itself — never the character
+/// whose code point equals the byte — and belongs to no POSIX class.
+mod invalid_byte_in_bracket {
+    use super::*;
+
+    #[test]
+    fn invalid_byte_matches_itself_not_the_same_code_point() {
+        assert_parity(
+            r#"x=$'\xcc' u=$'\ucc'
+[[ $x = [$x] ]]; print -n $?
+[[ $x = [$u] ]]; print -n $?
+[[ $u = [$u] ]]; print -n $?
+[[ $x = [$'\xcb'-$'\xcd'] ]]; print -n $?
+[[ $x = [^$x] ]]; print -n $?
+[[ $x = [[:alpha:]] ]]; print -n $?
+[[ a${x}b = a[$x]b ]]; print -n $?
+case $x in [$x]) print -n y;; *) print -n n;; esac
+(unsetopt multibyte; [[ bj$'\xf6'rn = *[$'\xe5\xe4\xf6\xc5\xc4\xd6']* ]]; print $?)"#,
+        );
+    }
+}
