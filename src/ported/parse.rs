@@ -2423,7 +2423,12 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     // stop set because `do` at command position can't start a
     // command. INBRACE_TOK was previously (wrongly) in the set too,
     // which made a brace-form COND parse as an empty cond + body.
+    // COND_LIST_DEPTH: as for par_if's condition — a word straight after a
+    // compound cond (`while (( i-- > 0 )) print $i`) is the SHORTLOOPS body
+    // (c:1548-1549 `par_save_list1`), not a stray word after a compound.
+    COND_LIST_DEPTH.with(|d| d.set(d.get() + 1));
     let cond = Box::new(parse_program_until(Some(&[DOLOOP]), false));
+    COND_LIST_DEPTH.with(|d| d.set(d.get() - 1));
 
     skip_separators();
     let body = parse_loop_body(false, false)?;

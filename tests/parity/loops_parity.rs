@@ -509,3 +509,28 @@ mod closing_brace_after_done_under_ignorebraces {
         assert_parity("for i in 1; { print brace $i }; print next");
     }
 }
+
+/// c:Src/parse.c:1521-1552 par_while — the condition is an ordinary list,
+/// which ends at the first word that is not a separator, so a word right
+/// after a compound condition is the SHORTLOOPS body (c:1548-1549
+/// `par_save_list1`): `while (( i-- > 0 )) print $i`. zshrs's Rust-only
+/// "word after a compound" check fired inside the condition and reported
+/// "parse error near `print'"; par_if already suppressed it for its cond.
+mod short_while_after_compound_condition {
+    use super::*;
+
+    #[test]
+    fn arith_and_brace_conditions_take_a_short_body() {
+        assert_parity("i=2; while (( i-- > 0 )) print $i");
+        assert_parity("i=2; until (( i-- <= 0 )) print $i");
+        assert_parity("i=0; while [[ $i -lt 2 ]] (( i++ )); print $i");
+        assert_parity("while { false } print never; print done");
+    }
+
+    #[test]
+    fn a_word_after_a_compound_command_is_still_an_error() {
+        assert_parity("{ print a } b c");
+        assert_parity("while false; do :; done x");
+        assert_parity("unsetopt shortloops; i=0; while (( i++ < 2 )) print s$i");
+    }
+}
