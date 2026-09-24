@@ -9999,6 +9999,12 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
             let type_mask = PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
             pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_HASHED as i32;
         }
+        // c:3590 — `v->pm->node.flags &= ~PM_DEFAULTED;` before the
+        // setarrvalue: an assignment clears the PM_UNSET|PM_DECLARED state
+        // a TYPESET_TO_UNSET declaration (`typeset -A h`) left behind, so a
+        // later `typeset -p h` prints the value instead of the bare
+        // declaration.
+        pm.node.flags &= !(PM_DEFAULTED as i32); // c:3590
         pm.u_arr = None;
         pm.u_str = None;
         (**pm).clone()

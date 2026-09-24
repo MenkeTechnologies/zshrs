@@ -5656,6 +5656,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::utils::zerr(&format!("read-only variable: {}", name)); // c:3217
             return 1; // c:3221
         }
+        // c:3171 — `v->pm->node.flags &= ~PM_DEFAULTED;` on the parameter
+        // being subscripted: an element store makes a TYPESET_TO_UNSET
+        // declaration (`typeset -A h; h[k]=v`) a set parameter, so
+        // `typeset -p h` then prints its value.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(p) = tab.get_mut(name) {
+                p.node.flags &= !(crate::ported::zsh_h::PM_DEFAULTED as i32); // c:3171
+            }
+        }
         // c:1410 — `if (v->pm && (*s == '(' || *s == Inpar))`, read off the
         // SOURCE spelling.
         let has_flags = sub_src.starts_with('(') || sub_src.starts_with(Inpar);

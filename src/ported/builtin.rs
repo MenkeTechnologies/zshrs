@@ -7601,7 +7601,25 @@ pub fn bin_typeset(
                         .iter()
                         .any(|e| e.name == arg);
                 if !preserved_special_hash && crate::ported::exec::assoc(arg).is_none() {
+                    // !!! RUST-ONLY: the empty bag is a declaration, not an
+                    // assignment. set_assoc routes through sethparam, whose
+                    // `flags &= ~PM_DEFAULTED` (c:Src/params.c:3590) would turn
+                    // a TYPESET_TO_UNSET `typeset -A h` into a set, empty hash;
+                    // C's createparam (c:2521) never assigns. Carry the
+                    // declaration's PM_DEFAULTED bits across the store.
+                    let defaulted = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(arg).map(|pm| pm.node.flags & PM_DEFAULTED as i32))
+                        .unwrap_or(0);
                     crate::ported::exec::set_assoc(arg, IndexMap::new());
+                    if defaulted != 0 {
+                        if let Ok(mut t) = paramtab().write() {
+                            if let Some(pm) = t.get_mut(arg) {
+                                pm.node.flags |= defaulted;
+                            }
+                        }
+                    }
                 }
             } else if crate::ported::exec::array(arg).is_none() {
                 crate::ported::exec::set_array(arg, Vec::new());

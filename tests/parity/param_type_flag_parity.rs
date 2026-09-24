@@ -549,3 +549,24 @@ print -r -- ${arr:#y}; print -r -- "${arr:#y}"; print -r -- ${(M)arr:#x}
 print -r -- ${(o)h:#v}"#,
     );
 }
+
+/// TYPESET_TO_UNSET: `typeset -A h` declares an unset (PM_DEFAULTED) hash;
+/// an assignment clears PM_DEFAULTED — sethparam at c:Src/params.c:3590,
+/// the subscripted assignsparam arm at c:3171 — so `typeset -p h` shows the
+/// value afterwards (E03posix "typeset -p1 output for associative array").
+/// Neither assignment cleared the state, and the declaration itself went
+/// through the assignment path, so both `typeset -p` forms printed the bare
+/// declaration or an empty `h=( )`.
+#[test]
+fn typeset_to_unset_assoc_becomes_set_on_assignment() {
+    for body in [
+        "typeset -A h; typeset -p h; h=(a b); typeset -p h",
+        "f() { local -A h; typeset -p h; h[x]=1; typeset -p h }; f",
+        "typeset -A h; h[k]=v; typeset -A h; typeset -p h",
+        "typeset -A h; h+=(k v); typeset -p1 h",
+        "local -A h; typeset -p h; print ${#h} ${(t)h} ${+h}",
+    ] {
+        assert_parity(&format!("setopt typesettounset; {body}"));
+        assert_parity(body);
+    }
+}
