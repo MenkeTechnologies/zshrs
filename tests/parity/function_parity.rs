@@ -752,3 +752,27 @@ mod anonymous_function_sees_prior_status {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/exec.c:5487-5493 — an anonymous function sets `$_` from its own
+// arguments, `""` when there are none, and doshfunc restores that value on
+// return. D04parameter "$_ with anonymous function without arguments".
+// ─────────────────────────────────────────────────────────────────────
+mod anon_function_underscore {
+    use super::*;
+
+    #[test]
+    fn no_arguments_leave_underscore_empty() {
+        assert_parity(
+            r#": One; function { : Two; echo $_; }; print -r -- "[$_]"; () { print -r -- "in[$_]"; }; print -r -- "[$_]""#,
+        );
+    }
+
+    /// With arguments `$_` is the last one; a named function keeps its name.
+    #[test]
+    fn arguments_and_named_functions_unchanged() {
+        assert_parity(
+            r#": One; () { : Two; } x y; print -r -- "[$_]"; f() { print -r -- "in[$_]"; }; : One; f; print -r -- "[$_]""#,
+        );
+    }
+}

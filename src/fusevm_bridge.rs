@@ -19767,8 +19767,13 @@ impl fusevm::ShellHost for ZshrsHost {
         // `${_}` returned empty. Bug #279 in docs/BUGS.md. Mirror the
         // C `setunderscore` by writing via `set_zunderscore` directly.
         let fn_name = name.to_string();
+        // c:Src/exec.c:5487-5488 — an ANONYMOUS function (execfuncdef, no names)
+        // sets `$_` from its own arguments only, `""` when it has none; the
+        // name pushed in front (c:5493) is not one of them.
+        let anon_fn = fn_name.starts_with("_zshrs_anon_");
+        let no_arg_underscore = if anon_fn { String::new() } else { fn_name.clone() };
         {
-            let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+            let dollar_underscore = args.last().cloned().unwrap_or_else(|| no_arg_underscore.clone());
             // c:3546 — zunderscore is the only store; the paramtab write
             // that used to accompany this cleared PM_UNSET (see pop_args).
             crate::ported::params::set_zunderscore(std::slice::from_ref(&dollar_underscore));
@@ -19819,7 +19824,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // saved there is the one execcmd_exec installed just before the
         // call (c:3546), i.e. exactly `args.last()`.
         {
-            let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+            let last_call_arg = args.last().cloned().unwrap_or(no_arg_underscore);
             crate::ported::params::set_zunderscore(std::slice::from_ref(&last_call_arg));
             // c:6257
         }
