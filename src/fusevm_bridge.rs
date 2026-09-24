@@ -3724,22 +3724,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_ZGDBMPATH, "zgdbmpath");
 
     // Prompt
+    //
+    // ACTUALLY ZSH FUNCTIONS: `promptinit` is Functions/Prompts/promptinit,
+    // and `prompt` is a function that file defines — neither is a builtin,
+    // but fusevm's name table hands both an opcode. Resolve them the way
+    // execcmd does a name that is not in builtintab (c:Src/exec.c:3484-3488
+    // shfunctab probe, else the command search): run the shell function,
+    // or fall to the external lookup and its "command not found".
+    //
+    // A native stand-in used to answer both names: a hard-coded theme list
+    // (one of them, `minimal`, not shipped by 5.9) in place of promptinit's
+    // `$^fpath/prompt_*_setup(N)` scan, so a user's own themes were never
+    // listed, and a `prompt` that shadowed the real function even after
+    // promptinit had defined it — `prompt -l` printed one theme per line,
+    // `prompt -h THEME` never showed the theme's help, and `prompt adam1`
+    // assigned a canned PS1 without running prompt_adam1_setup.
     vm.register_builtin(BUILTIN_PROMPTINIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        // ACTUALLY A ZSH FUNCTION: promptinit is a contrib FUNCTION
-        // (autoloaded from $fpath), never a builtin. Command-not-found until
-        // `autoload -Uz promptinit`; once autoloaded, run the native impl.
-        if !with_executor(|exec| exec.function_exists("promptinit")) {
-            eprintln!("zsh:1: command not found: promptinit");
-            let _ = args;
-            return Value::Status(127);
+        if let Some(s) = try_user_fn_override("promptinit", &args) {
+            return Value::Status(s);
         }
-        Value::Status(crate::extensions::ext_builtins::promptinit(&args))
+        let argv: Vec<String> = std::iter::once("promptinit".to_string()).chain(args).collect();
+        Value::Status(with_executor(|exec| exec.host_exec_external(&argv)))
     });
 
     vm.register_builtin(BUILTIN_PROMPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(crate::extensions::ext_builtins::prompt(&args))
+        if let Some(s) = try_user_fn_override("prompt", &args) {
+            return Value::Status(s);
+        }
+        let argv: Vec<String> = std::iter::once("prompt".to_string()).chain(args).collect();
+        Value::Status(with_executor(|exec| exec.host_exec_external(&argv)))
     });
 
     // Async / Parallel (zshrs extensions) — all overridable by a

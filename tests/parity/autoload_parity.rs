@@ -708,3 +708,50 @@ fn copied_autoload_function_keeps_the_original_file() {
     assert_eq!(r.stdout, z.stdout);
     assert_eq!(r.exit, z.exit);
 }
+
+/// `promptinit` and `prompt` are shell functions (Functions/Prompts/
+/// promptinit), not builtins. promptinit scans `$^fpath/prompt_*_setup(N)`,
+/// so a theme the user ships in their own fpath directory is listed and
+/// runnable, and `prompt -h THEME` reaches that theme's `_help` function.
+/// A native stand-in answered both names from a fixed theme table and
+/// assigned a canned PS1 instead.
+#[test]
+fn promptinit_scans_fpath_for_user_themes() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("prompt_zzmine_setup"),
+        "prompt_zzmine_help () { print 'zzmine help' }\nprompt_zzmine_setup () { PS1='zz%# '; prompt_opts=(percent) }\nprompt_zzmine_setup \"$@\"\n",
+    )
+    .unwrap();
+    let script = "fpath=(. $fpath); autoload -Uz promptinit; promptinit; \
+                  print -r -- ${(M)prompt_themes:#zzmine}; prompt zzmine; \
+                  print -r -- \"$PS1\"; prompt -h zzmine";
+    let z = run_zsh_in(d.path(), script);
+    let r = run_zshrs_in(d.path(), script);
+    assert!(
+        z.stdout.starts_with("zzmine\nzz%# \nHelp for zzmine theme:") && z.stdout.contains("\nzzmine help\n"),
+        "zsh sanity: {:?}",
+        z.stdout
+    );
+    assert_eq!(r.stdout, z.stdout);
+    assert_eq!(r.exit, z.exit);
+}
+
+/// Without promptinit there is no `prompt` command at all, and a `prompt`
+/// function defined at run time is what `prompt` runs.
+#[test]
+fn prompt_is_not_a_builtin() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let script = "prompt -l; print rc=$?; eval 'prompt() { print mine $@ }'; prompt -l";
+    let z = run_zsh_in(d.path(), script);
+    let r = run_zshrs_in(d.path(), script);
+    assert_eq!(z.stdout, "rc=127\nmine -l\n", "zsh sanity");
+    assert_eq!(r.stdout, z.stdout);
+    assert_eq!(r.exit, z.exit);
+}

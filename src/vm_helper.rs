@@ -8296,28 +8296,6 @@ impl ShellExecutor {
 }
 
 impl ShellExecutor {
-    pub(crate) fn apply_prompt_theme(&mut self, theme: &str, preview: bool) {
-        let (ps1, rps1) = match theme {
-            "minimal" => ("%# ", ""),
-            "off" => ("$ ", ""),
-            "adam1" => (
-                "%B%F{cyan}%n@%m %F{blue}%~%f%b %# ",
-                "%F{yellow}%D{%H:%M}%f",
-            ),
-            "redhat" => ("[%n@%m %~]$ ", ""),
-            _ => ("%n@%m %~ %# ", ""),
-        };
-        if preview {
-            println!("PS1={:?}", ps1);
-            println!("RPS1={:?}", rps1);
-        } else {
-            self.set_scalar("PS1".to_string(), ps1.to_string());
-            self.set_scalar("RPS1".to_string(), rps1.to_string());
-            self.set_scalar("prompt_theme".to_string(), theme.to_string());
-        }
-    }
-}
-impl ShellExecutor {
     /// Expand glob pattern via canonical `glob_path` (port of
     /// `Src/glob.c::zglob`). Adds executor-side `current_command_glob_failed`
     /// cell so the dispatch layer skips the current command on NOMATCH +
