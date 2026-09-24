@@ -12990,7 +12990,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // trap dispatch. Fires whenever a command exits
             // non-zero.
             let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
-            let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
+            // c:Src/exec.c:1654-1657 — `int eflag = errflag; errflag = 0;
+            // dotrap(SIGZERR); errflag = eflag;`: an error raised INSIDE
+            // the trap body (a `set -u` failure) ends the trap, not the
+            // list — `set -u; trap 'print t; : $u; print x' ZERR; false;
+            // print after` prints `after`. Without the restore the
+            // trap's errflag aborted the enclosing list.
+            let eflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:1654
+            crate::ported::utils::errflag.store(0, Ordering::Relaxed); // c:1655
+            let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR); // c:1656
+            // c:Src/subst.c:3355-3366 — the one error the restore must not
+            // drop: `${v?}` in a NON-interactive shell never gets here in C,
+            // it has already left through `zexit(1)`. The subst port defers
+            // that exit through ERRFLAG_HARD, so carry the bit across.
+            let hard = if isset(crate::ported::zsh_h::INTERACTIVE) {
+                0
+            } else {
+                crate::ported::utils::errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_HARD
+            };
+            crate::ported::utils::errflag.store(eflag | hard, Ordering::Relaxed); // c:1657
             // c:1602 — `donetrap = 1;` after firing.
             crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed);
             // c:Src/signals.c:1201-1203 — a trap body that ran `return N`

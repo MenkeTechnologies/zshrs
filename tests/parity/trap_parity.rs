@@ -343,3 +343,32 @@ mod signal_names_are_case_sensitive {
         assert_parity("trap - int 2>&1; echo $?");
     }
 }
+
+/// c:Src/exec.c:1654-1657 — `eflag = errflag; errflag = 0; dotrap(SIGZERR);
+/// errflag = eflag;`: an error raised inside the ZERR trap body ends the
+/// trap, not the list that triggered it (C03traps "DDD").
+mod zerr_trap_error_does_not_abort_the_list {
+    use super::*;
+
+    #[test]
+    fn nounset_error_in_string_trap() {
+        assert_parity(r#"set -u; trap 'echo t1; : $UNSET; echo t2' ZERR; false; echo after"#);
+        assert_parity(
+            r#"set -u; f() { trap 'echo t1; : $UNSET; echo t2' ZERR; false; echo after; }; f; echo out"#,
+        );
+    }
+
+    #[test]
+    fn nounset_error_in_function_called_by_trap() {
+        assert_parity(
+            r#"set -u; KO() { { : $KO } 2>&1 }; trap 'echo t1; KO; echo t2' ZERR; (false; echo in); echo "$?""#,
+        );
+    }
+
+    /// c:Src/subst.c:3355-3366 — `${v?}` in a non-interactive shell still
+    /// exits (C leaves through zexit before the restore).
+    #[test]
+    fn unset_question_in_trap_still_exits() {
+        assert_parity(r#"trap 'echo t1; : ${UNSET?x}; echo t2' ZERR; false; echo after"#);
+    }
+}
