@@ -3661,18 +3661,48 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
             };
             // c:1988 — *teststrp = end;
             *cursor += end;
-            // c:1989-1996 — runhookdef(GETCOLORATTR) then nearcolor;
-            //               on no-match → emit 24-bit form.
-            // GETCOLORATTR hook table isn't wired here; fall through to
-            // the truecolor encoding (matches C c:1993-1996 path).
-            let pixel = (((r as zattr) << 8) + g as zattr) << 8;
-            let pixel = pixel + b as zattr;
-            let bit24 = if is_fg {
-                TXT_ATTR_FG_24BIT
-            } else {
-                TXT_ATTR_BG_24BIT
+            // c:1989 — `colour = runhookdef(GETCOLORATTR, &color) - 1;`
+            // A loaded zsh/nearcolor registers getnearestcolor on the
+            // "get_color_attr" hook (nearcolor.c:199); it returns the
+            // nearest 88/256 palette index + 1 for the current tccolours,
+            // or -1 when the terminal is neither. With no hook function
+            // registered runhookdef returns 0, so colour == -1.
+            //
+            // c:1990-1992 (auto-load zsh/nearcolor when
+            // !truecolor_terminal()) is NOT ported: it is 5.9.999-only —
+            // /opt/homebrew/bin/zsh 5.9.2 emits 24-bit for `%F{#hex}`
+            // without the module, and zshrs never populates
+            // `.term.extensions` from a terminal query, so the auto-load
+            // would quantize every hex prompt colour to the 256 palette.
+            let mut rgb = crate::ported::zsh_h::color_rgb {
+                red: r as u32,
+                green: g as u32,
+                blue: b as u32,
             };
-            return on | bit24 | (pixel << shft);
+            let hook = crate::ported::module::gethookdef("get_color_attr");
+            let colour_hook = if hook.is_null() {
+                -1
+            } else {
+                crate::ported::module::runhookdef(
+                    hook,
+                    &mut rgb as *mut crate::ported::zsh_h::color_rgb as *mut std::ffi::c_void,
+                ) - 1 // c:1989
+            };
+            if colour_hook >= 0 {
+                colour = colour_hook; // c:1997 fall through to the range check
+            } else if colour_hook <= -2 {
+                return TXT_ERROR; // c:1997-1999
+            } else {
+                // c:1993-1996 — no hook answered: use true colour (24-bit).
+                let pixel = (((r as zattr) << 8) + g as zattr) << 8;
+                let pixel = pixel + b as zattr;
+                let bit24 = if is_fg {
+                    TXT_ATTR_FG_24BIT
+                } else {
+                    TXT_ATTR_BG_24BIT
+                };
+                return on | bit24 | (pixel << shft);
+            }
         } else if rest
             .as_bytes()
             .first()

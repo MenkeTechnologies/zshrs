@@ -365,7 +365,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:191
-    addhookfunc("get_color_attr", getnearestcolor); // c:199
+    crate::ported::module::addhookfunc("get_color_attr", unsafe { std::mem::transmute::<fn(*const hookdef, *const color_rgb) -> i32, crate::ported::zsh_h::Hookfn>(getnearestcolor) }); // c:199
     0 // c:207
 }
 
@@ -373,7 +373,7 @@ pub fn boot_(m: *const module) -> i32 {
 /// C body: `deletehookfunc("get_color_attr", ...); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
     // c:199
-    deletehookfunc("get_color_attr", getnearestcolor); // c:207
+    crate::ported::module::deletehookfunc("get_color_attr", unsafe { std::mem::transmute::<fn(*const hookdef, *const color_rgb) -> i32, crate::ported::zsh_h::Hookfn>(getnearestcolor) }); // c:207
     setfeatureenables(m, module_features(), None) // c:207
 }
 
@@ -391,41 +391,14 @@ pub fn finish_(m: *const module) -> i32 {
 // `module_features` — port of `static struct features module_features`
 // from nearcolor.c:159. All four feature slices empty.
 
-// Port of `addhookfunc(char *n, Hookfn f)` from Src/module.c:948.
-// C: `int addhookfunc(char *n, Hookfn f)` →
-//   `Hookdef h = gethookdef(n); if (h) return addhookdeffunc(h, f); return 1;`
-//
-// `gethookdef` (`Src/module.c:849`), `addhookdeffunc` (`:939`) and
-// `deletehookdeffunc` (`:961`) are module.c functions; the canonical
-// ports live in `src/ported/module.rs`. This file used to carry a
-// second, inert copy of all three — `gethookdef` returned `None`
-// unconditionally, so neither hook fn was ever reached. Those copies
-// are gone; the behaviour they produced (C's "hookdef not found"
-// return) is stated directly here.
-//
-// They are NOT forwarded to module.rs's real chain because the two
-// hook signatures differ: module.rs types the chain as `Hookfn =
-// fn(*mut hookdef, *mut c_void) -> i32` (`zsh_h.rs:1051`, C's
-// `Src/zsh.h` Hookfn), while nearcolor's hook is
-// `int (*)(Hookdef, Colour_rgb)` (`Src/Modules/nearcolor.c:161`). C
-// bridges them with the explicit `(Hookfn)` cast at nearcolor.c:199;
-// Rust cannot without a transmute, and wiring it up would change
-// runtime behaviour (`get_color_attr` IS registered in the hooktab —
-// `src/ported/init.rs:179`), which is a separate change.
-fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
-    // c:948
-    let _ = (n, f);
-    1 // c:955
-}
-
-// Port of `deletehookfunc(const char *n, Hookfn f)` from Src/module.c:977.
-// C: `int deletehookfunc(const char *n, Hookfn f)` →
-//   `Hookdef h = gethookdef(n); if (h) return deletehookdeffunc(h, f); return 1;`
-// Same signature-mismatch note as `addhookfunc` above.
-fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {
-    // c:977
-    let _ = (n, f);
-}
+// `(Hookfn) getnearestcolor` — the cast at nearcolor.c:199/207.
+// C registers an `int (*)(Hookdef, Color_rgb)` on a hook chain typed
+// `int (*)(Hookdef, void *)`; runhookdef hands it the `struct
+// color_rgb *` that match_colour passed (prompt.c:1989). The two
+// signatures are ABI-identical (two thin pointers in, int out), so the
+// Rust spelling of that C cast is the fn-pointer transmute in boot_ and
+// cleanup_ above. Both yield the same pointer value, so
+// deletehookdeffunc's pointer compare (module.c:966) finds the entry.
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
