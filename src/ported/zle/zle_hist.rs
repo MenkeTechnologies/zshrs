@@ -363,68 +363,78 @@ impl History {
     }
 }
 
-/// Move cursor up by `MULT.load(std::sync::atomic::Ordering::SeqCst)` lines within the multi-line buffer.
-/// Returns leftover count (positive = hit top of buffer before completing).
-/// Port of upline(char **args) from Src/Zle/zle_hist.c:243.
+/// Move the cursor up `zmult` lines within a multi-line buffer; returns
+/// the count left over when the top was reached first.
+/// Port of `upline(char **args)` from Src/Zle/zle_hist.c:243.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn upline() -> i32 {
     // c:243
-    let mut n = MULT.load(Ordering::SeqCst);
+    let mut n = ZMOD.lock().unwrap().mult; // c:245 `int n = zmult;`
     if n < 0 {
-        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
-        let r = -downline();
-        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
-        return r;
+        // c:247
+        ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:248
+        n = -downline(); // c:249
+        ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:250
+        return n; // c:251
     }
     if LASTCOL.load(Ordering::SeqCst) == -1 {
+        // c:253
         LASTCOL.store(
             (ZLECS.load(Ordering::SeqCst) - findbol()) as i32,
             Ordering::SeqCst,
-        );
+        ); // c:254
     }
-    ZLECS.store(findbol(), Ordering::SeqCst);
-    while n > 0 {
+    ZLECS.store(findbol(), Ordering::SeqCst); // c:255
+    while n != 0 {
+        // c:256
         if ZLECS.load(Ordering::SeqCst) == 0 {
-            break;
+            break; // c:257-258
         }
-        ZLECS.fetch_sub(1, Ordering::SeqCst);
-        ZLECS.store(findbol(), Ordering::SeqCst);
-        n -= 1;
+        ZLECS.fetch_sub(1, Ordering::SeqCst); // c:259
+        ZLECS.store(findbol(), Ordering::SeqCst); // c:260
+        n -= 1; // c:261
     }
     if n == 0 {
-        let x = findeol();
-        ZLECS.fetch_add(LASTCOL.load(Ordering::SeqCst) as usize, Ordering::SeqCst);
-        if ZLECS.load(Ordering::SeqCst) >= x {
-            ZLECS.store(x, Ordering::SeqCst);
+        // c:263
+        let x = findeol(); // c:264
+        let cs = ZLECS.load(Ordering::SeqCst) + LASTCOL.load(Ordering::SeqCst).max(0) as usize;
+        ZLECS.store(cs, Ordering::SeqCst);
+        if cs >= x {
+            // c:266 `if ((zlecs += lastcol) >= x)`
+            ZLECS.store(x, Ordering::SeqCst); // c:267
+            if x > findbol()
+                && crate::ported::zle::zle_h::invicmdmode(
+                    &crate::ported::zle::zle_keymap::curkeymapname(),
+                )
+            {
+                // c:268
+                crate::ported::zle::zle_move::deccs(); // c:269
+            }
         }
     }
-    n
+    n // c:277
 }
 
 /// Port of `uplineorhistory(char **args)` from Src/Zle/zle_hist.c:282.
 pub fn uplineorhistory() -> i32 {
     // c:282
-    let ocs = ZLECS.load(Ordering::SeqCst);
-    let n = upline();
+    let ocs = ZLECS.load(Ordering::SeqCst); // c:284
+    let n = upline(); // c:285
     if n != 0 {
-        ZLECS.store(ocs, Ordering::SeqCst);
-        if (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0 {
-            return 1;
+        // c:286
+        let m = ZMOD.lock().unwrap().mult; // c:287 `int m = zmult, ret;`
+        ZLECS.store(ocs, Ordering::SeqCst); // c:289
+        if crate::ported::zle::zle_vi::VIRANGEFLAG.load(Ordering::SeqCst) != 0
+            || (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0
+        {
+            return 1; // c:290-291
         }
-        let saved_mult = MULT.load(Ordering::SeqCst);
-        MULT.store(n, Ordering::SeqCst);
-        let ret = if zle_goto_hist(-MULT.load(Ordering::SeqCst), false) {
-            0
-        } else {
-            1
-        };
-        MULT.store(saved_mult, Ordering::SeqCst);
-        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-        ret
-    } else {
-        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-        0
+        ZMOD.lock().unwrap().mult = n; // c:292
+        let ret = uphistory(); // c:293
+        ZMOD.lock().unwrap().mult = m; // c:294
+        return ret; // c:295
     }
+    0 // c:297
 }
 
 /// Port of `viuplineorhistory(char **args)` from Src/Zle/zle_hist.c:302.
@@ -464,80 +474,95 @@ pub fn viuplineorhistory() -> i32 {
 ///         history-search-backward with current line as prefix.
 pub fn uplineorsearch() -> i32 {
     // c:312
-    let ocs = ZLECS.load(Ordering::SeqCst);
-    let n = upline();
+    let ocs = ZLECS.load(Ordering::SeqCst); // c:314
+    let n = upline(); // c:315
     if n != 0 {
-        ZLECS.store(ocs, Ordering::SeqCst);
-        let saved = MULT.load(Ordering::SeqCst);
-        MULT.store(n, Ordering::SeqCst);
-        let r = historysearchbackward();
-        MULT.store(saved, Ordering::SeqCst);
-        return r;
+        // c:316
+        let m = ZMOD.lock().unwrap().mult; // c:317
+        ZLECS.store(ocs, Ordering::SeqCst); // c:319
+        if crate::ported::zle::zle_vi::VIRANGEFLAG.load(Ordering::SeqCst) != 0
+            || (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0
+        {
+            return 1; // c:320-321
+        }
+        ZMOD.lock().unwrap().mult = n; // c:322
+        let ret = historysearchbackward(); // c:323
+        ZMOD.lock().unwrap().mult = m; // c:324
+        return ret; // c:325
     }
-    0
+    0 // c:327
 }
 
-/// Move cursor down by `MULT.load(std::sync::atomic::Ordering::SeqCst)` lines.
-/// Returns leftover count (positive = hit bottom before completing).
-/// Port of downline(char **args) from Src/Zle/zle_hist.c:332.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
+/// Move the cursor down `zmult` lines; returns the count left over when
+/// the bottom was reached first.
+/// Port of `downline(char **args)` from Src/Zle/zle_hist.c:332.
 pub fn downline() -> i32 {
     // c:332
-    let mut n = MULT.load(Ordering::SeqCst);
+    let mut n = ZMOD.lock().unwrap().mult; // c:334 `int n = zmult;`
     if n < 0 {
-        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
-        let r = -upline();
-        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
-        return r;
+        // c:336
+        ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:337
+        n = -upline(); // c:338
+        ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:339
+        return n; // c:340
     }
     if LASTCOL.load(Ordering::SeqCst) == -1 {
+        // c:342
         LASTCOL.store(
             (ZLECS.load(Ordering::SeqCst) - findbol()) as i32,
             Ordering::SeqCst,
-        );
+        ); // c:343
     }
-    while n > 0 {
-        let x = findeol();
+    while n != 0 {
+        // c:344
+        let x = findeol(); // c:345
         if x == ZLELL.load(Ordering::SeqCst) {
-            break;
+            break; // c:347-348
         }
-        ZLECS.store(x + 1, Ordering::SeqCst);
-        n -= 1;
+        ZLECS.store(x + 1, Ordering::SeqCst); // c:349
+        n -= 1; // c:350
     }
     if n == 0 {
-        let x = findeol();
-        ZLECS.fetch_add(LASTCOL.load(Ordering::SeqCst) as usize, Ordering::SeqCst);
-        if ZLECS.load(Ordering::SeqCst) >= x {
-            ZLECS.store(x, Ordering::SeqCst);
+        // c:352
+        let x = findeol(); // c:353
+        let cs = ZLECS.load(Ordering::SeqCst) + LASTCOL.load(Ordering::SeqCst).max(0) as usize;
+        ZLECS.store(cs, Ordering::SeqCst);
+        if cs >= x {
+            // c:355 `if ((zlecs += lastcol) >= x)`
+            ZLECS.store(x, Ordering::SeqCst); // c:356
+            if x > findbol()
+                && crate::ported::zle::zle_h::invicmdmode(
+                    &crate::ported::zle::zle_keymap::curkeymapname(),
+                )
+            {
+                // c:357
+                crate::ported::zle::zle_move::deccs(); // c:358
+            }
         }
     }
-    n
+    n // c:365
 }
 
 /// Port of `downlineorhistory(char **args)` from Src/Zle/zle_hist.c:370.
 pub fn downlineorhistory() -> i32 {
     // c:370
-    let ocs = ZLECS.load(Ordering::SeqCst);
-    let n = downline();
+    let ocs = ZLECS.load(Ordering::SeqCst); // c:372
+    let n = downline(); // c:373
     if n != 0 {
-        ZLECS.store(ocs, Ordering::SeqCst);
-        if (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0 {
-            return 1;
+        // c:374
+        let m = ZMOD.lock().unwrap().mult; // c:375
+        ZLECS.store(ocs, Ordering::SeqCst); // c:377
+        if crate::ported::zle::zle_vi::VIRANGEFLAG.load(Ordering::SeqCst) != 0
+            || (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0
+        {
+            return 1; // c:378-379
         }
-        let saved_mult = MULT.load(Ordering::SeqCst);
-        MULT.store(n, Ordering::SeqCst);
-        let ret = if zle_goto_hist(MULT.load(Ordering::SeqCst), false) {
-            0
-        } else {
-            1
-        };
-        MULT.store(saved_mult, Ordering::SeqCst);
-        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-        ret
-    } else {
-        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-        0
+        ZMOD.lock().unwrap().mult = n; // c:380
+        let ret = downhistory(); // c:381
+        ZMOD.lock().unwrap().mult = m; // c:382
+        return ret; // c:383
     }
+    0 // c:385
 }
 
 /// Port of `vidownlineorhistory(char **args)` from Src/Zle/zle_hist.c:390.
@@ -568,17 +593,23 @@ pub fn vidownlineorhistory() -> i32 {
 ///         history-search-forward with current line as prefix.
 pub fn downlineorsearch() -> i32 {
     // c:400
-    let ocs = ZLECS.load(Ordering::SeqCst);
-    let n = downline();
+    let ocs = ZLECS.load(Ordering::SeqCst); // c:402
+    let n = downline(); // c:403
     if n != 0 {
-        ZLECS.store(ocs, Ordering::SeqCst);
-        let saved = MULT.load(Ordering::SeqCst);
-        MULT.store(n, Ordering::SeqCst);
-        let r = historysearchforward();
-        MULT.store(saved, Ordering::SeqCst);
-        return r;
+        // c:404
+        let m = ZMOD.lock().unwrap().mult; // c:405
+        ZLECS.store(ocs, Ordering::SeqCst); // c:407
+        if crate::ported::zle::zle_vi::VIRANGEFLAG.load(Ordering::SeqCst) != 0
+            || (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0
+        {
+            return 1; // c:408-409
+        }
+        ZMOD.lock().unwrap().mult = n; // c:410
+        let ret = historysearchforward(); // c:411
+        ZMOD.lock().unwrap().mult = m; // c:412
+        return ret; // c:413
     }
-    0
+    0 // c:415
 }
 
 /// Port of `acceptlineanddownhistory(UNUSED(char **args))` from Src/Zle/zle_hist.c:420.

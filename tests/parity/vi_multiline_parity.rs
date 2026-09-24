@@ -488,3 +488,70 @@ fn a_twelve_count_is_twelve_not_two() {
         "vicmd 12x deletes twelve characters",
     );
 }
+
+/// `>` takes a motion (`viindent`, `zle_vi.c:821-853`): `2>j` indents
+/// three lines, leaving the blank middle line alone.
+#[test]
+fn indent_over_a_motion_skips_blank_lines() {
+    assert_same_dump(&vi_one_write("fi\\eO\\eOif\\e2>j"), "X02 #11: don't indent blank lines");
+}
+
+/// `>k` indents the line above as well as the current one.
+#[test]
+fn indent_upward_covers_both_lines() {
+    assert_same_dump(&vi_one_write("one\\eox\\e>k"), "X02 #13: indent with >k");
+}
+
+/// `>>` on an already-indented line adds exactly one tab.
+#[test]
+fn indent_twice_adds_one_tab() {
+    assert_same_dump(&vi_one_write("\\C-v\\ti\\e>>"), "X02 #12: additional indentation");
+}
+
+/// `<<` removes one leading tab (`viunindent`, `zle_vi.c:858-887`).
+#[test]
+fn unindent_removes_one_tab() {
+    assert_same_dump(&vi_one_write("\\C-v\\t\\C-v\\tx\\e<<"), "vicmd << drops one tab");
+}
+
+/// `3J` joins three lines, squeezing the next line's leading blanks and
+/// keeping one space (`vijoin`, `zle_vi.c:937-976`).
+#[test]
+fn join_with_a_count() {
+    assert_same_dump(
+        &vi_one_write(" four\\eO\\C-v\\tthree\\eO  two\\eOone\\e3J"),
+        "X02 #9: join lines with line count",
+    );
+}
+
+/// `gU`/`gu`/`g~` take a motion (`viupcase`/`vidowncase`/
+/// `vioperswapcase`, `zle_vi.c:724-791`) instead of running to the end
+/// of the line.
+#[test]
+fn case_operators_take_a_motion() {
+    assert_same_dump(&vi_one_write("hello big world\\e0gUw"), "vicmd gUw");
+    assert_same_dump(&vi_one_write("HELLO BIG WORLD\\e0guw"), "vicmd guw");
+    assert_same_dump(&vi_one_write("Hello Big World\\e0g~w"), "vicmd g~w");
+}
+
+/// `~` with a count stops at the end of the line and steps back onto
+/// the last character (`viswapcase`, `zle_vi.c:980-1000`).
+#[test]
+fn swap_case_with_a_count() {
+    assert_same_dump(&vi_one_write("abc def\\e0~~"), "vicmd ~~");
+    assert_same_dump(&vi_one_write("abc\\e09~"), "vicmd 9~ past the end");
+}
+
+/// `yy` on a blank line yanks an EMPTY line-wise buffer, which `p` must
+/// still paste (`viputafter` tests `!kctbuf->buf`, `zle_misc.c:672`).
+#[test]
+fn a_yanked_blank_line_pastes() {
+    assert_same_dump(&vi_one_write("1\\eo\\eyya2\\epa3"), "X02 #5: yank and paste blank line");
+}
+
+/// `2j` moves two lines: `downline` reads `zmult` (`zle_hist.c:334`).
+#[test]
+fn j_with_a_count_moves_that_many_lines() {
+    assert_same_dump(&vi_one_write("fi\\eOx\\eOif\\e2j"), "vicmd 2j");
+    assert_same_dump(&vi_one_write("a\\eob\\eoc\\e2k"), "vicmd 2k");
+}

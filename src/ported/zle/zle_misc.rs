@@ -947,7 +947,10 @@ pub fn viputbefore() -> i32 {
                 flags: cb.flags,
             }
         };
-    if kctbuf.buf.is_empty() {
+    // C tests `!kctbuf->buf` (never set). A yanked blank line is a
+    // NON-null empty buffer carrying CUTBUFFER_LINE, so emptiness alone
+    // is not "unset".
+    if kctbuf.buf.is_empty() && kctbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE == 0 {
         return 1; // c:635-636 `if (!kctbuf->buf) return 1;`
     }
     KCT.store(-1, SeqCst); // c:637 `kct = -1;`
@@ -989,7 +992,10 @@ pub fn viputafter() -> i32 {
                 flags: cb.flags,
             }
         };
-    if kctbuf.buf.is_empty() {
+    // C tests `!kctbuf->buf` (never set). A yanked blank line is a
+    // NON-null empty buffer carrying CUTBUFFER_LINE, so emptiness alone
+    // is not "unset".
+    if kctbuf.buf.is_empty() && kctbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE == 0 {
         return 1; // c:672-673 `if (!kctbuf->buf) return 1;`
     }
     KCT.store(-1, SeqCst); // c:674 `kct = -1;`
@@ -1023,7 +1029,8 @@ pub fn putreplaceselection() -> i32 {
                 flags: cb.flags,
             } // c:702
         };
-    if prevbuf.buf.is_empty() {
+    // `!putbuf->buf` — see viputbefore for the blank-line case.
+    if prevbuf.buf.is_empty() && prevbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE == 0 {
         return 1; // c:702
     }
     ZMOD.lock().unwrap().flags = 0; // c:712

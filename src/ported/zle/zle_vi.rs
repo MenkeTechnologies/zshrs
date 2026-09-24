@@ -1038,64 +1038,80 @@ pub fn viopenlineabove() -> i32 {
     0
 }
 
-/// Port of `vioperswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:723.
+/// Port of `vioperswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:724.
 pub fn vioperswapcase() -> i32 {
-    // c:723
-    // C body (c:725-746): startvichange(1); if (getvirange(0) != -1)
-    //                    swap case in range. Without getvirange, use
-    //                    [zlecs, eol) as implicit range.
-    startvichange(1);
-    let eol = findeol();
-    let oldcs = ZLECS.load(SeqCst);
-    while ZLECS.load(SeqCst) < eol {
-        let c = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)];
-        ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] = if c.is_ascii_uppercase() {
-            c.to_ascii_lowercase()
-        } else if c.is_ascii_lowercase() {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        };
-        ZLECS.fetch_add(1, SeqCst);
+    // c:724
+    let mut ret = 1; // c:726
+    startvichange(1); // c:729 — get the range
+    let c2 = getvirange(0);
+    if c2 != -1 {
+        // c:730
+        let oldcs = ZLECS.load(SeqCst); // c:731
+        // c:732-739 — swap the case of all letters within range
+        while (ZLECS.load(SeqCst) as i32) < c2 {
+            let cs = ZLECS.load(SeqCst);
+            let mut line = ZLELINE.lock().unwrap();
+            let c = line[cs];
+            if ZC_ilower(c) {
+                line[cs] = ZC_toupper(c); // c:735
+            } else if ZC_iupper(c) {
+                line[cs] = ZC_tolower(c); // c:737
+            }
+            drop(line);
+            inccs(); // c:738
+        }
+        ZLECS.store(oldcs, SeqCst); // c:741 — back to the first line of the range
+        ret = 0; // c:742
     }
-    ZLECS.store(oldcs, SeqCst);
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    ret // c:747
 }
 
-/// Port of `viupcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:751.
+/// Port of `viupcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:752.
 pub fn viupcase() -> i32 {
-    // c:751
-    // C body (c:753-771): same as vidowncase but uppercase.
-    startvichange(1);
-    let eol = findeol();
-    for i in ZLECS.load(SeqCst)..eol {
-        {
-            let mut __g = ZLELINE.lock().unwrap();
-            __g[i] = __g[i].to_ascii_uppercase();
+    // c:752
+    let mut ret = 1; // c:754
+    startvichange(1); // c:757 — get the range
+    let c2 = getvirange(0);
+    if c2 != -1 {
+        // c:758
+        let oldcs = ZLECS.load(SeqCst); // c:759
+        // c:760-764 — convert the case of all letters within range
+        while (ZLECS.load(SeqCst) as i32) < c2 {
+            let cs = ZLECS.load(SeqCst);
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs] = ZC_toupper(line[cs]); // c:762
+            }
+            inccs(); // c:763
         }
+        ZLECS.store(oldcs, SeqCst); // c:766
+        ret = 0; // c:767
     }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    ret // c:769
 }
 
-/// Port of `vidowncase(UNUSED(char **args))` from Src/Zle/zle_vi.c:773.
+/// Port of `vidowncase(UNUSED(char **args))` from Src/Zle/zle_vi.c:774.
 pub fn vidowncase() -> i32 {
-    // c:773
-    // C body (c:775-794): startvichange(1); if ((c2 = getvirange(0))
-    //                    != -1) { lowercase all letters in [zlecs, c2);
-    //                    return 0; } else return 1.
-    // Without getvirange we use [zlecs, eol) as the implicit range.
-    startvichange(1);
-    let eol = findeol();
-    for i in ZLECS.load(SeqCst)..eol {
-        {
-            let mut __g = ZLELINE.lock().unwrap();
-            __g[i] = __g[i].to_ascii_lowercase();
+    // c:774
+    let mut ret = 1; // c:776
+    startvichange(1); // c:779 — get the range
+    let c2 = getvirange(0);
+    if c2 != -1 {
+        // c:780
+        let oldcs = ZLECS.load(SeqCst); // c:781
+        // c:782-786 — convert the case of all letters within range
+        while (ZLECS.load(SeqCst) as i32) < c2 {
+            let cs = ZLECS.load(SeqCst);
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs] = ZC_tolower(line[cs]); // c:784
+            }
+            inccs(); // c:785
         }
+        ZLECS.store(oldcs, SeqCst); // c:788
+        ret = 0; // c:789
     }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    ret // c:791
 }
 
 /// Direct port of `int virepeatchange(char **args)` from
@@ -1171,59 +1187,80 @@ pub fn virepeatchange() -> i32 {
     0 // c:815
 }
 
-/// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:820.
+/// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:821.
 pub fn viindent() -> i32 {
-    // c:820
-    // C body (c:822-855): startvichange(1); insert tab at start of
-    //                    each line in range. Iterates with findeol+1.
-    use crate::ported::zle::zle_utils::spaceinline;
-    startvichange(1);
-    let saved_cs = ZLECS.load(SeqCst);
-    ZLECS.store(findbol(), SeqCst);
-    // c:842-849 — `while (zlecs <= c2 + 1) { if (zleline[zlecs] == '\n')
-    //                ++zlecs; else { spaceinline(1); zleline[zlecs] = '\t';
-    //                zlecs = findeol() + 1; } }`.
-    let line_len = ZLELL.load(SeqCst);
-    while ZLECS.load(SeqCst) < line_len {
-        let at_nl = ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)).copied() == Some('\n');
-        if at_nl {
-            ZLECS.fetch_add(1, SeqCst); // c:844
-            continue;
-        }
-        spaceinline(1); // c:843
-        if let Some(slot) = ZLELINE.lock().unwrap().get_mut(ZLECS.load(SeqCst)) {
-            *slot = '\t'; // c:844
-        }
-        let eol = findeol();
-        if eol >= ZLELL.load(SeqCst) {
-            break;
-        }
-        ZLECS.store(eol + 1, SeqCst); // c:845
+    // c:821
+    let mut oldcs = ZLECS.load(SeqCst); // c:823 `int oldcs = zlecs, c2;`
+    startvichange(1); // c:825
+    // c:826-828 — force line range
+    if REGION_ACTIVE.load(SeqCst) == 1 {
+        REGION_ACTIVE.store(2, SeqCst); // c:828
     }
-    ZLECS.store(saved_cs, SeqCst);
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    // c:829-832 — get the range
+    let mut c2 = getvirange(0);
+    if c2 == -1 {
+        return 1; // c:831
+    }
+    // c:833-837 — must be a line range
+    if VILINERANGE.load(SeqCst) == 0 {
+        ZLECS.store(oldcs, SeqCst); // c:835
+        return 1; // c:836
+    }
+    oldcs = ZLECS.load(SeqCst); // c:838
+    // c:839-849 — add a tab to the beginning of each line within range.
+    // `zleline[zlell]` is the terminating NUL in C, never '\n'.
+    while ZLECS.load(SeqCst) as i32 <= c2 {
+        let cs = ZLECS.load(SeqCst);
+        if ZLELINE.lock().unwrap().get(cs) == Some(&'\n') {
+            // c:841 — leave blank lines alone
+            ZLECS.store(cs + 1, SeqCst); // c:842 `++zlecs;`
+        } else {
+            spaceinline(1); // c:844
+            c2 += 1; // c:845
+            ZLELINE.lock().unwrap()[cs] = '\t'; // c:846
+            ZLECS.store(findeol() + 1, SeqCst); // c:847
+        }
+    }
+    // c:850-851 — go back to the first line of the range
+    ZLECS.store(oldcs, SeqCst);
+    vifirstnonblank(); // c:852
+    0 // c:853
 }
 
-/// Port of `viunindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:856.
+/// Port of `viunindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:858.
 pub fn viunindent() -> i32 {
-    // c:856
-    // C body: remove up to SHIFTWIDTH (4) leading spaces from each
-    //         line in range.
-    startvichange(1);
-    let bol = findbol();
-    let mut removed = 0;
-    while removed < 4 && bol < ZLELINE.lock().unwrap().len() && ZLELINE.lock().unwrap()[bol] == ' '
-    {
-        ZLELINE.lock().unwrap().remove(bol);
-        ZLELL.fetch_sub(1, SeqCst);
-        removed += 1;
+    // c:858
+    let mut oldcs = ZLECS.load(SeqCst); // c:860 `int oldcs = zlecs, c2;`
+    startvichange(1); // c:862
+    // c:863-865 — force line range
+    if REGION_ACTIVE.load(SeqCst) == 1 {
+        REGION_ACTIVE.store(2, SeqCst); // c:865
     }
-    if ZLECS.load(SeqCst) >= bol + removed {
-        ZLECS.fetch_sub(removed, SeqCst);
+    // c:866-869 — get the range
+    let mut c2 = getvirange(0);
+    if c2 == -1 {
+        return 1; // c:868
     }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    // c:870-874 — must be a line range
+    if VILINERANGE.load(SeqCst) == 0 {
+        ZLECS.store(oldcs, SeqCst); // c:872
+        return 1; // c:873
+    }
+    oldcs = ZLECS.load(SeqCst); // c:875
+    // c:876-882 — remove a tab from the beginning of each line within range
+    while (ZLECS.load(SeqCst) as i32) < c2 {
+        let cs = ZLECS.load(SeqCst);
+        if ZLELINE.lock().unwrap().get(cs) == Some(&'\t') {
+            // c:878
+            foredel(1, 0); // c:879
+            c2 -= 1; // c:880
+        }
+        ZLECS.store(findeol() + 1, SeqCst); // c:882
+    }
+    // c:884-885 — go back to the first line of the range
+    ZLECS.store(oldcs, SeqCst);
+    vifirstnonblank(); // c:886
+    0 // c:887
 }
 
 /// Direct port of `int vibackwarddeletechar(char **args)` from
@@ -1285,59 +1322,109 @@ pub fn vikillline() -> i32 {
     0 // c:928
 }
 
-/// Port of `vijoin(UNUSED(char **args))` from Src/Zle/zle_vi.c:933.
+/// Port of `vijoin(UNUSED(char **args))` from Src/Zle/zle_vi.c:937.
 pub fn vijoin() -> i32 {
-    // c:vijoin
-    // C body: replace next '\\n' with ' ', skipping leading whitespace
-    //         on the joined line. Repeat zmult times.
-    startvichange(-1);
-    let n = ZMOD.lock().unwrap().mult.max(1);
-    for _ in 0..n {
-        let eol = findeol();
-        if eol >= ZLELL.load(SeqCst) || ZLELINE.lock().unwrap().get(eol) != Some(&'\n') {
-            return 1;
-        }
-        ZLELINE.lock().unwrap()[eol] = ' ';
-        // Strip leading whitespace on the joined-in line.
-        let mut p = eol + 1;
-        while p < ZLELINE.lock().unwrap().len() && ZLELINE.lock().unwrap()[p].is_whitespace() {
-            ZLELINE.lock().unwrap().remove(p);
-            ZLELL.fetch_sub(1, SeqCst);
-        }
-        let _ = p;
-        ZLECS.store(eol, SeqCst);
-    }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
-}
-
-/// Port of `viswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:977.
-pub fn viswapcase() -> i32 {
-    // c:viswapcase
-    // C body: walk zmult chars, swap case of each; advance cursor.
-    startvichange(-1);
-    let n = ZMOD.lock().unwrap().mult;
+    // c:937
+    let visual = REGION_ACTIVE.load(SeqCst); // c:941
+    startvichange(-1); // c:943
+    let mut n = ZMOD.lock().unwrap().mult; // c:944
     if n < 1 {
-        return 1;
+        return 1; // c:946
     }
-    let eol = findeol();
-    for _ in 0..n {
-        if ZLECS.load(SeqCst) >= eol {
+    let zlell = || ZLELL.load(SeqCst);
+    let mark = || MARK.load(SeqCst);
+    let mut x: usize;
+    if visual != 0 && ZLECS.load(SeqCst) > mark() {
+        // c:947
+        exchangepointandmark(); // c:948
+        x = findeol(); // c:949
+        if x >= mark() {
+            // c:950
+            exchangepointandmark(); // c:951
+            return 1; // c:952
+        }
+    } else {
+        x = findeol(); // c:954
+        if x == zlell() || (visual != 0 && x >= mark()) {
+            return 1; // c:955
+        }
+    }
+    loop {
+        // c:957 do
+        ZLECS.store(x + 1, SeqCst); // c:958
+        let pos = ZLECS.load(SeqCst); // c:959
+        // c:960-961 — skip the blanks that start the next line
+        while ZLECS.load(SeqCst) != zlell()
+            && ZC_iblank(ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)])
+        {
+            inccs();
+        }
+        x = 1 + (ZLECS.load(SeqCst) - pos); // c:962
+        backdel(x as i32, CUT_RAW); // c:963
+        let mut joined = false;
+        if ZLECS.load(SeqCst) != 0 {
+            // c:964
+            let mut p = ZLECS.load(SeqCst); // c:965
+            decpos(&mut p); // c:966
+            if ZC_iblank(ZLELINE.lock().unwrap()[p]) {
+                // c:967
+                ZLECS.store(p, SeqCst); // c:968
+                joined = true; // c:969 `continue;`
+            }
+        }
+        if !joined {
+            spaceinline(1); // c:972
+            let cs = ZLECS.load(SeqCst);
+            ZLELINE.lock().unwrap()[cs] = ' '; // c:973
+        }
+        // c:974 — `while (!((!visual && --n < 2) || (x = findeol()) == zlell
+        //          || (visual && x >= mark)));`
+        if visual == 0 {
+            n -= 1;
+            if n < 2 {
+                break;
+            }
+        }
+        x = findeol();
+        if x == zlell() || (visual != 0 && x >= mark()) {
             break;
         }
-        let c = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)];
-        let swapped = if c.is_ascii_uppercase() {
-            c.to_ascii_lowercase()
-        } else if c.is_ascii_lowercase() {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        };
-        ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] = swapped;
-        ZLECS.fetch_add(1, SeqCst);
     }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    0 // c:976
+}
+
+/// Port of `viswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:980.
+pub fn viswapcase() -> i32 {
+    // c:980
+    startvichange(-1); // c:984
+    let mut n = ZMOD.lock().unwrap().mult; // c:985
+    if n < 1 {
+        return 1; // c:987
+    }
+    let eol = findeol(); // c:988
+    if ZLECS.load(SeqCst) == eol {
+        return 1; // c:990
+    }
+    // c:991-997 — `while (zlecs < eol && n--)`
+    while ZLECS.load(SeqCst) < eol && n > 0 {
+        n -= 1;
+        let cs = ZLECS.load(SeqCst);
+        {
+            let mut line = ZLELINE.lock().unwrap();
+            let c = line[cs];
+            if ZC_ilower(c) {
+                line[cs] = ZC_toupper(c); // c:993
+            } else if ZC_iupper(c) {
+                line[cs] = ZC_tolower(c); // c:995
+            }
+        }
+        inccs(); // c:996
+    }
+    if ZLECS.load(SeqCst) != 0 && ZLECS.load(SeqCst) == eol {
+        // c:998
+        deccs(); // c:999
+    }
+    0 // c:1000
 }
 
 /// Direct port of `int vicapslockpanic(char **args)` from

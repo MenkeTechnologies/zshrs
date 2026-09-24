@@ -869,7 +869,8 @@ pub fn cuttext(
         let viapp = mod_flags & MOD_VIAPP != 0;
         let mut vibuf_guard = vibuf().lock().unwrap();
         let b = &mut vibuf_guard[idx];
-        if !viapp || b.buf.is_empty() {
+        // c:967 `!b->buf` — a blank-line yank is set-but-empty (CUTBUFFER_LINE).
+        if !viapp || (b.buf.is_empty() && b.flags & CUTBUFFER_LINE == 0) {
             // c:967-972 — replace.
             b.buf = text;
             b.len = ct;
@@ -909,7 +910,11 @@ pub fn cuttext(
     //                CUT_REPLACE)` → start a fresh CUTBUF, push the
     //                old one to the ring.
     let lastcmd_v = LASTCMD.load(Ordering::Relaxed) as i32;
-    let cutbuf_empty = CUTBUF.lock().unwrap().buf.is_empty();
+    // c:1005 `!cutbuf.buf` — a blank-line cut is set-but-empty (CUTBUFFER_LINE).
+    let cutbuf_empty = {
+        let cb = CUTBUF.lock().unwrap();
+        cb.buf.is_empty() && cb.flags & CUTBUFFER_LINE == 0
+    };
     let should_rotate =
         !cutbuf_empty && ((lastcmd_v & ZLE_KILL) == 0 || (flags & CUT_REPLACE) != 0);
     if should_rotate {
