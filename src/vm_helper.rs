@@ -626,6 +626,13 @@ pub struct SubshellSnapshot {
     pub maxjob: usize,
     /// `thisjob` at subshell entry (Src/jobs.c:77 global).
     pub thisjob: i32,
+    /// `oldjobtab` / `oldmaxjob` at subshell entry (Src/jobs.c:101/104).
+    /// The subshell's `clearjobtab` (c:1808-1825) saves the parent's jobs
+    /// there; in C that copy lives in the forked child only, so the
+    /// parent's own `oldjobtab` must come back unchanged or its `jobs`,
+    /// `$jobstates` and `disown` would read the dead subshell's snapshot.
+    pub oldjobtab: Vec<crate::ported::zsh_h::job>,
+    pub oldmaxjob: usize,
     /// The descriptors 0-9 a bare `exec` redirection in the body moves
     /// are saved here on first touch and put back when this is dropped
     /// (see `crate::ported::exec::SubshFdFrame`). C zsh forks for `(...)`

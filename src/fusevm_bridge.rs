@@ -18728,6 +18728,15 @@ impl fusevm::ShellHost for ZshrsHost {
                     .get_or_init(|| std::sync::Mutex::new(-1))
                     .lock()
                     .unwrap(),
+                oldjobtab: crate::ported::jobs::OLDJOBTAB
+                    .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    .lock()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
+                oldmaxjob: *crate::ported::jobs::OLDMAXJOB
+                    .get_or_init(|| std::sync::Mutex::new(0))
+                    .lock()
+                    .unwrap(),
                 // c:Src/exec.c:2880 — fork copies the fd table; the
                 // child's `exec >file` / `exec N<&-` die with it.
                 fd_frame: crate::ported::exec::SubshFdFrame::enter(),
@@ -18806,6 +18815,16 @@ impl fusevm::ShellHost for ZshrsHost {
             // subshell_end. Bug #462.
             let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
             crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
+            // c:Src/exec.c:1133 + c:1245-1246 — `job_control_ok = monitor &&
+            // (flags & ESUB_JOB_CONTROL) && isset(POSIXJOBS)`, and a
+            // non-async `( … )` carries ESUB_JOB_CONTROL (c:2919-2920);
+            // `if (!job_control_ok) opts[MONITOR] = 0;`. With MONITOR off
+            // `jobs` lists the parent's oldjobtab and fg/bg refuse with
+            // "no job control in this shell". The option snapshot above
+            // restores it at subshell_end.
+            if !(monitor != 0 && crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXJOBS)) {
+                crate::ported::options::dosetopt(crate::ported::zsh_h::MONITOR, 0, 0);
+            }
             // clearjobtab left THISJOB on the control job (Src/jobs.c:
             // 1828). In C the very next pipeline's execpline reassigns
             // thisjob (Src/exec.c:1700 `thisjob = newjob = initjob()`),
@@ -18995,6 +19014,16 @@ impl fusevm::ShellHost for ZshrsHost {
                     .get_or_init(|| std::sync::Mutex::new(-1))
                     .lock()
                     .unwrap() = snap.thisjob;
+                // c:Src/jobs.c:101/104 — the subshell's oldjobtab died with
+                // the child in C; put the parent's back.
+                *crate::ported::jobs::OLDJOBTAB
+                    .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    .lock()
+                    .unwrap() = snap.oldjobtab;
+                *crate::ported::jobs::OLDMAXJOB
+                    .get_or_init(|| std::sync::Mutex::new(0))
+                    .lock()
+                    .unwrap() = snap.oldmaxjob;
                 if let Some(m) = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()

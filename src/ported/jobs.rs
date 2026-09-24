@@ -3182,10 +3182,25 @@ pub fn bin_fg(
             // building (the foreground job), NOT curjob. Skipping
             // curjob would hide every freshly-backgrounded job, since
             // spawnjob promotes it to curjob (c:1901-1903).
-            let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
             let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-            let t = table.lock().expect("jobtab poisoned");
-            let curmaxjob = t.len();
+            // c:2519-2528 — a subshell of a job-control shell lists the
+            // PARENT's jobs: clearjobtab saved them in oldjobtab
+            // (c:1808-1825) and MONITOR is off here (entersubsh, c:Src/exec.c:1245).
+            let oldmaxjob = *OLDMAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap();
+            let (t, curmaxjob, thisjob): (Vec<job>, usize, i32) =
+                if !isset(MONITOR) && oldmaxjob != 0 {
+                    let old = OLDJOBTAB
+                        .get_or_init(|| Mutex::new(Vec::new()))
+                        .lock()
+                        .expect("oldjobtab poisoned")
+                        .clone();
+                    let n = (oldmaxjob + 1).min(old.len()); // c:2528 `job <= curmaxjob`
+                    (old, n, 0) // c:2520-2522 — ignorejob = 0
+                } else {
+                    let t = table.lock().expect("jobtab poisoned").clone();
+                    let n = t.len();
+                    (t, n, *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap()) // c:2526
+                };
             let r_only = OPT_ISSET(ops, b'r');
             let s_only = OPT_ISSET(ops, b's');
             for job in 0..curmaxjob {
@@ -3247,6 +3262,14 @@ pub fn bin_fg(
                 zwarnnam(name, "no current job"); // c:2495
                 unqueue_signals();
                 return 1; // c:2497
+            }
+            // c:2514 `firstjob = curjob` → the job loop's first test.
+            // c:2587-2591 — a subshell may list its parent's jobs but not
+            // touch them.
+            if !OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().is_empty() {
+                zwarnnam(name, "can't manipulate jobs in subshell"); // c:2588
+                unqueue_signals();
+                return 1; // c:2590
             }
             if func == BIN_DISOWN {
                 // c:2498 firstjob = curjob → loop BIN_DISOWN arm c:2729
@@ -3478,6 +3501,14 @@ pub fn bin_fg(
                 }
             }
             continue; // c:2574
+        }
+        // c:2587-2591 — `if (func != BIN_JOBS && oldjobtab != NULL)`.
+        if func != BIN_JOBS
+            && !OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().is_empty()
+        {
+            zwarnnam(name, "can't manipulate jobs in subshell"); // c:2588
+            unqueue_signals();
+            return 1; // c:2590
         }
         // c:2576 — `job = (*argv) ? getjob(*argv, name) : firstjob;`
         // EVERY non-pid arg goes through getjob — a bare numeric like
@@ -4762,11 +4793,11 @@ pub static MAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
 
 // If we have entered a subshell, the original shell's job table.            // c:100
 /// Port of `oldjobtab` from `Src/jobs.c:101`.
-static OLDJOBTAB: OnceLock<Mutex<Vec<job>>> = OnceLock::new();
+pub static OLDJOBTAB: OnceLock<Mutex<Vec<job>>> = OnceLock::new();
 
 // The size of that.                                                         // c:103
 /// Port of `oldmaxjob` from `Src/jobs.c:104`.
-static OLDMAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
+pub static OLDMAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
 
 // 1 if ttyctl -f has been executed                                          // c:119
 /// Port of `ttyfrozen` from `Src/jobs.c:721`.

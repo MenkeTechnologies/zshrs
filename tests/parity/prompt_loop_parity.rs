@@ -617,3 +617,37 @@ fi
     );
     assert_same_verdict(&driver, "EXITED", "an untrapped SIGALRM logged the shell out");
 }
+
+/// A `( … )` of a job-control shell turns MONITOR off (c:Src/exec.c:1133 +
+/// c:1245-1246 — `job_control_ok` needs POSIX_JOBS), so inside it `jobs`
+/// lists the PARENT's jobs out of `oldjobtab` (c:Src/jobs.c:2519-2528), fg
+/// and bg refuse with "no job control in this shell" (c:2474-2478), and
+/// disown / wait on a job refuse with "can't manipulate jobs in subshell"
+/// (c:2587-2591). zshrs kept MONITOR on in its in-process subshell: `jobs`
+/// listed nothing, fg/bg said "no current job", disown said nothing. The
+/// last two lines check the parent's own `oldjobtab` survives the
+/// subshell: a job started afterwards must show up in `$jobstates`.
+fn subshell_job_control_driver() -> String {
+    let lines = [
+        "unsetopt promptcr promptsp",
+        "setopt nonotify nocheckjobs nohup",
+        "sleep 30 >/dev/null 2>&1 &",
+        "{ print -r -- mon=$options[monitor]; ( print -r -- sub=$options[monitor]; jobs; fg; bg; disown; disown %1; wait %1; print -r -- sjs=$#jobstates ); jobs; print -r -- js=$#jobstates } >! $OUTFILE 2>&1",
+        "sleep 31 >/dev/null 2>&1 &",
+        "{ print -r -- js=$#jobstates; jobs; disown %2; print -r -- rc=$? } >> $OUTFILE 2>&1",
+        "kill %1 $!",
+    ];
+    let typed: String = lines
+        .iter()
+        .map(|l| format!("zpty -w w {}; pump\n", sq(l)))
+        .collect();
+    format!("export ZSHRS_HISTORY=0\n{OPEN_PUMPED}{typed}zpty -d w\n")
+}
+
+#[test]
+fn a_subshell_lists_but_cannot_touch_the_parents_jobs() {
+    assert_same_dump(
+        &subshell_job_control_driver(),
+        "jobs/fg/bg/disown/wait inside ( … ) of a job-control shell",
+    );
+}
