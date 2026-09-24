@@ -1283,6 +1283,21 @@ fn main() {
     zshrs_main();
 }
 
+/// The process argv as the shell pipeline's `String`s.
+///
+/// C zsh takes `argv` as bytes and metafies it (c:Src/init.c:1910
+/// `metafy(*t, -1, META_ALLOC)`), so an argument that is not valid
+/// UTF-8 — `zsh -fc $'[[ bj\xf6rn = *[\xf6]* ]]'`, D02glob's "single byte
+/// match with top bit set" — runs like any other. `std::env::args()` panics
+/// on such an argument; decode each one the way a script file's bytes are
+/// decoded instead, so the byte reaches the lexer Meta-encoded.
+fn argv_strings() -> Vec<String> {
+    use std::os::unix::ffi::OsStrExt;
+    env::args_os()
+        .map(|a| zsh::script_bytes::decode_script_bytes(a.as_bytes()))
+        .collect()
+}
+
 /// Main entry point — extracted so the fat binary can call it after
 /// registering the stryke handler.
 pub fn zshrs_main() {
@@ -1323,7 +1338,7 @@ pub fn zshrs_main() {
     // scan args BEFORE calling init so the right filename is picked.
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
     let log_name = {
-        let raw_args: Vec<String> = env::args().collect();
+        let raw_args: Vec<String> = argv_strings();
         if raw_args.iter().any(|a| a == "--lsp") {
             "zshrs-lsp.log"
         } else if raw_args.iter().any(|a| a == "--dap") {
@@ -1402,7 +1417,7 @@ pub fn zshrs_main() {
         // nine separate letters. Splitting it produced `-o -n -u -l …`
         // and lost the option entirely; the option-word walk below
         // handles clumps natively via its own character loop.
-        let raw: Vec<String> = env::args().collect();
+        let raw: Vec<String> = argv_strings();
         let mut out: Vec<String> = Vec::with_capacity(raw.len());
         for (i, a) in raw.iter().enumerate() {
             // c:Src/init.c:277 — `argv0 = argzero = posixzero = *argv++;`
@@ -1806,7 +1821,7 @@ pub fn zshrs_main() {
     // non-interactive shell that is login-by-argv[0] alone — see
     // `emulation_startup::EXPLICIT_LOGIN` for the measured table.
     {
-        let raw: Vec<String> = std::env::args().collect();
+        let raw: Vec<String> = argv_strings();
         if raw.first().is_some_and(|a| a.starts_with('-')) {
             zsh::ported::options::opt_state_set("loginshell", true);
         }
@@ -3201,7 +3216,7 @@ pub fn zshrs_main() {
     let executor = Box::leak(Box::new(ShellExecutor::new()));
     zsh::startup_trace::mark("ShellExecutor::new");
     zsh::ported::exec::install_session_executor(executor);
-    let argv: Vec<String> = std::env::args().collect();
+    let argv: Vec<String> = argv_strings();
     zsh::startup_trace::mark("entering zsh_main");
     std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
 }

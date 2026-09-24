@@ -237,3 +237,27 @@ fn c_locale_length_counts_the_byte_not_its_encoding() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The `-c` ARGUMENT itself may carry the byte: C metafies argv like any
+/// other input (`Src/init.c:1910`), and D02glob's "single byte match with
+/// top bit set" is written that way. zshrs read argv with
+/// `std::env::args()`, which panics on a non-UTF-8 argument, so the shell
+/// died before parsing. The bracket member must also be the byte itself
+/// (`Src/pattern.c:1974-1975` / `:384`), not the two chars of its Meta
+/// encoding.
+#[test]
+fn script_argument_carries_a_latin1_byte() {
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skipping: no zshrs binary built");
+        return;
+    };
+    let dir = scratch("argv");
+    assert_clean(&run(&bin, b"print -rn -- caf\xe9", &dir), b"caf\xe9", "-c argument");
+    let out = run(
+        &bin,
+        b"[[ caf\xe9 = caf[\xe5\xe9] ]] && print -rn -- in; [[ caf\xe9 = caf[\xe5\xe4] ]] || print -rn -- /out",
+        &dir,
+    );
+    assert_eq!(out, b"in/out", "bracket member written as a raw byte");
+    let _ = std::fs::remove_dir_all(&dir);
+}

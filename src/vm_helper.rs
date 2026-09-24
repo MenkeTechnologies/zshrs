@@ -3438,8 +3438,9 @@ impl ShellExecutor {
         // Shfunc it defines — which is why zsh reports an EMPTY
         // `$functions_source[f]` for a function typed at the prompt.
         // Stamping "zsh" unconditionally made zshrs answer "zsh" there.
-        let dash_c = std::env::args()
+        let dash_c = std::env::args_os()
             .skip(1)
+            .map(|a| a.to_string_lossy().into_owned())
             .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'));
         if dash_c {
             crate::ported::utils::set_scriptfilename(Some("zsh".to_string())); // c:479
