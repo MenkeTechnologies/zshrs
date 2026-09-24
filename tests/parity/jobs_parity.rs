@@ -961,3 +961,12 @@ print "second=$?""#,
 fn sigchld_during_cmdsubst_option_restore_does_not_hang() {
     assert_parity("repeat 200 echo $(echo a &) w");
 }
+
+/// c:Src/jobs.c:2578-2580 — `wait PID` for a pid that is not a child warns
+/// "pid N is not a child of this shell" only when POSIX_BUILTINS is unset;
+/// the status is 127 either way.
+#[test]
+fn wait_unknown_pid_warning_is_suppressed_under_posix_builtins() {
+    assert_parity("wait 1 2>&1; print $?");
+    assert_parity("(setopt POSIX_BUILTINS; wait 1 2>&1; print $?)");
+}

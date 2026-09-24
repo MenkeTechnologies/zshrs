@@ -3428,7 +3428,12 @@ pub fn bin_fg(
                         }) {
                             returnval = bg;
                         } else {
-                            zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
+                            // c:Src/jobs.c:2579-2580 — the warning is
+                            // suppressed under POSIX_BUILTINS; the 127
+                            // status is not.
+                            if !isset(POSIXBUILTINS) {
+                                zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
+                            }
                             returnval = 127;
                         }
                     } else {
