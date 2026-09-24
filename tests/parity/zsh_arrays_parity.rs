@@ -1341,3 +1341,18 @@ mod failed_array_assignment_keeps_the_old_parameter {
         assert_parity(r#"y=(a b); eval 'y=( zshrs_nomatch_q* )'; print -r -- "rc=$? ${(t)y} [$y]""#);
     }
 }
+
+/// c:Src/params.c:1606-1610 — a missing assoc key reads as the empty string,
+/// and outside `"…"` prefork deletes that empty word (c:Src/subst.c:183-186).
+mod assoc_missing_key_word {
+    use super::*;
+
+    #[test]
+    fn missing_key_leaves_no_empty_word() {
+        assert_parity(
+            r#"typeset -A h=(a 1); print -l -- $h[zz] x ${h[zz]} y "${h[zz]}" z "$h[zz]" $h[a] $h[(e)zz] w"#,
+        );
+        assert_parity(r#"typeset -A h=(a 1); r=($h[zz] ${h[zz]}); print $#r"#);
+        assert_parity(r#"typeset -A e=(k ""); print -l -- $e[k] v "$e[k]""#);
+    }
+}

@@ -14651,6 +14651,19 @@ fn expanded_subscript_text(idx: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// The value of one assoc element read by `array_index_lookup`. A MISSING
+/// key reads as the empty string (c:Src/params.c:1606-1610 creates a
+/// PM_UNSET node), and an unquoted empty word is then deleted by prefork
+/// (c:Src/subst.c:183-186) — `print -l -- $h[missing] x` is ONE word. Returning
+/// `Value::str("")` directly skipped that drop, so a missing key became an
+/// empty argument; `nodes_to_value` is where the bridge applies it.
+fn assoc_key_value(v: Option<String>) -> Value {
+    match v {
+        Some(s) if !s.is_empty() => Value::str(s),
+        _ => nodes_to_value(vec![String::new()]),
+    }
+}
+
 fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
@@ -14664,7 +14677,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
         // broken syntax there ("failed to compile regex: repetition
         // quantifier…" + a `}` appended per keystroke).
         if let Some((_, v)) = crate::vm_helper::assoc_key_hit(name, idx) {
-            return Value::str(v.unwrap_or_default());
+            return assoc_key_value(v);
         }
     }
     // c:Src/params.c:1449-1450 getindex — a leading `(e)`/`(E)` flag
@@ -14684,7 +14697,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
             if !grp.is_empty() && grp.chars().all(|ch| ch == 'e' || ch == 'E') {
                 let key = &rest[close + 1..];
                 if let Some(hit) = direct_assoc_key_get(name, key) {
-                    return Value::str(hit.unwrap_or_default());
+                    return assoc_key_value(hit);
                 }
             }
         }
@@ -14694,7 +14707,7 @@ fn array_index_lookup(name: &str, idx: &str, ssub: bool) -> Value {
     // return empty — the textual fallback cannot represent the key.
     if (idx.contains(']') || idx.contains('}')) && !idx.starts_with('(') {
         if let Some(hit) = direct_assoc_key_get(name, idx) {
-            return Value::str(hit.unwrap_or_default());
+            return assoc_key_value(hit);
         }
     }
     let body = format!("${{{}[{}]}}", name, expanded_subscript_text(idx));
