@@ -655,62 +655,52 @@ pub fn videletechar() -> i32 {
     0 // c:434
 }
 
-/// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:455.
+/// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:456.
 pub fn visubstitute() -> i32 {
-    // c:455
-    // C body (c:457-475): startvichange(1); n=zmult; if(n<0) return 1;
-    //                    error if at eol; forekill(n, CUT_RAW);
-    //                    startvitext(1); return 0.
-    startvichange(1);
-    let n = ZMOD.lock().unwrap().mult;
+    // c:456
+    startvichange(1); // c:460
+    let mut n = ZMOD.lock().unwrap().mult; // c:461
     if n < 0 {
-        return 1;
+        return 1; // c:463
     }
+    // c:464-466 — it is an error to be on the end of line
     if ZLECS.load(SeqCst) == ZLELL.load(SeqCst)
         || ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'\n')
     {
-        return 1;
+        return 1; // c:466
     }
-    let eol = findeol();
-    let count = (n as usize).min(eol - ZLECS.load(SeqCst));
-    if count > 0 {
-        let text: Vec<char> = ZLELINE
-            .lock()
-            .unwrap()
-            .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + count)
-            .collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
+    if REGION_ACTIVE.load(SeqCst) != 0 {
+        // c:467
+        killregion(); // c:468
+    } else {
+        // c:470-473 — Put argument into the acceptable range -- it is not
+        // an error to specify a greater count than the number of
+        // available characters.
+        let room = findeol() as i32 - ZLECS.load(SeqCst) as i32;
+        if n > room {
+            n = room; // c:473
         }
-        ZLELL.fetch_sub(count, SeqCst);
+        forekill(n, CUT_RAW); // c:475 — do the substitution
     }
-    startvitext(1);
-    0
+    startvitext(1); // c:477
+    0 // c:478
 }
 
-/// Port of `vichangeeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:482.
+/// Port of `vichangeeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:483.
 pub fn vichangeeol() -> i32 {
-    // c:482
-    // C body (c:483-498): `if (region_active) { regionlines(...);
-    //                     zlecs = a; region_active = 0; ... } else
-    //                     forekill(findeol() - zlecs, CUT_RAW);
-    //                     startvitext(1); return 0`.
-    let eol = findeol();
-    if eol > ZLECS.load(SeqCst) {
-        let text: Vec<char> = ZLELINE
-            .lock()
-            .unwrap()
-            .drain(ZLECS.load(SeqCst)..eol)
-            .collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
-        }
-        ZLELL.fetch_sub(eol - ZLECS.load(SeqCst), SeqCst);
+    // c:483
+    if REGION_ACTIVE.load(SeqCst) != 0 {
+        // c:486
+        let (a, b) = regionlines(); // c:487
+        ZLECS.store(a, SeqCst); // c:488
+        REGION_ACTIVE.store(0, SeqCst); // c:489
+        cut(a as i32, b as i32 - a as i32, CUT_RAW); // c:490
+        shiftchars(a as i32, b as i32 - a as i32); // c:491
+    } else {
+        forekill(findeol() as i32 - ZLECS.load(SeqCst) as i32, CUT_RAW); // c:493
     }
-    startvitext(1);
-    0
+    startvitext(1); // c:494
+    0 // c:495
 }
 
 /// Port of `vichangewholeline(char **args)` from Src/Zle/zle_vi.c:499.

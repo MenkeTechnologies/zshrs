@@ -585,3 +585,31 @@ fn jump_to_an_unset_mark_fails() {
     assert_same_dump(&vi_one_write("one two\\eb`qx"), "vicmd `q on an unset mark");
     assert_same_dump(&vi_one_write("one two\\eb`1x"), "vicmd `1 — not a mark name");
 }
+
+/// `C` on a character-wise selection changes whole lines
+/// (`vichangeeol`, `zle_vi.c:483-495`, through regionlines).
+#[test]
+fn C_on_a_selection_acts_linewise() {
+    assert_same_dump(
+        &vi_one_write("four\\eOthree\\eOtwo\\eOone\\evjjhCnew"),
+        "X02 #59: change character wise selection with C acts linewise",
+    );
+}
+
+/// `s` on a selection kills the region (`visubstitute`,
+/// `zle_vi.c:467-468`); `3s` without one is clamped to the line.
+#[test]
+fn s_on_a_selection_kills_the_region() {
+    assert_same_dump(&vi_one_write("hello world\\e0vllsX"), "visual vlls");
+    assert_same_dump(&vi_one_write("abc\\eh9sX"), "vicmd 9s clamped to eol");
+}
+
+/// `p` over a LINE-wise selection at the end of the buffer puts after
+/// (`putreplaceselection`: `pos = (b == zlell)`, `zle_misc.c:727-730`).
+#[test]
+fn put_over_a_linewise_selection_at_the_end() {
+    assert_same_dump(
+        &vi_one_write("two\\eOone\\eyyjVp"),
+        "X02 #68: yank linewise and put over linewise selection at end of buffer",
+    );
+}

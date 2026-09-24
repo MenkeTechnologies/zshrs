@@ -1008,8 +1008,11 @@ pub fn viputafter() -> i32 {
 pub fn putreplaceselection() -> i32 {
     // c:680
     let n = ZMOD.lock().unwrap().mult; // c:682
-    let mut pos = 2; // c:686
-    startvichange(-1); // c:688
+    let mut pos = 2; // c:688
+    if crate::ported::zle::zle_h::invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname()) {
+        // c:691
+        startvichange(-1); // c:692
+    }
     if n < 0 || ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 1; // c:690
     }
@@ -1033,18 +1036,14 @@ pub fn putreplaceselection() -> i32 {
     if prevbuf.buf.is_empty() && prevbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE == 0 {
         return 1; // c:702
     }
-    ZMOD.lock().unwrap().flags = 0; // c:712
-    if REGION_ACTIVE.load(SeqCst) == 2 {
-        // c:713
-        // c:714-717 — regionlines split; lines-flag check elided.
-        pos = if ZLELL.load(SeqCst) == ZLECS.load(SeqCst) {
-            1
-        } else {
-            0
-        };
+    ZMOD.lock().unwrap().flags = 0; // c:726
+    if REGION_ACTIVE.load(SeqCst) == 2 && prevbuf.flags & crate::ported::zle::zle_h::CUTBUFFER_LINE != 0 {
+        // c:727
+        let (_a, b) = regionlines(); // c:729
+        pos = (b == ZLELL.load(SeqCst)) as i32; // c:730
     }
-    let _ = killregion(); // c:719
-    pastebuf(&prevbuf, n, pos) // c:721
+    let _ = killregion(); // c:732
+    pastebuf(&prevbuf, n, pos) // c:734
 }
 
 /// Port of `yankpop()` from `Src/Zle/zle_misc.c:728`.
