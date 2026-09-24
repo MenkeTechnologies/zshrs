@@ -428,3 +428,19 @@ mod global_alias_on_an_operator_token {
         assert_parity("true && print plain; false || print plain2");
     }
 }
+
+/// c:Src/exec.c:304 `inpop()` after a nested parse pops the alias frame an
+/// expansion at the end of a `$(…)` body left on the input stack, clearing
+/// the alias's `inuse` (c:Src/input.c:773). Left set, the alias expanded
+/// in the FIRST command substitution only (D06subscript).
+mod alias_in_repeated_cmdsubst {
+    use super::*;
+
+    #[test]
+    fn alias_expands_in_every_command_substitution() {
+        assert_parity("alias m='echo L'\nprint $(m)\nprint $(m)\nprint x`m` \"$(m)\"");
+        assert_parity(
+            "typeset -A a=(leader T); alias myind='echo leader'\nprint ${a[$(myind)]}\nprint $a[$(myind)]",
+        );
+    }
+}

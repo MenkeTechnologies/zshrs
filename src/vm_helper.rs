@@ -999,6 +999,13 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     }
 
     crate::ported::hist::strinend(); // c:298 — strin--
+    // c:Src/exec.c:304 `inpop()` — pops the pushed string AND its continuations, and an
+    // alias expanded at the end of the body sits on top as an
+    // INP_ALIAS|INP_CONT frame (c:Src/input.c:695), so this is where its
+    // `inuse` is cleared (c:Src/input.c:773). No string frame was pushed
+    // here, so only the alias frames go: left behind, the alias stayed
+    // `inuse` and every later `$(m)` / `m` reported "command not found".
+    crate::ported::input::inpopalias();
                                      // Restore the zshrs window, then the token/parse/history state.
     LEX_INPUT.with_borrow_mut(|s| *s = saved_input);
     LEX_POS.set(saved_pos);
