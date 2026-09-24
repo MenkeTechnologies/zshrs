@@ -1254,3 +1254,26 @@ mod tilde_flag_pattern_separator {
         assert_parity(r#"x=( a b ); case aXb in (${(~j.?.)x}) echo M;; (*) echo N;; esac"#);
     }
 }
+
+/// c:Src/lex.c:1033-1045 lexes `$(…)` as String Inpar … Outpar and `$((…))`
+/// as String Inparmath … Outparmath, and c:Src/subst.c:284 substitutes both
+/// inside a `[[ = ]]` pattern. Functions/Misc/zmathfuncdef counts a body's
+/// arguments with `[[ $body = *'$'(\{|)$((iarg+1))(|[^:[:digit:]]*) ]]`.
+mod cmdsubst_in_pattern_rhs {
+    use super::*;
+
+    #[test]
+    fn arith_subst_is_the_whole_pattern() {
+        assert_parity(r#"[[ 1 = $((1)) ]]; echo $?; [[ 5 = $(( (1+1)*2+1 )) ]]; echo $?"#);
+    }
+
+    #[test]
+    fn arith_subst_between_pattern_metas() {
+        assert_parity(r#"b='$1*$1'; [[ $b = *'$'(\{|)$((0+1))(|[^:[:digit:]]*) ]]; echo $?"#);
+    }
+
+    #[test]
+    fn command_subst_in_pattern() {
+        assert_parity(r#"[[ a1 = *$(echo 1) ]]; echo $?; [[ ab = $(print -r -- '*') ]]; echo $?"#);
+    }
+}

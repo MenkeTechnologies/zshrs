@@ -16290,6 +16290,7 @@ enum PatSeg {
 ///     (`\u{87}` Star, `\u{97}` Quest, `\u{91}` Inbrack, …) and
 ///     plain ASCII.
 fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
+    use crate::ported::zsh_h::{Inpar, Inparmath, Outpar, Outparmath};
     let chars: Vec<char> = s.chars().collect();
     let mut out: Vec<PatSeg> = Vec::new();
     let mut lit = String::new();
@@ -16368,10 +16369,23 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                             }
                             i += 1;
                         }
-                    } else if nxt == '(' || nxt == '\u{96}' {
+                    } else if nxt == '(' || nxt == Inpar || nxt == Inparmath {
                         // `$(…)` or `$((…))` — depth-balance parens.
+                        // c:Src/lex.c:1033-1045 — the lexer spells `$(…)` as
+                        // String Inpar … Outpar and `$((…))` as String
+                        // Inparmath … Outparmath; c:Src/subst.c:284 takes
+                        // both as a substitution. This arm used to test
+                        // OutangProc/Outang (0x96/0x95) instead, so neither
+                        // token form was recognized: the `$` split off as an
+                        // empty Subst and `((1))` / `(echo 1)` stayed literal
+                        // pattern text, and `[[ 1 = $((1)) ]]` never matched
+                        // (zmathfuncdef's `*'$'(\{|)$((iarg+1))…` arg count).
                         let open = nxt;
-                        let close = if nxt == '(' { ')' } else { '\u{95}' };
+                        let close = match nxt {
+                            '(' => ')',
+                            c if c == Inpar => Outpar,
+                            _ => Outparmath,
+                        };
                         subst.push(nxt);
                         i += 1;
                         let mut depth = 1i32;
