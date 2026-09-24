@@ -11262,6 +11262,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
         donetrap_reset_impl()
     });
+    vm.register_builtin(BUILTIN_EXITING_EXIT_TRAP, |_vm, _argc| {
+        use crate::ported::signals_h::SIGEXIT;
+        use std::sync::atomic::Ordering;
+        // `trap '…' EXIT` bodies live in traps_table, TRAPEXIT in sigtrapped.
+        let trapped = crate::ported::signals::sigtrapped.lock().ok().is_some_and(|st| st.get(SIGEXIT as usize).is_some_and(|&s| s != 0))
+            || crate::ported::builtin::traps_table().lock().ok().is_some_and(|t| t.contains_key("EXIT"));
+        if trapped {
+            let eflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:1701
+            crate::ported::utils::errflag.store(0, Ordering::Relaxed); // c:1702
+            crate::ported::signals::dotrap(SIGEXIT); // c:1703
+            // c:1705 — `sigtrapped[SIGEXIT] = 0;`
+            if let Ok(mut st) = crate::ported::signals::sigtrapped.lock() {
+                if let Some(slot) = st.get_mut(SIGEXIT as usize) {
+                    *slot = 0;
+                }
+            }
+            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                t.remove("EXIT");
+            }
+            crate::ported::utils::errflag.store(eflag, Ordering::Relaxed); // c:1706
+        }
+        Value::Int(0)
+    });
 
     // c:Src/exec.c:1451/1455/1476/1390 — see BUILTIN_STMT_PROLOGUE_FAST.
     vm.register_builtin(BUILTIN_STMT_PROLOGUE_FAST, |vm, _argc| {
@@ -17283,6 +17306,12 @@ pub const BUILTIN_XTRACE_IS_ON: u16 = 611;
 /// (sublist boundary). Mirrors C `Src/exec.c:1455` — `donetrap = 0`.
 /// Stack: untouched. argc = 0. Bug #303 in docs/BUGS.md.
 pub const BUILTIN_DONETRAP_RESET: u16 = 612;
+
+/// c:Src/exec.c:1700-1706 — the `exiting` epilogue of execlist, run at the end
+/// of a forked compound command (see compile_zsh `emit_exiting_exit_trap`):
+/// `if (exiting && sigtrapped[SIGEXIT]) { errflag = 0; dotrap(SIGEXIT);
+/// sigtrapped[SIGEXIT] = 0; errflag = eflag; }`. Stack: pushes Int(0). argc = 0.
+pub const BUILTIN_EXITING_EXIT_TRAP: u16 = 729;
 
 /// c:Src/exec.c:1417 (`int oldnoerrexit = noerrexit;`) + c:1536-1538
 /// (`if (isandor || isnot) noerrexit |= NOERREXIT_EXIT|NOERREXIT_RETURN;`).

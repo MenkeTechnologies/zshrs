@@ -372,3 +372,43 @@ mod zerr_trap_error_does_not_abort_the_list {
         assert_parity(r#"trap 'echo t1; : ${UNSET?x}; echo t2' ZERR; false; echo after"#);
     }
 }
+
+/// A forked compound command runs its list with `exiting` set (c:Src/exec.c:3063
+/// `last1 = forked = 1` → c:4098-4099 `do_exec = 1`), so an EXIT trap it sets
+/// fires at the end of that list (c:1700-1706). Only `{ … }`, the taken `if`
+/// branch, the last `for NAME in` iteration and a `case` arm pass `exiting`
+/// on (c:494, Src/loop.c:175/588/684); a simple command, `while`, `repeat`,
+/// the C-style `for` and `always` leave without firing it.
+mod forked_compound_exit_trap {
+    use super::*;
+
+    #[test]
+    fn brace_group_pipeline_stage() {
+        assert_parity(r#"{ trap 'echo X' EXIT; echo A } | cat; echo after"#);
+        assert_parity(r#"{ { trap 'echo X' EXIT; }; echo in; } | cat"#);
+        assert_parity(r#"{ trap 'echo X $?' EXIT; (exit 4) } | cat; print $pipestatus"#);
+        assert_parity(r#"{ TRAPEXIT() { echo T }; } | cat"#);
+    }
+
+    #[test]
+    fn if_for_case_stages() {
+        assert_parity(r#"if trap 'echo X' EXIT; then true; fi | cat"#);
+        assert_parity(r#"if false; then :; else trap 'echo E' EXIT; fi | cat"#);
+        assert_parity(r#"for i in 1 2; do trap "echo X$i" EXIT; done | cat"#);
+        assert_parity(r#"case a in a) trap 'echo X' EXIT;; esac | cat"#);
+    }
+
+    #[test]
+    fn shapes_that_do_not_fire() {
+        assert_parity(r#"trap 'echo X' EXIT | cat"#);
+        assert_parity(r#"while true; do trap 'echo X' EXIT; break; done | cat"#);
+        assert_parity(r#"for ((i=0;i<1;i++)); do trap 'echo X' EXIT; done | cat"#);
+        assert_parity(r#"{ trap 'echo X' EXIT } always { true } | cat"#);
+    }
+
+    #[test]
+    fn async_brace_group() {
+        assert_parity(r#"{ trap 'echo X' EXIT; } & wait"#);
+        assert_parity(r#"{ trap 'echo X' EXIT; echo A } | cat & wait"#);
+    }
+}

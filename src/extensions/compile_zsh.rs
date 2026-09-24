@@ -1481,6 +1481,9 @@ impl ZshCompiler {
         if async_simple {
             sub.errexit_suppress_depth -= 1;
         }
+        // c:Src/exec.c:3042-3063 — `how & Z_ASYNC` forks at once with
+        // `last1 = forked = 1`; see emit_exiting_exit_trap.
+        sub.emit_exiting_exit_trap(&pipe.cmd);
         let sub_end = sub.builder.current_pos();
         for patch in std::mem::take(&mut sub.return_patches) {
             sub.builder.patch_jump(patch, sub_end);
@@ -1732,6 +1735,36 @@ impl ZshCompiler {
         self.builder.emit(Op::Pop, 0);
     }
 
+    /// The `exiting` epilogue of the list a FORKED compound command runs
+    /// (c:Src/exec.c:1700-1706), emitted at the end of that child's chunk.
+    ///
+    /// A forked child sets `last1 = 1` (c:3063), so `execcmd_exec` hands
+    /// `do_exec = 1` to the compound's exec function (c:4098-4099), which
+    /// passes it on as execlist's `exiting` only for some shapes:
+    /// `{ … }` (c:494), the taken `if` branch (Src/loop.c:588), the last
+    /// iteration of `for NAME in …` (Src/loop.c:175), a case arm
+    /// (Src/loop.c:684/693). `while`/`until`/`repeat`/`select`/`always`
+    /// and the C-style `for` pass 0, and a simple command leaves through
+    /// `_realexit()` (c:4417) — none of those runs an EXIT trap it set.
+    /// `( … )` fires its own at subshell end.
+    fn emit_exiting_exit_trap(&mut self, cmd: &ZshCommand) {
+        let exiting = match cmd {
+            ZshCommand::Redirected(inner, _) => {
+                return self.emit_exiting_exit_trap(inner);
+            }
+            ZshCommand::Cursh(_) | ZshCommand::If(_) | ZshCommand::Case(_) => true,
+            ZshCommand::For(f) => !f.is_select && !matches!(f.list, ForList::CStyle { .. }),
+            _ => false,
+        };
+        if exiting {
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_EXITING_EXIT_TRAP, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+        }
+    }
+
     fn compile_pipe(&mut self, pipe: &ZshPipe) {
         // ZshPipe = command + Optional(next ZshPipe). For a single-command
         // pipe (no next), compile inline. Multi-stage pipelines fork one
@@ -1878,6 +1911,13 @@ impl ZshCompiler {
                 sub.compile_command(stage_cmd);
                 if async_simple {
                     sub.errexit_suppress_depth -= 1;
+                }
+                // c:Src/exec.c:3063 — a stage that forks (every stage of an
+                // async pipeline, every stage but the last otherwise) runs
+                // with `last1 = forked = 1`, so its compound body's list is
+                // `exiting`.
+                if async_job || i + 1 < stages.len() {
+                    sub.emit_exiting_exit_trap(stage_cmd);
                 }
                 if sub.stage_fds_pending {
                     // No dispatch arm consumed the install — rather than
