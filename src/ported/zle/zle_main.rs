@@ -1478,6 +1478,22 @@ pub fn zleread(
         }
         crate::ported::zle::zle_utils::handleundo(); // c:1311
     }
+    // c:1313-1319 — If main is linked to the viins keymap, we need to
+    // register explicitly that we're now in vi insert mode as there's
+    // no user operation to indicate this.
+    {
+        use crate::ported::zle::zle_keymap::openkeymap;
+        let main = openkeymap("main");
+        if main.is_some()
+            && match (&main, &openkeymap("viins")) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                _ => false,
+            }
+        {
+            // c:1318
+            crate::ported::zle::zle_vi::viinsert_init(); // c:1319
+        }
+    }
 
     // Sync the ZLE history-navigation list from the LIVE command history
     // (hist.rs `curhist`/`quietgethist`). zle_goto_hist (up/down-line-or-
@@ -1880,6 +1896,14 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
                 crate::ported::zle::zle_misc::fixsuffix(); // c:1471
                 crate::ported::zle::zle_h::invalidatelist(); // c:1472
             }
+            if (wflags & crate::ported::zle::zle_h::ZLE_LINEMOVE) != 0 {
+                // c:1474
+                crate::ported::zle::zle_vi::VILINERANGE.store(1, SeqCst); // c:1475
+            }
+            if (wflags & ZLE_LASTCOL) == 0 {
+                // c:1476
+                LASTCOL.store(-1, SeqCst); // c:1477
+            }
             let rc = if (wflags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0 {
                 // c:1481-1486 — `compwidget = w; ret = completecall(args)`.
                 *COMPWIDGET.lock().unwrap() = Some((**w).clone()); // c:1483
@@ -1893,6 +1917,10 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
                     _ => 0,
                 }
             };
+            if (wflags & ZLE_NOTCOMMAND) == 0 {
+                // c:1498
+                LASTCMD.store(wflags as u32, SeqCst); // c:1499 `lastcmd = wflags;`
+            }
             LASTVAL.store(rc, Ordering::Relaxed);
             if set_bindk != 0 {
                 *BINDK.lock().unwrap() = save_bindk; // c:1597
@@ -3686,6 +3714,15 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
     if matched && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         ungetbytes(&extra);
+        // c:1706-1707 — `if(vichgflag) curvichg.bufptr -= keybuflen;` — the
+        // ungotten bytes were recorded by getbyte; they will be recorded
+        // again when re-read, so drop them from the change being tracked.
+        if crate::ported::zle::zle_vi::VICHGFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+            let mut cur = crate::ported::zle::zle_vi::CURVICHG.lock().unwrap();
+            cur.bufptr -= extra.len() as i32;
+            let keep = cur.bufptr.max(0) as usize;
+            cur.buf.truncate(keep);
+        }
         buf.truncate(last_match_len);
         // Rebuild the global metafied mirror from the kept raw bytes.
         crate::ported::zle::zle_keymap::keybuf
@@ -3799,6 +3836,10 @@ fn execute_widget(widget: &widget) -> i32 {
         if (widget.flags & crate::ported::zle::zle_h::ZLE_MENUCMP) == 0 {
             crate::ported::zle::zle_misc::fixsuffix(); // c:1471
             crate::ported::zle::zle_h::invalidatelist(); // c:1472
+        }
+        if (widget.flags & crate::ported::zle::zle_h::ZLE_LINEMOVE) != 0 {
+            // c:1474
+            crate::ported::zle::zle_vi::VILINERANGE.store(1, SeqCst); // c:1475
         }
     }
 

@@ -353,3 +353,118 @@ sleep 1
     );
     assert_same_dump(&driver, "ci\" through the autoloaded select-quoted function");
 }
+
+/// A vi session with the WHOLE key sequence sent in ONE write, the way
+/// zsh's own `Test/X02zlevi.ztst` drives it (`zletest`, Test/comptest).
+/// One write matters: an ESC followed at once by the next key goes
+/// through the ESC-prefix lookahead in `getkeymapcmd`, which is where the
+/// lookahead byte must be taken back out of the vi change being recorded
+/// (`zle_keymap.c:1706-1707`). `keys` is the body of a `$'…'` string.
+fn vi_one_write(keys: &str) -> String {
+    format!(
+        "{OPEN}
+zpty -w w 'bindkey -v; KEYTIMEOUT=1'
+zpty -w w 'unset HISTFILE; HISTSIZE=100; SAVEHIST=0'
+sleep 1
+{DUMP_WIDGET}
+sleep 1
+zpty -w -n w $'{keys}'
+sleep 1
+{DUMP_KEY}
+{DRAIN}
+"
+    )
+}
+
+/// `cl` on the LAST character: under an operator `vi-forward-char` may
+/// reach the end of the line (`zle_move.c:674-675` only pulls the limit
+/// back when `!virangeflag`), so the range covers that character.
+#[test]
+fn cl_changes_the_last_character_of_the_buffer() {
+    assert_same_dump(&vi_one_write("goox\\ecld"), "X02 #1: goox ESC cld");
+}
+
+/// `c%` forward to the matching bracket: with `virangeflag` set,
+/// `vimatchbracket` steps past the match so the range includes it, and
+/// scans forward from a non-bracket to the first bracket on the line
+/// (`zle_move.c:601-656`).
+#[test]
+fn c_percent_changes_through_the_matching_bracket() {
+    assert_same_dump(&vi_one_write("{ ({[}]) }\\e0c%chg"), "X02 #2: c% forward");
+}
+
+/// `d%` backwards: the mark is advanced over the starting bracket so the
+/// range includes it (`zle_move.c:637-638`).
+#[test]
+fn d_percent_deletes_back_to_the_matching_bracket() {
+    assert_same_dump(&vi_one_write("s( match )\\ed%"), "X02 #3: d% backward");
+}
+
+/// `"a` / `"A` read the register name as the NEXT key
+/// (`visetbuffer`, `zle_vi.c:1032` `getfullchar(0)`); uppercase appends.
+#[test]
+fn named_register_set_and_appended() {
+    assert_same_dump(
+        &vi_one_write("first\\e\"ay0ddasecond\\e\"Add\"aP"),
+        "X02 #27: appending to named register",
+    );
+}
+
+/// A cut into a named register ALSO lands in the unnamed cut buffer:
+/// `cuttext` falls through from the `MOD_VIBUF` arm to the cutbuf update
+/// (`zle_utils.c:964-1043`), so a plain `P` pastes it.
+#[test]
+fn named_register_cut_also_sets_the_unnamed_register() {
+    assert_same_dump(
+        &vi_one_write("err\\eddahello\\e\"hddP"),
+        "X02 #26: setting named register also sets unnamed register",
+    );
+}
+
+/// `D` kills to the end of the line through `forekill`, so the text goes
+/// to register "1 (`vikilleol`, `zle_vi.c:1060-1071`).
+#[test]
+fn D_puts_the_killed_text_in_register_one() {
+    assert_same_dump(
+        &vi_one_write("yankee doodle\\ebhDyy0\"1P"),
+        "X02 #24: paste register 1 to get last deletion",
+    );
+}
+
+/// `.` right after the first insert repeats that insert: zleread starts
+/// the change for a line that opens in viins (`zle_main.c:1318-1319`
+/// `viinsert_init()`), and the `.` that the ESC lookahead read and gave
+/// back is not left inside the recorded change (which made `.` replay
+/// itself forever).
+#[test]
+fn dot_repeats_the_initial_insert() {
+    assert_same_dump(&vi_one_write("text\\e."), "X02 #42: repeat initial edit");
+}
+
+/// `v` after an operator forces a character-wise range
+/// (`visualmode`, `zle_move.c:518-523`).
+#[test]
+fn v_after_an_operator_forces_a_characterwise_range() {
+    assert_same_dump(
+        &vi_one_write("keepnot\\eo  unwanted\\ekhhcvj "),
+        "X02 #54: force character-wise change to join lines",
+    );
+}
+
+/// `V` after an operator forces a line-wise range
+/// (`visuallinemode`, `zle_move.c:542-547`).
+#[test]
+fn V_after_an_operator_forces_a_linewise_range() {
+    assert_same_dump(&vi_one_write("keep\\eOdel\\edVh"), "X02 #56: force line-wise delete");
+}
+
+/// `y-` is line-wise because `vi-up-line-or-history` carries
+/// `ZLE_LINEMOVE`, which `execzlefunc` turns into `vilinerange = 1`
+/// (`zle_main.c:1474-1475`).
+#[test]
+fn delete_up_is_linewise() {
+    assert_same_dump(
+        &vi_one_write("long\\eolong\\eo  s\\eolong\\ekjd-k"),
+        "X02 #20: delete up clears lastcol",
+    );
+}

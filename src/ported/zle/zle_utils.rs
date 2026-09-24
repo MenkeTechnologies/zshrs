@@ -886,7 +886,6 @@ pub fn cuttext(
             b.buf.push_str(&text); // c:984
             b.len = b.buf.chars().count(); // c:985 `b->len = len + ct;`
         }
-        return;
     } else if flags & CUT_YANK != 0 {
         // c:987-993 — Save in "0 (idx 26).
         if let Some(slot) = vibuf().lock().unwrap().get_mut(26) {

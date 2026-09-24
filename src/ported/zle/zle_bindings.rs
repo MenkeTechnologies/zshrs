@@ -838,7 +838,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "vi-replace" => Some(|_| vireplace()),
         "vi-rev-repeat-find" => Some(|_| virevrepeatfind()),
         "vi-rev-repeat-search" => Some(|_| virevrepeatsearch()),
-        "vi-set-buffer" => Some(|_| visetbuffer()),
+        "vi-set-buffer" => Some(visetbuffer),
         "vi-set-mark" => Some(|_| visetmark('\0')),
         "vi-substitute" => Some(|_| visubstitute()),
         "vi-swap-case" => Some(|_| viswapcase()),

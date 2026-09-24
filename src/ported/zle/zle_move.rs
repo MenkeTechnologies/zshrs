@@ -444,14 +444,13 @@ pub fn endoflinehist() -> i32 {
     0
 }
 
-/// Local port of `invicmdmode()`. Returns 1 in vi-command mode (cursor
-/// stops one short of EOL), 0 otherwise.
+/// Port of the `invicmdmode()` macro from `Src/Zle/zle.h:324`
+/// (`!strcmp(curkeymapname, "vicmd")`), as the int C adds to `zlecs`.
+/// !!! RUST-ONLY adapter: returns usize so `cs += invicmdmode()` reads
+/// like C; the predicate itself is `zle_h::invicmdmode`.
 fn invicmdmode() -> usize {
-    if INSMODE.load(Ordering::SeqCst) == 0 {
-        1
-    } else {
-        0
-    }
+    crate::ported::zle::zle_h::invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname())
+        as usize
 }
 
 /// Port of `forwardchar(char **args)` from `Src/Zle/zle_move.c:440`.
@@ -610,9 +609,14 @@ pub fn exchangepointandmark() -> i32 {
 /// Port of `visualmode(UNUSED(char **args))` from Src/Zle/zle_move.c:516.
 pub fn visualmode() -> i32 {
     // c:516
-    // c:518-523 — `if (virangeflag) { prefixflag = 1; flags &= ~LINE;
-    //                                  flags |= CHAR; return 0 }`.
-    //              No virangeflag tracker yet; skip.
+    if VIRANGEFLAG.load(Ordering::SeqCst) != 0 {
+        // c:518
+        PREFIXFLAG.store(1, Ordering::SeqCst); // c:519 `prefixflag = 1;`
+        let mut zm = ZMOD.lock().unwrap();
+        zm.flags &= !MOD_LINE; // c:520 `zmod.flags &= ~MOD_LINE;`
+        zm.flags |= MOD_CHAR; // c:521 `zmod.flags |= MOD_CHAR;`
+        return 0; // c:522
+    }
     match REGION_ACTIVE.load(Ordering::SeqCst) {
         // c:524
         1 => {
@@ -627,15 +631,20 @@ pub fn visualmode() -> i32 {
         } // c:531-533
         _ => {}
     }
-    let _ = MOD_CHAR;
     0
 }
 
 /// Port of `visuallinemode(UNUSED(char **args))` from Src/Zle/zle_move.c:540.
 pub fn visuallinemode() -> i32 {
     // c:540
-    // c:542-547 — `if (virangeflag) { prefixflag = 1; flags &= ~CHAR;
-    //                                  flags |= LINE; return 0 }`.
+    if VIRANGEFLAG.load(Ordering::SeqCst) != 0 {
+        // c:542
+        PREFIXFLAG.store(1, Ordering::SeqCst); // c:543 `prefixflag = 1;`
+        let mut zm = ZMOD.lock().unwrap();
+        zm.flags &= !MOD_CHAR; // c:544 `zmod.flags &= ~MOD_CHAR;`
+        zm.flags |= MOD_LINE; // c:545 `zmod.flags |= MOD_LINE;`
+        return 0; // c:546
+    }
     match REGION_ACTIVE.load(Ordering::SeqCst) {
         // c:548
         2 => {
@@ -650,7 +659,6 @@ pub fn visuallinemode() -> i32 {
         } // c:555-557
         _ => {}
     }
-    let _ = MOD_LINE;
     0
 }
 
@@ -694,66 +702,84 @@ pub fn vigotocolumn() -> i32 {
 /// Port of `vimatchbracket(UNUSED(char **args))` from Src/Zle/zle_move.c:594.
 pub fn vimatchbracket() -> i32 {
     // c:594
-    let ocs = ZLECS.load(Ordering::SeqCst); // c:594
-    if (ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst) || ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) == Some(&'\n')) // c:599
-        && ZLECS.load(Ordering::SeqCst) > 0
-    {
+    let ocs = ZLECS.load(Ordering::SeqCst); // c:596 `int ocs = zlecs`
+    let at_eol = |cs: usize| {
+        cs == ZLELL.load(Ordering::SeqCst) || ZLELINE.lock().unwrap().get(cs) == Some(&'\n')
+    };
+    if at_eol(ZLECS.load(Ordering::SeqCst)) && ZLECS.load(Ordering::SeqCst) > 0 {
+        // c:599
         deccs(); // c:600
     }
-    if ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst)
-        || ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) == Some(&'\n')
-    {
-        // c:604
-        ZLECS.store(ocs, Ordering::SeqCst); // c:605
-        return 1; // c:606
+    let virange = VIRANGEFLAG.load(Ordering::SeqCst) != 0;
+    if virange {
+        // c:601
+        MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:602 `mark = zlecs;`
     }
-    let me = ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)]; // c:608
-    let (oth, dir) = match me {
-        // c:609-635
-        '{' => ('}', 1),
-        '}' => ('{', -1),
-        '(' => (')', 1),
-        ')' => ('(', -1),
-        '[' => (']', 1),
-        ']' => ('[', -1),
-        '<' => ('>', 1),
-        '>' => ('<', -1),
-        _ => {
-            ZLECS.store(ocs, Ordering::SeqCst);
-            return 1;
+    // c:603-635 — `otog:` scan forward to the first bracket on the line.
+    let (me, oth, dir) = loop {
+        let cs = ZLECS.load(Ordering::SeqCst);
+        if at_eol(cs) {
+            // c:604
+            ZLECS.store(ocs, Ordering::SeqCst); // c:605
+            return 1; // c:606
+        }
+        let me = ZLELINE.lock().unwrap()[cs]; // c:608
+        match me {
+            '{' => break (me, '}', 1),  // c:609-612
+            '}' => break (me, '{', -1), // c:613-616
+            '(' => break (me, ')', 1),  // c:617-620
+            ')' => break (me, '(', -1), // c:621-624
+            '[' => break (me, ']', 1),  // c:625-628
+            ']' => break (me, '[', -1), // c:629-632
+            _ => inccs(),               // c:633-635 `default: INCCS(); goto otog;`
         }
     };
-    let mut depth = 1i32; // c:639
-    loop {
-        if dir > 0 {
-            if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
-                ZLECS.store(ocs, Ordering::SeqCst);
-                return 1;
+    if virange && dir < 0 {
+        // c:637 — include starting position when going backwards.
+        let mut m = MARK.load(Ordering::SeqCst);
+        incpos(&mut m); // c:638 `INCPOS(mark);`
+        MARK.store(m, Ordering::SeqCst);
+    }
+    // c:639-649 — C walks a signed zlecs that may step to -1 or zlell;
+    // mirror it in an isize.
+    let zlell = ZLELL.load(Ordering::SeqCst) as isize;
+    let mut cs = ZLECS.load(Ordering::SeqCst) as isize;
+    let mut ct = 1; // c:639 `ct = 1;`
+    while cs >= 0 && cs < zlell && ct != 0 {
+        // c:640
+        ZLECS.store(cs as usize, Ordering::SeqCst);
+        if dir < 0 {
+            if cs == 0 {
+                cs = -1; // c:642 `DECCS();` below 0
+                break;
             }
-            ZLECS.fetch_add(1, Ordering::SeqCst);
+            deccs(); // c:642
         } else {
-            if ZLECS.load(Ordering::SeqCst) == 0 {
-                ZLECS.store(ocs, Ordering::SeqCst);
-                return 1;
-            }
-            ZLECS.fetch_sub(1, Ordering::SeqCst);
+            inccs(); // c:644
         }
-        let c = match ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) {
-            Some(&c) => c,
-            None => {
-                ZLECS.store(ocs, Ordering::SeqCst);
-                return 1;
-            }
-        };
-        if c == me {
-            depth += 1;
-        } else if c == oth {
-            depth -= 1;
-            if depth == 0 {
-                return 0;
-            }
+        cs = ZLECS.load(Ordering::SeqCst) as isize;
+        if cs >= zlell {
+            break;
+        }
+        let c = ZLELINE.lock().unwrap()[cs as usize];
+        if c == oth {
+            // c:647
+            ct -= 1; // c:648
+        } else if c == me {
+            // c:649
+            ct += 1; // c:650
         }
     }
+    if cs < 0 || cs >= zlell {
+        // c:652
+        ZLECS.store(ocs, Ordering::SeqCst); // c:653
+        return 1; // c:654
+    } else if dir > 0 && virange {
+        // c:655
+        ZLECS.store(cs as usize, Ordering::SeqCst);
+        inccs(); // c:656
+    }
+    0 // c:657
 }
 
 /// Port of `viforwardchar(char **args)` from `Src/Zle/zle_move.c:659`.
@@ -794,11 +820,14 @@ pub fn viforwardchar() -> i32 {
         ZMOD.lock().unwrap().mult = saved;
         return ret;
     }
-    // c:672-673 — invicmdmode + !virangeflag → DECPOS(lim). Skip
-    // the vicmd/virangeflag global check; cursor-end-of-line bias
-    // applies the same in both modes for the Rust port.
-    if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" && lim > 0 {
-        lim -= 1;
+    // c:674-675 — `if (invicmdmode() && !virangeflag) DECPOS(lim);`
+    // Under an operator (`cl` at the last character) the motion may
+    // reach the end of the line so the range covers that character.
+    if invicmdmode() != 0
+        && VIRANGEFLAG.load(Ordering::SeqCst) == 0
+        && lim > 0
+    {
+        decpos(&mut lim); // c:675
     }
     if ZLECS.load(Ordering::SeqCst) >= lim {
         // c:674

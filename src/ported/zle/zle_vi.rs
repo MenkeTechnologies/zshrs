@@ -1378,50 +1378,69 @@ pub fn vicapslockpanic() -> i32 {
     0 // c:1011
 }
 
-/// Port of `visetbuffer(char **args)` from Src/Zle/zle_vi.c:1015.
-pub fn visetbuffer() -> i32 {
-    // c:visetbuffer
-    // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
-    //         set zmod.vibuf for the next yank/cut. Without vigetkey
-    //         interactive read, use lastchar.
-    let c = (crate::ported::zle::compcore::LASTCHAR.load(SeqCst) & 0xff) as u8;
-    let idx: i32 = if c.is_ascii_digit() {
-        (c - b'0') as i32 + 26
-    } else if c.is_ascii_lowercase() {
-        (c - b'a') as i32
-    } else if c.is_ascii_uppercase() {
-        // uppercase = append to register
-        ZMOD.lock().unwrap().flags |= MOD_VIAPP;
-        (c - b'A') as i32
+/// Port of `visetbuffer(char **args)` from Src/Zle/zle_vi.c:1020.
+pub fn visetbuffer(args: &[String]) -> i32 {
+    // c:1020
+    let registermod = [MOD_NULL, MOD_PRI, MOD_CLIP]; // c:1024
+    let ch: char = if let Some(a0) = args.first() {
+        // c:1027 `if (*args)`
+        let mut it = a0.chars();
+        let c = it.next().unwrap_or('\0'); // c:1028 `ch = **args;`
+        if args.len() > 1 || (c != '\0' && it.next().is_some()) {
+            // c:1029
+            return 1; // c:1030
+        }
+        c
     } else {
-        return 1;
+        // c:1032 `ch = getfullchar(0);`
+        match crate::ported::zle::zle_main::getfullchar(false) {
+            Some(c) => c,
+            None => return 1, // WEOF fails every test below
+        }
     };
-    ZMOD.lock().unwrap().vibuf = idx;
-    ZMOD.lock().unwrap().flags |= MOD_VIBUF;
-    PREFIXFLAG.store(1, SeqCst);
-    0
+    if let Some(found) = "_*+".find(ch) {
+        // c:1034 `if ((found = ZS_strchr(match, ch)))`
+        ZMOD.lock().unwrap().flags |= registermod[found]; // c:1035
+        PREFIXFLAG.store(1, SeqCst); // c:1036
+        return 0; // c:1037
+    } else {
+        ZMOD.lock().unwrap().flags &= !(MOD_NULL | MOD_OSSEL); // c:1039
+    }
+    if !ch.is_ascii_alphanumeric() {
+        // c:1040-1042 — 0-9, a-z, A-Z only.
+        return 1; // c:1043
+    }
+    let mut zm = ZMOD.lock().unwrap();
+    if ch.is_ascii_uppercase() {
+        // c:1044 — needed in cut()
+        zm.flags |= MOD_VIAPP; // c:1045
+    } else {
+        zm.flags &= !MOD_VIAPP; // c:1047
+    }
+    let lower = ZC_tolower(ch) as i32; // c:1049 `zmod.vibuf = ZC_tolower(ch);`
+    zm.vibuf = if ch.is_ascii_digit() {
+        lower - '0' as i32 + 26 // c:1051
+    } else {
+        lower - 'a' as i32 // c:1053
+    };
+    zm.flags |= MOD_VIBUF; // c:1054
+    drop(zm);
+    PREFIXFLAG.store(1, SeqCst); // c:1055
+    0 // c:1056
 }
 
-/// Port of `vikilleol(UNUSED(char **args))` from Src/Zle/zle_vi.c:1056.
+/// Port of `vikilleol(UNUSED(char **args))` from Src/Zle/zle_vi.c:1060.
 pub fn vikilleol() -> i32 {
-    // c:vikilleol
-    // C body: kill from cursor to eol; start vi cmd-mode change.
-    startvichange(1);
-    let eol = findeol();
-    if eol > ZLECS.load(SeqCst) {
-        let text: Vec<char> = ZLELINE
-            .lock()
-            .unwrap()
-            .drain(ZLECS.load(SeqCst)..eol)
-            .collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
-        }
-        ZLELL.fetch_sub(eol - ZLECS.load(SeqCst), SeqCst);
+    // c:1060
+    let n = findeol() as i32 - ZLECS.load(SeqCst) as i32; // c:1062
+    startvichange(-1); // c:1064
+    if n == 0 {
+        // c:1065 — error -- line already empty
+        return 1; // c:1067
     }
-    ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    // c:1069 — delete to end of line
+    forekill(findeol() as i32 - ZLECS.load(SeqCst) as i32, CUT_RAW); // c:1070
+    0 // c:1071
 }
 
 /// Port of `vipoundinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:1073.

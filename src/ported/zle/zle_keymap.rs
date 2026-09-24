@@ -2999,6 +2999,15 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     if last_match.is_some() && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         super::zle_main::ungetbytes(&extra);
+        // c:1706-1707 — `if(vichgflag) curvichg.bufptr -= keybuflen;` — the
+        // ungotten bytes were recorded by getbyte; they will be recorded
+        // again when re-read, so drop them from the change being tracked.
+        if crate::ported::zle::zle_vi::VICHGFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+            let mut cur = crate::ported::zle::zle_vi::CURVICHG.lock().unwrap();
+            cur.bufptr -= extra.len() as i32;
+            let keep = cur.bufptr.max(0) as usize;
+            cur.buf.truncate(keep);
+        }
         buf.truncate(last_match_len);
         // Rebuild the global metafied mirror from the kept raw bytes.
         keybuf.lock().unwrap().clear();
