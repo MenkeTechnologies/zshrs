@@ -5747,15 +5747,19 @@ impl ZshCompiler {
         // first `<(` / `>(` and concatenate the pieces; the substitution piece
         // then reaches the whole-word arm on its own. Only the lexer's Inang /
         // OutangProc + Inpar tokens start one, so `"a<(x)"`, `a\<\(x\)` and
-        // `'P=<(x)'` stay literal. `=(` is left alone: C accepts it only at the
-        // start of the word (`str == str3`), which the whole-word arm handles.
+        // `'P=<(x)'` stay literal. `=(` counts only at the start of the word
+        // (`str == str3`), but it still takes a suffix: D03procsubst's
+        // `=(echo sit),jessica` is `<tempfile>,jessica`, and sending that
+        // whole word to the whole-word arm dropped the file name.
         {
-            use crate::ported::zsh_h::{Inang, Inpar, OutangProc, Outpar};
+            use crate::ported::zsh_h::{Equals, Inang, Inpar, OutangProc, Outpar};
             let ch: Vec<char> = s.chars().collect();
             let mut span: Option<(usize, usize)> = None;
             let mut i = 0usize;
             while i + 1 < ch.len() {
-                if (ch[i] == Inang || ch[i] == OutangProc) && ch[i + 1] == Inpar {
+                if (ch[i] == Inang || ch[i] == OutangProc || (i == 0 && ch[i] == Equals))
+                    && ch[i + 1] == Inpar
+                {
                     let mut depth = 0i32;
                     for (j, &c) in ch.iter().enumerate().skip(i + 1) {
                         if c == Inpar {
@@ -6621,8 +6625,21 @@ impl ZshCompiler {
         // consumer; process_sub_in already creates a durable temp file
         // so `=(...)` shares the read-end implementation. Safe for the
         // read-once consumers (cat/diff/comm) that drive `=(...)` use.
-        let is_eq_psub = untoked.starts_with("=(") && untoked.ends_with(')');
-        if (untoked.starts_with("<(") || untoked.starts_with(">(") || is_eq_psub)
+        //
+        // c:Src/subst.c:245-247 — the test is on TOKENS: `c == Inang ||
+        // c == OutangProc || (str == str3 && c == Equals)` with `str[1] ==
+        // Inpar`. Testing the untokenized text also fired on quoted words,
+        // so `print -r -- "<(echo a)"` printed `/dev/fd/N` and
+        // `x="=(echo a)"` assigned a temp file name.
+        let psub_tokens = {
+            use crate::ported::zsh_h::{Equals, Inang, Inpar, OutangProc};
+            let mut it = s.chars();
+            matches!(it.next(), Some(c) if c == Inang || c == OutangProc || c == Equals)
+                && it.next() == Some(Inpar)
+        };
+        let is_eq_psub = psub_tokens && untoked.starts_with("=(") && untoked.ends_with(')');
+        if psub_tokens
+            && (untoked.starts_with("<(") || untoked.starts_with(">(") || is_eq_psub)
             && untoked.ends_with(')')
         {
             // c:Src/exec.c:4918/5040/5069 — a process substitution used in a

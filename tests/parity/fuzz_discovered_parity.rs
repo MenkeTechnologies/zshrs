@@ -4421,3 +4421,30 @@ mod math_char_constant_control {
         assert_parity(r#"print $(( ##\ca ))"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Process substitution is recognised on TOKENS (c:Src/subst.c:245-247):
+// `=(` only at the start of a word but still with a suffix, and never
+// inside quotes. D03procsubst "=(...) followed by something else without
+// a break".
+// ─────────────────────────────────────────────────────────────────────
+mod procsub_token_recognition {
+    use super::*;
+
+    /// zsh: `sit` / `jessica` — the temp file name keeps its `,jessica`.
+    #[test]
+    fn eq_procsub_with_suffix() {
+        assert_parity(
+            r#"catfield1() { local -a args; args=(${(s.,.)1}); cat $args[1]; print $args[2]; }
+catfield1 =(echo s$'\x69't),jessica"#,
+        );
+    }
+
+    /// Quoted text that merely looks like a substitution stays literal.
+    #[test]
+    fn quoted_procsub_text_is_literal() {
+        assert_parity(
+            r#"print -r -- "=(echo a)" "<(echo a)" ">(cat)"; x="=(echo a)"; print -r -- $x"#,
+        );
+    }
+}
