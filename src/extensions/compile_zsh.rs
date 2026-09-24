@@ -17071,7 +17071,18 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             };
             let len_str: Option<String> = split_at.map(|i| chars[i + 1..].iter().collect());
             let off_str = off_str.trim().to_string();
-            let len_str = len_str.map(|s| s.trim().to_string());
+            // c:Src/subst.c:1573 — check_colon_subscript gives up only on an
+            // EMPTY length (`${s:0:}` then reads `:` as a modifier and fails);
+            // a blank one is a math expression worth 0 (c:3652 mathevali), so
+            // `${s:0: }` is empty. Trimming it to "" turned it into the error.
+            let len_str = len_str.map(|s| {
+                let t = s.trim();
+                if t.is_empty() && !s.is_empty() {
+                    "0".to_string()
+                } else {
+                    t.to_string()
+                }
+            });
             // Re-attach the `[@]` / `[*]` suffix the source carried so the
             // runtime substring handler reaches paramsubst with the subscript.
             // Without it `${a[@]:1}` was bound to plain `a` and returned a

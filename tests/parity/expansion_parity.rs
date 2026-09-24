@@ -1671,3 +1671,18 @@ mod colon_s_replacement_rescan {
         assert_parity(r#"a=(p q); print -l $a:s/p/$(echo 1 2)/ ${a:s/p/`echo 3 4`/}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:1573 — check_colon_subscript gives up only on an EMPTY
+// length; a blank one is a math expression worth 0 (c:3652 mathevali).
+// D04parameter "Regression test for missing length after offset".
+// ─────────────────────────────────────────────────────────────────────
+mod substring_blank_length {
+    use super::*;
+
+    /// zsh: an empty line, then `unrecognized modifier` for the empty length.
+    #[test]
+    fn blank_length_is_zero_empty_length_is_an_error() {
+        assert_parity(r#"str=rts; print ${str:0: }; print "${str:1: }x"; print ${str:0:}"#);
+    }
+}
