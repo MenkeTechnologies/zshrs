@@ -11481,7 +11481,20 @@ impl ZshCompiler {
         // compile_list to this funcdef statement's own (offset-adjusted)
         // line, so it is the correct def line. Bug #396.
         let _ = lineno_off;
-        let line_base_str = self.current_sublist_line.to_string();
+        // c:Src/exec.c:5440-5444 — `shf->lineno = (funcstack &&
+        // (funcstack->tp == FS_FUNC || funcstack->tp == FS_EVAL)) ?
+        // funcstack->flineno + lineno : lineno;` — a definition executed
+        // inside a function body (a nested `g() {…}` or an `() {…}`) records
+        // the ABSOLUTE line: the enclosing function's def line plus the
+        // body-relative `lineno`. Inside a body chunk `lineno_offset` is that
+        // enclosing def line (set above for the body compiler) and
+        // `current_sublist_line` the body-relative line, so the sum is C's
+        // value; at top level `lineno_offset` is 0.
+        let line_base_str = if self.is_function_body {
+            (self.current_sublist_line + self.lineno_offset as i64).to_string()
+        } else {
+            self.current_sublist_line.to_string()
+        };
 
         for raw_name in &f.names {
             // Strip any trailing Inpar+Outpar markers (\u{88}\u{8a})

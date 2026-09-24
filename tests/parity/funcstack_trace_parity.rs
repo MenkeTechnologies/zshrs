@@ -263,3 +263,23 @@ fn argzero_is_seeded_from_argv0_when_reading_from_stdin() {
         "$0 must be argv[0] at startup and survive a function call"
     );
 }
+
+/// A definition executed inside a function body records the ABSOLUTE line:
+/// `shf->lineno = funcstack->flineno + lineno` (c:Src/exec.c:5440-5444).
+/// zshrs recorded the body-relative line, so `$funcsourcetrace` of a nested
+/// `g() {…}` / `() {…}` and PS4's `%I` inside it were off by the enclosing
+/// function's def line (E02xtrace "tracing recurses into anonymous
+/// functions").
+#[test]
+fn nested_definition_records_the_absolute_def_line() {
+    if !zsh_available() {
+        return;
+    }
+    for script in [
+        "f() {\n  :\n  g() { print $funcsourcetrace; }\n}\nf; g",
+        ":\nh() {\n  :\n  () { print $funcsourcetrace; }\n}\nh",
+        "PS4='+%N:%I> '\nfn() {\n  () { () { true } }\n}\nfunctions -T fn\nfn 2>&1",
+    ] {
+        assert_eq!(run_zshrs(script), run_zsh(script), "on:\n{script}");
+    }
+}
