@@ -6658,6 +6658,7 @@ pub fn doshfunc(
     use crate::ported::params::locallevel as locallevel_atomic;
     use crate::ported::zsh_h::{
         FS_EVAL, FS_FUNC, FS_SOURCE, FUNCTIONARGZERO, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNDEFINED,
+        PM_WARNNESTED,
     };
     use std::sync::atomic::Ordering;
 
@@ -6937,6 +6938,29 @@ pub fn doshfunc(
             fn_flags |= PM_TAGGED_LOCAL; // c:5958
         } else {
             opt_state_set("xtrace", false); // c:5960
+        }
+    }
+    // c:6022-6029 — `functions -W` (PM_WARNNESTED) is the per-function
+    // form of WARN_NESTED_VAR, with the same anonymous-function inheritance
+    // as `-T` above:
+    //     if (flags & PM_WARNNESTED)
+    //         opts[WARNNESTEDVAR] = 1;
+    //     else if (oflags & PM_WARNNESTED) {
+    //         if (shfunc->node.nam == ANONYMOUS_FUNCTION_NAME)
+    //             flags |= PM_WARNNESTED;
+    //         else
+    //             opts[WARNNESTEDVAR] = 0;
+    //     }
+    // WARNNESTEDVAR is in the always-restored subset at the exit block
+    // (c:6161).
+    if (fn_flags & PM_WARNNESTED) != 0 {
+        opt_state_set("warnnestedvar", true); // c:6023
+    } else if (oflags_prev & PM_WARNNESTED) != 0 {
+        // c:6024
+        if shfunc.node.nam == ANONYMOUS_FUNCTION_NAME {
+            fn_flags |= PM_WARNNESTED; // c:6026
+        } else {
+            opt_state_set("warnnestedvar", false); // c:6028
         }
     }
     FUNC_OFLAGS.store(fn_flags, Ordering::Relaxed); // c:5970

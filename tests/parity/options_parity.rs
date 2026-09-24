@@ -328,3 +328,18 @@ mod warn_create_global_prefix_assignment {
         assert_parity(r#"setopt warn_create_global; f(){ foo=bar; print ok }; f 2>&1"#);
     }
 }
+
+/// `functions -W` sets PM_WARNNESTED, the per-function form of
+/// WARN_NESTED_VAR: doshfunc turns the option on for the call and lets an
+/// anonymous function inherit it (c:Src/exec.c:6022-6029). The flag was
+/// stored but never consulted, so a `-W` function never warned.
+mod functions_w_warnnested {
+    use super::*;
+
+    #[test]
+    fn tagged_function_and_its_anon_warn_others_do_not() {
+        assert_parity(
+            "x=1\nf() { x=2; () { x=4; }; }\nfunctions -W f\nf 2>&1\ng() { x=3; }\ng 2>&1\nfunctions +W f\nf 2>&1\nprint $x",
+        );
+    }
+}
