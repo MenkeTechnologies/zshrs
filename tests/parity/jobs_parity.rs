@@ -421,6 +421,14 @@ fn async_child_resets_traps_and_ignores_int_quit() {
     );
 }
 
+/// Src/signames2.awk builds sig_msg[] with USE_SUSPENDED, which config.h
+/// always defines: a stopped job reads "suspended (signal)", not "stopped
+/// (signal)". zshrs kept a second, divergent table in jobs.rs.
+#[test]
+fn stopped_job_reads_suspended() {
+    assert_parity("sleep 5 & kill -STOP $!; sleep 0.5; jobs; kill -9 %1");
+}
+
 #[test]
 fn jobstates_markers_two_jobs() {
     // `:+` on curjob, `:-` on prevjob (parameter.c:1346-1351).

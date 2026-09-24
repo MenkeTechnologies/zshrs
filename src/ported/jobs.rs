@@ -1232,51 +1232,35 @@ pub fn should_report_time(job: &job, reporttime: f64) -> bool {
 // flat C globals already ported as `NUMPIPESTATS` / `PIPESTATS` at
 // file scope above. Read/write the canonical globals directly.
 
-/// File-static `sig_msg[]` from `Src/signames1.awk` /
-/// `signames.h` — name-by-signal-number lookup table consulted by
-/// `sigmsg()` at `jobs.c:1118`.
-static SIG_MSG: &[(libc::c_int, &str)] = &[
-    // c:signames.h
-    (libc::SIGHUP, "hangup"),
-    (libc::SIGINT, "interrupt"),
-    (libc::SIGQUIT, "quit"),
-    (libc::SIGILL, "illegal instruction"),
-    (libc::SIGTRAP, "trace trap"),
-    (libc::SIGABRT, "abort"),
-    (libc::SIGBUS, "bus error"),
-    (libc::SIGFPE, "floating point exception"),
-    (libc::SIGKILL, "killed"),
-    (libc::SIGUSR1, "user-defined signal 1"),
-    (libc::SIGSEGV, "segmentation fault"),
-    (libc::SIGUSR2, "user-defined signal 2"),
-    (libc::SIGPIPE, "broken pipe"),
-    (libc::SIGALRM, "alarm"),
-    (libc::SIGTERM, "terminated"),
-    (libc::SIGCHLD, "child exited"),
-    (libc::SIGCONT, "continued"),
-    (libc::SIGSTOP, "stopped (signal)"),
-    (libc::SIGTSTP, "stopped"),
-    (libc::SIGTTIN, "stopped (tty input)"),
-    (libc::SIGTTOU, "stopped (tty output)"),
-    (libc::SIGURG, "urgent I/O condition"),
-    (libc::SIGXCPU, "CPU time exceeded"),
-    (libc::SIGXFSZ, "file size exceeded"),
-    (libc::SIGVTALRM, "virtual timer expired"),
-    (libc::SIGPROF, "profiling timer expired"),
-    (libc::SIGWINCH, "window changed"),
-    (libc::SIGIO, "I/O ready"),
-    (libc::SIGSYS, "bad system call"),
-];
-
 /// Render a signal number as a one-line description.
-/// Port of `sigmsg(int sig)` from Src/jobs.c:1107.
+/// Port of `sigmsg(int sig)` from Src/jobs.c:1116.
 pub fn sigmsg(sig: i32) -> &'static str {
-    // c:1107
-    SIG_MSG
+    // c:1116
+    // c:1119-1125 — real-time signals are numbered, not tabled. The text
+    // is built once per distinct signal and leaked so the `&'static str`
+    // contract holds.
+    #[cfg(target_os = "linux")]
+    {
+        let (lo, hi) = (libc::SIGRTMIN(), libc::SIGRTMAX());
+        if sig >= lo && sig <= hi {
+            static RT: OnceLock<Mutex<std::collections::HashMap<i32, &'static str>>> =
+                OnceLock::new();
+            let mut m = RT.get_or_init(|| Mutex::new(Default::default())).lock().unwrap();
+            return m.entry(sig).or_insert_with(|| {
+                Box::leak(format!("real-time event {}", sig - lo + 1).into_boxed_str())
+            });
+        }
+    }
+    // c:1126 — `sig <= SIGCOUNT ? sig_msg[sig] : unknown`. sig_msg[0] is
+    // "done" (Src/signames2.awk); the rest is the one sig_msg[] port.
+    if sig == 0 {
+        return "done";
+    }
+    crate::ported::signals_h::SIG_MSG
         .iter()
         .find(|(s, _)| *s == sig)
         .map(|(_, m)| *m)
-        .unwrap_or("unknown signal") // c:1118 sig_msg[sig] : unknown
+        .unwrap_or("unknown signal") // c:1118
 }
 
 /// Print job with full detail (from jobs.c printjob)

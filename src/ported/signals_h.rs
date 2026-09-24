@@ -175,7 +175,9 @@ pub static ALT_SIGS: &[(&str, i32)] = &[
 /// to render a signal as e.g. `"hangup"` or `"floating point exception"`
 /// rather than just `"SIGFPE"`. Each entry is `(signum, message)`.
 pub static SIG_MSG: &[(i32, &str)] = &[
-    // c:signames.c sig_msg[]
+    // c:signames.c sig_msg[], as Src/signames2.awk generates it with
+    // USE_SUSPENDED (defined unconditionally in config.h — configure.ac
+    // AH_TOP), so the stop signals read "suspended …".
     (libc::SIGHUP, "hangup"),
     (libc::SIGINT, "interrupt"),
     (libc::SIGQUIT, "quit"),
@@ -190,7 +192,7 @@ pub static SIG_MSG: &[(i32, &str)] = &[
         target_os = "dragonfly",
         target_os = "solaris",
     ))]
-    (libc::SIGEMT, "EMT trap"),
+    (libc::SIGEMT, "EMT instruction"),
     (libc::SIGBUS, "bus error"),
     (libc::SIGFPE, "floating point exception"),
     (libc::SIGKILL, "killed"),
@@ -202,10 +204,10 @@ pub static SIG_MSG: &[(i32, &str)] = &[
     (libc::SIGTERM, "terminated"),
     (libc::SIGCHLD, "death of child"),
     (libc::SIGCONT, "continued"),
-    (libc::SIGSTOP, "stopped (signal)"),
-    (libc::SIGTSTP, "stopped"),
-    (libc::SIGTTIN, "stopped (tty input)"),
-    (libc::SIGTTOU, "stopped (tty output)"),
+    (libc::SIGSTOP, "suspended (signal)"),
+    (libc::SIGTSTP, "suspended"),
+    (libc::SIGTTIN, "suspended (tty input)"),
+    (libc::SIGTTOU, "suspended (tty output)"),
     (libc::SIGURG, "urgent condition"),
     (libc::SIGXCPU, "cpu limit exceeded"),
     (libc::SIGXFSZ, "file size limit exceeded"),
@@ -220,7 +222,13 @@ pub static SIG_MSG: &[(i32, &str)] = &[
         target_os = "netbsd",
         target_os = "dragonfly",
     ))]
-    (libc::SIGINFO, "information request"),
+    (libc::SIGINFO, "status request from keyboard"),
+    // signames2.awk: PWR has a message; STKFLT has none, so it prints as
+    // its `SIG` name.
+    #[cfg(target_os = "linux")]
+    (libc::SIGPWR, "power fail"),
+    #[cfg(target_os = "linux")]
+    (libc::SIGSTKFLT, "SIGSTKFLT"),
     (libc::SIGSYS, "invalid system call"),
 ];
 
