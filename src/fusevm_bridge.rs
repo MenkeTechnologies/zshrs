@@ -14045,7 +14045,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     & crate::ported::zsh_h::ERRFLAG_ERROR
                             };
                             let before = ef();
+                            // c:Src/glob.c:2164-2166 — a redirect target
+                            // (mode 7) is globbed with `in_expandredir` set,
+                            // so a NULL_GLOB no-match is `redirection failed
+                            // (no match)` (c:1888-1894), not a dropped word.
+                            let redir = (mode == 7) as i32;
+                            crate::ported::glob::IN_EXPANDREDIR.store(redir, std::sync::atomic::Ordering::SeqCst);
                             let globbed = exec.expand_glob(&s_tok);
+                            crate::ported::glob::IN_EXPANDREDIR.store(0, std::sync::atomic::Ordering::SeqCst);
                             if before == 0 && ef() != 0 {
                                 GLOB_WORD_ERRFLAG.with(|c| c.set(true));
                             }

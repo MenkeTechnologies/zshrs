@@ -531,3 +531,21 @@ mod escaped_metachar_in_a_literal_dir {
         }
     }
 }
+
+mod redirect_target_nullglob {
+    use super::*;
+
+    /// c:Src/glob.c:1888-1894 — a redirect target is globbed with
+    /// `in_expandredir` set, so a NULL_GLOB no-match (per-glob `(N)` or
+    /// `setopt nullglob`) is `redirection failed (no match)`: the
+    /// command does not run. D02glob "redirect to a non-matching pattern
+    /// is an error even with flag (N)". zshrs ran it with no redirection.
+    #[test]
+    fn nullglob_redirect_no_match_is_an_error() {
+        let d = mkdir_with_files(&[]);
+        assert_parity_in(
+            d.path(),
+            r#"(print x > nope*(N); print rc=$?); (setopt nullglob; print y > q*; print rc=$?); print -l -- *(N) end"#,
+        );
+    }
+}
