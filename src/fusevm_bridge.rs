@@ -858,6 +858,29 @@ fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<Strin
     (name, values)
 }
 
+/// c:Src/exec.c:3719 + 3755-3763 — an external command is forked
+/// (execcmd_fork) BEFORE `globlist(args, 0)`, so a NOMATCH (or the
+/// CSH_NULL_GLOB `no match`, c:Src/subst.c:505-507) raised while globbing
+/// its arguments ends the CHILD with status 1; the shell's errflag stays
+/// clean and the next command runs (`rm *nomatch; print after` prints the
+/// error, then `after`). zshrs globs in the shell, so every path that runs
+/// a name zsh would fork for calls this first: `Some(1)` means skip the
+/// command, with this command's ERRFLAG_ERROR taken back out.
+fn external_glob_failure_status() -> Option<i32> {
+    consume_tilde_globsubst_carrier();
+    let failed = with_executor(|exec| exec.current_command_glob_failed.replace(false))
+        || consume_badcshglob();
+    if !failed {
+        return None;
+    }
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    with_executor(|exec| exec.set_last_status(1));
+    Some(1)
+}
+
 fn consume_badcshglob() -> bool {
     let v = crate::ported::glob::BADCSHGLOB.swap(0, std::sync::atomic::Ordering::Relaxed);
     if v == 1 {
@@ -1180,12 +1203,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // ("invalid mode `+x'"), and `rm -s` / `mv -s` from the module's argument
     // parser instead of the system tool's. `dispatch_builtin` at :1087 already
     // gates unconditionally; this low-level `CallBuiltin` path did not.
-    if module_gated_files_builtin(name)
-        && !crate::ported::module::MODULESTAB
-            .lock()
-            .map(|t| t.is_loaded("zsh/files"))
-            .unwrap_or(false)
-    {
+    if files_builtin_runs_from_path(name) {
         // PATH lookup uses the LITERAL name: bare `mkdir` finds
         // /bin/mkdir; a `zf_*` alias finds nothing and exits 127 —
         // matching zsh -fc `zf_mkdir d` → "command not found:
@@ -1193,6 +1211,9 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
         // builtintab, Src/Modules/files.c:816-824; PATH has no
         // /bin/zf_rm). The previous zf_-strip silently ran the
         // system binary instead.
+        if let Some(status) = external_glob_failure_status() {
+            return status;
+        }
         let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
         return status;
     }
@@ -1264,6 +1285,16 @@ fn module_gated_files_builtin(name: &str) -> bool {
             | "zf_chgrp"
             | "zf_sync"
     )
+}
+
+/// A zsh/files name while the module is not loaded: C has no such entry in
+/// `builtintab` then, so the name runs from PATH like any external.
+fn files_builtin_runs_from_path(name: &str) -> bool {
+    module_gated_files_builtin(name)
+        && !crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded("zsh/files"))
+            .unwrap_or(false)
 }
 
 thread_local! {
@@ -1462,6 +1493,14 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // guard at host_exec_external (line 5167). Without this:
     // `echo /never/*` would print empty (silently rolled back to ""
     // by the empty glob expansion). Parity bug #13.
+    //
+    // A zsh/files name that runs from PATH (the arm below) is an external:
+    // its glob failure ends the forked child, not the shell.
+    if files_builtin_runs_from_path(name) {
+        if let Some(status) = external_glob_failure_status() {
+            return status;
+        }
+    }
     consume_tilde_globsubst_carrier();
     let glob_failed = with_executor(|exec| {
         let f = exec.current_command_glob_failed.get();
@@ -1599,28 +1638,22 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // etc.) in zsh; `type rm` reports `rm is /bin/rm`. The `zf_*`
     // aliases (`zf_rm`, `zf_chmod`, …) are bound by the same module
     // and gated the same way. Bug #28 in docs/BUGS.md.
-    if module_gated_files_builtin(name) {
-        if !crate::ported::module::MODULESTAB
-            .lock()
-            .unwrap()
-            .is_loaded("zsh/files")
-        {
-            // PATH lookup uses the literal name. In --zsh parity mode
-            // `zf_rm` must 127 like zsh -fc (no /bin/zf_rm); default
-            // zshrs mode keeps the convenience zf_-strip so the alias
-            // still reaches the system binary.
-            let path_name = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-                name
-            } else {
-                name.strip_prefix("zf_").unwrap_or(name)
-            };
-            let status =
-                with_executor(|exec| exec.execute_external(path_name, &args, &[])).unwrap_or(127);
-            crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
-            let mut synth = crate::ported::zsh_h::job::default();
-            crate::ported::jobs::waitonejob(&mut synth);
-            return status;
-        }
+    if files_builtin_runs_from_path(name) {
+        // PATH lookup uses the literal name. In --zsh parity mode
+        // `zf_rm` must 127 like zsh -fc (no /bin/zf_rm); default
+        // zshrs mode keeps the convenience zf_-strip so the alias
+        // still reaches the system binary.
+        let path_name = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            name
+        } else {
+            name.strip_prefix("zf_").unwrap_or(name)
+        };
+        let status =
+            with_executor(|exec| exec.execute_external(path_name, &args, &[])).unwrap_or(127);
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
+        return status;
     }
     // c:Src/exec.c:3997 `int q = queue_signal_level();`
     // c:Src/exec.c:4231 `dont_queue_signals();`
@@ -2154,6 +2187,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     crate::ported::builtin::LASTVAL
                         .store(1, std::sync::atomic::Ordering::Relaxed);
                     return Value::Status(1);
+                }
+                // A failed argument glob fails in that forked child too.
+                if let Some(status) = external_glob_failure_status() {
+                    return Value::Status(status);
                 }
                 // `[builtins].coreutils_shadows = off` in
                 // ~/.zshrs/zshrs.toml (or `ZSHRS_NO_COREUTILS_SHADOWS=1`
@@ -12262,6 +12299,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
             }
+            // c:Src/exec.c:3719 + 3755-3763 — the argument glob of an
+            // external runs in the forked child as well (`x=cat; $x
+            // *nomatch; print after` prints `after`).
+            if let Some(name) = args.first() {
+                let is_external = !with_executor(|exec| exec.function_exists(name))
+                    && (files_builtin_runs_from_path(name)
+                        || !crate::ported::builtin::createbuiltintable().contains_key(name.as_str()));
+                if is_external {
+                    if let Some(status) = external_glob_failure_status() {
+                        return Value::Status(status);
+                    }
+                }
+            }
             return Value::Status(1);
         }
         if args.is_empty() {
@@ -19172,32 +19222,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // genuine script-fatal errors (parse, redirect, paramsubst
         // `${:?msg}`) does NOT come paired with glob_failed, so
         // those still short-circuit + propagate.
-        consume_tilde_globsubst_carrier();
-        let glob_failed = with_executor(|exec| {
-            let f = exec.current_command_glob_failed.get();
-            exec.current_command_glob_failed.set(false);
-            f
-        });
-        if glob_failed {
-            crate::ported::utils::errflag.fetch_and(
-                !crate::ported::zsh_h::ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            with_executor(|exec| exec.set_last_status(1));
-            return 1;
-        }
-        // c:Src/subst.c:505-507 — CSH_NULL_GLOB external-path
-        // boundary: command skipped with `no match` but the NEXT
-        // sublist runs (zsh -fc 'setopt cshnullglob; ls *nope*;
-        // print after' prints the error then `after` — verified
-        // zsh 5.9.1), so clear ERRFLAG like the glob_failed arm.
-        if consume_badcshglob() {
-            crate::ported::utils::errflag.fetch_and(
-                !crate::ported::zsh_h::ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            with_executor(|exec| exec.set_last_status(1));
-            return 1;
+        if let Some(status) = external_glob_failure_status() {
+            return status;
         }
         if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
@@ -19435,6 +19461,18 @@ impl fusevm::ShellHost for ZshrsHost {
                 crate::ported::utils::errflag.fetch_and(!bits, std::sync::atomic::Ordering::Relaxed);
             }
             with_executor(|exec| exec.set_last_status(1));
+            return Some(1);
+        }
+        // c:Src/exec.c:3755-3763 — a shell function is not forked, so a
+        // failed argument glob is `lastval = 1; goto err;` in the shell: the
+        // body never runs, and errflag (left set) ends the list with status
+        // 1 (`f() { :; }; f *nomatch` exits 1).
+        if with_executor(|exec| exec.function_exists(name))
+            && with_executor(|exec| exec.current_command_glob_failed.replace(false))
+        {
+            consume_tilde_globsubst_carrier();
+            with_executor(|exec| exec.set_last_status(1));
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Some(1);
         }
         // Provenance: same argv record as `exec`, but ONLY when the name

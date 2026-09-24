@@ -664,3 +664,37 @@ mod wide_character_ifs {
         assert_parity(r#"unsetopt multibyte; IFS=$'\xe9'; s=$'a\xe9b'; print -rl -- ${=s}"#);
     }
 }
+
+/// c:Src/exec.c:3719 + 3755-3763 — an external command is forked BEFORE its
+/// arguments are globbed, so a NOMATCH ends only the child (status 1) and the
+/// script continues; a shell function is not forked, so the failure ends the
+/// list with status 1. zshrs's in-process stand-ins for externals — the
+/// zsh/files names (`rm`, `mkdir`, … while the module is unloaded), the
+/// coreutils shadows (`cat`, `touch`, …) and a dynamic `$cmd` word — ran the
+/// command with the failed word dropped (`rm *.nx` ran a bare `rm`) and then
+/// aborted the script; a failed function call exited 0.
+mod argument_glob_failure_is_forked_for_externals {
+    use super::*;
+
+    #[test]
+    fn stand_ins_for_externals_continue_after_the_error() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("keep"), "x").unwrap();
+        for cmd in ["rm", "rm -f", "mkdir", "chmod 644", "cat", "touch", "wc"] {
+            assert_parity_in(d.path(), &format!("{cmd} *.nx 2>&1; print after $?; print -l *"));
+        }
+        assert_parity_in(d.path(), "x=cat; $x *.nx 2>&1; print after $?");
+        assert_parity_in(d.path(), "x=rm; $x *.nx 2>&1; print after $?; print -l *");
+        assert_parity_in(d.path(), "setopt cshnullglob; cat *.nx; print after $?");
+    }
+
+    #[test]
+    fn builtins_and_functions_still_end_the_list() {
+        let d = tempfile::tempdir().unwrap();
+        assert_parity_in(d.path(), "print *.nx 2>&1; print after $?");
+        assert_parity_in(d.path(), "x=print; $x *.nx 2>&1; print after $?");
+        assert_parity_in(d.path(), "f() { print ran; }; f *.nx 2>&1; print after $?");
+        assert_parity_in(d.path(), "f() { return 3; }; f a *.nx 2>/dev/null");
+        assert_parity_in(d.path(), "zmodload zsh/files; rm *.nx 2>&1; print after $?");
+    }
+}
