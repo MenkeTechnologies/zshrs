@@ -4554,3 +4554,19 @@ mod unbraced_reference_word_shapes {
         assert_parity(r#"x=b; a=(p q); print -r -- $x"[1]" $x'[1]'; print -r -- $a"[2]"z"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:178-180 — `filesub` runs over the node AFTER the
+// substitution pass, so a leading unquoted `=` sees the substituted text.
+// ─────────────────────────────────────────────────────────────────────
+mod equals_expansion_after_substitution {
+    use super::*;
+
+    /// zsh: `ok` — `=$h` is `=sh`, a command lookup; a quoted `=` is not.
+    #[test]
+    fn leading_equals_sees_substituted_name() {
+        assert_parity(
+            r#"h=sh; [[ =$h == /* ]] && print ok; print -r -- "="$h \=$h; h=nosuch_cmd_x; (print =$h); print rc=$?"#,
+        );
+    }
+}

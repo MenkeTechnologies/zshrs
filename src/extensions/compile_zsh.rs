@@ -9318,6 +9318,13 @@ impl ZshCompiler {
         // expansion separately, defeating tilde-expand). Fall through
         // to the bridge so expand_string sees `~$VAR` whole.
         let starts_with_tilde_and_has_var = untoked.starts_with('~') && untoked.contains('$');
+        // Same for a leading unquoted `=` (the Equals token): c:Src/subst.c:
+        // 178-180 runs `filesub` over the node AFTER the substitution pass, so
+        // `h=ls; print =$h` is `=ls` → `/bin/ls`. The segment split emitted the
+        // `=` as plain text and the command lookup never ran.
+        let starts_with_equals_and_has_var =
+            s.starts_with(crate::ported::zsh_h::Equals) && untoked.contains('$');
+        let filesub_head_has_var = starts_with_tilde_and_has_var || starts_with_equals_and_has_var;
         // Default-word glob bracket gate (#2 default-word globbing): an
         // unquoted, top-level word that has BOTH a default/alt operator
         // (`-`/`+`) AND a glob metachar might carry a `${x:-*file}`-style
@@ -9348,7 +9355,7 @@ impl ZshCompiler {
             );
             self.builder.emit(Op::Pop, 0); // discard the RESET status
         }
-        if !has_bnull && !starts_with_tilde_and_has_var {
+        if !has_bnull && !filesub_head_has_var {
             // c:Src/subst.c:1878 / c:326-327 / c:142-147 — a failed `(e)`
             // re-lex returns NULL out of paramsubst after the word was cut at
             // that `$`, so the word becomes its node text up to the cut: the
