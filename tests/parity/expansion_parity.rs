@@ -1754,3 +1754,27 @@ mod array_assign_quoted_nested {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/params.c:1541-1546 / 1587 — an escape marker guarding a bracket in
+// a search-flag subscript sets `needtok`, and parsestr re-lexes the group
+// into a plain backslash that survives singsub. A nested subscript carries
+// the marker: `s="a[b"; print $s[$s[(i)\[]]` is `[`.
+// ─────────────────────────────────────────────────────────────────────
+mod nested_search_subscript_escaped_bracket {
+    use super::*;
+
+    #[test]
+    fn nested_escaped_bracket_search() {
+        assert_parity(
+            r#"s="a[b"; print -r -- $s[$s[(i)\[]] "$s[$s[(i)\[]]"; s="a]b(c)"; print -r -- $s[$s[(i)\]]] $s[$s[(i)\(]]"#,
+        );
+    }
+
+    #[test]
+    fn array_and_hash_searches_unchanged() {
+        assert_parity(
+            r#"a=("x[" y "z*"); print -r -- $a[(i)x\[] $a[$a[(i)z\*]]; typeset -A h; h=("a[" 1 b 2); print -r -- $h[a\[] $h[(I)?\[]"#,
+        );
+    }
+}

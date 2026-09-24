@@ -25161,7 +25161,12 @@ pub fn paramsubst(
                 } else {
                     raw_sub.clone()
                 };
-                let to_expand = if (sub_is_flag && raw_sub.contains('\\')) || folded != raw_sub {
+                // c:Src/params.c:1541-1546 sets `needtok` for an escape marker guarding a
+                // bracket too, so the flag group is re-lexed by parsestr (c:1587): its
+                // untokenize turns the Bnull back into `\`, which dquote_parse keeps as a
+                // plain backslash, and the pattern still sees the escape after singsub
+                // strips markers. A NESTED `$s[$s[(i)\[]]` arrives with the marker, not `\`.
+                let to_expand = if (sub_is_flag && (raw_sub.contains('\\') || raw_sub.contains(crate::ported::zsh_h::Bnull))) || folded != raw_sub {
                     crate::ported::lex::parsestr(&folded).unwrap_or_else(|_| folded.clone())
                 } else {
                     raw_sub
