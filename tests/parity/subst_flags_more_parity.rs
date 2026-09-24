@@ -825,3 +825,26 @@ mod p_flag_reads_the_unfolded_name {
         assert_parity(r#"typeset -u c=upper; upper=VAL; UPPER=BIG; print ${(P)${c}}"#);
     }
 }
+
+/// Flags whose result depends on the character set, run under a runtime
+/// `LC_ALL=C` the way the ztst harness runs D04parameter.
+mod c_locale_flags {
+    use super::*;
+
+    /// c:utils.c:6790-6863 ucs4tomb — the `(#)` character must be encodable
+    /// in the current codeset, else "character not in range" aborts `(X)`.
+    #[test]
+    fn hash_x_rejects_out_of_range_char_in_c_locale() {
+        assert_parity(r#"LC_ALL=C; : ${(#X):-0x80}; print reached"#);
+        assert_parity(r#"LC_ALL=C; a=(0x80 0x81); : ${(#X)a}; print reached"#);
+        assert_parity(r#"LC_ALL=C; print -r -- ${(#):-65}"#);
+    }
+
+    /// c:utils.c:6204-6209 — QT_DOLLARS skips the Nularg that stands in for
+    /// an empty string instead of quoting it.
+    #[test]
+    fn qqqq_of_literal_empty_string_in_c_locale() {
+        assert_parity(r#"LC_ALL=C; print -r -- ${(qqqq):-""} ${(qqqq):-a}"#);
+        assert_parity(r#"print -r -- ${(qqqq):-""}"#);
+    }
+}

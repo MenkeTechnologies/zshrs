@@ -9559,6 +9559,15 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // (subst.c:4085-4090 writes the quote pair and then `val[0] = '$'`),
         // so this arm returns the BODY only.
         let mut result = String::with_capacity(s.len() + 4);
+        // c:6204-6209 — "The only way to get Nularg here is when it is
+        // placeholding for the empty string": `if (inull(*u)) u++;`. Without
+        // the skip, `${(qqqq):-""}` quoted the Nularg itself (`$'¡'` under LANG=C).
+        let s = match s.chars().next() {
+            Some(c) if (c as u32) < 0x100 && crate::ported::ztype_h::inull(c as u8) => {
+                &s[c.len_utf8()..]
+            }
+            _ => s,
+        };
         let mcs = meta_chars(s);
         let bang = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
         for i in 0..mcs.len() {
@@ -9972,49 +9981,117 @@ pub fn ucs4toutf8(wval: u32) -> Option<String> {
 ///
 /// Encode a UCS-4 codepoint into the buffer `buf` using the current
 /// locale's multibyte encoding. Returns the number of bytes written,
-/// or -1 on conversion failure. C body uses `wctomb(3)` when
-/// `__STDC_ISO_10646__` is defined (which it is on every modern
-/// glibc / macOS libc), falls back to UTF-8 if the codeset is
-/// `"UTF-8"`, and uses `iconv(3)` otherwise.
+/// or -1 on conversion failure (after `zerr("character not in range")`).
 ///
-/// This Rust port mirrors the primary `wctomb` path via libc FFI;
-/// the iconv fallback is unused on macOS/Linux modern builds.
-/// On conversion failure, emits `zerr("character not in range")`
-/// to match C source line 6794.
-///
-/// C body shape:
-/// ```c
-/// int count = wctomb(buf, (wchar_t)wval);
-/// if (count == -1) zerr("character not in range");
-/// return count;
-/// ```
+/// C picks one of two bodies at compile time on `__STDC_ISO_10646__`
+/// (c:6790): `wctomb(3)` where it is defined, else `nl_langinfo(CODESET)`
+/// → `ucs4toutf8` for "UTF-8" and `iconv(3)` from "UCS-4BE" for any other
+/// codeset. glibc defines the macro; macOS libc does NOT (checked with
+/// `cc` on Darwin 25), so the zsh macOS builds run the iconv body, which
+/// rejects every value above 0x7f in the C locale ("US-ASCII"). macOS
+/// `wctomb` instead accepts 0x80-0xff as raw bytes there, so taking the
+/// wctomb body everywhere let `LC_ALL=C; : ${(#X):-0x80}` succeed.
 pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
-    // libc::wctomb requires at least MB_CUR_MAX bytes (typically 4
-    // for UTF-8, 6 for some encodings). Use a stack buffer first,
-    // then copy into the caller's buffer.
-    // libc crate doesn't expose wctomb on all platforms; declare
-    // the POSIX prototype directly. wchar_t is i32 on macOS/Linux
-    // for our supported targets.
-    extern "C" {
-        fn wctomb(s: *mut libc::c_char, wc: libc::wchar_t) -> libc::c_int;
+    // c:6790-6795 — `#if … && defined(__STDC_ISO_10646__)`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // wchar_t is i32 on the Linux targets; declare the POSIX prototype
+        // directly (libc crate does not expose wctomb on all platforms).
+        extern "C" {
+            fn wctomb(s: *mut libc::c_char, wc: libc::wchar_t) -> libc::c_int;
+        }
+        let mut local = [0 as libc::c_char; 16];
+        let count = unsafe { wctomb(local.as_mut_ptr(), wval as libc::wchar_t) }; // c:6791
+        if count < 0 || count as usize > buf.len() {
+            zerr("character not in range"); // c:6793
+            return -1;
+        }
+        for i in 0..count as usize {
+            buf[i] = local[i] as u8;
+        }
+        count // c:6794
     }
-    // libc::c_char is i8 on most targets but u8 on aarch64-linux. Use c_char
-    // so the wctomb arg pointer type matches per-target without a cast.
-    let mut local = [0 as libc::c_char; 16];
-    let count = unsafe { wctomb(local.as_mut_ptr(), wval as libc::wchar_t) };
-    if count < 0 {
-        zerr("character not in range");
-        return -1;
+    // c:6795-6863 — the `!__STDC_ISO_10646__` body.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        #[link(name = "iconv")]
+        extern "C" {
+            fn iconv_open(tocode: *const libc::c_char, fromcode: *const libc::c_char) -> *mut libc::c_void;
+            fn iconv(
+                cd: *mut libc::c_void,
+                inbuf: *mut *mut libc::c_char,
+                inbytesleft: *mut libc::size_t,
+                outbuf: *mut *mut libc::c_char,
+                outbytesleft: *mut libc::size_t,
+            ) -> libc::size_t;
+            fn iconv_close(cd: *mut libc::c_void) -> libc::c_int;
+        }
+        // c:6797 — `nl_langinfo(CODESET)`.
+        let codeset: String = unsafe {
+            let p = libc::nl_langinfo(libc::CODESET);
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        if codeset == "UTF-8" {
+            // c:6798 — `return ucs4toutf8(buf, wval);`
+            let Some(enc) = ucs4toutf8(wval) else {
+                return -1;
+            };
+            let b = enc.as_bytes();
+            if b.len() > buf.len() {
+                zerr("character not in range");
+                return -1;
+            }
+            buf[..b.len()].copy_from_slice(b);
+            return b.len() as i32;
+        }
+        // c:6823-6826 — ICONV_FROM_LIBICONV: an empty codeset is US-ASCII.
+        let codeset = if codeset.is_empty() { "US-ASCII".to_string() } else { codeset };
+        let to = std::ffi::CString::new(codeset.clone()).unwrap_or_default();
+        let from = std::ffi::CString::new("UCS-4BE").unwrap_or_default();
+        let mut cd = unsafe { iconv_open(to.as_ptr(), from.as_ptr()) }; // c:6827
+        if cd as isize == -1 && codeset == "646" {
+            // c:6829-6832 — Solaris' "646" spelling of US-ASCII.
+            let ascii = std::ffi::CString::new("US-ASCII").unwrap_or_default();
+            cd = unsafe { iconv_open(ascii.as_ptr(), from.as_ptr()) };
+        }
+        if cd as isize == -1 {
+            zerr("cannot do charset conversion (iconv failed)"); // c:6835
+            return -1;
+        }
+        // c:6839-6843 — store value in big endian form.
+        let mut inbuf: [libc::c_char; 4] = [0; 4];
+        let mut w = wval;
+        for i in (0..4).rev() {
+            inbuf[i] = (w & 0xff) as u8 as libc::c_char;
+            w >>= 8;
+        }
+        let mut local = [0 as libc::c_char; 6];
+        let mut inptr = inbuf.as_mut_ptr();
+        let mut outptr = local.as_mut_ptr();
+        let mut inbytes: libc::size_t = 4;
+        let mut outbytes: libc::size_t = 6;
+        let count = unsafe { iconv(cd, &mut inptr, &mut inbytes, &mut outptr, &mut outbytes) }; // c:6844
+        unsafe { iconv_close(cd) }; // c:6845
+        if count != 0 {
+            // c:6846-6851 — -1 is an error; a positive count is the number of
+            // non-reversible conversions, also "out-of-range".
+            zerr("character not in range");
+            return -1;
+        }
+        let n = 6 - outbytes as usize; // c:6853 `buf - bsave`
+        if n > buf.len() {
+            zerr("character not in range");
+            return -1;
+        }
+        for i in 0..n {
+            buf[i] = local[i] as u8;
+        }
+        n as i32
     }
-    let n = count as usize;
-    if n > buf.len() {
-        zerr("character not in range");
-        return -1;
-    }
-    for i in 0..n {
-        buf[i] = local[i] as u8;
-    }
-    count
 }
 
 /// Port of `getkeystring()` from `Src/utils.c:6915` — C decl `getkeystring(char *s, int *len, int how, int *misc)`.
