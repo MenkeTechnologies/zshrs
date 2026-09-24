@@ -6442,9 +6442,11 @@ pub fn paramsubst(
                 let nxt = body_chars.get(idx + 1).copied();
                 if matches!(nxt, Some('=') | Some(Equals)) {
                     suppress_split = true;
+                    force_split = false; // c:2562 `spbreak = 0`
                     idx += 2;
                 } else {
                     force_split = true;
+                    suppress_split = false; // c:2567 `spbreak = 2`
                     idx += 1;
                 }
                 continue;
@@ -15839,10 +15841,11 @@ pub fn paramsubst(
                     // `spbreak` is c:1707 `(pf_flags & PREFORK_SHWORDSPLIT) &&
                     // !(pf_flags & PREFORK_SINGLE) && !qt`, raised to 2 by the
                     // `${=…}` flag (c:2567) — which is what `force_split` holds.
-                    let spbreak = force_split
-                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
-                            && pf_flags & PREFORK_SINGLE == 0
-                            && !qt); // c:1707 / c:2567
+                    let spbreak = !suppress_split // c:2562 `${==…}` → spbreak = 0
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                && pf_flags & PREFORK_SINGLE == 0
+                                && !qt)); // c:1707 / c:2567
                     let split_flags = if spbreak {
                         // c:3216
                         let mut f = PREFORK_SHWORDSPLIT; // c:3216
@@ -16001,10 +16004,11 @@ pub fn paramsubst(
                     // array-producing default stays an array (see the
                     // `:-` arm above; this is the f-sy-h shape).
                     // c:3215-3226 split_flags — identical to the `:-` arm.
-                    let spbreak = force_split
-                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
-                            && pf_flags & PREFORK_SINGLE == 0
-                            && !qt); // c:1707 / c:2567
+                    let spbreak = !suppress_split // c:2562 `${==…}` → spbreak = 0
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                && pf_flags & PREFORK_SINGLE == 0
+                                && !qt)); // c:1707 / c:2567
                     let split_flags = if spbreak {
                         let mut f = PREFORK_SHWORDSPLIT; // c:3216
                         if !aspar {
@@ -16089,6 +16093,14 @@ pub fn paramsubst(
                     spbreak_cleared = true; // c:3230
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
+                // c:3207 — the word keeps its lexer tokens (see `rest_raw`), so the
+                // c:3259 split sees which blanks were quoted.
+                let default_tokenized: String = rest_raw.chars().skip(3).collect();
+                let default: &str = if !default_tokenized.is_empty() {
+                    default_tokenized.as_str()
+                } else {
+                    default
+                };
                 // c:3245 (unconditional assign)
                 // `${var::=value}` — zsh extension. Always store value
                 // (after expansion) regardless of whether var was
@@ -16106,10 +16118,26 @@ pub fn paramsubst(
                 // matching zsh). The previous port singsub'd to a scalar
                 // then IFS-split, which both lost quoting and wrongly
                 // split. Only the (s:…:) flag (spsep) re-splits.
-                if arrasg != 0 && spsep.is_none() && !force_split {
+                if arrasg != 0 && spsep.is_none() {
+                    // c:3257-3262 — `if (spbreak) split_flags = PREFORK_SPLIT|PREFORK_SHWORDSPLIT;
+                    // else split_flags = PREFORK_NOSHWORDSPLIT; multsub(&val, split_flags, &aval, …)`:
+                    // `${(A)=a=x "y z"}` splits at UNQUOTED blanks only, so the quoted
+                    // word stays one element. A singsub-then-IFS-split lost the quoting.
+                    let spbreak = !suppress_split
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                && pf_flags & PREFORK_SINGLE == 0
+                                && !qt)); // c:1707 / c:2562 / c:2567
+                    let split_flags = if spbreak {
+                        PREFORK_SPLIT | PREFORK_SHWORDSPLIT // c:3259
+                    } else {
+                        PREFORK_NOSHWORDSPLIT // c:3261
+                    };
                     let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                    let (joined, parts, isarr_rhs, _ms) = multsub_operand(default, PREFORK_NOSHWORDSPLIT);
+                    let (joined, parts, isarr_rhs, _ms) = multsub_operand(default, split_flags);
                     gs_restore(__gs); // c:Src/subst.c:3231-3232
+                    force_split = false; // c:3263 `spbreak = 0;`
+                    spbreak_cleared = true; // c:3263
                     value = joined.clone();
                     // c:Src/subst.c:3282-3293 — a SCALAR (non-isarr) RHS
                     // becomes a ONE-element array `arr[0]=val` (even when the
@@ -16127,8 +16155,27 @@ pub fn paramsubst(
                     };
                     if arrasg == 1 {
                         exec_assignaparam(&var_name, parts); // c:3263 (A)
+                        // c:3307-3309 — `aval = pm->gsu.a->getfn(pm); isarr = 1; arrasg = 0;`
+                        split_parts = crate::ported::subst::arrays_get(&var_name);
+                        isarr = 1;
+                        arrasg_assigned = true;
                     } else {
                         exec_sethparam(&var_name, parts); // c:3263 (AA)
+                        // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                        if let Some(__ht) = assoc_get(&var_name) {
+                            split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                        }
+                        isarr = 1; // c:3309
+                        arrasg_assigned = true; // c:3310 `arrasg = 0`
+                    }
+                    // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
+                    // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
+                    // was cleared above (c:3263), so a quoted `"${(A)a::=$@}"` is ONE word.
+                    if nojoin == 0 && qt && !length_op {
+                        let __aval = split_parts.take().unwrap_or_default();
+                        value = crate::ported::utils::sepjoin(&__aval, sep.as_deref()); // c:3331
+                        isarr = 0; // c:3332
+                        arrasg_assigned = false;
                     }
                 } else {
                     let __gs = gs_save(); // c:Src/subst.c:3231-3232
@@ -16173,6 +16220,12 @@ pub fn paramsubst(
                         // c:3263 (AA) with (s) separator or `=` word-split
                         let parts = split_arrasg(&value);
                         exec_sethparam(&var_name, parts);
+                        // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                        if let Some(__ht) = assoc_get(&var_name) {
+                            split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                        }
+                        isarr = 1; // c:3309
+                        arrasg_assigned = true; // c:3310 `arrasg = 0`
                     } else {
                         let __s = match subscript.as_deref() {
                             Some(k) => format!(
@@ -16200,11 +16253,26 @@ pub fn paramsubst(
                     // RHS ONLY when `spsep || spbreak` (the (s:X:) or `=`
                     // flag); otherwise the value stays a single element
                     // (multsub PREFORK_NOSHWORDSPLIT). Same as the `::=` arm.
-                    if arrasg != 0 && spsep.is_none() && !force_split {
+                    if arrasg != 0 && spsep.is_none() {
+                        // c:3257-3262 — `if (spbreak) split_flags = PREFORK_SPLIT|PREFORK_SHWORDSPLIT;
+                        // else split_flags = PREFORK_NOSHWORDSPLIT; multsub(&val, split_flags, &aval, …)`:
+                        // `${(A)=a=x "y z"}` splits at UNQUOTED blanks only, so the quoted
+                        // word stays one element. A singsub-then-IFS-split lost the quoting.
+                        let spbreak = !suppress_split
+                            && (force_split
+                                || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                    && pf_flags & PREFORK_SINGLE == 0
+                                    && !qt)); // c:1707 / c:2562 / c:2567
+                        let split_flags = if spbreak {
+                            PREFORK_SPLIT | PREFORK_SHWORDSPLIT // c:3259
+                        } else {
+                            PREFORK_NOSHWORDSPLIT // c:3261
+                        };
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                        let (joined, parts, isarr_rhs, _ms) =
-                            multsub_operand(default, PREFORK_NOSHWORDSPLIT);
+                        let (joined, parts, isarr_rhs, _ms) = multsub_operand(default, split_flags);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
+                        force_split = false; // c:3263 `spbreak = 0;`
+                        spbreak_cleared = true; // c:3263
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
                         // empty ⇒ 0; array-shaped RHS keeps its elements.
@@ -16217,8 +16285,27 @@ pub fn paramsubst(
                         };
                         if arrasg == 1 {
                             exec_assignaparam(&var_name, parts); // c:3263 (A)
+                            // c:3307-3309 — `aval = pm->gsu.a->getfn(pm); isarr = 1; arrasg = 0;`
+                            split_parts = crate::ported::subst::arrays_get(&var_name);
+                            isarr = 1;
+                            arrasg_assigned = true;
                         } else {
                             exec_sethparam(&var_name, parts); // c:3263 (AA)
+                            // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                            if let Some(__ht) = assoc_get(&var_name) {
+                                split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                            }
+                            isarr = 1; // c:3309
+                            arrasg_assigned = true; // c:3310 `arrasg = 0`
+                        }
+                        // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
+                        // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
+                        // was cleared above (c:3263), so a quoted `"${(A)a::=$@}"` is ONE word.
+                        if nojoin == 0 && qt && !length_op {
+                            let __aval = split_parts.take().unwrap_or_default();
+                            value = crate::ported::utils::sepjoin(&__aval, sep.as_deref()); // c:3331
+                            isarr = 0; // c:3332
+                            arrasg_assigned = false;
                         }
                     } else {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
@@ -16250,6 +16337,12 @@ pub fn paramsubst(
                             arrasg_assigned = true;
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
+                            // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                            if let Some(__ht) = assoc_get(&var_name) {
+                                split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                            }
+                            isarr = 1; // c:3309
+                            arrasg_assigned = true; // c:3310 `arrasg = 0`
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
@@ -16279,11 +16372,26 @@ pub fn paramsubst(
                 if !is_set {
                     // c:Src/subst.c:3269-3307 — split the RHS only when
                     // `spsep || spbreak`, same as the `:=`/`::=` arms.
-                    if arrasg != 0 && spsep.is_none() && !force_split {
+                    if arrasg != 0 && spsep.is_none() {
+                        // c:3257-3262 — `if (spbreak) split_flags = PREFORK_SPLIT|PREFORK_SHWORDSPLIT;
+                        // else split_flags = PREFORK_NOSHWORDSPLIT; multsub(&val, split_flags, &aval, …)`:
+                        // `${(A)=a=x "y z"}` splits at UNQUOTED blanks only, so the quoted
+                        // word stays one element. A singsub-then-IFS-split lost the quoting.
+                        let spbreak = !suppress_split
+                            && (force_split
+                                || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                    && pf_flags & PREFORK_SINGLE == 0
+                                    && !qt)); // c:1707 / c:2562 / c:2567
+                        let split_flags = if spbreak {
+                            PREFORK_SPLIT | PREFORK_SHWORDSPLIT // c:3259
+                        } else {
+                            PREFORK_NOSHWORDSPLIT // c:3261
+                        };
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                        let (joined, parts, isarr_rhs, _ms) =
-                            multsub_operand(default, PREFORK_NOSHWORDSPLIT);
+                        let (joined, parts, isarr_rhs, _ms) = multsub_operand(default, split_flags);
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
+                        force_split = false; // c:3263 `spbreak = 0;`
+                        spbreak_cleared = true; // c:3263
                         value = joined.clone();
                         // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
                         // empty ⇒ 0; array-shaped RHS keeps its elements.
@@ -16296,8 +16404,27 @@ pub fn paramsubst(
                         };
                         if arrasg == 1 {
                             exec_assignaparam(&var_name, parts);
+                            // c:3307-3309 — `aval = pm->gsu.a->getfn(pm); isarr = 1; arrasg = 0;`
+                            split_parts = crate::ported::subst::arrays_get(&var_name);
+                            isarr = 1;
+                            arrasg_assigned = true;
                         } else {
                             exec_sethparam(&var_name, parts);
+                            // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                            if let Some(__ht) = assoc_get(&var_name) {
+                                split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                            }
+                            isarr = 1; // c:3309
+                            arrasg_assigned = true; // c:3310 `arrasg = 0`
+                        }
+                        // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
+                        // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
+                        // was cleared above (c:3263), so a quoted `"${(A)a::=$@}"` is ONE word.
+                        if nojoin == 0 && qt && !length_op {
+                            let __aval = split_parts.take().unwrap_or_default();
+                            value = crate::ported::utils::sepjoin(&__aval, sep.as_deref()); // c:3331
+                            isarr = 0; // c:3332
+                            arrasg_assigned = false;
                         }
                     } else {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
@@ -16329,6 +16456,12 @@ pub fn paramsubst(
                             arrasg_assigned = true;
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
+                            // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
+                            if let Some(__ht) = assoc_get(&var_name) {
+                                split_parts = Some(crate::ported::params::paramvalarr(&__ht, (hkeys | hvals) as i32));
+                            }
+                            isarr = 1; // c:3309
+                            arrasg_assigned = true; // c:3310 `arrasg = 0`
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
@@ -16387,10 +16520,11 @@ pub fn paramsubst(
                     // the same split flags (c:3215-3226) and the same
                     // `spbreak = 0` afterwards (c:3230): `${=1+"$@"}` keeps
                     // "$@"'s elements and nothing re-splits them.
-                    let spbreak = force_split
-                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
-                            && pf_flags & PREFORK_SINGLE == 0
-                            && !qt); // c:1707 / c:2567
+                    let spbreak = !suppress_split // c:2562 `${==…}` → spbreak = 0
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                && pf_flags & PREFORK_SINGLE == 0
+                                && !qt)); // c:1707 / c:2567
                     let split_flags = if spbreak {
                         let mut f = PREFORK_SHWORDSPLIT; // c:3216
                         if !aspar {
@@ -16498,10 +16632,11 @@ pub fn paramsubst(
                     // the same split flags (c:3215-3226) and the same
                     // `spbreak = 0` afterwards (c:3230): `${=1+"$@"}` keeps
                     // "$@"'s elements and nothing re-splits them.
-                    let spbreak = force_split
-                        || (pf_flags & PREFORK_SHWORDSPLIT != 0
-                            && pf_flags & PREFORK_SINGLE == 0
-                            && !qt); // c:1707 / c:2567
+                    let spbreak = !suppress_split // c:2562 `${==…}` → spbreak = 0
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0
+                                && pf_flags & PREFORK_SINGLE == 0
+                                && !qt)); // c:1707 / c:2567
                     let split_flags = if spbreak {
                         let mut f = PREFORK_SHWORDSPLIT; // c:3216
                         if !aspar {
@@ -19864,10 +19999,19 @@ pub fn paramsubst(
                 // the same condition expressed as "the collapse has run".
                 let scalar_ctx =
                     (qt || dq_collapsed) && !is_at_subscript && !is_at_var && nojoin != 2;
-                if scalar_ctx {
+                // c:3549 `if (!vunset && isarr)` — a SCALAR (or unset) LHS has
+                // no `aval`: C takes the c:3555-3568 arm and tests the scalar
+                // `val` itself for membership. `arr` is empty for a scalar, so
+                // testing its sepjoin blanked every scalar.
+                let lhs_scalar = arrays_get(&var_name).is_none() && split_parts.is_none();
+                if scalar_ctx || lhs_scalar {
                     // c:3032 — DQ sepjoin uses the (j:STR:) `sep`; test that
                     // joined string for membership per C's c:3555.
-                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
+                    let joined = if lhs_scalar {
+                        value.clone() // c:3565 gethashnode2(ht, val)
+                    } else {
+                        crate::ported::utils::sepjoin(&arr, sep.as_deref()) // c:3032
+                    };
                                                                                       // c:3565-3567 exclude — blank iff joined IS a member.
                     value = if other_set.contains(&joined) {
                         String::new()
@@ -19939,11 +20083,17 @@ pub fn paramsubst(
                 // the same condition expressed as "the collapse has run".
                 let scalar_ctx =
                     (qt || dq_collapsed) && !is_at_subscript && !is_at_var && nojoin != 2;
-                if scalar_ctx {
+                // c:3549 — scalar/unset LHS: membership test of `val` (see `:|`).
+                let lhs_scalar = arrays_get(&var_name).is_none() && split_parts.is_none();
+                if scalar_ctx || lhs_scalar {
                     // c:3032 — the DQ sepjoin uses the (j:STR:) `sep`
                     // (default IFS when no (j)); test that joined string
                     // for set membership exactly as C's c:3555 gethashnode2.
-                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
+                    let joined = if lhs_scalar {
+                        value.clone() // c:3565 gethashnode2(ht, val)
+                    } else {
+                        crate::ported::utils::sepjoin(&arr, sep.as_deref()) // c:3032
+                    };
                                                                                       // c:3565-3567 intersect — blank iff joined is NOT a member.
                     value = if other_set.contains(&joined) {
                         joined
@@ -22161,9 +22311,11 @@ pub fn paramsubst(
             //     else { untokenize(val); list = bufferwords(NULL, val, NULL, shsplit); }
             // `untokenize` DROPS the Nularg sentinel (c:Src/exec.c:2143), which is
             // what keeps a nulstring element out of the word list (`q=("" 1)`,
-            // `"${(z)${(@)q}}"` is the single word `1`). Only that half is applied
-            // here: the lexer must still see `$'…'` regions in source form.
-            let strip_nularg = |s: &str| -> String { s.chars().filter(|&c| c != Nularg).collect() };
+            // `"${(z)${(@)q}}"` is the single word `1`). It also turns every other
+            // token back into its character — the lexer skips token bytes
+            // (c:Src/input.c ingetc `if (itok(...)) continue`), so a Dash/Star/Quest
+            // left in `${(z):-a-b}` vanished (`ab`). `untokenize_ztokens` is the C
+            // untokenize (it keeps `$'…'` in source form, unlike `untokenize`).
             let mut words: Vec<String> = Vec::new();
             let elements: Option<Vec<String>> = if isarr != 0 {
                 split_parts
@@ -22176,12 +22328,12 @@ pub fn paramsubst(
                 Some(list) => {
                     for ap in &list {
                         // c:4190-4192
-                        words.extend(crate::ported::hist::bufferwords(&strip_nularg(ap), None, shsplit).0);
+                        words.extend(crate::ported::hist::bufferwords(&crate::ported::lex::untokenize_ztokens(ap), None, shsplit).0);
                     }
                 }
                 None => {
                     // c:4196-4197
-                    words = crate::ported::hist::bufferwords(&strip_nularg(&value), None, shsplit).0;
+                    words = crate::ported::hist::bufferwords(&crate::ported::lex::untokenize_ztokens(&value), None, shsplit).0;
                 }
             }
                                                                         // c:4174-4198 — bufferwords result becomes a word list:
@@ -23509,6 +23661,7 @@ pub fn paramsubst(
         // `$name` path has its own c:1705 block further down; only the braced
         // one was uncovered.
         let spbreak = !spbreak_cleared
+            && !suppress_split // c:2562 `${==…}` → spbreak = 0
             && (force_split || (pf_flags & PREFORK_SHWORDSPLIT != 0 && !in_ssub && !qt)); // c:1707, c:3230
                                                                                                // c:Src/subst.c:3906-3911 — inside the same `if (ssub || spbreak || …)`
                                                                                                // block, an ARRAY-shaped value is JOINED FIRST when `nojoin == 0`:
@@ -23609,11 +23762,6 @@ pub fn paramsubst(
                 isarr = if nojoin != 0 { 1 } else { 2 };
             }
         }
-        // ${==name} forced no-split — just consume the flag, no
-        // additional action needed since the default path doesn't
-        // split. Used to override SH_WORD_SPLIT for one expansion.
-        let _ = suppress_split; // c:2562
-
         // Reconstruct the full str3 with the brace expansion applied
         // — same protocol the simple `$var` arm uses (line 1240).
         // Caller (stringsubst) re-loads `str3 = list.getdata(node_idx)`
@@ -24244,8 +24392,14 @@ pub fn paramsubst(
             // `isarr = nojoin ? 1 : 2` at c:3927 ever gets a chance, so even
             // `(@f)` stays scalar when the split yields one field —
             // `"${${(@f)$(echo hello)}[1]}"` is `h`, not `hello`.
-            let forced_split_to_one =
-                (spsep.is_some() || force_split) && parts.len() == 1 && !arrasg_assigned; // c:3921-3924 `!isarr`
+            // c:4246-4253 — `if (arrasg && !isarr) { l->list.flags |= LF_ARRAY;
+            // aval = hmkarray(val); isarr = 1; }` runs AFTER that collapse, so
+            // the `(A)` flag puts a one-field split back into array shape:
+            // `${${(As:;:)o}[1]}` is the whole field, not its first character.
+            let forced_split_to_one = (spsep.is_some() || force_split)
+                && parts.len() == 1
+                && !arrasg_assigned
+                && arrasg == 0; // c:3921-3924 `!isarr`, c:4246
             // c:Src/subst.c:3881 `if (isarr) l->list.flags |= LF_ARRAY; else … &= ~LF_ARRAY;`
             // LF_ARRAY tracks `isarr`, NOT `nojoin`. The `(@)` word-flag sets
             // nojoin=2 (force-no-join) but does NOT make a SCALAR array-shaped:
@@ -24838,8 +24992,44 @@ pub fn paramsubst(
                 // for a FLAG group carrying a source-literal backslash: the
                 // plain-key arm above already applied getarg's marker
                 // disposition and must not be re-lexed.
-                let to_expand = if sub_is_flag && raw_sub.contains('\\') {
-                    crate::ported::lex::parsestr(&raw_sub).unwrap_or_else(|_| raw_sub.clone())
+                //
+                // c:Src/params.c:1539-1551 — before that re-lex, getarg turns
+                // every escape marker that does NOT guard a bracket/paren/brace
+                // or `"` back into its character: `*t = ztokens[*t - Pound]`,
+                // i.e. Bnull → `\`. A NESTED subscript carries the lexer's
+                // `Bnull *` (`$s[$s[(i)\*]]`); left as a marker, the singsub
+                // below strips it (prefork's remnulargs) and the inner search
+                // got a bare `*` wildcard, so it answered 1 instead of the
+                // index of the literal `*`.
+                let folded = if sub_is_flag || !assoc_contains(&var_name) {
+                    let cv: Vec<char> = raw_sub.chars().collect();
+                    let mut out = String::with_capacity(raw_sub.len());
+                    let mut i = 0;
+                    while i < cv.len() {
+                        let c = cv[i];
+                        if c == crate::ported::zsh_h::Bnull {
+                            match cv.get(i + 1) {
+                                // c:1541-1548 — a guarded bracket keeps its marker.
+                                Some('[' | ']' | '(' | ')' | '{' | '}') => {
+                                    out.push(c);
+                                    out.push(cv[i + 1]);
+                                    i += 2;
+                                    continue;
+                                }
+                                Some('"') => out.push(c), // c:1549 `else if (c != '"')`
+                                _ => out.push('\\'),     // c:1550
+                            }
+                        } else {
+                            out.push(c);
+                        }
+                        i += 1;
+                    }
+                    out
+                } else {
+                    raw_sub.clone()
+                };
+                let to_expand = if (sub_is_flag && raw_sub.contains('\\')) || folded != raw_sub {
+                    crate::ported::lex::parsestr(&folded).unwrap_or_else(|_| folded.clone())
                 } else {
                     raw_sub
                 }; // c:1567

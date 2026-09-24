@@ -562,3 +562,69 @@ print -r -- ${#s}; print -rl -- $s"##,
         );
     }
 }
+
+/// `${==…}` and the `(A)` assignment forms: C's c:2562 `spbreak = 0` and the
+/// c:3257-3262 multsub split of an array-assignment word (D04parameter).
+mod split_flag_and_array_assign {
+    use super::*;
+
+    /// c:2562 — `${==…}` clears spbreak, so under SH_WORD_SPLIT the default
+    /// word's nested expansions are not split (c:3219-3226 NOSHWORDSPLIT).
+    #[test]
+    fn double_equals_suppresses_shwordsplit_in_default_word() {
+        assert_parity(r##"emulate sh; foo="1 2" bar="3 4"; print -l ${==1:-$foo $bar}"##);
+        assert_parity(r##"emulate sh; foo="1 2"; print -l ${===1:-$foo} ${==foo}"##);
+    }
+
+    /// c:3259 — `${(A)=a=…}` splits at UNQUOTED blanks only; a quoted word
+    /// stays one element, and c:3307 makes the expansion the new array.
+    #[test]
+    fn array_assign_split_keeps_quoted_words() {
+        assert_parity(
+            r##"print -l ${(A)=foo=Make "this test keeps" on a\ b}; print ${(t)foo} $#foo"##,
+        );
+        assert_parity(r##"print -l ${(A)=bar::=x "y z" w}; print $#bar"##);
+        assert_parity(r##"print -l ${(A)=q:="p q" r}; print $#q"##);
+        assert_parity(r##"x="1 2 3"; print -l ${(A)=z::=$x}; print $#z"##);
+    }
+
+    /// c:3302 — `(AA)` expands to the hash values; c:3326-3334 joins a
+    /// quoted `(A)` assignment back into one word.
+    #[test]
+    fn assoc_assign_values_and_quoted_join() {
+        assert_parity(r##"print -l ${(AA)=h::=k "v w"}; print -r -- $h[k]"##);
+        assert_parity(
+            r##"set If "this test fails" "we have"; print -l "${(A)foo::=$@}"; print -l $foo"##,
+        );
+    }
+
+    /// c:4246-4253 — `(A)` re-forces array shape after a split that yielded
+    /// one field (c:3924), so a subscript picks the element, not a character.
+    #[test]
+    fn array_flag_keeps_one_field_split_an_array() {
+        assert_parity(
+            r##"o=Option1; print ${${(As:;:)o}[1]} ${#${(As:;:)o}} ${${(Af)o}[1]} ${${(A)=o}[1]} "${${(As:;:)o}[1]}""##,
+        );
+        assert_parity(r##"o=Option1; print ${${(s:;:)o}[1]} ${#${(s:;:)o}}"##);
+    }
+
+    /// c:4185-4197 — `(z)` untokenizes the value before bufferwords re-lexes
+    /// it; token chars (Dash, Star, Quest) left in were skipped by the lexer.
+    #[test]
+    fn z_flag_untokenizes_before_lexing() {
+        assert_parity(r##"setopt nonomatch; print -rl -- ${(z):-foo-bar*thingy?}"##);
+        assert_parity(r##"print -rl -- ${(z):-a-b} ${(z):-"x*y"} ${(z):-a?b}"##);
+    }
+
+    /// c:3549-3568 — a SCALAR left operand of `:|` / `:*` is tested for
+    /// membership as a whole.
+    #[test]
+    fn scalar_operand_of_array_set_ops() {
+        assert_parity(
+            r##"mod=("one word" "two words"); s="two words"; print -r -- "[${s:|mod}] [${s:*mod}]""##,
+        );
+        assert_parity(
+            r##"s=abc; e=(); print -r -- "[${s:*nonexist}] [${s:|nonexist}] [${s:*e}] [${s:|e}] [${u:*e}]""##,
+        );
+    }
+}

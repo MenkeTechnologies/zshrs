@@ -638,3 +638,19 @@ mod unbraced_quoted_subscript_is_one_word {
         assert_parity(r#"n=(x y); IFS=:; t() { print -r -- "$# [$1]" }; t "$n[1,2]"; t "${n[1,2]}"; t $n[1,2]"#);
     }
 }
+
+/// c:Src/params.c:1539-1551 — getarg turns an escape marker that does not
+/// guard a bracket or `"` back into `\` before parsestr/singsub, so the
+/// escape reaches the pattern of a search flag (D06subscript).
+mod unbraced_subscript_escape_marker {
+    use super::*;
+
+    #[test]
+    fn escaped_star_survives_into_search_pattern() {
+        assert_parity(
+            r#"s='Twinkle, twinkle, little *, [how]'; x='*'; print $s[(I)$x\*] ${s[(I)$x\*]} $s[(i)$x\*]"#,
+        );
+        assert_parity(r#"a=(x '*' z); print $a[(i)\*] $a[$a[(i)\*]] $a[${a[(i)\*]}]"#);
+        assert_parity(r#"s='little *, [how]'; print -R $s[$s[(i)\*]] $s[(i)\*]"#);
+    }
+}
