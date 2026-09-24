@@ -567,3 +567,21 @@ fn a_region_does_not_survive_accept_line() {
         "visual region active at accept-line, then vbd on the next line",
     );
 }
+
+/// `m` and `` ` `` read the mark name as the NEXT key
+/// (`visetmark`/`vigotomark`, `zle_move.c:874-926`); `` `` `` returns to
+/// where the last jump started.
+#[test]
+fn set_mark_and_jump_back() {
+    assert_same_dump(
+        &vi_one_write("one two\\ebmt3|`tx``"),
+        "X02 #53: setting mark and returning to original position",
+    );
+}
+
+/// An unset mark fails without moving; a bad mark name fails too.
+#[test]
+fn jump_to_an_unset_mark_fails() {
+    assert_same_dump(&vi_one_write("one two\\eb`qx"), "vicmd `q on an unset mark");
+    assert_same_dump(&vi_one_write("one two\\eb`1x"), "vicmd `1 — not a mark name");
+}

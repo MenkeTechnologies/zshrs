@@ -809,14 +809,10 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "vi-forward-word-end" => Some(viforwardwordend),
         "vi-forward-word" => Some(viforwardword),
         "vi-goto-column" => Some(|_| vigotocolumn()),
-        // vi-goto-mark / vi-goto-mark-line / vi-set-mark read a
-        // second key char before dispatching (C body c:887/c:929/c:872).
-        // The keymap-level dispatch supplies the char via
-        // `getrestchar_keybuf`; this fn-ptr wrapper passes NUL since
-        // the dispatch is from a static table — the body re-reads
-        // the next key itself.
-        "vi-goto-mark-line" => Some(|_| vigotomarkline('\0')),
-        "vi-goto-mark" => Some(|_| vigotomark('\0')),
+        // vi-goto-mark / vi-goto-mark-line / vi-set-mark read the mark
+        // name themselves with getfullchar(0) (zle_move.c:878/897).
+        "vi-goto-mark-line" => Some(|_| vigotomarkline()),
+        "vi-goto-mark" => Some(|_| vigotomark()),
         "vi-history-search-backward" => Some(|_| vihistorysearchbackward()),
         "vi-history-search-forward" => Some(|_| vihistorysearchforward()),
         "vi-indent" => Some(|_| viindent()),
@@ -839,7 +835,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "vi-rev-repeat-find" => Some(|_| virevrepeatfind()),
         "vi-rev-repeat-search" => Some(|_| virevrepeatsearch()),
         "vi-set-buffer" => Some(visetbuffer),
-        "vi-set-mark" => Some(|_| visetmark('\0')),
+        "vi-set-mark" => Some(|_| visetmark()),
         "vi-substitute" => Some(|_| visubstitute()),
         "vi-swap-case" => Some(|_| viswapcase()),
         "vi-unindent" => Some(|_| viunindent()),

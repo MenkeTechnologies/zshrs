@@ -1152,50 +1152,82 @@ pub fn vifirstnonblank() -> i32 {
     0 // c:867
 }
 
-/// Port of `visetmark(UNUSED(char **args))` from Src/Zle/zle_move.c:872.
-/// WARNING: param names don't match C — Rust=(zle, ch) vs C=(args)
-pub fn visetmark(ch: char) -> i32 {
-    // c:872
-    // c:872 — `ch = getfullchar(0)`. Caller passes the read char.
-    if !('a'..='z').contains(&ch) {
-        // c:877
-        return 1;
-    }
-    let idx = (ch as u8 - b'a') as usize; // c:879
-    vimarks().lock().unwrap()[idx] = Some((
-        ZLECS.load(Ordering::SeqCst),
-        history().lock().unwrap().cursor as i32,
-    )); // c:880
-    0
-}
-
-/// Port of `vigotomark(UNUSED(char **args))` from Src/Zle/zle_move.c:887.
-/// WARNING: param names don't match C — Rust=(zle, ch) vs C=(args)
-pub fn vigotomark(ch: char) -> i32 {
-    // c:887
-    // c:887-927 — read mark name; jump to (vimarkcs[idx], vimarkline[idx]).
-    let idx = match ch {
-        'a'..='z' => (ch as u8 - b'a') as usize, // c:894
-        '\'' | '`' => 26,                        // c:898 ' / ` mark
-        _ => return 1,
+/// Port of `visetmark(UNUSED(char **args))` from Src/Zle/zle_move.c:874.
+/// The mark's history line is the ZLE history cursor (this port's
+/// `histline`).
+pub fn visetmark() -> i32 {
+    // c:874
+    // c:878 — `ch = getfullchar(0);`
+    let ch = match crate::ported::zle::zle_main::getfullchar(false) {
+        Some(c) => c,
+        None => return 1,
     };
-    if let Some((cs, hist)) = vimarks().lock().unwrap()[idx] {
-        // c:903
-        ZLECS.store(cs.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
-        history().lock().unwrap().cursor = hist.max(0) as usize;
-        return 0;
+    if !('a'..='z').contains(&ch) {
+        // c:879
+        return 1; // c:880
     }
-    1
+    let idx = (ch as u8 - b'a') as usize; // c:881
+    vimarks().lock().unwrap()[idx] = Some((
+        ZLECS.load(Ordering::SeqCst),               // c:882 `vimarkcs[ch] = zlecs;`
+        history().lock().unwrap().cursor as i32, // c:883 `vimarkline[ch] = histline;`
+    ));
+    0 // c:884
 }
 
-/// Port of `vigotomarkline(char **args)` from Src/Zle/zle_move.c:929.
-/// C body (single statement chain):
-///     `vigotomark(args); return vifirstnonblank(zlenoargs);`
-/// WARNING: param names don't match C — Rust=(ch) vs C=(args)
-pub fn vigotomarkline(ch: char) -> i32 {
-    // c:929
-    vigotomark(ch); // c:931
-    vifirstnonblank() // c:932
+/// Port of `vigotomark(UNUSED(char **args))` from Src/Zle/zle_move.c:889.
+/// An unset mark (C `!*markhist`) is `None`.
+pub fn vigotomark() -> i32 {
+    // c:889
+    let oldcs = ZLECS.load(Ordering::SeqCst); // c:893
+    let oldline = history().lock().unwrap().cursor as i32; // c:894
+    // c:897 — `ch = getfullchar(0);`
+    let ch = match crate::ported::zle::zle_main::getfullchar(false) {
+        Some(c) => c,
+        None => return 1,
+    };
+    // `slot` is the vimark index whose entry is cleared on a failed
+    // history jump (c:917); the `.` mark has none.
+    let (slot, mark): (Option<usize>, Option<(usize, i32)>) = if ch == '\'' || ch == '`' {
+        (Some(26), vimarks().lock().unwrap()[26]) // c:898-900
+    } else if ch == '.' && CURCHANGE.load(Ordering::SeqCst) > 0 {
+        // c:901-907 — position cursor where it was after the last change.
+        // not exactly what vim does but close enough
+        let stack = UNDO_STACK.lock().unwrap();
+        let prev = &stack[CURCHANGE.load(Ordering::SeqCst) - 1];
+        (None, Some((prev.new_cs.max(0) as usize, prev.hist))) // c:904-907
+    } else if ch.is_ascii_lowercase() {
+        let i = (ch as u8 - b'a') as usize; // c:909-910
+        (Some(i), vimarks().lock().unwrap()[i])
+    } else {
+        return 1; // c:912
+    };
+    // c:913-920
+    let (markcs, markhist) = match mark {
+        Some(m) => m,
+        None => return 1, // c:914-915 `if (!*markhist) return 1;`
+    };
+    let cur = history().lock().unwrap().cursor as i32;
+    if cur != markhist && !zle_goto_hist(markhist - cur, false) {
+        // c:916
+        if let Some(i) = slot {
+            vimarks().lock().unwrap()[i] = None; // c:917 `*markhist = 0;`
+        }
+        return 1; // c:918
+    }
+    ZLECS.store(markcs, Ordering::SeqCst); // c:921 `zlecs = *markcs;`
+    vimarks().lock().unwrap()[26] = Some((oldcs, oldline)); // c:922-923
+    if ZLECS.load(Ordering::SeqCst) > ZLELL.load(Ordering::SeqCst) {
+        // c:924
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst); // c:925
+    }
+    0 // c:926
+}
+
+/// Port of `vigotomarkline(char **args)` from Src/Zle/zle_move.c:931.
+pub fn vigotomarkline() -> i32 {
+    // c:931
+    vigotomark(); // c:933
+    vifirstnonblank() // c:934
 }
 /// Move cursor to the start of the current logical line.
 ///
