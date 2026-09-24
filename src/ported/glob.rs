@@ -1976,10 +1976,31 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     // With the MULTIBYTE option off a unit is a single BYTE, which is what
     // makes the range over 8-bit endpoints legal only in that mode
     // (mb_metacharlenconv, Src/utils.c:5613).
-    let lb = crate::ported::utils::unmetafy_str(left); // c:2236
+    // c:2227-2234 / c:2248-2255 — an endpoint that is a lexer token stands
+    // for its source character: `if (itok(*pnext)) { if (*pnext == Inbrace)
+    // return 0; convstr[0] = ztokens[*pnext - Pound]; … }`. Decoding the
+    // token char itself only happened to work while the locale was UTF-8:
+    // under LANG=C `left{[..]}right` (Inbrack..Outbrack) decoded to WEOF
+    // and the range was not recognised.
+    let untok = |t: &str| -> Option<String> {
+        let mut it = t.chars();
+        match (it.next(), it.next()) {
+            (Some(c), None) if (c as u32) < 0x100 && crate::ported::ztype_h::itok(c as u8) => {
+                if c == crate::ported::zsh_h::Inbrace {
+                    return None; // c:2229
+                }
+                let idx = (c as u32 - Pound as u32) as usize;
+                Some(ZTOKENS[idx..idx + 1].to_string()) // c:2230
+            }
+            _ => Some(t.to_string()),
+        }
+    };
+    let left = untok(left)?;
+    let end_str = untok(end_str)?;
+    let lb = crate::ported::utils::unmetafy_str(&left); // c:2236
     let (l_len, cstart, _) = crate::ported::utils::mb_metacharlenconv(&lb); // c:2236
                                                                             // c:2256-2257 — same decode for the last character of the range.
-    let rb = crate::ported::utils::unmetafy_str(end_str); // c:2257
+    let rb = crate::ported::utils::unmetafy_str(&end_str); // c:2257
     let (r_len, cend, _) = crate::ported::utils::mb_metacharlenconv(&rb); // c:2257
                                                                           // c:2239/2264 — `cstart == WEOF` / `*pnext != Outbrace`: the endpoint
                                                                           // must decode AND consume exactly the whole endpoint text.

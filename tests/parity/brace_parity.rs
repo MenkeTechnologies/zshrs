@@ -328,3 +328,16 @@ mod no_panic {
         assert_ne!(r.exit, 101, "multibyte brace content must not panic");
     }
 }
+
+/// c:glob.c:2227-2255 bracechardots — a token endpoint stands for its source
+/// character (`ztokens[*pnext - Pound]`), independent of the locale.
+mod token_char_ranges {
+    use super::*;
+
+    #[test]
+    fn bracket_endpoints_in_c_locale() {
+        assert_parity(r#"LC_ALL=C; print -r left{[..]}right"#);
+        assert_parity(r#"LC_ALL=C; print -r x{[..\]}y x{\[..]}y"#);
+        assert_parity(r#"print -r left{[..]}right {{..}}"#);
+    }
+}
