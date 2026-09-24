@@ -396,40 +396,59 @@ pub fn bin_stat(
             flags |= STF_PICK; // c:406
         } else {
             // c:407 - flag arm
-            for ch in arg.chars() {
+            for (pos, ch) in arg.char_indices() {
+                // c:410-411 — `rest` is `arg+1` for an option that takes a value.
+                let rest: &str = &arg[pos + 1..];
                 match ch {
                     'g' | 'l' | 'L' | 'n' | 'N' | 'o' | 'r' | 's' | 't' | 'T' => {
                         ops[ch as u8 as usize] = true; // c:411
                     }
                     'A' => {
-                        // c:412 — array name follows.
-                        i += 1;
-                        if i >= args.len() {
-                            zwarnnam(nam, "missing parameter name");
-                            return 1;
+                        // c:412-418 — `if (arg[1]) arrnam = arg+1; else if
+                        // (!(arrnam = *++args)) { missing parameter name }`.
+                        if !rest.is_empty() {
+                            arrnam = Some(rest.to_string()); // c:414
+                        } else {
+                            i += 1;
+                            if i >= args.len() {
+                                zwarnnam(nam, "missing parameter name"); // c:416
+                                return 1;
+                            }
+                            arrnam = Some(args[i].to_string()); // c:415
                         }
-                        arrnam = Some(args[i].to_string());
                         flags |= STF_ARRAY;
                         break;
                     }
                     'H' => {
-                        i += 1;
-                        if i >= args.len() {
-                            zwarnnam(nam, "missing parameter name");
-                            return 1;
+                        // c:421-427 — same attached-or-next rule as -A.
+                        if !rest.is_empty() {
+                            hashnam = Some(rest.to_string()); // c:422
+                        } else {
+                            i += 1;
+                            if i >= args.len() {
+                                zwarnnam(nam, "missing parameter name"); // c:424
+                                return 1;
+                            }
+                            hashnam = Some(args[i].to_string()); // c:423
                         }
-                        hashnam = Some(args[i].to_string());
                         flags |= STF_HASH;
                         break;
                     }
                     'f' => {
-                        ops[b'f' as usize] = true;
-                        i += 1;
-                        if i >= args.len() {
-                            zwarnnam(nam, "missing file descriptor");
-                            return 1;
-                        }
-                        let (val, endptr) = zstrtol(args[i], 10);
+                        ops[b'f' as usize] = true; // c:429
+                        // c:430-435 — `if (arg[1]) sfd = arg+1; else if
+                        // (!(sfd = *++args)) { missing file descriptor }`.
+                        let sfd: &str = if !rest.is_empty() {
+                            rest // c:431
+                        } else {
+                            i += 1;
+                            if i >= args.len() {
+                                zwarnnam(nam, "missing file descriptor"); // c:433
+                                return 1;
+                            }
+                            args[i] // c:432
+                        };
+                        let (val, endptr) = zstrtol(sfd, 10); // c:436
                         if !endptr.is_empty() {
                             zwarnnam(nam, "bad file descriptor");
                             return 1;
@@ -442,7 +461,7 @@ pub fn bin_stat(
                         // after 'F' (e.g. `-F%Y`), use those; else consume
                         // the next argv entry. Force STF_STRING via -s so
                         // the format actually gets used (c:449-450).
-                        let inline: &str = &arg[arg.find('F').unwrap() + 1..];
+                        let inline: &str = rest;
                         let fmt: &str = if !inline.is_empty() {
                             // c:443-444
                             inline
@@ -479,7 +498,6 @@ pub fn bin_stat(
         argv.push(args[i]);
         i += 1;
     }
-    let _ = fd;
 
     if (flags & STF_ARRAY) != 0 && (flags & STF_HASH) != 0 {
         // c:459
@@ -584,11 +602,22 @@ pub fn bin_stat(
     // as success. Track the first failure rc and return it after the
     // loop.
     let mut rc: i32 = 0;
-    for path in &argv {
-        let meta = if use_lstat {
-            fs::symlink_metadata(path)
+    // c:557 — `for (; OPT_ISSET(ops,'f') || *args; args++)`: with -f there
+    // are no file arguments (c:493) and the single pass fstat()s `fd`; the
+    // c:563 diagnostic then names the descriptor (`sprintf(outbuf, "%d", fd)`).
+    let fd_label = fd.to_string();
+    let targets: Vec<&str> = if ops[b'f' as usize] { vec![fd_label.as_str()] } else { argv.clone() };
+    for path in &targets {
+        let meta = if ops[b'f' as usize] {
+            // c:559 — `fstat(fd, &statbuf)`. The descriptor is borrowed,
+            // never closed: ManuallyDrop keeps File's Drop off it.
+            use std::os::unix::io::FromRawFd;
+            let file = std::mem::ManuallyDrop::new(unsafe { fs::File::from_raw_fd(fd) });
+            file.metadata()
+        } else if use_lstat {
+            fs::symlink_metadata(path) // c:560
         } else {
-            fs::metadata(path)
+            fs::metadata(path) // c:561
         };
         let meta = match meta {
             Ok(m) => m,
