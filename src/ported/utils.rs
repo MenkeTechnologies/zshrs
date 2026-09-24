@@ -3120,6 +3120,16 @@ pub fn zclose(fd: i32) -> i32 {
                     fd,
                     "zclose: skipping unowned in-range fd (thread-safety guard)"
                 );
+                // The guard exists for an fd a foreign thread has OPEN; an fd
+                // nobody has open is what C's blind `close(fd)` (c:2145)
+                // reports as -1/EBADF, and `{varid}<&-` on an already-closed
+                // descriptor surfaces that as "failed to close file
+                // descriptor N" (c:Src/exec.c:3928-3930). fcntl leaves errno
+                // at EBADF for the caller's `%e`.
+                #[cfg(unix)]
+                if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+                    return -1;
+                }
                 return 0;
             }
             if fdtable_get(fd) == FDT_FLOCK {

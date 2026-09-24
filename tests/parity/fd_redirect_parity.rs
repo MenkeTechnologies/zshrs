@@ -565,3 +565,24 @@ mod varid_descriptor_numbers {
         );
     }
 }
+
+/// c:Src/exec.c:3928-3930 — closing a `{varid}` descriptor that is already
+/// closed reports "failed to close file descriptor N: bad file descriptor"
+/// (zclose → close(2) → EBADF, c:Src/utils.c:2145). zshrs's zclose skipped
+/// fds its fdtable did not own and returned 0, so the warning never fired.
+mod varid_close_of_a_closed_descriptor {
+    use super::*;
+
+    #[test]
+    fn second_close_warns() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "exec 2>&1; exec {v}</dev/null; exec {v}<&-; exec {v}<&-; print st=$?",
+        );
+        assert_parity_in(
+            d.path(),
+            "exec 2>&1; exec {v}</dev/null; exec {v}<&-; read {v}<&-; print st=$?",
+        );
+    }
+}
