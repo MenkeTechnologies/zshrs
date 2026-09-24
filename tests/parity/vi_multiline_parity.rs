@@ -555,3 +555,15 @@ fn j_with_a_count_moves_that_many_lines() {
     assert_same_dump(&vi_one_write("fi\\eOx\\eOif\\e2j"), "vicmd 2j");
     assert_same_dump(&vi_one_write("a\\eob\\eoc\\e2k"), "vicmd 2k");
 }
+
+/// zleread resets `region_active` (and lastcol, zmod, prefixflag) at the
+/// start of every line (`zle_main.c:1343-1347`). A line accepted while a
+/// visual selection was active must not leave the next line's `d`
+/// operating on a stale region.
+#[test]
+fn a_region_does_not_survive_accept_line() {
+    assert_same_dump(
+        &vi_one_write(": abc\\ev\\r x testing\\ehvbd"),
+        "visual region active at accept-line, then vbd on the next line",
+    );
+}

@@ -1628,6 +1628,16 @@ pub fn zleread(
     // every prompt.
     zleactive.store(1, SeqCst);
     crate::ported::zle::zle_refresh::RESETNEEDED.store(1, SeqCst);
+    // c:1339-1347 — Start of the main zle read. Fully reset error
+    // conditions, including user interrupt; a region left active by the
+    // previous line (a widget that accepted mid-selection) must not carry
+    // into this one.
+    crate::utils::errflag.store(0, SeqCst); // c:1343
+    crate::ported::builtin::RETFLAG.store(0, SeqCst); // c:1343
+    LASTCOL.store(-1, SeqCst); // c:1344
+    initmodifier(); // c:1345
+    PREFIXFLAG.store(0, SeqCst); // c:1346
+    REGION_ACTIVE.store(0, SeqCst); // c:1347
 
     // c:1356 — `zlecallhook(init, NULL)` — runs user's zle-line-init widget
     // before the editing loop (e.g. for bindkey installation / zle -A wiring).
