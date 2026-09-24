@@ -235,3 +235,25 @@ mod nomatch_isolation {
         assert_parity(r#"{ y[[b] }; print not-reached"#);
     }
 }
+
+/// An expansion error aborts the subshell body before its command's
+/// redirection scope closes. C's `( … )` is a forked child (c:Src/exec.c:1123
+/// entersubsh), so those fds die with it and the parent's fd 2 is untouched;
+/// zshrs's in-process subshell kept `2>&1` live and sent the parent's
+/// later stderr to stdout.
+mod error_leaves_redirect_open {
+    use super::*;
+
+    #[test]
+    fn stderr_dup_does_not_outlive_aborted_subshell() {
+        assert_parity(r#"(print ${a[]} 2>&1); print -u2 err"#);
+        assert_parity(r#"( { print ${a[]} } 2>/dev/null ); print -u2 err"#);
+        assert_parity(r#"( (print ${a[]} 2>&1); print -u2 in ); print -u2 out"#);
+        assert_parity(r#"f() { (: ${a[(r)]} 2>&1) }; f; print -u2 err"#);
+    }
+
+    #[test]
+    fn stdout_redirect_does_not_outlive_aborted_subshell() {
+        assert_parity(r#"(print ${a[]} >/dev/null); print out"#);
+    }
+}

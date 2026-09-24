@@ -18805,6 +18805,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // c:Src/exec.c:2880 — fork copies the fd table; the
                 // child's `exec >file` / `exec N<&-` die with it.
                 fd_frame: crate::ported::exec::SubshFdFrame::enter(),
+                redir_depth: exec.redirect_scope_stack.len(),
                 // c:Src/signals.c:39 `sigtrapped` — saved so End restores the
                 // parent's per-signal trap flags (see the field docs).
                 sigtrapped: crate::ported::signals::sigtrapped
@@ -18976,6 +18977,10 @@ impl fusevm::ShellHost for ZshrsHost {
             // the or-branch).
             exec.current_command_glob_failed.set(false);
             if let Some(snap) = exec.subshell_snapshots.pop() {
+                // c:Src/exec.c:1123 entersubsh — the forked child owns its fds, so
+                // redirections a body error left open (`WithRedirectsEnd` skipped)
+                // go with it: `(print ${a[]} 2>&1); print -u2 err` keeps fd 2.
+                exec.unwind_redirect_scopes_to(snap.redir_depth);
                 // c:Src/exec.c::entersubsh fork semantics — `loops` /
                 // `breaks` / `contflag` are process globals the child
                 // owns a private copy of, so `(break)` inside a loop

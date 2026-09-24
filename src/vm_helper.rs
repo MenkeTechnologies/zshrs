@@ -641,6 +641,10 @@ pub struct SubshellSnapshot {
     /// pointing at t.log and `cat` looped forever copying the file into
     /// itself.
     pub fd_frame: crate::ported::exec::SubshFdFrame,
+    /// `redirect_scope_stack` depth at entry. A body aborted by an error
+    /// skips its `WithRedirectsEnd`; C's forked child takes those fds with
+    /// it, so subshell_end unwinds to here.
+    pub redir_depth: usize,
     /// `sigtrapped[]` at subshell entry (Src/signals.c:39). C's
     /// `entersubsh` clears per-signal trap STATE via `unsettrap(sig)`
     /// (c:Src/exec.c:1088-1092), which zeroes both the body and the
