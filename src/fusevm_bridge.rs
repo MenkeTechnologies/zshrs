@@ -4022,7 +4022,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `stage_fds_take()` below closes its `last_in_fd` copy; the forked
         // child inherits the parked pipe fd and installs it onto stdin, and
         // the writer stages (already forked) supply its input.
-        let last_stage_status = if crate::dash_mode::bash_mode() {
+        //
+        // c:Src/exec.c:3042-3043 — zsh itself forks the last stage of a
+        // multi-stage pipeline under sh emulation:
+        //     if ((how & Z_ASYNC) || output ||
+        //         (last1 == 2 && input && EMULATION(EMULATE_SH))) {
+        //         ... execcmd_fork(...)
+        // so `emulate sh -c 'echo x | read v; echo $v'` prints an empty
+        // line. ksh emulation keeps the in-shell last stage.
+        let last_stage_status = if crate::dash_mode::bash_mode()
+            || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+        {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
             match unsafe { libc::fork() } {

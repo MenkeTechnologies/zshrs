@@ -282,3 +282,31 @@ mod exit_in_a_forked_child_inside_a_function_or_subshell {
         assert_parity("(exit 3 & wait $!; print $?)");
     }
 }
+
+/// c:Src/exec.c:3042-3043 — under sh emulation the LAST stage of a
+/// multi-stage pipeline is forked (`last1 == 2 && input &&
+/// EMULATION(EMULATE_SH)`), so its assignments do not reach the shell.
+/// ksh and zsh emulation keep the in-shell last stage.
+mod sh_emulation_forks_last_pipeline_stage {
+    use super::*;
+
+    #[test]
+    fn read_and_assignment_in_last_stage_stay_in_the_child() {
+        assert_parity("emulate sh -c 'echo x | read v; echo \"[$v]\"'");
+        assert_parity("emulate sh -c 'abc=def; echo | abc=ghi; echo $abc'");
+        assert_parity("emulate sh -c 'f() { echo | local d=abc; echo \"[$d]\"; }; f'");
+        assert_parity("emulate sh -c 'echo | { w=2; }; echo \"[$w]\"'");
+    }
+
+    #[test]
+    fn ksh_and_zsh_keep_the_in_shell_last_stage() {
+        assert_parity("emulate ksh -c 'echo y | read v; echo $v'");
+        assert_parity("echo z | read v; echo $v");
+    }
+
+    #[test]
+    fn last_stage_status_and_output() {
+        assert_parity("emulate sh -c 'echo | false'; echo $?");
+        assert_parity("emulate sh -c 'echo abc | tr a b'");
+    }
+}
