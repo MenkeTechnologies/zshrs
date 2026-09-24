@@ -241,14 +241,29 @@ pub fn output_strftime(
             .unwrap_or(Duration::ZERO);
         (now.as_secs() as i64, now.subsec_nanos() as i64) // c:124-125 zgettime
     } else {
+        // c:126 — `errno = 0;`
         // c:128 — `ts.tv_sec = (time_t)strtoul(argv[1], &endptr, 10);`
-        let secs = match argv[1].parse::<i64>() {
-            Ok(v) => v,
-            Err(_) => {
-                zwarnnam(nam, &format!("{}: invalid decimal number", argv[1]));
-                return 1; // c:135
-            }
-        };
+        // libc strtoul, not a Rust parse: it skips leading blanks, takes
+        // a sign, and reports failures through errno (ERANGE on
+        // overflow; EINVAL for "no digits" on BSD/macOS libc), which
+        // c:129-131 prints with `%e`.
+        let arg1 = std::ffi::CString::new(argv[1]).unwrap_or_default();
+        let mut endptr: *mut libc::c_char = std::ptr::null_mut();
+        nix::errno::Errno::clear(); // c:126
+        let secs = unsafe { libc::strtoul(arg1.as_ptr(), &mut endptr, 10) } as libc::time_t as i64; // c:128
+        let err = nix::errno::Errno::last_raw();
+        if err != 0 {
+            // c:129-131
+            zwarnnam(
+                nam,
+                &format!("{}: {}", argv[1], crate::ported::utils::zsh_errno_msg(err)),
+            );
+            return 1; // c:131
+        } else if argv[1].is_empty() || unsafe { *endptr } != 0 {
+            // c:132-134
+            zwarnnam(nam, &format!("{}: invalid decimal number", argv[1]));
+            return 1; // c:134
+        }
         // c:144 — argv[2] nanoseconds (optional).
         let nsec = if argv.len() > 2 {
             match argv[2].parse::<i64>() {
