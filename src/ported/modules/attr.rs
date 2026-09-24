@@ -310,7 +310,7 @@ pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
         // c:126 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
         zwarnnam(
             nam,
-            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+            &format!("{}: {}", metafy(file), crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
         );
         // c:133 — ret = 1 + ((val_len > 0 && attr_len > val_len) || attr_len < 0);
         ret = 1 + i32::from((val_len > 0 && attr_len > val_len) || attr_len < 0);
@@ -351,7 +351,7 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
         // c:143 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
         zwarnnam(
             nam,
-            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+            &format!("{}: {}", metafy(file), crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
         );
         return 1; // c:150 ret = 1;
     }
@@ -408,7 +408,7 @@ pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 
             // c:160 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
             zwarnnam(
                 nam,
-                &format!("{}: {}", metafy(&file), std::io::Error::last_os_error()),
+                &format!("{}: {}", metafy(&file), crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
             );
             return 1; // c:169-162 ret=1; break;
         }
@@ -488,7 +488,7 @@ pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32
         // c:211 — zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
         zwarnnam(
             nam,
-            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+            &format!("{}: {}", metafy(file), crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
         );
         // c:212 — ret = 1 + (list_len > val_len || list_len < 0);
         ret = 1 + i32::from(list_len > val_len || list_len < 0);

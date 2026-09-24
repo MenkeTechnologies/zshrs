@@ -156,7 +156,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
             // c:95
             zwarn(&format!(
                 "ftruncate failed: {}", // c:96
-                io::Error::last_os_error()
+                crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
             ));
         }
         // c:97 — `memcpy(mmptr, value, len);`
@@ -170,7 +170,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
             // c:106
             zwarn(&format!(
                 "ftruncate failed: {}", // c:107
-                io::Error::last_os_error()
+                crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
             ));
         }
         // c:108 — `munmap(mmptr, len);`

@@ -989,7 +989,7 @@ pub fn zfsendcmd(cmd: &str) -> i32 {
             "zftp send",
             &format!(
                 "failure sending control message: {}",
-                io::Error::last_os_error()
+                crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
             ),
         );
         return 6; // c:848

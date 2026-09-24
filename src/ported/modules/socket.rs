@@ -75,7 +75,7 @@ pub fn bin_zsocket(
             // c:97
             zwarnnam(
                 nam,
-                &format!("socket error: {} ", std::io::Error::last_os_error()),
+                &format!("socket error: {} ", crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
             ); // c:98
             return 1; // c:99
         }
@@ -102,7 +102,7 @@ pub fn bin_zsocket(
                 &format!(
                     "could not bind to {}: {}",
                     localfn,
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             ); // c:107
             unsafe {
@@ -116,7 +116,7 @@ pub fn bin_zsocket(
                 nam,
                 &format!(
                     "could not listen on socket: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             ); // c:114
             unsafe {
@@ -138,7 +138,7 @@ pub fn bin_zsocket(
                 &format!(
                     "cannot duplicate fd {}: {}",
                     sfd,
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             ); // c:129
             return 1; // c:130
@@ -180,7 +180,7 @@ pub fn bin_zsocket(
                 // c:167
                 zwarnnam(
                     nam,
-                    &format!("poll error: {}", std::io::Error::last_os_error()),
+                    &format!("poll error: {}", crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
                 ); // c:169
                 return 1; // c:170
             }
@@ -214,7 +214,7 @@ pub fn bin_zsocket(
                 nam,
                 &format!(
                     "could not accept connection: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             ); // c:200
             return 1; // c:201
@@ -230,7 +230,7 @@ pub fn bin_zsocket(
                     &format!(
                         "could not duplicate socket fd to {}: {}",
                         targetfd,
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 ); // c:209
                    // c:214 — `zclose(rfd);` — rfd was registered as
@@ -271,7 +271,7 @@ pub fn bin_zsocket(
                 nam,
                 &format!(
                     "socket creation failed: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             ); // c:236
             return 1; // c:237
@@ -296,7 +296,7 @@ pub fn bin_zsocket(
             // c:243
             zwarnnam(
                 nam,
-                &format!("connection failed: {}", std::io::Error::last_os_error()),
+                &format!("connection failed: {}", crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
             ); // c:244
             unsafe {
                 libc::close(sfd);
@@ -313,7 +313,7 @@ pub fn bin_zsocket(
                     &format!(
                         "could not duplicate socket fd to {}: {}",
                         targetfd,
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 ); // c:256
                    // c:257 — `zclose(sfd);` — sfd was just registered as

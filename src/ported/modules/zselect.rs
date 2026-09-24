@@ -245,7 +245,10 @@ pub fn bin_zselect(
             // c:178
             zwarnnam(
                 nam,
-                &format!("error on select: {}", std::io::Error::last_os_error()),
+                &format!(
+                    "error on select: {}", // c:179 `%e`
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                ),
             ); // c:179
         }
         return 1; // c:181

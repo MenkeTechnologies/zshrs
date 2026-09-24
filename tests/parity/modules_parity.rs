@@ -1425,6 +1425,31 @@ mod stat_extra {
             r#"zstat -F "%Y" +mtime /etc/hosts | wc -l | tr -d ' '"#,
         ));
     }
+
+    /// `zstat -f FD` fstat()s the descriptor (stat.c:557-559): the port
+    /// parsed -f but its per-file loop only walked file arguments, of
+    /// which -f allows none, so it printed nothing and returned 0. `-f`,
+    /// `-A` and `-H` also take their value attached (`-f0`, `-Aname`,
+    /// c:412-436), which the port rejected. A bad descriptor is reported
+    /// as `FD: %e` (c:562-565).
+    #[test]
+    fn fstat_via_dash_f() {
+        assert_parity_dash_f(
+            r#"zmodload zsh/stat
+{
+zstat -f 0 +mode </etc/hosts; echo $?
+zstat -f0 +size </etc/hosts
+zstat -A a -f 0 </etc/hosts; print ${#a}
+zstat -H h -f 0 </etc/hosts; print ${#h}
+zstat -nf 0 +size </etc/hosts
+zstat -f 99 +mode; echo $?
+zstat -f 99 -A b; echo $? ${#b}
+zstat -Aarr +size /etc/hosts; print $arr
+zstat -Hhh /etc/hosts; print ${#hh}
+zstat -f 1x; echo $?
+} 2>&1"#,
+        );
+    }
 }
 
 // ───────────────────────── zsh/files extra ─────────────────────────
@@ -1499,6 +1524,33 @@ touch o; mkdir p; zf_mv p o; echo $?
     }
 }
 
+// ───────────────────────── `%e` errno rendering ─────────────────────────
+
+mod errno_diagnostics {
+    use super::*;
+
+    /// zsh/attr, zsh/net/socket, zsh/net/tcp and zsh/zselect format errno
+    /// with `%e` (strerror, first letter lowered — utils.c zerrmsg). The
+    /// ports printed io::Error Display: "No such file or directory (os
+    /// error 2)".
+    #[test]
+    fn module_errno_messages_use_percent_e() {
+        assert_parity_dash_f(
+            r#"{
+zmodload zsh/attr
+zgetattr /nonexistent foo; echo $?
+zsetattr /nonexistent foo bar; echo $?
+zdelattr /nonexistent foo; echo $?
+zlistattr /nonexistent; echo $?
+zmodload zsh/net/socket
+zsocket /nonexistent/sock; echo $?
+zmodload zsh/net/tcp
+ztcp 127.0.0.1 1; echo $?
+} 2>&1"#,
+        );
+    }
+}
+
 // ───────────────────────── zsh/datetime extra ─────────────────────
 
 mod datetime_extra {
@@ -1533,6 +1585,26 @@ b=$EPOCHSECONDS
             &["datetime"],
             r#"output_strftime "%Y-%m-%d %H:%M:%S" 0"#,
         ));
+    }
+
+    /// strftime's epoch argument goes through strtoul with errno cleared
+    /// (datetime.c:126-134): leading blanks and a sign are accepted, an
+    /// errno failure (ERANGE; EINVAL for no digits on BSD libc) prints
+    /// `ARG: %e`, and only a trailing remainder or an empty argument is
+    /// "invalid decimal number". The port used a Rust integer parse.
+    #[test]
+    fn epoch_argument_parsed_by_strtoul() {
+        assert_parity_dash_f(
+            r#"zmodload zsh/datetime
+{
+TZ=UTC strftime %s " 5"; echo $?
+TZ=UTC strftime %s +7; echo $?
+strftime %Y "5 "; echo $?
+strftime %Y ""; echo $?
+strftime %Y 99999999999999999999999; echo $?
+strftime %Y abc; echo $?
+} 2>&1"#,
+        );
     }
 }
 

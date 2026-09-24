@@ -94,7 +94,7 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
                     nam,
                     &format!(
                         "can't change capabilities: {}",
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 );
                 ret = 1;
@@ -115,7 +115,7 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
                     nam,
                     &format!(
                         "can't get capabilities: {}",
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 );
                 ret = 1;
@@ -185,7 +185,7 @@ pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
             if caps.is_null() || result.is_null() {
                 zwarnnam(
                     nam,
-                    &format!("{}: {}", file, std::io::Error::last_os_error()),
+                    &format!("{}: {}", file, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
                 );
                 ret = 1;
             } else {
@@ -262,7 +262,7 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
             if ffi::cap_set_file(path_c.as_ptr(), caps) != 0 {
                 zwarnnam(
                     nam,
-                    &format!("{}: {}", file, std::io::Error::last_os_error()),
+                    &format!("{}: {}", file, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))), // `%e`
                 );
                 ret = 1;
             }

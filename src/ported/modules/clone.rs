@@ -100,7 +100,7 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
                 nam,
                 &format!(
                     "failed to create new session: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ), // c:61
             );
         }

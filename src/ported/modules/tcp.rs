@@ -283,7 +283,7 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {
             if err != 0 {
                 zwarn(&format!(
                     "connection close failed: {}",
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ));
             }
         }
@@ -481,7 +481,7 @@ pub fn bin_ztcp(
                 &format!(
                     "could not bind to port {}: {}", // c:440
                     u16::from_be(lport),
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             tcp_close(sess); // c:441
@@ -493,7 +493,7 @@ pub fn bin_ztcp(
                 nam,
                 &format!(
                     "could not listen on socket: {}", // c:447
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             tcp_close(sess); // c:448
@@ -521,7 +521,7 @@ pub fn bin_ztcp(
                 &format!(
                     "cannot duplicate fd {}: {}",
                     nfd, // c:462
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             tcp_close(sess); // c:463
@@ -586,7 +586,7 @@ pub fn bin_ztcp(
                     nam,
                     &format!(
                         "poll error: {}", // c:513
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 );
                 return 1; // c:514
@@ -623,7 +623,7 @@ pub fn bin_ztcp(
                 nam,
                 &format!(
                     "could not accept connection: {}", // c:549
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             tcp_close(sess); // c:550
@@ -643,7 +643,7 @@ pub fn bin_ztcp(
                     &format!(
                         "could not duplicate socket fd to {}: {}",
                         targetfd,
-                        std::io::Error::last_os_error()
+                        crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                     ),
                 );
                 return 1; // c:562
@@ -814,7 +814,7 @@ pub fn bin_ztcp(
                 nam,
                 &format!(
                     "socket creation failed: {}", // c:658
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             zts_delete(fd); // c:660
@@ -844,7 +844,7 @@ pub fn bin_ztcp(
                 nam,
                 &format!(
                     "connection failed: {}", // c:675
-                    std::io::Error::last_os_error()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                 ),
             );
             tcp_close(sess); // c:676
@@ -864,7 +864,7 @@ pub fn bin_ztcp(
                         &format!(
                             "could not duplicate socket fd to {}: {}",
                             targetfd,
-                            std::io::Error::last_os_error()
+                            crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)) // `%e`
                         ),
                     ); // c:684
                     tcp_close(sess); // c:686
