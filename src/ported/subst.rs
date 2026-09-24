@@ -25125,6 +25125,34 @@ pub fn paramsubst(
             } else if depth == 0 {
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
+                // c:Src/params.c:1537-1550 — getarg turns every quote marker in
+                // the subscript back into its character (`*t = ztokens[*t -
+                // Pound]`), except one guarding a bracket or a `"`; for a hash
+                // the remaining markers go at c:1582 (remnulargs). So
+                // `$h["x"]` looks up the three-byte key `"x"` and `$h['$x']`
+                // substitutes `$x` between literal quotes. The unbraced walk
+                // below kept the Snull/Dnull markers for singsub to strip. (The
+                // braced fast path gets the same key via
+                // untokenize_preserve_quotes.)
+                let raw_sub: String = if assoc_contains(&var_name) {
+                    let cv: Vec<char> = raw_sub.chars().collect();
+                    cv.iter()
+                        .enumerate()
+                        .map(|(i, &c)| {
+                            let guards = matches!(
+                                cv.get(i + 1),
+                                Some('[' | ']' | '(' | ')' | '{' | '}' | '"')
+                            );
+                            match c {
+                                c if c == crate::ported::zsh_h::Snull && !guards => '\'',
+                                c if c == crate::ported::zsh_h::Dnull && !guards => '"',
+                                c => c,
+                            }
+                        })
+                        .collect()
+                } else {
+                    raw_sub
+                };
                 // c:2033-2048 — the raw text with TOKENs mapped back to their
                 // characters but the inull() quote markers left in place, so a
                 // quoted/escaped `["@"]` / `[\@]` is longer than one char and

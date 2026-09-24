@@ -1881,3 +1881,29 @@ mod indirect_positional_subscript {
         assert_parity(r#"arr=(foo q); foo=bar; print ${(P)arr[1]}; a=(x y z); n=a; print ${(P)n[2]}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/params.c:1537-1550 — getarg turns the quote markers of a subscript
+// back into characters, so an unbraced `$h["x"]` keys on the three bytes
+// `"x"` (as the braced form already did) and `$h['$x']` substitutes `$x`
+// between literal quotes.
+// ─────────────────────────────────────────────────────────────────────
+mod unbraced_hash_key_keeps_quotes {
+    use super::*;
+
+    /// zsh: `. . 3. 3. . 2. x3y 3`.
+    #[test]
+    fn quoted_key_characters_are_part_of_the_key() {
+        assert_parity(
+            r#"typeset -A h; h=("<" 1 x 2 "\"x\"" 3); print -r -- $h["<"]. ${h["<"]}. $h["x"]. ${h["x"]}. $h[\<]. $h[x]. x$h["x"]y "$h["x"]""#,
+        );
+    }
+
+    /// zsh: `1 1 3 3 4`.
+    #[test]
+    fn substitution_inside_quoted_key() {
+        assert_parity(
+            r#"typeset -A h; x=k; h=("'k'" 1 "'\$x'" 2 "\"k\"" 3 k 4); print -r -- $h['$x'] ${h['$x']} $h["$x"] ${h["$x"]} $h[$x]"#,
+        );
+    }
+}
