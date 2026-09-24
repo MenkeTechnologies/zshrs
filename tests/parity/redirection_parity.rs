@@ -424,6 +424,22 @@ mod multios {
         assert_parity_in(d.path(), r#"print -u2 e 2>&1 2>f; echo "f:[$(cat f)]""#);
     }
 
+    /// Multio on an fd that was CLOSED before the redirection
+    /// (c:Src/exec.c:2426-2437 saves -1, restored by closing it; every
+    /// split member is `movefd`'d, c:2463-2481). The first file opened AS
+    /// fd 3, so the splitter's pipe replaced it (the file stayed empty and
+    /// the splitter fed itself), and with no restore slot the scope-end
+    /// join waited forever on the still-open write end.
+    #[test]
+    fn closed_fd_three_tee_two_files() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            r#"print -u3 w 3>x 3>y; echo "x:[$(cat x)] y:[$(cat y)]"; { print -u3 g } 3>x 3>y; echo "x:[$(cat x)] y:[$(cat y)]"; print -u3 after 2>&1"#,
+        );
+        assert_parity_in(d.path(), r#"{ print -u 3 words } 3>&1 3>&1; echo rc=$?"#);
+    }
+
     /// fd-2 multio, two files: `2> e1 2> e2`.
     #[test]
     fn stderr_tee_two_files() {

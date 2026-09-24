@@ -11552,11 +11552,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // saved descriptor and reported success where zsh says `bad file number`.
         // F_DUPFD with a floor of 10 is exactly what movefd does.
         let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
-        if saved >= 0 {
+        // c:2426-2437 — "fd1 may already be closed here, so ignore bad
+        // file descriptor error": `save[fd1] = fdN` stores -1 for a closed
+        // fd, and the scope-end restore (c:Src/utils.c:2047 `if (x < 0)
+        // zclose(y)`) then CLOSES it. Without that slot the splitter's pipe
+        // write end stayed dup'd on the fd, the splitter never saw EOF and
+        // the scope-end join hung: `print -u3 x 3>a 3>b` never returned.
+        let saved_slot = if saved >= 0 {
+            Some(saved)
+        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF) {
+            Some(-1)
+        } else {
+            None
+        };
+        if let Some(saved) = saved_slot {
             with_executor(|exec| {
                 if let Some(top) = exec.redirect_scope_stack.last_mut() {
                     top.push((fd, saved));
-                } else {
+                } else if saved >= 0 {
                     unsafe { libc::close(saved) };
                 }
             });
@@ -11660,6 +11673,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             match open_result {
                 Ok(tfd) => {
+                    // c:2463-2470 / c:2481 — every member of a split stream
+                    // is `movefd`'d above the script's fd range. A file opened
+                    // while the target fd is closed comes back AS that fd
+                    // (`print -u3 x 3>a 3>b`: `a` opens on 3), and the pipe
+                    // dup2 below then replaced the member with the splitter's
+                    // own write end — `a` stayed empty and the splitter fed
+                    // its output back into itself.
+                    let tfd = crate::ported::utils::movefd(tfd);
                     if i == 0 && !pipe_seed {
                         // c:2448-2450 — first member replaces the fd.
                         unsafe {
@@ -11868,11 +11889,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // saved descriptor and reported success where zsh says `bad file number`.
         // F_DUPFD with a floor of 10 is exactly what movefd does.
         let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
-        if saved >= 0 {
+        // c:2426-2437 — a closed fd saves -1, restored by closing it (see
+        // the write-side multio above).
+        let saved_slot = if saved >= 0 {
+            Some(saved)
+        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF) {
+            Some(-1)
+        } else {
+            None
+        };
+        if let Some(saved) = saved_slot {
             with_executor(|exec| {
                 if let Some(top) = exec.redirect_scope_stack.last_mut() {
                     top.push((fd, saved));
-                } else {
+                } else if saved >= 0 {
                     unsafe { libc::close(saved) };
                 }
             });
