@@ -8836,8 +8836,12 @@ pub fn magic_special_shadowed_by_nonhash(name: &str) -> bool {
             .read()
             .ok()
             .and_then(|t| t.get(name).map(|pm| pm.node.flags as u32))
-            // c:2270 — PM_TYPE decides; absent node ⇒ nothing to serve.
-            .map_or(true, |f| crate::ported::zsh_h::PM_TYPE(f) != PM_HASHED)
+            // c:2270 — PM_TYPE decides; absent node ⇒ nothing to serve; c:2264-2266 — nor
+            // does an unset, undeclared node (`zmodload zsh/parameter; unset functions`).
+            .map_or(true, |f| {
+                use crate::ported::zsh_h::{PM_DECLARED, PM_TYPE, PM_UNSET};
+                PM_TYPE(f) != PM_HASHED || (f & (PM_UNSET | PM_DECLARED)) == PM_UNSET
+            })
 }
 
 pub fn partab_get(name: &str, key: &str) -> Option<String> {

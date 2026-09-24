@@ -7211,6 +7211,24 @@ pub fn bin_typeset(
                     returnval = 1;
                     continue;
                 }
+                // c:2062-2064 — `usepm = pm && (!(pm->node.flags & PM_UNSET) || ...)`:
+                // an UNSET non-special pm (e.g. `typeset -a g` under
+                // TYPESET_TO_UNSET, c:2540-2541) is not reused, so control reaches
+                // the fresh-parameter path whose c:2521 `createparam(pname, on &
+                // ~PM_READONLY)` takes over the unset struct (Src/params.c:1132
+                // `pm = oldpm`) and re-types it from `on` alone — `typeset g=s`
+                // leaves a SCALAR, not the old declared array.
+                if !usepm && target_is_arraylike && !requesting_type {
+                    let unset_plain = paramtab().read().ok().and_then(|t| {
+                        t.get(n).map(|pm| {
+                            (pm.node.flags as u32 & PM_UNSET) != 0
+                                && (pm.node.flags as u32 & PM_SPECIAL) == 0
+                        })
+                    }) == Some(true);
+                    if unset_plain {
+                        let _ = createparam(n, (on as u32 & !(PM_READONLY | PM_LOCAL)) as i32); // c:2521
+                    }
+                }
                 // c:Src/builtin.c:2342-2345 (second half of the inconsistency
                 // test) — a SCALAR value assigned to an explicitly-REQUESTED
                 // array/hashed declaration (`typeset -a g=1`, `typeset -A h=1`,

@@ -271,3 +271,30 @@ mod unset_hash_shadow_still_hides {
         assert_parity(r#"zmodload zsh/parameter; f(){ local -A aliases=(a b); unset aliases; print "[${(t)aliases}]" }; f"#);
     }
 }
+
+/// The materialized special itself `unset` after `zmodload zsh/parameter`:
+/// unsetparam_pm keeps a PM_SPECIAL node flagged PM_UNSET (c:Src/params.c:3851-3852),
+/// and fetchvalue then yields no value for it (c:Src/params.c:2264-2266), so
+/// `${+functions}`/`${#functions}` read 0 until an element assignment revives it.
+mod unset_materialized_special {
+    use super::*;
+
+    #[test]
+    fn unset_functions_after_zmodload() {
+        assert_parity(
+            r#"zmodload zsh/parameter; f(){}; print ${+functions}; unset functions; print "${+functions} ${#functions} [${(t)functions}]"; functions[g]=true; print ${+functions}; whence -w f g"#,
+        );
+    }
+
+    #[test]
+    fn unset_mapfile_after_zmodload() {
+        assert_parity(r#"zmodload zsh/mapfile; unset mapfile; print ${+mapfile}"#);
+    }
+
+    #[test]
+    fn unset_several_magic_hashes_after_zmodload() {
+        assert_parity(
+            r#"zmodload zsh/parameter; for p in aliases options commands dirstack; do unset $p; print $p ${(P)+p}; done"#,
+        );
+    }
+}

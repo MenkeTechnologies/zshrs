@@ -570,3 +570,20 @@ fn typeset_to_unset_assoc_becomes_set_on_assignment() {
         assert_parity(body);
     }
 }
+
+/// TYPESET_TO_UNSET: `typeset -a g` leaves an UNSET array node
+/// (c:Src/builtin.c:2540-2541), so a later `typeset g=s` does not reuse it
+/// (c:2062-2064 `usepm = pm && !(pm->node.flags & PM_UNSET) …`); the
+/// fresh-parameter path's createparam (c:2521) re-types it from the requested
+/// flags, leaving a SCALAR instead of the old declared array.
+#[test]
+fn typeset_to_unset_declared_array_retyped_by_scalar_assign() {
+    for body in [
+        "typeset -a g; typeset g=s; typeset -p g; print ${#g}",
+        "typeset -A g; typeset g=s; typeset -p g",
+        "f() { typeset -a g; typeset g=s; typeset -p g }; f",
+        "g=(a b); f() { local -a g; local g=s; typeset -p g }; f; typeset -p g",
+    ] {
+        assert_parity(&format!("setopt typeset_to_unset; {body}"));
+    }
+}
