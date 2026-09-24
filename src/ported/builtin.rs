@@ -7332,6 +7332,35 @@ pub fn bin_typeset(
                             .and_then(|t| t.get(n).map(|pm| PM_TYPE(pm.node.flags as u32)))
                             .unwrap_or(PM_SCALAR);
                         let was_arraylike = old_type == PM_ARRAY || old_type == PM_HASHED;
+                        // c:2114-2118 chflags/tc, then c:2351-2359 — a type
+                        // conversion carries readonly/exported into `on` and
+                        // turns the old param's readonly off, so the value
+                        // assignment below is not refused and the post-assign
+                        // stamp restores the bit: `typeset -r x=ro;
+                        // typeset -F x=1.5` is a readonly float in zsh. Same
+                        // step the array-init arm above takes.
+                        let old_flags = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(n).map(|pm| pm.node.flags as u32))
+                            .unwrap_or(0);
+                        let chflags = ((off as u32 & old_flags) | (on as u32 & !old_flags))
+                            & (PM_INTEGER
+                                | PM_EFLOAT
+                                | PM_FFLOAT
+                                | PM_HASHED
+                                | PM_ARRAY
+                                | PM_TIED
+                                | PM_AUTOLOAD); // c:2114-2116
+                        let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2118
+                        if tc && !OPT_ISSET(&ops, b'p') && (old_flags & PM_READONLY) != 0 {
+                            on |= !off & (PM_READONLY | PM_EXPORTED) & old_flags; // c:2357
+                            if let Ok(mut tab) = paramtab().write() {
+                                if let Some(pm) = tab.get_mut(n) {
+                                    pm.node.flags &= !(PM_READONLY as i32); // c:2359
+                                }
+                            }
+                        }
                         let extra_clear = if is_numeric_type {
                             let mut c = (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z) as i32;
                             if was_arraylike {
@@ -8023,6 +8052,27 @@ pub fn bin_typeset(
             // (`-i` puts PM_ARRAY in `off`), so `cur_flags` no longer shows it.
             // `already_typed` was read before that arm ran.
             let carry = !already_typed && (on & (PM_ARRAY | PM_HASHED)) == 0;
+            // c:2351-2359 — a type conversion recreates the parameter:
+            //     /* Maintain existing readonly/exported status... */
+            //     on |= ~off & (PM_READONLY|PM_EXPORTED) & pm->node.flags;
+            //     /* ...but turn off existing readonly so we can delete it */
+            //     pm->node.flags &= ~PM_READONLY;
+            // and createparam(pname, on & ~PM_READONLY) (c:2518) gets the
+            // carried value before the readonly bit returns. Without the
+            // clear, the value migration below hit the readonly guard:
+            // `typeset -r x=ro; typeset -F x` said "read-only variable: x"
+            // where zsh converts it to a readonly float.
+            let tc_keeps_readonly = tc
+                && !OPT_ISSET(&ops, b'p')
+                && (cur_flags & PM_READONLY) != 0
+                && (off & PM_READONLY) == 0; // c:2357
+            if tc && !OPT_ISSET(&ops, b'p') && (cur_flags & PM_READONLY) != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg.as_str()) {
+                        pm.node.flags &= !(PM_READONLY as i32); // c:2359
+                    }
+                }
+            }
             let pre_assign_to_clear = (off
                 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
                 as i32;
@@ -8069,6 +8119,15 @@ pub fn bin_typeset(
                 if tc && carry {
                     if let Some(ref val) = saved_val {
                         setsparam(arg, val);
+                    }
+                }
+            }
+            if tc_keeps_readonly {
+                // c:2357 — the kept readonly bit is part of `on` for the
+                // recreated parameter, applied once its value is in.
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg.as_str()) {
+                        pm.node.flags |= PM_READONLY as i32;
                     }
                 }
             }
@@ -13710,8 +13769,8 @@ pub fn checkjobs() {
         // c:5908
         if (found_stat & STAT_STOPPED) != 0 {
             // c:5909
-            // c:5912/5914 — `zerr("you have suspended/stopped jobs.");`
-            zerr("you have stopped jobs."); // c:5914
+            // c:5903-5908 — USE_SUSPENDED is always defined (config_h.rs).
+            zerr("you have suspended jobs."); // c:5904
         } else {
             // c:5917 — `zerr("you have running jobs.");`
             zerr("you have running jobs."); // c:5917
@@ -20422,6 +20481,70 @@ fn format_spec_str(spec: &str, s: &str, honor_zero: bool) -> String {
     // (Src/builtin.c:5375 `fprintf(fout, "%*c", …, ' ')` → `%04s ab` = "  ab"),
     // so they pass honor_zero=false.
     let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
+    if !honor_zero {
+        // c:Src/builtin.c:5335-5372 — the inline `%s`/`%b` arm counts the
+        // argument's characters with `mbrlen` over its raw bytes (an invalid
+        // or incomplete sequence counts as one character, c:5346-5360; with
+        // MULTIBYTE off every byte is one, c:5363), truncates at `prec`
+        // characters (c:5343-5346) and pads by that character count
+        // (c:5368-5372). Counting the port's metafied `char`s made an
+        // undecodable byte two columns wide and cut a `%.1s` between the
+        // `Meta` byte and its payload.
+        let _ = *crate::ported::utils::MB_LOCALE_READY;
+        let b = crate::ported::utils::unmetafy_str(s);
+        let multibyte = crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+        let mut mbs: crate::ported::utils::MbStateBuf = crate::ported::utils::MBSTATE_ZERO; // c:5338
+        let mut lbytes = b.len();
+        let mut lchars = 0usize;
+        let mut ptr = 0usize;
+        while ptr < b.len() {
+            // c:5341
+            if Some(lchars) == prec {
+                lbytes = ptr; // c:5343-5346
+                break;
+            }
+            let chars = if multibyte {
+                // c:5349 `chars = mbrlen(ptr, lleft, &mbs)`; mbrlen is
+                // mbrtowc with a NULL destination.
+                let r = unsafe {
+                    crate::ported::utils::mbrtowc(
+                        std::ptr::null_mut(),
+                        b[ptr..].as_ptr() as *const libc::c_char,
+                        b.len() - ptr,
+                        &mut mbs as *mut _ as *mut libc::c_void,
+                    )
+                };
+                if r == 0
+                    || r == crate::ported::utils::MB_INVALID
+                    || r == crate::ported::utils::MB_INCOMPLETE
+                {
+                    1 // c:5360-5361 `if (chars <= 0) chars = 1;`
+                } else {
+                    r
+                }
+            } else {
+                1 // c:5364
+            };
+            ptr += chars; // c:5366
+            lchars += 1;
+        }
+        // The printed prefix, back in the port's String form: the
+        // `mb_metacharlenconv` units of the kept bytes (c:5370 `fwrite(b, 1,
+        // lbytes, fout)`).
+        let mut kept = String::with_capacity(lbytes);
+        let mut i = 0usize;
+        while i < lbytes {
+            let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&b[i..lbytes]);
+            kept.push_str(&unit);
+            i += n.max(1);
+        }
+        let pad = " ".repeat(width.saturating_sub(lchars)); // c:5368-5372
+        return if left_align {
+            format!("{}{}", kept, pad)
+        } else {
+            format!("{}{}", pad, kept)
+        };
+    }
     let truncated: &str = if let Some(p) = prec {
         let end: usize = s.chars().take(p).map(|c| c.len_utf8()).sum();
         &s[..end.min(s.len())]

@@ -4504,3 +4504,31 @@ mod glob_on_tokenized_word {
         ));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// A typeset TYPE conversion recreates the parameter (c:Src/builtin.c:
+// 2351-2378): readonly/exported are carried into `on`, the old readonly bit
+// is turned off so the carried or given value can be stored, and the
+// recreated parameter is readonly again. zshrs refused the value with
+// "read-only variable".
+// ─────────────────────────────────────────────────────────────────────
+mod typeset_type_change_on_readonly {
+    use super::*;
+
+    /// zsh: `1.5000000000 float-readonly` / `3 integer-readonly`, then the
+    /// readonly bit still refuses a plain assignment.
+    #[test]
+    fn value_form_converts_and_stays_readonly() {
+        assert_parity(
+            r#"typeset -r x=ro; typeset -F x=1.5; print -r -- $x ${(t)x}; typeset -r y=ro; typeset -i y=3; print -r -- $y ${(t)y}; (y=4); print rc=$?"#,
+        );
+    }
+
+    /// zsh: `0.0000000000 float-readonly` / `7 integer-readonly`.
+    #[test]
+    fn bare_form_converts_and_stays_readonly() {
+        assert_parity(
+            r#"typeset -r x=ro; typeset -F x; print -r -- $x ${(t)x}; typeset -r y=7; typeset -i y; print -r -- $y ${(t)y}"#,
+        );
+    }
+}
