@@ -155,3 +155,14 @@ fn sourced_bad_param_name_error_uses_meta_notation() {
     assert_eq!(run_stderr(&mut c, s), want, "zshrs diverged from zsh");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `${c:off:len}` and a chained `${c[i][j]}` walk the value with
+/// `MB_METACHARLEN` (c:Src/subst.c:3726-3755, c:Src/params.c:1634-1663).
+/// Both arms demetafied through a LOSSY UTF-8 decode, so the invalid byte
+/// `0xe9` came back as U+FFFD, and they counted `char`s where
+/// `unsetopt multibyte` makes every unit a byte.
+#[test]
+fn substring_and_chained_subscript_keep_raw_bytes() {
+    let s = r#"c=$'a\xe9b'; print -r -- ${c:1:1} ${c:1} ${c: -2:1} ${c:1:-1} ${c[2][1]}; unsetopt multibyte; s=héllo; print -r -- ${s:1:2} ${s: -4:1} ${s[2][1]}"#;
+    assert_bytes(s, "e920e96220e920e920e90ac3a920a920c30a");
+}

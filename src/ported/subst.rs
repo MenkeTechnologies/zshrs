@@ -12919,10 +12919,21 @@ pub fn paramsubst(
                 // via MB_METACHARLEN. Demetafy `$'\xNN'` escapes to the
                 // logical-char form so `${x[N]}` / `${x[lo,hi]}` land on
                 // characters, not metafied bytes. Identity for non-metafied.
-                let dv: String =
-                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&cur))
-                        .into_owned();
-                let n = dv.chars().count() as i64;
+                // The unit is `mb_metacharlenconv`'s: an undecodable byte stays
+                // one byte (a lossy decode turned it into U+FFFD) and with
+                // MULTIBYTE off every unit is a byte (c:Src/utils.c:5613).
+                let dv: Vec<String> = {
+                    let ub = crate::ported::utils::unmetafy_str(&cur);
+                    let mut v: Vec<String> = Vec::new();
+                    let mut i = 0usize;
+                    while i < ub.len() {
+                        let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
+                        v.push(unit);
+                        i += n.max(1);
+                    }
+                    v
+                };
+                let n = dv.len() as i64;
                 let resolve = |k: i64| -> usize {
                     let k = if k < 0 { n + k + 1 } else { k };
                     if k < 1 {
@@ -12965,14 +12976,14 @@ pub fn paramsubst(
                     if l >= h {
                         String::new()
                     } else {
-                        dv.chars().skip(l).take(h - l).collect()
+                        dv[l..h].concat()
                     }
                 } else {
                     // c:Src/params.c:1618-1620, via the one reader — see the
                     // range arm above.
                     let k: i64 = parse_idx(s2, 1);
                     let i = resolve(k);
-                    dv.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()
+                    dv.get(i).cloned().unwrap_or_default()
                 }
                 };
                 // c:Src/subst.c:2903-2966 — each pass re-derives val/aval from the
@@ -21013,14 +21024,22 @@ pub fn paramsubst(
                         // logical-char form so offsets/slices land on
                         // characters, not metafied bytes (`$'caf\xc3\xa9'`
                         // is 4 chars, `${x: -1}` → é). Identity for
-                        // non-metafied values.
-                        let dv: String = String::from_utf8_lossy(
-                            &crate::ported::utils::unmetafy_str(
-                                ksh_bare_scalar_src.as_deref().unwrap_or(raw_value.as_str()),
-                            ),
-                        )
-                        .into_owned();
-                        let total = dv.chars().count() as i64;
+                        // non-metafied values. The unit is `mb_metacharlenconv`'s
+                        // (c:3726 `sptr += MB_METACHARLEN(sptr)`): an undecodable
+                        // byte stays one byte (a lossy decode made it U+FFFD) and
+                        // with MULTIBYTE off every unit is a byte.
+                        let dv: Vec<String> = {
+                            let ub = crate::ported::utils::unmetafy_str(ksh_bare_scalar_src.as_deref().unwrap_or(raw_value.as_str()));
+                            let mut v: Vec<String> = Vec::new();
+                            let mut i = 0usize;
+                            while i < ub.len() {
+                                let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
+                                v.push(unit);
+                                i += n.max(1);
+                            }
+                            v
+                        };
+                        let total = dv.len() as i64;
                         // bash (unlike zsh/ksh93) yields the EMPTY string when a
                         // negative offset underflows past the start of the value
                         // (`${v: -10}` on "hello" → "" in bash, "hello" in
@@ -21057,7 +21076,7 @@ pub fn paramsubst(
                             },
                         };
                         value = match len {
-                            Some(l) if l >= 0 => dv.chars().skip(start).take(l as usize).collect(),
+                            Some(l) if l >= 0 => dv.iter().skip(start).take(l as usize).map(String::as_str).collect(),
                             Some(l) => {
                                 // c:Src/subst.c:3722-3741 — a negative length counts
                                 // from the string end: end = strlen + length. C's
@@ -21083,9 +21102,9 @@ pub fn paramsubst(
                                     return (String::new(), 0, Vec::new()); // c:3740
                                 }
                                 let take = (end - given_offset).max(0) as usize;
-                                dv.chars().skip(start).take(take).collect()
+                                dv.iter().skip(start).take(take).map(String::as_str).collect()
                             }
-                            None => dv.chars().skip(start).collect(),
+                            None => dv.iter().skip(start).map(String::as_str).collect(),
                         };
                         // The clamped bare reference is a SCALAR (c:2288's
                         // `v->scanflags = 0`), so the substring IS the whole
