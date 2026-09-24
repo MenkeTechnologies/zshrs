@@ -240,14 +240,23 @@ pub fn parse_context_restore(ps: &parse_stack) {
 /// the pending-heredocs list and bump each `pc` by `d` if it's
 /// at or after position `p`. Called by `ecispace` / `ecdel` when
 /// wordcodes shift.
-#[allow(unused_variables)]
 pub fn ecadjusthere(p: usize, d: i32) {
-    // parse.c:362-366 — `for (p2 = hdocs; p2; p2 = p2->next) if
-    // (p2->pc >= p) p2->pc += d;`. zshrs's hdocs are still
-    // Vec<HereDoc> on the lexer (pre-P9c migration); since none
-    // of them carry a wordcode pc today (the AST tree has no pc
-    // slots), this is a no-op until Phase 9c wires
-    // `hdocs.pc` into wordcode emission.
+    // c:362 `struct heredocs *h;`
+    // c:364-366 — `for (h = hdocs; h; h = h->next) if (h->pc >= p)
+    // h->pc += d;`. par_redir records each pending here-document's
+    // wordcode position in HDOCS (c:2290-2296); when par_pipe/par_sublist
+    // later open a slot in front of it (a `cat <<X | cat` stage gets its
+    // WC_PIPE header inserted), setheredoc must still patch the redirection
+    // it recorded, not the word that slid into its old position.
+    HDOCS.with_borrow_mut(|head| {
+        let mut h = head.as_deref_mut();
+        while let Some(node) = h {
+            if node.pc >= p as i32 {
+                node.pc += d; // c:366
+            }
+            h = node.next.as_deref_mut();
+        }
+    });
 }
 
 // === AST tree relocated to src/extensions/zsh_ast.rs ===

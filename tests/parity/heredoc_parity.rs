@@ -411,3 +411,27 @@ mod heredoc_delimiter_word {
         );
     }
 }
+
+/// c:Src/parse.c:360-367 — ecadjusthere shifts every pending heredoc's
+/// recorded wordcode position when ecispace/ecdel open or close a slot in
+/// front of it. A pipeline stage gets its WC_PIPE header inserted AFTER its
+/// redirections were emitted, so without the shift setheredoc patched the
+/// wrong words and the function text lost the here-document: `functions f`
+/// printed `cat 2>&1 | cat` for `cat <<HERE |& cat` (A04redirect
+/// "Combination of HERE-document and |&").
+mod heredoc_in_a_pipeline_stage_function_text {
+    use super::*;
+
+    #[test]
+    fn function_text_keeps_the_here_document() {
+        assert_parity("f() {\ncat <<HERE |& cat\nFOO\nHERE\n}\nfunctions f; f");
+        assert_parity("f() {\ncat <<HERE | cat\nFOO\nHERE\n}\nfunctions f");
+        assert_parity("f() {\ncat <<A | cat <<B\nx\nA\ny\nB\n}\nfunctions f; f");
+        assert_parity("f() {\ncat <<A && cat <<B | cat\nx\nA\ny\nB\n}\nfunctions f; f");
+    }
+
+    #[test]
+    fn re_evaluated_text_still_runs_the_here_document() {
+        assert_parity("f() {\ncat <<HERE | tr a-z A-Z\nfoo\nHERE\n}\neval \"$(functions f)\"; f");
+    }
+}
