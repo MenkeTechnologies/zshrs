@@ -15352,6 +15352,48 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
         segs.push(WordSegment::Literal(lit));
     }
 
+    // c:Src/subst.c:814-835 — a `:s` replacement keeps its substitution
+    // tokens (c:4663-4679), and whether stringsubst expands them depends on
+    // the text AROUND the expansion: strcatsub leaves the scan at the start
+    // of the value only when there is neither prefix nor suffix. A segment
+    // is expanded without its neighbours, so a `$NAME:…` / `${NAME:…}` whose modifier
+    // text carries a `$`/backquote token takes the whole-word path, where
+    // paramsubst sees the real prefix and suffix: `a=aaa b=d; print
+    // x$a:gs/a/${b}/` is `x${b}${b}${b}` but `print $a:gs/a/${b}/` is `ddd`.
+    if segs.len() >= 2
+        && segs.iter().any(|seg| {
+            let WordSegment::Expansion(exp) = seg else {
+                return false;
+            };
+            let ec: Vec<char> = exp.chars().collect();
+            if ec.len() < 2 || matches!(ec[1], '\u{88}' | '(') {
+                return false;
+            }
+            // A braced body's modifiers sit one brace level down, after the
+            // `:` that starts a history modifier (not `:-` / `:=` / offset).
+            let braced = matches!(ec[1], '\u{8f}' | '{');
+            let base = i32::from(braced);
+            let mut depth = 0i32;
+            let mut in_mods = false;
+            for (k, &ch) in ec.iter().enumerate().skip(1) {
+                match ch {
+                    '\u{91}' | '[' | '\u{8f}' | '{' | '\u{88}' | '(' => depth += 1,
+                    '\u{92}' | ']' | '\u{90}' | '}' | '\u{8a}' | ')' => depth -= 1,
+                    ':' if depth == base
+                        && (!braced
+                            || ec.get(k + 1).is_some_and(|m| "gsSwWfF&".contains(*m))) =>
+                    {
+                        in_mods = true
+                    }
+                    '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}' if in_mods => return true,
+                    _ => {}
+                }
+            }
+            false
+        })
+    {
+        return None;
+    }
     // Reject single-segment cases — the caller's other fast paths cover
     // pure-literal and bare-expansion words. Only multi-segment concat
     // benefits from this path.

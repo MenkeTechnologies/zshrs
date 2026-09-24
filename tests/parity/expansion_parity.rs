@@ -1624,3 +1624,50 @@ mod empty_default_word_replaces_the_array {
         assert_parity(r#"a=(1 2 3); print -r "${(@j:-:)a}""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// A `:s` replacement keeps its substitution tokens (c:Src/subst.c:4663-4679)
+// and stringsubst re-scans the inserted text only when strcatsub leaves the
+// scan at the value: no prefix and no suffix for a scalar (c:820-821), always
+// for a multi-element array (c:4441). D04parameter "History modifier works the
+// same for scalar and array substitution".
+// ─────────────────────────────────────────────────────────────────────
+mod colon_s_replacement_rescan {
+    use super::*;
+
+    /// zsh: `ddd` for both the bare and the braced form.
+    #[test]
+    fn scalar_without_affixes_expands_replacement() {
+        assert_parity(r#"a=aaa b=d; print $a:gs/a/${b}/ ${a:gs/a/${b}/} $a:gs/a/$b/"#);
+    }
+
+    /// zsh: `x${b}${b}${b}` / `${b}${b}${b}y` — a prefix or suffix stops the re-scan.
+    #[test]
+    fn scalar_with_affixes_keeps_replacement_text() {
+        assert_parity(
+            r#"a=aaa b=d; print x$a:gs/a/${b}/ $a:gs/a/${b}/y x${a:gs/a/${b}/} "${a:gs/a/${b}/}""#,
+        );
+    }
+
+    /// zsh: `xddd bdby` — a multi-element array is re-scanned even with affixes.
+    #[test]
+    fn array_always_expands_replacement() {
+        assert_parity(
+            r#"a=(aaa bab) b=d; print x$a:gs/a/${b}/y; print ${a:gs/a/${b}/}; print "x${a[@]:gs/a/${b}/}y""#,
+        );
+    }
+
+    /// The inserted text is expanded exactly once, and quoted replacements stay literal.
+    #[test]
+    fn replacement_expands_once_and_quoted_stays_literal() {
+        assert_parity(
+            r#"a=aaa b='$c' c=Z; print $a:gs/a/$b/ ${a:gs/a/$b/} ${a:gs/a/\$b/} ${a:gs/a/'$b'/}"#,
+        );
+    }
+
+    /// A command substitution in the replacement word-splits like any other.
+    #[test]
+    fn replacement_command_substitution_splits() {
+        assert_parity(r#"a=(p q); print -l $a:s/p/$(echo 1 2)/ ${a:s/p/`echo 3 4`/}"#);
+    }
+}

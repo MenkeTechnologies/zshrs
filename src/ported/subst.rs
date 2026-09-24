@@ -1266,7 +1266,10 @@ fn stringsubst(
                             // c:237
                         } // c:237
                     } // c:237
-                    if multi {
+                    // c:4441 — `*str = getdata(n = on)`: scan the first spliced
+                    // node again from its start; prefork visits the rest.
+                    let rescan_first = PARAMSUBST_RESCAN_FIRST.with(|c| c.replace(false));
+                    if multi && !rescan_first {
                         // c:339 — continue scanning in the LAST
                         // spliced node (the suffix after `${...}`
                         // lives there); paramsubst's returned pos is
@@ -3729,6 +3732,27 @@ pub fn paramsubst(
     // expansion's word: C's NULL is this call's return value, nothing more.
     PARAMSUBST_NULL.with(|c| c.set(false));
     PARAMSUBST_NULL_NODES.with(|c| c.borrow_mut().clear());
+    PARAMSUBST_RESCAN_FIRST.with(|c| c.set(false));
+    // c:Src/subst.c:814-835 / c:4441 — whether C's stringsubst scans the
+    // substituted text again. `strcatsub` returns `dest` at the START of the
+    // value when there is neither prefix nor suffix (c:820-821), and the
+    // multi-element array leg resets `*str = getdata(n = on)` (c:4441), so
+    // the value is re-read by the stringsubst loop. A parameter's value never
+    // holds a substitution token there (metafy keeps token bytes out of it),
+    // but a `:s` replacement keeps them (c:4663-4679 only chucks INULLs):
+    // `a=aaa b=d; print $a:gs/a/${b}/` is `ddd`.
+    //
+    // !!! RUST-ONLY GATE !!! The Rust stringsubst also expands a RAW `$`
+    // (callers that hand it untokenized text), which C never does, so the
+    // re-scan is taken only when the value holds a String/Qstring/Tick/Qtick
+    // token. Without the gate every `print $v` whose value contains a `$`
+    // would expand that text a second time.
+    let paramsubst_rescans = |values: &[String]| -> bool {
+        use crate::ported::zsh_h::{Qstring, Qtick, Stringg, Tick};
+        values
+            .iter()
+            .any(|v| v.chars().any(|c| c == Stringg || c == Qstring || c == Tick || c == Qtick))
+    };
     // !!! RUST-ONLY ADAPTER !!! `multsub` for a `${name-word}` / `${name+word}`
     // family OPERAND (c:3226 / c:3313). C's multsub preforks the operand as its
     // own list (c:625) and prefork's c:183-186 prunes THAT list's empty nodes
@@ -20398,7 +20422,30 @@ pub fn paramsubst(
                     // when split_parts was None, which made
                     // `${arr[N]:modifier}` apply the modifier to
                     // EVERY element. Parity bug #14.
-                    let mod_str = format!(":{}", slice);
+                    // c:Src/subst.c:4663-4679 — modify() keeps the String /
+                    // Tick tokens of a `:s` replacement (it chucks only the
+                    // INULLs), so the inserted text is substituted when the
+                    // scan resumes over it (see `paramsubst_rescans`).
+                    // `rest` folded those tokens to plain `$` / `` ` ``
+                    // above and marks every QUOTED one with a Bnull, so an
+                    // unmarked `$` / `` ` `` here is a live substitution:
+                    // give it back its token. The search text is
+                    // untokenized again by modify (c:4661-4662), as in C.
+                    let mod_str: String = {
+                        let mut out = String::with_capacity(slice.len() + 1);
+                        out.push(':');
+                        let mut prev = '\0';
+                        for ch in slice.chars() {
+                            let quoted = prev == Bnull || prev == crate::ported::zsh_h::Bnullkeep;
+                            out.push(match ch {
+                                '$' if !quoted => Stringg,
+                                '`' if !quoted => Tick,
+                                other => other,
+                            });
+                            prev = ch;
+                        }
+                        out
+                    };
                     let mod_one = |s: &str| -> String { modify(s, &mod_str) };
                     // c:Src/subst.c:3030-3034 — sepjoin under qt
                     // clears isarr to 0 BEFORE the modify dispatch at
@@ -24629,7 +24676,16 @@ pub fn paramsubst(
                 } else {
                     nodes.last().map(|n| n.chars().count()).unwrap_or(0)
                 };
+                if !plan9_pre_subst && paramsubst_rescans(&nodes) {
+                    // c:4441 `*str = getdata(n = on)` — re-scan from the first node.
+                    PARAMSUBST_RESCAN_FIRST.with(|c| c.set(true));
+                    return (first, 0, nodes);
+                }
                 return (first, last_pos, nodes);
+            }
+            // c:820-821 — no prefix and no suffix: the scan resumes AT the value.
+            if !qt && prefix.is_empty() && suffix.is_empty() && paramsubst_rescans(&nodes) {
+                return (first, 0, nodes);
             }
             let new_pos_in_full = prefix.chars().count()
                 + first.chars().count().saturating_sub(prefix.chars().count());
@@ -24657,6 +24713,10 @@ pub fn paramsubst(
         if qt && full.is_empty() {
             let nul = crate::ported::zsh_h::Nularg.to_string();
             return (nul.clone(), nul.chars().count(), vec![nul]);
+        }
+        // c:820-821 — no prefix and no suffix: the scan resumes AT the value.
+        if !qt && prefix.is_empty() && suffix.is_empty() && paramsubst_rescans(std::slice::from_ref(&full)) {
+            return (full.clone(), 0, vec![full]);
         }
         let new_pos_in_full = prefix.chars().count() + value.chars().count();
         return (full.clone(), new_pos_in_full, vec![full]);
@@ -25777,6 +25837,16 @@ pub fn paramsubst(
                     1 => prefix.chars().count() + arr[0].chars().count(),
                     _ => arr[arr.len() - 1].chars().count(),
                 };
+                // c:820-821 (one node) / c:4441 (several) — see paramsubst_rescans.
+                if paramsubst_rescans(&nodes) {
+                    if nodes.len() > 1 {
+                        PARAMSUBST_RESCAN_FIRST.with(|c| c.set(true));
+                        return (first, 0, nodes);
+                    }
+                    if !qt && prefix.is_empty() && suffix.is_empty() {
+                        return (first, 0, nodes);
+                    }
+                }
                 return (first, resume, nodes); // c:3950
             } // c:3950
         } // c:3950
@@ -25784,6 +25854,11 @@ pub fn paramsubst(
         let prefix: String = chars[..start_pos].iter().collect(); // c:1625
         let suffix: String = chars[pos..].iter().collect(); // c:1625
         let result = format!("{}{}{}", prefix, value, suffix); // c:1625
+        // c:820-821 — no prefix and no suffix: the scan resumes AT the value.
+        if !qt && prefix.is_empty() && suffix.is_empty() && paramsubst_rescans(std::slice::from_ref(&result)) {
+            result_nodes.push(result.clone());
+            return (result, 0, result_nodes);
+        }
         result_nodes.push(result.clone()); // c:1625
                                            // Resume position is a CHAR index into the reconstructed word
                                            // (the caller, stringsubst, indexes `chars[pos]`). Byte lengths
@@ -27913,6 +27988,14 @@ thread_local! {
     /// Two-or-more elements accidentally worked because `l > 1` alone
     /// selects the array path.
     pub static PARAMSUBST_LF_ARRAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
+    /// c:Src/subst.c:4441 — `*str = getdata(n = on);`: after splicing a
+    /// multi-element array paramsubst hands stringsubst back the FIRST node
+    /// with the scan pointer at its start, so every spliced node is scanned
+    /// again (prefork's c:148 `incnode` then visits the rest). The Rust
+    /// stringsubst instead resumes in the LAST node past the values; this
+    /// asks it to take C's path. Set only through `paramsubst_rescans`.
+    pub static PARAMSUBST_RESCAN_FIRST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 
     /// True when the paramsubst that just returned was a NON-`@` forced
     /// split (`(s:X:)` / `(f)` producing spsep, non-nojoin). The nested
