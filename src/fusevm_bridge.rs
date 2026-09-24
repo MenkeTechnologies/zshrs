@@ -3491,7 +3491,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if errflag_set() {
                 break; // c:187-190
             }
-            if i < 64 && text_mask & (1u64 << i) != 0 {
+            // c:178 — `if (unset(SHFILEEXPANSION))`: under SH_FILE_EXPANSION
+            // the file expansion already ran in the first pass (c:122-138),
+            // BEFORE substitution, so a `~` that arrived through a GLOB_SUBST
+            // expansion stays literal (`emulate sh; v='~/x'; print $v`).
+            if i < 64
+                && text_mask & (1u64 << i) != 0
+                && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
+            {
                 *word = filesub_deferred_word(std::mem::replace(word, Value::Int(0)));
             }
         }
@@ -6933,7 +6940,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // so shtokenize the value first (`~`→Tilde, glob metas active),
             // run filesub, then untokenize the surviving glob metas back to
             // raw for expand_glob (which re-tokenizes internally).
-            let pattern = if pattern.contains('~') || pattern.contains('=') {
+            // c:178 — that filesub is prefork's SECOND pass, gated on
+            // `unset(SHFILEEXPANSION)`: with SH_FILE_EXPANSION the file
+            // expansion ran before substitution, so a substituted `~`/`=`
+            // stays literal.
+            let pattern = if (pattern.contains('~') || pattern.contains('='))
+                && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
+            {
                 let mut tok = pattern.clone();
                 crate::ported::glob::shtokenize(&mut tok);
                 let fs = crate::ported::subst::filesub(&tok, 0);
@@ -17046,10 +17059,13 @@ fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
         // pass through), run filesub, then untokenize surviving glob metas
         // for expand_glob. Gated on `~`/`=` (raw or token) so ordinary
         // substituted words skip the roundtrip. Fixes `${~x}` x="~/foo".
-        let filesubbed = if pattern.contains('~')
+        // c:178 — prefork's second-pass filesub only runs when
+        // `unset(SHFILEEXPANSION)` (see the GLOB_SUBST arm above).
+        let filesubbed = if (pattern.contains('~')
             || pattern.contains('=')
             || pattern.contains(crate::ported::zsh_h::Tilde)
-            || pattern.contains(crate::ported::zsh_h::Equals)
+            || pattern.contains(crate::ported::zsh_h::Equals))
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION)
         {
             let mut tok = pattern.clone();
             crate::ported::glob::shtokenize(&mut tok);

@@ -425,3 +425,25 @@ mod hook_inside_tilde_expansion_does_not_leak_globsubst {
         }
     }
 }
+
+/// Prefork's end-of-word `filesub` is gated on `unset(SHFILEEXPANSION)`
+/// (c:Src/subst.c:178): under SH_FILE_EXPANSION the file expansion runs
+/// FIRST (c:122-138), so a `~`/`=` that only appears after substitution —
+/// a GLOB_SUBST value, `${~v}` — stays literal. zshrs's GLOB_SUBST glob arms
+/// ran filesub unconditionally (E01options "SH_FILE_EXPANSION option with
+/// GLOB_SUBST et al.").
+mod sh_file_expansion_leaves_substituted_tilde_literal {
+    use super::assert_parity;
+
+    #[test]
+    fn globsubst_values() {
+        assert_parity(r#"setopt globsubst shfileexpansion; v='~/one'; x='=ls'; print -l -- $v ${~v} $x"#);
+        assert_parity(r#"() { emulate -L sh; v='~/one ~/two'; print -l -- $v $v; }"#);
+    }
+
+    #[test]
+    fn literal_words_still_expand_first() {
+        assert_parity(r#"setopt shfileexpansion; x=a; print ~/$x =ls "~/q" a=~/b; print -l ~/{a,b}$x"#);
+        assert_parity(r#"v='~/one'; print ${~v}; setopt globsubst; print $v"#);
+    }
+}
