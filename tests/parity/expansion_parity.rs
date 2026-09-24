@@ -1706,3 +1706,27 @@ mod z_flag_incomplete_math {
         assert_parity(r#"print -rl - ${(z):-"x; (( 1 + 2 )) y"}; eval '(( 1 +'; print $?"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:3442-3445 / 3460-3463 — the `(*)` flag turns EXTENDED_GLOB
+// on for the pattern of `#` `%` `/` (and `:#`, `:/`), then restores it.
+// D02glob "the '*' qualfier enables extended_glob for pattern matching".
+// ─────────────────────────────────────────────────────────────────────
+mod star_flag_extendedglob {
+    use super::*;
+
+    #[test]
+    fn star_flag_enables_extended_patterns() {
+        assert_parity(
+            r#"x=abc; print ${(*)x/(#b)(b)/<$match[1]>} ${(*)x/b#/Q} ${x/b#/Q}; x=abbc; print ${(*)x//b##/Q} ${(*)x:/a#b#c/Z} ${(*)x:#a#b#c}"#,
+        );
+    }
+
+    /// Per element for an array, and the option is put back afterwards.
+    #[test]
+    fn array_and_option_restored() {
+        assert_parity(
+            r#"x=(abc bbd); print ${(*)x/(#b)(b)/<$match[1]>}; [[ -o extendedglob ]] && print LEAK; print ${(*)x%%c#}"#,
+        );
+    }
+}

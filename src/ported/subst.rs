@@ -15493,6 +15493,30 @@ pub fn paramsubst(
         } else {
             (raw_value, is_set)
         };
+        // c:Src/subst.c:3442-3445 / 3460-3463 — `if (flags & SUB_EGLOB)
+        // opts[EXTENDEDGLOB] = 1; getmatch…(); opts[EXTENDEDGLOB] = eglob;`:
+        // the `(*)` flag turns extended globbing on for the pattern of the
+        // `#` `%` `/` family (which `:#` and `:/` also reach, c:3082-3086).
+        // The Rust operator arms compile and match their patterns in many
+        // places, so the option is held for the whole operator dispatch and
+        // put back by the guard on every exit, error returns included.
+        struct EglobRestore(Option<bool>);
+        impl Drop for EglobRestore {
+            fn drop(&mut self) {
+                if let Some(eglob) = self.0 {
+                    opt_state_set("extendedglob", eglob);
+                }
+            }
+        }
+        let eglob_restore = EglobRestore(
+            (sub_flags_bits & SUB_EGLOB != 0
+                && [":#", ":/", "/", "#", "%", "\u{84}"].iter().any(|op| rest.starts_with(op)))
+            .then(|| {
+                let eglob = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                opt_state_set("extendedglob", true);
+                eglob
+            }),
+        );
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {
@@ -21266,6 +21290,7 @@ pub fn paramsubst(
                 return (String::new(), new_pos, Vec::new());
             }
         }
+        drop(eglob_restore);
         // Case mods operate per-element when array-shaped (so
         // \${(@U)arr} uppercases each element, preserving shape).
         // Direct port of subst.c:3937 casmod arm which iterates aval
