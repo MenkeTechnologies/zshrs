@@ -5736,6 +5736,89 @@ pub fn bin_typeset(
             continue;
         }
 
+        // c:1961-1995 typeset_setbase — the `-i N` / `-E N` / `-F N`
+        // argument is validated by every typeset_single arm that reaches it
+        // (c:2294-2296 reuse, c:2444-2446 type change, c:2534-2538 new
+        // param), before the value is assigned:
+        //     int base = (int)zstrtol(arg, &eptr, 10);
+        //     if (*eptr) { zwarnnam(name, "bad base value: %s" /
+        //                  "bad precision value: %s", arg); return 1; }
+        //     if ((on & PM_INTEGER) && (base < 2 || base > 36)) {
+        //         zwarnnam(name, "invalid base (must be 2 to 36 inclusive): %d",
+        //                  base); return 1; }
+        // The check depends only on the options, so it runs once here, ahead
+        // of the arms' mutations. On failure the reuse arm (usepm: the param
+        // keeps its type) returns NULL with the old value intact; the type-
+        // change arm has already deleted the old param (c:2378) and the new-
+        // param arm calls `unsetparam_pm(pm, 0, 1)` (c:2536) — so outside
+        // the reuse arm the name ends up unset.
+        {
+            let setbase_arg: Option<&str> = if (on as u32 & PM_INTEGER) != 0
+                && OPT_HASARG(&ops, b'i')
+            {
+                OPT_ARG(&ops, b'i') // c:1966-1967
+            } else if (on as u32 & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
+                OPT_ARG(&ops, b'E') // c:1968-1969
+            } else if (on as u32 & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
+                OPT_ARG(&ops, b'F') // c:1970-1971
+            } else {
+                None
+            };
+            let setbase_err = setbase_arg.and_then(|a| {
+                let (base, rest) = crate::ported::utils::zstrtol(a, 10); // c:1976
+                if !rest.is_empty() {
+                    // c:1977-1983
+                    Some(if (on as u32 & PM_INTEGER) != 0 {
+                        format!("bad base value: {}", a)
+                    } else {
+                        format!("bad precision value: {}", a)
+                    })
+                } else if (on as u32 & PM_INTEGER) != 0 && !(2..=36).contains(&(base as i32)) {
+                    // c:1984-1988
+                    Some(format!("invalid base (must be 2 to 36 inclusive): {}", base as i32))
+                } else {
+                    None
+                }
+            });
+            if let Some(msg) = setbase_err {
+                zwarnnam(name, &msg);
+                // c:2114-2118 — chflags/tc decide reuse vs recreate.
+                let keeps_type = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(arg_name).map(|pm| {
+                            let f = pm.node.flags as u32;
+                            let chflags = ((off as u32 & f) | (on as u32 & !f))
+                                & (PM_INTEGER
+                                    | PM_EFLOAT
+                                    | PM_FFLOAT
+                                    | PM_HASHED
+                                    | PM_ARRAY
+                                    | PM_TIED
+                                    | PM_AUTOLOAD);
+                            !(chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT))
+                        })
+                    })
+                    .unwrap_or(false);
+                if usepm_existing && keeps_type {
+                    // c:2285-2288 — the reuse arm has already merged the
+                    // attributes when typeset_setbase fails, so `float x=3;
+                    // typeset -F 1x x` leaves x a -F float.
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(arg_name) {
+                            pm.node.flags = (pm.node.flags | (on as i32 & !(PM_READONLY as i32)))
+                                & !(off as i32 | PM_UNSET as i32);
+                        }
+                    }
+                } else if pname_in_tab {
+                    unsetparam(arg_name); // c:2378 / c:2536
+                }
+                returnval = 1; // c:3153-3156 typeset_single NULL
+                continue;
+            }
+        }
+
         // c:3117-3150 — `typeset -n NAME[=refname]` arm.
         if (on as u32 & PM_NAMEREF) != 0 {
             // c:Src/builtin.c:3117-3150 — the `-n` literal-name arm,
@@ -7265,32 +7348,6 @@ pub fn bin_typeset(
                             if (off as u32 & PM_NAMEREF) != 0 {
                                 pm.width = 0;
                                 pm.base = 0;
-                            }
-                        }
-                    }
-                }
-                // c:Src/builtin.c:1982-1986 (typeset_setbase) — an integer
-                // base must be 2..=36 inclusive. Validate BEFORE assigning the
-                // value: on an invalid base zsh errors PER param and leaves the
-                // (already-created) param EMPTY. The live base-stamp below
-                // (c:1990) never validated, so `typeset -i0`/`-i1`/`-i37`
-                // silently produced `0#…`/`37#…`. The faithful typeset_setbase
-                // port has the check but was dead code. Bug #1027.
-                if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
-                    if let Some(bs) = OPT_ARG(&ops, b'i') {
-                        if let Ok(bv) = bs.trim().parse::<i32>() {
-                            if !(2..=36).contains(&bv) {
-                                crate::ported::utils::zwarnnam(
-                                    name,
-                                    &format!("invalid base (must be 2 to 36 inclusive): {}", bv),
-                                );
-                                // zsh leaves the param UNSET on this failure
-                                // (even a pre-existing value is dropped) — the
-                                // just-created param is torn down before the
-                                // value is assigned.
-                                crate::ported::params::unsetparam(n);
-                                returnval = 1;
-                                continue;
                             }
                         }
                     }

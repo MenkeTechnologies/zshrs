@@ -1329,3 +1329,40 @@ mod reserved_word_runs_a_disabled_builtin {
         assert_parity("disable typeset; \\typeset x=1 2>/dev/null; print rc=$?");
     }
 }
+
+/// c:Src/builtin.c:1961-1995 typeset_setbase — `-i N`/`-E N`/`-F N` is
+/// validated in every typeset_single arm, valueless declares included:
+/// "bad base value" / "bad precision value" for trailing junk, "invalid
+/// base" outside 2..36. The reuse arm (same type) keeps the param with its
+/// attributes merged (c:2285-2288); new params and type changes end up unset.
+mod typeset_setbase_validates_every_arm {
+    use super::*;
+
+    #[test]
+    fn valueless_declare_rejects_bad_base() {
+        assert_parity("typeset -i 37 x 2>&1 | cut -d: -f3-; typeset -i 37 x 2>/dev/null; print $? ${+x}");
+        assert_parity("typeset -i 0 x y 2>/dev/null; print $? ${+x} ${+y}");
+        assert_parity("integer -i 1 z 2>/dev/null; print $? ${+z}");
+        assert_parity("f(){ typeset -i 37 x 2>/dev/null; print $? ${+x} }; f");
+    }
+
+    #[test]
+    fn junk_after_the_number_is_rejected() {
+        assert_parity("typeset -i 1x x=5 2>&1 | cut -d: -f3-; typeset -i 1x x=5 2>/dev/null; print $? ${+x}");
+        assert_parity("typeset -F 2x x 2>&1 | cut -d: -f3-; typeset -F 2x x 2>/dev/null; print $? ${+x}");
+    }
+
+    #[test]
+    fn reuse_arm_keeps_the_param_type_change_unsets_it() {
+        assert_parity("integer x=3; typeset -i 37 x=5 2>/dev/null; print $?; typeset -p x");
+        assert_parity("float x=3; typeset -F 1x x=5 2>/dev/null; print $?; typeset -p x");
+        assert_parity("x=1; typeset -i 37 x 2>/dev/null; print $? ${+x}");
+        assert_parity("x=1; typeset -i 37 x=4 2>/dev/null; print $? ${+x}");
+    }
+
+    #[test]
+    fn valid_bases_still_apply() {
+        assert_parity("typeset -i 16 x=255 y; typeset -p x y");
+        assert_parity("typeset -E 3 e=3.14159; typeset -F 2 f; typeset -p e f");
+    }
+}
