@@ -108,6 +108,7 @@ mod math_parity;
 mod menu_select_last_prompt_parity;
 mod metasort_unmetafy_parity;
 mod module_feature_enables_parity;
+mod multibyte_meta_parity;
 mod modules_parity;
 mod noclobber_parity;
 mod non_utf8_script_parity;

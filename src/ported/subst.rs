@@ -9284,6 +9284,22 @@ pub fn paramsubst(
                             r // c:1618
                         }
                     };
+                    // c:Src/params.c:1634-1663 — the scalar character subscript on
+                    // the c:Src/subst.c:2890 temporary walks METAFIED characters
+                    // (`t += MB_METACHARLEN(t)`): a `Meta`+byte pair is one unit,
+                    // and with MULTIBYTE off a unit is one byte. Same walk as the
+                    // named scalar arm.
+                    let sv_units: Vec<String> = {
+                        let ub = crate::ported::utils::unmetafy_str(&sv);
+                        let mut v: Vec<String> = Vec::new();
+                        let mut i = 0usize;
+                        while i < ub.len() {
+                            let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
+                            v.push(unit);
+                            i += n.max(1);
+                        }
+                        v
+                    };
                     if let Some(an) = subexp_passoc_name.as_deref() {
                         // `${${(P)n}[key]}` — the inner `(P)n` references
                         // assoc `an`; the outer subscript is an assoc KEY
@@ -9321,8 +9337,8 @@ pub fn paramsubst(
                                     .trim()
                                     .parse()
                                     .map(ksh_sub_c1619)
-                                    .unwrap_or(sv.chars().count() as i64);
-                                let n = sv.chars().count() as i64;
+                                    .unwrap_or(sv_units.len() as i64);
+                                let n = sv_units.len() as i64;
                                 let resolve = |k: i64| -> usize {
                                     let k = if k < 0 { n + k + 1 } else { k };
                                     if k < 1 {
@@ -9349,7 +9365,7 @@ pub fn paramsubst(
                                 if l >= h {
                                     String::new()
                                 } else {
-                                    sv.chars().skip(l).take(h - l).collect()
+                                    sv_units[l..h].concat()
                                 }
                             }
                         }
@@ -9365,13 +9381,10 @@ pub fn paramsubst(
                                 }
                             }
                             None => {
-                                let nl = sv.chars().count() as i64;
+                                let nl = sv_units.len() as i64;
                                 let idx = if n < 0 { nl + n } else { n - 1 };
-                                if idx >= 0 && (idx as usize) < sv.chars().count() {
-                                    sv.chars()
-                                        .nth(idx as usize)
-                                        .map(|c| c.to_string())
-                                        .unwrap_or_default()
+                                if idx >= 0 && (idx as usize) < sv_units.len() {
+                                    sv_units[idx as usize].clone()
                                 } else {
                                     String::new()
                                 }
@@ -25372,7 +25385,22 @@ pub fn paramsubst(
             } else {
                 // c:1625
                 let s = vars_get(&var_name).unwrap_or_default(); // c:1625
-                let chars_v: Vec<char> = s.chars().collect(); // c:1625
+                // c:Src/params.c:1634-1663 — a scalar subscript walks the value
+                // with `t += MB_METACHARLEN(t)`, so the unit is a METAFIED
+                // character: a `Meta`+byte pair is ONE unit (an invalid byte
+                // such as `$'\M-\\'` stays whole) and with MULTIBYTE off a
+                // unit is one byte. Same walk as the braced scalar arm.
+                let chars_v: Vec<String> = {
+                    let ub = crate::ported::utils::unmetafy_str(&s);
+                    let mut v: Vec<String> = Vec::new();
+                    let mut i = 0usize;
+                    while i < ub.len() {
+                        let (n, _, unit) = crate::ported::utils::mb_metacharlenconv(&ub[i..]);
+                        v.push(unit);
+                        i += n.max(1);
+                    }
+                    v
+                };
                 if is_splat_txt!(sub) {
                     // c:1625
                     s // c:1625
@@ -25416,7 +25444,7 @@ pub fn paramsubst(
                     // c:Src/params.c:1618 + c:2133 — arithmetic bounds, as above.
                     let lo = crate::ported::math::mathevalarg(lo); // c:1618
                     let hi = crate::ported::math::mathevalarg(hi); // c:2133
-                    let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
+                    let chars_arr: Vec<String> = chars_v.clone(); // c:1625
                     getarrvalue(&chars_arr, lo, hi).concat()
                 // c:1625
                 } else if let Some(idx) = sub.parse::<i32>().ok().or_else(|| {
@@ -25460,7 +25488,7 @@ pub fn paramsubst(
                     }; // c:1625
                     if i >= 0 && (i as usize) < chars_v.len() {
                         // c:1625
-                        chars_v[i as usize].to_string() // c:1625
+                        chars_v[i as usize].clone() // c:1625
                     } else {
                         // c:1625
                         String::new() // c:1625
@@ -26413,7 +26441,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
                         } else if name == "@" || name == "*" {
                             arrays_get("@").map(|a| a.len()).unwrap_or(0)
                         } else if let Some(s) = vars_get(&name) {
-                            s.chars().count()
+                            crate::ported::zsh_h::MB_METASTRLEN(&s)
                         } else {
                             0
                         };
