@@ -4514,7 +4514,7 @@ mod tests {
         PREFIXFLAG.store(1, SeqCst);
         handleprefixes();
         assert_ne!(ZMOD.lock().unwrap().flags & MOD_MULT, 0);
-        assert_ne!(!ZMOD.lock().unwrap().flags & MOD_TMULT, 0);
+        assert_ne!(ZMOD.lock().unwrap().flags & MOD_TMULT, 0);
         assert_eq!(ZMOD.lock().unwrap().mult, 7);
         assert_eq!(PREFIXFLAG.load(SeqCst), 0);
     }
