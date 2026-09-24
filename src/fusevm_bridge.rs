@@ -8529,10 +8529,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 return;
             }
-            if exec.has_assoc(&name) {
-                eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
-                return;
-            }
+            // An association falls through too: c:Src/params.c:3178-3192
+            // `resetparam(v->pm, PM_SCALAR)`s a non-special PM_HASHED
+            // target (unset KSHARRAYS) and the augment then appends to the
+            // fresh empty scalar, so `typeset -A h; h+=x` leaves h="x".
             // Scalar / integer / float form: route through canonical
             // assignsparam(name, value, ASSPM_AUGMENT) which
             // dispatches PM_TYPE — PM_SCALAR concats, PM_INTEGER

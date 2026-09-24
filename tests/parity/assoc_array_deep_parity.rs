@@ -703,3 +703,18 @@ mod assoc_scan_result_is_an_array_for_operators {
         );
     }
 }
+
+/// c:Src/params.c:3179-3192 — a scalar assignment to a non-special
+/// association resets it to a scalar even under `+=` (only the PM_ARRAY arm
+/// is gated on !ASSPM_AUGMENT), and the augment then appends to the empty
+/// scalar. zshrs refused with a Rust-only "cannot use += on assoc" error.
+mod scalar_append_to_association {
+    use super::*;
+
+    #[test]
+    fn plus_equals_scalar_replaces_the_association() {
+        assert_parity("typeset -A h; h=(one 1); h+=string; print -r -- ${(t)h} $h; [[ $h[@] == string ]] && print ok");
+        assert_parity("typeset -A h; h=(one 1); h+=(two 2); print -r -- ${(t)h} ${(kv)h}");
+        assert_parity("a=(x y); a+=z; print -r -- ${(t)a} $a");
+    }
+}

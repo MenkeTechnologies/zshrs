@@ -8654,14 +8654,15 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             }
         }
         let pm = tab.get(name).unwrap();
-        // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
-        // non-tied, non-KSHARRAYS, non-AUGMENT scalar assignment →
-        // `resetparam(v->pm, PM_SCALAR)`.
+        // c:3179-3192 — an existing PM_ARRAY on a non-AUGMENT scalar
+        // assignment, or a PM_HASHED on ANY scalar assignment (`+=`
+        // included: `typeset -A h; h+=x` leaves h="x"), non-special,
+        // non-tied, unset KSHARRAYS → `resetparam(v->pm, PM_SCALAR)`.
         let f = pm.node.flags as u32;
-        let is_array_or_hash = (f & PM_ARRAY) != 0 || (f & PM_HASHED) != 0;
-        let is_special_or_tied = (f & (PM_SPECIAL | PM_TIED)) != 0;
         let augment_bit = (flags & ASSPM_AUGMENT) != 0;
-        if is_array_or_hash && !is_special_or_tied && !augment_bit && !isset(KSHARRAYS) {
+        let resets = ((f & PM_ARRAY) != 0 && !augment_bit) || (f & PM_HASHED) != 0;
+        let is_special_or_tied = (f & (PM_SPECIAL | PM_TIED)) != 0;
+        if resets && !is_special_or_tied && !isset(KSHARRAYS) {
             // c:3242 — flip type to PM_SCALAR, drop array/hash slots.
             let pm_mut = tab.get_mut(name).unwrap();
             pm_mut.node.flags =
