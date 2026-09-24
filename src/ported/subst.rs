@@ -18893,11 +18893,11 @@ pub fn paramsubst(
                 // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
                 // reuse one program for the whole scan.
                 let gms_memo: std::cell::RefCell<
-                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                    std::collections::HashMap<(String, i32), Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
                 > = std::cell::RefCell::new(std::collections::HashMap::new());
-                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32, nse_: i32| -> bool {
                     let prog_ = {
-                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        let hit_ = gms_memo.borrow().get(&(p_.to_string(), nse_)).cloned();
                         match hit_ {
                             Some(pr_) => pr_,
                             None => {
@@ -18911,11 +18911,11 @@ pub fn paramsubst(
                                 crate::ported::glob::tokenize(&mut t_);
                                 let c_ = crate::ported::pattern::patcompile(
                                     &t_,
-                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    crate::ported::zsh_h::PAT_HEAPDUP | nse_, // c:Src/glob.c:2780-2808 set_pat_start / set_pat_end
                                     None,
                                 )
                                 .map(std::rc::Rc::new);
-                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                gms_memo.borrow_mut().insert((p_.to_string(), nse_), c_.clone());
                                 c_
                             }
                         }
@@ -18932,7 +18932,12 @@ pub fn paramsubst(
                             -1,
                             None,
                             off_,
-                        ),
+                        )
+                            // !!! RUST-ONLY !!! pattern.rs lets a PAT_NOTEND trial succeed on a
+                            // partial match (it reads the flag like PAT_NOANCH); C's P_END still
+                            // anchors the trial (c:Src/pattern.c:3461), so the whole slice must match.
+                            && (nse_ & crate::ported::zsh_h::PAT_NOTEND == 0
+                                || crate::ported::pattern::patmatchlen() as usize == s_.len()),
                         None => false,
                     }
                 };
@@ -19087,7 +19092,7 @@ pub fn paramsubst(
                                     // the captures from the matched prefix. No-op
                                     // for patterns without (#b) (GF_BACKREF gate
                                     // inside the helper).
-                                    if gms(sl(0, k), &p, 0) {
+                                    if gms(sl(0, k), &p, 0, if k < nn { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
                                         found = Some((0, k));
                                         break;
                                     }
@@ -19269,11 +19274,11 @@ pub fn paramsubst(
                 // tries (`pattrylen` takes `&Patprog`), which is exactly why C can
                 // reuse one program for the whole scan.
                 let gms_memo: std::cell::RefCell<
-                    std::collections::HashMap<String, Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
+                    std::collections::HashMap<(String, i32), Option<std::rc::Rc<crate::ported::pattern::Patprog>>>,
                 > = std::cell::RefCell::new(std::collections::HashMap::new());
-                let gms = |s_: &str, p_: &str, off_: i32| -> bool {
+                let gms = |s_: &str, p_: &str, off_: i32, nse_: i32| -> bool {
                     let prog_ = {
-                        let hit_ = gms_memo.borrow().get(p_).cloned();
+                        let hit_ = gms_memo.borrow().get(&(p_.to_string(), nse_)).cloned();
                         match hit_ {
                             Some(pr_) => pr_,
                             None => {
@@ -19287,11 +19292,11 @@ pub fn paramsubst(
                                 crate::ported::glob::tokenize(&mut t_);
                                 let c_ = crate::ported::pattern::patcompile(
                                     &t_,
-                                    crate::ported::zsh_h::PAT_HEAPDUP,
+                                    crate::ported::zsh_h::PAT_HEAPDUP | nse_, // c:Src/glob.c:2780-2808 set_pat_start / set_pat_end
                                     None,
                                 )
                                 .map(std::rc::Rc::new);
-                                gms_memo.borrow_mut().insert(p_.to_string(), c_.clone());
+                                gms_memo.borrow_mut().insert((p_.to_string(), nse_), c_.clone());
                                 c_
                             }
                         }
@@ -19308,7 +19313,12 @@ pub fn paramsubst(
                             -1,
                             None,
                             off_,
-                        ),
+                        )
+                            // !!! RUST-ONLY !!! pattern.rs lets a PAT_NOTEND trial succeed on a
+                            // partial match (it reads the flag like PAT_NOANCH); C's P_END still
+                            // anchors the trial (c:Src/pattern.c:3461), so the whole slice must match.
+                            && (nse_ & crate::ported::zsh_h::PAT_NOTEND == 0
+                                || crate::ported::pattern::patmatchlen() as usize == s_.len()),
                         None => false,
                     }
                 };
@@ -19352,7 +19362,14 @@ pub fn paramsubst(
                             let mut count: u32 = 0;
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
-                                    if gms(sl(start, start + k), &p, ioff(start)) {
+                                    if gms(
+                                        sl(start, start + k),
+                                        &p,
+                                        ioff(start),
+                                        // c:3033 set_pat_start, c:3044 set_pat_end
+                                        if start > 0 { crate::ported::zsh_h::PAT_NOTSTART } else { 0 }
+                                            | if start + k < total { crate::ported::zsh_h::PAT_NOTEND } else { 0 },
+                                    ) {
                                         count += 1; // c:3057 `--n`
                                         if count >= target {
                                             return Some((start, start + k));
@@ -19369,7 +19386,7 @@ pub fn paramsubst(
                         for k in 0..=total {
                             let prefix: String = cv[..k].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&prefix, &p, 0) {
+                            if gms(&prefix, &p, 0, if k < total { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
                                 return Some((0, k));
                             }
                         }
@@ -19553,11 +19570,22 @@ pub fn paramsubst(
                     crate::ported::zsh_h::PAT_HEAPDUP,
                     None,
                 );
-                let gms = |s_: &str, off_: i32| -> bool {
+                // c:Src/glob.c:2956 / 2978 — `set_pat_start(p, t-s)`: a trial that
+                // starts past the head carries PAT_NOTSTART, so `(#s)` fails there.
+                let prog_ns_ = crate::ported::pattern::patcompile(
+                    &{
+                        let mut t_ = p.clone();
+                        crate::ported::glob::tokenize(&mut t_);
+                        t_
+                    },
+                    crate::ported::zsh_h::PAT_HEAPDUP | crate::ported::zsh_h::PAT_NOTSTART,
+                    None,
+                );
+                let gms = |s_: &str, off_: i32, ns_: bool| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
-                    match &prog_ {
+                    match if ns_ { &prog_ns_ } else { &prog_ } {
                         // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
                         // the CHARACTER offset of the trial slice, so pattryrefs
                         // reports $mbegin/$mend relative to the WHOLE string
@@ -19615,7 +19643,7 @@ pub fn paramsubst(
                             // span at the end. Plain `%%` (no SUB_SUBSTR) has no
                             // such probe — its arm at c:3186 walks `ioff` all the
                             // way to `send` instead — hence the substr_mode gate.
-                            if gms("", val.len() as i32) {
+                            if gms("", val.len() as i32, !val.is_empty()) {
                                 return Some((total, total));
                             }
                             // Rightmost longest substring match.
@@ -19623,7 +19651,7 @@ pub fn paramsubst(
                             for start in 0..=total {
                                 for k in (0..=(total - start)).rev() {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, ioff(start)) {
+                                    if gms(&candidate, ioff(start), start > 0) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -19644,7 +19672,7 @@ pub fn paramsubst(
                             // shift of the published arrays added a BYTE offset
                             // instead, so any non-ASCII prefix reported the
                             // wrong positions.
-                            if gms(&suffix, ioff(suffix_start_char)) {
+                            if gms(&suffix, ioff(suffix_start_char), suffix_start_char > 0) {
                                 return Some((suffix_start_char, total));
                             }
                             if k == 0 {
@@ -19822,11 +19850,22 @@ pub fn paramsubst(
                     crate::ported::zsh_h::PAT_HEAPDUP,
                     None,
                 );
-                let gms = |s_: &str, off_: i32| -> bool {
+                // c:Src/glob.c:2956 / 2978 — `set_pat_start(p, t-s)`: a trial that
+                // starts past the head carries PAT_NOTSTART, so `(#s)` fails there.
+                let prog_ns_ = crate::ported::pattern::patcompile(
+                    &{
+                        let mut t_ = p.clone();
+                        crate::ported::glob::tokenize(&mut t_);
+                        t_
+                    },
+                    crate::ported::zsh_h::PAT_HEAPDUP | crate::ported::zsh_h::PAT_NOTSTART,
+                    None,
+                );
+                let gms = |s_: &str, off_: i32, ns_: bool| -> bool {
                     // c:Src/glob.c:2514 matchpat shape — see the
                     // sibling closure above (captures/(#b)/(#m) now
                     // publish inside pattryrefs).
-                    match &prog_ {
+                    match if ns_ { &prog_ns_ } else { &prog_ } {
                         // c:Src/glob.c:2964 igetmatch — the suffix scan passes `ioff`,
                         // the CHARACTER offset of the trial slice, so pattryrefs
                         // reports $mbegin/$mend relative to the WHOLE string
@@ -19882,7 +19921,7 @@ pub fn paramsubst(
                         // character count. When it matches, C returns
                         // immediately with `get_match_ret(&imd, umltot,
                         // umltot)` — the empty span at the end.
-                        if gms("", val.len() as i32) {
+                        if gms("", val.len() as i32, !val.is_empty()) {
                             return Some((total, total));
                         }
                         if substr_mode {
@@ -19891,7 +19930,7 @@ pub fn paramsubst(
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
                                     let candidate: String = cv[start..start + k].iter().collect();
-                                    if gms(&candidate, ioff(start)) {
+                                    if gms(&candidate, ioff(start), start > 0) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -19921,7 +19960,7 @@ pub fn paramsubst(
                                 let mut longest = e;
                                 for k in (0..=(total - b)).rev() {
                                     let candidate: String = cv[b..b + k].iter().collect();
-                                    if gms(&candidate, ioff(b)) {
+                                    if gms(&candidate, ioff(b), b > 0) {
                                         longest = b + k;
                                         break;
                                     }
@@ -19935,14 +19974,14 @@ pub fn paramsubst(
                                 } else {
                                     ioff(b)
                                 };
-                                let _ = gms(&span, off);
+                                let _ = gms(&span, off, b > 0);
                             }
                             return best;
                         }
                         for k in 0..=total {
                             let suffix: String = cv[total - k..].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if gms(&suffix, ioff(total - k)) {
+                            if gms(&suffix, ioff(total - k), total - k > 0) {
                                 return Some((total - k, total));
                             }
                         }
@@ -24969,6 +25008,25 @@ pub fn paramsubst(
             pos += 1; // c:1625
         } // c:1625
         let var_name: String = chars[var_start..pos].iter().collect(); // c:1625
+
+        // c:1665 — `int plan9 = isset(RCEXPANDPARAM);` holds for the unbraced
+        // reference as much as the braced one: the braced and unbraced forms
+        // run the same paramsubst, whose plan9 emit (c:4316-4359) glues the
+        // prefix AND the substituted suffix to every element. This arm
+        // distributes only first/last, so `setopt rcexpandparam; a=(a b);
+        // print x$a\*` gave `xa b*` for zsh's `xa* xb*`. A bare `$name` with
+        // no subscript or modifier is exactly `${name}` (same precedent as
+        // the `$+name` rewrite above), so hand it to the braced walk.
+        if isset(RCEXPANDPARAM)
+            && !chars
+                .get(pos)
+                .is_some_and(|&c| c == '[' || c == crate::ported::zsh_h::Inbrack || c == ':')
+        {
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[pos..].iter().collect();
+            let rewritten = format!("{}${{{}}}{}", prefix, var_name, suffix);
+            return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
+        }
 
         // Optional `[subscript]`. Per zsh, only valid for declared
         // arrays/assocs — for scalars the `[` stays literal.

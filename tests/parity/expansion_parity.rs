@@ -1833,3 +1833,28 @@ mod length_flags_count_the_slice {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/glob.c:2929 / 2956 / 2978 — igetmatch tells the matcher when a
+// trial was cut short: `set_pat_end` before a shortened head trial and
+// `set_pat_start` before a tail trial past the head, so `(#e)` / `(#s)`
+// only match at the real ends (calendar_scandate's time parsing).
+// ─────────────────────────────────────────────────────────────────────
+mod strip_anchors_see_the_whole_value {
+    use super::*;
+
+    /// zsh: `ab ab ab ab b a ab  ` then `a1b` and two empties.
+    #[test]
+    fn end_and_start_assertions_in_prefix_and_suffix_strips() {
+        assert_parity(
+            r#"setopt extendedglob; x=ab; print ${x#a(#e)} ${x##a(#e)} ${x%(#s)b} ${x%%(#s)b} ${x#(#s)a} ${x%b(#e)} ${x#ab(#e)} ${x%%(#s)ab}; x=a1b; print ${x#[a-z](#e)} ${x#*(#e)} ${x%%(#s)*}"#,
+        );
+    }
+
+    #[test]
+    fn substring_and_array_strips() {
+        assert_parity(
+            r#"setopt extendedglob; x=abcabc; print ${(S)x#b(#e)} ${(S)x%(#s)a} ${(S)x#(#s)b} ${(S)x#c(#e)}; a=(ab xb); print ${a#a(#e)} ${a%(#s)b}"#,
+        );
+    }
+}
