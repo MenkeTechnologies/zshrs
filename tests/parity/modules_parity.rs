@@ -1163,6 +1163,43 @@ mod nearcolor_module {
         let r = run_zshrs("zmodload zsh/nearcolor 2>/dev/null && echo ok || echo nope");
         assert_eq!(z.stdout, r.stdout);
     }
+
+    /// `%F{#hex}` / `%K{#hex}` consult the "get_color_attr" hook
+    /// (prompt.c:1989) that a loaded zsh/nearcolor fills
+    /// (nearcolor.c:199): the RGB maps to the nearest palette index for
+    /// the terminal's colour count. Without the module, or after
+    /// unloading it, the 24-bit form is emitted. TERM=dumb has no colour
+    /// count, so the hook answers -1 and the spec is rejected (c:1997).
+    /// zshrs never registered the zshhooks hookdefs (init.c:1085) and its
+    /// nearcolor boot_ attached nothing, so every case printed 24-bit.
+    #[test]
+    fn hex_colour_maps_through_nearcolor_hook() {
+        if !zsh_available() {
+            return;
+        }
+        let script = r##"TERM=xterm-256color
+print -r - ${(V)${(%):-"%F{#123456}"}}
+zmodload zsh/nearcolor
+for 1 in 123456 654321 87af5f f00 0f0 00f cccccc; do
+  print -r - $1 ${(V)${(%):-"%F{#$1}%K{#$1}"}}
+done
+TERM=dumb
+print -r - ${(V)${(%):-"%F{#f00}x"}}
+zmodload -u zsh/nearcolor
+TERM=xterm-256color
+print -r - ${(V)${(%):-"%F{#f00}"}}"##;
+        let z = Command::new(zsh_path()).args(["-f", "-c", script]).output().expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&r.stdout),
+            String::from_utf8_lossy(&z.stdout)
+        );
+        assert_eq!(r.status.code(), z.status.code());
+    }
 }
 
 // ───────────────────────── zsh/watch ─────────────────────────
@@ -1607,6 +1644,54 @@ fi"#;
             z.stdout,
             r.stdout
         );
+    }
+
+    /// `zsh -f -c` vs `zshrs --zsh -f -c` on `zmodload zsh/param/private;
+    /// <body>`: stdout and exit status must match.
+    fn private_parity(body: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let script = format!("zmodload zsh/param/private 2>/dev/null; {body}");
+        let z = Command::new(zsh_path()).args(["-f", "-c", &script]).output().expect("zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", &script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&r.stdout),
+            String::from_utf8_lossy(&z.stdout),
+            "stdout divergence on: {body}"
+        );
+        assert_eq!(r.status.code(), z.status.code(), "exit divergence on: {body}");
+    }
+
+    /// A nested-scope WRITE to a name whose outer function holds a private
+    /// that shadows a global lands on the GLOBAL: C's getnode hook
+    /// (param_private.c:568-617, installed at c:678) resolves every lookup
+    /// in the callee — assignment included — past the private to
+    /// `pm->old`. zshrs rejected these with `read-only variable: x` (the
+    /// flag scopeprivate sets for the call) and never touched the global.
+    /// (`local -P…` rather than `private -a …=(…)`: in one `-c` string zsh
+    /// parses before zmodload makes `private` a reserved word.)
+    #[test]
+    fn nested_scope_write_reaches_shadowed_global() {
+        private_parity("x=g; f(){ private x=p; () { x=n1; print $x }; () { x+=n2; print $x }; print in $x }; f; print out $x");
+        private_parity("a=(t l); f(){ local -Pa a=(p q); () { a=(n3) }; () { a+=(n4) }; () { a[1]=n5 }; print in $a }; f; print out $a");
+        private_parity("integer i=5; f(){ local -Pi i=1; () { i=7; (( i++ )) }; print in $i }; f; print out $i");
+    }
+
+    /// An associative private is hidden from the callee too. zshrs keeps
+    /// the pairs in a name-keyed side table, so the callee read the
+    /// private's pairs (V10private.ztst "privates are not visible in
+    /// anonymous functions").
+    #[test]
+    fn nested_scope_sees_shadowed_global_assoc() {
+        private_parity("typeset -A h=(top level); () { local -PA h=(in function); () { print X ${(kv)h} }; print Y ${(kv)h} }; print ${(kv)h}");
+        private_parity("typeset -A h=(top level); () { local -PA h=(in function); () { h[in]=deeper }; print Y ${(kv)h} }; print ${(okv)h}");
+        private_parity("typeset -A h=(top level); () { local -PA h=(in function); () { h=(even deeper); () { print Z ${(kv)h} } }; print Y ${(kv)h} }; print ${(kv)h}");
+        private_parity("typeset -a h=(top level); f(){ local -PA h=(in function); g }; g(){ typeset -p h; print ${(t)h} ${(kv)h} }; f; print ${(kv)h}");
     }
 }
 

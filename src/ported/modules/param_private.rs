@@ -1025,9 +1025,73 @@ pub fn wrap_private(
                                                            // `scopeprivate` reads `locallevel` itself (c:515), so park the
                                                            // counter at C's value across the scan (see the WARNING above).
         locallevel.store(local, Ordering::Relaxed);
+        // !!! WARNING: RUST-ONLY ADJUSTMENT — NO C COUNTERPART !!!
+        // C hides a private from the wrapped function through
+        // `realparamtab->getnode = getprivatenode` (c:678): EVERY lookup —
+        // read, assignment (`getvalue`→`fetchvalue`), `typeset -p`,
+        // `${(t)…}`, assoc element writes — walks past the private to
+        // `pm->old`. zshrs's paramtab has no getnode vtable; only a few
+        // read sites call getprivatenode, so assignments in the callee
+        // hit the private itself (`read-only variable: x` from the
+        // PM_READONLY scopeprivate just set, where zsh assigns the
+        // outer `x`) and an assoc's pairs — kept by NAME in
+        // paramtab_hashed_storage — stayed visible (`local -PA h=(in
+        // fn); () { print ${(kv)h} }` printed `in fn`, zsh prints the
+        // outer `h`). So for the duration of the wrapped call the
+        // private is lifted off its name and `pm->old` is put in its
+        // slot — exactly the node getprivatenode would return — and it
+        // is spliced back afterwards. A private with no `pm->old` stays
+        // in place: C resolves it to NULL, which the existing
+        // getprivatenode read sites and createparam's PM_RO_BY_DESIGN
+        // check (params.c:1066-1074) already reproduce.
+        //
+        // Each entry: (name, private node, Some(private's hashed row) when
+        // a shadow frame of the private's level was lifted with it).
+        let mut lifted: Vec<(String, Box<param>, Option<Option<indexmap::IndexMap<String, String>>>)> =
+            Vec::new();
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, PM_UNSET as i32); // c:555
+            }
+            let names: Vec<String> = tab
+                .iter()
+                .filter(|(_, pm)| {
+                    pm.level == local && pm.old.is_some() && is_private(&***pm as *const param) != 0
+                })
+                .map(|(n, _)| n.clone())
+                .collect();
+            for name in names {
+                if let Some(slot) = tab.get_mut(&name) {
+                    if let Some(outer) = slot.old.take() {
+                        let private = std::mem::replace(slot, outer);
+                        lifted.push((name, private, None));
+                    }
+                }
+            }
+        }
+        // The assoc half: makeprivate retagged the frame holding the
+        // outer's pairs to the private's level; swap it into the storage
+        // and keep the private's pairs aside.
+        if !lifted.is_empty() {
+            if let Some(stk_mtx) = crate::ported::params::PARAMTAB_HASHED_SHADOW_STACK.get() {
+                if let (Ok(mut stk), Ok(mut store)) =
+                    (stk_mtx.lock(), crate::ported::params::paramtab_hashed_storage().lock())
+                {
+                    for (name, private, row) in lifted.iter_mut() {
+                        let frame = match stk.get_mut(name.as_str()) {
+                            Some(frames) if frames.last().is_some_and(|(l, _)| *l == private.level) => {
+                                frames.pop().map(|(_, r)| r)
+                            }
+                            _ => None,
+                        };
+                        if let Some(outer_row) = frame {
+                            *row = Some(store.remove(name.as_str()));
+                            if let Some(r) = outer_row {
+                                store.insert(name.clone(), r);
+                            }
+                        }
+                    }
+                }
             }
         }
         locallevel.store(hoisted, Ordering::Relaxed);
@@ -1035,6 +1099,56 @@ pub fn wrap_private(
                      // c:557 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);`
                      // Restore each param's saved PM_UNSET/PM_READONLY state.
         locallevel.store(local, Ordering::Relaxed);
+        // Splice the lifted privates back (reverse of the lift above).
+        // The callee's own locals are still on the chain here — zshrs
+        // runs doshfunc's endparamscope after the wrapper chain returns —
+        // so the private goes BENEATH any node above its level, where C's
+        // createparam would have chained a callee `local` over it.
+        for (name, mut private, row) in lifted.into_iter().rev() {
+            let lvl = private.level;
+            if let Some(private_row) = row {
+                if let (Some(stk_mtx), Ok(mut store)) = (
+                    crate::ported::params::PARAMTAB_HASHED_SHADOW_STACK.get(),
+                    crate::ported::params::paramtab_hashed_storage().lock(),
+                ) {
+                    if let Ok(mut stk) = stk_mtx.lock() {
+                        let frames = stk.entry(name.clone()).or_default();
+                        match frames.iter().position(|(l, _)| *l > lvl) {
+                            Some(i) => {
+                                let outer_row = std::mem::replace(&mut frames[i].1, private_row);
+                                frames.insert(i, (lvl, outer_row));
+                            }
+                            None => {
+                                let outer_row = store.remove(name.as_str());
+                                if let Some(r) = private_row {
+                                    store.insert(name.clone(), r);
+                                }
+                                frames.push((lvl, outer_row));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                match tab.get_mut(&name) {
+                    Some(slot) if slot.level > lvl => {
+                        let mut cur: &mut Box<param> = slot;
+                        while cur.old.as_ref().is_some_and(|o| o.level > lvl) {
+                            cur = cur.old.as_mut().unwrap();
+                        }
+                        private.old = cur.old.take();
+                        cur.old = Some(private);
+                    }
+                    Some(slot) => {
+                        let outer = std::mem::replace(slot, private);
+                        slot.old = Some(outer);
+                    }
+                    None => {
+                        tab.insert(name, private);
+                    }
+                }
+            }
+        }
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, 0); // c:557
