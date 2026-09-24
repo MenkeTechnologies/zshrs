@@ -4187,7 +4187,7 @@ impl ShellExecutor {
                             ops = chunk.ops.len(),
                             "autoload: rkyv chunk hit, skipping parse+compile"
                         );
-                        let status = self.run_chunk_with_exit_hooks(chunk, "autoload:cached");
+                        let status = self.run_chunk(chunk, "autoload:cached");
                         if self.functions_compiled.contains_key(name) {
                             return status;
                         }
@@ -4237,7 +4237,14 @@ impl ShellExecutor {
                 Err(e) => tracing::warn!(name, error = %e, "autoload: chunk serialize failed"),
             }
         }
-        self.run_chunk_with_exit_hooks(chunk, "autoload:compiled")
+        // c:Src/exec.c:5807-5816 — installing the definition is a funcdef
+        // store (`execode(…, "evalautofunc")` for ksh style); nothing on that
+        // path reaches the shell-exit hooks. Running the definition through
+        // `run_chunk_with_exit_hooks` fired the EXIT trap, `TRAPEXIT` and
+        // `zshexit` on the first call of EVERY autoloaded function (and
+        // consumed a string EXIT trap so it never ran at exit): `trap 'echo T'
+        // EXIT; autoload -Uz is-at-least; is-at-least 1.0` printed T first.
+        self.run_chunk(chunk, "autoload:compiled")
     }
 
     /// `execute_script` — see implementation.

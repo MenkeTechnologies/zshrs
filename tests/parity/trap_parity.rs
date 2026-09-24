@@ -280,3 +280,46 @@ mod zerr_after_a_failing_subshell {
         assert_parity(r#"trap "print Z" ZERR; ( (false) ) & wait; print end"#);
     }
 }
+
+/// c:Src/exec.c:5807-5816 — loading an autoloaded function installs its
+/// definition and runs nothing else; none of the shell-exit hooks
+/// (`trap … EXIT`, `TRAPEXIT`, `zshexit`) fire on that path. zshrs ran
+/// the definition through the end-of-script pipeline, so the first call of
+/// ANY autoloaded function fired them (and consumed the string EXIT trap).
+mod autoload_does_not_fire_exit_hooks {
+    use super::*;
+
+    #[test]
+    fn string_exit_trap_survives_first_autoload_call() {
+        assert_parity(
+            r#"trap "echo T" EXIT; autoload -Uz is-at-least; is-at-least 1.0 && echo ok; echo y"#,
+        );
+    }
+
+    #[test]
+    fn trapexit_and_zshexit_not_fired_by_autoload() {
+        assert_parity(
+            r#"TRAPEXIT() { echo T }; autoload -Uz is-at-least; is-at-least 1.0 && echo ok; echo y"#,
+        );
+        assert_parity(
+            r#"zshexit() { echo Z }; autoload -Uz is-at-least; is-at-least 1.0 && echo ok; echo y"#,
+        );
+    }
+
+    /// C03traps "autoloaded TRAPEXIT": an autoloaded TRAPEXIT runs once
+    /// at `exit`, not once for the load and once more for the exit.
+    #[test]
+    fn autoloaded_trapexit_runs_once() {
+        let dir = std::env::temp_dir().join(format!("zshrs-trapexit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("TRAPEXIT"), "print Running exit trap\n").unwrap();
+        let d = dir.display();
+        assert_parity(&format!(
+            "fpath=({d} $fpath); autoload TRAPEXIT; print A; exit; print What"
+        ));
+        assert_parity(&format!(
+            "fpath=({d} $fpath); autoload TRAPEXIT; fn() {{ print F }}; fn; print B; exit"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
