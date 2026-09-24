@@ -1686,3 +1686,23 @@ mod substring_blank_length {
         assert_parity(r#"str=rts; print ${str:0: }; print "${str:1: }x"; print ${str:0:}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/lex.c:804-810 — under LEXFLAGS_ACTIVE (bufferwords, the `(z)` flag)
+// an incomplete `((` math expression keeps its `((` in the word.
+// D04parameter "${(z)} with incomplete math expressions".
+// ─────────────────────────────────────────────────────────────────────
+mod z_flag_incomplete_math {
+    use super::*;
+
+    #[test]
+    fn incomplete_math_keeps_its_parens() {
+        assert_parity(r#"print -rl - ${(z):-":;(( echo 42 "} ${(z):-"(( 1"}"#);
+    }
+
+    /// A complete `(( … ))` and the command-position parse error are unchanged.
+    #[test]
+    fn complete_math_and_parse_error_unchanged() {
+        assert_parity(r#"print -rl - ${(z):-"x; (( 1 + 2 )) y"}; eval '(( 1 +'; print $?"#);
+    }
+}

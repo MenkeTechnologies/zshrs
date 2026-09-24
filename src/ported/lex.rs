@@ -1641,9 +1641,16 @@ fn gettok() -> lextok {
                             // lexbuf cmd_or_math filled, so yyerror names
                             // it: `(( 1 +` → "parse error near ` 1 +'".
                             CMD_OR_MATH_ERR | _ => {
-                                set_tokstr(Some(
-                                    LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()),
-                                ));
+                                // c:804-810 — `if (lexflags & LEXFLAGS_ACTIVE) tokstr =
+                                // dyncat("((", tokstr ? tokstr : "");`: bufferwords()
+                                // keeps an incomplete math expression as ONE word, its
+                                // `((` included (`${(z):-"(( 1"}` is `(( 1`).
+                                let buf = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
+                                set_tokstr(Some(if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE != 0 {
+                                    format!("(({}", buf) // c:810
+                                } else {
+                                    buf
+                                }));
                                 return LEXERR;
                             }
                         }
