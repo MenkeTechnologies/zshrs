@@ -4146,26 +4146,44 @@ pub fn resizehistents() {
 }
 
 /// Port of `readhistline()` from `Src/hist.c:2635`. — C decl `readhistline(int start, char **bufp, int *bufsiz, FILE *in, int *readbytes)`.
-pub fn readhistline(line: &str) -> Option<histent> {
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
-    if let Some(rest) = line.strip_prefix(": ") {
-        if let Some(semi) = rest.find(';') {
-            let meta = &rest[..semi];
-            let cmd = &rest[semi + 1..];
-            let parts: Vec<&str> = meta.splitn(2, ':').collect();
-            let timestamp = parts
-                .first()
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(0);
-            let mut entry = make_histent(0, cmd.to_string());
-            entry.stim = timestamp;
-            return Some(entry);
+///
+/// Returns one LOGICAL history line: physical lines ending in a
+/// backslash are joined with the backslash turned into the newline it
+/// escaped, and the single space `savehistfile` appends after a
+/// trailing backslash run (c:3063-3068) is removed again. `lines` are
+/// the file's physical lines without their `\n`; `ends_with_nl` says
+/// whether the LAST one had one (fgets' `buf[len - 1] != '\n'` test).
+/// `None` is C's `return 0` — end of file.
+pub fn readhistline<'a, I: Iterator<Item = &'a str>>(
+    lines: &mut std::iter::Peekable<I>,
+    ends_with_nl: bool,
+) -> Option<String> {
+    let mut buf = String::new();
+    loop {
+        let raw = lines.next()?; // c:2638 fgets; NULL → return 0
+        buf.push_str(raw);
+        // c:2644-2651 — an unterminated last line is returned as is.
+        if lines.peek().is_none() && !ends_with_nl {
+            return Some(buf);
         }
+        // c:2654 buf[len - 1] = '\0'; c:2655-2659 — a trailing
+        // backslash escaped a newline: turn it back into one and read on.
+        // fgets stopped at the '\n', so feof() is still false here and
+        // C always recurses; a continuation on the last line therefore
+        // meets fgets == NULL and the whole entry is dropped (c:2638).
+        if buf.ends_with('\\') {
+            buf.pop();
+            buf.push('\n');
+            continue;
+        }
+        // c:2661-2665 — backslashes followed by spaces: drop the one
+        // space the writer added so the line did not read as continued.
+        let trimmed_len = buf.trim_end_matches(' ').len();
+        if trimmed_len != buf.len() && buf[..trimmed_len].ends_with('\\') {
+            buf.pop();
+        }
+        return Some(buf);
     }
-    Some(make_histent(0, line.to_string()))
 }
 
 /// Port of `readhistfile()` from `Src/hist.c:2675`. — C decl `readhistfile(char *fn, int err, int readflags)`.
@@ -4348,15 +4366,11 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
             }
         }
     }
-    for raw_line in lines_iter {
-        if let Some((stim, ftim, ref mut text)) = current {
-            if text.ends_with('\\') {
-                text.pop();
-                text.push('\n');
-                text.push_str(raw_line);
-                current = Some((stim, ftim, text.clone()));
-                continue;
-            }
+    let mut lines_iter = lines_iter.peekable();
+    let ends_with_nl = contents.ends_with('\n');
+    while let Some(logical) = readhistline(&mut lines_iter, ends_with_nl) {
+        let raw_line = logical.as_str();
+        if let Some((stim, ftim, ref text)) = current {
             let n = curhist.fetch_add(1, SeqCst) + 1;
             let mut entry = make_histent(n, text.clone());
             entry.stim = stim;
@@ -4366,22 +4380,48 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
             histlinect.fetch_add(1, SeqCst);
             current = None;
         }
-        if let Some(rest) = raw_line.strip_prefix(": ") {
-            if let Some((meta, text)) = rest.split_once(';') {
-                if let Some((stim_s, dur_s)) = meta.split_once(':') {
-                    let stim: i64 = stim_s.parse().unwrap_or(0);
-                    let dur: i64 = dur_s.parse().unwrap_or(0);
-                    let ftim = stim + dur;
-                    current = Some((stim, ftim, text.to_string()));
-                    continue;
+        // c:2771-2785 — `: STIM:ELAPSED;TEXT` extended header. C only
+        // looks at the leading `:` and scans with zstrtol, so a header
+        // missing its `:ELAPSED` part leaves the text EMPTY (pt ran to
+        // the NUL looking for the `:`) and ftim = stim.
+        let (stim, ftim, text): (i64, i64, &str) = if let Some(pt) = raw_line.strip_prefix(':') {
+            let (stim, _) = crate::ported::utils::zstrtol(pt, 0); // c:2773
+            match pt.find(':') {
+                // c:2775-2779
+                Some(c) => {
+                    let pt = &pt[c + 1..];
+                    let (ftim, _) = crate::ported::utils::zstrtol(pt, 0); // c:2776
+                    let text = match pt.find(';') {
+                        Some(s) => &pt[s + 1..],
+                        None => "",
+                    };
+                    (stim, ftim, text)
                 }
+                None => (stim, stim, ""), // c:2780-2781
             }
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        current = Some((now, now, raw_line.to_string()));
+        } else {
+            // c:2783-2784 — a plain-format line starting with `:` was
+            // written as `\:` (c:3057-3058) so it does not read as a header.
+            let text = match raw_line.strip_prefix("\\:") {
+                Some(_) => &raw_line[1..],
+                None => raw_line,
+            };
+            (0, 0, text)
+        };
+        // c:2816-2821 — no timestamp means "now"; an ELAPSED smaller than
+        // the start is a duration (what savehistfile writes, c:3055-3056).
+        let (stim, ftim) = if stim == 0 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            (now, now)
+        } else if ftim < stim {
+            (stim, stim + ftim)
+        } else {
+            (stim, ftim)
+        };
+        current = Some((stim, ftim, text.to_string()));
     }
     if let Some((stim, ftim, text)) = current {
         let n = curhist.fetch_add(1, SeqCst) + 1;

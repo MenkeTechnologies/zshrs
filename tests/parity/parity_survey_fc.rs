@@ -1658,3 +1658,35 @@ EOF
         );
     }
 }
+
+// ───────── history file read-back (fc -R) ─────────
+
+/// c:Src/hist.c:2635 `readhistline` — a physical line ending in `\`
+/// continues the entry (the `\` becomes the newline it escaped), and
+/// the single space `savehistfile` appends after a trailing backslash
+/// run (c:3063-3068) is stripped again on read (c:2661-2665).
+/// c:2783-2784 — a plain-format `\:` line reads back as `:`.
+mod history_file_read {
+    use super::*;
+
+    #[test]
+    fn trailing_backslash_space_is_stripped() {
+        assert_parity(
+            r#"h=$(mktemp); printf '%s\n' 'x\ ' 'y\  ' 'z ' > $h; fc -p -R $h; fc -l 1; command rm -f $h"#,
+        );
+    }
+
+    #[test]
+    fn backslash_newline_continues_the_entry() {
+        assert_parity(
+            r#"h=$(mktemp); printf '%s\n' 'a\' 'b' 'c\\\' 'd' 'e' > $h; fc -p -R $h; fc -l 1; command rm -f $h"#,
+        );
+    }
+
+    #[test]
+    fn extended_header_and_escaped_colon() {
+        assert_parity(
+            r#"h=$(mktemp); printf '%s\n' '\:foo bar' ':x' ': 100:5;timed' ':200;semi' > $h; fc -p -R $h; fc -l 1; fc -lt %s 3; command rm -f $h"#,
+        );
+    }
+}
