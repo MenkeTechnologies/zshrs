@@ -469,3 +469,23 @@ mod nameref_zshrs_pin {
         );
     }
 }
+
+/// c:Src/builtin.c:3873-3878 — `if ((ss && !subscript) || !isident(s))
+/// { zerrnam(...); }`. isident (c:Src/params.c:1309) accepts an all-digit
+/// name, so `unset 1` is a quiet no-op; a bad name is zerrnam, which sets
+/// errflag and abandons the rest of the command list.
+mod unset_name_check_is_isident_and_zerrnam {
+    use super::*;
+
+    #[test]
+    fn digit_names_are_identifiers() {
+        assert_parity("set -- a b; unset 1; echo $? \"[$1]\" $#; unset 5 0; echo $?");
+    }
+
+    #[test]
+    fn a_bad_name_abandons_the_list() {
+        assert_parity("x=1; unset -v x 1x y 2>/dev/null; echo $? ${x-gone}");
+        assert_parity("f() { unset 'a[' 2>/dev/null; echo in }; f; echo after");
+        assert_parity("unset '#' 2>&1 | cut -d: -f3-");
+    }
+}

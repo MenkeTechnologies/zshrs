@@ -9684,24 +9684,22 @@ pub fn bin_unset(
                 (&s[..start], Some(&s[start + 1..s.len() - 1])) // c:3875
             }
             Some(_) => {
-                // c:3879-3884 — bracket without `]` close → invalid.
-                zwarnnam(name, &format!("{}: invalid parameter name", s)); // c:3882
-                returnval = 1; // c:3883
-                continue; // c:3884
+                // c:3873-3879 — bracket without `]` close → invalid.
+                zerrnam(name, &format!("{}: invalid parameter name", s)); // c:3876
+                returnval = 1; // c:3877
+                continue; // c:3878
             }
             None => (s.as_str(), None),
         };
-        // c:3878 — `if (... || !isident(s))` invalid identifier check.
-        if nm.is_empty()
-            || !nm
-                .chars()
-                .next()
-                .map_or(false, |c| c.is_alphabetic() || c == '_')
-            || !nm.chars().all(|c| c.is_alphanumeric() || c == '_')
-        {
-            zwarnnam(name, &format!("{}: invalid parameter name", s)); // c:3882
-            returnval = 1; // c:3883
-            continue;
+        // c:3873 — `if ((ss && !subscript) || !isident(s))`. isident
+        // (c:Src/params.c:1309) takes an all-digit name (`unset 1` is a
+        // no-op, as no such parameter exists) and namespaced `.a.b`. The
+        // diagnostic is zerrnam: errflag is set and the rest of the
+        // command list is abandoned.
+        if !isident(nm) {
+            zerrnam(name, &format!("{}: invalid parameter name", s)); // c:3876
+            returnval = 1; // c:3877
+            continue; // c:3878
         }
         // c:3886-3905 — `if (!pm) continue;` then unset.
         // C `unsetparam_pm` dispatches on `pm->gsu` (the gsu_*
