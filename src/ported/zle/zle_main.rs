@@ -2074,9 +2074,12 @@ pub fn initmodifier() {
 pub fn handleprefixes() {
     if (PREFIXFLAG.load(SeqCst) != 0) {
         PREFIXFLAG.store(0, SeqCst);
+        // c:1622 — MOD_TMULT stays set: the next digit-argument keeps
+        // accumulating into tmult (zle_misc.c:972-973), which is how a
+        // multi-digit count like `12`, or vi `10` through
+        // vi-digit-or-beginning-of-line (zle_vi.c:1136), is built.
         if ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
-            ZMOD.lock().unwrap().flags &= !MOD_TMULT;
-            ZMOD.lock().unwrap().flags |= MOD_MULT;
+            ZMOD.lock().unwrap().flags |= MOD_MULT; // c:1623
             let mut __g_zmod = ZMOD.lock().unwrap();
             __g_zmod.mult = __g_zmod.tmult;
         }

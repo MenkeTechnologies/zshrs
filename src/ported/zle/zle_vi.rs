@@ -1547,7 +1547,9 @@ pub fn vidigitorbeginningofline() -> i32 {
     if ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
         return digitargument();
     }
-    vibeginningofline()
+    let _ = crate::ported::zle::zle_h::removesuffix(); // c:1139
+    crate::ported::zle::zle_h::invalidatelist(); // c:1140
+    vibeginningofline() // c:1141
 }
 /// `VIRANGEFLAG` static.
 pub static VIRANGEFLAG: std::sync::atomic::AtomicI32 = // c:36

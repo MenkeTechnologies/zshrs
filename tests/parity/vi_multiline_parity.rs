@@ -468,3 +468,23 @@ fn delete_up_is_linewise() {
         "X02 #20: delete up clears lastcol",
     );
 }
+
+/// A multi-digit count: `handleprefixes` promotes tmult into mult but
+/// leaves MOD_TMULT set (`zle_main.c:1620-1627`), so the second digit
+/// accumulates (`zle_misc.c:972-980`) and a `0` after a digit is a digit
+/// rather than beginning-of-line (`zle_vi.c:1136`).
+#[test]
+fn a_two_digit_count_accumulates() {
+    assert_same_dump(
+        &vi_one_write("abcdefghijklmnop\\e010x"),
+        "vicmd 10x deletes ten characters",
+    );
+}
+
+#[test]
+fn a_twelve_count_is_twelve_not_two() {
+    assert_same_dump(
+        &vi_one_write("abcdefghijklmnopqrstu\\e012x"),
+        "vicmd 12x deletes twelve characters",
+    );
+}
