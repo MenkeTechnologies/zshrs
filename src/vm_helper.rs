@@ -5673,7 +5673,7 @@ impl ShellExecutor {
                 if let Some(rc) = self.try_registered_ffi_command(cmd, args) {
                     return Ok(rc);
                 }
-                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
                 return Ok(127);
             }
         }
@@ -5811,7 +5811,7 @@ impl ShellExecutor {
                     // directly rather than through `zerr` for the same reason
                     // as the PATH-unset arm above: command-not-found is
                     // non-fatal and must not raise errflag.
-                    eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                    eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
                     return Ok(127); // c:819 `_exit(127)`
                 }
             }
@@ -6015,7 +6015,7 @@ impl ShellExecutor {
                                     cmd
                                 );
                             } else {
-                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
                             }
                             Ok(127)
                         } else {
@@ -6158,7 +6158,7 @@ impl ShellExecutor {
                                     cmd
                                 );
                             } else {
-                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), cmd);
+                                eprintln!("{}: command not found: {}", zerr_prefix(&sn), crate::ported::utils::nicedupstring(&cmd));
                             }
                             Ok(127)
                         } else if e.kind() == io::ErrorKind::PermissionDenied {

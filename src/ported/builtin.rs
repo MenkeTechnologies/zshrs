@@ -2481,7 +2481,7 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     }
 
     // c:1071 — failure warning.
-    zwarnnam(cnam, &format!("no such file or directory: {}", dest));
+    zwarnnam(cnam, &format!("no such file or directory: {}", crate::ported::utils::nicedupstring(&dest))); // c:1080 `%s` → nicezputs (c:Src/utils.c:316)
     None
 }
 
@@ -9746,7 +9746,7 @@ pub fn bin_unset(
             }
             Some(_) => {
                 // c:3873-3879 — bracket without `]` close → invalid.
-                zerrnam(name, &format!("{}: invalid parameter name", s)); // c:3876
+                zerrnam(name, &format!("{}: invalid parameter name", crate::ported::utils::nicedupstring(&s))); // c:3876 — `%s` is nicezputs (c:Src/utils.c:316)
                 returnval = 1; // c:3877
                 continue; // c:3878
             }
@@ -9758,7 +9758,7 @@ pub fn bin_unset(
         // diagnostic is zerrnam: errflag is set and the rest of the
         // command list is abandoned.
         if !isident(nm) {
-            zerrnam(name, &format!("{}: invalid parameter name", s)); // c:3876
+            zerrnam(name, &format!("{}: invalid parameter name", crate::ported::utils::nicedupstring(&s))); // c:3876 — `%s` is nicezputs (c:Src/utils.c:316)
             returnval = 1; // c:3877
             continue; // c:3878
         }

@@ -3152,7 +3152,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if !has_slash && errno == libc::ENOENT {
                         // c:876 — PATH search exhausted with no good
                         // errno → `command not found: arg0`.
-                        crate::ported::utils::zerr(&format!("command not found: {}", cmd));
+                        crate::ported::utils::zerr(&format!("command not found: {}", crate::ported::utils::nicedupstring(&cmd)));
                     } else {
                         let mut errmsg = crate::ported::compat::strerror(errno);
                         if errno != libc::EIO {
@@ -3230,7 +3230,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let errno = err.raw_os_error().unwrap_or(libc::ENOENT);
         let has_slash = cmd.contains('/');
         if !has_slash && errno == libc::ENOENT {
-            crate::ported::utils::zerr(&format!("command not found: {}", cmd));
+            crate::ported::utils::zerr(&format!("command not found: {}", crate::ported::utils::nicedupstring(&cmd)));
         } else {
             let mut errmsg = crate::ported::compat::strerror(errno);
             if errno != libc::EIO {

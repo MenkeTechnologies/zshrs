@@ -4168,7 +4168,7 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
                         libc::_exit(LASTVAL.load(Ordering::Relaxed));
                     }
                 }
-                zerr(&format!("command not found: {}", arg0)); // c:811
+                zerr(&format!("command not found: {}", crate::ported::utils::nicedupstring(&arg0))); // c:818 — `%s` is nicezputs (c:Src/utils.c:316)
                 unsafe {
                     libc::_exit(127);
                 } // c:812
@@ -4249,7 +4249,7 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
             libc::_exit(LASTVAL.load(Ordering::Relaxed));
         } // c:874
     } else {
-        zerr(&format!("command not found: {}", arg0)); // c:876
+        zerr(&format!("command not found: {}", crate::ported::utils::nicedupstring(&arg0))); // c:903 — `%s` is nicezputs (c:Src/utils.c:316)
     }
     let code = if eno == libc::EACCES || eno == libc::ENOEXEC {
         126

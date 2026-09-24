@@ -104,3 +104,54 @@ fn unbraced_multibyte_identifier() {
     let s = r#"hähä=3; print -r -- $hähä "$hähä" x$hähä; setopt posixidentifiers; print -r -- $hähä"#;
     assert_bytes(s, "3320332078330ac3a468c3a40a");
 }
+
+fn run_stderr(cmd: &mut Command, script: &str) -> String {
+    let o = cmd
+        .args(["-f", "-c", script])
+        .env_remove("LC_CTYPE")
+        .env_remove("LANG")
+        .env_remove("ZSHRS_CACHE")
+        .env("LC_ALL", LOCALE)
+        .output()
+        .expect("spawn shell");
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+/// c:Src/utils.c:314-316 — zerrmsg prints every `%s` argument through
+/// `nicezputs`, so an invalid byte in a command name, a `cd` target or an
+/// `unset` operand is shown as `\M-i`, a control char as `^A`/`\t`. The
+/// port formats the message before zerr sees it, so each call site has to
+/// nice-format its argument (exec.c:818/903, builtin.c:1080/3877).
+/// D07multibyte "Invalid parameter name with following tokenized input".
+#[test]
+fn error_messages_nice_format_their_argument() {
+    let s = r#"x=$'a\xe9b'; $x; cd $x; y=$'a\x01é\tb'; $y; cd $y; typeset -A h; unset "h[$x""#;
+    let want = "zsh:1: command not found: a\\M-ib\n\
+                zsh:cd:1: no such file or directory: a\\M-ib\n\
+                zsh:1: command not found: a^Aé\\tb\n\
+                zsh:cd:1: no such file or directory: a^Aé\\tb\n\
+                zsh:unset:1: h[a\\M-ib: invalid parameter name\n";
+    if let Some(z) = zsh_path() {
+        assert_eq!(run_stderr(&mut Command::new(z), s), want, "pin no longer matches zsh");
+    }
+    let mut c = Command::new(zshrs_bin());
+    c.arg("--zsh");
+    assert_eq!(run_stderr(&mut c, s), want, "zshrs diverged from zsh");
+}
+
+/// The sourced-file form from D07: `$\xe9#` followed by tokenized input
+/// is not a parameter, so the whole word is the command name.
+#[test]
+fn sourced_bad_param_name_error_uses_meta_notation() {
+    let dir = std::env::temp_dir().join(format!("zshrs_mb_badparam_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let s = r#"print $'$\xe9#``' >test_bad_param; (setopt nonomatch; . ./test_bad_param)"#;
+    let want = "./test_bad_param:1: command not found: $\\M-i#\n";
+    if let Some(z) = zsh_path() {
+        assert_eq!(run_stderr(Command::new(z).current_dir(&dir), s), want, "pin no longer matches zsh");
+    }
+    let mut c = Command::new(zshrs_bin());
+    c.arg("--zsh").current_dir(&dir);
+    assert_eq!(run_stderr(&mut c, s), want, "zshrs diverged from zsh");
+    let _ = std::fs::remove_dir_all(&dir);
+}
