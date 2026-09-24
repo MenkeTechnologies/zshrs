@@ -11564,7 +11564,18 @@ impl ZshCompiler {
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_REGISTER_COMPILED_FN, 6),
                 0,
             );
-            self.builder.emit(Op::SetStatus, 0);
+            if f.auto_call_args.is_some() {
+                // c:Src/exec.c:5460-5495 — the anonymous arm of
+                // execfuncdef goes straight from building `shf` to
+                // `execshfunc(shf, args)` without touching lastval, so the
+                // body (and its argument words) still see the `$?` of the
+                // command before the definition: `false; () { echo $?; }`
+                // prints 1. Only a NAMED definition finishes with
+                // `return ret` with ret still 0 (c:5549) and resets the status.
+                self.builder.emit(Op::Pop, 0);
+            } else {
+                self.builder.emit(Op::SetStatus, 0);
+            }
         }
 
         // Anonymous-function form `() { body } a b c` — register and call

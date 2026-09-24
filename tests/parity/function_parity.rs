@@ -719,3 +719,36 @@ mod rcquotes_state_of_the_defining_lex {
         assert_parity("f() { print 'a''b' }; setopt rcquotes; functions f");
     }
 }
+
+/// c:Src/exec.c:5460-5495 — the anonymous arm of execfuncdef calls
+/// `execshfunc(shf, args)` without touching lastval, so the body and its
+/// argument words see the status of the command before the definition. A
+/// NAMED definition returns 0 (c:5549). zshrs set the status to 0 after
+/// registering the function, so `false; () { print $? }` printed 0.
+mod anonymous_function_sees_prior_status {
+    use super::*;
+
+    #[test]
+    fn body_and_arguments_see_the_previous_status() {
+        assert_parity("false; () { print $?; }");
+        assert_parity("false; () { print in $1; } $?");
+        assert_parity("false; (){ return $?; }; print $?");
+        assert_parity("false\n() { print $?; }");
+    }
+
+    #[test]
+    fn a_named_definition_still_resets_the_status() {
+        assert_parity("false; f() { :; }; print $?");
+    }
+
+    /// A02alias "We can now alias special tokens": a global alias on `&&`
+    /// expands to an anonymous function returning `$?`, which must carry
+    /// the failure of the previous line into the `&&` chain.
+    #[test]
+    fn global_alias_on_and_and_chains_the_status() {
+        assert_parity(
+            "alias -g '&&=(){ return $?; } && '\n\
+             eval 'print one\n&& { print two; false; }\n&& print not this\ntrue\n&& print three'",
+        );
+    }
+}
