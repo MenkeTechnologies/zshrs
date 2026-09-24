@@ -279,7 +279,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
         &format!(
             "cannot make directory `{}': {}",
             path,
-            std::io::Error::from_raw_os_error(last_err)
+            crate::ported::utils::zsh_errno_msg(last_err)
         ),
     );
     1 // c:150
@@ -337,7 +337,7 @@ pub fn bin_rmdir(
                 &format!(
                     "cannot remove directory `{}': {}",
                     arg,
-                    crate::ported::compat::last_errstr()
+                    crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))
                 ),
             );
             err = 1; // c:162
@@ -521,7 +521,7 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
                 return 1; // c:309
             }
             Err(e) => {
-                zwarnnam(nam, &format!("{}: {}", p, e)); // c:308
+                zwarnnam(nam, &format!("{}: {}", p, crate::ported::utils::zsh_errno_msg(e.raw_os_error().unwrap_or(0)))); // c:308 `%e`
                 return 1;
             }
             _ => {}
@@ -579,11 +579,11 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
         } else {
             p
         };
-        // Bug #112 — use C strerror via last_errstr to avoid the
-        // " (os error N)" Rust suffix that Display appends.
+        // Bug #112 — `%e` (zsh_errno_msg: strerror, first letter lowered)
+        // without the " (os error N)" suffix io::Error Display appends.
         zwarnnam(
             nam,
-            &format!("`{}': {}", errfile, crate::ported::compat::last_errstr()),
+            &format!("`{}': {}", errfile, crate::ported::utils::zsh_errno_msg(osek.raw_os_error().unwrap_or(0))),
         ); // c:357
         return 1; // c:358
     }
@@ -649,7 +649,7 @@ where
         Err(e) => {
             if reccmd.opt_noerr == 0 {
                 // c:491
-                zwarnnam(reccmd.nam, &format!("{}: {}", arg, e)); // c:492
+                zwarnnam(reccmd.nam, &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(e.raw_os_error().unwrap_or(0)))); // c:492 `%e`
             }
             return err1 | 1; // c:493
         }
@@ -767,7 +767,7 @@ pub fn rm_leaf(
         // c:594
         zwarnnam(
             rmm.nam, // c:594
-            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
+            &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))),
         );
         return 1; // c:594
     }
@@ -791,7 +791,7 @@ pub fn rm_dirpost(
         // c:608
         zwarnnam(
             rmm.nam, // c:616
-            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
+            &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))),
         );
         return 1; // c:616
     }
@@ -879,7 +879,7 @@ pub fn chmod_dochmod(
         // c:646
         zwarnnam(
             chm.nam, // c:655
-            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
+            &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))),
         );
         return 1; // c:655
     }
@@ -962,7 +962,7 @@ pub fn chown_dochown(
         // c:695
         zwarnnam(
             chm.nam, // c:695
-            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
+            &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))),
         );
         return 1; // c:695
     }
@@ -996,7 +996,7 @@ pub fn chown_dolchown(
         // c:708
         zwarnnam(
             chm.nam, // c:708
-            &format!("{}: {}", arg, crate::ported::compat::last_errstr()),
+            &format!("{}: {}", arg, crate::ported::utils::zsh_errno_msg(std::io::Error::last_os_error().raw_os_error().unwrap_or(0))),
         );
         return 1; // c:708
     }

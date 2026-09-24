@@ -103,6 +103,44 @@ fn with_modules(modules: &[&str], body: &str) -> String {
     s
 }
 
+/// `zsh -f -c script` vs `zshrs --zsh -f -c script`, each run in its own
+/// fresh temporary directory: stdout and exit status must match. Merge
+/// stderr into stdout inside the script (`2>&1`) to compare diagnostics.
+fn assert_parity_dash_f(script: &str) {
+    if !zsh_available() {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!(
+        "zshrs_modules_parity.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let (dz, dr) = (base.join("zsh"), base.join("zshrs"));
+    std::fs::create_dir_all(&dz).unwrap();
+    std::fs::create_dir_all(&dr).unwrap();
+    let z = Command::new(zsh_path())
+        .args(["-f", "-c", script])
+        .current_dir(&dz)
+        .output()
+        .expect("zsh");
+    let r = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", script])
+        .current_dir(&dr)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(
+        String::from_utf8_lossy(&r.stdout),
+        String::from_utf8_lossy(&z.stdout),
+        "stdout divergence on: {script}"
+    );
+    assert_eq!(r.status.code(), z.status.code(), "exit divergence on: {script}");
+}
+
 /// Assert that `/bin/zsh -fc script` and `zshrs --zsh -c script` produce
 /// the same stdout and exit code. Stderr is checked only by emptiness
 /// — the two shells phrase warnings differently in many cases, so the
@@ -1434,6 +1472,31 @@ mod files_extra {
         let _ = std::fs::remove_file(&tmp_zsh);
         let _ = std::fs::remove_file(&tmp_rs);
     }
+
+    /// Every files.c diagnostic formats the errno with `%e` (utils.c
+    /// zerrmsg: strerror with its first letter lowered). The port printed
+    /// raw strerror ("No such file or directory") or io::Error Display
+    /// ("... (os error 2)").
+    #[test]
+    fn errno_diagnostics_use_percent_e() {
+        assert_parity_dash_f(
+            r#"zmodload zsh/files
+{
+zf_chmod 644 /nonexistent; echo $?
+zf_chown 0 /nonexistent; echo $?
+zf_rm /nonexistent; echo $?
+zf_rm -r /nonexistent/x; echo $?
+zf_rmdir /nonexistent; echo $?
+mkdir -p e/f; zf_rmdir e; echo $?
+zf_mkdir /nonexistent/x; echo $?
+mkdir g; zf_mkdir g; echo $?
+zf_ln /nonexistent l; echo $?
+zf_mv /nonexistent l; echo $?
+touch a; zf_ln a a; echo $?
+touch o; mkdir p; zf_mv p o; echo $?
+} 2>&1"#,
+        );
+    }
 }
 
 // ───────────────────────── zsh/datetime extra ─────────────────────
@@ -1646,25 +1709,9 @@ fi"#;
         );
     }
 
-    /// `zsh -f -c` vs `zshrs --zsh -f -c` on `zmodload zsh/param/private;
-    /// <body>`: stdout and exit status must match.
+    /// `zmodload zsh/param/private; <body>` through [`assert_parity_dash_f`].
     fn private_parity(body: &str) {
-        if !zsh_available() {
-            return;
-        }
-        let script = format!("zmodload zsh/param/private 2>/dev/null; {body}");
-        let z = Command::new(zsh_path()).args(["-f", "-c", &script]).output().expect("zsh");
-        let r = Command::new(zshrs_bin())
-            .args(["--zsh", "-f", "-c", &script])
-            .env_remove("ZSHRS_CACHE")
-            .output()
-            .expect("zshrs");
-        assert_eq!(
-            String::from_utf8_lossy(&r.stdout),
-            String::from_utf8_lossy(&z.stdout),
-            "stdout divergence on: {body}"
-        );
-        assert_eq!(r.status.code(), z.status.code(), "exit divergence on: {body}");
+        assert_parity_dash_f(&format!("zmodload zsh/param/private 2>/dev/null; {body}"));
     }
 
     /// A nested-scope WRITE to a name whose outer function holds a private
