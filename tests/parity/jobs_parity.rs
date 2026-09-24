@@ -410,6 +410,17 @@ fn jobs_d_prints_the_start_directory_across_a_cd() {
     );
 }
 
+/// c:Src/exec.c:2916 → c:1127-1140 — an async child resets string traps
+/// and, without job control, ignores SIGINT/SIGQUIT (`settrap(SIG, NULL)`),
+/// which `trap` then lists. zshrs's background child kept the parent's
+/// traps and set neither ignore.
+#[test]
+fn async_child_resets_traps_and_ignores_int_quit() {
+    assert_parity(
+        "trap 'print t' USR1; { trap } & wait; { trap } | cat & wait; trap 'print e' ERR; { trap } & wait",
+    );
+}
+
 #[test]
 fn jobstates_markers_two_jobs() {
     // `:+` on curjob, `:-` on prevjob (parameter.c:1346-1351).

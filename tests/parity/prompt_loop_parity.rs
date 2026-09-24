@@ -681,3 +681,37 @@ fn exit_with_a_running_job_warns_and_stays() {
         "first `exit` with a running job under check_running_jobs",
     );
 }
+
+/// c:Src/exec.c:2916 — the child of an async command runs
+/// `entersubsh(ESUB_ASYNC|ESUB_PGRP)`, which drops MONITOR and the
+/// interactive shell's SIGTERM ignore (c:1224-1225, c:1245-1246). zshrs's
+/// background child kept both (and `setsid()`ed instead), so `kill %N` hit
+/// a child that ignored SIGTERM while its command sat in a group of its
+/// own: the job kept running. Pinned for a simple command and for a
+/// pipeline, whose stages share the first stage's group.
+fn kill_background_job_driver() -> String {
+    let lines = [
+        "unsetopt promptcr promptsp",
+        "setopt nonotify nocheckjobs nohup",
+        "sleep 30 >/dev/null 2>&1 &",
+        "sleep 31 >/dev/null 2>&1 &",
+        "sleep 32 | cat >/dev/null &",
+        "kill %2 %3",
+        "sleep 1",
+        "jobs >! $OUTFILE 2>&1",
+        "kill %1",
+    ];
+    let typed: String = lines
+        .iter()
+        .map(|l| format!("zpty -w w {}; pump\n", sq(l)))
+        .collect();
+    format!("export ZSHRS_HISTORY=0\n{OPEN_PUMPED}{typed}zpty -d w\n")
+}
+
+#[test]
+fn kill_reaches_a_background_job_of_an_interactive_shell() {
+    assert_same_dump(
+        &kill_background_job_driver(),
+        "`kill %N` on a background command and a background pipeline",
+    );
+}

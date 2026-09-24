@@ -4325,7 +4325,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     0 => {
                         forked_child_subsh_levels(); // c:Src/exec.c:1221
-                        unsafe { libc::setpgid(0, gleader) };
+                        // c:Src/exec.c:2916 — every async stage runs
+                        // `entersubsh(ESUB_ASYNC|ESUB_PGRP)`: traps reset, MONITOR
+                        // off, SIGINT/SIGQUIT ignored without job control, the
+                        // interactive SIGTERM ignore dropped, job table cleared,
+                        // subsh set. With job control it joins the job's group,
+                        // led by the first stage (c:1149-1190); the port reads
+                        // that leader from jobtab[thisjob], which zshrs fills in
+                        // only after every fork, so join it here instead.
+                        let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
+                        crate::ported::exec::entersubsh(
+                            crate::ported::exec::esub::ASYNC | crate::ported::exec::esub::PGRP,
+                            None,
+                        );
+                        if monitor {
+                            unsafe { libc::setpgid(0, gleader) };
+                        }
                         // Mirrors the RUN_PIPELINE stage child: default SIGPIPE
                         // so a broken pipe kills the stage quietly, and drop the
                         // parent's EXIT trap (c:Src/exec.c:2917-2918).
@@ -4340,14 +4355,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 *slot = 0;
                             }
                         }
-                        // c:Src/exec.c:2862 → 1219 — entersubsh clears the job
-                        // table and marks the process a subshell.
-                        with_executor(|exec| {
-                            let monitor =
-                                crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
-                            crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
-                        });
-                        crate::ported::exec::subsh.store(1, std::sync::atomic::Ordering::Relaxed);
                         *crate::ported::jobs::THISJOB
                             .get_or_init(|| std::sync::Mutex::new(-1))
                             .lock()
@@ -4383,7 +4390,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if gleader == 0 {
                             gleader = pid;
                         }
-                        unsafe { libc::setpgid(pid, gleader) };
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
+                            unsafe { libc::setpgid(pid, gleader) };
+                        }
                         procs.push((pid, stages[i].1.clone()));
                     }
                 }
@@ -4455,8 +4464,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             -1 => Value::Status(1),
             0 => {
                 forked_child_subsh_levels(); // c:Src/exec.c:1221
-                // Child: detach and run.
-                unsafe { libc::setsid() };
+                // c:Src/exec.c:2916 — an async command's child runs
+                // `entersubsh(ESUB_ASYNC|ESUB_PGRP)`: string traps reset,
+                // MONITOR off (no ESUB_JOB_CONTROL, c:1245-1246), SIGINT/
+                // SIGQUIT ignored without job control (c:1137-1140), its own
+                // process group with it (c:1149-1190), SIGTERM/SIGINT back to
+                // default in an interactive shell (c:1224-1230), subsh set. The old `setsid()` did none of
+                // that: the child kept MONITOR and the interactive SIGTERM
+                // ignore, so it put its own commands in fresh groups and
+                // `kill %N` reached nothing.
+                crate::ported::exec::entersubsh(
+                    crate::ported::exec::esub::ASYNC | crate::ported::exec::esub::PGRP,
+                    None,
+                );
+                // NOT DONE: `$ZSH_SUBSHELL` lives in the param, not in the
+                // zsh_subshell counter entersubsh bumped, and copying it
+                // across double-counts `( … ) &` — C runs that subshell in
+                // this same child (execcmd_fork already forked), while zshrs
+                // enters its in-process subshell again. So `{ … } &` still
+                // reports the parent's level.
                 crate::fusevm_disasm::maybe_print_stdout("background_job", &chunk);
                 let mut bg_vm = fusevm::VM::new(chunk);
                 register_builtins(&mut bg_vm);
@@ -4466,6 +4492,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 std::process::exit(bg_vm.last_status);
             }
             pid => {
+                // c:Src/exec.c:2887-2890 — C's parent blocks on the synch
+                // pipe until the child has run entersubsh, so the child's
+                // own group exists before `kill %N` can target it. Set it
+                // from this side too (the async-pipeline arm above does the
+                // same) so neither side can lose the race.
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) {
+                    unsafe { libc::setpgid(pid, pid) };
+                }
                 // Parent: record the PID into `$!` (most recent
                 // backgrounded job's pid). zsh exposes this for any
                 // script that needs `wait $!`. Also register the
