@@ -27185,8 +27185,12 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             } else {
                 untokenize(&pat)
             };
-            // Read replacement with `&` and `\X` handling.
-            let mut repl = String::new(); // c:4625
+            // Read replacement with `&` and `\X` handling. A bare `&` is kept
+            // as `None` until the search mode is known: only the literal
+            // strstr path turns it into the search text (c:Src/hist.c:2375
+            // `convamps`); the pattern path hands the replacement to getmatch
+            // as written (c:2370), so there it is a plain `&`.
+            let mut repl_parts: Vec<Option<char>> = Vec::new(); // c:4625
             while let Some(&c) = chars.peek() {
                 if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep {
                     // c:Src/subst.c — INULL-marked literal (see the pattern
@@ -27194,7 +27198,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     // not an escape of the trailing delimiter.
                     chars.next();
                     if let Some(&nx) = chars.peek() {
-                        repl.push(nx);
+                        repl_parts.push(Some(nx));
                         chars.next();
                     }
                     continue;
@@ -27207,41 +27211,56 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     // c:4630
                     chars.next();
                     if let Some(&nx) = chars.peek() {
-                        repl.push(nx);
+                        repl_parts.push(Some(nx));
                         chars.next();
                     }
                 } else if c == '&' {
                     // c:4639 (& → matched portion)
                     chars.next();
-                    repl.push_str(&pat);
+                    repl_parts.push(None);
                 } else {
-                    repl.push(c);
+                    repl_parts.push(Some(c));
                     chars.next();
                 }
             }
-            // Apply: gbal→all, else first match. :S allows
-            // anchored patterns via leading `#` (prefix) or
-            // trailing `%` (suffix); :s treats those literally.
-            // Direct port of subst.c modify's S-arm anchoring.
-            let (eff_pat, anchor_head, anchor_tail) = if modifier == 'S' {
-                if let Some(rest) = pat.strip_prefix('#') {
-                    (rest.to_string(), true, false) // c:4665 (#X)
-                } else if let Some(rest) = pat.strip_suffix('%') {
-                    (rest.to_string(), false, true) // c:4665 (X%)
-                } else {
-                    (pat.clone(), false, false) // c:4665
-                }
-            } else {
-                (pat.clone(), false, false) // c:4665
-            };
-            // For `:S` (modifier=='S'), matching is glob-based per
-            // hist.c::subst() forcepat=1 path (parse_subst_string +
-            // getmatch). For `:s` (modifier=='s'), matching is
-            // literal `strstr` unless HISTSUBSTPATTERN option is on.
             // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
-            // || forcepat)` selects the pattern path; otherwise the
-            // strstr-based literal replace runs.
+            // || forcepat)` selects the pattern path (`:S` is forcepat);
+            // otherwise the strstr-based literal replace runs.
             let use_glob = modifier == 'S' || isset(HISTSUBSTPATTERN);
+            let repl: String = repl_parts
+                .iter()
+                .map(|p| match p {
+                    Some(c) => c.to_string(),
+                    None if use_glob => "&".to_string(), // c:2370
+                    None => pat.clone(),                 // c:2375 convamps
+                })
+                .collect();
+            // c:Src/hist.c:2346-2361 — on the pattern path a LEADING `#`
+            // anchors at the head and a following LEADING `%` at the tail
+            // (both: the whole value); the literal path takes them as text.
+            let (eff_pat, anchor_head, anchor_tail) = if use_glob {
+                let mut rest = pat.as_str();
+                let mut head = false;
+                let mut tail = false;
+                if let Some(r) = rest.strip_prefix(['#', Pound]) {
+                    head = true; // c:2347-2350
+                    rest = r;
+                }
+                if let Some(r) = rest.strip_prefix('%') {
+                    tail = true; // c:2351-2355
+                    rest = r;
+                }
+                (rest.to_string(), head, tail)
+            } else {
+                (pat.clone(), false, false)
+            };
+            // c:Src/hist.c:2366-2369 — the pattern path runs `parse_subst_string(in)`
+            // and then `singsub(&in)`, so a `$name` in the search text is
+            // substituted (`setopt histsubstpattern; b=b; ${a:s/$b/X/}`); the
+            // literal strstr path (c:2371) searches for the text as written.
+            // `hsubl` keeps the unsubstituted text, as C's does, for `:&`.
+            let hsubl_pat = eff_pat.clone();
+            let eff_pat = if use_glob { singsub(&eff_pat) } else { eff_pat };
             let do_match = |hay: &str| -> Option<(usize, usize)> {
                 if use_glob {
                     // Sliding-window glob match — find first
@@ -27298,7 +27317,25 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 } else {
                     None
                 };
-                result = if anchor_head {
+                result = if anchor_head && anchor_tail {
+                    // c:2357-2361 — SUB_START|SUB_END: the pattern must match
+                    // the whole value.
+                    let whole = patcompile(
+                        &{
+                            let mut __pat_tok = (&eff_pat).to_string();
+                            crate::ported::glob::tokenize(&mut __pat_tok);
+                            __pat_tok
+                        },
+                        PAT_HEAPDUP as i32,
+                        None,
+                    )
+                    .map_or(false, |__p| pattry(&__p, &result));
+                    if whole {
+                        repl.clone()
+                    } else {
+                        result
+                    }
+                } else if anchor_head {
                     // c:4665
                     if use_glob {
                         let cv: Vec<char> = result.chars().collect();
@@ -27432,7 +27469,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             } else {
                 3
             };
-            *hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
+            *hsubl.lock().unwrap() = Some(hsubl_pat); // c:4673
             *hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
             hsubpatopt.store(mode as i32, Ordering::Relaxed); // c:4673
                                                               // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
@@ -27499,6 +27536,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // `[[:space:]]` and changed nothing (D04parameter.ztst
                 // "Different behaviour of :s and :S modifiers").
                 let replay_glob = mode != 0 || isset(HISTSUBSTPATTERN); // c:Src/hist.c:2336
+                let p = if replay_glob { singsub(&p) } else { p }; // c:Src/hist.c:2369
                                                                         // Sliding-window glob search — same shape as the s/S arm's
                                                                         // `do_match` (a port of getmatch()'s SUB_SUBSTR loop).
                 let g_find = |hay: &str| -> Option<(usize, usize)> {

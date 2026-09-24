@@ -1778,3 +1778,33 @@ mod nested_search_subscript_escaped_bracket {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/hist.c:2336-2376 — under HIST_SUBST_PATTERN a `:s` search text
+// takes a leading `#` / `%` anchor and is substituted (`singsub(&in)`),
+// and the replacement goes to getmatch as written, so `&` stays literal;
+// only the literal strstr path turns `&` into the search text (convamps).
+// ─────────────────────────────────────────────────────────────────────
+mod hist_subst_pattern_search {
+    use super::*;
+
+    #[test]
+    fn pattern_search_text_is_substituted() {
+        assert_parity(
+            r#"setopt histsubstpattern; a=abc b=b; print ${a:s/$b/X/} $a:s/$b/X/ ${a:s/[$b]/X/}"#,
+        );
+    }
+
+    #[test]
+    fn pattern_anchors_and_literal_ampersand() {
+        assert_parity(
+            r#"setopt histsubstpattern; a=abc; print ${a:gs/?/<&>/} ${a:s/#?/Q/} ${a:s/#%abc/Q/} ${a:s/%?/Q/} ${a:s/%/Q/}"#,
+        );
+    }
+
+    /// Without the option `&` is the search text and anchors are literal.
+    #[test]
+    fn literal_path_unchanged() {
+        assert_parity(r#"a=abab; print ${a:s/b/X/:&} ${a:gs/b/&&/} ${a:s/b/\&/} ${a:s/#a/Q/}"#);
+    }
+}
