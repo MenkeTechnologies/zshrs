@@ -9352,11 +9352,44 @@ impl ZshCompiler {
             // combines an `(e)` expansion with anything else is expanded whole
             // by BUILTIN_EXPAND_TEXT, whose multsub/singsub is the C prefork
             // over the tokenized word and returns that node on a stop.
+            // c:Src/glob.c:1221-1230 — zglob runs on the TOKENIZED word that
+            // prefork left behind, where only the lexer's glob tokens are
+            // active: a substituted value (shtokenized only under GLOB_SUBST,
+            // c:Src/subst.c:814-835 strcatsub) and a quoted literal stay plain.
+            // Segment assembly concatenates UNTOKENIZED text and globs the
+            // result, so every `*`/`?`/`[` in it went live: `x='*';
+            // print $x*` listed the directory where zsh matches only names
+            // starting with `*`. A word that combines an expansion with a
+            // literal glob metachar and will be filename-generated is
+            // therefore expanded whole by BUILTIN_EXPAND_TEXT, whose multsub
+            // keeps the tokens (c:Src/subst.c:165-191) and whose glob honours
+            // them.
+            let word_will_glob = self.dq_context_depth == 0
+                && !word_is_single_dq_span(s)
+                && self.scalar_assign_depth == 0
+                && self.assign_builtin_arg_depth == 0
+                && self.word_seg_depth == 0;
             let segs_opt = split_word_segments(s).filter(|segs| {
                 !(segs.len() > 1
                     && segs.iter().any(|seg| {
                         matches!(seg, WordSegment::Expansion(e) if expansion_may_null_prefork(e))
                     }))
+                    && !(word_will_glob
+                        && segs.iter().any(|seg| matches!(seg, WordSegment::Expansion(_)))
+                        && literal_segments_glob_brace(segs).0)
+                    // c:Src/subst.c:2800-2802 + 2867 — under KSH_ARRAYS an
+                    // UNBRACED `$name[…]` does not subscript: the `[…]` stays
+                    // in the word as literal text and the WHOLE word is
+                    // filename-generated. The option is a runtime one, and
+                    // the segment's own BUILTIN_ARRAY_INDEX_UNBRACED can only
+                    // glob its own piece, so `a$h[1]` reported `x[1]` instead
+                    // of `ax[1]` and `$k=$h[$k]` was not globbed at all. The
+                    // runtime paramsubst makes the KSH_ARRAYS call on the
+                    // whole tokenized word.
+                    && !(word_will_glob
+                        && segs.iter().any(|seg| {
+                            matches!(seg, WordSegment::Expansion(e) if is_unbraced_ident_subscript(e))
+                        }))
             });
             if let Some(segs) = segs_opt {
                 // Pick concat operator based on segment shape:
@@ -9517,81 +9550,9 @@ impl ZshCompiler {
                     }
                 }
                 {
-                    let mut in_sq = false;
-                    let mut in_dq = false;
-                    // NB: deliberately no `isset(EXTENDEDGLOB)` here. This is
-                    // the COMPILER; every option it could read is a RUNTIME
-                    // value that a `setopt` later in the same script may
-                    // change. See the Pound/Hat arm below (bug #1049).
-                    for seg in &segs {
-                        let lit = match seg {
-                            WordSegment::Literal(l) => l,
-                            WordSegment::Expansion(_) => continue,
-                        };
-                        let mut prev = ' ';
-                        let mut saw_inpar = false;
-                        let mut saw_bar = false;
-                        let mut saw_outpar = false;
-                        for c in lit.chars() {
-                            match c {
-                                '\u{9d}' => in_sq = !in_sq,
-                                '\u{9e}' => in_dq = !in_dq,
-                                _ if in_sq || in_dq || prev == '\u{9f}' || prev == '\0' => {}
-                                '*' | '\u{87}' | '?' | '\u{97}' | '[' | '\u{91}' => {
-                                    needs_glob = true;
-                                }
-                                // c:Src/lex.c:1201-1206 — an unquoted `<N-M>`
-                                // numeric range is lexed as Inang … Outang, and
-                                // haswilds fires on Inang (c:Src/pattern.c:4362-
-                                // 4364). Missing here, `$x<1-2>` never reached
-                                // filename generation while `a<1-2>` did.
-                                '<' | '\u{94}' => needs_glob = true,
-                                // c:Src/pattern.c:4326-4335 — haswilds
-                                // fires on ANY Inpar TOKEN unless SHGLOB
-                                // is set; the runtime zglob short-
-                                // circuits under SHGLOB.
-                                '\u{88}' => needs_glob = true,
-                                '(' => saw_inpar = true,
-                                '|' => saw_bar = true,
-                                ')' => saw_outpar = true,
-                                // c:Src/lex.c:433-434 — `lextok2['#'] = Pound;`
-                                // / `lextok2['^'] = Hat;` tokenize
-                                // UNCONDITIONALLY; the lexer never consults
-                                // EXTENDEDGLOB. The option test lives at glob
-                                // time in haswilds (c:Src/pattern.c:4363-4370,
-                                // `case Pound: if (isset(EXTENDEDGLOB) && …)`),
-                                // which the Rust port already mirrors at
-                                // pattern.rs:4119-4126.
-                                //
-                                // Testing EXTENDEDGLOB HERE read a RUNTIME
-                                // option at COMPILE time: the whole script is
-                                // compiled before any `setopt` in it executes,
-                                // so `setopt extendedglob; v=a; print ${v}##`
-                                // compiled with the option still off, never
-                                // emitted the glob op, and printed `a##`.
-                                // Passing `-o extendedglob` (set before
-                                // compile) worked — the tell. Bug #1049.
-                                //
-                                // Emitting the op unconditionally is safe
-                                // because it only routes the word to
-                                // expand_glob, which gates on haswilds and
-                                // hands back the literal when the option is
-                                // off — same as C, where a Pound-carrying word
-                                // always reaches zglob and haswilds decides.
-                                '#' | '\u{84}' | '^' | '\u{86}' => {
-                                    needs_glob = true;
-                                }
-                                '{' | '\u{8f}' | '}' | '\u{90}' => {
-                                    needs_brace = true;
-                                }
-                                _ => {}
-                            }
-                            prev = c;
-                        }
-                        if saw_inpar && saw_bar && saw_outpar {
-                            needs_glob = true;
-                        }
-                    }
+                    let (lit_glob, lit_brace) = literal_segments_glob_brace(&segs);
+                    needs_glob |= lit_glob;
+                    needs_brace |= lit_brace;
                 }
                 // A word that MIXES a plan9 (`^`) expansion with a non-plan9
                 // (splice/scalar) expansion — `"${(@)^a}${(@)b}"` — cannot be
@@ -10052,6 +10013,19 @@ impl ZshCompiler {
         } else {
             mode
         };
+        // c:Src/exec.c:3755-3758 — an argv word is globbed ONCE. A mode-0
+        // word whose unquoted literal text carries a glob token keeps that
+        // token through multsub, so the EXPAND_TEXT handler globs it (its
+        // `haswilds` gate) — substituted GLOB_SUBST metachars included, see
+        // glob.rs `word_is_tokenized`. The BUILTIN_GLOB_SUBST_EXPAND pass the
+        // argv site adds for GLOB_SUBST must not glob the generated names a
+        // second time: `setopt globsubst; x='*'; print $x\b*` listed `ab`
+        // twice (`a*b` re-globbed as a pattern).
+        if mode == 0
+            && split_word_segments(s).is_some_and(|segs| literal_segments_glob_brace(&segs).0)
+        {
+            self.word_emitted_glob = true;
+        }
         let idx = self.builder.add_constant(Value::str(preserved.as_str()));
         self.builder.emit(Op::LoadConst(idx), 0);
         self.builder.emit(Op::LoadInt(mode as i64), 0);
@@ -14429,6 +14403,108 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
         return 3;
     }
     0
+}
+
+/// True for an expansion segment spelled `$name[…]` — an UNBRACED
+/// identifier reference followed by a bracket, the shape whose subscript
+/// KSH_ARRAYS switches off (c:Src/subst.c:2800-2802, 2867).
+fn is_unbraced_ident_subscript(seg: &str) -> bool {
+    let u = crate::lex::untokenize(seg);
+    let Some(rest) = u.strip_prefix('$') else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c == '_' || c.is_ascii_alphanumeric()))
+        .unwrap_or(rest.len());
+    name_len > 0
+        && !rest.starts_with(|c: char| c.is_ascii_digit())
+        && rest[name_len..].starts_with('[')
+}
+
+/// Scan a word's LITERAL segments for unquoted filename-generation
+/// metachars (`needs_glob`) and brace tokens (`needs_brace`), with the
+/// Snull/Dnull quote state threaded ACROSS segments at word level (see
+/// the call site in `compile_word_str` for why per-segment and
+/// whole-word scans each fail).
+fn literal_segments_glob_brace(segs: &[WordSegment]) -> (bool, bool) {
+    let mut needs_glob = false;
+    let mut needs_brace = false;
+    let mut in_sq = false;
+    let mut in_dq = false;
+    // NB: deliberately no `isset(EXTENDEDGLOB)` here. This is
+    // the COMPILER; every option it could read is a RUNTIME
+    // value that a `setopt` later in the same script may
+    // change. See the Pound/Hat arm below (bug #1049).
+    for seg in segs {
+        let lit = match seg {
+            WordSegment::Literal(l) => l,
+            WordSegment::Expansion(_) => continue,
+        };
+        let mut prev = ' ';
+        let mut saw_inpar = false;
+        let mut saw_bar = false;
+        let mut saw_outpar = false;
+        for c in lit.chars() {
+            match c {
+                '\u{9d}' => in_sq = !in_sq,
+                '\u{9e}' => in_dq = !in_dq,
+                _ if in_sq || in_dq || prev == '\u{9f}' || prev == '\0' => {}
+                '*' | '\u{87}' | '?' | '\u{97}' | '[' | '\u{91}' => {
+                    needs_glob = true;
+                }
+                // c:Src/lex.c:1201-1206 — an unquoted `<N-M>`
+                // numeric range is lexed as Inang … Outang, and
+                // haswilds fires on Inang (c:Src/pattern.c:4362-
+                // 4364). Missing here, `$x<1-2>` never reached
+                // filename generation while `a<1-2>` did.
+                '<' | '\u{94}' => needs_glob = true,
+                // c:Src/pattern.c:4326-4335 — haswilds
+                // fires on ANY Inpar TOKEN unless SHGLOB
+                // is set; the runtime zglob short-
+                // circuits under SHGLOB.
+                '\u{88}' => needs_glob = true,
+                '(' => saw_inpar = true,
+                '|' => saw_bar = true,
+                ')' => saw_outpar = true,
+                // c:Src/lex.c:433-434 — `lextok2['#'] = Pound;`
+                // / `lextok2['^'] = Hat;` tokenize
+                // UNCONDITIONALLY; the lexer never consults
+                // EXTENDEDGLOB. The option test lives at glob
+                // time in haswilds (c:Src/pattern.c:4363-4370,
+                // `case Pound: if (isset(EXTENDEDGLOB) && …)`),
+                // which the Rust port already mirrors at
+                // pattern.rs:4119-4126.
+                //
+                // Testing EXTENDEDGLOB HERE read a RUNTIME
+                // option at COMPILE time: the whole script is
+                // compiled before any `setopt` in it executes,
+                // so `setopt extendedglob; v=a; print ${v}##`
+                // compiled with the option still off, never
+                // emitted the glob op, and printed `a##`.
+                // Passing `-o extendedglob` (set before
+                // compile) worked — the tell. Bug #1049.
+                //
+                // Emitting the op unconditionally is safe
+                // because it only routes the word to
+                // expand_glob, which gates on haswilds and
+                // hands back the literal when the option is
+                // off — same as C, where a Pound-carrying word
+                // always reaches zglob and haswilds decides.
+                '#' | '\u{84}' | '^' | '\u{86}' => {
+                    needs_glob = true;
+                }
+                '{' | '\u{8f}' | '}' | '\u{90}' => {
+                    needs_brace = true;
+                }
+                _ => {}
+            }
+            prev = c;
+        }
+        if saw_inpar && saw_bar && saw_outpar {
+            needs_glob = true;
+        }
+    }
+    (needs_glob, needs_brace)
 }
 
 /// One piece of a concatenated word. Either a literal stretch (raw

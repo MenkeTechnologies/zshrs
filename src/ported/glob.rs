@@ -4092,6 +4092,25 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     let (pat, quals) = parse_qualifiers(pattern);
     state.qualifiers = quals;
 
+    // !!! RUST-ONLY decision — NO DIRECT C COUNTERPART !!!
+    // Is `pat` a lexer-TOKENIZED word (the only form C's `zglob`, c:1221,
+    // ever receives) or a raw programmatic pattern? In a tokenized word
+    // only the glob tokens are active: a plain `*`, `?`, `[`, `~` … was
+    // quoted or substituted and must not be tokenized again. `glob_path`
+    // also serves raw callers (compsys, builtins) whose metachars are
+    // plain, so the word's spelling decides: any token means tokenized,
+    // none means raw.
+    //
+    // Under GLOB_SUBST the plain characters are substituted values that C
+    // would have shtokenized in `strcatsub` (c:Src/subst.c:822/829-830).
+    // The port's paramsubst does not tokenize them — it carries the option
+    // on the global table (including the `${~spec}` carrier, subst.rs
+    // `TILDE_GLOBSUBST_CARRIER`) for the glob layer to apply — so the raw
+    // treatment, which activates every plain metachar, stands in for that
+    // shtokenize.
+    let word_is_tokenized =
+        crate::ported::lex::has_token(&pat) && !isset(crate::ported::zsh_h::GLOBSUBST);
+
     // c:Src/glob.c — `A~B` exclusion. zsh compiles the ENTIRE glob
     // (path components + `~B` exclusion + `**`) into ONE Patprog and
     // matches each candidate PATH against it, so the `~B` applies to the
@@ -4106,6 +4125,12 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // the post-filter applies the exclusion).
     let (pat, glob_exclusions): (String, Vec<String>) =
         if glob_isset(EXTENDEDGLOB) && (pat.contains('~') || pat.contains('\u{98}')) {
+            // In a TOKENIZED word (see the `pat_tok` note below) only the
+            // Tilde token is the operator (c:Src/pattern.c:800 compares
+            // against `zpc_special[ZPC_TILDE]`, the token); a plain `~` was
+            // quoted or substituted. A raw programmatic pattern keeps the
+            // plain spelling as the operator.
+            let raw_tilde_is_op = !word_is_tokenized;
             let cv: Vec<char> = pat.chars().collect();
             let mut parts: Vec<String> = Vec::new();
             let mut cur = String::new();
@@ -4157,7 +4182,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
                         }
                         cur.push(c);
                     }
-                    '~' | '\u{98}' if bd == 0 && pd == 0 => {
+                    '~' | '\u{98}' if bd == 0 && pd == 0 && (c == '\u{98}' || raw_tilde_is_op) => {
                         parts.push(std::mem::take(&mut cur));
                     }
                     _ => cur.push(c),
@@ -4203,8 +4228,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // and untokenized (expand_glob fast paths) patterns, so tokenize a
     // local copy for the check — existing token chars pass through
     // zshtokenize untouched, untokenized metachars gain their tokens.
+    //
+    // Only an UNTOKENIZED pattern may be tokenized, though. C never runs
+    // zshtokenize over a word that reaches zglob (c:1221 `ostr` is the
+    // lexer's tokenized word after prefork): a plain `*` in it is a QUOTED
+    // or SUBSTITUTED character and must stay literal. Tokenizing it again
+    // made `x=a; print $x\**` (node `a*<Star>`) match `ab` as well as
+    // `a*b`. See `word_is_tokenized` above.
     let mut pat_tok = pat.clone();
-    tokenize(&mut pat_tok); // c:Src/glob.c:3548
+    if !word_is_tokenized {
+        tokenize(&mut pat_tok); // c:Src/glob.c:3548
+    }
     if !haswilds(&pat_tok) && state.qualifiers.is_none() {
         return vec![pattern.to_string()];
     }

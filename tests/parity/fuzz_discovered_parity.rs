@@ -4448,3 +4448,59 @@ catfield1 =(echo s$'\x69't),jessica"#,
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Filename generation runs on the TOKENIZED word (c:Src/glob.c:1221-1230):
+// only the lexer's glob tokens are active, so a substituted value (unless
+// GLOB_SUBST shtokenizes it, c:Src/subst.c:814-835) and a quoted literal
+// stay plain characters. zshrs globbed the untokenized assembled word, so
+// every `*`/`?`/`[` in it went live.
+// ─────────────────────────────────────────────────────────────────────
+mod glob_on_tokenized_word {
+    use super::*;
+
+    fn in_fixture(body: &str) -> String {
+        format!(
+            "d=$(mktemp -d); cd $d; : > 'a*b' > ab > ax1 > 'k1=1k'; ( {body} ); cd /; command rm -rf $d"
+        )
+    }
+
+    /// zsh: `no matches found: **` — the `*` from `$x` is literal.
+    #[test]
+    fn substituted_star_is_literal() {
+        assert_parity(&in_fixture(r#"x='*'; print -r -- $x*"#));
+        assert_parity(&in_fixture(r#"x='*'; print -r -- $x"b"*"#));
+    }
+
+    /// zsh: `a*b` — a quoted or backslashed `*` is literal next to a live one.
+    #[test]
+    fn quoted_star_is_literal() {
+        assert_parity(&in_fixture(r#"x=a; print -r -- $x"*"*; print -r -- $x\**"#));
+    }
+
+    /// zsh: `a*b ab`, once each — GLOB_SUBST / `$~` make the value active,
+    /// and the generated names are not globbed a second time.
+    #[test]
+    fn glob_subst_value_is_active_once() {
+        assert_parity(&in_fixture(
+            r#"x='*'; print -r -- $~x"b"*; setopt globsubst; print -r -- $x"b"*; print -r -- $x\b*"#,
+        ));
+    }
+
+    /// zsh: `no matches found: a~b*` — a substituted `~` is no exclusion.
+    #[test]
+    fn substituted_tilde_is_not_exclusion() {
+        assert_parity(&in_fixture(r#"setopt extendedglob; x='a~b'; print -r -- $x*"#));
+    }
+
+    /// c:Src/subst.c:2800-2802 + 2867 — under KSH_ARRAYS an unbraced
+    /// `$name[…]` keeps `[…]` as literal text of the WHOLE word, which is
+    /// then globbed. zsh: `ax1` / `k1=1k`.
+    #[test]
+    fn ksh_arrays_unbraced_subscript_globs_whole_word() {
+        assert_parity(&in_fixture(r#"setopt ksharrays; h=x; print -r -- a$h[1]"#));
+        assert_parity(&in_fixture(
+            r#"setopt ksharrays; typeset -A h=(k1 1); k=k1; print -r -- $k=$h[$k]"#,
+        ));
+    }
+}
