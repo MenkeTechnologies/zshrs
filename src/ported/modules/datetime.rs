@@ -20,8 +20,6 @@ use crate::ported::params::{getsparam, isident, setiparam, setsparam};
 use crate::ported::utils::{metafy, zwarnnam};
 use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ARG, OPT_ISSET};
 use crate::ported::zsh_system_h::timespec;
-use chrono::format::{Parsed, StrftimeItems};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use once_cell::sync::Lazy;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,134 +42,44 @@ pub fn reverse_strftime(
         zwarnnam(nam, "timestring expected");
         return 1;
     }
-    let format = argv[0];
-    let input = argv[1];
-    // c:64 — `strptime(timestring, format, &tm)`. C's strptime
-    // accepts PARTIAL formats: `%Y` + `"2024"` parses just the
-    // year and fills the rest of struct tm with zeros (which
-    // mktime then resolves to 2024-01-01 00:00:00). chrono's
-    // `NaiveDateTime::parse_from_str` REQUIRES every field
-    // (year, month, day, hour, minute, second) and fails on
-    // partial input, so route through `Parsed` which holds
-    // any subset of fields then fill missing pieces with
-    // defaults to mirror strptime + mktime semantics. Bug #324.
-    // c:62 — `endp = strptime(argv[1], argv[0], &tm);` — strptime returns
-    // the FIRST unconsumed character (NUL if entire string was consumed).
-    // chrono's `parse_and_remainder` returns the remainder slice on
-    // success, which is the equivalent of `endp`.
-    let mut parsed = Parsed::new();
-    let remainder =
-        match chrono::format::parse_and_remainder(&mut parsed, input, StrftimeItems::new(format)) {
-            Ok(rem) => rem,
-            Err(_) => {
-                // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
-                //                          'format not matched'); return 1; }`
-                // C emits the bare 'format not matched' string with no
-                // input echo; prior Rust port appended ': {input}' which
-                // diverged from zsh -fc parity.
-                if quiet == 0 {
-                    zwarnnam(nam, "format not matched"); // c:67
-                }
-                return 1; // c:68
-            }
-        };
-    // c:59-61 — `memset(&tm, 0, sizeof(tm)); tm.tm_isdst = -1; tm.tm_mday = 1;`
+    // c:59-61 — `memset(&tm, 0, sizeof(tm)); tm.tm_isdst = -1;
+    // tm.tm_mday = 1;`. tm_year stays 0 (1900), so a partial format
+    // such as `%H:%M` lands on 1900-01-01.
     //
-    // C zero-fills the struct tm and then sets tm_isdst=-1 + tm_mday=1.
-    // tm.tm_year IS LEFT AT 0, which means "year since 1900" → 1900.
-    // mktime() on a 0-year tm with a parsed time-of-day produces an
-    // epoch around 1900-01-01 (a large negative number on 64-bit
-    // systems).
-    //
-    // Prior Rust port defaulted to 1970 — convenient (positive epoch)
-    // but divergent from C. `strftime -r '%H:%M' '14:30'`:
-    //   - C zsh:    -2208988800 + 14*3600 + 30*60 = -2208938400
-    //   - Prior Rust: 50400 (1970-01-01 14:30:00)
-    // For a user pipelining the result to e.g. another strftime call,
-    // the year difference matters.
-    let year = parsed
-        .year
-        .or_else(|| {
-            parsed
-                .year_div_100
-                .zip(parsed.year_mod_100)
-                .map(|(d, m)| d * 100 + m)
-        })
-        .unwrap_or(1900); // c:59 — tm_year=0 means 1900.
-    let month = parsed.month.unwrap_or(1);
-    let day = parsed.day.unwrap_or(1);
-    let hour = parsed
-        .hour_div_12
-        .zip(parsed.hour_mod_12)
-        .map(|(d, m)| (d * 12 + m) as u32)
-        .unwrap_or(0);
-    let minute = parsed.minute.unwrap_or(0);
-    let second = parsed.second.unwrap_or(0);
-    let date = match NaiveDate::from_ymd_opt(year, month, day) {
-        Some(d) => d,
-        None => {
-            // c:67 — same bare 'format not matched' for out-of-range
-            // date components (e.g. month 13). C's strptime → mktime
-            // chain doesn't distinguish parse-mismatch from invalid-
-            // date because mktime normalises any out-of-range tm
-            // fields rather than failing; chrono's from_ymd_opt is
-            // stricter, so we emit the same diagnostic.
-            if quiet == 0 {
-                zwarnnam(nam, "format not matched");
-            }
-            return 1;
+    // The conversion is libc's strptime(3) + mktime(3), exactly as in C.
+    // A chrono re-implementation used to stand here; chrono's `Local`
+    // caches the zone it first resolved, so a later `TZ=UTC strftime -r …`
+    // (or a function run under a TZ prefix assignment, as
+    // Functions/Calendar/calendar_scandate does) kept converting in the
+    // zone of the first call. mktime(3) consults TZ on every call.
+    // A C string ends at its first NUL, so an embedded one truncates.
+    let cstr = |s: &str| std::ffi::CString::new(s.split('\0').next().unwrap_or("")).unwrap_or_default();
+    let (c_input, c_format) = (cstr(argv[1]), cstr(argv[0]));
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() }; // c:59
+    tm.tm_isdst = -1; // c:60
+    tm.tm_mday = 1; // c:61
+    // c:62 — `endp = strptime(argv[1], argv[0], &tm);`
+    let endp = unsafe { libc::strptime(c_input.as_ptr(), c_format.as_ptr(), &mut tm) };
+    if endp.is_null() {
+        // c:64-69
+        if quiet == 0 {
+            zwarnnam(nam, "format not matched"); // c:67
         }
-    };
-    let time = NaiveTime::from_hms_opt(hour, minute, second)
-        .unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    let dt = NaiveDateTime::new(date, time);
+        return 1; // c:68
+    }
     // c:71 — `mytime = (zlong)mktime(&tm);`
-    // C uses `tm.tm_isdst = -1` (set at c:60) to ask mktime to
-    // auto-detect DST. For ambiguous times (the fall-back hour that
-    // exists twice — e.g. 1:30 AM on a US fall-back day), mktime
-    // with tm_isdst=-1 returns the LATER (non-DST) variant; the
-    // standard rationale is "after a fall-back, the same wall-clock
-    // time appears twice; the second occurrence (standard time)
-    // wins" matching how `date` and most tools resolve.
-    //
-    // chrono's `from_local_datetime` returns `Ambiguous(earliest,
-    // latest)` for these times. Prior Rust picked .earliest (the
-    // first variant arg) — the DST-active occurrence, which is the
-    // OPPOSITE of C mktime's resolution. Real-world repro:
-    //   $ TZ=America/New_York strftime -r '%Y-%m-%d %H:%M:%S' '2024-11-03 01:30:00'
-    //   # C: emits the second occurrence (EST, after fall-back).
-    //   # Prior Rust: emits the first occurrence (EDT, pre-fall-back).
-    //   # Difference: one hour off — 3600 seconds.
-    // Pick `.latest()` for fall-back-ambiguous matching mktime.
-    let secs = match Local.from_local_datetime(&dt) {
-        // c:71 mktime
-        chrono::LocalResult::Single(d) => d.timestamp(),
-        chrono::LocalResult::Ambiguous(_, latest) => latest.timestamp(),
-        chrono::LocalResult::None => {
-            if quiet == 0 {
-                zwarnnam(nam, "unable to convert to time");
-            }
-            return 1;
-        }
-    };
+    let mytime = unsafe { libc::mktime(&mut tm) } as i64;
     if let Some(name) = scalar {
         // c:73-74 — `if (scalar) setiparam(scalar, mytime);`
-        setiparam(name, secs); // c:74 setiparam
+        setiparam(name, mytime); // c:74 setiparam
     } else {
-        // c:75-79 — print as decimal.
-        println!("{}", secs); // c:78 printf("%ld\n", ...)
+        // c:75-79 — `convbase(buf, mytime, 10); printf("%s\n", buf);`
+        println!("{}", mytime);
     }
-    // c:81-88 — `if (*endp && !quiet) zwarnnam(nam,
-    //              "warning: input string not completely matched");`
-    // strptime can succeed yet leave trailing input unconsumed; the
-    // format was satisfied but more bytes remained. C emits a soft
-    // warning (still returns 0) so the user can spot accidental
-    // truncation. Prior Rust port didn't have this — silent
-    // partial-parse meant scripts feeding malformed input through
-    // `strftime -r '%Y-%m-%d' 'extra2024-01-15'` got `secs=0` (the
-    // post-strptime defaults applied) without diagnostic.
-    if !remainder.is_empty() && quiet == 0 {
-        zwarnnam(nam, "warning: input string not completely matched"); // c:87
+    // c:80-87 — `if (*endp && !quiet) zwarnnam(nam, "warning: input string
+    // not completely matched");`
+    if unsafe { *endp } != 0 && quiet == 0 {
+        zwarnnam(nam, "warning: input string not completely matched"); // c:86
     }
     0 // c:90
 }

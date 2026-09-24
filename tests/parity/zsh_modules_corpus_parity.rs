@@ -868,6 +868,24 @@ mod zmod_datetime {
         );
     }
 
+    /// c:Src/Modules/datetime.c:71 — `mktime(&tm)` reads TZ on every call, so
+    /// a TZ prefix assignment after an earlier conversion still applies
+    /// (Functions/Calendar/calendar_scandate runs under one).
+    #[test]
+    fn strftime_r_follows_tz_changes() {
+        assert_parity(
+            r###"zmodload zsh/datetime; f() { strftime -r %Y-%m-%d 2024-03-01 }; TZ=America/Chicago f; TZ=UTC f; TZ=Asia/Tokyo f"###,
+        );
+    }
+
+    /// c:Src/Modules/datetime.c:59-62 — zeroed tm, so `%H:%M` lands in 1900.
+    #[test]
+    fn strftime_r_partial_format_is_1900() {
+        assert_parity(
+            r###"export TZ=UTC; zmodload zsh/datetime; strftime -r %H:%M 14:30; strftime -r %Y-%m-%d 2024-13-01; echo $?"###,
+        );
+    }
+
     /// strftime nanoseconds + %N.
     #[test]
     fn strftime_nanoseconds() {
