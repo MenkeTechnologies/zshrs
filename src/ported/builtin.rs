@@ -13682,10 +13682,14 @@ pub fn checkjobs() {
     let mut found_stat: i32 = 0;
     for i in 1..=maxjob {
         // c:5903
-        let stat = JOBSTATS
+        // c:5904 `jobtab[i].stat` — the canonical table. The JOBSTATS
+        // mirror this used to read is never written, so every job looked
+        // unused and `exit` never warned about running or stopped jobs.
+        let stat = crate::ported::jobs::JOBTAB
+            .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .ok()
-            .and_then(|t| t.get(i as usize).copied())
+            .and_then(|t| t.get(i as usize).map(|j| j.stat))
             .unwrap_or(0);
         // c:5904-5906 — `i != thisjob && (stat & STAT_LOCKED) &&
         //                !(stat & STAT_NOPRINT) &&

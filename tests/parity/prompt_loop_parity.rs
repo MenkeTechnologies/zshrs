@@ -651,3 +651,33 @@ fn a_subshell_lists_but_cannot_touch_the_parents_jobs() {
         "jobs/fg/bg/disown/wait inside ( … ) of a job-control shell",
     );
 }
+
+/// c:Src/builtin.c:5891-5913 `checkjobs` — with CHECK_JOBS and
+/// CHECK_RUNNING_JOBS set, the first `exit` of a job-control shell with a
+/// running job warns "you have running jobs." and does NOT exit
+/// (c:5984-5991 defers via stopmsg). zshrs's checkjobs read a stat mirror
+/// nothing ever wrote, so it saw no jobs and exited at once. The verdict is
+/// that the shell is still there to run the next line.
+fn exit_with_running_jobs_driver() -> String {
+    let lines = [
+        "unsetopt promptcr promptsp",
+        "setopt nonotify check_jobs check_running_jobs nohup",
+        "sleep 30 >/dev/null 2>&1 &",
+        "exit",
+        "print -r -- still-here=$#jobstates >! $OUTFILE",
+        "kill %1",
+    ];
+    let typed: String = lines
+        .iter()
+        .map(|l| format!("zpty -w w {}; pump\n", sq(l)))
+        .collect();
+    format!("export ZSHRS_HISTORY=0\n{OPEN_PUMPED}{typed}zpty -d w\n")
+}
+
+#[test]
+fn exit_with_a_running_job_warns_and_stays() {
+    assert_same_dump(
+        &exit_with_running_jobs_driver(),
+        "first `exit` with a running job under check_running_jobs",
+    );
+}
