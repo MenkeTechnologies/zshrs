@@ -1730,3 +1730,27 @@ mod star_flag_extendedglob {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:3311 `arrasg = 0` after an `(A)` assignment: a quoted
+// assignment joined to a scalar (c:3328-3331) is not made an array again by
+// c:4246 `if (arrasg && !isarr)`, so a nested length counts characters.
+// ─────────────────────────────────────────────────────────────────────
+mod array_assign_quoted_nested {
+    use super::*;
+
+    /// zsh: `5` `1` `3` `1` `1`.
+    #[test]
+    fn quoted_nested_assignment_is_a_scalar() {
+        assert_parity(
+            r#"set -- a b c; print -l "${#${(A)h::=$@}}" "${#${(A)h::=$@}[1]}" ${#${(A)h::=$@}} "${#${(A)h::=x}}" ${#${(A)h::=x}}"#,
+        );
+    }
+
+    #[test]
+    fn empty_and_assoc_assignments_unchanged() {
+        assert_parity(
+            r#"print ${#${(A)h::=}} "${#${(A)h::=}}"; print -l "${(A)h::=a b}"; print ${#${(AA)g::=a b}} "${#${(AA)g::=a b}}""#,
+        );
+    }
+}

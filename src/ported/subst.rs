@@ -6344,6 +6344,10 @@ pub fn paramsubst(
         // value is the assigned array, which the c:3921-3924 single-field
         // collapse (`force_split && !isarr`) must not turn back into a scalar.
         let mut arrasg_assigned = false;
+        // c:3311 — `arrasg = 0;` once the `(A)` assignment ran. `arrasg` itself is
+        // read by closures above, so the reset rides on this local: the c:4246
+        // `if (arrasg && !isarr)` re-array and the c:3924 collapse test see it.
+        let mut arrasg_cleared = false;
         // !!! WARNING: C clears its local globsubst after the default/alternate
         // word (c:3231-3233) and keeps only the tokens the word's own unquoted
         // substitutions produced under GLOB_SUBST. The port has no token-carrying
@@ -16231,6 +16235,7 @@ pub fn paramsubst(
                         split_parts = crate::ported::subst::arrays_get(&var_name);
                         isarr = 1;
                         arrasg_assigned = true;
+                        arrasg_cleared = true; // c:3311 `arrasg = 0`
                     } else {
                         exec_sethparam(&var_name, parts); // c:3263 (AA)
                         // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
@@ -16239,6 +16244,7 @@ pub fn paramsubst(
                         }
                         isarr = 1; // c:3309
                         arrasg_assigned = true; // c:3310 `arrasg = 0`
+                        arrasg_cleared = true; // c:3311 `arrasg = 0`
                     }
                     // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
                     // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
@@ -16288,6 +16294,7 @@ pub fn paramsubst(
                         split_parts = crate::ported::subst::arrays_get(&var_name);
                         isarr = 1;
                         arrasg_assigned = true;
+                        arrasg_cleared = true; // c:3311 `arrasg = 0`
                     } else if arrasg == 2 {
                         // c:3263 (AA) with (s) separator or `=` word-split
                         let parts = split_arrasg(&value);
@@ -16298,6 +16305,7 @@ pub fn paramsubst(
                         }
                         isarr = 1; // c:3309
                         arrasg_assigned = true; // c:3310 `arrasg = 0`
+                        arrasg_cleared = true; // c:3311 `arrasg = 0`
                     } else {
                         let __s = match subscript.as_deref() {
                             Some(k) => format!(
@@ -16361,6 +16369,7 @@ pub fn paramsubst(
                             split_parts = crate::ported::subst::arrays_get(&var_name);
                             isarr = 1;
                             arrasg_assigned = true;
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else {
                             exec_sethparam(&var_name, parts); // c:3263 (AA)
                             // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
@@ -16369,6 +16378,7 @@ pub fn paramsubst(
                             }
                             isarr = 1; // c:3309
                             arrasg_assigned = true; // c:3310 `arrasg = 0`
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         }
                         // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
                         // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
@@ -16407,6 +16417,7 @@ pub fn paramsubst(
                             split_parts = crate::ported::subst::arrays_get(&var_name);
                             isarr = 1;
                             arrasg_assigned = true;
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
                             // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
@@ -16415,6 +16426,7 @@ pub fn paramsubst(
                             }
                             isarr = 1; // c:3309
                             arrasg_assigned = true; // c:3310 `arrasg = 0`
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
@@ -16480,6 +16492,7 @@ pub fn paramsubst(
                             split_parts = crate::ported::subst::arrays_get(&var_name);
                             isarr = 1;
                             arrasg_assigned = true;
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else {
                             exec_sethparam(&var_name, parts);
                             // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
@@ -16488,6 +16501,7 @@ pub fn paramsubst(
                             }
                             isarr = 1; // c:3309
                             arrasg_assigned = true; // c:3310 `arrasg = 0`
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         }
                         // c:3326-3334 — `if (nojoin) isarr = -1; if (qt && !getlen && isarr > 0 &&
                         // !spsep && spbreak < 2) { val = sepjoin(aval, sep, 1); isarr = 0; }` — spbreak
@@ -16526,6 +16540,7 @@ pub fn paramsubst(
                             split_parts = crate::ported::subst::arrays_get(&var_name);
                             isarr = 1;
                             arrasg_assigned = true;
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else if arrasg == 2 {
                             exec_sethparam(&var_name, split_arrasg(&value));
                             // c:3302-3304 — `aval = paramvalarr(pm->gsu.h->getfn(pm), hkeys|hvals);`
@@ -16534,6 +16549,7 @@ pub fn paramsubst(
                             }
                             isarr = 1; // c:3309
                             arrasg_assigned = true; // c:3310 `arrasg = 0`
+                            arrasg_cleared = true; // c:3311 `arrasg = 0`
                         } else {
                             let __s = match subscript.as_deref() {
                                 Some(k) => format!(
@@ -23985,7 +24001,7 @@ pub fn paramsubst(
         // `${(A@)s}` (s="hi") into a 1-element array → `${#…}` counts 1
         // ELEMENT, not 2 chars. Without it, the `(A)` flag was a no-op on
         // scalars and the length counted characters.
-        if arrasg != 0 {
+        if arrasg != 0 && !arrasg_cleared {
             if isarr == 0 {
                 // hmkarray(val) (utils.c:4094) builds a 1-element array from a
                 // non-NULL val, but an EMPTY/unset scalar reaches here as C's
@@ -24503,7 +24519,7 @@ pub fn paramsubst(
             let forced_split_to_one = (spsep.is_some() || force_split)
                 && parts.len() == 1
                 && !arrasg_assigned
-                && arrasg == 0; // c:3921-3924 `!isarr`, c:4246
+                && (arrasg == 0 || arrasg_cleared); // c:3921-3924 `!isarr`, c:4246
             // c:Src/subst.c:3881 `if (isarr) l->list.flags |= LF_ARRAY; else … &= ~LF_ARRAY;`
             // LF_ARRAY tracks `isarr`, NOT `nojoin`. The `(@)` word-flag sets
             // nojoin=2 (force-no-join) but does NOT make a SCALAR array-shaped:
