@@ -323,3 +323,23 @@ mod autoload_does_not_fire_exit_hooks {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// c:Src/jobs.c:3091-3099 — getsigidx matches signal names with `strcmp`,
+/// so a lower-case word is NOT a signal. `trap int INT` installs the
+/// command `int` (C03traps "Outputting traps correctly"); zshrs upper-cased
+/// the name, took `int` for SIGINT and ran the unset form instead.
+mod signal_names_are_case_sensitive {
+    use super::*;
+
+    #[test]
+    fn lowercase_command_word_is_the_trap_body() {
+        assert_parity("trap -; trap int INT; trap sigterm SIGTERM; trap quit 3; trap");
+    }
+
+    #[test]
+    fn lowercase_signal_name_is_undefined() {
+        assert_parity("trap x int 2>&1; echo $?");
+        assert_parity("trap x sigint 2>&1; echo $?");
+        assert_parity("trap - int 2>&1; echo $?");
+    }
+}

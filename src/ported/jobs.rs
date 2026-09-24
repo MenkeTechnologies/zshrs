@@ -4227,8 +4227,26 @@ pub fn getsigidx(s: &str) -> Option<i32> {
             }
         }
     }
-    let s = s.strip_prefix("SIG").unwrap_or(s);
-    match s.to_uppercase().as_str() {
+    let s = s.strip_prefix("SIG").unwrap_or(s); // c:3088-3089
+    // c:3091-3099 — `strcmp(s, sigs[i])` / `strcmp(s, alt_sigs[i].name)`:
+    // the name match is CASE-SENSITIVE, so `trap int INT` installs the
+    // command `int` on SIGINT (zsh: `trap x int` → "undefined signal: int").
+    // Upper-casing here made `int` a signal name, and bin_trap's c:7377
+    // test then took `trap int INT` for the unset form `trap INT INT`.
+    //
+    // !!! EMULATION-ONLY (no C counterpart) !!! bash, dash, ksh93 and mksh
+    // all accept a lower-case name (`trap x int` lists as INT/SIGINT), so
+    // the drop-in personalities keep the case-insensitive match.
+    let upper;
+    let s = if crate::extensions::emulation_startup::personality()
+        == crate::extensions::emulation_startup::Personality::Zsh
+    {
+        s
+    } else {
+        upper = s.to_uppercase();
+        upper.as_str()
+    };
+    match s {
         "EXIT" => Some(0),
         // c:Src/signames.c:62-98 + jobs.c:2761 — zsh-internal virtual
         // signals: ZERR/DEBUG are SIGCOUNT+1 / SIGCOUNT+2; ERR aliases
