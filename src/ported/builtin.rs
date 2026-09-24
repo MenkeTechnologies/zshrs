@@ -3079,18 +3079,26 @@ pub fn bin_fc(
     }
     if first == -1 {
         // c:1589
-        let _xflags = if OPT_ISSET(ops, b'L') {
-            HIST_FOREIGN
+        let xflags = if OPT_ISSET(ops, b'L') {
+            HIST_FOREIGN as i32
         } else {
             0
-        }; // c:1597
+        }; // c:1602
+        // c:1603-1604 — `first = OPT_ISSET(ops,'l')? addhistnum(curhist,-16,xflags)
+        //                 : addhistnum(curline.histnum,-1,xflags);`
+        let curline_num = crate::ported::hist::curline
+            .lock()
+            .ok()
+            .and_then(|c| c.as_ref().map(|e| e.histnum))
+            .unwrap_or(0);
         first = if OPT_ISSET(ops, b'l') {
-            (curhist - 16).max(1)
-        }
-        // c:1598
-        else {
-            (curhist - 1).max(1)
+            crate::ported::hist::addhistnum(curhist, -16, xflags)
+        } else {
+            crate::ported::hist::addhistnum(curline_num, -1, xflags)
         };
+        if first < 1 {
+            first = 1; // c:1605-1606
+        }
         if last < first {
             last = first;
         } // c:1604
@@ -3248,8 +3256,15 @@ pub fn fcgetcomm(s: &str) -> i64 {
         if cmd != 0 || is_zero_prefix {
             if cmd < 0 {
                 // c:1693 — `cmd = addhistnum(curline.histnum, cmd, HIST_FOREIGN);`
-                let curh = crate::ported::hist::curhist.load(Relaxed);
-                cmd = addhistnum(curh, cmd as i32, 1);
+                // Relative to the line being edited, not `curhist`: with no
+                // edited line (`zsh -c`) curline.histnum is 0, so a negative
+                // event finds nothing below it and resolves to 0.
+                let curline_num = crate::ported::hist::curline
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.as_ref().map(|e| e.histnum))
+                    .unwrap_or(0);
+                cmd = addhistnum(curline_num, cmd as i32, HIST_FOREIGN as i32);
             }
             if cmd < 0 {
                 // c:1695
@@ -3315,26 +3330,33 @@ pub fn fclist(
     is_command: i32,
 ) -> i32 {
     use std::io::Write;
+    let mut fclistdone = 0i32; // c:1754
+    let mut xflags: u32 = 0; // c:1754
 
-    // c:1762-1766 — `if (OPT_ISSET(ops,'r')) swap(first, last);`
+    // c:1759-1763 — reverse range if required.
     if OPT_ISSET(ops, b'r') {
         std::mem::swap(&mut first, &mut last);
     }
-    // c:1768-1773 — `if (is_command && first > last) zwarnnam(...)`.
+    // c:1765-1770
     if is_command != 0 && first > last {
         zwarnnam("fc", "history events can't be executed backwards, aborted");
         return 1;
     }
 
-    // c:1776-1790 — `gethistent(first, ...)` with bidirectional fallback.
+    // c:1772-1783 —
+    //     ent = gethistent(first, first < last? GETHIST_DOWNWARD : GETHIST_UPWARD);
+    //     if (!ent || (first < last? ent->histnum > last : ent->histnum < last)) {
+    //         if (first == last) zwarnnam("fc", "no such event: %s", buf);
+    //         else zwarnnam("fc", "no events in that range");
+    //         return 1;
+    //     }
+    // gethistent's near match can land past the other end of the range
+    // (`fc -l 5` with one event finds event 1, below `last`), which is
+    // as much a miss as no event at all.
     let near = if first < last { 1 } else { -1 };
-    let start_ev = match gethistent(first, near) {
-        Some(e) => e,
-        None => {
-            // c:Src/builtin.c — `no such event: <N>` carries the
-            // requested event number so the user can see which
-            // index missed. zsh appends the failing event id;
-            // the bare `no such event` message diverged.
+    let mut ev = match gethistent(first, near) {
+        Some(e) if !(if first < last { e > last } else { e < last }) => e,
+        _ => {
             zwarnnam(
                 "fc",
                 &if first == last {
@@ -3347,153 +3369,113 @@ pub fn fclist(
         }
     };
 
-    // c:1792-1817 — timestamp format setup.
-    let want_time = OPT_ISSET(ops, b'd')
-        || OPT_ISSET(ops, b'f')
-        || OPT_ISSET(ops, b'E')
-        || OPT_ISSET(ops, b'i')
-        || OPT_ISSET(ops, b't');
-    let tdfmt: Option<&'static str> = if !want_time {
-        None
-    } else if OPT_ISSET(ops, b't') {
-        Some("%H:%M") // -t expects user-supplied fmt; without OPT_ARG access default to %H:%M
+    // c:1785-1803 — time/date format for -d/-f/-E/-i/-t.
+    let tdfmt: Option<String> = if OPT_ISSET(ops, b't') {
+        Some(OPT_ARG(ops, b't').unwrap_or("").to_string()) // c:1789
     } else if OPT_ISSET(ops, b'i') {
-        Some("%Y-%m-%d %H:%M")
+        Some("%Y-%m-%d %H:%M".to_string()) // c:1791
     } else if OPT_ISSET(ops, b'E') {
-        Some("%d.%m.%Y %H:%M")
+        Some("%f.%-m.%Y %H:%M".to_string()) // c:1793
     } else if OPT_ISSET(ops, b'f') {
-        Some("%m/%d/%Y %H:%M")
+        Some("%-m/%f/%Y %H:%M".to_string()) // c:1795
+    } else if OPT_ISSET(ops, b'd') {
+        Some("%H:%M".to_string()) // c:1797
     } else {
-        Some("%H:%M")
+        None // c:1801
     };
 
-    // c:1820-1880 — walk events from start_ev toward `last`. Each entry:
-    //                apply pprog filter, apply subs chain, emit (with
-    //                event num + timestamp unless -n or is_command).
-    let mut ev = start_ev;
-    let step: i64 = if first < last { 1 } else { -1 };
+    // c:1805-1811 — xflags exclude events.
+    if OPT_ISSET(ops, b'L') {
+        xflags |= crate::ported::zsh_h::HIST_FOREIGN;
+    }
+    if OPT_ISSET(ops, b'I') {
+        xflags |= crate::ported::zsh_h::HIST_READ;
+    }
+
+    // C pre-compiles the pattern once (bin_fc c:1493 patcompile).
+    let prog = pprog.and_then(|pat| {
+        let mut tok = pat.to_string();
+        crate::ported::glob::tokenize(&mut tok);
+        patcompile(&tok, 0, None)
+    });
+
     loop {
-        // c:1830 — `ent = quietgethist(ev);` — fetch entry by event #.
+        // c:1813-1817
         let entry = match quietgethist(ev) {
             Some(e) => e,
             None => break,
         };
-        let line = entry.node.nam.clone();
-
-        // c:1833 — pprog pattern filter. C pre-compiles a Patprog;
-        //          Rust compiles per-call. Most fc -l calls have no
-        //          pattern so the gate is cheap.
-        if let Some(pat) = pprog {
-            let prog = patcompile(
-                &{
-                    let mut __pat_tok = (pat).to_string();
-                    crate::ported::glob::tokenize(&mut __pat_tok);
-                    __pat_tok
-                },
-                0,
-                None,
-            );
-            let matched = prog.as_ref().map(|p| pattry(p, &line)).unwrap_or(true);
-            if !matched {
-                if ev == last {
-                    break;
-                }
-                ev += step;
-                continue;
-            }
-        }
-
-        // c:1841-1855 — apply subs chain (asgment list of `old=new`
-        //                pairs that get substituted in order).
-        let mut text = line;
-        for (old, new) in subs.iter() {
-            if old.is_empty() {
-                continue;
-            }
-            text = text.replace(old.as_str(), new.as_str());
-        }
-
-        // c:1860-1870 — emit prefix: event number (unless -n / -h),
-        //                then optional timestamp.
-        if is_command == 0 {
-            if !OPT_ISSET(ops, b'n') {
-                let _ = write!(out, "{:>5}", ev);
-                if OPT_ISSET(ops, b'D') {
-                    // c:Src/builtin.c — `-D` shows duration as M:SS.
-                    // C: `fprintf(f, "%d:%02d", (int)(d/60), (int)(d%60))`.
-                    // Direct ftim-minus-stim duration in seconds, then
-                    // M:SS layout (zero-pad seconds, no zero-pad minutes).
-                    let dur = entry.ftim.saturating_sub(entry.stim).max(0);
-                    let _ = write!(out, "  {}:{:02}", dur / 60, dur % 60);
-                }
-                if let Some(fmt) = tdfmt {
-                    // c:1817 — `strftime(timebuf, 256, tdfmt,
-                    //                    localtime(&ent->stim))`.
-                    //          Use libc directly so locale-aware
-                    //          format specifiers (%Y %m %d %H %M %S
-                    //          %p etc.) all work without a hand-rolled
-                    //          strftime port.
-                    let formatted: Option<String> = (|| {
-                        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-                        let t: libc::time_t = entry.stim as libc::time_t;
-                        let cfmt = std::ffi::CString::new(fmt).ok()?;
-                        unsafe {
-                            if libc::localtime_r(&t, &mut tm).is_null() {
-                                return None;
-                            }
-                            let mut buf = vec![0u8; 256];
-                            let n = libc::strftime(
-                                buf.as_mut_ptr() as *mut libc::c_char,
-                                buf.len(),
-                                cfmt.as_ptr(),
-                                &tm,
-                            );
-                            if n == 0 {
-                                return None;
-                            }
-                            buf.truncate(n);
-                            String::from_utf8(buf).ok()
-                        }
-                    })();
-                    if let Some(s) = formatted {
-                        let _ = write!(out, "  {}", s);
-                    } else {
-                        // strftime failed (locale issue / format bug);
-                        // fall back to raw epoch matching C's
-                        // pre-strftime print behavior.
-                        let _ = write!(out, "  {}", entry.stim);
-                    }
-                }
-                let _ = write!(out, "  ");
-            }
-        }
-
-        // c:Src/builtin.c:1850-1858 — output the command:
-        //     if (f == stdout) { nicezputs(s, f); putc('\n', f); }
-        //     else { unmetafy(s, &len); fwrite(s, 1, len, f); putc('\n', f); }
-        // A listing renders control bytes visibly (an embedded newline from
-        // `print -s $'a\nb'` lists as `a\nb`); the temp file handed to the
-        // editor gets the raw bytes so the edited command round-trips.
-        // !!! WARNING: Rust cannot compare a `&mut dyn Write` against stdout,
-        // so the `f == stdout` test is read from `is_command`. The two are
-        // equivalent at every C call site: c:1611 passes (stdout, …, 0) and
-        // c:1643 passes (the temp file, …, 1).
-        if is_command == 0 {
-            crate::ported::utils::nicezputs(&text, out); // c:1851
-            let _ = out.write_all(b"\n"); // c:1852
+        let s: Option<String> = if (entry.node.flags as u32 & xflags) != 0 {
+            None
         } else {
-            let _ = writeln!(out, "{}", text); // c:1856-1857
-        }
+            Some(entry.node.nam.clone())
+        };
+        // c:1818 — `if (s && (!pprog || pattry(pprog, s)))`
+        if let Some(mut s) = s.filter(|s| prog.as_ref().is_none_or(|p| pattry(p, s))) {
+            // c:1820 — `fclistdone |= (subs ? fcsubs(&s, subs) : 1);`
+            fclistdone |= if subs.is_empty() {
+                1
+            } else {
+                i32::from(fcsubs(&mut s, subs) != 0)
+            };
 
-        if ev == last {
-            break;
+            // c:1822-1828 — do numbering.
+            if !OPT_ISSET(ops, b'n') {
+                let foreign = (entry.node.flags as u32 & crate::ported::zsh_h::HIST_FOREIGN) != 0;
+                let _ = write!(out, "{:>5}{} ", ev, if foreign { '*' } else { ' ' });
+            }
+            // c:1830-1839 — time (and possibly date) of execution.
+            if let Some(ref fmt) = tdfmt {
+                let t = std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(entry.stim.max(0) as u64);
+                let _ = write!(out, "{}  ", crate::ported::utils::ztrftime(fmt, t, false));
+            }
+            // c:1841-1845 — time taken by the command.
+            if OPT_ISSET(ops, b'D') {
+                let diff = if entry.ftim != 0 { entry.ftim - entry.stim } else { 0 };
+                let _ = write!(out, "{}:{:02}  ", diff / 60, diff % 60);
+            }
+
+            // c:1847-1856 — output the command:
+            //     if (f == stdout) { nicezputs(s, f); putc('\n', f); }
+            //     else { unmetafy(s, &len); fwrite(s, 1, len, f); putc('\n', f); }
+            // A listing renders control bytes visibly (an embedded newline
+            // from `print -s $'a\nb'` lists as `a\nb`); the temp file handed
+            // to the editor gets the raw bytes so the edited command
+            // round-trips.
+            // !!! WARNING: Rust cannot compare a `&mut dyn Write` against
+            // stdout, so the `f == stdout` test is read from `is_command`.
+            // The two are equivalent at every C call site: c:1611 passes
+            // (stdout, …, 0) and c:1643 passes (the temp file, …, 1).
+            if is_command == 0 {
+                crate::ported::utils::nicezputs(&s, out); // c:1849
+                let _ = out.write_all(b"\n"); // c:1850
+            } else {
+                let _ = writeln!(out, "{}", s); // c:1854-1855
+            }
         }
-        ev += step;
-        if ev < 0 {
-            break;
+        // c:1859-1866 — move on to the next history line, or quit.
+        let next = if first < last {
+            crate::ported::hist::down_histent(ev).filter(|&n| n <= last)
+        } else {
+            crate::ported::hist::up_histent(ev).filter(|&n| n >= last)
+        };
+        match next {
+            Some(n) => ev = n,
+            None => break,
         }
     }
-    0 // c:1880
+
+    // c:1872-1878 — final processing.
+    if fclistdone == 0 {
+        if !subs.is_empty() {
+            zwarnnam("fc", "no substitutions performed");
+        } else if xflags != 0 || pprog.is_some() {
+            zwarnnam("fc", "no matching events found");
+        }
+        return 1;
+    }
+    0 // c:1879
 }
 
 /// Port of `fcedit()` from `Src/builtin.c:1885`.

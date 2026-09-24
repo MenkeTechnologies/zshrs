@@ -305,3 +305,34 @@ mod which_type {
         assert_parity(r#"type nonexistent_xyz_42 2>/dev/null; echo $?"#);
     }
 }
+
+/// c:Src/builtin.c:1751-1879 fclist — a near match past the other end of
+/// the range is "no such event"; the -d/-t time prints even under -n and
+/// before the -D duration; -t takes its strftime format; a pattern or
+/// substitution that matches nothing warns and returns 1. c:1693 fcgetcomm
+/// resolves a negative event against the edited line (none under -c).
+mod fc_list_follows_fclist {
+    use super::*;
+
+    #[test]
+    fn a_near_match_outside_the_range_is_no_such_event() {
+        assert_parity("print -s a; fc -l 5 2>&1 | cut -d: -f3-; fc -l 5 2>/dev/null; echo $?");
+        assert_parity("print -s a; print -s b; fc -l 3 2>/dev/null; echo $?");
+        assert_parity("print -s one; print -s two; fc -ln -2 -1 2>/dev/null; echo $?");
+    }
+
+    #[test]
+    fn time_columns_follow_the_c_order() {
+        assert_parity("print -s one; fc -ln -d | perl -pe 's/\\d\\d:\\d\\d/HM/'");
+        assert_parity("print -s one; fc -lDd | perl -pe 's/\\d\\d:\\d\\d/HM/'");
+        assert_parity("print -s one; fc -l -t '%Y' | perl -pe 's/\\d{4}/YYYY/'");
+        assert_parity("print -s one; fc -lE | perl -pe 's/\\d+\\.\\d+\\.\\d{4} \\d\\d:\\d\\d/DATE/'");
+    }
+
+    #[test]
+    fn nothing_matched_is_an_error() {
+        assert_parity("print -s one; fc -lm 'x*' 2>&1 | cut -d: -f3-; fc -lm 'x*' 2>/dev/null; echo $?");
+        assert_parity("print -s one; fc -l x=two 2>/dev/null; echo $?");
+        assert_parity("print -s one; fc -l one=two; echo $?");
+    }
+}
