@@ -3682,6 +3682,26 @@ pub fn bin_kill(
     let mut got_sig = false; // c:2780
     let mut idx = 0usize;
 
+    // c:2962-2989 — the `-s NAME` / `-NAME` lookup, written once inline
+    // in C; the port splits those two branches, so both call this:
+    //     signame = casemodify(signame, CASMOD_UPPER);
+    //     if (!strncmp(signame, "SIG", 3)) signame+=3;
+    //     for (sig = 1; sig <= SIGCOUNT; sig++) ...strcmp(sigs[sig])...
+    //     if (*signame == '0' && !signame[1]) sig = 0;
+    //     if (sig > SIGCOUNT) { ...alt_sigs... }
+    //     if (sig > SIGCOUNT && !(sig = rtsigno(signame))) { unknown }
+    // `None` is the unknown-signal arm.
+    let kill_signame_lookup = |signame: &str| -> Option<i32> {
+        let upper = signame.to_ascii_uppercase(); // c:2962
+        let bare = upper.strip_prefix("SIG").unwrap_or(&upper); // c:2963-2964
+        if bare == "0" {
+            return Some(0); // c:2970-2971
+        }
+        // c:2967-2969 sigs[1..SIGCOUNT], c:2972-2980 alt_sigs (sigs_number
+        // walks both tables), c:2981-2985 rtsigno.
+        sigs_number(bare).or_else(|| crate::ported::signals::rtsigno(bare))
+    };
+
     // c:2782 — `while (*argv && **argv == '-')` flag-parse loop.
     while idx < argv.len() && argv[idx].starts_with('-') {
         let arg = argv[idx].clone();
@@ -3727,8 +3747,11 @@ pub fn bin_kill(
                     idx += 1;
                     if let Ok(n) = token.parse::<i32>() {
                         // c:2821 numeric
-                        let s = (n & !0o200) as i32; // c:2855
-                        if let Some(name) = sigs_name(s) {
+                        let s = (n & !0o200) as i32; // c:2882
+                        // c:2883 — `if (1 <= sig && sig <= SIGCOUNT)`: slot 0
+                        // (EXIT) and the pseudo-signal slots print as numbers.
+                        let in_range = (1..=crate::ported::signals_h::SIGCOUNT).contains(&s);
+                        if let Some(name) = sigs_name(s).filter(|_| in_range) {
                             // c:2856-2858
                             println!("{}", name);
                         } else {
@@ -3898,13 +3921,14 @@ pub fn bin_kill(
                 zwarnnam(nam, "-: signal name expected");
                 return 1;
             }
-            let upper = name.to_ascii_uppercase();
-            let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-            match sigs_number(bare) {
+            match kill_signame_lookup(name) {
                 Some(n) => sig = n,
                 None => {
-                    zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2944
-                    return 1;
+                    let upper = name.to_ascii_uppercase();
+                    let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
+                    zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2987
+                    zwarnnam(nam, "type kill -L for a list of signals"); // c:2988
+                    return 1; // c:2989
                 }
             }
             got_sig = true;
@@ -3956,7 +3980,7 @@ pub fn bin_kill(
         // c:2960 — symbolic `-NAME` (no `s` prefix needed).
         let upper = body.to_ascii_uppercase();
         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-        match sigs_number(bare) {
+        match kill_signame_lookup(body) {
             Some(n) => {
                 sig = n;
                 got_sig = true;

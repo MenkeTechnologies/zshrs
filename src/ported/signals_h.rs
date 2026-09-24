@@ -148,15 +148,25 @@ pub static SIGS: &[(&str, i32)] = &[
     ("SYS", libc::SIGSYS),
 ];
 
-/// Port of `alt_sigs[]` from `Src/jobs.c:2740`. Cross-platform name
+/// Port of `alt_sigs[]` from `Src/jobs.c:2765`. Cross-platform name
 /// aliases — names like `CLD` / `IO` / `IOT` map to the same number
 /// as the canonical zsh name on platforms where the underlying
 /// C macro pair coincides.
 pub static ALT_SIGS: &[(&str, i32)] = &[
-    // c:jobs.c:2740
-    ("CLD", libc::SIGCHLD), // c:2742-2746
-    ("IOT", libc::SIGABRT), // c:2752-2756
-    ("ERR", SIGZERR),       // c:2762
+    // c:jobs.c:2765
+    // c:2766-2770 — `#if defined(SIGCHLD) && defined(SIGCLD)`. SIGCLD is
+    // a System V name: glibc/musl and Solaris define it, macOS and the
+    // BSDs do not, so there `CLD` is an unknown signal
+    // (`kill -s CLD` → "unknown signal: SIGCLD").
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "solaris",
+        target_os = "illumos",
+    ))]
+    ("CLD", libc::SIGCHLD),
+    ("IOT", libc::SIGABRT), // c:2776-2780
+    ("ERR", SIGZERR),       // c:2781-2787
 ];
 
 /// Port of the `sig_msg[]` array from `signames.c` (auto-generated

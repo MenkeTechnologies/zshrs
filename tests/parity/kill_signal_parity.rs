@@ -284,3 +284,36 @@ echo done
         );
     }
 }
+
+/// c:Src/jobs.c:2962-2989 — the `-s NAME` / `-NAME` lookup: `0` names
+/// signal 0, `alt_sigs` holds only the aliases the platform defines, and
+/// an unknown name warns twice (`unknown signal` + the `kill -L` hint).
+/// c:2883 — `kill -l N` prints a name only for `1 <= N <= SIGCOUNT`.
+mod kill_signal_name_lookup {
+    use super::*;
+
+    #[test]
+    fn unknown_name_via_s_prints_the_hint_too() {
+        assert_parity("{ kill -s FOO 1 } 2>&1 | cut -d: -f2-; print $pipestatus");
+        assert_parity("{ kill -FOO 1 } 2>&1 | cut -d: -f2-");
+    }
+
+    #[test]
+    fn s_zero_is_signal_zero() {
+        assert_parity("kill -s 0 $$; echo $?");
+        assert_parity("kill -s SIG0 $$; echo $?");
+    }
+
+    #[test]
+    fn alias_names_follow_the_platform() {
+        assert_parity("{ kill -s CLD $$ } 2>&1 | cut -d: -f2-");
+        assert_parity("{ kill -l CLD IOT } 2>&1 | cut -d: -f2-");
+        assert_parity("kill -s IOT 2>&1 | cut -d: -f2-");
+    }
+
+    #[test]
+    fn l_zero_prints_the_number() {
+        assert_parity("kill -l 0");
+        assert_parity("kill -l 128 137 0");
+    }
+}
