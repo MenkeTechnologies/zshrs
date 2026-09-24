@@ -11848,8 +11848,36 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             result.push(char::from(b_ ^ 32));
         }
     };
+    // c:Src/utils.c:7276-7298 — under GETKEY_DOLLAR_QUOTE each chunk decoded
+    // into the temporary buffer is copied out by a loop that, when
+    // POSIX_STRINGS is set, stops at an embedded NUL and sets `ignoring`
+    // (c:6920), which drops every later buffered chunk. `\u`/`\U`
+    // (c:7117-7131) and tokens (c:7240-7255) bypass the buffer. `tbuf_mark`
+    // is where the pending chunk starts in `result`.
+    let posix_cut = (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0
+        && isset(crate::ported::zsh_h::POSIXSTRINGS);
+    let mut ignoring = false;
+    let mut tbuf_mark: Option<usize> = None;
+    let flush_tbuf = |result: &mut String, mark: &mut Option<usize>, ignoring: &mut bool| {
+        let Some(m) = mark.take() else { return };
+        if !posix_cut || m > result.len() {
+            return;
+        }
+        if *ignoring {
+            result.truncate(m); // c:7286-7287
+        } else if let Some(nul) = result[m..].find('\0') {
+            *ignoring = true; // c:7284-7285
+            result.truncate(m + nul);
+        }
+    };
     while let Some(c) = chars.next() {
         apply_pending_mask(&mut result, &mut pending_mask);
+        flush_tbuf(&mut result, &mut tbuf_mark, &mut ignoring);
+        if !(0x84..=0xa1).contains(&(c as u32))
+            && !(c == '\\' && matches!(chars.peek(), Some('u') | Some('U')))
+        {
+            tbuf_mark = Some(result.len());
+        }
         consumed += c.len_utf8();
         // c:utils.c:7194 — `^X` caret notation. A bare `^` (not a backslash
         // escape) followed by any char applies the control mask to it, but
@@ -12321,6 +12349,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
         }
     }
     apply_pending_mask(&mut result, &mut pending_mask);
+    flush_tbuf(&mut result, &mut tbuf_mark, &mut ignoring);
     (result, consumed)
 }
 

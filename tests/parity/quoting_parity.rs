@@ -416,3 +416,31 @@ mod sq_glob_meta_in_cond_pattern {
         assert_parity(r#"p='hello'; _r='hello ('; [[ $_r == ${p}' ('* ]] && print M || print N"#);
     }
 }
+
+/// c:Src/utils.c:7276-7298 — under POSIX_STRINGS the copy-out loop of
+/// getkeystring stops at an embedded NUL in `$'…'` and drops everything
+/// decoded after it (`ignoring`), while `\u`/`\U` bypass that loop. The
+/// option is read at EXPANSION time (c:Src/subst.c:211 stringsubstquote), so
+/// a `setopt posixstrings` earlier on the same line applies.
+mod posix_strings_nul_cut {
+    use super::*;
+
+    #[test]
+    fn nul_ends_the_string_on_the_setopt_line() {
+        assert_parity("setopt posixstrings; x=a$'b\\0c'd; print ${#x}");
+        assert_parity("setopt posixstrings; x=$'b\\0c'; print ${#x}");
+        assert_parity("x=\"$(setopt posixstrings; print -r a$'b\\0c'd)\"; print ${#x}");
+        assert_parity("(setopt posixstrings; x=a$'b\\x00c'd; print ${#x})");
+    }
+
+    #[test]
+    fn nul_ends_the_string_on_a_later_line() {
+        assert_parity("setopt posixstrings\nx=a$'b\\0c'd\nprint ${#x}");
+    }
+
+    #[test]
+    fn unicode_escape_nul_and_default_mode_keep_the_tail() {
+        assert_parity("setopt posixstrings; x=$'a\\u0000b'; print ${#x}");
+        assert_parity("x=a$'b\\0c'd; print ${#x}");
+    }
+}

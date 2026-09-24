@@ -548,7 +548,15 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
         content.push(chars[k]);
         k += 1;
     }
-    let (strsub, _) = getkeystring(&content); // c:211
+    // c:211 — `getkeystring(strdpos+2, &len, GETKEYS_DOLLARS_QUOTE, NULL)`;
+    // the flags carry GETKEY_DOLLAR_QUOTE, which enables the POSIX_STRINGS
+    // NUL cut (c:Src/utils.c:7283-7287) that `setopt posixstrings; print
+    // $'a\0b'` on one line relies on.
+    let (strsub, _) = crate::ported::utils::getkeystring_with(
+        &content,
+        crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
+        None,
+    );
 
     // C: `len += 2;` — caller's len now includes the leading `$'`
     // (Rust mirrors via end+1 below).

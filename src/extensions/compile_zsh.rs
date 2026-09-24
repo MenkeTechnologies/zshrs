@@ -5717,6 +5717,25 @@ impl ZshCompiler {
     /// ops where possible. Words that hit no fast path fall through
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
+        // c:Src/subst.c:301-304 → stringsubstquote → getkeystring decodes a
+        // `$'…'` span at EXPANSION time, and c:Src/utils.c:7283-7287 cuts
+        // the string at an embedded NUL when POSIX_STRINGS is set. That is a
+        // runtime option (`setopt posixstrings; print $'a\0b'` on one line
+        // must see it), so a word whose `$'…'` decodes to a NUL cannot be
+        // folded into a compile-time constant; route it through the runtime
+        // text expansion, whose stringsubstquote applies the cut.
+        if (s.contains(crate::ported::zsh_h::Stringg) || s.contains(crate::ported::zsh_h::Qstring))
+            && s.contains(crate::ported::zsh_h::Snull)
+            && crate::lex::untokenize(s).contains('\0')
+        {
+            let text = self.builder.add_constant(Value::str(s));
+            self.builder.emit(Op::LoadConst(text), 0);
+            let mode = self.text_mode_for_context(self.text_base_mode(s));
+            self.builder.emit(Op::LoadInt(mode as i64), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+            return;
+        }
         // c:Src/subst.c:245-251 — stringsubst replaces a process substitution
         // ANYWHERE in the word, not only a whole-word one:
         //     if ((c == Inang || c == OutangProc || (str == str3 && c == Equals))
