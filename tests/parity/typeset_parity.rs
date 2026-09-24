@@ -1366,3 +1366,24 @@ mod typeset_setbase_validates_every_arm {
         assert_parity("typeset -E 3 e=3.14159; typeset -F 2 f; typeset -p e f");
     }
 }
+
+/// c:Src/builtin.c:2984-3005 — both halves of `typeset -T` go through
+/// typeset_single, whose createparam arm (c:2514-2547) rejects a name that
+/// is neither an identifier nor an existing parameter: zerrnam "not an
+/// identifier" for a leading digit, "not valid in this context" otherwise.
+mod tie_names_are_validated {
+    use super::*;
+
+    #[test]
+    fn a_bad_half_is_rejected_and_aborts() {
+        assert_parity("typeset -T 1x y 2>&1 | cut -d: -f3-; ( typeset -T 1x y ) 2>/dev/null; print $? ${+y}");
+        assert_parity("typeset -T X 1y 2>&1 | cut -d: -f3-; ( typeset -T X 1y ) 2>/dev/null; print $? ${+X}");
+        assert_parity("typeset -T 'a b' y 2>&1 | cut -d: -f3-");
+        assert_parity("f() { typeset -T 1x y 2>/dev/null; print in }; f; print after");
+    }
+
+    #[test]
+    fn valid_ties_still_work() {
+        assert_parity("typeset -T X x; x=(a b); print $X; typeset -T PATH path; print ok");
+    }
+}

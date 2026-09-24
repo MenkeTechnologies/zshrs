@@ -5008,6 +5008,31 @@ pub fn bin_typeset(
         // into, which is what tiedarrsetfn's sepsplit would produce.
         let assign_initial = rhs_given || !init_arr.is_empty();
 
+        // c:2984-2989 / c:2998-3005 — each half is made by typeset_single,
+        // whose createparam arm takes a name only when
+        //     (isident(pname) || paramtab->getnode(paramtab, pname))
+        //         && (!idigit(*pname) || !strcmp(pname, "0"))
+        // and otherwise zerrnam's "not an identifier" (leading digit) or
+        // "not valid in this context" (c:2514-2547). The array half goes
+        // first; when the scalar half then fails, C unsets the array it just
+        // made (c:3001 `unsetparam_pm(apm, 1, 1)`).
+        for (half, is_scalar) in [(aname, false), (sname, true)] {
+            let exists = paramtab().read().map(|t| t.contains_key(half)).unwrap_or(false);
+            let lead_digit = half.as_bytes().first().is_some_and(|b| b.is_ascii_digit());
+            if !((isident(half) || exists) && (!lead_digit || half == "0")) {
+                if lead_digit {
+                    zerrnam(name, &format!("not an identifier: {}", half)); // c:2544
+                } else {
+                    zerrnam(name, &format!("not valid in this context: {}", half)); // c:2546
+                }
+                if is_scalar {
+                    unsetparam(aname); // c:3001
+                }
+                unqueue_signals();
+                return 1; // c:2991 / c:3003
+            }
+        }
+
         // Install the array side first (matching C c:2980 "Do it
         // first because we need the address"). Build a plain
         // PM_ARRAY|PM_TIED param.
