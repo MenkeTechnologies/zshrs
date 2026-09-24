@@ -166,3 +166,44 @@ fn substring_and_chained_subscript_keep_raw_bytes() {
     let s = r#"c=$'a\xe9b'; print -r -- ${c:1:1} ${c:1} ${c: -2:1} ${c:1:-1} ${c[2][1]}; unsetopt multibyte; s=héllo; print -r -- ${s:1:2} ${s: -4:1} ${s[2][1]}"#;
     assert_bytes(s, "e920e96220e920e920e90ac3a920a920c30a");
 }
+
+fn assert_parity_text(script: &str) {
+    let mut c = Command::new(zshrs_bin());
+    c.arg("--zsh");
+    let dir = std::env::temp_dir().join(format!(
+        "zshrs_mb_{}_{}",
+        std::process::id(),
+        script.len()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let got = run_stderr_and_stdout(c.current_dir(&dir), script);
+    if let Some(z) = zsh_path() {
+        let want = run_stderr_and_stdout(Command::new(z).current_dir(&dir), script);
+        assert_eq!(got, want, "zshrs diverged from zsh\n  script: {script}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn run_stderr_and_stdout(cmd: &mut Command, script: &str) -> (String, String) {
+    let o = cmd
+        .args(["-f", "-c", script])
+        .env_remove("LC_CTYPE")
+        .env_remove("LANG")
+        .env_remove("ZSHRS_CACHE")
+        .env("LC_ALL", LOCALE)
+        .output()
+        .expect("spawn shell");
+    (
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// c:Src/Modules/stat.c:574-582 — with `-n` the file name leads each
+/// file's entries: an element for `-A`, a `name` pair for `-H`.
+#[test]
+fn zstat_name_prefix_in_array_and_hash() {
+    assert_parity_text(
+        r#"zmodload zsh/stat; touch a b; zstat -A arr -n +size -- a b; print -r -- $arr; zstat -nH h +size a; print -r -- ${(kv)h}; touch 50150-é 50150-Ą; zstat +size -A sizes -nor -- 50150-*; print -r -- $sizes"#,
+    );
+}

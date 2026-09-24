@@ -654,12 +654,18 @@ pub fn bin_stat(
             }
         };
 
-        // c:573-581 — `STF_FILE` prefix the filename per file.
-        if (local_flags & STF_FILE) != 0 && arrnam.is_none() && hashnam.is_none() {
-            if (local_flags & STF_PICK) != 0 {
-                print!("{} ", path); // c:580
+        // c:574-582 — `STF_FILE`: the file name leads this file's entries —
+        // an array element for `-A`, the HNAMEKEY pair for `-H`, a printed
+        // prefix otherwise.
+        if (local_flags & STF_FILE) != 0 {
+            if arrnam.is_some() {
+                array_out.push(path.to_string()); // c:576 ztrdup_metafy(*args)
+            } else if hashnam.is_some() {
+                hash_out.push((HNAMEKEY.to_string(), path.to_string())); // c:578-579
+            } else if (local_flags & STF_PICK) != 0 {
+                print!("{} ", path); // c:581
             } else {
-                println!("{}:", path);
+                println!("{}:", path); // c:581
             }
         }
         if iwhich >= 0 {
