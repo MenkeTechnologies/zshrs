@@ -1883,7 +1883,12 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     // the wordcode-Eprog; in zshrs we fall back to `body` text directly
     // when funcdef is absent. Without this, `functions NAME` prints
     // `f () { }` for every user-defined function.
-    let has_body_source = hn.body.as_deref().is_some_and(|b| !b.is_empty());
+    //
+    // c:947 tests `f->funcdef`, which every DEFINED function has — an empty
+    // `f() {}` holds an empty Eprog and lists as `f () {\n\t\n}`. Only a
+    // node with no program at all takes the c:986 ` () { }` arm, so an
+    // empty `body` still counts as present.
+    let has_body_source = hn.body.is_some();
     if hn.funcdef.is_some() || has_body_source || (hn.node.flags & PM_UNDEFINED as i32) != 0 {
         // c:947
         print!(" () {{\n"); // c:948

@@ -319,3 +319,17 @@ mod functions_assignment_is_a_body_not_a_file {
         );
     }
 }
+
+/// c:Src/hashtable.c:947-987 — printshfuncnode takes the ` () { }` arm only
+/// for a node with NO program; an empty `f() {}` still has one (an empty
+/// Eprog) and lists as `f () {\n\t\n}` (C04funcdef-adjacent).
+mod empty_function_listing {
+    use super::*;
+
+    #[test]
+    fn empty_body_lists_like_any_other_definition() {
+        assert_parity("f() {}; functions f");
+        assert_parity("f() { }; typeset -f f; which f");
+        assert_parity("f() {}; g() { f }; functions");
+    }
+}
