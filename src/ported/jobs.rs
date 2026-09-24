@@ -5681,7 +5681,7 @@ mod tests {
         assert_eq!(sigmsg(libc::SIGSEGV), "segmentation fault");
         assert_eq!(sigmsg(libc::SIGPIPE), "broken pipe");
         assert_eq!(sigmsg(libc::SIGTERM), "terminated");
-        assert_eq!(sigmsg(libc::SIGCHLD), "child exited");
+        assert_eq!(sigmsg(libc::SIGCHLD), "death of child");
         assert_eq!(sigmsg(libc::SIGCONT), "continued");
     }
 
@@ -5693,7 +5693,8 @@ mod tests {
         // SIGCOUNT abstraction, so use a deliberately-high number).
         assert_eq!(sigmsg(9999), "unknown signal");
         assert_eq!(sigmsg(-1), "unknown signal");
-        assert_eq!(sigmsg(0), "unknown signal");
+        // sig_msg[0] is "done" (signames2.awk), not out of range.
+        assert_eq!(sigmsg(0), "done");
     }
 
     // ===== Test for get_usage (collapsed this session).
