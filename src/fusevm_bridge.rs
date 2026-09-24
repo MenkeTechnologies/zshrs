@@ -5479,7 +5479,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // shape the compiler tracks — it reaches this builtin from
             // `compile_word_str`, which the `PREFORK_SINGLE` callers do not
             // use. Pass `false` until a measured divergence says otherwise.
+            //
+            // c:Src/subst.c:1625 — paramsubst runs with `qt` set inside `"…"`;
+            // array_index_lookup reads it from in_dq_context. Without it the
+            // lookup ran unquoted and elided EMPTY elements before the join
+            // below: `a=("" b); "$a[1,2]"` gave `b` for ` b`, and a quoted
+            // SCANPM_ISVAR_AT selection (see isvar_at) lost its empty words
+            // (`set -- "" b; "$@[1,2]"` is two words).
+            let isvar_at = name == "@" || idx == "@";
+            if quoted {
+                with_executor(|exec| exec.in_dq_context += 1);
+            }
             let v = array_index_lookup(&name, &idx, false);
+            if quoted {
+                with_executor(|exec| exec.in_dq_context -= 1);
+            }
             // c:Src/subst.c:3033-3034 — `if (qt && !getlen && isarr > 0)
             // { val = sepjoin(aval, sep, 1); isarr = 0; }`. Inside double
             // quotes a subscript that selects an array (a range, or nothing
@@ -5488,8 +5502,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // rebuilds a flat `${name[idx]}` that carries no `qt`, so the
             // unbraced form returned the raw array: `"$a[1]"` on an empty
             // array vanished and `"$n[1,2]"` split into two words.
+            //
+            // `nojoin` (isarr = -1, c:3031-3032) spares a SCANPM_ISVAR_AT
+            // value, which c:Src/params.c:2251/2272 sets when the name is
+            // `@` and c:2049-2050 when the subscript is `[@]` (c:Src/subst.c:
+            // 2917 turns it into isarr = -1). So `"$@[2,3]"` stays one word
+            // per element, as `"${@[2,3]}"` does; `for 2 3 4 in "$@[7,-1]"`
+            // in Functions/Misc/regexp-replace depends on it.
             let v = match v {
-                Value::Array(items) if quoted => {
+                Value::Array(items) if quoted && !isvar_at => {
                     let strs: Vec<String> = items.iter().map(|x| x.to_str()).collect();
                     Value::str(crate::ported::utils::sepjoin(&strs, None)) // c:3034
                 }
@@ -5501,6 +5522,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Mirrors the previous compile-shape `ARRAY_INDEX +
             // Op::Concat` exactly: Concat stringifies via as_str_cow
             // (fusevm value.rs:132-146, arrays join with " ").
+            if let (true, Value::Array(items)) = (isvar_at, &v) {
+                let mut items: Vec<Value> = items.iter().cloned().collect();
+                // An unjoined `"$@[…]"` keeps its elements; the suffix
+                // glues onto the last one (c:Src/subst.c:4434
+                // `strcatsub(&y, aptr, aptr, x, xlen, fstr, …)`).
+                if let Some(last) = items.pop() {
+                    items.push(Value::str(format!("{}{}", last.to_str(), suffix)));
+                    return Value::array(items);
+                }
+            }
             return Value::str(format!("{}{}", v.to_str(), suffix));
         }
         // KSHARRAYS bare form: no subscript. Bare-`$name` words +

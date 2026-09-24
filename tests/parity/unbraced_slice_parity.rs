@@ -113,3 +113,23 @@ fn slice_bounds_are_arithmetic() {
     assert_parity(r#"w=(a b c); i=1; print -r -- $w[i++,$#w] $i"#);
     assert_parity(r#"w=(a b c); e=; print -r -- $w[$e,2]"#);
 }
+
+/// c:Src/params.c:2251/2272 marks a `$@` value SCANPM_ISVAR_AT, which
+/// c:Src/subst.c:2917 + 3031-3032 turn into `nojoin`: inside double quotes
+/// the unbraced `"$@[lo,hi]"` stays one word per element exactly like
+/// `"${@[lo,hi]}"`. Functions/Misc/regexp-replace walks its match offsets
+/// with `for 2 3 4 in "$@[7,-1]"`, so `regexp-replace x '^' X` under
+/// rematchpcre died with a math error on the joined word.
+#[test]
+fn quoted_positional_slice_is_not_joined() {
+    assert_parity(r#"set -- a b c; printf '[%s]' "$@[2,3]" x"$@[2,3]"y; echo"#);
+    assert_parity(r#"set -- a b c d; for 2 3 in "$@[1,-1]"; do printf '(%s|%s)' $2 $3; done; echo"#);
+    assert_parity(r#"set -- '' b ''; printf '[%s]' "$@[1,3]"; echo"#);
+}
+
+/// c:Src/subst.c:3033-3034 joins a quoted slice AFTER paramsubst ran with
+/// `qt` set, so an empty element is still part of the joined word.
+#[test]
+fn quoted_slice_join_keeps_empty_elements() {
+    assert_parity(r#"a=('' b); printf '[%s]' "$a[1,2]" "$a[1]"; echo"#);
+}
