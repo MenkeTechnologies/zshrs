@@ -1808,3 +1808,28 @@ mod hist_subst_pattern_search {
         assert_parity(r#"a=abab; print ${a:s/b/X/:&} ${a:gs/b/&&/} ${a:s/b/\&/} ${a:s/#a/Q/}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:3849-3865 — `(c)` / `(w)` lengths count `aval`, which
+// getarrvalue already cut to the `[lo,hi]` range. zargs' `-s` loop shrinks
+// a slice until `${(c)#…[1,n]}` fits and never ended when it ignored the
+// range.
+// ─────────────────────────────────────────────────────────────────────
+mod length_flags_count_the_slice {
+    use super::*;
+
+    /// zsh: `6 2 2 8 2 3 4 0 0`.
+    #[test]
+    fn char_and_word_length_of_a_slice() {
+        assert_parity(
+            r#"a=(aa bbb c); e=2; print ${(c)#a[1,e]} ${(w)#a[1,e]} ${#a[1,e]} ${(c)#a} ${(w)#a[1,2]} ${(c)#a[2]} ${(c)#a[-2,-1]} ${(w)#a[5,6]} ${(c)#a[2,1]}"#,
+        );
+    }
+
+    #[test]
+    fn quoted_and_hash_lengths() {
+        assert_parity(
+            r#"a=(aa bbb c); print "${(c)#a[1,2]}" ${(W)#a[1,2]} ${(ws: :)#a[1,2]}; typeset -A h; h=(a "x y" b z); print ${(c)#h} ${(w)#h}"#,
+        );
+    }
+}

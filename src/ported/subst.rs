@@ -13640,6 +13640,32 @@ pub fn paramsubst(
                     || magic_keys.is_some())
                     && !single_slot_subscript)
                     || flagged_array_subscript);
+            // c:Src/subst.c:3849-3865 — getlen counts `aval`, which getarrvalue
+            // (c:Src/params.c:2449) already cut to the `[lo,hi]` range (and a
+            // flagged subscript to its matches). The `(c)`/`(w)` arms below
+            // re-read the whole parameter, so give them the subscripted list:
+            // `a=(aa bbb c); ${(c)#a[1,2]}` is 6, not 8 — zargs' `-s` loop
+            // shrinks its slice until this length fits and never ended.
+            let len_elems = |whole: Vec<String>| -> Vec<String> {
+                if flagged_array_subscript {
+                    return split_parts.clone().unwrap_or_default();
+                }
+                let Some((lo_s, hi_s)) = subscript.as_deref().and_then(|s| {
+                    crate::subscript_escape::subscript_range_bounds(s, &subscript_split)
+                }) else {
+                    return whole;
+                };
+                let len = whole.len() as i64;
+                let lo = crate::ported::math::mathevali(&singsub(&lo_s)).unwrap_or(1); // c:Src/params.c:2130
+                let hi = crate::ported::math::mathevali(&singsub(&hi_s)).unwrap_or(len); // c:Src/params.c:2172
+                let lo_idx = if lo < 0 { (len + lo).max(0) } else { (lo - 1).max(0) };
+                let hi_idx = if hi < 0 { (len + hi + 1).max(0) } else { hi.min(len) };
+                if hi_idx <= lo_idx {
+                    Vec::new()
+                } else {
+                    whole[lo_idx as usize..hi_idx as usize].to_vec()
+                }
+            };
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -13760,13 +13786,13 @@ pub fn paramsubst(
                     // (sep defaults to first IFS char which is ' ').
                     // C: `len = -sl; for (...) len += sl + STRLEN(elem)`.
                     // For arr=("abc","def"): len = -1 + 1+3 + 1+3 = 7.
-                    let arr: Vec<String> = if let Some(a) = arrays_get(&var_name) {
+                    let arr: Vec<String> = len_elems(if let Some(a) = arrays_get(&var_name) {
                         a
                     } else if let Some(m) = assoc_get(&var_name) {
                         m.values().cloned().collect()
                     } else {
                         Vec::new()
-                    };
+                    });
                     if arr.is_empty() {
                         0
                     } else {
@@ -13787,13 +13813,13 @@ pub fn paramsubst(
                 } else {
                     // c:3862 — wordcount each elem, multi-IFS if getlen>3
                     let multi = if getlen > 3 { 1 } else { 0 }; // c:3864
-                    let arr: Vec<String> = if let Some(a) = arrays_get(&var_name) {
+                    let arr: Vec<String> = len_elems(if let Some(a) = arrays_get(&var_name) {
                         a
                     } else if let Some(m) = assoc_get(&var_name) {
                         m.values().cloned().collect()
                     } else {
                         Vec::new()
-                    };
+                    });
                     let mut total: i32 = 0;
                     for elem in &arr {
                         total += crate::ported::utils::wordcount(elem, spsep.as_deref(), multi);
