@@ -400,6 +400,16 @@ fn jobstates_and_jobdirs_running_bg_job() {
     assert_parity("cd /tmp; sleep 5 & print -r -- \"[$jobstates[1]][$jobdirs[1]]\"; kill %1");
 }
 
+/// c:Src/jobs.c:1344-1353 — `jobs -d` prints `(pwd : DIR)` under each job;
+/// DIR is the job's `pwd`, stamped by `cd` via setjobpwd
+/// (c:Src/builtin.c:1241), so it stays the start directory after a `cd`.
+#[test]
+fn jobs_d_prints_the_start_directory_across_a_cd() {
+    assert_parity(
+        "cd /tmp; sleep 5 & jobs -d; cd /; jobs -d; print -r -- \"[$jobdirs[1]]\"; jobs -ld; kill %1",
+    );
+}
+
 #[test]
 fn jobstates_markers_two_jobs() {
     // `:+` on curjob, `:-` on prevjob (parameter.c:1346-1351).

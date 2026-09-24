@@ -2157,6 +2157,7 @@ pub fn bin_cd(
         //   PWD is unchanged but OLDPWD becomes the pre-popd PWD.
         //   Prior port left OLDPWD stale (whatever an earlier cd/pushd
         //   set), diverging on any `$OLDPWD` / `cd -` that followed.
+        crate::ported::jobs::setjobpwd(); // c:1241 — before `pwd = new_pwd`
         setsparam("OLDPWD", &pre_pwd);
         env::set_var("OLDPWD", &pre_pwd);
         // c:Src/builtin.c:1245-1252 — print dirstack on POPD unless
@@ -2176,6 +2177,9 @@ pub fn bin_cd(
         setsparam("OLDPWD", &o);
         env::set_var("OLDPWD", &o);
     }
+    // c:1241 — `setjobpwd();` stamps every live job with the directory
+    // it was started in, while $PWD still holds the pre-cd value.
+    crate::ported::jobs::setjobpwd();
     // c:1241 — `pwd = new_pwd;` writes the LOGICAL path (the dest
     // argument as given to cd, not `getcwd()`). Computed once up front
     // (see `new_pwd_logical` above) so the PUSHDIGNOREDUPS scan and this

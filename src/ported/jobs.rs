@@ -1451,6 +1451,22 @@ pub fn printjob(
         lines.join("\n")
     };
 
+    // c:1344-1353 — `jobs -d` (lng & 4) follows the job with the
+    // directory it was started in: `jn->pwd` once a later `cd` has
+    // stamped it (setjobpwd, c:1890), otherwise the current `pwd`.
+    // NOT PORTED: the `interact && job == thisjob && jn->pwd != pwd`
+    // "(pwd now: …)" arm — this formatter has no reliable `thisjob`
+    // (THISJOB is -1 between pipelines), so it would misfire.
+    let header = if (lng & 4) != 0 {
+        let dir = match job.pwd.as_deref() {
+            Some(p) => p.to_string(),
+            None => getsparam("PWD").unwrap_or_default(),
+        };
+        format!("{}\n(pwd : {})", header, crate::ported::utils::fprintdir(&dir))
+    } else {
+        header
+    };
+
     // c:1220-1221 — `if (should_report_time(jn)) dumptime(jn);`
     //               Also fires for c:1354-1355 (synchronous-wait variant).
     let reporttime: f64 = getsparam("REPORTTIME")
