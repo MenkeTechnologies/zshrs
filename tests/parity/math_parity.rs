@@ -1147,3 +1147,25 @@ mod substring_math_errors_are_reported_verbatim {
         assert_stderr_parity("foo=abc; print ${foo:(1)x:2}");
     }
 }
+
+/// Math lexer: `Inf`/`NaN` are recognised only when not emulating sh
+/// (c:Src/math.c:872 `if (ie - p == 3 && !EMULATION(EMULATE_SH))`), so in
+/// sh every identifier is a variable reference as POSIX requires (E03posix
+/// "All identifiers are variable references in POSIX arithmetic"). The
+/// gate is in both zsh source trees but not in the 5.9.2 release binary the
+/// parity helpers run, so the sh cases are zshrs pins; the zsh-mode cases
+/// stay parity.
+mod inf_nan_under_sh_emulation {
+    use super::*;
+
+    #[test]
+    fn sh_treats_inf_and_nan_as_variables() {
+        let r = run_zshrs(r#"emulate sh -c 'inf=42; nan=3; echo $((inf)) $((nan)) $((Inf)) $((NaN))'"#);
+        assert_eq!(r.stdout, "42 3 0 0\n");
+    }
+
+    #[test]
+    fn zsh_and_ksh_keep_the_constants() {
+        assert_parity(r#"echo $((Inf)) $((-inf)) $((NaN)); emulate ksh; inf=42; echo $((inf))"#);
+    }
+}

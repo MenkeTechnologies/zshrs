@@ -2757,8 +2757,16 @@ pub(crate) fn zzlex() -> i32 {
 
                     let id = m_input_slice(id_start, m_pos());
 
-                    // Check for Inf/NaN
-                    let id_lower = id.to_lowercase();
+                    // c:872 — `if (ie - p == 3 && !EMULATION(EMULATE_SH))`:
+                    // the Inf/NaN constants are a zsh extension; under sh
+                    // emulation every identifier is a variable reference, as
+                    // POSIX arithmetic requires (`emulate sh; inf=42;
+                    // echo $((inf))` is 42).
+                    let id_lower = if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH) {
+                        String::new()
+                    } else {
+                        id.to_lowercase()
+                    };
                     if id_lower == "nan" {
                         m_yyval_set(mnumber {
                             l: 0,
