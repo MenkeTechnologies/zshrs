@@ -207,3 +207,18 @@ fn zstat_name_prefix_in_array_and_hash() {
         r#"zmodload zsh/stat; touch a b; zstat -A arr -n +size -- a b; print -r -- $arr; zstat -nH h +size a; print -r -- ${(kv)h}; touch 50150-é 50150-Ą; zstat +size -A sizes -nor -- 50150-*; print -r -- $sizes"#,
     );
 }
+
+/// c:Src/builtin.c:5335-5372 — printf's `%s`/`%b` width and precision
+/// count characters with `mbrlen` over the argument's raw bytes, one per
+/// byte with MULTIBYTE off. Counting the port's metafied `char`s made the
+/// undecodable byte `0xe9` two columns wide, and `unsetopt multibyte` still
+/// padded and truncated by character. (A precision that lands on an
+/// invalid sequence is a 5.9.2 / dev-tree version split and is not pinned.)
+#[test]
+fn printf_width_counts_mbrlen_characters() {
+    let s = r#"printf "%3s|%-3s|%3b|\n" $'\xe9' $'\xe9' "\xe9"; printf "%4s|%.2s|\n" é éab; unsetopt multibyte; printf "%3s|%.1s|%-3s|\n" é é é"#;
+    assert_bytes(
+        s,
+        "2020e97ce920207c2020e97c0a202020c3a97cc3a9617c0a20c3a97cc37cc3a9207c0a",
+    );
+}
