@@ -8568,8 +8568,17 @@ pub fn paramsubst(
                         // c:3154-3160 — the `/` separator scan skips a whole
                         // Dnull span (`${v/"a/b"/r}` searches for `a/b`).
                         // This fold loses the Dnull, so escape the slash the
-                        // way that scan already honours (c:3150-3153).
-                        out.push(Bnull);
+                        // way that scan already honours (c:3150-3153) —
+                        // unless a bare backslash just before it already does
+                        // (`mark` leaves `\` unmarked before `/`): a Bnull
+                        // between them would un-pair that `\/` and turn the
+                        // slash into the separator (p10k's URL encoder,
+                        // `"${1//(#m)[^…"\/:_.-!'()~"]/…}"`).
+                        let prev_escapes = out.ends_with('\\')
+                            && !out[..out.len() - 1].ends_with(Bnull);
+                        if !prev_escapes {
+                            out.push(Bnull);
+                        }
                         out.push(c);
                     } else {
                         mark(&mut out, c, raw.get(i + 1).copied());
