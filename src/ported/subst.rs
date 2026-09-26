@@ -4886,6 +4886,21 @@ pub fn paramsubst(
                     }
                     // c:2093 — `endparamscope();`
                     crate::ported::params::endparamscope();
+                    // c:2094-2103 — `if (exit_pending) { stopmsg = 1; zexit(exit_val,
+                    // ZEXIT_NORMAL); } else _exit(exit_val);` — an `exit` in the
+                    // body was only deferred by the parameter scope.
+                    {
+                        use crate::ported::builtin::{zexit, EXIT_PENDING, EXIT_VAL, STOPMSG};
+                        if EXIT_PENDING.load(Ordering::Relaxed) != 0 {
+                            STOPMSG.store(1, Ordering::Relaxed); // c:2100
+                            zexit(EXIT_VAL.load(Ordering::Relaxed), crate::ported::zsh_h::ZEXIT_NORMAL); // c:2101
+                            // c:2103 — still here only for an in-process subshell
+                            // (zexit deferred on SUBSHELL_DEPTH): abort the command
+                            // as the `_exit`ed child would.
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                    }
                     if kind == 2 {
                         // c:2089-2091 — `s = dyncat(rplyvar, s); rplyvar =
                         // NULL;` — re-enter the ordinary parameter path so

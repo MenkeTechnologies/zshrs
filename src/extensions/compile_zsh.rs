@@ -6881,6 +6881,15 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadInt(qt_code), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_KSH_FUNSUB, 4), 0);
+                // c:Src/subst.c:183-186 — an UNQUOTED word that expands to
+                // nothing is removed by prefork: `print -l ${ true } XX` is one
+                // line. Same end-of-word drop the bare `$@` read uses above.
+                if qt_code == 0 && self.word_seg_depth == 0 {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
+                }
                 // Unquoted, the result is an ordinary expansion. Under
                 // ksh/mksh (and zsh's SH_WORD_SPLIT) that means IFS word
                 // splitting; under plain zsh it does NOT

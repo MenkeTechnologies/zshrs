@@ -6527,6 +6527,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             };
             crate::ported::params::endparamscope(); // c:2093
+            // c:2094-2103 — `if (exit_pending) { … stopmsg = 1; zexit(exit_val,
+            // ZEXIT_NORMAL); }`: an `exit` in the body ran in the CURRENT shell
+            // and was only deferred by the parameter scope; it ends the shell
+            // here, before the command around the substitution runs.
+            {
+                use crate::ported::builtin::{zexit, EXIT_PENDING, EXIT_VAL, STOPMSG};
+                use std::sync::atomic::Ordering::Relaxed;
+                if EXIT_PENDING.load(Relaxed) != 0 {
+                    STOPMSG.store(1, Relaxed); // c:2100
+                    zexit(EXIT_VAL.load(Relaxed), crate::ported::zsh_h::ZEXIT_NORMAL); // c:2101
+                    // c:2103 `_exit(exit_val)` — back here only when zexit deferred
+                    // for an in-process subshell (SUBSHELL_DEPTH): the forked child
+                    // C runs would already be gone, so abort the command around
+                    // the substitution and let the subshell unwind with the value.
+                    crate::ported::utils::errflag
+                        .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
+                }
+            }
             val
         });
         // A nofork substitution IS a command substitution, so it publishes

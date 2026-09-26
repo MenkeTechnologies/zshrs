@@ -463,3 +463,37 @@ mod nofork_trim_zshrs_pin {
         assert_eq!(out(r#"x="${ print a }"; typeset -p x"#), "typeset x=$'a\\n'\n");
     }
 }
+
+/// Nofork substitution runs in the CURRENT shell (dev-tree zsh pins, see
+/// `nofork_trim_zshrs_pin`). c:Src/subst.c:2094-2103: an `exit` in the body
+/// ends the shell before the command around it runs, and c:2056 leaves the
+/// body's errflag set. The capture restored the parent's exit/errflag state
+/// the way `$( … )` must, so the command ran and the exit was lost.
+mod nofork_current_shell_zshrs_pin {
+    use super::*;
+
+    #[test]
+    fn exit_in_the_body_ends_the_shell_first() {
+        for body in ["${ print x; exit 7 }", "${| REPLY=x; exit 7 }", "${(U)${ exit 7 }}"] {
+            let r = run_zshrs(&format!("print A {body} B; print C"));
+            assert_eq!((r.stdout.as_str(), r.exit), ("", 7), "{body}");
+            let r = run_zshrs(&format!("(print A {body} B; print C); print rc=$?"));
+            assert_eq!(r.stdout, "rc=7\n", "subshell: {body}");
+        }
+    }
+
+    #[test]
+    fn errexit_in_the_body_aborts_the_command() {
+        let r = run_zshrs("(print A ${ setopt errexit; false; print no } B; print C)");
+        assert_eq!((r.stdout.as_str(), r.exit), ("", 1));
+    }
+
+    /// c:Src/subst.c:183-186 — prefork removes an unquoted empty word.
+    #[test]
+    fn an_empty_unquoted_result_is_no_word() {
+        assert_eq!(run_zshrs("print -l ${ true } ${| true } XX").stdout, "XX\n");
+        assert_eq!(run_zshrs("a=(${ true }); print $#a").stdout, "0\n");
+        assert_eq!(run_zshrs(r#"print -l "${ true }" XX"#).stdout, "\nXX\n");
+        assert_eq!(run_zshrs("x=${ true }; print ${+x}").stdout, "1\n");
+    }
+}

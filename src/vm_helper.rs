@@ -6861,10 +6861,14 @@ impl ShellExecutor {
                 // HARD bit makes every later zerr() silent
                 // (c:Src/utils.c:175-177) and silently fails every
                 // later parse. Same fix as subshell_end.
-                errflag.fetch_and(
-                    !(ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
-                    Relaxed,
-                );
+                // A nofork `${ … }` is no fork: c:Src/subst.c:2056 leaves the
+                // body's errflag set, so the command around it aborts.
+                if !shared_state {
+                    errflag.fetch_and(
+                        !(ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
+                        Relaxed,
+                    );
+                }
                 // c:Src/exec.c:4783 execcmdoutsubst — `$(...)` is a
                 // subshell, and zsh fires the EXIT trap when the
                 // subshell ends BUT only if the trap was installed
@@ -6882,7 +6886,7 @@ impl ShellExecutor {
                     .lock()
                     .ok()
                     .and_then(|t| t.get("EXIT").cloned());
-                if live_exit != snap_exit {
+                if !shared_state && live_exit != snap_exit {
                     if let Some(body) = live_exit {
                         if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                             t.remove("EXIT");
@@ -6902,11 +6906,24 @@ impl ShellExecutor {
                 // sigtrapped snapshot/restore pair exists.
                 // Restore parent's exit / loop / function-return
                 // state so the outer VM continues normally.
-                EXIT_PENDING.store(saved_exit_pending, Relaxed);
-                EXIT_VAL.store(saved_exit_val, Relaxed);
-                SHELL_EXITING.store(saved_shell_exiting, Relaxed);
-                RETFLAG.store(saved_retflag, Relaxed);
-                BREAKS.store(saved_breaks, Relaxed);
+                //
+                // A nofork `${ … }` runs in the CURRENT shell, so only `return`
+                // stops at it (c:Src/subst.c:2049-2053 `if (retflag) { retflag
+                // = 0; breaks = obreaks; }`): an `exit` stays pending for the
+                // caller's c:2094 zexit and a `break` keeps unwinding the loop
+                // around the command.
+                if shared_state {
+                    if RETFLAG.load(Relaxed) != 0 {
+                        RETFLAG.store(saved_retflag, Relaxed); // c:2051
+                        BREAKS.store(saved_breaks, Relaxed); // c:2052
+                    }
+                } else {
+                    EXIT_PENDING.store(saved_exit_pending, Relaxed);
+                    EXIT_VAL.store(saved_exit_val, Relaxed);
+                    SHELL_EXITING.store(saved_shell_exiting, Relaxed);
+                    RETFLAG.store(saved_retflag, Relaxed);
+                    BREAKS.store(saved_breaks, Relaxed);
+                }
                 // Restore parent state. The inner cmd-subst's stdout
                 // (the captured pipe contents) is the only thing
                 // that leaks out.
