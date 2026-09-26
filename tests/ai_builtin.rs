@@ -451,3 +451,29 @@ fn zsh_emulation_hides_the_name_but_still_dispatches_it() {
     assert_eq!(c2, 0, "stderr: {err}");
     assert_eq!(out, "[Z]\n");
 }
+
+#[test]
+fn a_literal_ai_inside_a_function_body_reaches_the_builtin() {
+    // A literal command word in a compiled body is the path fusevm's name
+    // registry decides: once it maps `ai` to `BUILTIN_AI`, the compiler
+    // emits `CallBuiltin(264)`, and the VM silently skips an id nobody
+    // registered. A missing registration shows up here as an empty `$r`
+    // with status 0 — `ai` a no-op — not as an error.
+    let (out, err, code) = run(r#"f() { ai -v r 'probe'; print -r -- "rc=$?" }
+ai -M 'probe=HIT'
+f
+print -r -- "[$r]""#);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0\n[HIT]\n");
+}
+
+#[test]
+fn a_user_function_named_ai_wins_over_the_builtin() {
+    // function > builtin, zsh's dispatch order. Defined on one line and
+    // called on the next, so the override probe in the registered handler
+    // (not only the compiler's same-unit shadow check) has to honour it.
+    let (out, err, code) =
+        run("ai() { print -r -- \"fn:$1\" }\nai probe\nbuiltin ai -M 'probe=B'\nbuiltin ai probe");
+    assert_eq!(code, 0, "stderr: {err}");
+    assert_eq!(out, "fn:probe\nB\n");
+}

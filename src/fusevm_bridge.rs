@@ -3851,6 +3851,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_ext_overridable!(vm, BUILTIN_PEACH, "peach", builtin_peach);
     reg_ext_overridable!(vm, BUILTIN_BARRIER, "barrier", builtin_barrier);
 
+    // `ai` — zshrs-original LLM builtin (`src/extensions/ai.rs`).
+    // fusevm's name registry maps `"ai"` to `fusevm::shell_builtins::BUILTIN_AI`
+    // (264) from its 0.26.7 release on, and the compiler then emits
+    // `CallBuiltin(264)` for a literal `ai`. The VM silently skips an
+    // unregistered id, so the handler must be installed here or `ai` becomes
+    // a no-op. The id is defined locally (shadowing the glob import once the
+    // crate carries it) so this also builds against a fusevm that predates
+    // the constant; on such a release the name lookup answers `None` and a
+    // literal `ai` reaches `try_run_registered_builtin` instead. Must stay
+    // equal to fusevm's `BUILTIN_AI`.
+    /// `BUILTIN_AI` constant.
+    pub const BUILTIN_AI: u16 = 264;
+    reg_ext_overridable!(vm, BUILTIN_AI, "ai", builtin_ai);
+
     // Intercept (AOP)
     reg_ext_overridable!(vm, BUILTIN_INTERCEPT, "intercept", builtin_intercept);
     reg_ext_overridable!(
