@@ -1386,6 +1386,24 @@ print -- "$result""#,
         ));
     }
 
+    /// A ternary branch that runs off the end of the format before its
+    /// delimiter makes the format malformed: zformat_substring returns NULL
+    /// (Src/Modules/zutil.c:882-887, `|| !*s`) and bin_zformat warns and
+    /// returns 1 (c:989-992). zshrs returned the partial text with status 0.
+    /// Cases are Test/V13zformat.ztst's "incomplete ternary expression" and
+    /// "ternary expression with impossible spec char".
+    #[test]
+    fn zformat_unterminated_ternary_is_malformed() {
+        assert_parity_dash_f(
+            r#"zmodload zsh/zutil
+for f in '%(.' '%()' '%(..)' '<%(>' '%(-.true.false)' '%(0.true.false)' '%(x.a%(y.b.c.e)f'; do
+  zformat -F REPLY "$f" 2>&1; print -r -- "rc=$? <$REPLY>"
+done
+zformat -f REPLY '%(x.a%(y.b.c)d.e)f' x:1 y:0; print -r -- "rc=$? <$REPLY>"
+zformat -F REPLY '%(x!true!false)'; print -r -- "rc=$? <$REPLY>""#,
+        );
+    }
+
     /// `zparseopts` parses option arguments. The zsh-completion system
     /// depends on this heavily.
     #[test]

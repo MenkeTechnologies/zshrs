@@ -785,16 +785,23 @@ impl ZFormat {
                 // actval, skip the first text. So the FIRST text
                 // (between `(` and the delim) is the FALSE branch, the
                 // SECOND text (between delim and `)`) is the TRUE.
+                //     if (!(s = zformat_substring(s+1, ..., endcharl, ...,
+                //                 skip || actval)) || !*s)
+                //         return NULL;
+                // c:882-884 — a branch that runs off the end of the format
+                // without meeting its delimiter makes the whole format
+                // malformed; the previous port kept going and returned the
+                // partial text, so `zformat -F R '%(..)'` succeeded.
                 ZFormat::substring(bytes, idx, out, endcharl, specs, presence, skip || actval)?;
-                // Skip the delimiter
-                if *idx < bytes.len() && bytes[*idx] == endcharl {
-                    *idx += 1;
+                if *idx >= bytes.len() {
+                    return None; // c:884
                 }
+                *idx += 1; // c:882 `s+1` — past the delimiter
                 ZFormat::substring(bytes, idx, out, ')', specs, presence, skip || !actval)?;
-                // Skip the closing `)`
-                if *idx < bytes.len() && bytes[*idx] == ')' {
-                    *idx += 1;
+                if *idx >= bytes.len() {
+                    return None; // c:887
                 }
+                *idx += 1; // c:821 `s++` — past the closing `)`
                 continue;
             }
 
@@ -1749,7 +1756,20 @@ pub fn bin_zformat(
                 }
                 specs.insert(ab[0] as char, ap[2..].to_string()); // c:987
             }
-            let out = zformat_substring(&args[1], &specs, presence != 0); // c:990
+            // c:989-992 — `if (!zformat_substring(args[1], specs, &out, …))
+            // { zwarnnam(nam, "malformed format string"); return 1; }`.
+            // VERSION SPLIT — the same upstream a04c944804 that dropped the
+            // seeded specs above appended `: %s` (args[1]) to this message;
+            // the released text is kept to match them.
+            let chars: Vec<char> = args[1].chars().collect();
+            let mut out = String::with_capacity(chars.len() + 16);
+            let mut idx = 0;
+            if ZFormat::substring(&chars, &mut idx, &mut out, '\0', &specs, presence != 0, false)
+                .is_none()
+            {
+                zwarnnam(nam, "malformed format string"); // c:990
+                return 1; // c:991
+            }
             setsparam(&args[0], &out); // c:993 setsparam
             return 0; // c:994
         }
