@@ -1270,6 +1270,41 @@ print -r - ${(V)${(%):-"%F{#f00}"}}"##;
         );
         assert_eq!(r.status.code(), z.status.code());
     }
+
+    /// 88-colour mapping, pinned to the expected output of zsh's own
+    /// `Test/V15nearcolor.ztst` ("88-colour conversion"). Upstream
+    /// 75ebfe8cf1 (after 5.9.2) added the missing 0x73 grey to `mapRGBto88`'s
+    /// component table (Src/Modules/nearcolor.c:76) and moved the grey base
+    /// from 77 to 76 (c:108), so this is NOT compared against Homebrew's
+    /// 5.9.2, which still maps #123456 to 81 and #654321 to 82.
+    #[test]
+    fn eighty_eight_colour_map_includes_every_grey() {
+        let probe = Command::new(zshrs_bin())
+            .args(["--zsh", "-fc", "zmodload zsh/terminfo; TERM=xterm-88color; print -r -- $terminfo[colors]"])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        if String::from_utf8_lossy(&probe.stdout).trim() != "88" {
+            eprintln!("skip: no xterm-88color terminfo entry");
+            return;
+        }
+        let script = r##"zmodload zsh/nearcolor
+TERM=xterm-88color
+for 1 in 123456 654321 8a6cb4 8bffcd a5e02d cccccc d0d0d0 f00 0f0 00f; do
+  print -r - $1 ${(V)${(%):-"%F{#$1}"}}
+done"##;
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("zshrs");
+        assert_eq!(
+            String::from_utf8_lossy(&r.stdout),
+            "123456 ^[[38;5;80m\n654321 ^[[38;5;81m\n8a6cb4 ^[[38;5;38m\n\
+             8bffcd ^[[38;5;46m\na5e02d ^[[38;5;40m\ncccccc ^[[38;5;58m\n\
+             d0d0d0 ^[[38;5;86m\nf00 ^[[38;5;64m\n0f0 ^[[38;5;28m\n00f ^[[38;5;19m\n"
+        );
+    }
 }
 
 // ───────────────────────── zsh/watch ─────────────────────────

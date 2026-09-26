@@ -140,9 +140,12 @@ pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {
 /// Port of `mapRGBto88(int red, int green, int blue)` from `Src/Modules/nearcolor.c:74`.
 pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {
     // c:74
-    // c:74 — palette ramp: 4 RGB levels + 7 grey levels.
-    let component: [i32; 11] = [
-        0, 0x8b, 0xcd, 0xff, 0x2e, 0x5c, 0x8b, 0xa2, 0xb9, 0xd0, 0xe7,
+    // c:76 — palette ramp: 4 RGB levels + 8 grey levels. Upstream
+    // 75ebfe8cf1 ("nearcolor was missing the third grayscale entry in 88
+    // color mode", after 5.9.2) added the 0x73 grey and moved the grey
+    // index base from 77 to 76; 5.9.2 maps e.g. #123456 to 81, not 80.
+    let component: [i32; 12] = [
+        0, 0x8b, 0xcd, 0xff, 0x2e, 0x5c, 0x73, 0x8b, 0xa2, 0xb9, 0xd0, 0xe7,
     ]; // c:76
     let mut orig = cielab::default(); // c:77
     let mut next = cielab::default(); // c:77
@@ -164,7 +167,7 @@ pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {
     // c:86-100 — three nested for-loops with `if (r > 3) g = b = r;`
     // grey-ramp shortcut. Mirror C's `for (...)` with mutable counters.
     r = 0; // c:86
-    while r < 11 {
+    while r < 12 {
         // c:86
         g = 0; // c:87
         while g <= 3 {
@@ -197,11 +200,11 @@ pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {
         r += 1; // c:86
     }
 
-    // c:102-103 — return (comp_r > 3) ? 77 + comp_r :
+    // c:102-103 — return (comp_r > 3) ? 76 + comp_r :
     //                    16 + (comp_r * 16) + (comp_g * 4) + comp_b;
     if comp_r > 3 {
         // c:102
-        77 + comp_r // c:102
+        76 + comp_r // c:102
     } else {
         16 + (comp_r * 16) + (comp_g * 4) + comp_b // c:110
     }
