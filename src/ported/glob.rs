@@ -1963,10 +1963,15 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     let left = &s[..dotdot_pos];
     let right = &s[dotdot_pos + 2..];
 
-    // Check for increment
+    // Check for increment. c:2246-2264 — C's form is exactly `c..c`
+    // followed by Outbrace; a third `..step` part is not a character
+    // range (`{1..2..x}` stays literal). Only bash's `{a..e..2}` takes one.
     let (end_str, incr) = if let Some(pos) = right.find("..") {
+        if !crate::dash_mode::bash_mode() {
+            return None;
+        }
         let end = &right[..pos];
-        let inc: i32 = right[pos + 2..].parse().unwrap_or(1);
+        let inc: i32 = right[pos + 2..].parse().ok()?;
         (end, inc)
     } else {
         (right, 1)
@@ -6488,7 +6493,13 @@ fn expand_range(
         if let Some(pos) = content[right_start..].find("..") {
             let r = &content[right_start..right_start + pos];
             let s_text = &content[right_start + pos + 2..];
-            let raw: i64 = s_text.parse().unwrap_or(1);
+            // c:2366-2369 — `rincr = zstrtol(p+2, &p, 10); … if (p != str2
+            // || !rincr) err++;` — an empty or non-numeric step (`{1..2..}`)
+            // is an error just like a zero one, not a step of 1.
+            let raw: i64 = match s_text.parse() {
+                Ok(v) => v,
+                Err(_) => return None,
+            };
             if raw == 0 {
                 // c:2368 — `!rincr` → err++ → no expansion. Return
                 // None so xpandbraces falls back to literal.
@@ -6661,35 +6672,69 @@ fn expand_comma(
 }
 
 fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> {
-    // c:Src/glob.c:expand_ccl — char-class range expansion for the
-    // `setopt braceccl` brace shape `{m-o}` → m,n,o. Accept both
-    // ASCII `-` and Dash TOKEN (\u{9b}) as the range separator —
-    // the bridge passthru path delivers `{m-o}` with Dash TOKEN
-    // since the lexer tokenizes `-` to Dash inside word context.
-    let mut chars_set = HashSet::new();
-    let chars: Vec<char> = content.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let is_range = i + 2 < chars.len() && (chars[i + 1] == '-' || chars[i + 1] == '\u{9b}');
-        if is_range {
-            let start = chars[i];
-            let end = chars[i + 2];
-            for c in start..=end {
-                chars_set.insert(c);
-            }
-            i += 3;
+    // c:2424-2475 — `if (!comma && isset(BRACECCL)) { /* {a-mnop} */`
+    //     "Here we expand each character to a separate node, but also
+    //      ranges of characters like a-m.  ccl is a set of flags saying
+    //      whether each character is present; the final list is in
+    //      lexical order."
+    // C's `ccl[256]` is indexed by byte; the set below is keyed by the
+    // character value, which is the same order for every single-byte
+    // character.
+    let pound = crate::ported::zsh_h::Pound as u32;
+    let meta = char::from(crate::ported::zsh_h::Meta);
+    // c:2437/2441 — `if (itok(c1 = *p++)) c1 = ztokens[c1 - Pound];`
+    let untok = |c: char| -> u32 {
+        let cu = c as u32;
+        if cu < 0x100 && crate::ported::ztype_h::itok(cu as u8) {
+            ZTOKENS.as_bytes()[(cu - pound) as usize] as u32
         } else {
-            chars_set.insert(chars[i]);
-            i += 1;
+            cu
+        }
+    };
+    let cs: Vec<char> = content.chars().collect();
+    let mut ccl: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new(); // c:2432
+    let mut lastch: i64 = -1; // c:2431
+    let mut p = 0usize;
+    while p < cs.len() {
+        // c:2435
+        let mut c1 = untok(cs[p]); // c:2437-2438
+        p += 1;
+        if cs[p - 1] == meta && p < cs.len() {
+            c1 = cs[p] as u32 ^ 32; // c:2439-2440 `c1 = 32 ^ *p++;`
+            p += 1;
+        }
+        // c:2441-2444 — peek the following character.
+        let c2: i64 = match cs.get(p) {
+            Some(&n) if n == meta => cs.get(p + 1).map_or(0, |&m| (m as u32 ^ 32) as i64),
+            Some(&n) => untok(n) as i64,
+            None => 0,
+        };
+        // c:2445-2449 — `if (IS_DASH((char)c1) && lastch >= 0 &&
+        //                   p < str2 && lastch <= (int)c2)`
+        if c1 == '-' as u32 && lastch >= 0 && p < cs.len() && lastch <= c2 {
+            while lastch < c2 {
+                ccl.insert(lastch as u32); // c:2447 `ccl[lastch++] = 1;`
+                lastch += 1;
+            }
+            lastch = -1; // c:2448
+        } else {
+            lastch = c1 as i64; // c:2450 `ccl[lastch = c1] = 1;`
+            ccl.insert(c1);
         }
     }
-
-    let mut results: Vec<String> = chars_set
-        .iter()
-        .map(|c| format!("{}{}{}", prefix, c, suffix))
-        .collect();
-    results.sort();
+    // c:2454-2471 — walk ccl from the top, inserting each after `last`,
+    // so the list comes out ascending; an imeta byte is re-metafied.
+    let mut results = Vec::with_capacity(ccl.len());
+    for c1 in ccl {
+        let mut mid = String::new();
+        if c1 < 0x100 && crate::ported::ztype_h::imeta(c1 as u8) {
+            mid.push(meta); // c:2460 `str[pl] = Meta;`
+            mid.push(char::from_u32(c1 ^ 32)?); // c:2461
+        } else {
+            mid.push(char::from_u32(c1)?); // c:2465
+        }
+        results.push(format!("{}{}{}", prefix, mid, suffix));
+    }
     Some(results)
 }
 

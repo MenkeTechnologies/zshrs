@@ -341,3 +341,32 @@ mod token_char_ranges {
         assert_parity(r#"print -r left{[..]}right {{..}}"#);
     }
 }
+
+/// c:glob.c:2424-2475 — BRACECCL: token chars stand for their source
+/// character, `-` is a range only between two characters in ascending
+/// order, and the result is in lexical (byte) order.
+mod brace_ccl {
+    use super::*;
+
+    #[test]
+    fn ccl_untokenizes_orders_and_ranges_like_c() {
+        assert_parity("setopt braceccl; print -r -- {^ab}");
+        assert_parity("setopt braceccl; print -r -- {a^} {*?}");
+        assert_parity("setopt braceccl; print -r -- {-a} {a-}");
+        assert_parity("setopt braceccl; print -r -- {z-a}");
+        assert_parity("setopt braceccl; print -r -- {a-c-e} x{a-cA}y");
+    }
+}
+
+/// c:glob.c:2366-2369 — an empty or non-numeric `..step` is an error
+/// (braces stripped), and c:2246-2264 bracechardots takes no step at all.
+mod range_step_errors {
+    use super::*;
+
+    #[test]
+    fn empty_or_garbage_step_is_not_a_step_of_one() {
+        assert_parity("print -r -- {1..2..}");
+        assert_parity("print -r -- {1..2..x}");
+        assert_parity("print -r -- {a..b..}");
+    }
+}
