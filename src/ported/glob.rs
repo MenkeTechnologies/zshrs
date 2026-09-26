@@ -3927,6 +3927,12 @@ pub enum qualifier {
     /// running sense bit on each marker and XORs it into later tests.
     /// Fixes `*(/^@)` (dir AND not-symlink), `*(.^x)`, etc.
     ToggleSense,
+
+    /// `-` — c:1348-1352 `sense ^= 2;` toggles link-following for the
+    /// SUBSEQUENT qualifiers only: each node then tests the target's stat
+    /// (c:399-403 `bp = (qn->sense & 2) ? &buf2 : &buf;`). `*(@-.)` is a
+    /// symlink whose target is a regular file.
+    ToggleFollow,
 }
 
 // Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
@@ -3955,7 +3961,6 @@ pub struct qualifier_set {
     // c:138
     pub qualifiers: Vec<qualifier>,
     pub alternatives: Vec<Vec<qualifier>>,
-    pub follow_links: bool,
     /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
     /// Each entry is the C `struct globsort.tp` field — `GS_NAME` /
     /// `GS_DEPTH` / `GS_EXEC` / `GS_SIZE` / `GS_ATIME` / `GS_MTIME` /
@@ -4897,7 +4902,11 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 negated = !negated;
                 qs.qualifiers.push(qualifier::ToggleSense);
             }
-            '-' => follow = !follow,
+            // c:1348-1352 — `case '-': case Dash: sense ^= 2;`
+            '-' => {
+                follow = !follow;
+                qs.qualifiers.push(qualifier::ToggleFollow);
+            }
             ',' => {
                 // Start new alternative
                 if !qs.qualifiers.is_empty() {
@@ -5572,8 +5581,6 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
         qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
     }
 
-    qs.follow_links = follow;
-
     // Build the faithful glob.c `struct qual` arena from `alternatives`
     // (additive: matching still uses the enum). Each alternative is an
     // AND-chain (`next` links); alternatives chain via `or`. ToggleSense
@@ -5599,6 +5606,10 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 let fields: Option<(TestMatchFunc, i64, i32, i32, i32, Option<String>)> = match q {
                     qualifier::ToggleSense => {
                         sense ^= 1; // c:1346
+                        None
+                    }
+                    qualifier::ToggleFollow => {
+                        sense ^= 2; // c:1351
                         None
                     }
                     qualifier::IsRegular => Some((qualisreg, 0, 0, 0, 0, None)),
@@ -6078,7 +6089,7 @@ pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
 /// `stat_out` is C's `struct stat buf` (c:348), which `insert()` shares
 /// with this walk: c:385 fills it here and c:391's `statted = 1` stops
 /// c:434 from stat'ing the same file a second time. Only the plain lstat
-/// is handed back — under `follow_links` the walk reads C's `buf2`
+/// is handed back — a node with the follow bit reads C's `buf2`
 /// (c:399-402), which the arms after c:419 track separately.
 fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Metadata>) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -6093,34 +6104,33 @@ fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Met
         return true;
     }
 
-    let meta = match if qs.follow_links {
-        // c:399-402 — `if (!S_ISLNK(buf.st_mode) || statfullpath(s,&buf2,0))
-        //                  memcpy(&buf2, &buf, sizeof(buf));`
-        // Follow the link, but fall back to the lstat buffer when the
-        // target stat fails (a broken symlink) so `*(-@)` / `*(-^/)`
-        // still see the dangling link rather than dropping it.
-        fs::metadata(path).or_else(|_| fs::symlink_metadata(path))
-    } else {
-        fs::symlink_metadata(path)
-    } {
+    // c:385 `statfullpath(s, &buf, 1)` — this IS insert()'s `buf`.
+    let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(_) => return false, // c:385-387
     };
-    if !qs.follow_links {
-        // c:385 `statfullpath(s, &buf, 1)` — this IS insert()'s `buf`.
-        *stat_out = Some(meta.clone());
-    }
+    *stat_out = Some(meta.clone());
     // Bridge meta → libc::stat for the leaf test fns (no extra syscall).
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    st.st_mode = meta.mode() as _;
-    st.st_uid = meta.uid() as _;
-    st.st_gid = meta.gid() as _;
-    st.st_dev = meta.dev() as _;
-    st.st_nlink = meta.nlink() as _;
-    st.st_size = meta.size() as _;
-    st.st_atime = meta.atime() as _;
-    st.st_mtime = meta.mtime() as _;
-    st.st_ctime = meta.ctime() as _;
+    let to_stat = |meta: &fs::Metadata| -> libc::stat {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        st.st_mode = meta.mode() as _;
+        st.st_uid = meta.uid() as _;
+        st.st_gid = meta.gid() as _;
+        st.st_dev = meta.dev() as _;
+        st.st_nlink = meta.nlink() as _;
+        st.st_size = meta.size() as _;
+        st.st_atime = meta.atime() as _;
+        st.st_mtime = meta.mtime() as _;
+        st.st_ctime = meta.ctime() as _;
+        st
+    };
+    let st = to_stat(&meta);
+    // c:397-402 — `buf2`, stat'ed once, the first time a node with the
+    // follow bit (sense & 2) is reached:
+    //     if (!S_ISLNK(buf.st_mode) || statfullpath(s, &buf2, 0))
+    //         memcpy(&buf2, &buf, sizeof(buf));
+    // A broken symlink keeps its lstat, so `*(-@)` still sees it.
+    let mut st2: Option<libc::stat> = None;
     // qualsheval / qualnonemptydir need the name (REPLY / opendir).
     let name = glob_emit_path(path);
 
@@ -6154,7 +6164,19 @@ fn check_qualifiers(state: &globdata, path: &Path, stat_out: &mut Option<fs::Met
         g_range.store(range, Ordering::SeqCst);
         g_amc.store(amc, Ordering::SeqCst);
         g_units.store(units, Ordering::SeqCst);
-        let r = func(&name, &st, data, sdata.as_deref().unwrap_or(""));
+        // c:403 — `bp = (qn->sense & 2) ? &buf2 : &buf;`
+        let bp = if sense & 2 != 0 {
+            &*st2.get_or_insert_with(|| {
+                if meta.file_type().is_symlink() {
+                    fs::metadata(path).map(|m| to_stat(&m)).unwrap_or(st)
+                } else {
+                    st
+                }
+            })
+        } else {
+            &st
+        };
+        let r = func(&name, bp, data, sdata.as_deref().unwrap_or(""));
         // c:407-409 — reject if `(!(func()) ^ sense) & 1`.
         let reject = ((if r == 0 { 1 } else { 0 }) ^ (sense & 1)) & 1 == 1;
         if reject {

@@ -437,6 +437,27 @@ mod qualifier_arg_delimiters {
         assert_parity_sorted(d.path(), "print -l *(.e[true])");
     }
 
+    /// c:Src/glob.c:1348-1352 — `-` is `sense ^= 2` for the qualifiers
+    /// AFTER it only (c:403 per-node `bp`), not a flag on the whole list:
+    /// `*(@-.)` is a symlink (lstat) whose target is a regular file (stat).
+    #[test]
+    fn dash_follows_links_for_later_qualifiers_only() {
+        if !zsh_available() {
+            return;
+        }
+        let d = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(d.path().join("d")).unwrap();
+        std::fs::write(d.path().join("f"), b"").unwrap();
+        std::os::unix::fs::symlink("f", d.path().join("lf")).unwrap();
+        std::os::unix::fs::symlink("d", d.path().join("ld")).unwrap();
+        std::os::unix::fs::symlink("nope", d.path().join("bad")).unwrap();
+        for s in ["print *(@-.)", "print *(@-/)", "print *(-@)", "print *(.,-/)"] {
+            let z = run_zsh_in(d.path(), s);
+            let r = run_zshrs_in(d.path(), s);
+            assert_eq!(z.stdout, r.stdout, "divergence on: {s}");
+        }
+    }
+
     /// c:Src/glob.c:1108 — `glob_exec_string` untokenizes the code, so an
     /// UNQUOTED `e:REPLY=x:` body is an assignment (not a command word
     /// carrying an Equals token) and `\*` reaches the eval as `\*`.
