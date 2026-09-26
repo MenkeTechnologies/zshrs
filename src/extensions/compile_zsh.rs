@@ -5805,7 +5805,9 @@ impl ZshCompiler {
     }
 
     fn emit_unbraced_subscript(&mut self, name: &str, key: &str, suffix: &str, quoted: bool) {
-        let key = subscript_literal_key(key);
+        // c:Src/params.c:2029 — `parse_subscript(s, scanflags & SCANPM_DQUOTED, ']')`:
+        // a double-quoted reference re-lexes its subscript with `sub` set.
+        let key = subscript_literal_key(key, quoted);
         let name_const = self.builder.add_constant(Value::str(name));
         let key_const = self.builder.add_constant(Value::str(key.as_ref()));
         let suffix_const = self.builder.add_constant(Value::str(suffix));
@@ -8158,7 +8160,7 @@ impl ZshCompiler {
             crate::ported::lex::parse_subscript(&format!("{}]", key), ']').is_some()
         });
         if let Some((base, key)) = static_subscript {
-            let key = subscript_literal_key(key);
+            let key = subscript_literal_key(key, false);
             let name_const = self.builder.add_constant(Value::str(base));
             let key_const = self.builder.add_constant(Value::str(key.as_ref()));
             self.builder.emit(Op::LoadConst(name_const), 0);
@@ -17692,7 +17694,12 @@ fn parse_zsh_flag_subscript(s: &str) -> Option<(&str, &str, &str)> {
 /// `if (ishash && (keymatch || !rev)) remnulargs(s);` skips the marker
 /// deletion for a reverse/pattern search, because there the backslashes are
 /// PATTERN escapes that `patcompile` (c:1697) still has to see.
-fn subscript_literal_key(key: &str) -> std::borrow::Cow<'_, str> {
+///
+/// `dquoted` is `SCANPM_DQUOTED`: inside double quotes `parse_subscript`
+/// re-lexes with `sub` set, so `\"` also becomes a marker that `remnulargs`
+/// deletes (c:Src/lex.c:1506 `(c == '"' && sub)`); `"$A[a\"b]"` keys on `a"b`
+/// while the unquoted `$A[a\"b]` keys on `a\"b`.
+fn subscript_literal_key(key: &str, dquoted: bool) -> std::borrow::Cow<'_, str> {
     let trimmed = key.trim_start();
     if trimmed.starts_with('(')
         || trimmed.starts_with(crate::ported::zsh_h::Inpar)
@@ -17703,7 +17710,7 @@ fn subscript_literal_key(key: &str) -> std::borrow::Cow<'_, str> {
     // `resolve_dollar` is true: this is a compile-time LITERAL key (the
     // callers reject `$`/backtick keys), so there is no `parsestr`/`singsub`
     // round after this and c:1585-1592's share of the work belongs here.
-    std::borrow::Cow::Owned(crate::subscript_escape::subscript_unescape(key, false, true).0)
+    std::borrow::Cow::Owned(crate::subscript_escape::subscript_unescape(key, dquoted, true).0)
 }
 
 /// Split a subscripted name like `m[k]` or `arr[1]` into (base, key).

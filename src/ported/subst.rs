@@ -25326,6 +25326,32 @@ pub fn paramsubst(
                                     k += 2;
                                     continue;
                                 }
+                                // c:Src/params.c:2029 — `parse_subscript(s, qt, ']')`
+                                // re-lexes the untokenized `\X` through
+                                // `dquote_parse(']', sub)` (c:Src/lex.c:1501-1511),
+                                // which marks only `$ \ `` ` and (with `sub`, i.e.
+                                // inside double quotes) `"`; any other escaped char
+                                // keeps its backslash as ordinary text. So the
+                                // unquoted `$A[a\b]` / `$A[a\"c]` key on `a\b` /
+                                // `a\"c`, and only `"$A[a\"c]"` keys on `a"c`.
+                                match cv.get(k + 1) {
+                                    // c:1501 — re-marked, then c:1550 turns the
+                                    // marker into `\` and parsestr/singsub
+                                    // (c:1585-1592) read it as an escape: the
+                                    // char is literal. Keep the marker so the
+                                    // singsub below does not expand it.
+                                    Some(&x @ ('$' | '`')) => {
+                                        out.push(c);
+                                        out.push(x);
+                                        k += 2;
+                                        continue;
+                                    }
+                                    Some('\\') => {}
+                                    Some('"') if qt => {}
+                                    // c:1508-1511 — `add('\\'); goto cont;`.
+                                    Some(_) => out.push('\\'),
+                                    None => {}
+                                }
                                 k += 1;
                                 continue;
                             }

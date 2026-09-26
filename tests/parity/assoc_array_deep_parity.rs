@@ -101,6 +101,32 @@ mod lookup {
         assert_parity(r#"typeset -A H; H[name]=jacob; echo "${H[name]}""#);
     }
 
+    /// c:Src/params.c:2029 — `parse_subscript(s, qt, ']')` re-lexes an
+    /// unbraced subscript: `\"` is an escape only inside double quotes,
+    /// `\b` never is, and `\$` stays a literal `$`.
+    #[test]
+    fn unbraced_key_backslash_escapes() {
+        assert_parity(
+            r#"typeset -A A
+A[a\b]=1; A[ab]=2; typeset -g 'A[a\$b]'=3 'A[a$b]'=4 'A[a\\b]'=5 'A[a\"c]'=7 'A[a"c]'=8
+print -r -- x$A[a\b] x$A[a\$b] x$A[a\\b] x$A[a\"c] "x$A[a\b]" "x$A[a\"c]" "x$A[a\$b]"
+print -r -- $A[a\b] $A[a\$b] $A[a\\b] $A[a\"c] "$A[a\b]" "$A[a\"c]" "$A[a\$b]" $A[a\"c]z"#,
+        );
+    }
+
+    /// D06subscript "Associative array keys with double quotes": a whole
+    /// double-quoted `"$A[one\"two]"` keys on `one"two`.
+    #[test]
+    fn dquoted_unbraced_key_with_escaped_quotes() {
+        assert_parity(
+            r#"typeset -A A
+typeset -g "A[one\"two\"three\"quotes]"=QQQ
+typeset -g 'A[one\"two\"three\"quotes]'=qqq
+print -R "$A[one\"two\"three\"quotes]"
+print -R $A[one\"two\"three\"quotes]"#,
+        );
+    }
+
     #[test]
     fn lookup_missing_key_empty() {
         assert_parity(r#"typeset -A H; H[a]=1; echo "[${H[nonexistent]}]""#);
