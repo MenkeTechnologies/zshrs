@@ -436,3 +436,29 @@ mod pseudo_signal_traps_in_cmdsubst {
         assert_parity(r#"trap 'echo T' USR1; x=$(kill -USR1 $$; echo hi); echo "<$x>""#);
     }
 }
+
+// c:Src/exec.c:1484-1485 — `$ZSH_DEBUG_CMD` is `getpermtext(...)`, the
+// permanent text with newlines and tab indents (c:Src/text.c:279,
+// tnewlins=1), not the one-line job text `jobs` shows.
+mod zsh_debug_cmd_permanent_text {
+    use super::*;
+
+    #[test]
+    fn compound_commands_are_multi_line() {
+        assert_parity(
+            r#"trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; while false; do :; done; case a in a) echo A;; esac"#,
+        );
+        assert_parity(r#"trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; { echo a } always { echo b }"#);
+        assert_parity(
+            r#"trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; if false; then :; elif true; then echo e; else echo n; fi"#,
+        );
+    }
+
+    /// The text is rendered from what was parsed: no second alias
+    /// expansion, and an RCQUOTES `''` pair stays as written.
+    #[test]
+    fn simple_commands_keep_their_spelling() {
+        assert_parity(r#"alias ll='echo LL'; trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; ll x; x=(1 2) y=3"#);
+        assert_parity(r#"setopt rcquotes; trap 'print -r -- "[$ZSH_DEBUG_CMD]"' DEBUG; x='it''s'; echo "$x""#);
+    }
+}

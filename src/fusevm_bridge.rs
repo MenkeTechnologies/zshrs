@@ -12956,7 +12956,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                // c:1636 — the post-sublist arm has no ZSH_DEBUG_CMD assignment;
                // the parameter is a DEBUG_BEFORE_CMD feature only.
             if before {
-                crate::ported::params::setsparam("ZSH_DEBUG_CMD", &cmd_text);
+                // c:1484-1485 — `getpermtext(state->prog, pc2, 0)`: the
+                // PERMANENT text, with newlines and tab indents (tnewlins=1,
+                // c:Src/text.c:279), so `while false; do :; done` reads
+                // "while false\ndo\n\t:\ndone". The compiled operand is the
+                // one-line job text; re-parse it and render it through the
+                // ported getpermtext, as printshfuncnode does for a function
+                // body (hashtable.rs). The text is already alias-expanded, so
+                // the re-lex must not expand again, and RCQUOTES must not
+                // fold a `''` pair the first lex kept as written.
+                let noalias_save = crate::ported::lex::noaliases();
+                let rcquotes_save = isset(crate::ported::zsh_h::RCQUOTES);
+                // A text the wordcode parser rejects falls back to the job
+                // text silently: C never parses it, so no diagnostic or
+                // errflag may escape.
+                let noerrs_save = *crate::ported::utils::noerrs_lock().lock().unwrap();
+                let errflag_save =
+                    crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+                crate::ported::utils::set_noerrs(1);
+                crate::ported::lex::set_noaliases(true);
+                crate::ported::options::opt_state_set("rcquotes", false);
+                let permtext = crate::ported::exec::parse_string(&cmd_text, 0)
+                    .map(|p| crate::ported::text::getpermtext(Box::new(p), None, 0));
+                crate::ported::options::opt_state_set("rcquotes", rcquotes_save);
+                crate::ported::lex::set_noaliases(noalias_save);
+                crate::ported::utils::set_noerrs(noerrs_save);
+                crate::ported::utils::errflag
+                    .store(errflag_save, std::sync::atomic::Ordering::Relaxed);
+                let text = permtext.filter(|t| !t.is_empty()).unwrap_or(cmd_text);
+                crate::ported::params::setsparam("ZSH_DEBUG_CMD", &text);
             }
             // c:1488/1636 — `exiting = donetrap;` … c:1493/1641 `donetrap = exiting;`
             let exiting = crate::ported::exec::DONETRAP.load(std::sync::atomic::Ordering::Relaxed);
