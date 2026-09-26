@@ -14688,6 +14688,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
         let args = pop_args(vm, argc);
+        // c:Src/exec.c:5389-5394 — `if (htok && names) { execsubst(names);
+        // if (errflag) { state->pc = end; return 1; } }`: the name words are
+        // prefork-expanded and globbed (c:2741-2746), so a NOMATCH defines
+        // nothing and fails the definition.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::utils::ERRFLAG_ERROR
+            != 0
+        {
+            return Value::Status(1); // c:5393
+        }
+        // c:5399 — `while ((s = (char *) ugetnode(names)))`: one function per
+        // name the expansion produced (`function a* { … }` defines one per
+        // matching file). The names lead the argument list; the five
+        // definition fields follow.
+        let nnames = args.len().saturating_sub(5);
+        let (names, fields) = args.split_at(nnames);
+        let mut status = Value::Status(0);
+        for name in names {
+            let mut one = Vec::with_capacity(fields.len() + 1);
+            one.push(name.clone());
+            one.extend_from_slice(fields);
+            status = register_compiled_fn(vm, one);
+        }
+        status
+    });
+    fn register_compiled_fn(vm: &mut fusevm::VM, args: Vec<String>) -> Value {
         let mut iter = args.into_iter();
         let name = iter.next().unwrap_or_default();
         let body_b64 = iter.next().unwrap_or_default();
@@ -14961,7 +14987,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Err(_) => 1,
         };
         Value::Status(status)
-    });
+    }
 
     // Wire the ShellHost so direct shell ops (Op::Glob, Op::TildeExpand,
     // Op::ExpandParam, Op::CmdSubst, Op::CallFunction, etc.) route through

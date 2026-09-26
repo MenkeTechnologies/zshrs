@@ -2705,30 +2705,6 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // c:1700-1706 — past the option prologue above, EVERY
                 // remaining STRING is a literal function name (including
                 // `-T`, `--`, `-zui_std_*`, `+foo`, …).
-
-                // c:Src/exec.c:5389-5390 — `if (htok && names) execsubst(names);`
-                // globs the function NAME words (c:2744-2746 prefork +
-                // globlist). zglob acts only on the lexer's glob TOKENS
-                // (c:Src/glob.c:1230 haswilds), so a quoted name —
-                // `function '*' { … }`, `function "q*" { … }` — is literal
-                // and never globbed. This probe runs at parse time instead
-                // of in execfuncdef, and only reproduces the NOMATCH error;
-                // a matching pattern still defines the literal name.
-                // Tokenizing the word first (as the probe used to) armed the
-                // quoted metacharacters too: `function '*' { … }` failed
-                // "no matches found: *" (D04parameter).
-                if crate::ported::pattern::haswilds(s)
-                    && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH)
-                {
-                    let mut probe = vec![s.to_string()];
-                    crate::ported::glob::zglob(&mut probe, 0, 0);
-                    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
-                        & crate::ported::utils::ERRFLAG_ERROR
-                        != 0
-                    {
-                        return None;
-                    }
-                }
                 names.push(s.to_string());
                 zshlex();
             }

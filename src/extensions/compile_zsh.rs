@@ -11695,9 +11695,15 @@ impl ZshCompiler {
                 || stripped.contains('\u{8c}')  // Qstring (DQ $ token)
                 || stripped.contains('`')
                 || stripped.contains('\u{93}')  // Tick
-                || stripped.contains('\u{99}'); // Qtick
+                || stripped.contains('\u{99}')  // Qtick
+                // c:Src/exec.c:2745-2746 — execsubst also runs `globlist`
+                // over the names, so a name carrying the lexer's glob
+                // tokens (`function a* { … }`) is filename-generated: one
+                // definition per match, NOMATCH fails the definition.
+                || crate::ported::pattern::haswilds(stripped);
             if name_needs_expand {
-                // Push the expanded name onto the stack (scalar word).
+                // Push the expanded name(s) onto the stack; the register
+                // builtin takes every leading argument as a name.
                 self.compile_word_str(stripped);
             } else {
                 let cleaned = crate::lex::untokenize(stripped);

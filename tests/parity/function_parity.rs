@@ -809,3 +809,28 @@ mod funcdef_missing_body {
         assert_parity("exec 2>&1; eval 'f() g()'; echo rc=$?");
     }
 }
+
+/// c:Src/exec.c:5389-5399 — execfuncdef runs `execsubst(names)` (prefork +
+/// globlist, c:2741-2746) on the name words when they carry tokens, then
+/// defines one function per resulting name; a NOMATCH fails the definition
+/// at run time, after the commands before it have run.
+mod def_name_expansion {
+    use super::*;
+
+    #[test]
+    fn glob_name_defines_one_function_per_match() {
+        assert_parity(
+            "d=$(mktemp -d); cd $d; touch ab ac; function a* { print hi $0 }; \
+             print -l ${(k)functions}; ab; ac; cd /; command rm -r $d",
+        );
+    }
+
+    #[test]
+    fn nomatch_name_fails_at_run_time() {
+        assert_parity("exec 2>&1; print first; function zz_nomatch* { :; }; print after");
+        assert_parity("exec 2>&1; print first; zz_nomatch*() { :; }; print after");
+        assert_parity("setopt nonomatch; function zz_q* { print q }; zz_q\\*");
+        assert_parity("function 'zz_q*' { print lit }; zz_q\\*");
+        assert_parity("x=(f1 f2); function $x { print $0 }; f1; f2");
+    }
+}
