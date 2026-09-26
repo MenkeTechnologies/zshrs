@@ -9581,6 +9581,10 @@ pub fn bin_functions(
             });
             let new_shf_ptr = Box::into_raw(new_shf);
             let _ = mkautofn(new_shf_ptr); // c:3765
+            // c:3766 — `shfunc_set_sticky(shf);` stamps the pending
+            // `emulate … -c` snapshot so the loaded body runs (and is
+            // parsed) under that emulation (doshfunc c:5978).
+            crate::ported::exec::shfunc_set_sticky(unsafe { &mut *new_shf_ptr });
             add_autoload_function(new_shf_ptr, fname); // c:3767
                                                        // PFA-SMR: an `autoload NAME` registers a function stub
                                                        // that fires on first call. Record it as a `function`

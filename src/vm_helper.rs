@@ -4549,6 +4549,7 @@ impl ShellExecutor {
                 let _restore_noaliases = NoAliasesRestore(noalias_save); // c:5704
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     did_autoload = true; // c:5626 — body runs as "loadautofunc"
+                    let _sticky_load = AutoloadStickyGuard::enter(&stub);
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
                     let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
@@ -4642,6 +4643,9 @@ impl ShellExecutor {
                         restore_loaddir(name, dir, abspath_used, ksh_style);
                     }
                 } else if let Some(body) = stub.body.clone() {
+                    // c:Src/exec.c:5978 — the body runs under the stub's sticky
+                    // emulation; see AutoloadStickyGuard.
+                    let _sticky_load = AutoloadStickyGuard::enter(&stub);
                     // c:Src/builtin.c:3180 (eval_autoload) — `autoload +X NAME`
                     // loads the body EAGERLY through `loadautofn`, which sets
                     // `body` + `filename`/PM_LOADDIR and clears PM_UNDEFINED
@@ -4906,6 +4910,7 @@ impl ShellExecutor {
                 let _restore_noaliases = NoAliasesRestore(noalias_save);
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     did_autoload = true; // c:5626 — body runs as "loadautofunc"
+                    let _sticky_load = AutoloadStickyGuard::enter(&stub);
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
                     let load_rc = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
@@ -5111,6 +5116,9 @@ impl ShellExecutor {
                         return Some(1);
                     }
                 } else if let Some(body) = stub.body.clone() {
+                    // c:Src/exec.c:5978 — the body runs under the stub's sticky
+                    // emulation; see AutoloadStickyGuard.
+                    let _sticky_load = AutoloadStickyGuard::enter(&stub);
                     // c:Src/Modules/parameter.c::setpmfunction — function
                     // registered via `functions[name]=body` lives in
                     // shfunctab with `body` set but `functions_compiled`
@@ -8043,41 +8051,7 @@ pub(crate) fn funcdef_lex_pin(name: &str, body: &str) -> FuncdefLexPin {
     let sticky_restore = crate::ported::utils::getshfunc(name)
         .and_then(|f| f.sticky.clone())
         .filter(|s| crate::ported::exec::sticky_emulation_differs(Some(s)) != 0)
-        .map(|s| {
-            use std::sync::atomic::Ordering;
-            let size = crate::ported::zsh_h::OPT_SIZE as usize;
-            let saved: Vec<bool> = (0..size)
-                .map(|optno| {
-                    optno > 0
-                        && crate::ported::options::opt_state_get(crate::ported::zsh_h::opt_name(optno as i32))
-                            .unwrap_or(false)
-                })
-                .collect();
-            let saved_emu = (
-                crate::ported::options::emulation.load(Ordering::Relaxed),
-                crate::ported::options::EMULATION.load(Ordering::Relaxed),
-                crate::ported::options::FULLY_EMULATING.load(Ordering::Relaxed),
-            );
-            let mut new_opts = [-1i8; crate::ported::zsh_h::OPT_SIZE as usize];
-            crate::ported::options::installemulation(s.emulation, &mut new_opts); // c:5993
-            for (optno, &v) in new_opts.iter().enumerate().skip(1) {
-                if v >= 0 {
-                    crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), v == 1);
-                }
-            }
-            for on in &s.on_opts {
-                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*on as i32), true); // c:5995-6001
-            }
-            for off in &s.off_opts {
-                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*off as i32), false); // c:6002-6008
-            }
-            let emu_base = s.emulation & !crate::ported::zsh_h::EMULATE_FULLY;
-            crate::ported::options::emulation.store(emu_base, Ordering::Relaxed);
-            crate::ported::options::EMULATION.store(emu_base, Ordering::Relaxed);
-            crate::ported::options::FULLY_EMULATING
-                .store((s.emulation & crate::ported::zsh_h::EMULATE_FULLY) != 0, Ordering::Relaxed);
-            (saved, saved_emu.0, saved_emu.1, saved_emu.2)
-        });
+        .map(|s| install_sticky_emulation(&s));
     let captured = FUNCDEF_ALIAS_RESOLVED
         .lock()
         .as_ref()
@@ -8133,15 +8107,113 @@ impl Drop for FuncdefLexPin {
             crate::ported::options::opt_state_set("rcquotes", live);
         }
         crate::ported::lex::set_noaliases(self.noaliases);
-        if let Some((opts, emu, emu_cell, fully)) = self.sticky_restore.take() {
-            use std::sync::atomic::Ordering;
-            for (optno, on) in opts.into_iter().enumerate().skip(1) {
-                crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), on);
-            }
-            crate::ported::options::emulation.store(emu, Ordering::Relaxed);
-            crate::ported::options::EMULATION.store(emu_cell, Ordering::Relaxed);
-            crate::ported::options::FULLY_EMULATING.store(fully, Ordering::Relaxed);
+        if let Some(saved) = self.sticky_restore.take() {
+            restore_sticky_emulation(saved);
         }
+    }
+}
+
+/// Options and emulation cells saved by [`install_sticky_emulation`].
+type SavedEmulation = (Vec<bool>, i32, i32, bool);
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// The option half of doshfunc's sticky-emulation entry (c:Src/exec.c:
+/// 5991-6008): `installemulation(emulation, opts)` then the on/off option
+/// lists. Returns what it overwrote for [`restore_sticky_emulation`].
+fn install_sticky_emulation(s: &crate::ported::zsh_h::emulation_options) -> SavedEmulation {
+    use std::sync::atomic::Ordering;
+    let size = crate::ported::zsh_h::OPT_SIZE as usize;
+    let saved: Vec<bool> = (0..size)
+        .map(|optno| {
+            optno > 0
+                && crate::ported::options::opt_state_get(crate::ported::zsh_h::opt_name(optno as i32))
+                    .unwrap_or(false)
+        })
+        .collect();
+    let saved_emu = (
+        crate::ported::options::emulation.load(Ordering::Relaxed),
+        crate::ported::options::EMULATION.load(Ordering::Relaxed),
+        crate::ported::options::FULLY_EMULATING.load(Ordering::Relaxed),
+    );
+    let mut new_opts = [-1i8; crate::ported::zsh_h::OPT_SIZE as usize];
+    crate::ported::options::installemulation(s.emulation, &mut new_opts); // c:5993
+    for (optno, &v) in new_opts.iter().enumerate().skip(1) {
+        if v >= 0 {
+            crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), v == 1);
+        }
+    }
+    for on in &s.on_opts {
+        crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*on as i32), true); // c:5995-6001
+    }
+    for off in &s.off_opts {
+        crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(*off as i32), false); // c:6002-6008
+    }
+    let emu_base = s.emulation & !crate::ported::zsh_h::EMULATE_FULLY;
+    crate::ported::options::emulation.store(emu_base, Ordering::Relaxed);
+    crate::ported::options::EMULATION.store(emu_base, Ordering::Relaxed);
+    crate::ported::options::FULLY_EMULATING
+        .store((s.emulation & crate::ported::zsh_h::EMULATE_FULLY) != 0, Ordering::Relaxed);
+    (saved, saved_emu.0, saved_emu.1, saved_emu.2)
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Undo [`install_sticky_emulation`].
+fn restore_sticky_emulation((opts, emu, emu_cell, fully): SavedEmulation) {
+    use std::sync::atomic::Ordering;
+    for (optno, on) in opts.into_iter().enumerate().skip(1) {
+        crate::ported::options::opt_state_set(crate::ported::zsh_h::opt_name(optno as i32), on);
+    }
+    crate::ported::options::emulation.store(emu, Ordering::Relaxed);
+    crate::ported::options::EMULATION.store(emu_cell, Ordering::Relaxed);
+    crate::ported::options::FULLY_EMULATING.store(fully, Ordering::Relaxed);
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// C loads an autoloaded body from INSIDE doshfunc: the stub's funcdef is
+/// the `mkautofn` trampoline, so `execautofn` → `loadautofn` → `getfpfunc`
+/// (c:Src/exec.c:5640, 5697) parses the file after doshfunc has entered the
+/// stub's sticky emulation (c:5978-6010), and the body is installed IN
+/// PLACE on the same Shfunc, keeping `shf->sticky` (stamped by
+/// `shfunc_set_sticky` in bin_autoload, c:Src/builtin.c:3766). zshrs loads
+/// and registers the body before doshfunc runs, so this guard opens the
+/// same window for the load: the stub's emulation for the parse, and the
+/// stub's snapshot as the pending `sticky` so the re-registration stamps it
+/// onto the loaded function.
+struct AutoloadStickyGuard {
+    saved_opts: SavedEmulation,
+    saved_sticky: Option<crate::ported::zsh_h::Emulation_options>,
+}
+
+impl AutoloadStickyGuard {
+    fn enter(stub: &crate::ported::zsh_h::shfunc) -> Option<Self> {
+        let s = stub.sticky.as_deref()?;
+        if crate::ported::exec::sticky_emulation_differs(Some(s)) == 0 {
+            return None;
+        }
+        let dup = crate::ported::exec::sticky_emulation_dup(s, 1);
+        let saved_opts = install_sticky_emulation(&dup);
+        let saved_sticky = std::mem::replace(
+            &mut *crate::ported::options::sticky
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+            Some(dup),
+        );
+        Some(Self {
+            saved_opts,
+            saved_sticky,
+        })
+    }
+}
+
+impl Drop for AutoloadStickyGuard {
+    fn drop(&mut self) {
+        *crate::ported::options::sticky
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = self.saved_sticky.take();
+        restore_sticky_emulation(std::mem::take(&mut self.saved_opts));
     }
 }
 

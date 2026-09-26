@@ -755,3 +755,44 @@ fn prompt_is_not_a_builtin() {
     assert_eq!(r.stdout, z.stdout);
     assert_eq!(r.exit, z.exit);
 }
+
+/// `emulate zsh -c 'autoload -Uz NAME'` stamps the pending sticky emulation
+/// on the stub (c:Src/builtin.c:3766 `shfunc_set_sticky(shf)`), and the body
+/// is parsed and run under it because C loads it from inside doshfunc
+/// (c:Src/exec.c:5978-6010). The caller's `ignorebraces` must neither break
+/// the parse of `{ echo OK }` nor be visible to the body; the same holds for
+/// `autoload +X`, whose eager load keeps the stub's `sticky`.
+#[test]
+fn autoload_under_emulate_c_keeps_sticky_emulation() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("emufunctest"),
+        "{ echo OK }\n[[ -o ignorebraces ]] || print 'ignorebraces is off'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.path().join("kf"),
+        "[[ -o ksharrays ]] && echo on || echo off\n",
+    )
+    .unwrap();
+    let script = r#"fpath=(.)
+setopt ignorebraces ksharrays
+emulate zsh -c 'autoload -Uz emufunctest'
+emufunctest
+emulate zsh -c 'autoload -Uz +X kf'
+kf
+[[ -o ignorebraces && -o ksharrays ]] && echo caller-kept"#;
+    let z = run_zsh_in(d.path(), script);
+    let r = run_zshrs_in(d.path(), script);
+    assert_eq!(
+        z.stdout, "OK\nignorebraces is off\noff\ncaller-kept\n",
+        "zsh sanity: {:?}",
+        z.stderr
+    );
+    assert_eq!(r.stdout, z.stdout, "zshrs stderr: {:?}", r.stderr);
+    assert_eq!(r.stderr, z.stderr);
+    assert_eq!(r.exit, z.exit);
+}
