@@ -10081,6 +10081,7 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
                         i32::from(isset(LONGLISTJOBS)),
                         if cur >= 0 { Some(cur as usize) } else { None },
                         if prev >= 0 { Some(prev as usize) } else { None },
+                        false,
                     );
                     if !s.is_empty() {
                         eprintln!("{}", s);

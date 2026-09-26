@@ -81,7 +81,7 @@ use crate::ported::zsh_h::{
     ASG_KEY_VALUE, ASG_VALUEP, AUTOPUSHD, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND,
     BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_KEEPNUM, BINF_MAGICEQUALS,
     BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH,
-    BINF_SKIPINVALID, BSDECHO, CDABLEVARS, CHASELINKS, CHECKRUNNINGJOBS, DISABLED, EMULATE_CSH,
+    BINF_SKIPINVALID, BSDECHO, CDABLEVARS, CHASELINKS, CHECKJOBS, CHECKRUNNINGJOBS, DISABLED, EMULATE_CSH,
     EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, FUNCTIONARGZERO,
     GLOBALEXPORT, GLOBALRCS, HASHED, HFILE_APPEND, HFILE_NO_REWRITE, HFILE_SKIPOLD,
     HFILE_USE_OPTIONS, HIST_FOREIGN, INTERACTIVE, KSHARRAYS, LOGINSHELL, MAX_OPS, MFF_STR,
@@ -13844,7 +13844,18 @@ pub fn zexit(val: i32, from_where: i32) {
         && STOPMSG.load(Relaxed) == 0
         && from_where != ZEXIT_SIGNAL
     {
-        checkjobs(); // c:5999
+        // c:5997 — `scanjobs();    /* check if jobs need printing */`
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            crate::ported::jobs::scanjobs(&mut guard); // c:5997
+        }
+        // c:5998 — `if (isset(CHECKJOBS))`. Without the gate
+        // `setopt no_check_jobs` still refused the first `exit` with
+        // "you have running jobs." (W02jobs.ztst "running job with
+        // no_check_jobs").
+        if isset(CHECKJOBS) {
+            checkjobs(); // c:5999
+        }
         if STOPMSG.load(Relaxed) != 0 {
             // c:6000
             STOPMSG.store(2, Relaxed); // c:6001

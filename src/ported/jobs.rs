@@ -858,7 +858,11 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
         // docs/BUGS.md #1094.
         let notify = crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY);
         if (notify || ji as i32 == thisjob) && (jn[ji].stat & stat::LOCKED) != 0 {
-            crate::exec_jobs::printjob_delete_tail(jn, ji); // c:641 → c:1350-1363
+            // c:647 — `if (printjob(jn, !!isset(LONGLISTJOBS), 0) && zleactive)`
+            if crate::exec_jobs::printjob_async(jn, ji, thisjob) && zleactive.load(Ordering::Relaxed) != 0 {
+                crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH); // c:649
+            }
+            crate::exec_jobs::printjob_delete_tail(jn, ji); // c:1350-1363
         }
         return true;
     }
@@ -1269,12 +1273,20 @@ pub fn sigmsg(sig: i32) -> &'static str {
 // find length of longest signame, check to see                             // c:1178
 // if we really need to print this job                                      // c:1179
 /// `printjob` — see implementation.
+///
+/// `thisfmt` is C's `int thisfmt = job == thisjob && synch != 2;`
+/// (c:1255), computed by the caller: only the asynchronous report
+/// (`exec_jobs::printjob_async`, synch 0) can pass `true`.
+///
+/// WARNING: param names don't match C — Rust=(job, job_num, lng, cur_job,
+/// prev_job, thisfmt) vs C=(jn, lng, synch)
 pub fn printjob(
     job: &job,
     job_num: usize,
     lng: i32,
     cur_job: Option<usize>,
     prev_job: Option<usize>,
+    thisfmt: bool,
 ) -> String {
     // c:1141 — `int job, len = 9, sig, sflag = 0, llen;` — the status
     // column is `len + 2` wide where len starts at 9 and grows to the
@@ -1333,8 +1345,17 @@ pub fn printjob(
 
     // c:1273-1277 — first line carries `[N]  M `; continuation lines
     // (further proc groups) carry the matching indent.
-    let head_prefix = format!("[{}]  {} ", job_num, marker);
-    let cont_prefix = if job_num > 9 { "        " } else { "       " }; // c:1277
+    // c:1281-1288 — `if (!thisfmt || lng) { "[%ld]  %c " / indent }
+    //                else fprintf(fout, "zsh: ");` — the current job's
+    // asynchronous report starts EVERY line with `zsh: `.
+    let (head_prefix, cont_prefix) = if !thisfmt || lng != 0 {
+        (
+            format!("[{}]  {} ", job_num, marker),
+            if job_num > 9 { "        " } else { "       " }, // c:1277
+        )
+    } else {
+        ("zsh: ".to_string(), "zsh: ") // c:1288
+    };
 
     let header = if job.procs.is_empty() {
         // c:1255 — `for (pn = jn->procs; pn;)` — a procless job (e.g.
@@ -1377,7 +1398,7 @@ pub fn printjob(
             // c:1265 — `len2 = (thisfmt ? 5 : 10) + len;` — the width the
             // header already costs. C never adds the FIRST text on a line to
             // it, so the leading proc of every line is always admitted.
-            let mut len2 = 10 + len;
+            let mut len2 = if thisfmt { 5 } else { 10 } + len;
             // c:1266-1276 — group extent.
             let mut group_end = i + 1;
             if (lng & 3) == 0 {
@@ -2504,6 +2525,7 @@ pub fn scanjobs(jobtab: &mut [job]) {
                     } else {
                         None
                     },
+                    false,
                 ); // c:2000
                 if !s.is_empty() {
                     eprintln!("{}", s);
@@ -3221,7 +3243,7 @@ pub fn bin_fg(
                     } else {
                         None
                     };
-                    let s = printjob(j, job, lng, curjob_opt, prevjob_opt);
+                    let s = printjob(j, job, lng, curjob_opt, prevjob_opt, false);
                     if !s.is_empty() {
                         println!("{}", s);
                     }
@@ -3666,6 +3688,7 @@ pub fn bin_fg(
                     } else {
                         None
                     },
+                    false,
                 );
                 if !s.is_empty() {
                     println!("{}", s);
@@ -5377,7 +5400,7 @@ mod tests {
         p.text = "echo hi".to_string();
         p.status = 0; // exited 0
         job.procs.push(p);
-        let out = printjob(&job, 1, 0, Some(1), None);
+        let out = printjob(&job, 1, 0, Some(1), None, false);
         assert!(
             out.contains("echo hi"),
             "expected status line; got: {:?}",
@@ -5527,7 +5550,7 @@ mod tests {
         job.text = "vim file.txt".to_string();
         job.stat |= stat::STOPPED;
 
-        let formatted = printjob(&job, 1, 0, Some(1), None);
+        let formatted = printjob(&job, 1, 0, Some(1), None, false);
         // Real zsh format: `[N]<space><space><marker><space>...`
         // The job number is followed by two spaces, then the
         // current/previous-job marker (`+`, `-`, ` `), then a

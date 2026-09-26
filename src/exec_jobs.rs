@@ -73,6 +73,101 @@ pub fn printjob_delete_tail(tab: &mut [job], idx: usize) {
     }
 }
 
+/// `printjob(jn, !!isset(LONGLISTJOBS), 0)` — the asynchronous (synch 0)
+/// report update_job issues at `Src/jobs.c:647` when a job changes state.
+/// Returns 1-as-true when something was printed (C's `doneprint`).
+///
+/// Lives here (not src/ported/) because it has no C name of its own. The Rust `printjob` is a pure formatter with no
+/// print gate; this is the gate + output half of C's printjob for synch 0.
+/// The done-job delete tail (c:1350-1363) stays with the caller
+/// (`printjob_delete_tail`), which runs it whether or not this printed —
+/// exactly as C falls through to it.
+///
+/// This path was missing entirely: update_bg_job deleted a finished job
+/// without reporting it, so `: &` + `wait` never said `[1]  + done  :`,
+/// `kill %1` never said `[1]  + terminated  ...`, and a foreground job
+/// killed by a signal never said `zsh: terminated  ...`.
+///
+/// NOT PORTED: the STAT_SUPERJOB -> subjob redirect (c:1171-1185) and the
+/// `(pwd now: …)` line (c:1349-1353).
+///
+/// WARNING: param names don't match C — Rust=(tab, ji, thisjob) vs
+/// C=(jn, lng, synch)
+pub fn printjob_async(tab: &[job], ji: usize, thisjob: i32) -> bool {
+    use crate::ported::builtins::sched::zleactive;
+    use crate::ported::zsh_h::{isset, INTERACTIVE, LONGLISTJOBS, PRINTEXITVALUE, SHINSTDIN, SP_RUNNING};
+    use std::sync::atomic::Ordering;
+    let jn = &tab[ji];
+    // c:1163-1164 — `if (jn->stat & STAT_NOPRINT) skip_print = 1;`
+    let mut skip_print = (jn.stat & stat::NOPRINT) != 0;
+    let mut sflag = false; // c:1150
+    let mut doputnl = false; // c:1151
+    let is_thisjob = ji as i32 == thisjob;
+    // c:1190-1221 — does any finished process force a report?
+    for pn in jn.procs.iter() {
+        if pn.status == SP_RUNNING {
+            continue; // c:1193
+        }
+        if libc::WIFSIGNALED(pn.status) {
+            let sig = libc::WTERMSIG(pn.status); // c:1195
+            if sig != libc::SIGINT && sig != libc::SIGPIPE {
+                sflag = true; // c:1202-1203
+            }
+            if is_thisjob && sig == libc::SIGINT {
+                doputnl = true; // c:1204-1205
+            }
+            if isset(PRINTEXITVALUE) && isset(SHINSTDIN) {
+                sflag = true; // c:1206-1208
+                skip_print = false;
+            }
+        } else if libc::WIFSTOPPED(pn.status) {
+            let sig = libc::WSTOPSIG(pn.status); // c:1210
+            if is_thisjob && sig == libc::SIGTSTP {
+                doputnl = true; // c:1214-1215
+            }
+        } else if isset(PRINTEXITVALUE) && isset(SHINSTDIN) && libc::WEXITSTATUS(pn.status) != 0
+        {
+            sflag = true; // c:1216-1219
+            skip_print = false;
+        }
+    }
+    // c:1224-1238 — a skipped job is only deleted (caller's tail).
+    if skip_print {
+        return false;
+    }
+    let interact = isset(INTERACTIVE);
+    let stopped = (jn.stat & stat::STOPPED) != 0;
+    // c:1248-1250 — `(interact || synch) && jobbing &&
+    //                ((jn->stat & STAT_STOPPED) || sflag || job != thisjob)`
+    if interact && crate::ported::zsh_h::jobbing() && (stopped || sflag || !is_thisjob) {
+        // c:1258-1259 — `if (!synch) zleentry(ZLE_CMD_TRASH);` (trashzle
+        // itself is a no-op unless zleactive).
+        if zleactive.load(Ordering::Relaxed) != 0 {
+            crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_TRASH);
+        }
+        let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        let s = crate::ported::jobs::printjob(
+            jn,
+            ji,
+            isset(LONGLISTJOBS) as i32,
+            (curjob >= 0).then_some(curjob as usize),
+            (prevjob >= 0).then_some(prevjob as usize),
+            is_thisjob, // c:1255 — `thisfmt = job == thisjob && synch != 2`
+        );
+        // c:1260-1263 — `if (doputnl && !synch) putc('\n', fout);`
+        let nl = if doputnl { "\n" } else { "" };
+        eprint!("{}{}\n", nl, s);
+        return true;
+    } else if doputnl && interact {
+        // c:1338-1341
+        eprintln!();
+        return true;
+    }
+    false
+}
+
+
 /// `setprevjob` (Src/jobs.c:698-717) body operating on an
 /// already-locked table slice — `printjob_delete_tail` callers hold
 /// the JOBTAB lock, so the re-locking ported `setprevjob()` would

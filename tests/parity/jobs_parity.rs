@@ -1010,3 +1010,75 @@ fn wait_unknown_pid_warning_is_suppressed_under_posix_builtins() {
     assert_parity("wait 1 2>&1; print $?");
     assert_parity("(setopt POSIX_BUILTINS; wait 1 2>&1; print $?)");
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Interactive job reports (Test/W02jobs.ztst) — need a pty, so these go
+// through zsh/zpty like the other interactive probes.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// c:Src/jobs.c:646-647 — update_job's asynchronous `printjob(jn, …, 0)`
+/// reports a background job that finishes, here while `wait` reaps it.
+/// zshrs reaped the job and deleted it without a word: `: &` + `wait`
+/// never printed `[1]  + done  :` (W02jobs "job notification").
+#[test]
+fn wait_reports_finished_background_job() {
+    let driver = format!(
+        "{}
+zpty -w w ': &'
+zpty -w w 'wait'
+sleep 1
+zpty -w w 'print END'
+sleep 1
+{}
+if [[ $all == *'[1]  + done'* ]]; then print DONE=yes; else print DONE=no; fi
+",
+        crate::zpty_probe::OPEN,
+        crate::zpty_probe::DRAIN
+    );
+    crate::zpty_probe::assert_same_verdict(&driver, "DONE", "`wait` reported the done job");
+}
+
+/// Same report for a job killed by a signal (W02jobs "various `kill`
+/// signals"): `kill %1` is followed by `[1]  + terminated  …`.
+#[test]
+fn killed_background_job_is_reported() {
+    let driver = format!(
+        "{}
+zpty -w w '/bin/sleep 30 &'
+sleep 1
+zpty -w w 'kill %1'
+sleep 1
+zpty -w w 'print END'
+sleep 1
+{}
+if [[ $all == *'[1]  + terminated'* ]]; then print KILLED=yes; else print KILLED=no; fi
+",
+        crate::zpty_probe::OPEN,
+        crate::zpty_probe::DRAIN
+    );
+    crate::zpty_probe::assert_same_verdict(&driver, "KILLED", "`kill %1` reported the job");
+}
+
+/// c:Src/builtin.c:5998-5999 — zexit only runs checkjobs `if
+/// (isset(CHECKJOBS))`. zshrs checked regardless, so with `no_check_jobs`
+/// the first `exit` still refused with "you have running jobs." and the
+/// shell stayed up (W02jobs "running job with no_check_jobs").
+#[test]
+fn no_check_jobs_exits_with_running_job() {
+    let driver = format!(
+        "{}
+zpty -w w 'setopt no_check_jobs no_hup'
+zpty -w w '/bin/sleep 5 &'
+sleep 1
+zpty -w w 'exit'
+sleep 1
+zpty -w w 'print ALIVEM${{:-}}ARK'
+sleep 1
+{}
+if [[ $all == *ALIVEMARK* ]]; then print EXITED=no; else print EXITED=yes; fi
+",
+        crate::zpty_probe::OPEN,
+        crate::zpty_probe::DRAIN
+    );
+    crate::zpty_probe::assert_same_verdict(&driver, "EXITED", "the first `exit` left the shell");
+}
