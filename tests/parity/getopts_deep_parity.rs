@@ -310,3 +310,24 @@ while getopts a opt; do echo "2: $opt"; done
         );
     }
 }
+
+/// c:Src/builtin.c:5681-5685 — `if (zoptind < 1) { zoptind = 1; optcind = 0; }`
+/// reads `zoptind`, which IS $OPTIND's storage (c:Src/params.c:370), so a
+/// script's `OPTIND=0` restarts the parse. `unset OPTIND` only flags the
+/// special PM_UNSET; the counter carries on and $OPTIND stays unset.
+mod optind_zero_and_unset {
+    use super::*;
+
+    #[test]
+    fn zero_restarts_the_parse() {
+        assert_parity("OPTIND=0; set --; getopts a o; echo $? $OPTIND");
+        assert_parity("set -- -a -b; getopts ab o; OPTIND=0; getopts ab o; echo $o $OPTIND");
+    }
+
+    #[test]
+    fn unset_keeps_the_counter() {
+        assert_parity(
+            r#"set -- -a -b -c; getopts abc o; unset OPTIND; getopts abc o; echo $o ${+OPTIND} "[$OPTIND]"; getopts abc o; echo $o "[$OPTIND]"; getopts abc o; echo $?"#,
+        );
+    }
+}

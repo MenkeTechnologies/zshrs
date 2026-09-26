@@ -13240,7 +13240,23 @@ pub fn bin_getopts(
     // in native zshrs, and a script's own `OPTIND=1` still passes through.
     let raw_optind = getiparam("OPTIND");
     let paramtab_oi = crate::dash_mode::getopts_optind_internal(raw_optind);
-    let mut zoptind = if paramtab_oi >= 1 {
+    // c:Src/params.c:370 — `IPDEF6("OPTIND", &zoptind, varinteger_gsu)`:
+    // `zoptind` IS $OPTIND's value slot, so a script's `OPTIND=0` (or a
+    // fresh `local OPTIND`, which reads 0) is what the reset below sees.
+    // `unset OPTIND` only flags the special PM_UNSET (stdunsetfn leaves a
+    // special's storage alone), so the counter carries on in ZOPTIND, and
+    // getopts' writes to `zoptind` never make $OPTIND set again.
+    let optind_set = paramtab()
+        .read()
+        .unwrap()
+        .get("OPTIND")
+        .is_some_and(|pm| (pm.node.flags as u32 & PM_UNSET) == 0);
+    let write_optind = |v: i64| {
+        if optind_set {
+            setiparam("OPTIND", v);
+        }
+    };
+    let mut zoptind = if optind_set {
         paramtab_oi as i32
     } else {
         ZOPTIND.load(Relaxed)
@@ -13250,6 +13266,9 @@ pub fn bin_getopts(
         // c:5681
         zoptind = 1;
         OPTCIND.store(0, Relaxed);
+        // c:5683 — the reset lands in $OPTIND itself, so it is visible
+        // even when the no-more-options return (c:5686) follows.
+        write_optind(1);
     }
     // c:Src/builtin.c — when $OPTIND was just reset to 1 (i.e. the
     // user-visible param disagrees with the previous internal
@@ -13260,7 +13279,7 @@ pub fn bin_getopts(
     // to $OPTIND, not just on a write of 1 from elsewhere; dash and ash never
     // do. See dash_mode::getopts_optind_user_reset — false in --zsh, so the
     // c:5681-5685 rule on the left stands alone there.
-    let mut optcind = if (paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1)
+    let mut optcind = if (optind_set && paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1)
         || crate::dash_mode::getopts_optind_user_reset(raw_optind)
     {
         0
@@ -13314,10 +13333,7 @@ pub fn bin_getopts(
             // cleared) on the end-of-options return; zsh leaves both alone.
             // See dash_mode::getopts_end_of_options. No-op in --zsh.
             crate::dash_mode::getopts_end_of_options(&var);
-            setiparam(
-                "OPTIND",
-                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-            ); // c:5702
+            write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64); // c:5702
             return 1;
         }
         str_buf = args[(zoptind - 1) as usize].clone();
@@ -13334,10 +13350,7 @@ pub fn bin_getopts(
             // pointer. Previous Rust port skipped this write on the
             // "no more options" exit; OPTIND stayed at the last
             // option arg index (-b) instead of advancing past it.
-            setiparam(
-                "OPTIND",
-                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-            );
+            write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64);
             // !!! EMULATION-ONLY (no C counterpart) !!! XCU getopts requires
             // `name` to be set to `?` (and, in bash/ksh93/mksh, $OPTARG to be
             // cleared) on the end-of-options return; zsh leaves both alone.
@@ -13355,10 +13368,7 @@ pub fn bin_getopts(
             // cleared) on the end-of-options return; zsh leaves both alone.
             // See dash_mode::getopts_end_of_options. No-op in --zsh.
             crate::dash_mode::getopts_end_of_options(&var);
-            setiparam(
-                "OPTIND",
-                crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-            ); // c:5711
+            write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64); // c:5711
             return 1;
         }
         optcind += 1;
@@ -13398,10 +13408,7 @@ pub fn bin_getopts(
         ZOPTIND.store(zoptind, Relaxed);
         OPTCIND.store(optcind, Relaxed);
         // Sync OPTIND env var so callers can read.
-        setiparam(
-            "OPTIND",
-            crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-        );
+        write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64);
         return 0;
     }
 
@@ -13434,10 +13441,7 @@ pub fn bin_getopts(
                 }
                 ZOPTIND.store(zoptind, Relaxed);
                 OPTCIND.store(optcind, Relaxed);
-                setiparam(
-                    "OPTIND",
-                    crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-                );
+                write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64);
                 return 0;
             }
             // c:5763 — `p = ztrdup(args[zoptind++]);` — read args[zoptind]
@@ -13469,10 +13473,7 @@ pub fn bin_getopts(
     setsparam(&var, &optbuf);
     ZOPTIND.store(zoptind, Relaxed);
     OPTCIND.store(optcind, Relaxed);
-    setiparam(
-        "OPTIND",
-        crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64,
-    );
+    write_optind(crate::dash_mode::getopts_optind_report(zoptind, optcind, lenstr) as i64);
     0 // c:5790
 }
 
