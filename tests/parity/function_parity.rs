@@ -776,3 +776,22 @@ mod anon_function_underscore {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/exec.c:6061 zerr → c:Src/utils.c:301-308 zerrmsg: the `lineno: `
+// field is printed only when `lineno` is non-zero. A recursion on the
+// function's first body line has lineno 0, so zsh prints `f: maximum …`.
+// ─────────────────────────────────────────────────────────────────────
+mod funcnest_diagnostic {
+    use super::*;
+
+    #[test]
+    fn zero_lineno_omits_the_line_field() {
+        assert_parity("exec 2>&1; FUNCNEST=3; f() { f }; f");
+    }
+
+    #[test]
+    fn nonzero_lineno_keeps_the_line_field() {
+        assert_parity("exec 2>&1; FUNCNEST=3; f() {\nf\n}\nf");
+    }
+}

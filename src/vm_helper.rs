@@ -5287,11 +5287,21 @@ impl ShellExecutor {
             //   ( FUNCNEST=0; fn() { true; }; fn )
             // printed `fn: maximum …` where zsh prints `fn:4: maximum …`
             // (C04funcdef:46).
-            eprintln!(
-                "{}:{}: maximum nested function level reached; increase FUNCNEST?",
-                name,
-                crate::ported::lex::lineno()
-            );
+            // c:Src/utils.c:301-308 zerrmsg — the `lineno: ` part is only
+            // printed when `lineno` is non-zero (else a single space), so a
+            // recursion on a function's first line reads `f: maximum …`.
+            let lineno = crate::ported::lex::lineno();
+            let shows_lineno = (crate::ported::zsh_h::unset(crate::ported::zsh_h::SHINSTDIN)
+                || crate::ported::params::locallevel.here() != 0)
+                && lineno != 0;
+            if shows_lineno {
+                eprintln!(
+                    "{}:{}: maximum nested function level reached; increase FUNCNEST?",
+                    name, lineno
+                );
+            } else {
+                eprintln!("{}: maximum nested function level reached; increase FUNCNEST?", name);
+            }
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:6061 (zerr)
             crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:6062
             return Some(1);
