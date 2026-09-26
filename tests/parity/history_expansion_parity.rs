@@ -445,3 +445,56 @@ fn the_repeat_modifier_reuses_the_last_substitution() {
         ":& repeated the last substitution",
     );
 }
+
+/// Feed `script` to `shell -fis` (an interactive shell reading its
+/// commands from stdin, as Test/W01history.ztst does) and return stdout.
+/// The history store is pointed at a scratch `$ZSHRS_HOME` so the lines
+/// never reach the real one.
+fn stdin_interactive(shell: &std::path::Path, zshrs: bool, script: &str) -> String {
+    use std::io::Write;
+    let home = std::env::temp_dir().join(format!(
+        "zshrs-hist-parity-{}-{}",
+        std::process::id(),
+        zshrs
+    ));
+    let _ = std::fs::create_dir_all(&home);
+    let mut cmd = std::process::Command::new(shell);
+    if zshrs {
+        cmd.arg("--zsh");
+    }
+    let mut child = cmd
+        .arg("-fis")
+        .env("ZSHRS_HOME", &home)
+        .env_remove("HISTFILE")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn shell");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().expect("wait shell");
+    let _ = std::fs::remove_dir_all(&home);
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// c:Src/hist.c:751-753 — `!#` is the current line so far (`ev =
+/// curhist`), found through the `curline` sentinel linkcurline splices
+/// into the ring (c:1079-1089) and checkcurline points at the text read
+/// (c:1342, c:2422-2428). zshrs keeps the sentinel outside its ring, so
+/// every `!#` reference failed with "no such event".
+#[test]
+fn bang_hash_refers_to_the_current_line() {
+    if !crate::zpty_probe::zsh_available() {
+        return;
+    }
+    let script = "print x !#\nprint y !#:1\nprint z !#:0 !#^ !#$\nprint w !#:1:u\n";
+    let want = stdin_interactive(std::path::Path::new(crate::zpty_probe::zsh_path()), false, script);
+    assert_eq!(want, "x print x\ny y\nz print z z\nw W\n", "reference zsh changed");
+    let got = stdin_interactive(&crate::zpty_probe::zshrs_bin(), true, script);
+    assert_eq!(got, want);
+}

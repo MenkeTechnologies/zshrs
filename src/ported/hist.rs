@@ -3743,7 +3743,26 @@ pub fn quietgethist(ev: i64) -> Option<histent> {
 /// Port of `gethist()` from `Src/hist.c:2440`. — C decl `gethist(int ev)`.
 pub fn gethist(ev: i64) -> Option<histent> {
     // c:2440
-    let ret = quietgethist(ev);
+    let mut ret = quietgethist(ev);
+    // c:1318-1343 — C's ring also holds the `curline` sentinel that
+    // linkcurline (c:1079-1089) splices in while a line is being read,
+    // and gethistent's `checkcurline(he)` (c:1342) points it at the text
+    // read so far; checkcurline (c:2424) gates on the same `histnum ==
+    // curhist && HA_ACTIVE` pair. zshrs keeps the sentinel outside its
+    // ring, so `curhist` missed and `!#` (c:751-753, `ev = curhist`)
+    // reported "no such event" instead of the current line.
+    //
+    // !!! Resolved here, not in quietgethist: the ZLE navigation-list
+    // sync (zle_main.rs) walks quietgethist up to curhist and relies on
+    // the in-flight line being absent, or a PS2 read would record the
+    // partial text as that event.
+    if ret.is_none() && ev == curhist.load(SeqCst) && (histactive.load(SeqCst) & HA_ACTIVE) != 0 {
+        let sentinel = curline.lock().unwrap().as_ref().map(clone_histent);
+        if let Some(he) = sentinel {
+            checkcurline(&he); // c:1342
+            ret = curline.lock().unwrap().as_ref().map(clone_histent);
+        }
+    }
     if ret.is_none() {
         herrflush();
         zerr(&format!("no such event: {}", ev));
