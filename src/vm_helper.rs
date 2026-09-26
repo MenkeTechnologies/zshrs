@@ -5218,6 +5218,10 @@ impl ShellExecutor {
             Some(self.functions_compiled.get(name).cloned()?)
         };
 
+        // c:Src/exec.c:5634 (execshfunc) — `xtrerr = stderr;`: the body traces
+        // to the stderr the call's own redirections set up.
+        crate::ported::utils::xtrerr.store(2, Ordering::Relaxed);
+
         // zshrs-specific bookkeeping that doshfunc doesn't own:
         // - prompt_funcstack (PS4 trace) push/pop
         // - local_scope_depth FUNCNEST guard

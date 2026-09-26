@@ -343,3 +343,25 @@ mod functions_w_warnnested {
         );
     }
 }
+
+/// XTRACE writes through `xtrerr`, which a simple command points at a copy
+/// of its pre-redirection stderr (c:Src/exec.c:3765-3773), and a function
+/// call points back at the live stderr (c:5634). The trace of
+/// `print x 2>/dev/null` used to follow the redirection into /dev/null.
+mod xtrace_stream {
+    use super::*;
+
+    #[test]
+    fn simple_command_redirection_does_not_capture_its_trace() {
+        assert_parity(
+            "PS4='+%N:%i> '\n{ set -x; print hi 2>/dev/null; : 2>/dev/null; x=1 2>/dev/null; set +x } 2>&1",
+        );
+    }
+
+    #[test]
+    fn function_body_traces_to_the_calls_redirected_stderr() {
+        assert_parity(
+            "PS4='+%N:%i> '\nf() { print in; }\ng() { print a 2>/dev/null; }\n{ set -x; f 2>/dev/null; g; set +x } 2>&1",
+        );
+    }
+}

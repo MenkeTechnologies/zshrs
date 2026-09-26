@@ -110,6 +110,13 @@ thread_local! {
     /// single write.
     static XTRERR: RefCell<String> = const { RefCell::new(String::new()) };
 
+    /// !!! WARNING: RUST-ONLY HELPER !!! `(scope depth, newxtrerr fd)` for
+    /// each simple command whose redirect scope took a copy of stderr for
+    /// xtrace (c:Src/exec.c:3766-3772). C holds newxtrerr in an
+    /// `execcmd_exec` local and closes it on the way out (c:4445-4452);
+    /// zshrs closes it when that redirect scope ends.
+    static XTRERR_COPIES: RefCell<Vec<(usize, i32)>> = const { RefCell::new(Vec::new()) };
+
     /// Stack of (RETFLAG, BREAKS, CONTFLAG, EXIT_PENDING) tuples saved
     /// at try-block exit so the always-arm body can run cleanly even
     /// when the try-block fired `return` / `break` / `continue` /
@@ -204,8 +211,16 @@ pub(crate) fn xtrerr_flush() {
     XTRERR.with(|b| {
         let mut buf = b.borrow_mut();
         if !buf.is_empty() {
-            use std::io::Write;
-            let _ = std::io::stderr().write_all(buf.as_bytes());
+            // c:Src/utils.c:1714 — the line goes to `xtrerr`, which is
+            // stderr unless a simple command's redirect scope holds a copy
+            // of the pre-redirection stderr (c:Src/exec.c:3766-3772).
+            let fd = crate::ported::utils::xtrerr.load(std::sync::atomic::Ordering::Relaxed);
+            if fd == libc::STDERR_FILENO {
+                use std::io::Write;
+                let _ = std::io::stderr().write_all(buf.as_bytes());
+            } else {
+                let _ = crate::ported::utils::write_loop(fd, buf.as_bytes());
+            }
             buf.clear();
         }
     });
@@ -12158,6 +12173,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(1)
     });
     // c:Src/exec.c:3722-3724 — see the const's doc block. No args.
+    // BUILTIN_XTRERR_COPY — c:Src/exec.c:3765-3773, emitted right before a
+    // simple command's WithRedirectsBegin. No args.
+    vm.register_builtin(BUILTIN_XTRERR_COPY, |_vm, _argc| {
+        xtrerr_flush(); // c:3766 fflush(xtrerr)
+        if isset(crate::ported::zsh_h::XTRACE)
+            && crate::ported::utils::xtrerr.load(std::sync::atomic::Ordering::Relaxed) == libc::STDERR_FILENO
+        {
+            // c:3767-3769
+            let fd = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
+            if fd >= 0 {
+                // c:Src/exec.c:779 `closem(FDT_XTRACE, 0)` closes this fd in a
+                // child before it execs; zshrs's spawns run no closem, so
+                // close-on-exec stands in for it.
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+                crate::ported::utils::xtrerr.store(fd, std::sync::atomic::Ordering::Relaxed); // c:3770
+                crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_XTRACE); // c:3771
+                let depth = with_executor(|exec| exec.redirect_scope_stack.len()) + 1;
+                XTRERR_COPIES.with(|v| v.borrow_mut().push((depth, fd)));
+            }
+        }
+        Value::Status(0)
+    });
     vm.register_builtin(BUILTIN_PIPE_OUTPUT_MARK, |_vm, _argc| {
         with_executor(|exec| exec.pipe_output_pending = true);
         Value::Status(0)
@@ -17393,6 +17430,13 @@ pub const BUILTIN_DONETRAP_RESET: u16 = 612;
 /// sigtrapped[SIGEXIT] = 0; errflag = eflag; }`. Stack: pushes Int(0). argc = 0.
 pub const BUILTIN_EXITING_EXIT_TRAP: u16 = 729;
 
+/// Take a copy of stderr for this simple command's xtrace output before
+/// its redirections apply (c:Src/exec.c:3765-3773). Released when the
+/// redirect scope it precedes ends (c:4445-4452).
+///
+/// Stack: untouched. argc = 0.
+pub const BUILTIN_XTRERR_COPY: u16 = 730;
+
 /// c:Src/exec.c:1417 (`int oldnoerrexit = noerrexit;`) + c:1536-1538
 /// (`if (isandor || isnot) noerrexit |= NOERREXIT_EXIT|NOERREXIT_RETURN;`).
 /// Saves the current `noerrexit` on a per-thread stack and ORs in the two
@@ -20618,6 +20662,16 @@ impl ShellExecutor {
         }
         if PIPE_INPUT_SCOPE.with(|c| c.get()).is_some_and(|d| d > self.redirect_scope_stack.len()) {
             PIPE_INPUT_SCOPE.with(|c| c.set(None));
+        }
+        // c:Src/exec.c:4445-4452 — the command is done: drop its xtrace copy.
+        let depth = self.redirect_scope_stack.len();
+        while let Some(fd) = XTRERR_COPIES.with(|v| {
+            let mut v = v.borrow_mut();
+            if v.last().is_some_and(|&(d, _)| d > depth) { v.pop().map(|(_, fd)| fd) } else { None }
+        }) {
+            xtrerr_flush(); // c:4448 fclose(newxtrerr)
+            crate::ported::utils::xtrerr.store(libc::STDERR_FILENO, std::sync::atomic::Ordering::Relaxed); // c:4449
+            let _ = crate::ported::utils::zclose(fd); // c:4451
         }
     }
 

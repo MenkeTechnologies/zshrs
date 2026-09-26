@@ -6601,6 +6601,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
         let body_runner = move || -> i32 {
             crate::ported::exec::run_function_body(&name_for_body, &body_args_owned).unwrap_or(0)
         };
+        crate::ported::utils::xtrerr.store(2, Ordering::Relaxed); // c:5634 xtrerr = stderr;
         let _ = doshfunc(shf, args.clone(), false, body_runner);
     }
     // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
@@ -10474,8 +10475,9 @@ pub fn execcmd_exec(
     let mut orig_cflags: u32 = 0; // c:2915 int orig_cflags = 0
     let mut checked: i32 = 0; // c:2915 int checked = 0
     let mut oautocont: i32 = -1; // c:2915 int oautocont = -1
-                                 // c:2916 — `FILE *oxtrerr = xtrerr, *newxtrerr = NULL;` — xtrerr
-                                 // accessor is stub; track newxtrerr state via Option<RawFd>.
+                                 // c:2916 — `FILE *oxtrerr = xtrerr, *newxtrerr = NULL;`. newxtrerr
+                                 // is only made while xtrerr == stderr (c:3767), so the
+                                 // c:4449 restore to oxtrerr is a restore to stderr.
     let mut newxtrerr: Option<i32> = None; // c:2916
 
     // c:2917-2924 — eparams field unpacking. `args` / `redir` are
@@ -11553,13 +11555,22 @@ pub fn execcmd_exec(
         );
     }
 
-    // c:3711-3718 — XTRACE prep (newxtrerr stderr dup).
-    // Architectural divergence: C duplicates stderr to a new FD and
-    // marks it `FDT_XTRACE` in the fdtable so the redir loop skips it.
-    // zshrs routes xtrace output through `eprintln!()` / `tracing`
-    // instead of a duplicated fd, so the FDT_XTRACE bookkeeping has
-    // no counterpart. Not a port gap — `xtrerr is FILE*` is a C-ism
-    // intentionally replaced.
+    // c:3765-3773 — "Make a copy of stderr for xtrace output before
+    // redirecting". The fusevm runtime reaches the same
+    // port when it opens a simple command's redirect scope.
+    crate::fusevm_bridge::xtrerr_flush(); // c:3766 fflush(xtrerr)
+    if isset(XTRACE)
+        && crate::ported::utils::xtrerr.load(Ordering::Relaxed) == 2
+        && (typ < WC_SUBSH as i32 || typ == WC_TIMED as i32)
+    {
+        // c:3767-3768
+        let fd = crate::ported::utils::movefd(unsafe { libc::dup(2) }); // c:3769
+        if fd >= 0 {
+            crate::ported::utils::xtrerr.store(fd, Ordering::Relaxed); // c:3770
+            crate::ported::utils::fdtable_set(fd, FDT_XTRACE); // c:3771
+            newxtrerr = Some(fd);
+        }
+    }
 
     // c:3720-3724 — pipeline input/output to mfds.
     if input != 0 {
@@ -12670,10 +12681,12 @@ fn execcmd_exec_done_path(
         crate::ported::jobs::shelltime(Some(shti), Some(chti), Some(then_ts), 1);
         // c:4389
     }
-    // c:4390-4398 — newxtrerr close.
+    // c:4445-4452 — newxtrerr close.
     if let Some(fd) = newxtrerr.take() {
-        // c:4390
-        let _ = zclose(fd); // c:4396
+        // c:4445
+        crate::fusevm_bridge::xtrerr_flush(); // c:4448 fclose(newxtrerr)
+        crate::ported::utils::xtrerr.store(2, Ordering::Relaxed); // c:4449 xtrerr = oxtrerr
+        let _ = zclose(fd); // c:4451
     }
     // c:4400-4401 — `zsfree(STTYval); STTYval = 0;`
     {

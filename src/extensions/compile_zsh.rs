@@ -4163,6 +4163,11 @@ impl ZshCompiler {
     /// expansion. Redirect TARGETS still expand here — i.e. after the
     /// arg words — mirroring xpandredir inside the addfd loop.
     fn emit_redir_scope_begin(&mut self, redirs: &[crate::parse::ZshRedir]) {
+        // c:Src/exec.c:3765-3773 — a simple command takes a copy of stderr
+        // for xtrace output before its redirections apply.
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRERR_COPY, 0), 0);
+        self.builder.emit(Op::Pop, 0);
         self.builder
             .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
         self.compile_redirs_multios(redirs);

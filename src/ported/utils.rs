@@ -2249,6 +2249,16 @@ pub fn checkmailpath(s: &[String]) -> Vec<String> {
     messages
 }
 
+/// Port of `FILE *xtrerr` from `Src/utils.c:1714` — the stream xtrace
+/// output goes to. Held as the fd behind the FILE: `2` is `stderr`
+/// (c:Src/init.c:637 `xtrerr = stderr`). `execcmd_exec` points it at a
+/// private copy of stderr for the duration of a simple command
+/// (c:Src/exec.c:3766-3772), so the trace
+/// of `print x 2>file` — and of whatever a redirected `.` runs — reaches
+/// the stderr the command was started with, not the file.
+#[allow(non_upper_case_globals)]
+pub static xtrerr: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2); // c:1714
+
 /// Port of `printprompt4()` from `Src/utils.c:1718`.
 ///
 /// Render the PS4 / PROMPT4 prefix and write it to stderr. zsh's
