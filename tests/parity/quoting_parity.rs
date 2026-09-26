@@ -444,3 +444,26 @@ mod posix_strings_nul_cut {
         assert_parity("x=a$'b\\0c'd; print ${#x}");
     }
 }
+
+/// c:Src/utils.c:7156-7178 — a `\x` escape always emits `zstrtol`'s value,
+/// which is 0 when no hex digit follows, and `zstrtol` skips leading blanks;
+/// an unrecognised escape under GETKEY_EMACS drops its backslash
+/// (c:7181-7185). The parse-time `$'…'` decoder and the untokenize decoder
+/// each had their own table: `$'\x'` was empty, `x$'a\xg'y` kept `\x`,
+/// `x$'a\?b'y` kept the backslash.
+mod ansi_c_escape_edges {
+    use super::*;
+
+    #[test]
+    fn hex_escape_without_digits_is_a_nul() {
+        assert_parity(r#"print -rn -- $'\x' | od -An -tx1"#);
+        assert_parity(r#"print -rn -- $'\xg' $'\x 41' | od -An -tx1"#);
+        assert_parity(r#"x=$'\x'; print ${#x}"#);
+        assert_parity(r#"print -rn -- x$'a\xg'y | od -An -tx1"#);
+    }
+
+    #[test]
+    fn unknown_escape_in_a_mixed_word_drops_the_backslash() {
+        assert_parity(r#"print -rn -- x$'a\?b'y x$'a\qb'y x$'a\^ab'y | od -An -tx1"#);
+    }
+}

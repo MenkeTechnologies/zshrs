@@ -5659,266 +5659,28 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 /// `Snull`. `Bnull \\` and `Bnull '` are user-literal `\` / `'`
 /// per Src/lex.c:1303.
 pub(crate) fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
-    let mut out = String::new();
+    // c:Src/subst.c:211 — `getkeystring(strdpos+2, &len,
+    // GETKEYS_DOLLARS_QUOTE, NULL)`: decode through the ported
+    // `getkeystring_with`, the same call `stringsubstquote` makes, so every
+    // escape (`\x` with no hex digit is a NUL, c:Src/utils.c:7156-7178)
+    // decodes identically wherever `$'...'` is expanded. A `Bnull` quotes
+    // the `\` or `'` after it (c:Src/lex.c:1303-1306); it goes to the
+    // decoder as the backslash it stands for, as `stringsubstquote` does.
+    let mut content = String::new();
     let mut i = start;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == Snull {
-            return (out, i);
-        }
-        if c == Bnull {
-            // Bnull marks a user-literal `\\` or `\'` per
-            // Src/lex.c:1303-1306. The next char is the literal.
+    while i < chars.len() && chars[i] != Snull {
+        if chars[i] == Bnull && i + 1 < chars.len() {
+            content.push('\\');
             i += 1;
-            if i < chars.len() {
-                out.push(chars[i]);
-                i += 1;
-            }
-            continue;
         }
-        if c == '\\' && i + 1 < chars.len() {
-            let nc = chars[i + 1];
-            match nc {
-                'a' => {
-                    out.push('\x07');
-                    i += 2;
-                }
-                'b' => {
-                    out.push('\x08');
-                    i += 2;
-                }
-                'e' | 'E' => {
-                    out.push('\x1b');
-                    i += 2;
-                }
-                'f' => {
-                    out.push('\x0c');
-                    i += 2;
-                }
-                'n' => {
-                    out.push('\n');
-                    i += 2;
-                }
-                'r' => {
-                    out.push('\r');
-                    i += 2;
-                }
-                't' => {
-                    out.push('\t');
-                    i += 2;
-                }
-                'v' => {
-                    out.push('\x0b');
-                    i += 2;
-                }
-                '\\' | '\'' | '"' => {
-                    out.push(nc);
-                    i += 2;
-                }
-                'x' => {
-                    // \xNN — up to 2 hex digits per Src/utils.c:7156
-                    let mut val: u32 = 0;
-                    let mut consumed = 2; // \x
-                    let mut got = 0;
-                    while got < 2 && i + consumed < chars.len() {
-                        let h = chars[i + consumed];
-                        if let Some(d) = h.to_digit(16) {
-                            val = val * 16 + d;
-                            consumed += 1;
-                            got += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if got == 0 {
-                        // No hex digits — emit literal `\x` per
-                        // Src/utils.c:7160-7163 fallthrough
-                        out.push('\\');
-                        out.push('x');
-                    } else {
-                        // c:Src/utils.c — `\xNN` is one raw BYTE, not
-                        // a Unicode codepoint (the old char::from_u32
-                        // re-encoded 0xNN >= 0x80 as two UTF-8
-                        // bytes); metafied per c:Src/utils.c:7289-
-                        // 7294. Bug #127.
-                        {
-                            // c:Src/utils.c metafy byte-encode step:
-                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                            let b_ = (val & 0xff) as u8;
-                            if b_ < 0x80 {
-                                out.push(b_ as char);
-                            } else {
-                                out.push('\u{83}');
-                                out.push(char::from(b_ ^ 32));
-                            }
-                        }
-                    }
-                    i += consumed;
-                }
-                'u' | 'U' => {
-                    let n = if nc == 'u' { 4 } else { 8 };
-                    let mut val: u32 = 0;
-                    let mut consumed = 2; // \u or \U
-                    let mut got = 0;
-                    while got < n && i + consumed < chars.len() {
-                        let h = chars[i + consumed];
-                        if let Some(d) = h.to_digit(16) {
-                            val = val * 16 + d;
-                            consumed += 1;
-                            got += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if let Some(ch) = char::from_u32(val) {
-                        out.push(ch);
-                    }
-                    i += consumed;
-                }
-                '0'..='7' => {
-                    // Octal — up to 3 digits per Src/utils.c:7156
-                    let mut val: u32 = 0;
-                    let mut consumed = 1; // skip backslash
-                    let mut got = 0;
-                    while got < 3 && i + consumed < chars.len() {
-                        let h = chars[i + consumed];
-                        if let Some(d) = h.to_digit(8) {
-                            val = val * 8 + d;
-                            consumed += 1;
-                            got += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    // c:Src/utils.c — octal escape is one raw BYTE
-                    // (`$'\377'` = 0xff), metafied per
-                    // c:Src/utils.c:7289-7294. Bug #127.
-                    {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = (val & 0xff) as u8;
-                        if b_ < 0x80 {
-                            out.push(b_ as char);
-                        } else {
-                            out.push('\u{83}');
-                            out.push(char::from(b_ ^ 32));
-                        }
-                    }
-                    i += consumed;
-                }
-                'C' | 'M' => {
-                    // c:Src/utils.c:7029-7052 — `\C` and `\M` set
-                    // `control` / `meta` flags; the optional `-`
-                    // separator is consumed; then the NEXT char (or
-                    // chained `\C`/`\M` modifier) is read and the
-                    // mask applied at c:7265-7275 (control → `& 0x9f`,
-                    // meta → `| 0x80`). `\C-?` is special-cased to
-                    // 0x7f. Bug #113 in docs/BUGS.md: the previous
-                    // Rust port dropped `\C` / `\M` into the
-                    // unknown-escape default branch, so `$'\C-a'`
-                    // emitted literal `C-a` instead of byte 0x01.
-                    let mut control = nc == 'C';
-                    let mut meta = nc == 'M';
-                    let mut j = i + 2;
-                    // Consume any chain of `-`, additional `\C`/`\M`
-                    // modifiers (e.g. `\M-\C-x` → meta+control on x).
-                    loop {
-                        if j < chars.len() && chars[j] == '-' {
-                            j += 1;
-                            continue;
-                        }
-                        if j + 1 < chars.len()
-                            && chars[j] == '\\'
-                            && (chars[j + 1] == 'C' || chars[j + 1] == 'M')
-                        {
-                            if chars[j + 1] == 'C' {
-                                control = true;
-                            } else {
-                                meta = true;
-                            }
-                            j += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    if j >= chars.len() {
-                        // Malformed — preserve literal per
-                        // Src/utils.c:7050 fallthrough.
-                        out.push('\\');
-                        out.push(nc);
-                        i += 2;
-                        continue;
-                    }
-                    // Read one base char (allowing nested `\xNN` /
-                    // `\NNN` / `\u…` / literal). For simplicity,
-                    // accept either a literal char or a one-char
-                    // escape.
-                    let (mut ch, advance): (char, usize) =
-                        if chars[j] == '\\' && j + 1 < chars.len() {
-                            let nn = chars[j + 1];
-                            match nn {
-                                'a' => ('\x07', 2),
-                                'b' => ('\x08', 2),
-                                'e' | 'E' => ('\x1b', 2),
-                                'f' => ('\x0c', 2),
-                                'n' => ('\n', 2),
-                                'r' => ('\r', 2),
-                                't' => ('\t', 2),
-                                'v' => ('\x0b', 2),
-                                '\\' | '\'' | '"' => (nn, 2),
-                                _ => (nn, 2), // unknown — take literal char
-                            }
-                        } else {
-                            (chars[j], 1)
-                        };
-                    let mut byte = ch as u32;
-                    if control {
-                        // c:7265-7269 — `\C-?` → 0x7f; else AND 0x9f.
-                        if byte == '?' as u32 {
-                            byte = 0x7f;
-                        } else {
-                            byte &= 0x9f;
-                        }
-                    }
-                    if meta {
-                        // c:7272-7274 — OR 0x80.
-                        byte |= 0x80;
-                    }
-                    // c:Src/utils.c:7265-7275 — the masked result is
-                    // one raw BYTE (`$'\M-i'` = 0xe9), metafied per
-                    // c:7289-7294. Multibyte base chars (> 0xff after
-                    // masking) keep the codepoint form. Bug #127.
-                    if byte <= 0xff {
-                        {
-                            // c:Src/utils.c metafy byte-encode step:
-                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                            let b_ = byte as u8;
-                            if b_ < 0x80 {
-                                out.push(b_ as char);
-                            } else {
-                                out.push('\u{83}');
-                                out.push(char::from(b_ ^ 32));
-                            }
-                        }
-                    } else {
-                        ch = char::from_u32(byte).unwrap_or('\0');
-                        out.push(ch);
-                    }
-                    i = j + advance;
-                }
-                _ => {
-                    // Unknown escape — keep `\` per
-                    // Src/utils.c:7180-7185 default branch
-                    out.push('\\');
-                    out.push(nc);
-                    i += 2;
-                }
-            }
-            continue;
-        }
-        out.push(c);
+        content.push(chars[i]);
         i += 1;
     }
+    let (out, _) = crate::ported::utils::getkeystring_with(
+        &content,
+        crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
+        None,
+    );
     (out, i)
 }
 /// `untokenize` — see implementation.
