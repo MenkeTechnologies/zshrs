@@ -935,3 +935,38 @@ mod digit_before_a_process_substitution {
         assert_parity_in(d.path(), "{ print err >&2 } 2>&1 | cat");
     }
 }
+
+/// c:Src/exec.c:3719 forks an external command before the redirect loop
+/// (c:3785-3796 `xpandredir(…); if (errflag) { …; execerr(); }`), so an
+/// expansion error in a redirect TARGET — a NULL_GLOB `nx(N)`, a NOMATCH
+/// `nx*`, `$((1/0))` — ends only the child: status 1, next command runs.
+/// For a builtin the same error stays in the shell and ends the list.
+mod redirect_target_expansion_error {
+    use super::*;
+
+    #[test]
+    fn external_command_continues() {
+        let d = tdir();
+        assert_parity_in(d.path(), "exec 2>&1; /bin/echo > nx(N); print after $?");
+        assert_parity_in(d.path(), "exec 2>&1; /bin/echo > nx*; print after $?");
+        assert_parity_in(d.path(), "exec 2>&1; /bin/echo a > f 2> $((1/0)); print after $?; cat f");
+        assert_parity_in(d.path(), "exec 2>&1; /bin/echo x | /bin/cat > nx(N); print after $?");
+        assert_parity_in(d.path(), "exec 2>&1; cat < nx(N); print after $?");
+    }
+
+    #[test]
+    fn builtin_and_group_still_abort() {
+        let d = tdir();
+        assert_parity_in(d.path(), "exec 2>&1; print > nx(N); print after $?");
+        assert_parity_in(d.path(), "exec 2>&1; { /bin/echo hi } 2> $((1/0)); print after $?");
+    }
+
+    /// c:3636-3637 — an ARGUMENT expansion error is raised before the fork:
+    /// `lastval = 1` and the list ends, redirections or not.
+    #[test]
+    fn argument_error_exits_with_status_1() {
+        let d = tdir();
+        assert_parity_in(d.path(), "exec 2>&1; true; /bin/echo $((1/0)) > f; print after $?");
+        assert_parity_in(d.path(), "exec 2>&1; true; /bin/echo $((1/0))");
+    }
+}

@@ -565,6 +565,13 @@ thread_local! {
     /// dispatch, inside its sublist; a compound command's body starts a new
     /// sublist first.
     static REDIR_SCOPE_OPENED: std::cell::Cell<(u64, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Per open redirect scope (index = depth - 1): whether ERRFLAG_ERROR
+    /// was clear when the scope opened. c:Src/exec.c:3637-3643 aborts on an
+    /// argument-expansion errflag BEFORE the redirect loop, so an errflag
+    /// first seen while a redirection is applied came from that
+    /// redirection's own target (xpandredir). See redir_target_expansion_failed.
+    static REDIR_SCOPE_ERRFLAG_CLEAN: std::cell::RefCell<Vec<bool>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// c:Src/exec.c:3775-3777 — `if (input) addfd(forked, save, mfds, 0,
     /// input, 0, NULL);` seeds `mfds[0]` with the pipeline input BEFORE the
     /// stage command's redirect list is walked, so an input redirection
@@ -876,6 +883,32 @@ fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<Strin
         flatten_array_value(v, &mut values);
     }
     (name, values)
+}
+
+/// c:Src/exec.c:3785-3796 — the redirect loop runs `xpandredir(fn, redir)`
+/// on each target and then `if (errflag) { closemnodes(mfds); fixfds(save);
+/// execerr(); }`: an expansion error in a target (`> $((1/0))`,
+/// `> ${u?msg}`, a NULL_GLOB `> nx(N)`) is a failed redirection. zshrs
+/// expands the target before the redirect op runs, so the op sees the
+/// errflag: when it was clear as this command's redirect scope opened, mark
+/// the redirection failed and skip it. The redirect_failed gates then treat
+/// it like any other failure — for an external command, which C forks before
+/// this loop (c:3719), only the child dies (call_function).
+/// !!! RUST-ONLY HELPER: C tests errflag inline in the redirect loop.
+fn redir_target_expansion_failed(exec: &mut ShellExecutor) -> bool {
+    if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::zsh_h::ERRFLAG_ERROR)
+        == 0
+    {
+        return false;
+    }
+    let depth = exec.redirect_scope_stack.len();
+    let clean_at_open = depth > 0
+        && REDIR_SCOPE_ERRFLAG_CLEAN.with(|v| v.borrow().get(depth - 1).copied().unwrap_or(false));
+    if clean_at_open {
+        exec.redirect_failed = true;
+    }
+    clean_at_open
 }
 
 /// c:Src/exec.c:3719 + 3755-3763 — an external command is forked
@@ -2219,6 +2252,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         !bits,
                         std::sync::atomic::Ordering::Relaxed,
                     );
+                    // A NOMATCH / NULL_GLOB failure in the redirect target's
+                    // filename generation belongs to the same child.
+                    let _ = external_glob_failure_status();
                     crate::ported::builtin::LASTVAL
                         .store(1, std::sync::atomic::Ordering::Relaxed);
                     return Value::Status(1);
@@ -11718,6 +11754,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Restore compile order (target_1 first).
         pairs.reverse();
+        // c:Src/exec.c:3785-3796 — an errflag from expanding a target fails
+        // the redirection (see redir_target_expansion_failed).
+        if with_executor(redir_target_expansion_failed) {
+            return Value::Status(1);
+        }
 
         // c:Src/glob.c:2195-2203 xpandredir — "Loop over matches,
         // duplicating the redirection for each file found": a glob
@@ -12125,6 +12166,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             pairs.push((op_byte, source));
         }
         pairs.reverse();
+        // c:Src/exec.c:3785-3796 — an errflag from expanding a target fails
+        // the redirection (see redir_target_expansion_failed).
+        if with_executor(redir_target_expansion_failed) {
+            return Value::Status(1);
+        }
 
         // Splice glob match arrays (c:Src/glob.c:2195-2203).
         let mut entries: Vec<(u8, String)> = Vec::with_capacity(pairs.len());
@@ -19592,6 +19638,10 @@ impl fusevm::ShellHost for ZshrsHost {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
         {
+            // c:Src/exec.c:3636-3637 — `if (errflag) { lastval = 1; … return; }`
+            // after prefork. The abort that follows exits with LASTVAL, so
+            // store it: `/bin/echo $((1/0))` exited with the previous status.
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return 1;
         }
         // c:Src/exec.c — two distinct empty-command cases:
@@ -19822,6 +19872,10 @@ impl fusevm::ShellHost for ZshrsHost {
                     crate::ported::zsh_h::ERRFLAG_ERROR
                 };
                 crate::ported::utils::errflag.fetch_and(!bits, std::sync::atomic::Ordering::Relaxed);
+                // A NOMATCH / NULL_GLOB failure in the redirect target's
+                // filename generation belongs to the same child: take its
+                // carrier too, or the command-boundary gate still ends the list.
+                let _ = external_glob_failure_status();
             }
             with_executor(|exec| exec.set_last_status(1));
             return Some(1);
@@ -20258,6 +20312,9 @@ impl ShellExecutor {
     }
     /// `host_apply_redirect` — see implementation.
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
+        if redir_target_expansion_failed(self) {
+            return;
+        }
         // c:Src/exec.c:3775-3777 — in a pipeline stage whose input is the
         // pipe, mfds[0] already holds it, so `<file` / `<&N` becomes the
         // multio's second member (c:2447-2480) instead of replacing it.
@@ -20727,6 +20784,15 @@ impl ShellExecutor {
             self.pipe_output_pending = false;
             self.pipe_output_scope = Some(self.redirect_scope_stack.len());
         }
+        let clean = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            == 0;
+        let depth = self.redirect_scope_stack.len();
+        REDIR_SCOPE_ERRFLAG_CLEAN.with(|v| {
+            let mut v = v.borrow_mut();
+            v.truncate(depth);
+            v.push(clean);
+        });
         self.redirect_scope_stack.push(Vec::new());
         self.multios_scope_stack.push(Vec::new());
         let serial = SUBLIST_SERIAL.with(|c| c.get());
