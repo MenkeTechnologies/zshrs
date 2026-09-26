@@ -239,3 +239,43 @@ mod hash_dir_listing {
         assert_parity("hash -d one=/first/dir; hash -d two=/second; hash -d");
     }
 }
+
+/// c:Src/builtin.c:4049-4073 — the `-m` scans walk each hash table once per
+/// node and print through the table's own printnode. zshrs walked the raw
+/// BUILTINS vec, whose repeated module rows printed `kill`/`log` 2-3 times;
+/// printed reserved words bare instead of via printreswdnode
+/// (Src/hashtable.c:1147, `for: reserved`); listed `disable -r`ed words; and
+/// under -a re-ran the internal lookups on the cmdnamtab matches, which C
+/// skips (`!allmatched`, c:4091). PATH is emptied so only the internal tables
+/// can match.
+mod whence_dash_m_scans {
+    use super::*;
+
+    #[test]
+    fn a_builtin_prints_once() {
+        assert_parity("path=(); whence -wm 'kil*'; whence -m 'lo*'; whence -vm 'kil*'");
+    }
+
+    #[test]
+    fn reserved_words_honour_the_print_flags() {
+        assert_parity("path=(); whence -wm 'fo*'; whence -vm 'fo*'; whence -cm 'fo*'; whence -wm 'loca*'");
+    }
+
+    #[test]
+    fn a_disabled_reserved_word_is_skipped() {
+        assert_parity("path=(); disable -r for; whence -m 'fo*'");
+    }
+
+    #[test]
+    fn dash_a_does_not_rescan_internal_tables() {
+        let dir = std::env::temp_dir().join(format!("whence_am_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("kill");
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let d = dir.display();
+        assert_parity(&format!("path=({d}); whence -am 'kil*'; whence -avm 'kil*'"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

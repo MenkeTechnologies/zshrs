@@ -10665,26 +10665,24 @@ pub fn bin_whence(
                         }
                         // c:4054-4056 — `scanmatchtable(reswdtab, pprog,
                         //   1, 0, DISABLED, reswdtab->printnode, printflags);`.
-                        // reswdtab->printnode is `printreswdnode` at
-                        // Src/hashtable.c:1259 — its body is just
-                        // `zputs(hn->nam); putchar('\n')`. Inline the
-                        // print since no separate Rust callback yet
-                        // exists and the body is trivial.
-                        // Reserved words: collect matches + sort to
-                        // match zsh's scanmatchtable order (same logic
-                        // as the builtin walk below).
-                        let mut names: Vec<String> = reswdtab_lock()
+                        // reswdtab->printnode is `printreswdnode`
+                        // (Src/hashtable.c:1147), which honours the
+                        // -w/-c/-v printflags (`for: reserved`). The
+                        // DISABLED mask skips `disable -r`ed words.
+                        // c:Src/hashtable.c:402 sorts by hnamcmp (ztrcmp).
+                        let mut rw_matches: Vec<crate::ported::zsh_h::reswd> = reswdtab_lock()
                             .read()
                             .map(|t| {
                                 t.iter()
                                     .filter(|(k, _)| pattry(&prog, k))
-                                    .map(|(k, _)| k.clone())
+                                    .filter(|(_, rw)| (rw.node.flags & DISABLED as i32) == 0)
+                                    .map(|(_, rw)| rw.clone())
                                     .collect()
                             })
                             .unwrap_or_default();
-                        names.sort();
-                        for w in &names {
-                            println!("{}", w); // c:1259 zputs + newline
+                        rw_matches.sort_by(|a, b| crate::ported::utils::ztrcmp(&a.node.nam, &b.node.nam));
+                        for rw in &rw_matches {
+                            crate::ported::hashtable::printreswdnode(rw, printflags); // c:4056
                             informed += 1; // c:4054
                         }
                         // c:4059-4061 — `scanmatchshfunc(pprog, 1, 0,
@@ -10723,13 +10721,22 @@ pub fn bin_whence(
                                 .lock()
                                 .map(|s| s.clone())
                                 .unwrap_or_default();
-                        let mut bn_matches: Vec<&builtin> = BUILTINS
-                            .iter()
-                            .chain(crate::extensions::ext_builtins::extension_builtin_defs())
+                        // c:4064 — the walk is over `builtintab`, one node per
+                        // name. The raw BUILTINS vec repeats module rows
+                        // (`kill`, `log`, …) that createbuiltintable folds, so
+                        // walking it printed `kill` two or three times.
+                        let mut bn_matches: Vec<&builtin> = createbuiltintable()
+                            .values()
+                            .copied()
                             .filter(|b| pattry(&prog, &b.node.nam))
                             .filter(|b| !disabled_snapshot.contains(b.node.nam.as_str()))
+                            // Same module gate as the name lookup below: a
+                            // builtin of an unloaded module (`zstat`) is not in
+                            // C's builtintab until `zmodload` adds it.
+                            .filter(|b| crate::extensions::ext_builtins::module_builtin_available(&b.node.nam))
                             .collect();
-                        bn_matches.sort_by(|a, b| a.node.nam.cmp(&b.node.nam));
+                        // c:Src/hashtable.c:402 `qsort(…, hnamcmp)` — ztrcmp.
+                        bn_matches.sort_by(|a, b| crate::ported::utils::ztrcmp(&a.node.nam, &b.node.nam));
                         for b in bn_matches {
                             printbuiltinnode(
                                 &b.node as *const hashnode as *mut hashnode,
@@ -10823,6 +10830,10 @@ pub fn bin_whence(
     } else {
         argv.to_vec()
     };
+    // c:4076 — `allmatched` is set exactly when -m ran in -a mode (the
+    // non -a case returned at c:4082); those names came from cmdnamtab and
+    // the internal tables were already scanned, so c:4091 skips them.
+    let allmatched = OPT_ISSET(ops, b'm');
     for arg in &argv_vec {
         // c:4121
         // c:4088 — `informed = 0;` reset per iteration so the per-arg
@@ -10831,7 +10842,7 @@ pub fn bin_whence(
                       // c:4090 `char *cnam` is the findcmd return in C; in Rust it
                       // is bound inline at the findcmd call site below.
                       // c:4089-4137 — !`-p` and !`-a` matched-from-prior-`-m` arm.
-        if !OPT_ISSET(ops, b'p') {
+        if !OPT_ISSET(ops, b'p') && !allmatched {
             // c:4093-4097 — alias check. C: `aliastab->printnode(hn, aliasflags)`.
             let alias_text = aliastab_lock()
                 .read()
