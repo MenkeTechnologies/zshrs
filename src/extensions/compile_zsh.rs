@@ -2151,7 +2151,7 @@ impl ZshCompiler {
                 // restored. Status is whatever the inner cmd left.
                 self.builder
                     .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
-                self.compile_redirs_multios(redirs);
+                self.compile_redirs_multios(redirs, false);
                 // c:Src/exec.c — if any redirect failed (e.g.
                 // `{ … } < /nonexistent`), zsh aborts the entire body
                 // and sets $? = 1. Check the flag after opening all
@@ -2622,7 +2622,7 @@ impl ZshCompiler {
             if !simple.redirs.is_empty() {
                 self.builder
                     .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
-                self.compile_redirs_multios(&simple.redirs);
+                self.compile_redirs_multios(&simple.redirs, false);
                 // c:Src/exec.c:3963-3976 — addvars under nullexec=2
                 // fires INSIDE the redir scope. Emit the deferred
                 // assigns here so a readonly-reassignment zerr writes
@@ -2767,12 +2767,12 @@ impl ZshCompiler {
             // ahead of the redirect loop under nullexec==1 (`exec
             // >file` has no args to expand first).
             self.emit_stage_fds_install();
-            for redir in &simple.redirs {
-                // permanent=true: c:Src/exec.c:3978-3986 nullexec==1 —
-                // exec's fd changes skip save/restore even when an
-                // enclosing group scope is active.
-                self.compile_redir(redir, true);
-            }
+            // permanent=true: c:Src/exec.c:3978-3986 nullexec==1 — exec's
+            // fd changes skip save/restore even when an enclosing group
+            // scope is active. The list still goes through the same addfd
+            // multio logic as any command (c:3730-4016): `exec 3>&1 3>&2`
+            // makes fd 3 a tee to both.
+            self.compile_redirs_multios(&simple.redirs, true);
             // Epilogue: c:Src/exec.c:252-259 execerr (failed redirect →
             // lastval=1) + c:4367-4386 done: gate (POSIX_BUILTINS makes
             // it fatal for BINF_EXEC). Success path returns status 0.
@@ -4200,7 +4200,7 @@ impl ZshCompiler {
         self.builder.emit(Op::Pop, 0);
         self.builder
             .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
-        self.compile_redirs_multios(redirs);
+        self.compile_redirs_multios(redirs, false);
     }
 
     /// Dup this pipeline stage's pipe fds onto 0/1, if we're compiling
@@ -4251,7 +4251,7 @@ impl ZshCompiler {
     /// dispatch — when MULTIOS is on (default) and fd1 already has a
     /// multio bag, a new redirect to the same fd appends to the bag
     /// instead of overwriting.
-    fn compile_redirs_multios(&mut self, redirs: &[crate::parse::ZshRedir]) {
+    fn compile_redirs_multios(&mut self, redirs: &[crate::parse::ZshRedir], permanent: bool) {
         // Group consecutive write-side redirects by fd. We treat the
         // first occurrence of an fd as the bag's anchor; if a second
         // write-side redirect targets the same fd, mark them all for
@@ -4393,7 +4393,7 @@ impl ZshCompiler {
                     _ => match derive_op(redir) {
                         Some(o) => o,
                         None => {
-                            self.compile_redir(redir, false);
+                            self.compile_redir(redir, permanent);
                             continue;
                         }
                     },
@@ -4467,13 +4467,13 @@ impl ZshCompiler {
                 && (write_total >= 2
                     || (write_total == 1 && is_write_side(redir.rtype) && has_glob_tokens(redir)));
             if !is_multios_candidate {
-                self.compile_redir(redir, false);
+                self.compile_redir(redir, permanent);
                 continue;
             }
             let op_byte = match derive_op(redir) {
                 Some(o) => o,
                 None => {
-                    self.compile_redir(redir, false);
+                    self.compile_redir(redir, permanent);
                     continue;
                 }
             };
@@ -4505,11 +4505,29 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadInt(fd as i64), 0);
                     // CallBuiltin pops 2N + 1 from the stack.
                     let argc = (2 * n + 1) as u8;
+                    if permanent {
+                        // Stack-neutral toggle AFTER the target words ran, so a
+                        // `$(…)` in a target sees the flag clear (compile_redir).
+                        self.builder.emit(Op::LoadInt(1), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_PERM_REDIRS, 1),
+                            0,
+                        );
+                        self.builder.emit(Op::Pop, 0);
+                    }
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_MULTIOS_REDIRECT, argc),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0); // discard Status
+                    if permanent {
+                        self.builder.emit(Op::LoadInt(0), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_PERM_REDIRS, 1),
+                            0,
+                        );
+                        self.builder.emit(Op::Pop, 0);
+                    }
                 }
             }
         }

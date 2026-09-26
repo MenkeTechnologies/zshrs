@@ -11792,6 +11792,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // on fd 3, so `print -u 3 -r -- X 2>/dev/null` wrote into the shell's own
         // saved descriptor and reported success where zsh says `bad file number`.
         // F_DUPFD with a floor of 10 is exactly what movefd does.
+        // c:Src/exec.c:3978-3986 — a bare `exec`'s redirections (nullexec==1)
+        // are permanent: the saved copy is closed, not restored, and the
+        // tee process outlives this command (see the closemn arm below).
+        let permanent = with_executor(|exec| exec.exec_redirs_permanent);
+        if permanent {
+            // Inside an in-process `( … )` / `$( … )` the change is permanent
+            // only for the subshell (see SubshFdFrame), as for a single target.
+            crate::ported::exec::SubshFdFrame::touch(fd);
+        }
         let saved = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
         // c:2426-2437 — "fd1 may already be closed here, so ignore bad
         // file descriptor error": `save[fd1] = fdN` stores -1 for a closed
@@ -11806,7 +11815,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             None
         };
-        if let Some(saved) = saved_slot {
+        if permanent {
+            // c:4038-4040 — `for (i = 0; i < 10; i++) if (save[i] != -2)
+            // zclose(save[i]);`
+            if saved >= 0 {
+                unsafe { libc::close(saved) };
+            }
+        } else if let Some(saved) = saved_slot {
             with_executor(|exec| {
                 if let Some(top) = exec.redirect_scope_stack.last_mut() {
                     top.push((fd, saved));
@@ -11982,6 +11997,40 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             )
         };
         let pipe_write_raw = AsRawFd::as_raw_fd(&write_end);
+        if permanent && (0..10).contains(&fd) {
+            // c:Src/exec.c:4014-4016 — "We are done with redirection. close
+            // the mnodes, spawning tee/cat processes as necessary." A bare
+            // `exec 3>&1 3>&2` keeps the multio for the rest of the shell's
+            // life, so the scope-bound splitter thread below (drained and
+            // joined at scope end) cannot serve it: nothing ever ends the
+            // scope, and the thread dies with the process before it copies
+            // what the last command wrote. closemn forks the tee process C
+            // uses for every multio; it reads until the shell's last copy
+            // of the pipe write end closes, i.e. after the shell exits.
+            // c:4045 — "We're done with this job, no need to wait for it."
+            let write_dup = unsafe { libc::fcntl(pipe_write_raw, libc::F_DUPFD, 10) };
+            drop(write_end);
+            if write_dup < 0 {
+                for f in &target_fds {
+                    unsafe { libc::close(*f) };
+                }
+                return Value::Status(1);
+            }
+            unsafe {
+                libc::dup2(write_dup, fd);
+                libc::close(write_dup);
+            }
+            let mn = crate::ported::zsh_h::multio {
+                ct: target_fds.len() as i32,
+                rflag: 1, // c:2462 — output multio: a tee, not a cat
+                pipe: std::os::unix::io::IntoRawFd::into_raw_fd(read_end),
+                fds: target_fds,
+            };
+            let mut mfds: [Option<Box<crate::ported::zsh_h::multio>>; 10] = Default::default();
+            mfds[fd as usize] = Some(Box::new(mn));
+            crate::ported::exec::closemn(&mut mfds, fd, crate::ported::zsh_h::REDIR_CLOSE);
+            return Value::Status(0);
+        }
         // Spawn the splitter thread: read pipe → write every chunk
         // to every target fd. Each write inside the thread uses
         // libc::write directly on the raw fd (no Rust File ownership

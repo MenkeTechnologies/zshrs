@@ -3382,10 +3382,17 @@ pub fn closemnodes(mfds: &mut [Option<Box<multio>>; 10]) {
 /// + per-output fds stay alive for the read/write loop.
 pub fn closeallelse(mn: &multio) {
     // c:2358
-    // c:2363 — `openmax = fdtable_size;`. zshrs models fdtable as a
-    // Vec; use MAX_ZSH_FD as the upper bound (fdtable_size grows past
-    // max_zsh_fd in C but every slot past it is FDT_UNUSED anyway).
-    let openmax = MAX_ZSH_FD.load(Ordering::Relaxed) + 1; // c:2363
+    // c:2363 — `openmax = fdtable_size;`. fdtable_size starts at
+    // `zopenmax()` (c:Src/init.c:1931) and only grows (check_fd_table,
+    // c:Src/utils.c:1974-1981) to cover max_zsh_fd, so it spans every
+    // descriptor the process may hold — not just the ones the table
+    // records. Stopping at max_zsh_fd left the tee holding a descriptor
+    // the table never saw (a user `exec 3>&1 3>&2` target, a Rust-side
+    // pipe), and a tee that holds its own pipe's write end never exits.
+    let openmax = std::cmp::max(
+        MAX_ZSH_FD.load(Ordering::Relaxed) + 1,
+        crate::ported::compat::zopenmax() as i32,
+    ); // c:2363
     for i in 0..openmax {
         // c:2365
         if mn.pipe == i {
@@ -3404,7 +3411,10 @@ pub fn closeallelse(mn: &multio) {
         }
         // c:2370-2371 — `if (j == mn->ct) zclose(i);`
         if !found {
-            let _ = zclose(i); // c:2371
+            // c:2371 zclose → c:Src/utils.c:2145 `close(fd)`, blind. zclose's
+            // skip-unowned guard exists for sibling threads recycling fds;
+            // this runs in the forked child, which has only one thread.
+            unsafe { libc::close(i) }; // c:2371
         }
     }
 }

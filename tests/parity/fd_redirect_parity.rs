@@ -586,3 +586,28 @@ mod varid_close_of_a_closed_descriptor {
         );
     }
 }
+
+/// c:Src/exec.c:4014-4016 + 3978-3986 — a bare `exec` with two write
+/// redirections of one fd builds the same multio as any command (addfd,
+/// c:2447-2480) and closemn forks the tee that outlives the command. zshrs
+/// applied each redirection as a plain replace, so fd 3 reached only the
+/// last target.
+mod bare_exec_multios {
+    use super::*;
+
+    #[test]
+    fn exec_fans_one_fd_out_to_two_targets() {
+        let d = tdir();
+        assert_parity_in(d.path(), "exec 3>&1 3>&2; print -u3 x");
+        assert_parity_in(d.path(), "exec 3>&1 3>/dev/null; print -u3 a; print -u3 b");
+    }
+
+    /// Inside `$( … )` the multio lives only as long as the substitution
+    /// (C forks it away); the tee must not keep the capture pipe open.
+    #[test]
+    fn exec_multios_inside_command_substitution() {
+        let d = tdir();
+        assert_parity_in(d.path(), "x=$(exec 3>&1 3>/dev/null; print -u3 q); print \"[$x]\"");
+        assert_parity_in(d.path(), "(exec 3>/dev/null 3>/dev/null; print -u3 sub); print -u3 after 2>/dev/null; print st=$?");
+    }
+}
