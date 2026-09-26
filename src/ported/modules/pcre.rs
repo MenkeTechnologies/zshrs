@@ -963,14 +963,20 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                                         // c:296
                                     }
                                     None => {
-                                        // Unparticipated group: empty match
-                                        // text (C's zero-length metafy of the
-                                        // PCRE2_UNSET pair) + "-1" offsets
-                                        // (the regex.c sibling convention,
-                                        // Src/Modules/regex.c:158-161).
-                                        subs.push(String::new());
-                                        mbegin_arr.push("-1".to_string());
-                                        mend_arr.push("-1".to_string());
+                                        // A group that did not take part has
+                                        // both ovector slots at PCRE2_UNSET:
+                                        // c:209 metafies a zero-length slice
+                                        // (empty text); c:279 `leftlen =
+                                        // ipair[0]` truncates to -1, so the
+                                        // c:280 `while (leftlen > 0)` walk never
+                                        // runs and offs stays 0, and c:289's
+                                        // length is 0. mbegin is therefore
+                                        // `!isset(KSHARRAYS)` (c:286) and mend
+                                        // one less (c:296) — zsh prints 1 and 0,
+                                        // not regex.c's -1 convention.
+                                        subs.push(String::new()); // c:209
+                                        mbegin_arr.push((1 - ksharr).to_string()); // c:286
+                                        mend_arr.push((1 - ksharr - 1).to_string()); // c:296
                                     }
                                 }
                             }

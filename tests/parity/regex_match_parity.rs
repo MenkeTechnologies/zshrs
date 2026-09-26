@@ -348,3 +348,26 @@ fi
         );
     }
 }
+
+mod rematch_pcre_offsets {
+    use super::*;
+
+    /// A capture group that did not take part leaves both ovector slots at
+    /// PCRE2_UNSET. `zpcre_get_substrings` (Src/Modules/pcre.c:279-296)
+    /// truncates the start to -1, so its character walk never runs: the
+    /// group's `mbegin` is `!isset(KSHARRAYS)` and its `mend` one less
+    /// (1/0, or 0/-1 under KSH_ARRAYS). zshrs reported -1/-1, the regex.c
+    /// convention. Only a group BEFORE a participating one is used: whether
+    /// trailing non-participants are reported at all differs between 5.9.2
+    /// and upstream 698af7bc13.
+    #[test]
+    fn unmatched_group_offsets() {
+        assert_parity(
+            r#"zmodload zsh/pcre || exit
+setopt rematch_pcre
+[[ foo =~ (pre)?f(o*) ]]; typeset -p match mbegin mend
+setopt ksharrays
+[[ xfoo =~ (pre)?f(o*) ]]; typeset -p mbegin mend"#,
+        );
+    }
+}
