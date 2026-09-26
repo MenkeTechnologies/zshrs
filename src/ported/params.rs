@@ -7228,7 +7228,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         }
                         if !val.is_empty() && !valid_refname(val, flags) {
                             // c:3258-3264
-                            zerr(&format!("invalid name reference: {}", val));
+                            zerr(&format!("invalid variable name: {}", val));
                             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                             return None;
                         }
@@ -8685,7 +8685,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     if !val.is_empty() && (pm.node.flags as u32 & PM_NAMEREF) != 0 {
         if !valid_refname(val, pm.node.flags) {
             // c:3259
-            zerr(&format!("invalid name reference: {}", val)); // c:3260
+            zerr(&format!("invalid variable name: {}", val)); // c:3260
             drop(tab);
             errflag.fetch_or(
                 // c:3263
@@ -15662,95 +15662,43 @@ pub fn upscope(mut pm: Param, reference: &param) -> Param {
     pm
 }
 
-/// Port of `valid_refname()` from `Src/params.c:6466`. C body
-/// validates a nameref target name. Two paths:
-///   - PM_UPPER (`typeset -nu`): reject digit-leader (positional
-///     refs would loop) and the literal `argv`/`ARGC` names.
-///   - non-PM_UPPER: positional digit-leader is permitted (must be
-///     all-digits before any `[`); otherwise scan via
-///     `itype_end(INAMESPC)`.
-/// Either path then accepts the trailing one-char specials
-/// `! ? $ - _` and an optional `[subscript]` tail. Returns 1 on
-/// valid, 0 otherwise. The Rust port follows the same control
-/// flow with `is_ascii_digit`/`is_alphabetic` standing in for
-/// `idigit`/`itype_end`.
+/// Port of `valid_refname()` from `Src/params.c:6466`.
+///
+/// ```c
+/// static int
+/// valid_refname(char *val, int flags)
+/// {
+///     if (flags & PM_UPPER) {
+///         /* Upward reference to positionals is doomed to fail */
+///         if (idigit(*val) || !strcmp(val, "argv") || !strcmp(val, "ARGC"))
+///             return 0;
+///     }
+///     if (*val == '!' || *val == '?' || *val == '$' || *val == '-')
+///         return !*(++val);
+///     return !*itype_end(val, INAMESPC, 0) && isident(val);
+/// }
+/// ```
+///
+/// The whole value must be a (namespaced) identifier: a subscript
+/// (`arr[1]`) or a trailing `@` is not a valid referent.
 pub fn valid_refname(val: &str, flags: i32) -> bool {
-    // c:6466
-    if val.is_empty() {
-        return false;
-    }
-    let first = val.chars().next().unwrap();
-    let pm_upper = (flags as u32 & PM_UPPER) != 0;
-    let mut t: usize;
-    if pm_upper {
+    // c:6468
+    if (flags as u32 & PM_UPPER) != 0 {
         // c:6470
-        if first.is_ascii_digit() {
+        // c:6471 — Upward reference to positionals is doomed to fail
+        if val.starts_with(|c: char| c.is_ascii_digit()) || val == "argv" || val == "ARGC" {
             // c:6472
             return false; // c:6473
         }
-        // c:6474 — `t = itype_end(val, INAMESPC, 0)`; INAMESPC stops
-        // at `.` and other non-namespace chars. Approximate with
-        // alphanumeric/_ scan.
-        t = val
-            .char_indices()
-            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
-            .map(|(i, _)| i)
-            .unwrap_or(val.len());
-        if t - 0 == 4                                                        // c:6475
-            && (val.starts_with("argv") || val.starts_with("ARGC"))
-        // c:6476-6477
-        {
-            return false; // c:6478
-        }
-    } else if first.is_ascii_digit() {
-        // c:6479
-        // c:6480-6485 — all-digit run; first non-digit must be `[`.
-        t = 1;
-        for (i, c) in val.char_indices().skip(1) {
-            if !c.is_ascii_digit() {
-                t = i;
-                break;
-            }
-            t = i + c.len_utf8();
-        }
-        if t < val.len() && val.as_bytes()[t] != b'[' {
-            // c:6484
-            return false; // c:6485
-        }
-    } else {
-        // c:6487 — `t = itype_end(val, INAMESPC, 0)`.
-        t = val
-            .char_indices()
-            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '.'))
-            .map(|(i, _)| i)
-            .unwrap_or(val.len());
     }
 
-    if t == 0 {
-        // c:6489
-        let c = val.as_bytes()[0];
-        if !(c == b'!' || c == b'?' || c == b'$' || c == b'-' || c == b'_') {
-            // c:6490
-            return false; // c:6493
-        }
-        t = 1; // c:6494
+    if let Some(rest) = val.strip_prefix(['!', '?', '$', '-']) {
+        // c:6476
+        return rest.is_empty(); // c:6477
     }
-    if t < val.len() && val.as_bytes()[t] == b'[' {
-        // c:6496
-        // c:6498-6504 — parse_subscript/Inbrack/Outbrack walk. The
-        // tokenize+parse_subscript pair isn't ported; accept any
-        // balanced `[…]` tail (single-level) to remain conservative.
-        let tail = &val[t + 1..];
-        if let Some(close) = tail.find(']') {
-            // c:6505-6508 — anything past `]` is rejected.
-            if close + 1 < tail.len() {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-    true // c:6510
+
+    crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false) == val.len() // c:6479
+        && isident(val)
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -17897,7 +17845,9 @@ mod tests {
         assert!(valid_refname("_bar", 0));
         assert!(valid_refname("1", 0));
         assert!(valid_refname("!", 0));
-        assert!(valid_refname("arr[1]", 0));
+        // 54718 (c:Src/params.c:6479): subscripted referents are rejected.
+        assert!(!valid_refname("arr[1]", 0));
+        assert!(!valid_refname("foo@", 0));
         assert!(!valid_refname("", 0));
         // C semantics: empty leader without one of `! ? $ - _` is rejected.
         assert!(!valid_refname(" ", 0));

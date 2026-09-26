@@ -10202,6 +10202,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 other => values.push(other.to_str()),
             }
         }
+        // c:Src/params.c:3316/3365 — assignaparam's subscript arm finds the
+        // parameter through getvalue/fetchvalue, whose getparamnode
+        // (c:570-575) follows a PM_NAMEREF chain to its endpoint, so
+        // `ptr[2,4]=(x y)` splices the array `ptr` names. Everything below
+        // looks `name` up directly and spliced the reference itself ("ptr:
+        // attempt to assign array value to non-array"). A chain ending on a
+        // visible parameter is that parameter's name; any other outcome
+        // (subscripted refname, hidden binding, placeholder, loop) goes to
+        // the ported assignaparam, which resolves the chain itself.
+        let name = if crate::ported::params::is_nameref(&name) {
+            use crate::ported::params::nameref_resolution as NR;
+            let visible = |t: &str, level: i32, has_pm: bool| {
+                !has_pm
+                    || crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|tb| tb.get(t).map(|p| p.level))
+                        == Some(level)
+            };
+            match crate::ported::params::resolve_nameref_name(&name, None) {
+                NR::Target { name: t, subscript: None, pm, level } if visible(&t, level, pm.is_some()) => t,
+                _ if !scalar_rhs => {
+                    let asspm = if append { crate::ported::zsh_h::ASSPM_AUGMENT } else { 0 };
+                    let done =
+                        crate::ported::params::assignaparam(&format!("{name}[{key}]"), values, asspm);
+                    return Value::Status(if done.is_some() { 0 } else { 1 });
+                }
+                _ => name,
+            }
+        } else {
+            name
+        };
         // Bash sparse-array tracking: a single-index `a[i]=v` that pads the
         // dense Vec past its old end leaves indices old_len..i as HOLES (not
         // real elements), so `${#a[@]}`/`${!a[@]}` skip them like bash. Only

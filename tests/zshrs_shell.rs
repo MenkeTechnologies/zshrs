@@ -13611,13 +13611,18 @@ fn test_nameref_chain_and_self_reference_loop() {
 
 #[test]
 fn test_nameref_subscript_element() {
-    // K01 "nameref to hash element" + "assign array element by nameref"
-    let (_, out, _) =
+    // K01 once had "nameref to hash element" / "assign array element by
+    // nameref"; zsh 54718 (forkedRepos 2d3f0b346c, "Remove support for named
+    // references to subscripted variables") dropped both tests and made
+    // valid_refname reject a subscripted referent (c:Src/params.c:6479).
+    let (st, _, err) =
         run_zshrs_parity("typeset -A hash=(x MISS y HIT); typeset -n p='hash[y]'; print -r -- $p");
-    assert_eq!(out.trim(), "HIT");
-    let (_, out, _) =
+    assert_ne!(st, 0);
+    assert!(err.contains("invalid variable name: hash[y]"), "got: {err:?}");
+    let (st, _, err) =
         run_zshrs_parity("typeset -a ary=(1 2); typeset -n p='ary[2]'; p=TWO; typeset -p ary");
-    assert_eq!(out.trim(), "typeset -a ary=( 1 TWO )");
+    assert_ne!(st, 0);
+    assert!(err.contains("invalid variable name: ary[2]"), "got: {err:?}");
 }
 
 #[test]
@@ -13663,11 +13668,43 @@ fn test_nameref_up_reference_reads_bind_scope() {
 #[test]
 fn test_nameref_invalid_refname_rejected() {
     // K01 "invalid nameref" — valid_refname (c:6466) guard.
+    // Message text is c:Src/params.c:3202 `zerr("invalid variable name: %s", val)`
+    // (K01nameref.ztst `*?*invalid variable name: not\[2\]good`).
     let (st, _, err) = run_zshrs_parity("typeset -n p='not[2]good'");
     assert_ne!(st, 0);
     assert!(
-        err.contains("invalid name reference: not[2]good"),
+        err.contains("invalid variable name: not[2]good"),
         "got: {err:?}"
+    );
+}
+
+#[test]
+fn test_nameref_referent_must_be_a_plain_identifier() {
+    // K01 "references to invalid variable names" — c:Src/params.c:6479
+    // (54718): `!*itype_end(val, INAMESPC, 0) && isident(val)`, so a
+    // subscript or a trailing `@` is not a referent.
+    for bad in ["foo@", "arr[1]", ".foo."] {
+        let (st, _, err) = run_zshrs_parity(&format!("typeset -n r='{bad}'"));
+        assert_ne!(st, 0, "{bad} accepted");
+        assert!(err.contains(&format!("invalid variable name: {bad}")), "got: {err:?}");
+    }
+    let (st, out, _) = run_zshrs_parity("foo.bar=x; typeset -n r=foo.bar; print -r -- $r");
+    assert_eq!((st, out.trim()), (0, "x"));
+}
+
+#[test]
+fn test_nameref_subscript_array_assignment_splices_referent() {
+    // K01 "assign/typeset existing array via nameref" — assignaparam's
+    // subscript arm resolves the chain through fetchvalue (c:Src/params.c:
+    // 3316/3365); the slice used to land on the reference itself ("ptr:
+    // attempt to assign array value to non-array").
+    let (st, out, err) = run_zshrs_parity(
+        "typeset var=(val1 val2); typeset -n ptr=var; ptr=(n1 n2 n3 n4 n5); ptr[2,4]=(n7 n8); typeset -p var; ptr[2]+=(Q); typeset -p var",
+    );
+    assert_eq!(st, 0, "stderr: {err:?}");
+    assert_eq!(
+        out,
+        "typeset -a var=( n1 n7 n8 n5 )\ntypeset -a var=( n1 n7 Q n8 n5 )\n"
     );
 }
 
