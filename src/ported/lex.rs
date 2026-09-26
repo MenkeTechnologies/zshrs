@@ -1371,6 +1371,11 @@ fn gettok() -> lextok {
         cmdpush(CS_MATH as u8);
         let dq = dquote_parse(end_char, false);
         cmdpop();
+        // c:638 — `*lexbuf.ptr = '\0';` — BEFORE the error test: tokstr is
+        // the lexbuf, so on LEXERR it still holds the partial expression and
+        // exalias publishes it as zshlextext (`for ((i=0` → "parse error
+        // near `i=0'").
+        set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
         if let Err(stopped) = dq {
             // c:643-645 — `if (c || …) { hungetc(c); return LEXERR; }`
             if let Some(stopped) = stopped {
@@ -1378,8 +1383,6 @@ fn gettok() -> lextok {
             }
             return LEXERR;
         }
-        // c:638 — `*lexbuf.ptr = '\0';`
-        set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
         // c:639-642 — `if (!c && infor) { infor--; return DINPAR; }`
         if LEX_INFOR.get() > 0 {
             LEX_INFOR.set(LEX_INFOR.get() - 1);

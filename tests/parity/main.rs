@@ -120,6 +120,7 @@ mod omz_snippet_corpus_parity;
 mod options_parity;
 mod parity_harness;
 mod parity_survey_fc;
+mod parse_error_parity;
 mod pipeline_parity;
 mod precmd_keyword_parity;
 mod prefix_assign_export_parity;

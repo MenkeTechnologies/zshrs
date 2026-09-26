@@ -8440,7 +8440,7 @@ pub(crate) fn autoload_definition_source(
         !crate::ported::utils::ERRFLAG_ERROR,
         std::sync::atomic::Ordering::Relaxed,
     );
-    let prog = crate::ported::exec::parse_string(body, 0); // c:6264
+    let prog = crate::ported::exec::parse_string(body, 1); // c:6329 `r = parse_string(d, 1);` — reset_lineno: errors count lines within the file
     let parse_failed = (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
         & crate::ported::utils::ERRFLAG_ERROR)
         != 0

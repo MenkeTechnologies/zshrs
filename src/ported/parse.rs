@@ -136,6 +136,28 @@ thread_local! {
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
 
+/// Port of `#define YYERROR(O) { tok = LEXERR; ecused = (O); return 0; }`
+/// from `Src/parse.c:87`. Only flags the error: the one diagnostic,
+/// "parse error near `<zshlextext>'", is printed by `yyerror` once the
+/// parse unwinds to `parse_list` / `par_event`.
+macro_rules! YYERROR {
+    ($o:expr) => {{
+        set_tok(LEXERR);
+        ECUSED.set(($o) as i32);
+        return 0;
+    }};
+}
+
+/// Port of `#define YYERRORV(O) { tok = LEXERR; ecused = (O); return; }`
+/// from `Src/parse.c:88` — the `void` twin of `YYERROR`.
+macro_rules! YYERRORV {
+    ($o:expr) => {{
+        set_tok(LEXERR);
+        ECUSED.set(($o) as i32);
+        return;
+    }};
+}
+
 /// Port of `parse_context_save()` from `Src/parse.c:295` — C signature `parse_context_save(struct parse_stack *ps, int toplevel)`.
 /// Snapshots the lexer-side file-statics (which currently live on
 /// `lexer` until Phase 7 dissolution makes them file-scope
@@ -1606,7 +1628,9 @@ fn par_for() -> Option<ZshCommand> {
     // The old Rust loop tested `v == "in"` BEFORE taking the first name,
     // so that form died with "expected variable name in for".
     let mut names: Vec<String> = Vec::new();
-    if tok() == STRING_LEX {
+    // c:1117-1118 — `if (tok != STRING || !isident(tokstr)) YYERRORV(oecused);`
+    // — the FIRST name must be an identifier (`for a-b in x` is an error).
+    if tok() == STRING_LEX && crate::ported::params::isident(&tokstr().unwrap_or_default()) {
         loop {
             names.push(tokstr().unwrap_or_default()); // c:1124 ecstr(tokstr)
             zshlex(); // c:1125
@@ -1634,7 +1658,9 @@ fn par_for() -> Option<ZshCommand> {
     set_noaliases(saved_noaliases);
     set_nocorrect(saved_nocorrect);
     if names.is_empty() {
-        zerr("expected variable name in for");
+        // c:1117-1118 — `YYERRORV(oecused)` only flags LEXERR; the single
+        // "parse error near `<zshlextext>'" comes from par_event's yyerror.
+        set_tok(LEXERR); // c:87 `tok = LEXERR`
         return None;
     }
     let var = names.join(" ");
@@ -1707,6 +1733,13 @@ fn par_for() -> Option<ZshCommand> {
                 }
                 zshlex();
             }
+            // c:1149-1150 — `if (tok != SEPER) YYERRORV(oecused);` — the
+            // word list must end at a separator (`for x in a b` at end of
+            // input is an error).
+            if tok() != SEPER {
+                set_tok(LEXERR); // c:87 `tok = LEXERR`
+                return None;
+            }
             // c:Src/parse.c:1162 — `incmdpos = 1;` after the
             // wordlist + SEPER are consumed, so the next token
             // (`do` / `{` body opener) lexes at command position.
@@ -1735,15 +1768,18 @@ fn par_for() -> Option<ZshCommand> {
             }
             zshlex();
         }
-        if tok() == OUTPAR_TOK {
-            // After the `)` of a for-list, the next token is the
-            // body opener — `do`/`{`. zsh's lexer needs incmdpos
-            // set so `{` lexes as Inbrace (not as a literal). C
-            // analogue: parse.c::par_for sets `incmdpos = 1`
-            // after consuming the Outpar before the body parse.
-            set_incmdpos(true);
-            zshlex();
+        // c:1158-1159 — `if (tok != OUTPAR) YYERRORV(oecused);`
+        if tok() != OUTPAR_TOK {
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
+            return None;
         }
+        // After the `)` of a for-list, the next token is the
+        // body opener — `do`/`{`. zsh's lexer needs incmdpos
+        // set so `{` lexes as Inbrace (not as a literal). C
+        // analogue: parse.c::par_for sets `incmdpos = 1`
+        // after consuming the Outpar before the body parse.
+        set_incmdpos(true);
+        zshlex();
         ForList::Words(words)
     } else {
         ForList::Positional
@@ -1800,7 +1836,8 @@ fn par_case() -> Option<ZshCommand> {
             (w, ona, onc, restore)
         }
         _ => {
-            zerr("expected word after case");
+            // c:1218-1219 — `if (tok != STRING) YYERRORV(oecused);`
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
             return None;
         }
     };
@@ -1815,12 +1852,12 @@ fn par_case() -> Option<ZshCommand> {
         if s.map(|s| s != "in").unwrap_or(true) {
             // c:1228-1232 — restore noaliases/nocorrect on error path.
             restore(ona, onc);
-            zerr("expected 'in' in case");
+            set_tok(LEXERR); // c:1232 YYERRORV(oecused)
             return None;
         }
     } else if !use_brace {
         restore(ona, onc);
-        zerr("expected 'in' or '{' in case");
+        set_tok(LEXERR); // c:1232 YYERRORV(oecused)
         return None;
     }
     // c:1236-1239 — `incasepat = 1; incmdpos = 0; noaliases = ona;
@@ -1865,11 +1902,13 @@ fn par_case() -> Option<ZshCommand> {
         // ENDINPUT without either is a parse error (`case ... esack`
         // typo absorbs `esack` as part of the body and silently
         // terminates rc=0 otherwise). Bug #400.
+        // c:1256-1257 — `if (tok != STRING) YYERRORV(oecused);`: the
+        // diagnostic is par_event's "parse error near `<zshlextext>'", which
+        // names the last token read (`case x in a) echo;;` → near `;;').
         if tok() == ENDINPUT || tok() == LEXERR {
             set_incasepat(0);
-            crate::ported::utils::zerr("unmatched `case'");
-            yyerror(0);
-            break;
+            set_tok(LEXERR); // c:87 `tok = LEXERR`
+            return None;
         }
 
         // c:1250 — `if (tok == INPAR) zshlex();` — leading-paren
@@ -2110,7 +2149,9 @@ fn par_case() -> Option<ZshCommand> {
         // be consumed as the case-arm closer. Detect and consume it.
         if !absorbed_outpar {
             if tok() != OUTPAR_TOK {
-                zerr("expected ')' in case pattern");
+                // c:1356 — neither `)` nor `|` after the pattern:
+                // `YYERRORV(oecused);`.
+                set_tok(LEXERR); // c:87 `tok = LEXERR`
                 return None;
             }
             // c:Src/parse.c:1257-1258 — `if (tok != STRING)
@@ -2123,7 +2164,7 @@ fn par_case() -> Option<ZshCommand> {
             // already validated the pattern inside). Bug #161 in
             // docs/BUGS.md.
             if patterns.is_empty() && !leading_inpar_consumed {
-                zerr("parse error near `)'");
+                set_tok(LEXERR); // c:1257 YYERRORV(oecused)
                 return None;
             }
             set_incmdpos(true);
@@ -2199,7 +2240,19 @@ fn par_case() -> Option<ZshCommand> {
                 zshlex();
                 CaseTerm::TestNext
             }
-            _ => CaseTerm::Break,
+            // c:1386-1387 — `if ((tok == ESAC && !brflag) || (tok ==
+            // OUTBRACE && brflag)) break;` — left for the loop top, which
+            // consumes the closer.
+            ESAC if !use_brace => CaseTerm::Break,
+            STRING_LEX if !use_brace && tokstr().as_deref() == Some("esac") => CaseTerm::Break,
+            OUTBRACE_TOK if use_brace => CaseTerm::Break,
+            // c:1388-1389 — `if (tok != DSEMI && tok != SEMIAMP && tok !=
+            // SEMIBAR) YYERRORV(oecused);`
+            _ => {
+                set_incasepat(0);
+                set_tok(LEXERR); // c:87 `tok = LEXERR`
+                return None;
+            }
         };
 
         if !patterns.is_empty() {
@@ -2263,7 +2316,7 @@ fn par_if() -> Option<ZshCommand> {
         skip_separators(); // c:1430
                            // c:1432-1435 — only IF / ELIF may open an arm.
         if xtok != IF && xtok != ELIF {
-            zerr("parse error near `if'");
+            set_tok(LEXERR); // c:1434 YYERRORV(oecused)
             return None;
         }
         // c:1438 — the cond is an ordinary list; a `{ … }` body opener ends it
@@ -2302,7 +2355,7 @@ fn par_if() -> Option<ZshCommand> {
             zshlex(); // consume {
             let b = parse_program_until(Some(&[OUTBRACE_TOK]), false);
             if tok() != OUTBRACE_TOK {
-                zerr("parse error: expected `}'");
+                set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
                 return None;
             }
             zshlex(); // c:1469 — consume }
@@ -2352,7 +2405,10 @@ fn par_if() -> Option<ZshCommand> {
         // a brace body with no separator also falls through (e.g. `} elif`,
         // `} else` on the same line). Because a brace arm never reaches the
         // loop-top `fi`-consume, it cannot steal an enclosing then-form's `fi`.
-        if this_arm_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
+        // ENDINPUT is NOT a separator: C breaks only on `tok == SEPER`, so
+        // `if [[ x ]] { y }` at end of input loops back and YYERRORs
+        // ("parse error near `}'"), exactly as zsh does.
+        if this_arm_brace && matches!(tok(), SEPER | NEWLIN | SEMI) {
             break;
         }
         // c:1481 — the SHORTLOOPS arm ends with `break;` (with xtok still FI
@@ -2375,7 +2431,7 @@ fn par_if() -> Option<ZshCommand> {
             zshlex(); // consume {
             let b = parse_program_until(Some(&[OUTBRACE_TOK]), false);
             if tok() != OUTBRACE_TOK {
-                zerr("parse error: expected `}'");
+                set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
                 return None;
             }
             zshlex(); // consume }
@@ -2384,7 +2440,7 @@ fn par_if() -> Option<ZshCommand> {
             // c:1498-1502 — then-form else, stops at and consumes `fi`.
             let b = parse_program_until(Some(&[FI]), false);
             if tok() != FI {
-                zerr("parse error: unterminated if");
+                set_tok(LEXERR); // c:1503 YYERRORV(oecused)
                 return None;
             }
             zshlex(); // consume fi
@@ -2397,7 +2453,7 @@ fn par_if() -> Option<ZshCommand> {
     let cond = match if_cond {
         Some(c) => c,
         None => {
-            zerr("parse error: empty if");
+            set_tok(LEXERR); // c:87 YYERRORV(oecused)
             return None;
         }
     };
@@ -2486,7 +2542,7 @@ fn par_repeat() -> Option<ZshCommand> {
             c
         }
         _ => {
-            zerr("expected count after repeat");
+            set_tok(LEXERR); // c:1575 YYERRORV(oecused)
             return None;
         }
     };
@@ -2531,7 +2587,7 @@ fn par_subsh(zsh_construct: bool) -> Option<ZshCommand> {
     // emits two INPARs), which is why `((1` reached the command layer and
     // reported `command not found: 1` instead of a parse error.
     if tok() != OUTPAR_TOK {
-        yyerror(0); // c:1631 YYERRORV — sets ERRFLAG_ERROR (c:2751)
+        set_tok(LEXERR); // c:1631 YYERRORV(oecused)
         return None;
     }
     set_incmdpos(!zsh_construct); // c:1632
@@ -2754,7 +2810,9 @@ fn par_funcdef() -> Option<ZshCommand> {
                 .and_then(|s| s.bytes().next())
                 .unwrap_or(b' ');
             if !matches!(next_byte, b' ' | b'\t' | b'\n' | b';') {
-                zerr("parse error near `}'"); // c:Src/parse.c YYERRORV
+                // c:1735 YYERRORV(oecused) — par_event's yyerror names
+                // zshlextext (`function {` at end of input → near `{').
+                set_tok(LEXERR); // c:87 `tok = LEXERR`
                 return None;
             }
         }
@@ -2769,7 +2827,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         // so `function f { echo hi` doesn't silently register a half-
         // parsed body. Bug #405.
         if tok() != OUTBRACE_TOK {
-            zerr("parse error: expected `}'");
+            set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
             return None;
         }
         // See the matching `NAME ()` arm below and Bug #642: slice
@@ -2835,7 +2893,7 @@ fn par_funcdef() -> Option<ZshCommand> {
     } else if unset(SHORTLOOPS) {
         // c:Src/parse.c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
         // Braceless short body (`function f () CMD`) requires SHORTLOOPS.
-        zerr("parse error: short function body form requires SHORTLOOPS option");
+        set_tok(LEXERR); // c:1746 YYERRORV(oecused)
         None
     } else {
         // c:Src/parse.c:1747-1748 — `else par_list1(&c)`. The short body
@@ -2908,14 +2966,16 @@ fn par_time() -> Option<ZshCommand> {
 /// condition wordcode then advances past `]]`.
 pub fn par_dinbrack() -> Option<()> {
     // c:1810
+    let oecused = ECUSED.get(); // c:1812 `int oecused = ecused;`
     set_incond(1); // c:1814
     set_incmdpos(false); // c:1815
     zshlex(); // c:1816
     let _ = par_cond(); // c:1817
     if tok() != DOUTBRACK {
         // c:1818
-        crate::ported::utils::zerr("missing ]]");
-        yyerror(0);
+        // c:1819 — `YYERROR(oecused);`
+        set_tok(LEXERR);
+        ECUSED.set(oecused);
         return None;
     }
     set_incond(0); // c:1820
@@ -3078,6 +3138,13 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 }
                 // Check for function definition foo() { ... }
                 if words.len() == 1 && tok() == INOUTPAR {
+                    // c:2058-2060 — `/* Error if preceding assignments */
+                    // if (assignments || postassigns) YYERROR(oecused);` —
+                    // `x=1 f() { … }` is a parse error, not a definition.
+                    if !assigns.is_empty() {
+                        set_tok(LEXERR); // c:2060 YYERROR(oecused)
+                        return None;
+                    }
                     // The ALIAS_FUNC_DEF gate applies to EVERY route into the
                     // funcdef body, not just the match arm below; this early
                     // return is the single-word shape.
@@ -3160,7 +3227,14 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // `f1 f2() { ... }` defines f1 AND f2 to the same
                 // body, but only when MULTIFUNCDEF is set.
                 if !isset(MULTIFUNCDEF) && words.len() > 1 {
-                    zerr("parse error: multiple names in function definition without MULTIFUNCDEF");
+                    set_tok(LEXERR); // c:2057 YYERROR(oecused)
+                    return None;
+                }
+                // c:2058-2060 — `/* Error if preceding assignments */ if
+                // (assignments || postassigns) YYERROR(oecused);` —
+                // `x=1 f() { … }` is a parse error, not a definition.
+                if !assigns.is_empty() {
+                    set_tok(LEXERR); // c:2060 YYERROR(oecused)
                     return None;
                 }
                 // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
@@ -3475,9 +3549,7 @@ pub fn par_cond_2() -> i32 {
             condlex();
         }
         if tok() != OUTPAR_TOK {
-            crate::ported::utils::zerr("missing )");
-            yyerror(0);
-            return 0;
+            YYERROR!(ECUSED.get()); // c:2544 `YYERROR(ecused);`
         }
         condlex();
         return r;
@@ -3517,9 +3589,7 @@ pub fn par_cond_2() -> i32 {
             }
             return par_cond_double("-n", &s1);
         }
-        crate::ported::utils::zerr("condition expected");
-        yyerror(0);
-        return 0;
+        YYERROR!(ECUSED.get()); // c:2560 `YYERROR(ecused);`
     }
     condlex();
     while COND_SEP() {
@@ -3533,9 +3603,7 @@ pub fn par_cond_2() -> i32 {
             condlex();
         }
         if tok() != STRING_LEX {
-            crate::ported::utils::zerr("string expected");
-            yyerror(0);
-            return 0;
+            YYERROR!(ECUSED.get()); // c:2577 `YYERROR(ecused);`
         }
         let s3 = tokstr().unwrap_or_default();
         condlex();
@@ -3560,9 +3628,7 @@ pub fn par_cond_2() -> i32 {
             }
             return par_cond_multi(&s1, &[]);
         }
-        crate::ported::utils::zerr("syntax error");
-        yyerror(0);
-        return 0;
+        YYERROR!(ECUSED.get()); // c:2596 `YYERROR(ecused);`
     }
     let s2 = tokstr().unwrap_or_default();
     set_incond(incond() + 1);
@@ -6744,7 +6810,7 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
 /// Port of `par_for` from `Src/parse.c:1087` — C decl `par_for(int *cmplx)`. Rust fn `par_for_wordcode` is the wordcode-emitting variant.
 pub fn par_for_wordcode(cmplx: &mut i32) {
     // c:1089 — `int oecused = ecused, csh = (tok == FOREACH), p, sel = (tok == SELECT);`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let csh = tok() == FOREACH;
     let sel = tok() == SELECT;
     let p: usize;
@@ -6766,8 +6832,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1099-1100 — `if (tok != DINPAR) YYERRORV(oecused);`
         if tok() != DINPAR {
-            zerr("par_for: expected init");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1101 — `ecstr(tokstr);`
         ecstr(&tokstr().unwrap_or_default());
@@ -6775,8 +6840,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1103-1104
         if tok() != DINPAR {
-            zerr("par_for: expected cond");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1105
         ecstr(&tokstr().unwrap_or_default());
@@ -6784,8 +6848,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1107-1108
         if tok() != DOUTPAR {
-            zerr("par_for: expected ))");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1109
         ecstr(&tokstr().unwrap_or_default());
@@ -6808,8 +6871,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         set_infor(0);
         // c:1117-1118 — `if (tok != STRING || !isident(tokstr)) YYERRORV(oecused);`
         if tok() != STRING_LEX || !crate::ported::params::isident(&tokstr().unwrap_or_default()) {
-            zerr("par_for: expected identifier");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1119-1120 — `if (!sel) np = ecadd(0);`
         if !sel {
@@ -6840,8 +6902,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             {
                 set_noaliases(ona);
                 set_nocorrect(onc);
-                zerr("par_for: expected identifier in name list");
-                return;
+                YYERRORV!(oecused);
             }
         }
         // c:1137-1138 — `noaliases = ona; nocorrect = onc;`
@@ -6871,8 +6932,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             let n2 = par_wordlist_wordcode();
             // c:1149-1150 — `if (tok != SEPER) YYERRORV(oecused);`
             if tok() != SEPER {
-                zerr("par_for: expected separator after `in`");
-                return;
+                YYERRORV!(oecused);
             }
             // c:1151 — `ecbuf[np] = n;`
             ECBUF.with_borrow_mut(|b| {
@@ -6892,8 +6952,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             let n2 = par_nl_wordlist_wordcode();
             // c:1158-1159 — `if (tok != OUTPAR) YYERRORV(oecused);`
             if tok() != OUTPAR_TOK {
-                zerr("par_for: expected `)`");
-                return;
+                YYERRORV!(oecused);
             }
             // c:1160 — `ecbuf[np] = n;`
             ECBUF.with_borrow_mut(|b| {
@@ -6919,7 +6978,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
     }
     // c:1170-1193 — body dispatch (inline in C, factored here for
     // reuse by par_while/par_repeat — same control flow, same calls).
-    par_loop_body_wordcode(cmplx, csh);
+    par_loop_body_wordcode(cmplx, csh, oecused);
     // c:1195-1197 — `ecbuf[p] = (sel ? WCB_SELECT(...) : WCB_FOR(...));`
     let used = ECUSED.get() as usize;
     let off = used.saturating_sub(1 + p) as wordcode;
@@ -6978,14 +7037,13 @@ fn par_nl_wordlist_wordcode() -> u32 {
 /// factored out because all three Rust wordcode emitters need it.
 /// Body dispatch shared by par_for / par_while / par_repeat.
 /// Direct port of `Src/parse.c:1170-1194`.
-fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
+fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool, oecused: usize) {
     if tok() == DOLOOP {
         zshlex();
         // c:1172 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != DONE {
-            zerr("missing `done`");
-            return;
+            YYERRORV!(oecused);
         }
         set_incmdpos(false);
         zshlex();
@@ -6994,8 +7052,7 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
         // c:1179 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != OUTBRACE_TOK {
-            zerr("missing `}`");
-            return;
+            YYERRORV!(oecused);
         }
         set_incmdpos(false);
         zshlex();
@@ -7003,13 +7060,12 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
         // c:1185 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            zerr("missing `end`");
-            return;
+            YYERRORV!(oecused);
         }
         set_incmdpos(false);
         zshlex();
     } else if unset(SHORTLOOPS) {
-        zerr("short loop form requires SHORTLOOPS");
+        YYERRORV!(oecused);
     } else {
         // c:1193 — `par_save_list1(cmplx);`
         par_save_list1_wordcode(cmplx);
@@ -7029,7 +7085,7 @@ pub fn par_select_wordcode(cmplx: &mut i32) {
 /// Port of `par_case` from `Src/parse.c:1209` — C decl `par_case(int *cmplx)`. Rust fn `par_case_wordcode` is the wordcode-emitting variant.
 pub fn par_case_wordcode(_cmplx: &mut i32) {
     // c:1211 — `int oecused = ecused, brflag, p, pp, palts, type, nalts;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let brflag: bool;
     let p: usize;
     let mut pp: usize;
@@ -7049,8 +7105,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
     zshlex();
     // c:1218-1219 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
-        zerr("par_case: expected scrutinee");
-        return;
+        YYERRORV!(oecused);
     }
     // c:1220 — `ecstr(tokstr);`
     ecstr(&tokstr().unwrap_or_default());
@@ -7074,8 +7129,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         // c:1231-1233 — restore noaliases/nocorrect + ERROR
         set_noaliases(ona);
         set_nocorrect(onc);
-        zerr("par_case: expected `in` or `{`");
-        return;
+        YYERRORV!(oecused);
     }
     // c:1235 — `brflag = (tok == INBRACE);`
     brflag = tok() == INBRACE_TOK;
@@ -7115,8 +7169,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         } else {
             // c:1256-1257 — `if (tok != STRING) YYERRORV(oecused);`
             if tok() != STRING_LEX {
-                zerr("par_case: expected pattern");
-                return;
+                YYERRORV!(oecused);
             }
             // c:1258-1259 — `if (!strcmp(tokstr, "esac")) break;`
             if tokstr().as_deref() == Some("esac") {
@@ -7230,8 +7283,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
                     // c:1345-1346 — `if (*s || pct || s == str)
                     // YYERRORV(oecused);`
                     if early_break || pct != 0 || chars.is_empty() {
-                        zerr("par_case: expected `)` or `|`");
-                        return;
+                        YYERRORV!(oecused);
                     }
                     // c:1347-1352 — strip surrounding `(...)`.
                     chars.pop();
@@ -7251,8 +7303,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
                     break;
                 }
                 // c:1358 — `YYERRORV(oecused);`
-                zerr("par_case: expected `)` or `|`");
-                return;
+                YYERRORV!(oecused);
             }
 
             // c:1359 — `zshlex();`
@@ -7270,8 +7321,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
                 }
                 _ => {
                     // c:1374-1376 — `YYERRORV(oecused);`
-                    zerr("par_case: expected pattern, `)` or `|`");
-                    return;
+                    YYERRORV!(oecused);
                 }
             }
         }
@@ -7300,8 +7350,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         }
         // c:1389-1390 — `if (tok != DSEMI && tok != SEMIAMP && tok != SEMIBAR) YYERRORV;`
         if tok() != DSEMI && tok() != SEMIAMP && tok() != SEMIBAR {
-            zerr("par_case: expected `;;`, `;&`, or `;|`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1391 — `incasepat = 1;`
         set_incasepat(1);
@@ -7327,7 +7376,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
 /// Port of `par_if` from `Src/parse.c:1411` — C decl `par_if(int *cmplx)`. Rust fn `par_if_wordcode` is the wordcode-emitting variant.
 pub fn par_if_wordcode(cmplx: &mut i32) {
     // c:1413 — `int oecused = ecused, p, pp, type, usebrace = 0;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let p: usize;
     let mut pp: usize = 0;
     let mut r#type: wordcode = WC_IF_IF;
@@ -7370,8 +7419,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         // c:1432-1435 — `if (!(xtok == IF || xtok == ELIF)) { cmdpop(); YYERRORV; }`
         if !(xtok == IF || xtok == ELIF) {
             cmdpop();
-            zerr("par_if: expected `if` or `elif`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1436 — `pp = ecadd(0);`
         pp = ecadd(0);
@@ -7384,8 +7432,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop(); YYERRORV; }`
         if tok() == ENDINPUT {
             cmdpop();
-            zerr("par_if: unexpected end-of-input after condition");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1444-1445 — `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
@@ -7437,8 +7484,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1463-1466 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
             if tok() != OUTBRACE_TOK {
                 cmdpop();
-                zerr("par_if: expected `}`");
-                return;
+                YYERRORV!(oecused);
             }
             // c:1467 — `ecbuf[pp] = WCB_IF(type, ecused - 1 - pp);`
             let used = ECUSED.get() as usize;
@@ -7458,8 +7504,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         } else if unset(SHORTLOOPS) {
             // c:1474-1476 — `cmdpop(); YYERRORV;`
             cmdpop();
-            zerr("par_if: short body requires SHORTLOOPS");
-            return;
+            YYERRORV!(oecused);
         } else {
             // c:1477-1484 — short loop form
             // c:1478 — `cmdpop();`
@@ -7500,8 +7545,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1495-1498 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
             if tok() != OUTBRACE_TOK {
                 cmdpop();
-                zerr("par_if: else expected `}`");
-                return;
+                YYERRORV!(oecused);
             }
         } else {
             // c:1500 — `par_save_list(cmplx);`
@@ -7509,8 +7553,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1501-1504 — `if (tok != FI) { cmdpop(); YYERRORV; }`
             if tok() != FI {
                 cmdpop();
-                zerr("par_if: else expected `fi`");
-                return;
+                YYERRORV!(oecused);
             }
         }
         // c:1506 — `incmdpos = 0;`
@@ -7535,7 +7578,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
 /// Port of `par_while` from `Src/parse.c:1521` — C decl `par_while(int *cmplx)`. Rust fn `par_while_wordcode` is the wordcode-emitting variant.
 pub fn par_while_wordcode(cmplx: &mut i32) {
     // c:1523 — `int oecused = ecused, p;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let p: usize;
     // c:1524 — `int type = (tok == UNTIL ? WC_WHILE_UNTIL : WC_WHILE_WHILE);`
     let r#type: wordcode = if tok() == UNTIL {
@@ -7566,8 +7609,7 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         par_save_list_wordcode(cmplx);
         // c:1535-1536 — `if (tok != DONE) YYERRORV(oecused);`
         if tok() != DONE {
-            zerr("par_while: expected `done`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1537 — `incmdpos = 0;`
         set_incmdpos(false);
@@ -7580,8 +7622,7 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         par_save_list_wordcode(cmplx);
         // c:1542-1543 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            zerr("par_while: expected `}`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1544 — `incmdpos = 0;`
         set_incmdpos(false);
@@ -7591,14 +7632,12 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         // c:1546-1550
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            zerr("par_while: expected `end`");
-            return;
+            YYERRORV!(oecused);
         }
         zshlex();
     } else if unset(SHORTLOOPS) {
         // c:1551-1552 — `YYERRORV(oecused);`
-        zerr("par_while: short body requires SHORTLOOPS");
-        return;
+        YYERRORV!(oecused);
     } else {
         // c:1554 — `par_save_list1(cmplx);`
         par_save_list1_wordcode(cmplx);
@@ -7625,7 +7664,7 @@ pub fn par_until_wordcode(cmplx: &mut i32) {
 pub fn par_repeat_wordcode(cmplx: &mut i32) {
     // c:1567 — `/* ### what to do about inrepeat_ here? */`
     // c:1568 — `int oecused = ecused, p;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let p: usize;
 
     // c:1570 — `p = ecadd(0);`
@@ -7637,8 +7676,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
     zshlex();
     // c:1574-1575 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
-        zerr("par_repeat: expected count");
-        return;
+        YYERRORV!(oecused);
     }
     // c:1576 — `ecstr(tokstr);`
     ecstr(&tokstr().unwrap_or_default());
@@ -7656,8 +7694,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         zshlex();
         par_save_list_wordcode(cmplx);
         if tok() != DONE {
-            zerr("par_repeat: expected `done`");
-            return;
+            YYERRORV!(oecused);
         }
         set_incmdpos(false);
         zshlex();
@@ -7666,8 +7703,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         zshlex();
         par_save_list_wordcode(cmplx);
         if tok() != OUTBRACE_TOK {
-            zerr("par_repeat: expected `}`");
-            return;
+            YYERRORV!(oecused);
         }
         set_incmdpos(false);
         zshlex();
@@ -7675,15 +7711,13 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         // c:1596-1599
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            zerr("par_repeat: expected `end`");
-            return;
+            YYERRORV!(oecused);
         }
         zshlex();
     } else if unset(SHORTLOOPS) && unset(SHORTREPEAT) {
         // c:1601-1602 — par_repeat needs BOTH SHORTLOOPS and SHORTREPEAT
         // unset to refuse short form (more permissive than par_while).
-        zerr("par_repeat: short body requires SHORTLOOPS or SHORTREPEAT");
-        return;
+        YYERRORV!(oecused);
     } else {
         // c:1604 — `par_save_list1(cmplx);`
         par_save_list1_wordcode(cmplx);
@@ -7708,7 +7742,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
 /// the enclosing scope's `ecnpats` accumulator (parse.c:1723-1758).
 pub fn par_funcdef_wordcode(cmplx: &mut i32) {
     // c:1674 — `int oecused = ecused, num = 0, onp, p, c = 0;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let mut num: i32 = 0;
     let onp: i32;
     let p: usize;
@@ -7841,8 +7875,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
             set_lineno(lineno() + oldlineno);
             ECNPATS.with(|cc| cc.set(onp));
             ECSSUB.set(oecssub);
-            zerr("par_funcdef: expected `}`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1737-1740 — `if (num == 0) { incmdpos = 0; }`
         if num == 0 {
@@ -7855,8 +7888,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
         set_lineno(lineno() + oldlineno);
         ECNPATS.with(|cc| cc.set(onp));
         ECSSUB.set(oecssub);
-        zerr("par_funcdef: short body requires SHORTLOOPS");
-        return;
+        YYERRORV!(oecused);
     } else {
         // c:1748 — `par_list1(&c);`
         par_list1_wordcode(&mut c);
@@ -7932,7 +7964,7 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
     // c:1621 — `enum lextok otok = tok;`
     let otok = tok();
     // c:1622 — `int oecused = ecused, p, pp;`
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let p: usize;
     let pp: usize;
 
@@ -7956,8 +7988,7 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
             OUTBRACE_TOK
         })
     {
-        zerr("par_subsh: missing closing token");
-        return;
+        YYERRORV!(oecused);
     }
     // c:1632 — `incmdpos = !zsh_construct;`
     set_incmdpos(zsh_construct == 0);
@@ -7984,8 +8015,7 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1643-1644 — `if (tok != INBRACE) YYERRORV(oecused);`
         if tok() != INBRACE_TOK {
-            zerr("par_subsh: 'always' expects `{`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1645 — `cmdpop();`
         cmdpop();
@@ -8006,8 +8036,7 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            zerr("par_subsh: 'always' block missing `}`");
-            return;
+            YYERRORV!(oecused);
         }
         // c:1657 — `zshlex();`
         zshlex();
@@ -8093,8 +8122,7 @@ pub fn par_cond_wordcode() {
     // c:1818-1819 — `if (tok != DOUTBRACK) YYERRORV(oecused);`
     if tok() != DOUTBRACK {
         let _ = oecused;
-        zerr("missing ]]");
-        return;
+        YYERRORV!(oecused);
     }
     // c:1820 — `incond = 0;`
     set_incond(0);
@@ -8147,7 +8175,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
     //   is_typeset = 0;`
     // c is the SAVED initial cmplx so INOUTPAR can restore via
     // `*cmplx = c;` at c:2070.
-    let _oecused = ECUSED.get() as usize;
+    let oecused = ECUSED.get() as usize;
     let c_saved = *cmplx;
     let mut isnull = true;
     let mut argc: u32 = 0;
@@ -8303,8 +8331,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 cmdpop();
                 // c:1904-1905 — `if (tok != OUTPAR) YYERROR(oecused);`
                 if tok() != OUTPAR_TOK {
-                    zerr("par_simple: expected `)' after array assignment");
-                    return 0;
+                    YYERROR!(oecused);
                 }
                 // c:1906 — `incmdpos = oldcmdpos;`
                 set_incmdpos(oldcmdpos);
@@ -8334,8 +8361,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
 
     // c:1920-1921 — `if (tok == AMPER || tok == AMPERBANG) YYERROR;`
     if tok() == AMPER || tok() == AMPERBANG {
-        zerr("par_simple: unexpected &");
-        return 0;
+        YYERROR!(oecused);
     }
 
     // c:1923 — `p = ecadd(WCB_SIMPLE(0));`
@@ -8542,8 +8568,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 cmdpop();
                 set_intypeset(true);
                 if tok() != OUTPAR_TOK {
-                    zerr("expected `)' after array assignment");
-                    return 0;
+                    YYERROR!(oecused);
                 }
                 isnull = false;
                 zshlex();
@@ -8571,13 +8596,11 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let oecssub = ECSSUB.get();
                 // c:2055-2057 — `if (!isset(MULTIFUNCDEF) && argc > 1) YYERROR;`
                 if !isset(MULTIFUNCDEF) && argc > 1 {
-                    zerr("par_simple: too many function names for funcdef");
-                    return 0;
+                    YYERROR!(oecused);
                 }
                 // c:2058-2060 — `if (assignments || postassigns) YYERROR;`
                 if assignments || postassigns > 0 {
-                    zerr("par_simple: assignments before funcdef");
-                    return 0;
+                    YYERROR!(oecused);
                 }
                 // c:2061-2068 — hasalias check + zwarn — skipped (no
                 // alias tracking on the wordcode path).
@@ -8639,8 +8662,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                         set_lineno(lineno() + oldlineno);
                         ECNPATS.with(|cc| cc.set(onp));
                         ECSSUB.set(oecssub);
-                        zerr("par_simple: funcdef expected `}`");
-                        return 0;
+                        YYERROR!(oecused);
                     }
                     // c:2102-2105 — `if (argc == 0) incmdpos = 0;`
                     if argc == 0 {
@@ -8659,8 +8681,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                     let ok = par_cmd_wordcode(&mut body_c, if argc == 0 { 1 } else { 0 });
                     if !ok {
                         cmdpop();
-                        zerr("par_simple: funcdef short-body: missing command");
-                        return 0;
+                        YYERROR!(oecused);
                     }
                     if argc == 0 {
                         // c:2118-2127 — anonymous funcdef may take args
@@ -8930,8 +8951,7 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
             let htype = r#type;
             // c:2260-2261 — `if (strchr(tokstr, '\n')) YYERROR(ecused);`
             if name.contains('\n') {
-                zerr("here-doc terminator contains newline");
-                return 0;
+                YYERROR!(ECUSED.get());
             }
             // c:2263-2273 — `ncodes = 5; if (idstring) { type |= MASK; ncodes = 6; }`
             if idstring.is_some() {
@@ -8991,8 +9011,7 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
                 r#type = REDIR_OUTPIPE;
             } else if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
                 // c:2306-2307 — `else if (tokstr[0] == Inang && tokstr[1] == Inpar) YYERROR;`
-                zerr("par_redir: < before >");
-                return 0;
+                YYERROR!(ECUSED.get());
             }
         }
         // c:2309-2315 — REDIR_READ
@@ -9001,8 +9020,7 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
             if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
                 r#type = REDIR_INPIPE;
             } else if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
-                zerr("par_redir: > before <");
-                return 0;
+                YYERROR!(ECUSED.get());
             }
         }
         // c:2316-2320 — REDIR_READWRITE
@@ -9897,7 +9915,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get init: Dinpar "i=0"
 
     if tok() != DINPAR {
-        zerr("expected init expression in for ((");
+        set_tok(LEXERR); // c:1100 YYERRORV(oecused)
         return None;
     }
     let init = tokstr().unwrap_or_default();
@@ -9905,7 +9923,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get cond: Dinpar "i<10"
 
     if tok() != DINPAR {
-        zerr("expected condition in for ((");
+        set_tok(LEXERR); // c:1104 YYERRORV(oecused)
         return None;
     }
     let cond = tokstr().unwrap_or_default();
@@ -9913,7 +9931,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get step: Doutpar "i++"
 
     if tok() != DOUTPAR {
-        zerr("expected )) in for");
+        set_tok(LEXERR); // c:1108 YYERRORV(oecused)
         return None;
     }
     let step = tokstr().unwrap_or_default();
@@ -9997,7 +10015,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         // a command (which then failed "command not found") instead
         // of erroring at parse time. Bug #403, #404.
         if tok() != DONE {
-            zerr("parse error: expected `done'");
+            set_tok(LEXERR); // c:1174 YYERRORV(oecused)
             return None;
         }
         // c:1175 / c:1537 / c:1586 — `incmdpos = 0; zshlex();`: the word after
@@ -10012,7 +10030,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
         // c:Src/parse.c:1186 / :1539 — `if (tok != OUTBRACE) YYERRORV`.
         if tok() != OUTBRACE_TOK {
-            zerr("parse error: expected `}'");
+            set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
             return None;
         }
         // c:1182 / c:1544 — the brace form clears incmdpos the same way.
@@ -10024,7 +10042,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         let body = parse_program_until(Some(&[ZEND]), false);
         // c:1190 / 1548 — `if (tok != ZEND) YYERRORV`.
         if tok() != ZEND {
-            zerr("parse error: expected `end'");
+            set_tok(LEXERR); // c:1187 YYERRORV(oecused)
             return None;
         }
         zshlex();
@@ -10113,7 +10131,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     let (body, body_source) = if tok() != INBRACE_TOK {
         if unset(SHORTLOOPS) {
             // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
-            zerr("parse error: short function body form requires SHORTLOOPS option");
+            set_tok(LEXERR); // c:1746 YYERRORV(oecused)
             return None;
         }
         // c:2114 — `par_cmd(&c, argc == 0)`: for an anonymous function
@@ -10160,7 +10178,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
         // gate as the named-funcdef path. Bug #405 sibling.
         if tok() != OUTBRACE_TOK {
-            zerr("parse error: expected `}'");
+            set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
             return None;
         }
         // c:2102-2105 — `if (argc == 0) { /* Anonymous function, possibly
@@ -10248,13 +10266,10 @@ fn parse_cursh(zsh_construct: bool) -> Option<ZshCommand> {
     // previous behavior silently returned `Cursh(prog)` and ran the
     // body as if the braces were absent. Bug #167 in docs/BUGS.md.
     if tok() != OUTBRACE_TOK {
-        // Reuse the "parse error near `<tok>'" shape from #142/#161.
-        // The offending token is whatever follows the unclosed brace
-        // body. For EOF (`{ echo a` at end of input) C zsh errors
-        // near the LAST consumed body token; we use the current
-        // tokstr() or fall back to a "}" hint.
-        let near = tokstr().unwrap_or_else(|| "}".to_string());
-        zerr(&format!("parse error near `{}'", near));
+        // c:1630-1631 — `YYERRORV(oecused)`: flag LEXERR and let
+        // par_event's yyerror name `zshlextext`, the last token lexed
+        // (`{ print` → near `print', `{ print;` → near `;').
+        set_tok(LEXERR); // c:87 `tok = LEXERR`
         return None;
     }
     // Check for { ... } always { ... }. Direct port of zsh's
@@ -10278,19 +10293,26 @@ fn parse_cursh(zsh_construct: bool) -> Option<ZshCommand> {
                 zshlex();
                 skip_separators();
 
-                if tok() == INBRACE_TOK {
-                    zshlex();
-                    // c:Src/parse.c — always-clause body terminates at
-                    // OUTBRACE_TOK. Bug #167/#168 family.
-                    let always = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-                    if tok() == OUTBRACE_TOK {
-                        zshlex();
-                    }
-                    return Some(ZshCommand::Try(ZshTry {
-                        try_block: Box::new(prog),
-                        always: Box::new(always),
-                    }));
+                // c:1643-1644 — `if (tok != INBRACE) YYERRORV(oecused);`
+                if tok() != INBRACE_TOK {
+                    set_tok(LEXERR); // c:87 `tok = LEXERR`
+                    return None;
                 }
+                zshlex();
+                // c:Src/parse.c — always-clause body terminates at
+                // OUTBRACE_TOK. Bug #167/#168 family.
+                let always = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+                set_incmdpos(true); // c:1653 `incmdpos = 1;`
+                // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
+                if tok() != OUTBRACE_TOK {
+                    set_tok(LEXERR); // c:87 `tok = LEXERR`
+                    return None;
+                }
+                zshlex();
+                return Some(ZshCommand::Try(ZshTry {
+                    try_block: Box::new(prog),
+                    always: Box::new(always),
+                }));
             }
         }
     }
@@ -10349,7 +10371,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // silently registered as a complete fn with body `echo hi`.
         // Bug #405.
         if tok() != OUTBRACE_TOK {
-            zerr("parse error: expected `}'");
+            set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
             return None;
         }
         // Slice THROUGH pos() (not `pos()-1`). pos() sits just past the
@@ -10401,7 +10423,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // accepted when SHORTLOOPS is set. parse_init seeds
         // SHORTLOOPS=on so this fires only when a script
         // explicitly disabled the option.
-        zerr("parse error: short function body form requires SHORTLOOPS option");
+        set_tok(LEXERR); // c:1746 YYERRORV(oecused)
         None
     } else {
         // Slice the raw short-body text (unbraced_body_start was captured
@@ -10461,8 +10483,18 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
             // and the script ran on with status 0. c:2071 `lineno = 0;` is
             // never undone on this path (only the brace arm's c:2097 adds
             // `oldlineno` back), so the diagnostic carries no line number.
+            //
+            // That holds only when par_cmd itself returns 0 (nothing
+            // parsed: `f()` at end of input). A compound body that fails
+            // INSIDE (`f() ( :`, `f() if`) YYERRORs in its own parser while
+            // par_cmd still returns 1 (c:958-1060 `break`s after every
+            // compound), so C runs on to c:2172 `lineno += oldlineno` and
+            // the message keeps its line. A sub-construct failure is the
+            // one that already left `tok == LEXERR`.
             None => {
-                set_lineno(0);
+                if tok() != LEXERR {
+                    set_lineno(0);
+                }
                 set_tok(LEXERR);
                 None
             }
