@@ -1946,6 +1946,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
     let mut in_brace_param = 0;
+    // c:941 — `in_pattern = 0`: inside `${name/pat/repl}` it is 2 right
+    // after an operator slash, 1 while the PATTERN is read, and 0 again once
+    // the separating `/` has passed. It lets a single-quoted `/` in the
+    // pattern be Bnull-escaped (c:1309-1310) so it is not the separator.
+    let mut in_pattern: i32 = 0;
     // c:940 — `int cmdsubst = 0;`. Tracks whether we entered the
     // brace from `$(...)` command substitution (relevant for the
     // IGNOREBRACES check at lex.c:1138).
@@ -2173,7 +2178,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                         }
                                     }
                                 }
-                                Some(ch) => add(ch),
+                                Some(ch) => {
+                                    // c:1309-1310 — the same `else if (in_pattern
+                                    // && c == '/') add(Bnull);` leg as a plain
+                                    // `'…'`: `${s/$'/'/W}` searches for `/`.
+                                    if in_pattern != 0 && ch == '/' {
+                                        add(Bnull);
+                                    }
+                                    add(ch)
+                                }
                                 None => {
                                     LEX_LEXSTOP.set(true);
                                     unmatched = '\'';
@@ -2431,6 +2444,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                         in_brace_param = 0;
                         cmdsubst = false;
+                        in_pattern = 0; // c:1163
                     }
                     bct -= 1;
                     add(Outbrace);
@@ -2525,8 +2539,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             // so isnumglob still fires below — but cond /
                             // case patterns stay raw.
                             add(c);
-                        } else if isnumglob() {
-                            // c:1201
+                        } else if in_brace_param == 0 && isnumglob() {
+                            // c:1201 — `if (!in_brace_param && isnumglob())`:
+                            // inside `${…}` a `<N-M>` stays literal text, so a
+                            // flag argument `${(l<3><->)…}` keeps its `<->`
+                            // (zsh 54437). A `//` pattern or `(r)` subscript
+                            // still matches it as a numeric range: those are
+                            // tokenized again before pattern compilation.
                             // c:1202-1206 — emit Inang…Outang markers.
                             add(Inang); // c:1202
                             while let Some(ch) = hgetc() {
@@ -2753,7 +2772,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                     break true; // c:1323 goto brk
                                 }
                             }
-                            Some(ch) => add(ch),
+                            Some(ch) => {
+                                // c:1309-1310 — `else if (in_pattern && c == '/')
+                                // add(Bnull);`: a quoted `/` in a `${v/pat/…}`
+                                // pattern is not the pattern/replacement separator.
+                                if in_pattern != 0 && ch == '/' {
+                                    add(Bnull);
+                                }
+                                add(ch)
+                            }
                             None => {
                                 LEX_LEXSTOP.set(true);
                                 unmatched = '\'';
@@ -3012,6 +3039,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if c == '\n' && in_brace_param == 0 && pct == 0 && brct == 0 {
                     break;
                 }
+                // c:1412-1419 — `if (in_brace_param) { if (c == '/') {
+                // if (in_pattern == 0) in_pattern = 2; else --in_pattern; } }`
+                if in_brace_param > 0 && c == '/' {
+                    if in_pattern == 0 {
+                        in_pattern = 2; // c:1415
+                    } else {
+                        in_pattern -= 1; // c:1417
+                    }
+                }
                 // Multibyte UTF-8 codepoints (>= 256) pass through
                 // verbatim — lextok2 only maps the 256-entry byte
                 // table (C's `lextok2[STOUC(c)]` truncates to u8).
@@ -3043,6 +3079,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
         if intpos > 0 {
             intpos -= 1;
+        }
+        // c:1431-1432 — `else if (in_pattern == 2 && c != '/') in_pattern = 1;`
+        // (the `if` leg, the `${…|…}` cmdsubst push, needs a STRING char, so
+        // it never holds right after the `/` that set in_pattern to 2).
+        if in_pattern == 2 && c != '/' {
+            in_pattern = 1;
         }
     }
 

@@ -4609,10 +4609,10 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             // node, so `(M:t)` would mark THEN tail (effectively just
             // tail since the slash is gone). Faithful order.
             if let Some(ref m) = colon_mods {
-                // Delegate to canonical `modify()` port in subst.rs
-                // (Src/subst.c:4531). Local colon-modifier impl was
-                // an invented duplicate — removed.
-                s = crate::ported::subst::modify(&s, m);
+                // c:430-432 — `modify(&news, &mod, 1);` with no check of
+                // where `mod` stopped: an unknown modifier ends the chain
+                // silently (`*(:u:x:t)` is `*(:u)`); only paramsubst reports.
+                s = crate::ported::subst::modify(&s, m).0; // c:432 — tail ignored
             }
             s
         })
@@ -6694,97 +6694,67 @@ fn expand_comma(
 }
 
 fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> {
-    // c:2421-2470 — `if (!comma && isset(BRACECCL)) { /* {a-mnop} */`
+    // c:2424-2475 — `if (!comma && isset(BRACECCL)) { /* {a-mnop} */`
     //     "Here we expand each character to a separate node, but also
     //      ranges of characters like a-m.  ccl is a set of flags saying
     //      whether each character is present; the final list is in
     //      lexical order."
-    use crate::ported::zsh_h::{Meta, Pound};
-    use crate::ported::ztype_h::{imeta, itok};
-    // !!! RUST-ONLY adapter (no C counterpart) !!! C walks the metafied
-    // BYTES of the word. A zshrs word is a UTF-8 `str` holding tokens as
-    // chars U+0084..=U+00A1, a byte that is not valid UTF-8 as `Meta` +
-    // `byte ^ 32`, and NUL as a plain char. Rebuild C's byte string: a
-    // token is its one byte, a Meta pair stays a pair, and any other char
-    // contributes its UTF-8 bytes, metafied where C's would be (`imeta`,
-    // which includes NUL).
-    let mut str: Vec<u8> = Vec::with_capacity(content.len());
-    let mut chars = content.chars();
-    while let Some(c) = chars.next() {
+    // C's `ccl[256]` is indexed by byte; the set below is keyed by the
+    // character value, which is the same order for every single-byte
+    // character.
+    let pound = crate::ported::zsh_h::Pound as u32;
+    let meta = char::from(crate::ported::zsh_h::Meta);
+    // c:2437/2441 — `if (itok(c1 = *p++)) c1 = ztokens[c1 - Pound];`
+    let untok = |c: char| -> u32 {
         let cu = c as u32;
-        if cu == Meta as u32 {
-            str.push(Meta);
-            if let Some(n) = chars.next() {
-                str.push(n as u32 as u8);
-            }
-        } else if cu < 0x100 && itok(cu as u8) {
-            str.push(cu as u8);
+        if cu < 0x100 && crate::ported::ztype_h::itok(cu as u8) {
+            ZTOKENS.as_bytes()[(cu - pound) as usize] as u32
         } else {
-            let mut buf = [0u8; 4];
-            for &b in c.encode_utf8(&mut buf).as_bytes() {
-                if imeta(b) {
-                    str.push(Meta);
-                    str.push(b ^ 32);
-                } else {
-                    str.push(b);
-                }
-            }
-        }
-    }
-    let untok = |b: u8| -> u8 {
-        if itok(b) {
-            ZTOKENS.as_bytes()[(b - Pound as u8) as usize]
-        } else {
-            b
+            cu
         }
     };
-    let str2 = str.len();
-    let mut ccl = [false; 256]; // c:2426 `char ccl[256]`
-    let mut lastch: i32 = -1; // c:2429
+    let cs: Vec<char> = content.chars().collect();
+    let mut ccl: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new(); // c:2432
+    let mut lastch: i64 = -1; // c:2431
     let mut p = 0usize;
-    while p < str2 {
-        // c:2433
-        let mut c1 = untok(str[p]); // c:2434-2435
+    while p < cs.len() {
+        // c:2435
+        let mut c1 = untok(cs[p]); // c:2437-2438
         p += 1;
-        if c1 == Meta && p < str2 {
-            c1 = 32 ^ str[p]; // c:2436-2437 `c1 = 32 ^ *p++;`
+        if cs[p - 1] == meta && p < cs.len() {
+            c1 = cs[p] as u32 ^ 32; // c:2439-2440 `c1 = 32 ^ *p++;`
             p += 1;
         }
-        // c:2438-2441 — `if (itok(c2 = *p)) …; if ((char) c2 == Meta) c2 = 32 ^ p[1];`
-        let mut c2 = str.get(p).map_or(0, |&b| untok(b));
-        if c2 == Meta {
-            c2 = 32 ^ str.get(p + 1).copied().unwrap_or(0);
-        }
-        // c:2442-2446 — `if (IS_DASH((char)c1) && lastch >= 0 &&
+        // c:2441-2444 — peek the following character.
+        let c2: i64 = match cs.get(p) {
+            Some(&n) if n == meta => cs.get(p + 1).map_or(0, |&m| (m as u32 ^ 32) as i64),
+            Some(&n) => untok(n) as i64,
+            None => 0,
+        };
+        // c:2445-2449 — `if (IS_DASH((char)c1) && lastch >= 0 &&
         //                   p < str2 && lastch <= (int)c2)`
-        if c1 == b'-' && lastch >= 0 && p < str2 && lastch <= c2 as i32 {
-            while lastch < c2 as i32 {
-                ccl[lastch as usize] = true; // c:2445 `ccl[lastch++] = 1;`
+        if c1 == '-' as u32 && lastch >= 0 && p < cs.len() && lastch <= c2 {
+            while lastch < c2 {
+                ccl.insert(lastch as u32); // c:2447 `ccl[lastch++] = 1;`
                 lastch += 1;
             }
-            lastch = -1; // c:2446
+            lastch = -1; // c:2448
         } else {
-            lastch = c1 as i32; // c:2448 `ccl[lastch = c1] = 1;`
-            ccl[c1 as usize] = true;
+            lastch = c1 as i64; // c:2450 `ccl[lastch = c1] = 1;`
+            ccl.insert(c1);
         }
     }
-    // c:2452-2466 — walk ccl from the top, inserting each after `last`, so
-    // the list comes out in ascending byte order.
-    let mut results = Vec::new();
-    for c1 in 0..=255u8 {
-        if !ccl[c1 as usize] {
-            continue;
-        }
-        // c:2455-2463 — `if (imeta(c1)) { str[pl] = Meta; str[pl+1] = c1 ^ 32; }
-        // else str[pl] = c1;`. In zshrs' representation (see above) an ASCII
-        // byte, NUL included, is its own char, and any byte >= 0x80 is a
-        // lone non-UTF-8 byte, held as `Meta` + `byte ^ 32`. Emitting NUL as
-        // C's Meta pair left a stray Meta char in the word.
-        let mid = if c1 < 0x80 {
-            char::from(c1).to_string()
+    // c:2454-2471 — walk ccl from the top, inserting each after `last`,
+    // so the list comes out ascending; an imeta byte is re-metafied.
+    let mut results = Vec::with_capacity(ccl.len());
+    for c1 in ccl {
+        let mut mid = String::new();
+        if c1 < 0x100 && crate::ported::ztype_h::imeta(c1 as u8) {
+            mid.push(meta); // c:2460 `str[pl] = Meta;`
+            mid.push(char::from_u32(c1 ^ 32)?); // c:2461
         } else {
-            [char::from(Meta), char::from(c1 ^ 32)].iter().collect()
-        };
+            mid.push(char::from_u32(c1)?); // c:2465
+        }
         results.push(format!("{}{}{}", prefix, mid, suffix));
     }
     Some(results)

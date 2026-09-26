@@ -1907,3 +1907,101 @@ mod unbraced_hash_key_keeps_quotes {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:4720-4728 — modify() stops silently at a modifier it
+// cannot parse; only paramsubst's braced form reports it (c:3797-3801).
+// glob.c:432 ignores the leftover, so a glob qualifier's `:x` just ends
+// the chain.
+// ─────────────────────────────────────────────────────────────────────
+mod modify_unknown_modifier_scope {
+    use super::*;
+
+    /// zsh: `A.C` then `a.c`, rc 0.
+    #[test]
+    fn glob_qualifier_chain_stops_at_unknown_modifier() {
+        assert_parity(
+            r#"d=$(mktemp -d) && cd $d && touch a.c && print *(:u:x:t) && print *(:x:u); cd / && command rm -rf $d"#,
+        );
+    }
+
+    /// zsh: `unrecognized modifier `x'`, rc 1.
+    #[test]
+    fn braced_form_still_reports_it() {
+        assert_parity(r#"x=a.c; print ${x:u:x}"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/subst.c:245-275 — stringsubst runs a `=(…)` that begins a
+// default word (`${:-=(cmd)}`) through getoutputfile and splices the
+// temp-file name in. The port excised it unexecuted.
+// ─────────────────────────────────────────────────────────────────────
+mod procsubst_in_default_word {
+    use super::*;
+
+    /// zsh: `hi`, then `a b`, then `gone` (the temp file is unlinked when
+    /// the assignment finishes).
+    #[test]
+    fn equals_procsubst_default_word_runs() {
+        assert_parity(
+            r#"cat ${:-=(print hi)}; cat ${x:-=(print a b)}; f=${:-=(print q)}; [[ -e $f ]] || print gone"#,
+        );
+    }
+
+    /// c:Src/exec.c:4940-4950 — zsh: "unterminated `=(...)'", rc 1.
+    #[test]
+    fn unterminated_equals_procsubst_in_default_word() {
+        assert_parity(r#"print something=${:-=(echo 'C,D),(F,G)'}"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// c:Src/exec.c:5389-5390 — function NAME words are globbed on their glob
+// TOKENS only; a quoted `'*'` name is literal (D04parameter).
+// ─────────────────────────────────────────────────────────────────────
+mod quoted_glob_function_name {
+    use super::*;
+
+    /// zsh: `star 1` / `star 1` / `What a star`.
+    #[test]
+    fn quoted_star_function_name_is_not_globbed() {
+        assert_parity(
+            r#"function '*' { print star $#; }; \* a; "*" b; function "q*" { echo What a star; }; eval 'q\*'"#,
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Current zsh source (Src/lex.c, 54437 and 52202) — newer than the 5.9.2
+// reference, so these pin the expected text instead of diffing zsh.
+// ─────────────────────────────────────────────────────────────────────
+mod brace_param_lexer_current_source {
+    use super::*;
+
+    fn assert_zshrs(script: &str, want: &str) {
+        let r = run_zshrs(script);
+        assert_eq!(r.stdout, want, "script:\n{script}\nstderr: {}", r.stderr);
+        assert_eq!(r.exit, 0, "script:\n{script}\nstderr: {}", r.stderr);
+    }
+
+    /// c:Src/lex.c:1201 `if (!in_brace_param && isnumglob())` — `<->` in a
+    /// flag argument stays literal; the pattern forms still match numbers.
+    #[test]
+    fn numeric_glob_text_in_flag_argument() {
+        assert_zshrs(
+            r#"print -r - ${(l<3><->):-}; print -r - ${(l<3><1->):-}; str=abc123xyz; print -r - ${str//<->/.}; arr=(abc 123 xyz); print -r - ${arr[(r)<1->]}"#,
+            "---\n-1-\nabc.xyz\n123\n",
+        );
+    }
+
+    /// c:Src/lex.c:1309-1310 + c:Src/subst.c:3154-3160 — a quoted `/` in a
+    /// `${v/pat/repl}` pattern is part of the pattern, not the separator.
+    #[test]
+    fn quoted_slash_in_replace_pattern() {
+        assert_zshrs(
+            r#"slash=/; print -r -- x${slash/'/'}y x${slash/"/"}y; s=a/b/c; print -r -- ${s/'/'/X} ${s//'/'/X} ${s/'b/c'/X} ${s/"b/c"/Z} ${s/b/'/'}"#,
+            "xy xy\naXb/c aXbXc a/X a/Z a///c\n",
+        );
+    }
+}

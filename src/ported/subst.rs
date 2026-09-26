@@ -665,45 +665,35 @@ fn stringsubst(
             && chars.get(pos + 1) == Some(&Inpar)
         // c:237
         {
-            // c:237
-            // <(...) / >(...) / =(...) process / cmd substitution.
-            // The full port (getproc / getoutputfile) needs fork/exec
-            // and lives in Src/exec.c. Until that lands, skip the
-            // marker AND its parenthesized body so subsequent passes
-            // don't misinterpret the inner text as bare param/cmd
-            // substitution. Direct port of subst.c:248-274 layout —
-            // C calls getproc/getoutputfile then memcpy's the result;
-            // the no-op port still has to consume the same span.
+            // c:248-275 — `<(...)` / `>(...)` / `=(...)`: run the command
+            // (getproc / getoutputfile) and splice `str3[..str] + subst +
+            // rest`, rescanning from just after the substituted name. The
+            // port used to excise the span unexecuted, so `${:-=(echo hi)}`
+            // produced nothing.
+            let head: String = chars[..pos].iter().collect(); // c:251 str3len
+            let tail: String = chars[pos..].iter().collect(); // str
+            let mut rest_at: usize = 0;
+            let subst = if c == Inang || c == OUTANGPROC {
+                crate::ported::exec::getproc(&tail, Some(&mut rest_at)) // c:253
+            } else {
+                crate::ported::exec::getoutputfile(&tail, Some(&mut rest_at)) // c:255
+            };
             if errflag_set() {
-                // c:237
-                return None; // c:237
-            } // c:237
-              // Walk the matching close paren — depth-tracked so
-              // nested `<(echo $(...))` skips correctly. Includes the
-              // Inang/OUTANGPROC/Equals marker char itself.
-            let start = pos; // c:237
-            pos += 2; // c:237 (skip marker + Inpar)
-            let mut depth = 1_i32; // c:237
-            while pos < chars.len() && depth > 0 {
-                // c:237
-                let ch = chars[pos]; // c:237
-                if ch == Inpar {
-                    depth += 1;
-                }
-                // c:237
-                else if ch == Outpar {
-                    depth -= 1;
-                } // c:237
-                pos += 1; // c:237
-            } // c:237
-              // Excise the entire span (was producing junk output
-              // for `cat <(echo a) <(echo b)` because the half-skipped
-              // `(echo a)` parsed as cmd-subst).
-            chars.drain(start..pos); // c:237
-            str3 = chars.iter().collect(); // c:237
-            list.setdata(node_idx, str3.clone()); // c:237
-            pos = start; // c:237
-            continue; // c:237
+                // c:256
+                return None; // c:257
+            }
+            // c:258-259 — `if (!subst) rest = subst = "";`
+            let (subst, rest) = match subst {
+                Some(s) => (s, tail.get(rest_at..).unwrap_or("").to_string()),
+                None => (String::new(), String::new()),
+            };
+            // c:261-274 — `snew = str3[..str3len] + subst + rest;
+            // str3 = snew; str = snew + str3len + sublen; setdata(node, str3);`
+            pos += subst.chars().count();
+            str3 = format!("{}{}{}", head, subst, rest);
+            chars = str3.chars().collect();
+            list.setdata(node_idx, str3.clone()); // c:274
+            continue;
         } // c:237
 
         pos += 1; // c:237
@@ -3762,6 +3752,22 @@ pub fn paramsubst(
     // `PARAMSUBST_AFFIXES_DEFERRED` describes the compiled word being assembled,
     // not this inner list, so it is suspended for the call; without that the
     // inner prefork kept the `` and the prefix landed on it (`x` `a` `b` `y`).
+    // c:3767-3801 — the braced modifier leg: `modify(&val, &s, inbrace)`,
+    // then `if (inbrace && *s)` reports what modify() could not parse.
+    let braced_modify = |s: &str, mods: &str| -> String {
+        let (result, rest) = modify(s, mods); // c:3767
+        if rest.is_empty() {
+            return result;
+        }
+        let mut r = rest.chars();
+        // c:3797 — `if (*s == ':' && !imeta(s[1]))`
+        match (r.next(), r.next()) {
+            (Some(':'), Some(c)) => zerr(&format!("unrecognized modifier `{}'", c)), // c:3798
+            _ => zerr("unrecognized modifier"),                                      // c:3800
+        }
+        errflag_set_error();
+        String::new() // c:3801 `return NULL;`
+    };
     let multsub_operand = |s: &str, pf_flags: i32| {
         let saved = PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.replace(0));
         let result = multsub(s, pf_flags);
@@ -8558,6 +8564,13 @@ pub fn paramsubst(
                         i += 1;
                     } else if (0x84..=0xa1).contains(&(c as u32)) {
                         out.extend(fold(c));
+                    } else if c == '/' {
+                        // c:3154-3160 — the `/` separator scan skips a whole
+                        // Dnull span (`${v/"a/b"/r}` searches for `a/b`).
+                        // This fold loses the Dnull, so escape the slash the
+                        // way that scan already honours (c:3150-3153).
+                        out.push(Bnull);
+                        out.push(c);
                     } else {
                         mark(&mut out, c, raw.get(i + 1).copied());
                     }
@@ -20578,7 +20591,7 @@ pub fn paramsubst(
                         }
                         out
                     };
-                    let mod_one = |s: &str| -> String { modify(s, &mod_str) };
+                    let mod_one = |s: &str| -> String { braced_modify(s, &mod_str) };
                     // c:Src/subst.c:3030-3034 — sepjoin under qt
                     // clears isarr to 0 BEFORE the modify dispatch at
                     // c:4531. In DQ, modify runs once on the joined
@@ -21315,7 +21328,7 @@ pub fn paramsubst(
                             if !qt {
                                 if let Some(elems) = split_parts.clone() {
                                     let modified: Vec<String> =
-                                        elems.iter().map(|s| modify(s, mod_tail)).collect();
+                                        elems.iter().map(|s| braced_modify(s, mod_tail)).collect();
                                     value = modified.join(" ");
                                     split_parts = Some(modified);
                                 }
@@ -21331,10 +21344,10 @@ pub fn paramsubst(
                                 // diagnostic: `"${arr:0:x}"` printed the whole
                                 // array where zsh errors out. Discard the
                                 // result, keep the side effects.
-                                let _ = modify(&value, mod_tail);
+                                let _ = braced_modify(&value, mod_tail);
                             }
                         } else {
-                            value = modify(&value, mod_tail);
+                            value = braced_modify(&value, mod_tail);
                         }
                         if errflag_set() {
                             return (String::new(), 0, Vec::new());
@@ -26013,7 +26026,7 @@ pub fn paramsubst(
                 let arr: Vec<String> = if bare_mod_chain.is_empty() {
                     arr
                 } else {
-                    arr.iter().map(|e| modify(e, &bare_mod_chain)).collect() // c:3774
+                    arr.iter().map(|e| modify(e, &bare_mod_chain).0).collect() // c:3774
                 };
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
@@ -26477,7 +26490,7 @@ pub fn paramsubst(
                     } else {
                         // c:3766-3776 — `while ((*pp = *ap++)) { ss = s;
                         // modify(pp++, &ss, inbrace); }`
-                        values = values.iter().map(|e| modify(e, &mod_chain)).collect();
+                        values = values.iter().map(|e| modify(e, &mod_chain).0).collect();
                     }
                     after_pos = mod_end;
                 }
@@ -27081,15 +27094,19 @@ pub fn apply_bare_modifier_chain(
         (value.to_string(), start, String::new())
     } else {
         // c:3761 `modify(&val, &s, inbrace)` — the scalar (`!isarr`) leg.
-        (modify(value, &mod_buf), probe, mod_buf)
+        (modify(value, &mod_buf).0, probe, mod_buf)
     }
 }
 
-/// History-style colon modifiers
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
-/// Port of `modify(char **str, char **ptr, int inbrace)` from Src/subst.c:4531.
+/// Port of `modify(char **str, char **ptr, int inbrace)` from Src/subst.c:4542.
+/// Returns the modified string plus the unconsumed tail of `modifiers`:
+/// C leaves `*ptr` there, and on a modifier it cannot parse rewinds to
+/// that modifier's `:` (c:4721 / c:4727 `*ptr = lptr; return;`) keeping
+/// every modifier already applied. modify() itself reports nothing; the
+/// caller decides (paramsubst errors at c:3797, glob.c:432 ignores it).
 /// WARNING: param names don't match C — Rust=(s, modifiers) vs C=(str, ptr, inbrace)
-pub fn modify(s: &str, modifiers: &str) -> String {
+pub fn modify(s: &str, modifiers: &str) -> (String, String) {
     // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
@@ -27099,6 +27116,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                                                                                         // observed in this pass; writes a new pair after each `:s`.
 
     while chars.peek() == Some(&':') {
+        // c:4558 `lptr = *ptr;` — where a failed modifier rewinds to.
+        let lptr: String = chars.clone().collect();
         // c:4531
         chars.next(); // consume ':'                        // c:4531
                       // c:Src/subst.c:3788 — `s[1]`, the first char after this `:`.
@@ -27236,16 +27255,11 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // exited the modify loop, so `${a:W}` returned the
                 // value unchanged with rc=0.
                 if any_flag_consumed {
-                    // c:Src/subst.c:3785-3790 — modify() consumed only flag
-                    // chars with no modifier letter → resets + returns; the
-                    // caller reports the first char after the `:` (s[1]).
-                    match first_after_colon {
-                        Some(fc) => {
-                            zerr(&format!("unrecognized modifier `{}'", fc)) // c:3788
-                        }
-                        None => zerr("unrecognized modifier"), // c:3790
-                    }
-                    errflag_set_error();
+                    // c:4726-4728 — flag chars but no modifier letter:
+                    // `if (!c) { *ptr = lptr; return; }`; the caller reports
+                    // the first char after the `:` (c:3798 `s[1]`).
+                    let _ = first_after_colon;
+                    return (result, lptr);
                 }
                 break;
             }
@@ -27295,7 +27309,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     // the unchanged value. Bug #595.
                     zerr("bad substitution");
                     errflag_set_error();
-                    return String::new();
+                    return (String::new(), String::new()); // c:4618 `return;` with errflag set
                 }
             };
             // Read pattern with backslash-escape support.
@@ -27347,7 +27361,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // the chosen delimiter. `${a:s/l}` is rejected.
                 zerr("bad substitution");
                 errflag_set_error();
-                return String::new();
+                return (String::new(), String::new()); // c:4618 `return;` with errflag set
             }
             // c:Src/subst.c:4650-4651 — `if (!isset(HISTSUBSTPATTERN))
             // untokenize(hsubl);`. The search text arrives from the lexer
@@ -27973,20 +27987,16 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 }
                 if bad {
                     // c:4720-4722 `default: *ptr = lptr; return;` — the caller
-                    // reports `s[1]`, the first char after the `:` (c:3788).
-                    zerr(&format!("unrecognized modifier `{}'", first_after_colon.unwrap_or(modifier)));
-                    errflag_set_error();
-                    return String::new();
+                    // reports `s[1]`, the first char after the `:` (c:3798).
+                    return (result, lptr);
                 }
                 result = modified.join(separator);
             } else {
                 match dispatch(&result) {
                     Some(m) => result = m,
                     None => {
-                        // c:4720-4722 + c:3788 — see the word-wise arm above.
-                        zerr(&format!("unrecognized modifier `{}'", first_after_colon.unwrap_or(modifier)));
-                        errflag_set_error();
-                        return String::new();
+                        // c:4720-4722 — see the word-wise arm above.
+                        return (result, lptr);
                     }
                 }
             }
@@ -27997,34 +28007,10 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         }
     } // c:4531
 
-    // c:Src/subst.c:3786-3790 — after modify() consumes all valid
-    // `:X` modifiers, if unconsumed text remains the caller emits:
-    //   `:X` followed by a non-meta byte → "unrecognized modifier `X'"
-    //   anything else (including bare letter, digit, etc.)        → "unrecognized modifier"
-    // Without this check the outer `while chars.peek() == Some(&':')`
-    // loop silently exits on any trailing non-`:` byte —
-    // `${a:s/l/X/g}` and `${a:s/l/X/2}` accepted the bogus `g` / `2`
-    // and returned the substitution result unchanged from the
-    // legitimate trailing-delim case. Bug #594.
-    if let Some(&leftover) = chars.peek() {
-        // c:3787 — emit the named-modifier form only when the
-        // leftover is `:X` (C: `*s == ':' && !imeta(s[1])`); the
-        // trailing-after-delim case (`:s/.../.../X`) returns bare.
-        if leftover == ':' {
-            let _consume = chars.next();
-            if let Some(&next) = chars.peek() {
-                zerr(&format!("unrecognized modifier `{}'", next)); // c:3788
-            } else {
-                zerr("unrecognized modifier"); // c:3790
-            }
-        } else {
-            zerr("unrecognized modifier"); // c:3790
-        }
-        errflag_set_error();
-        return String::new();
-    }
-
-    result // c:4531
+    // `*ptr` now points past the last recognised modifier; any text left
+    // (`${a:s/l/X/g}`'s trailing `g`, Bug #594) is the caller's to report
+    // (paramsubst c:3797-3801) or to ignore (glob.c:432).
+    (result, chars.collect()) // c:4531
 } // c:4531
 
 /// Get a directory stack entry
@@ -29391,7 +29377,7 @@ mod tests {
     fn test_modify_head() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        let result = modify("/path/to/file.txt", ":h"); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":h").0; // utils.c:6915
         assert_eq!(result, "/path/to"); // utils.c:6915
     } // utils.c:6915
 
@@ -29399,7 +29385,7 @@ mod tests {
     fn test_modify_tail() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        let result = modify("/path/to/file.txt", ":t"); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":t").0; // utils.c:6915
         assert_eq!(result, "file.txt"); // utils.c:6915
     } // utils.c:6915
 
@@ -29407,7 +29393,7 @@ mod tests {
     fn test_modify_extension() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        let result = modify("/path/to/file.txt", ":e"); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":e").0; // utils.c:6915
         assert_eq!(result, "txt"); // utils.c:6915
     } // utils.c:6915
 
@@ -29415,7 +29401,7 @@ mod tests {
     fn test_modify_root() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        let result = modify("/path/to/file.txt", ":r"); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":r").0; // utils.c:6915
         assert_eq!(result, "/path/to/file"); // utils.c:6915
     } // utils.c:6915
 
@@ -29949,7 +29935,7 @@ mod tests {
     #[test]
     fn modify_h_strips_trailing_component() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("/foo/bar/baz", ":h"), "/foo/bar");
+        assert_eq!(modify("/foo/bar/baz", ":h").0, "/foo/bar");
     }
 
     /// c:4531 — `:t` is the basename modifier (tail). `/foo/bar/baz:t`
@@ -29957,7 +29943,7 @@ mod tests {
     #[test]
     fn modify_t_returns_trailing_component() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("/foo/bar/baz", ":t"), "baz");
+        assert_eq!(modify("/foo/bar/baz", ":t").0, "baz");
     }
 
     /// c:4531 — `:r` strips the file extension (root). `foo.txt:r`
@@ -29965,15 +29951,15 @@ mod tests {
     #[test]
     fn modify_r_strips_extension() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("foo.txt", ":r"), "foo");
-        assert_eq!(modify("foo", ":r"), "foo", "no ext = no change");
+        assert_eq!(modify("foo.txt", ":r").0, "foo");
+        assert_eq!(modify("foo", ":r").0, "foo", "no ext = no change");
     }
 
     /// c:4531 — `:e` returns just the extension. Counterpart to `:r`.
     #[test]
     fn modify_e_returns_extension() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("foo.txt", ":e"), "txt");
+        assert_eq!(modify("foo.txt", ":e").0, "txt");
     }
 
     /// c:4531 — `:u` uppercases (used by `${var:u}`). Critical for
@@ -29981,14 +29967,14 @@ mod tests {
     #[test]
     fn modify_u_uppercases() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("hello", ":u"), "HELLO");
+        assert_eq!(modify("hello", ":u").0, "HELLO");
     }
 
     /// c:4531 — `:l` lowercases.
     #[test]
     fn modify_l_lowercases() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("HELLO", ":l"), "hello");
+        assert_eq!(modify("HELLO", ":l").0, "hello");
     }
 
     /// c:4531 — chained modifiers compose left-to-right. `foo.txt:r:u`
@@ -29996,7 +29982,7 @@ mod tests {
     #[test]
     fn modify_chained_modifiers_apply_left_to_right() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("foo.txt", ":r:u"), "FOO");
+        assert_eq!(modify("foo.txt", ":r:u").0, "FOO");
     }
 
     /// c:4531 — empty modifier string is a no-op (returns input
@@ -30005,7 +29991,7 @@ mod tests {
     #[test]
     fn modify_empty_modifier_returns_input_unchanged() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(modify("foo/bar", ""), "foo/bar");
+        assert_eq!(modify("foo/bar", "").0, "foo/bar");
     }
 
     /// c:1566 — `check_colon_subscript("")` returns None — empty

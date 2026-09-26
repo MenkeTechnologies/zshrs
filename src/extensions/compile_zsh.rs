@@ -9185,7 +9185,20 @@ impl ZshCompiler {
                 _ => false,
             })
         };
-        if (!has_bnull || modifier_safe_with_bnull) && !in_dq && !quoted_affix {
+        // c:Src/subst.c:245-247 — a default word that is a process
+        // substitution (`${x:-=(cmd)}`: the lexer makes `=` Equals and `(`
+        // Inpar inside the braces, c:Src/lex.c:1256) is run by stringsubst
+        // when paramsubst's multsub preforks it. The lowering hands
+        // paramsubst the UNTOKENIZED `rhs`, where `=(cmd)` is plain text
+        // that later globs ("missing end of string"). Decline; the generic
+        // path keeps the tokens.
+        let procsubst_tokens = {
+            use crate::ported::zsh_h::{Equals, Inang, Inpar, OutangProc};
+            let ch: Vec<char> = s.chars().collect();
+            ch.windows(2)
+                .any(|w| matches!(w[0], c if c == Equals || c == Inang || c == OutangProc) && w[1] == Inpar)
+        };
+        if (!has_bnull || modifier_safe_with_bnull) && !in_dq && !quoted_affix && !procsubst_tokens {
             if let Some(mut modifier) = parsed_mod {
                 // c:Src/subst.c:178-181 — `prefork` runs `filesub` on the word
                 // AFTER `stringsubst`, so a `~` the LEXER turned into a `Tilde`
@@ -17326,12 +17339,24 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         let chars: Vec<char> = body.chars().collect();
         let mut sep = None;
         let mut i = 0;
+        let (mut in_sq, mut in_dq) = (false, false);
         while i < chars.len() {
-            if chars[i] == '\\' && i + 1 < chars.len() {
+            if chars[i] == '\'' && !in_dq {
+                in_sq = !in_sq;
+            } else if chars[i] == '"' && !in_sq {
+                in_dq = !in_dq;
+            } else if chars[i] == '\\' && !in_sq && i + 1 < chars.len() {
                 i += 2;
                 continue;
-            }
-            if chars[i] == '/' {
+            } else if chars[i] == '/' {
+                if in_sq || in_dq {
+                    // c:Src/subst.c:3154-3160 + c:Src/lex.c:1309-1310 — a
+                    // quoted `/` in the pattern is not the separator. The
+                    // `unesc` split below cannot express that; leave the
+                    // word to the generic paramsubst path, which keeps the
+                    // quote tokens.
+                    return None;
+                }
                 sep = Some(i);
                 break;
             }

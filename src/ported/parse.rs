@@ -2650,39 +2650,21 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // remaining STRING is a literal function name (including
                 // `-T`, `--`, `-zui_std_*`, `+foo`, …).
 
-                // c:Src/exec.c::execcmd_args — function name tokens
-                // in `function NAME { ... }` form go through globbing
-                // at parse time. zsh's `function with[bracket] { ... }`
-                // triggers a glob expansion of `with[bracket]`; no file
-                // matches → "no matches found: NAME" + rc=1 (when
-                // NOMATCH is set, the default). Bug #536: zshrs accepted
-                // the literal bracket-containing name and registered
-                // the function silently. Mirror C by probing for glob
-                // metachars on the name; if present AND no file
-                // matches, emit the diagnostic and abort the parse.
-                let has_glob_chars = s.chars().any(|c| {
-                    matches!(
-                        c,
-                        '[' | ']'
-                            | '*'
-                            | '?'
-                            | crate::ported::zsh_h::Inbrack
-                            | crate::ported::zsh_h::Outbrack
-                            | crate::ported::zsh_h::Star
-                            | crate::ported::zsh_h::Quest
-                    )
-                });
-                if has_glob_chars && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH) {
-                    // Probe the funcname pattern through the canonical
-                    // glob entry — C `zglob(args, firstnode(args), 0)`
-                    // (c:3318). zglob runs the tokenized word and, under
-                    // NOMATCH with no match (nullglob off), emits
-                    // "no matches found: PAT" + errflag itself
-                    // (c:1876-1880). Tokenize first (the funcname word
-                    // still holds literal `*`/`?`; haswilds keys on the
-                    // Star/Quest tokens) and propagate the abort.
+                // c:Src/exec.c:5389-5390 — `if (htok && names) execsubst(names);`
+                // globs the function NAME words (c:2744-2746 prefork +
+                // globlist). zglob acts only on the lexer's glob TOKENS
+                // (c:Src/glob.c:1230 haswilds), so a quoted name —
+                // `function '*' { … }`, `function "q*" { … }` — is literal
+                // and never globbed. This probe runs at parse time instead
+                // of in execfuncdef, and only reproduces the NOMATCH error;
+                // a matching pattern still defines the literal name.
+                // Tokenizing the word first (as the probe used to) armed the
+                // quoted metacharacters too: `function '*' { … }` failed
+                // "no matches found: *" (D04parameter).
+                if crate::ported::pattern::haswilds(s)
+                    && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH)
+                {
                     let mut probe = vec![s.to_string()];
-                    crate::ported::glob::tokenize(&mut probe[0]);
                     crate::ported::glob::zglob(&mut probe, 0, 0);
                     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
                         & crate::ported::utils::ERRFLAG_ERROR

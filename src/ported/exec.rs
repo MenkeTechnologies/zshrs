@@ -3969,48 +3969,51 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     words
 }
 
-/// Port of `parsecmd()` from `Src/exec.c:4878` — C decl `parsecmd(char *cmd, char **eptr)`.
+/// Port of `parsecmd()` from `Src/exec.c:4934` — C decl `parsecmd(char *cmd, char **eptr)`.
 /// Lex a `<(...)`/`>(...)`/`=(...)` body — the leading 2 chars are
 /// the marker pair (`Inang+Inpar`, `Outang+Inpar`, `Equals+Inpar`),
 /// remainder is the command up to the matching `Outpar`. Returns the
-/// parsed Eprog (and writes the post-`)` cursor through `eptr`).
+/// parsed Eprog (and writes the post-`)` cursor through `eptr`, as a
+/// BYTE offset into `cmd`). The tokens are multi-byte in a Rust `String`,
+/// so the scan walks chars: comparing single bytes against `Inpar` /
+/// `Outpar` (as the port did) could never match and every call failed.
 pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
-    // c:4878
-    let bytes = cmd.as_bytes();
-    // c:4883 — `for (str = cmd + 2; *str && *str != Outpar; str++);`
-    if bytes.len() < 2 {
-        return None;
-    }
-    let mut str_idx: usize = 2;
-    while str_idx < bytes.len() && (bytes[str_idx] as char) != Outpar {
-        str_idx += 1;
-    }
-    // c:4884 — `if (!*str || cmd[1] != Inpar)`.
-    if str_idx >= bytes.len() || (bytes[1] as char) != Inpar {
-        // c:4884
-        let errstr = if bytes.len() >= 2 {
-            untokenize(&cmd[..2]) // c:4891-4892
-        } else {
-            String::new()
-        };
-        zerr(&format!("unterminated `{}...)'", errstr)); // c:4893
-        return None; // c:4894
-    }
-    // c:4896 — `*str = '\0';` — cmd[str_idx] becomes the terminator.
-    // c:4897-4898 — `if (eptr) *eptr = str + 1;`
+    // c:4934
+    let mut it = cmd.char_indices();
+    let _marker = it.next(); // cmd[0]
+    let second = it.next().map(|(_, c)| c); // cmd[1]
+    let body_start = it.next().map_or(cmd.len(), |(i, _)| i); // cmd + 2
+    // c:4939 — `for (str = cmd + 2; *str && *str != Outpar; str++);`
+    let close = cmd[body_start..].find(Outpar).map(|i| body_start + i);
+    // c:4940 — `if (!*str || cmd[1] != Inpar)`.
+    let close = match close {
+        Some(c) if second == Some(Inpar) => c,
+        _ => {
+            // c:4941-4946 — `This can happen if the expression is being parsed
+            // inside another construct, e.g. as a value within ${..:..} etc.
+            // So print a proper error message instead of the not very
+            // useful but traditional "oops".`
+            let pfx_end = cmd.char_indices().nth(2).map_or(cmd.len(), |(i, _)| i);
+            let errstr = untokenize(&cmd[..pfx_end]); // c:4947-4948
+            zerr(&format!("unterminated `{}...)'", errstr)); // c:4949
+            return None; // c:4950
+        }
+    };
+    // c:4952 — `*str = '\0';` — cmd[close] becomes the terminator.
+    // c:4953-4954 — `if (eptr) *eptr = str + 1;`
     if let Some(p) = eptr {
-        *p = str_idx + 1;
+        *p = close + Outpar.len_utf8();
     }
-    // c:4899 — `parse_string(cmd + 2, 0)`.
-    let body = &cmd[2..str_idx];
-    let prog = parse_string(body, 0);
+    // c:4955 — `parse_string(cmd + 2, 0)`.
+    let prog = parse_string(&cmd[body_start..close], 0);
     if prog.is_none() {
-        // c:4899
-        zerr("parse error in process substitution"); // c:4900
-        return None; // c:4901
+        // c:4955
+        zerr("parse error in process substitution"); // c:4956
+        return None; // c:4957
     }
-    prog // c:4903
+    prog // c:4959
 }
+
 
 /// `POUNDBANGLIMIT` from `Src/exec.c:500` — max bytes read from the
 /// front of a script when probing for a `#!` shebang line.
@@ -4448,6 +4451,11 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4960 — `addfilelist(nam, 0);` — register temp file in current
     // job's filelist so it's unlinked at job exit (not relying on the
     // OS temp-reaper).
+    // zshrs runs commands in-process and the VM owns that job-end unlink
+    // (the `=(cmd)` temp files the compiled path creates are parked there
+    // too), so the parent also parks the name there on every return below.
+    // Not before the fork: the child's own commands would drain the
+    // inherited list and unlink the file it is writing.
     if let Some(jt) = JOBTAB.get() {
         let mut guard = jt.lock().unwrap();
         let tj = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
@@ -4465,6 +4473,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         unsafe {
             libc::close(fd);
         } // c:4967
+        crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4968
     }
     // c:4971 — `cmdoutpid = pid = zfork(NULL)`.
@@ -4476,6 +4485,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
             libc::close(fd);
         } // c:4973
         child_unblock(); // c:4974
+        crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4975
     } else if pid != 0 {
         // c:4976 — parent.
@@ -4484,6 +4494,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         } // c:4977
         let _ = waitforpid(pid); // c:4978
         cmdoutval.store(0, Ordering::Relaxed); // c:4979
+        crate::fusevm_bridge::psub_pending_file_add(&nam);
         return Some(nam); // c:4980
     }
     // c:4983 — child.
@@ -4492,13 +4503,17 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     entersubsh(esub::PGRP | esub::NOMONITOR, None); // c:4986
     cmdpush(CS_CMDSUBST as u8); // c:4987
                                 // c:4988 — execode — WARNING (d).
-    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
-    let body = if body_end > 2 && body_end <= cmd.len() {
-        &cmd[2..body_end]
+    // The re-fed text is what parsecmd parsed: after the two marker chars,
+    // up to the Outpar ending at `ends_at` (a byte offset). The markers are
+    // multi-byte chars, so a `cmd[2..]` byte slice split them.
+    let body_start = cmd.char_indices().nth(2).map_or(cmd.len(), |(i, _)| i);
+    let body_end = ends_at.saturating_sub(Outpar.len_utf8());
+    let body = if body_end > body_start && body_end <= cmd.len() {
+        untokenize(&cmd[body_start..body_end])
     } else {
-        ""
+        String::new()
     };
-    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     cmdpop(); // c:4989
     unsafe {
         libc::close(1);
@@ -4539,7 +4554,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:5025
     let bytes = cmd.as_bytes();
-    let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
+    let out: i32 = if cmd.starts_with(Inang) {
         1 // c:5032 — `<(...)` writer-side child
     } else {
         0
@@ -4620,13 +4635,17 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     let _ = redup(pipes[out as usize], out); // c:5096
     closem(FDT_UNUSED, 0); // c:5097
     cmdpush(CS_CMDSUBST as u8); // c:5100
-    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
-    let body = if body_end > 2 && body_end <= cmd.len() {
-        &cmd[2..body_end]
+    // The re-fed text is what parsecmd parsed: after the two marker chars,
+    // up to the Outpar ending at `ends_at` (a byte offset). The markers are
+    // multi-byte chars, so a `cmd[2..]` byte slice split them.
+    let body_start = cmd.char_indices().nth(2).map_or(cmd.len(), |(i, _)| i);
+    let body_end = ends_at.saturating_sub(Outpar.len_utf8());
+    let body = if body_end > body_start && body_end <= cmd.len() {
+        untokenize(&cmd[body_start..body_end])
     } else {
-        ""
+        String::new()
     };
-    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
     std::process::exit(LASTVAL.load(Ordering::Relaxed)); // c:5104
@@ -5536,7 +5555,7 @@ impl Drop for SubshFdFrame {
 pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     // c:5119
     let bytes = cmd.as_bytes();
-    let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
+    let out: i32 = if cmd.starts_with(Inang) {
         1 // c:5122 — `<(...)` reads from child, child writes to fd 1
     } else {
         0 // `>(...)` — child reads from fd 0
@@ -5600,13 +5619,17 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     closem(FDT_UNUSED, 0); // c:5148
     cmdpush(CS_CMDSUBST as u8); // c:5149
                                 // c:5150 — execode(prog, 0, 1, ...) — see WARNING (c).
-    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
-    let body = if body_end > 2 && body_end <= bytes.len() {
-        &cmd[2..body_end]
+    // The re-fed text is what parsecmd parsed: after the two marker chars,
+    // up to the Outpar ending at `ends_at` (a byte offset). The markers are
+    // multi-byte chars, so a `cmd[2..]` byte slice split them.
+    let body_start = cmd.char_indices().nth(2).map_or(cmd.len(), |(i, _)| i);
+    let body_end = ends_at.saturating_sub(Outpar.len_utf8());
+    let body = if body_end > body_start && body_end <= cmd.len() {
+        untokenize(&cmd[body_start..body_end])
     } else {
-        ""
+        String::new()
     };
-    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     cmdpop(); // c:5151
               // c:5152 — _realexit() — WARNING (d).
     std::process::exit(LASTVAL.load(Ordering::Relaxed));
