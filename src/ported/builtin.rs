@@ -17881,7 +17881,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             BIN_DISOWN,
-            None,
+            Some("a"),
             None,
         ),
         BUILTIN(

@@ -3047,6 +3047,13 @@ pub fn bin_fg(
     func: i32,
 ) -> i32 {
     let _ofunc = func; // c:2424
+    // c:2431 — `int disown_all = (func == BIN_DISOWN && OPT_ISSET(ops, 'a'));`
+    let disown_all = func == BIN_DISOWN && OPT_ISSET(ops, b'a');
+    if disown_all && !argv.is_empty() {
+        // c:2433
+        zwarnnam(name, &format!("argument not meaningful with -a: {}", argv[0])); // c:2434
+        return 1; // c:2435
+    }
 
     // c:2425-2452 — `-Z`: rename the running process. Used by
     // login shells / tools that want their `ps` line to reflect a
@@ -3251,6 +3258,54 @@ pub fn bin_fg(
             }
             unqueue_signals(); // c:2522
             return 0; // c:2523
+        }
+        if disown_all {
+            // c:2501-2502 — `firstjob = 0;`, then the job loop walks
+            // every slot: c:2594 `firstjob = (disown_all && job <= maxjob)
+            // ? job + 1 : -1;`.
+            let maxjob = *MAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap();
+            for job in 0..=maxjob {
+                // c:2587-2591 — checked on every pass, before the job.
+                if !OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().is_empty() {
+                    zwarnnam(name, "can't manipulate jobs in subshell"); // c:2588
+                    unqueue_signals(); // c:2589
+                    return 1; // c:2590
+                }
+                let mut tab = table.lock().expect("jobtab poisoned");
+                let Some(j) = tab.get_mut(job) else { continue };
+                // c:2598-2605 — `if (!(jstat & STAT_INUSE) || (jstat &
+                // STAT_NOPRINT)) { if (disown_all) continue; ...`
+                if (j.stat & stat::INUSE) == 0 || (j.stat & stat::NOPRINT) != 0 {
+                    continue; // c:2602-2603
+                }
+                // c:2715-2718 — a superjob is only marked; its subjob's
+                // exit completes the disown.
+                if (j.stat & stat::SUPERJOB) != 0 {
+                    j.stat |= crate::ported::zsh_h::STAT_DISOWN; // c:2716
+                    continue; // c:2717
+                }
+                if (j.stat & stat::STOPPED) != 0 {
+                    // c:2719-2746 — same warning as the per-arg arm below.
+                    zwarnnam(
+                        name,
+                        &format!(
+                            "warning: job is suspended, use `kill -CONT -{}' to resume",
+                            j.gleader
+                        ),
+                    );
+                }
+                deletejob(j, true); // c:2748
+                drop(tab);
+                // Same curjob/prevjob repair as the per-arg disown arm.
+                let cj = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                if cj == job as i32 {
+                    let pj = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                    *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = pj;
+                }
+                setprevjob();
+            }
+            unqueue_signals(); // c:2752
+            return 0; // c:2753
         }
         if func == BIN_FG || func == BIN_BG || func == BIN_DISOWN {
             // c:2491-2499 — "no current job" gate. C body covers BIN_FG/

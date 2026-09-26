@@ -1082,3 +1082,15 @@ if [[ $all == *ALIVEMARK* ]]; then print EXITED=no; else print EXITED=yes; fi
     );
     crate::zpty_probe::assert_same_verdict(&driver, "EXITED", "the first `exit` left the shell");
 }
+
+/// c:Src/jobs.c:2431-2435, 2501-2502, 2594 — `disown -a` disowns every
+/// job, and refuses a job argument next to `-a`. The option is zsh 54585
+/// (c86e1de954), newer than the installed 5.9.2 reference, so this pins
+/// the dev-tree output instead of comparing: zshrs rejected `-a` as a job
+/// spec ("job not found: -a", rc 127) and left both jobs in the table.
+#[test]
+fn disown_all_empties_the_job_table() {
+    let r = run_zshrs("sleep 0.3 & sleep 0.3 & disown -a; print rc=$?; jobs; disown -a %1; print rc=$?");
+    assert_eq!(r.stdout, "rc=0\nrc=1\n", "stderr: {}", r.stderr);
+    assert_eq!(r.stderr, "zsh:disown:1: argument not meaningful with -a: %1\n");
+}
